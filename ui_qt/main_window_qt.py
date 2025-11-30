@@ -14,6 +14,170 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap
 from config import config
 from settings import settings_manager
 from ui_qt.loading_screen_qt import ModernLoadingScreen
+
+
+class CustomTitleBar(QFrame):
+    """Custom title bar for frameless window with integrated menu."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self._drag_position = None
+        self._is_maximized = False
+        self.setFixedHeight(32)
+        self.setObjectName("customTitleBar")
+        self.setAutoFillBackground(True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Menu bar (File, View, Help) - LEFT
+        from PyQt6.QtWidgets import QMenuBar, QMenu
+        self.menu_bar = QMenuBar()
+        self.menu_bar.setStyleSheet("""
+            QMenuBar {
+                background-color: transparent;
+                color: #c0c0d0;
+                font-size: 12px;
+                border: none;
+                spacing: 0px;
+            }
+            QMenuBar::item {
+                background-color: transparent;
+                padding: 8px 10px 4px 10px;
+            }
+            QMenuBar::item:selected {
+                background-color: #5a5a5c;
+                color: #ffffff;
+            }
+            QMenuBar::item:pressed {
+                background-color: #6a6a6c;
+            }
+            QMenu {
+                background-color: #3a3a3c;
+                color: #e0e0ff;
+                border: 1px solid #5a5a5c;
+            }
+            QMenu::item {
+                padding: 6px 24px;
+            }
+            QMenu::item:selected {
+                background-color: #6366f1;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #5a5a5c;
+                margin: 4px 8px;
+            }
+        """)
+        layout.addWidget(self.menu_bar)
+
+        layout.addStretch()
+
+        # App title - CENTER
+        self.title_label = QLabel("OpenWhisper")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                background-color: transparent;
+                color: #e0e0ff;
+                font-size: 13px;
+                font-weight: 600;
+                font-family: 'Segoe UI', sans-serif;
+            }
+        """)
+        layout.addWidget(self.title_label)
+
+        layout.addStretch()
+
+        # Window buttons
+        button_style = """
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                color: #808098;
+                font-size: 14px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QPushButton:hover {
+                background-color: #3d3d5c;
+                color: #ffffff;
+            }
+        """
+        close_button_style = """
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                color: #808098;
+                font-size: 14px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QPushButton:hover {
+                background-color: #e81123;
+                color: #ffffff;
+            }
+        """
+
+        self.minimize_btn = QPushButton("─")
+        self.minimize_btn.setFixedSize(46, 32)
+        self.minimize_btn.setStyleSheet(button_style)
+        self.minimize_btn.clicked.connect(self._minimize)
+
+        self.maximize_btn = QPushButton("□")
+        self.maximize_btn.setFixedSize(46, 32)
+        self.maximize_btn.setStyleSheet(button_style)
+        self.maximize_btn.clicked.connect(self._toggle_maximize)
+
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(46, 32)
+        self.close_btn.setStyleSheet(close_button_style)
+        self.close_btn.clicked.connect(self._close)
+
+        layout.addWidget(self.minimize_btn)
+        layout.addWidget(self.maximize_btn)
+        layout.addWidget(self.close_btn)
+
+        # Darker background to stand out from main content
+        self.setStyleSheet("""
+            #customTitleBar {
+                background-color: #48484a;
+                border-bottom: 1px solid #5a5a5c;
+            }
+        """)
+
+    def _minimize(self):
+        if self.parent_window:
+            self.parent_window.showMinimized()
+
+    def _toggle_maximize(self):
+        if self.parent_window:
+            if self._is_maximized:
+                self.parent_window.showNormal()
+                self.maximize_btn.setText("□")
+            else:
+                self.parent_window.showMaximized()
+                self.maximize_btn.setText("❐")
+            self._is_maximized = not self._is_maximized
+
+    def _close(self):
+        if self.parent_window:
+            self.parent_window.close()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_position = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_position:
+            self.parent_window.move(event.globalPosition().toPoint() - self._drag_position)
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._toggle_maximize()
+
+
 from ui_qt.widgets import (
     HeaderCard, Card, PrimaryButton, DangerButton,
     SuccessButton, WarningButton, ControlPanel, ModernButton,
@@ -43,6 +207,9 @@ class ModernMainWindow(QMainWindow):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.setWindowTitle("OpenWhisper")
+
+        # Frameless window with custom title bar
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(500, 600)
         self.setMaximumWidth(1220)  # Increased to accommodate sidebar
         self.resize(604, 700)  # Initial size: base_width + edge_tab_width (580 + 24)
@@ -77,10 +244,21 @@ class ModernMainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        # Main layout (root) - horizontal to support sidebar
-        root_layout = QHBoxLayout(central_widget)
+        # Outer layout for title bar + content
+        outer_layout = QVBoxLayout(central_widget)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Custom title bar
+        self.title_bar = CustomTitleBar(self)
+        outer_layout.addWidget(self.title_bar)
+
+        # Container for main content + sidebar
+        content_wrapper = QWidget()
+        root_layout = QHBoxLayout(content_wrapper)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        outer_layout.addWidget(content_wrapper, stretch=1)
 
         # Main content area (left side)
         main_area = QWidget()
@@ -201,25 +379,12 @@ class ModernMainWindow(QMainWindow):
         root_layout.addWidget(self.history_sidebar)
 
     def _setup_menu(self):
-        """Setup the menu bar."""
-        menubar = self.menuBar()
-        menubar.setStyleSheet("""
-            QMenuBar {
-                background-color: #2d2d44;
-                color: #e0e0ff;
-                border-bottom: 1px solid #404060;
-            }
-            QMenuBar::item:selected {
-                background-color: #6366f1;
-            }
-            QMenu {
-                background-color: #2d2d44;
-                color: #e0e0ff;
-            }
-            QMenu::item:selected {
-                background-color: #6366f1;
-            }
-        """)
+        """Setup the menu bar in the custom title bar."""
+        # Hide the QMainWindow's built-in menu bar
+        self.menuBar().hide()
+
+        # Use the custom title bar's menu bar
+        menubar = self.title_bar.menu_bar
 
         # File menu
         file_menu = menubar.addMenu("File")
