@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QSizePolicy, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, pyqtProperty
 from PyQt6.QtGui import QFont, QCursor
 
 from history_manager import HistoryEntry, RecordingInfo, history_manager
@@ -263,12 +263,14 @@ class HistorySidebar(QWidget):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
         self._is_expanded = False
+        self._current_width = self.COLLAPSED_WIDTH
         
         self._setup_ui()
         self._apply_style()
         
-        # Start collapsed
-        self.setFixedWidth(self.COLLAPSED_WIDTH)
+        # Start collapsed - use minimumWidth and maximumWidth instead of fixedWidth for smooth animation
+        self.setMinimumWidth(self.COLLAPSED_WIDTH)
+        self.setMaximumWidth(self.COLLAPSED_WIDTH)
     
     def _setup_ui(self):
         """Setup the sidebar UI."""
@@ -345,10 +347,35 @@ class HistorySidebar(QWidget):
         
         main_layout.addWidget(self.content_widget)
         
-        # Animation for expand/collapse
-        self.animation = QPropertyAnimation(self, b"minimumWidth")
+        # Animation for expand/collapse - animate both min and max width together
+        self.animation = QPropertyAnimation(self, b"sidebarWidth")
         self.animation.setDuration(250)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.finished.connect(self._on_animation_finished)
+    
+    def _get_sidebar_width(self):
+        """Get the current sidebar width."""
+        return self._current_width
+    
+    def _set_sidebar_width(self, width):
+        """Set the sidebar width (used by animation)."""
+        self._current_width = int(width)
+        self.setMinimumWidth(self._current_width)
+        self.setMaximumWidth(self._current_width)
+    
+    sidebarWidth = pyqtProperty(int, _get_sidebar_width, _set_sidebar_width)
+    
+    def _on_animation_finished(self):
+        """Called when animation finishes."""
+        # Ensure final state is correct
+        if self._is_expanded:
+            self.setMinimumWidth(self.EXPANDED_WIDTH)
+            self.setMaximumWidth(self.EXPANDED_WIDTH)
+            # Refresh content after expansion is complete to avoid glitches during animation
+            self.refresh()
+        else:
+            self.setMinimumWidth(self.COLLAPSED_WIDTH)
+            self.setMaximumWidth(self.COLLAPSED_WIDTH)
     
     def _apply_style(self):
         """Apply custom styling."""
@@ -399,13 +426,15 @@ class HistorySidebar(QWidget):
             return
         
         self._is_expanded = True
+        
+        # Start animation immediately - no delay
         self.animation.stop()
-        self.animation.setStartValue(self.width())
+        current_width = self.width() if self.width() > 0 else self.COLLAPSED_WIDTH
+        self.animation.setStartValue(current_width)
         self.animation.setEndValue(self.EXPANDED_WIDTH)
         self.animation.start()
         
-        # Refresh content when expanding
-        self.refresh()
+        # Refresh will happen automatically when animation finishes (in _on_animation_finished)
         
         self.logger.debug("Sidebar expanded")
     
@@ -415,8 +444,11 @@ class HistorySidebar(QWidget):
             return
         
         self._is_expanded = False
+        
+        # Start animation immediately - smooth collapse
         self.animation.stop()
-        self.animation.setStartValue(self.width())
+        current_width = self.width() if self.width() > 0 else self.EXPANDED_WIDTH
+        self.animation.setStartValue(current_width)
         self.animation.setEndValue(self.COLLAPSED_WIDTH)
         self.animation.start()
         

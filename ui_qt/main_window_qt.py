@@ -655,12 +655,16 @@ class ModernMainWindow(QMainWindow):
     def toggle_history(self):
         """Toggle the history sidebar visibility."""
         self.logger.info("Toggling history sidebar")
-        self.history_sidebar.toggle()
-        # Update the edge tab arrow direction
-        self.history_edge_tab.set_expanded(self.history_sidebar.is_expanded)
         
-        # Resize window to accommodate sidebar
-        self._resize_for_sidebar(self.history_sidebar.is_expanded)
+        # Update the edge tab arrow direction immediately for instant visual feedback
+        will_be_expanded = not self.history_sidebar.is_expanded
+        self.history_edge_tab.set_expanded(will_be_expanded)
+        
+        # Start sidebar animation immediately
+        self.history_sidebar.toggle()
+        
+        # Resize window immediately to match sidebar animation
+        self._resize_for_sidebar(will_be_expanded)
         
         self.history_toggle_requested.emit()
     
