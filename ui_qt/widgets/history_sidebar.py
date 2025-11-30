@@ -38,33 +38,26 @@ class HistoryItemWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
-        
-        # Top row: timestamp and model badge
+
+        # Top row: timestamp and audio indicator
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
-        
+
         # Timestamp
         self.timestamp_label = QLabel(self.entry.formatted_timestamp)
         self.timestamp_label.setObjectName("historyTimestamp")
         self.timestamp_label.setFont(QFont("Segoe UI", 10))
         top_row.addWidget(self.timestamp_label)
-        
-        top_row.addStretch()
-        
-        # Model badge
-        self.model_badge = QLabel(self._format_model_name(self.entry.model))
-        self.model_badge.setObjectName("modelBadge")
-        self.model_badge.setFont(QFont("Segoe UI", 9))
-        top_row.addWidget(self.model_badge)
-        
+
         # Audio indicator if recording exists
         if self.entry.audio_file:
             audio_indicator = QLabel("🎤")
             audio_indicator.setToolTip("Audio recording available")
             top_row.addWidget(audio_indicator)
-        
+
+        top_row.addStretch()
         layout.addLayout(top_row)
-        
+
         # Preview text
         self.preview_label = QLabel(self.entry.preview_text)
         self.preview_label.setObjectName("historyPreview")
@@ -99,13 +92,6 @@ class HistoryItemWidget(QFrame):
                 color: #98989d;
                 background-color: transparent;
             }
-            QLabel#modelBadge {
-                color: #64d2ff;
-                background-color: rgba(10, 132, 255, 0.12);
-                padding: 3px 10px;
-                border-radius: 8px;
-                font-weight: 600;
-            }
             QLabel#historyPreview {
                 color: #e5e5e7;
                 background-color: transparent;
@@ -138,8 +124,18 @@ class HistoryItemWidget(QFrame):
                 height: 1px;
                 margin: 4px 8px;
             }
+            QMenu::item:disabled {
+                color: #8e8e93;
+            }
         """)
-        
+
+        # Model info (non-clickable)
+        model_name = self._format_model_name(self.entry.model)
+        model_action = menu.addAction(f"Model: {model_name}")
+        model_action.setEnabled(False)
+
+        menu.addSeparator()
+
         # Copy action
         copy_action = menu.addAction("Copy Text")
         copy_action.triggered.connect(lambda: self.copy_requested.emit(self.entry.id))
@@ -261,7 +257,7 @@ class HistorySidebar(QWidget):
     retranscribe_requested = pyqtSignal(str)  # Emits audio file path
     
     COLLAPSED_WIDTH = 0
-    EXPANDED_WIDTH = 320
+    EXPANDED_WIDTH = 380
     
     def __init__(self, parent=None):
         super().__init__(parent)

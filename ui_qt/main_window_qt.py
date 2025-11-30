@@ -24,6 +24,7 @@ class CustomTitleBar(QFrame):
         self.parent_window = parent
         self._drag_position = None
         self._is_maximized = False
+        self._normal_geometry = None  # Store geometry before maximizing
         self.setFixedHeight(32)
         self.setObjectName("customTitleBar")
         self.setAutoFillBackground(True)
@@ -137,11 +138,11 @@ class CustomTitleBar(QFrame):
         layout.addWidget(self.maximize_btn)
         layout.addWidget(self.close_btn)
 
-        # Darker background to stand out from main content
+        # Match transcription box and dropdown background
         self.setStyleSheet("""
             #customTitleBar {
-                background-color: #48484a;
-                border-bottom: 1px solid #5a5a5c;
+                background-color: #2c2c2e;
+                border-bottom: 1px solid #3a3a3c;
             }
         """)
 
@@ -152,9 +153,13 @@ class CustomTitleBar(QFrame):
     def _toggle_maximize(self):
         if self.parent_window:
             if self._is_maximized:
-                self.parent_window.showNormal()
+                # Restore to saved geometry
+                if self._normal_geometry:
+                    self.parent_window.setGeometry(self._normal_geometry)
                 self.maximize_btn.setText("□")
             else:
+                # Save current geometry before maximizing
+                self._normal_geometry = self.parent_window.geometry()
                 self.parent_window.showMaximized()
                 self.maximize_btn.setText("❐")
             self._is_maximized = not self._is_maximized
@@ -211,7 +216,7 @@ class ModernMainWindow(QMainWindow):
         # Frameless window with custom title bar
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(500, 600)
-        self.setMaximumWidth(1220)  # Increased to accommodate sidebar
+        self.setMaximumWidth(1280)  # Increased to accommodate sidebar
         self.resize(604, 700)  # Initial size: base_width + edge_tab_width (580 + 24)
 
         # State
@@ -222,7 +227,7 @@ class ModernMainWindow(QMainWindow):
         
         # Window sizing for sidebar toggle
         self._base_width = 580  # Optimal width without sidebar
-        self._sidebar_width = 320  # HistorySidebar.EXPANDED_WIDTH
+        self._sidebar_width = 380  # HistorySidebar.EXPANDED_WIDTH
         self._edge_tab_width = 24  # HistoryEdgeTab width
 
         # Callbacks (will be set by controller)
