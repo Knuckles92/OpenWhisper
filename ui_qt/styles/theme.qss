@@ -96,6 +96,24 @@ QPushButton#successButton:hover {
     background-color: #28cd41;
 }
 
+QPushButton#successButton:pressed {
+    background-color: #1fb34a;
+}
+
+/* Warning buttons (yellow/amber) */
+QPushButton#warningButton {
+    background-color: #ff9f0a; /* Apple System Orange */
+    color: #ffffff;
+}
+
+QPushButton#warningButton:hover {
+    background-color: #ff9500;
+}
+
+QPushButton#warningButton:pressed {
+    background-color: #cc7700;
+}
+
 /* ComboBox (Model selector) */
 QComboBox {
     background-color: #2c2c2e;

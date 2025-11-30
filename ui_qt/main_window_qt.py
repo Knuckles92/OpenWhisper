@@ -16,8 +16,8 @@ from settings import settings_manager
 from ui_qt.loading_screen_qt import ModernLoadingScreen
 from ui_qt.widgets import (
     HeaderCard, Card, PrimaryButton, DangerButton,
-    SuccessButton, ControlPanel, ModernButton,
-    HistorySidebar, HistoryEdgeTab
+    SuccessButton, WarningButton, ControlPanel, ModernButton,
+    HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget
 )
 from history_manager import history_manager
 
@@ -147,10 +147,10 @@ class ModernMainWindow(QMainWindow):
         control_panel = ControlPanel()
         control_panel.layout.setSpacing(12) # Reduced spacing
 
-        self.record_button = PrimaryButton("Start Recording")
-        self.cancel_button = DangerButton("Cancel")
+        self.record_button = SuccessButton("Start Recording")
+        self.cancel_button = WarningButton("Cancel")
         self.cancel_button.setEnabled(False)
-        self.stop_button = SuccessButton("Stop")
+        self.stop_button = DangerButton("Stop")
         self.stop_button.setEnabled(False)
 
         control_panel.layout.addStretch()
@@ -176,9 +176,12 @@ class ModernMainWindow(QMainWindow):
         transcription_card.layout.addWidget(self.transcription_text)
 
         content_layout.addWidget(transcription_card)
-        
-        content_layout.addWidget(transcription_card)
-        
+
+        # Transcription statistics display (hidden by default)
+        self.stats_widget = TranscriptionStatsWidget()
+        self.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
+        content_layout.addWidget(self.stats_widget)
+
         content_layout.addStretch() # Push everything up
 
         # Add main area to root layout
@@ -365,6 +368,45 @@ class ModernMainWindow(QMainWindow):
     def clear_transcription(self):
         """Clear the transcription text."""
         self.transcription_text.clear()
+
+    def set_transcription_stats(
+        self,
+        transcription_time: float,
+        audio_duration: float,
+        file_size: int
+    ):
+        """Set the transcription statistics display.
+
+        Args:
+            transcription_time: Time taken to transcribe in seconds.
+            audio_duration: Duration of the audio in seconds.
+            file_size: Size of the audio file in bytes.
+        """
+        self.stats_widget.set_stats(transcription_time, audio_duration, file_size)
+
+    def clear_transcription_stats(self):
+        """Clear and hide the transcription statistics display."""
+        self.stats_widget.clear()
+
+    def _on_stats_visibility_changed(self, visible: bool):
+        """Handle stats widget visibility change and adjust window height.
+
+        Args:
+            visible: True if stats are now visible, False if hidden.
+        """
+        # Get the stats widget height (approximately 60px when visible)
+        stats_height = 60 if visible else 0
+        current_height = self.height()
+
+        if visible:
+            # Expand window to fit stats
+            new_height = current_height + stats_height
+        else:
+            # Shrink window when stats hidden
+            new_height = max(600, current_height - stats_height)  # Don't go below min height
+
+        # Animate the height change
+        self._animate_resize(self.width(), new_height)
 
     def get_model_value(self) -> str:
         """Get the model value key."""

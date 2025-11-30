@@ -6,6 +6,7 @@ from ui_qt.widgets.buttons import (
     PrimaryButton,
     DangerButton,
     SuccessButton,
+    WarningButton,
     IconButton,
 )
 from ui_qt.widgets.cards import (
@@ -22,12 +23,14 @@ from ui_qt.widgets.history_sidebar import (
     HistoryItemWidget,
     RecordingItemWidget,
 )
+from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 
 __all__ = [
     "ModernButton",
     "PrimaryButton",
     "DangerButton",
     "SuccessButton",
+    "WarningButton",
     "IconButton",
     "Card",
     "ControlPanel",
@@ -39,4 +42,5 @@ __all__ = [
     "HistoryEdgeTab",
     "HistoryItemWidget",
     "RecordingItemWidget",
+    "TranscriptionStatsWidget",
 ]

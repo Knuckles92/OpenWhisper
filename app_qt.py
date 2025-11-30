@@ -10,6 +10,7 @@ import os
 import sys
 import subprocess
 import platform
+import time
 import pyperclip
 import keyboard
 from pathlib import Path
@@ -97,9 +98,14 @@ class ApplicationController(QObject):
         
         # Track current model for history
         self._current_model_name: str = "local_whisper"
-        
+
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
+
+        # Track transcription stats
+        self._transcription_start_time: Optional[float] = None
+        self._pending_audio_duration: Optional[float] = None
+        self._pending_file_size: Optional[int] = None
 
         # Setup components
         self._setup_transcription_backends()
@@ -219,6 +225,8 @@ class ApplicationController(QObject):
         """Start audio recording."""
         if self.recorder.start_recording():
             logging.info("Recording started")
+            # Clear previous transcription stats
+            self.ui_controller.clear_transcription_stats()
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(True)
             # Emit status to trigger overlay display
@@ -268,6 +276,10 @@ class ApplicationController(QObject):
 
         # Track the audio file for history saving
         self._pending_audio_file = config.RECORDED_AUDIO_FILE
+
+        # Capture audio stats for history
+        self._pending_audio_duration = self.recorder.get_recording_duration()
+        self._pending_file_size = file_size
 
         # Start transcription in background
         try:
@@ -426,7 +438,14 @@ class ApplicationController(QObject):
     def _retranscribe_audio_file(self, audio_file_path: str):
         """Re-transcribe a single audio file in background thread."""
         try:
+            # Capture file stats for retranscription
+            self._pending_file_size = os.path.getsize(audio_file_path)
+            # Estimate audio duration from file (if available from recorder, otherwise use file-based estimate)
+            # For retranscription, we don't have recorder duration, so we'll leave it as None
+            self._pending_audio_duration = None
+
             self.status_update.emit("Transcribing...")
+            self._transcription_start_time = time.time()
             transcribed_text = self.current_backend.transcribe(audio_file_path)
             self.transcription_completed.emit(transcribed_text)
         except Exception as e:
@@ -436,10 +455,14 @@ class ApplicationController(QObject):
     def _retranscribe_large_audio(self, audio_file_path: str):
         """Re-transcribe a large audio file by splitting into chunks."""
         chunk_files = []
+        # Capture file stats for retranscription
+        self._pending_file_size = os.path.getsize(audio_file_path)
+        self._pending_audio_duration = None
+        self._transcription_start_time = time.time()
         try:
             def progress_callback(message):
                 self.status_update.emit(message)
-            
+
             chunk_files = audio_processor.split_audio_file(audio_file_path, progress_callback)
             
             if not chunk_files:
@@ -471,6 +494,7 @@ class ApplicationController(QObject):
         """Transcribe audio in background thread."""
         try:
             self.status_update.emit("Transcribing...")
+            self._transcription_start_time = time.time()
             transcribed_text = self.current_backend.transcribe(config.RECORDED_AUDIO_FILE)
 
             # Emit signal to update UI on main thread
@@ -483,6 +507,7 @@ class ApplicationController(QObject):
     def _transcribe_large_audio(self):
         """Transcribe large audio file by splitting into chunks."""
         chunk_files = []
+        self._transcription_start_time = time.time()
         try:
             def progress_callback(message):
                 self.status_update.emit(message)
@@ -527,8 +552,22 @@ class ApplicationController(QObject):
 
         # Hide overlay after completion
         self.ui_controller.hide_overlay()
-        
-        # Save to history (with audio file if available)
+
+        # Calculate transcription time
+        transcription_time = None
+        if self._transcription_start_time is not None:
+            transcription_time = time.time() - self._transcription_start_time
+            self._transcription_start_time = None
+
+        # Display stats in the UI
+        if transcription_time is not None:
+            audio_duration = self._pending_audio_duration or 0.0
+            file_size = self._pending_file_size or 0
+            self.ui_controller.set_transcription_stats(
+                transcription_time, audio_duration, file_size
+            )
+
+        # Save to history (with audio file and stats if available)
         try:
             # Get detailed model info for local whisper
             model_info = self._current_model_name
@@ -540,7 +579,10 @@ class ApplicationController(QObject):
             history_manager.add_entry(
                 text=transcribed_text,
                 model=model_info,
-                source_audio_file=self._pending_audio_file
+                source_audio_file=self._pending_audio_file,
+                transcription_time=transcription_time,
+                audio_duration=self._pending_audio_duration,
+                file_size=self._pending_file_size
             )
             # Refresh the history sidebar
             self.ui_controller.refresh_history()
@@ -548,8 +590,10 @@ class ApplicationController(QObject):
         except Exception as e:
             logging.error(f"Failed to save transcription to history: {e}")
         finally:
-            # Clear the pending audio file
+            # Clear the pending data
             self._pending_audio_file = None
+            self._pending_audio_duration = None
+            self._pending_file_size = None
 
         # Load settings
         settings = settings_manager.load_all_settings()

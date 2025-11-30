@@ -22,16 +22,30 @@ class HistoryEntry:
     timestamp: str
     model: str
     audio_file: Optional[str] = None  # Relative path to saved recording if available
-    
+    transcription_time: Optional[float] = None  # Time taken to transcribe in seconds
+    audio_duration: Optional[float] = None  # Duration of the audio in seconds
+    file_size: Optional[int] = None  # Size of the audio file in bytes
+
     @classmethod
-    def create(cls, text: str, model: str, audio_file: Optional[str] = None) -> 'HistoryEntry':
+    def create(
+        cls,
+        text: str,
+        model: str,
+        audio_file: Optional[str] = None,
+        transcription_time: Optional[float] = None,
+        audio_duration: Optional[float] = None,
+        file_size: Optional[int] = None
+    ) -> 'HistoryEntry':
         """Create a new history entry with auto-generated id and timestamp."""
         return cls(
             id=str(uuid.uuid4()),
             text=text,
             timestamp=datetime.now().isoformat(),
             model=model,
-            audio_file=audio_file
+            audio_file=audio_file,
+            transcription_time=transcription_time,
+            audio_duration=audio_duration,
+            file_size=file_size
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -143,28 +157,42 @@ class HistoryManager:
         except Exception as e:
             logging.error(f"Failed to save history: {e}")
     
-    def add_entry(self, text: str, model: str, source_audio_file: Optional[str] = None) -> HistoryEntry:
+    def add_entry(
+        self,
+        text: str,
+        model: str,
+        source_audio_file: Optional[str] = None,
+        transcription_time: Optional[float] = None,
+        audio_duration: Optional[float] = None,
+        file_size: Optional[int] = None
+    ) -> HistoryEntry:
         """Add a new transcription to history.
-        
+
         Args:
             text: The transcribed text.
             model: The model used for transcription (display name or internal value).
             source_audio_file: Optional path to source audio file to save.
-            
+            transcription_time: Time taken to transcribe in seconds.
+            audio_duration: Duration of the audio in seconds.
+            file_size: Size of the audio file in bytes.
+
         Returns:
             The created HistoryEntry.
         """
         saved_audio_path = None
-        
+
         # Save the audio recording if provided
         if source_audio_file and os.path.exists(source_audio_file):
             saved_audio_path = self._save_recording(source_audio_file)
-        
+
         # Create and add the entry
         entry = HistoryEntry.create(
             text=text,
             model=model,
-            audio_file=saved_audio_path
+            audio_file=saved_audio_path,
+            transcription_time=transcription_time,
+            audio_duration=audio_duration,
+            file_size=file_size
         )
         
         with self._lock:

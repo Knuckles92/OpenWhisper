@@ -75,6 +75,17 @@ class SuccessButton(ModernButton):
         self.setMinimumWidth(140)
 
 
+class WarningButton(ModernButton):
+    """Warning button for caution actions (yellow/amber)."""
+
+    def __init__(self, text: str = "", parent=None):
+        """Initialize warning button."""
+        super().__init__(text, parent)
+        self.setObjectName("warningButton")
+        self.setMinimumHeight(48)
+        self.setMinimumWidth(140)
+
+
 class IconButton(ModernButton):
     """Small button, typically used for icons."""
 

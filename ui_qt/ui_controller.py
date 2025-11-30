@@ -226,6 +226,27 @@ class UIController(QObject):
         """
         self.main_window.set_device_info(device_info)
 
+    def set_transcription_stats(
+        self,
+        transcription_time: float,
+        audio_duration: float,
+        file_size: int
+    ):
+        """Set the transcription statistics display.
+
+        Args:
+            transcription_time: Time taken to transcribe in seconds.
+            audio_duration: Duration of the audio in seconds.
+            file_size: Size of the audio file in bytes.
+        """
+        self.main_window.set_transcription_stats(
+            transcription_time, audio_duration, file_size
+        )
+
+    def clear_transcription_stats(self):
+        """Clear and hide the transcription statistics display."""
+        self.main_window.clear_transcription_stats()
+
     def set_status(self, status: str):
         """Set status message and update overlay state based on status."""
         self.status_changed.emit(status)
