@@ -17,13 +17,15 @@ from config import config
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, device: str = None, compute_type: str = None):
         """Initialize the local faster-whisper backend.
 
         Args:
             model_name: Whisper model name to use. Reads from settings if None.
                        Use "auto" to auto-select based on hardware (turbo for GPU, base for CPU).
                        Available: auto, tiny, base, small, medium, large-v2, large-v3, turbo, distil-large-v3
+            device: Device to use ("cuda" or "cpu"). Overrides settings if provided.
+            compute_type: Compute type to use ("float16", "float32", "int8", etc.). Overrides settings if provided.
         """
         super().__init__()
         # Read model from settings if not explicitly provided
@@ -35,6 +37,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         self.model: Optional[WhisperModel] = None
         self._device: Optional[str] = None
         self._compute_type: Optional[str] = None
+        self._override_device = device  # Store override values
+        self._override_compute_type = compute_type
         self._load_model()
 
     def _get_supported_compute_types(self, device: str) -> set:
@@ -101,12 +105,21 @@ class LocalWhisperBackend(TranscriptionBackend):
             - compute_type: "float16" for GPU, "int8" for CPU (if supported)
             - model: "turbo" for GPU, "base" for CPU
         """
-        # Check user settings first, then config overrides
+        # Use override values if provided, otherwise check user settings
         from settings import settings_manager
         settings = settings_manager.load_all_settings()
-
-        device = settings.get('whisper_device', config.FASTER_WHISPER_DEVICE)
-        compute_type = settings.get('whisper_compute_type', config.FASTER_WHISPER_COMPUTE_TYPE)
+        
+        if self._override_device is not None:
+            device = self._override_device
+        else:
+            device = settings.get('whisper_device', config.FASTER_WHISPER_DEVICE)
+        
+        if self._override_compute_type is not None:
+            compute_type = self._override_compute_type
+        else:
+            compute_type = settings.get('whisper_compute_type', config.FASTER_WHISPER_COMPUTE_TYPE)
+        
+        # Get model from settings (no override for model, use model_name parameter instead)
         model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
 
         # Auto-detect based on CUDA availability
@@ -335,35 +348,64 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         This unloads the model from memory (including GPU memory if applicable).
         """
+        import time
+
         try:
             if self.model is not None:
-                logging.info("Cleaning up LocalWhisperBackend - unloading model...")
+                print("    [cleanup] Starting cleanup...", flush=True)
 
                 # Cancel any ongoing transcription
                 self.should_cancel = True
 
-                # Delete the model to free memory
-                del self.model
+                # Force CUDA to finish ALL pending operations before destroying model
+                # This is critical for large models like turbo
+                print("    [cleanup] Synchronizing CUDA...", flush=True)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        print("    [cleanup] CUDA synchronized", flush=True)
+                except ImportError:
+                    pass
+                except Exception as e:
+                    print(f"    [cleanup] CUDA sync error: {e}", flush=True)
+
+                # Small delay after sync
+                time.sleep(0.3)
+
+                print("    [cleanup] Setting model = None...", flush=True)
                 self.model = None
+                print("    [cleanup] Model set to None", flush=True)
+
+                # Give CUDA/ctranslate2 time to finish destructor work
+                print("    [cleanup] Sleeping 0.5s...", flush=True)
+                time.sleep(0.5)
+                print("    [cleanup] Sleep done", flush=True)
 
                 # Force garbage collection to release memory
+                print("    [cleanup] Calling gc.collect()...", flush=True)
                 import gc
                 gc.collect()
+                print("    [cleanup] gc.collect() done", flush=True)
 
-                # If using CUDA, clear GPU cache
+                # Another delay before touching CUDA cache
+                time.sleep(0.2)
+
+                # Clear GPU cache
+                print("    [cleanup] Clearing CUDA cache...", flush=True)
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                        logging.info("Cleared CUDA cache")
+                        print("    [cleanup] CUDA cache cleared", flush=True)
                 except ImportError:
-                    pass  # torch not available, skip GPU cleanup
+                    pass
                 except Exception as e:
-                    logging.debug(f"Error clearing CUDA cache: {e}")
+                    print(f"    [cleanup] CUDA error: {e}", flush=True)
 
-                logging.info("LocalWhisperBackend cleaned up successfully")
+                print("    [cleanup] Cleanup complete!", flush=True)
         except Exception as e:
-            logging.debug(f"Error during LocalWhisperBackend cleanup: {e}")
+            print(f"    [cleanup] Exception: {e}", flush=True)
 
     @property
     def name(self) -> str:

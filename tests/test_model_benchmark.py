@@ -278,26 +278,15 @@ class ModelBenchmark:
         self.audio_generator = AudioGenerator()
         self.results: List[TestResult] = []
         
-        # Initialize all backends
+        # Store list of local models to test (will be initialized one at a time)
+        # NOTE: turbo is placed LAST because its cleanup can crash (ctranslate2 destructor bug)
+        # By putting it last, we don't need to clean it up before loading another model
+        self.local_models_to_test = ['base', 'base.en', 'tiny', 'tiny.en', 'turbo']
+        
+        # Initialize API backends (lightweight, can stay loaded)
         self.backends: Dict[str, any] = {}
         
-        # Local Whisper backend
-        try:
-            print("Initializing Local Whisper backend...")
-            self.backends['local_whisper'] = LocalWhisperBackend()
-            if not self.backends['local_whisper'].is_available():
-                print("⚠️  Local Whisper backend not available")
-            else:
-                print("✅ Local Whisper backend initialized")
-        except Exception as e:
-            error_msg = str(e)
-            if len(error_msg) > 150:
-                error_msg = error_msg[:147] + "..."
-            print(f"⚠️  Failed to initialize Local Whisper: {error_msg}")
-            print("   (This may be due to CUDA/cuDNN issues - will skip this model)")
-        
-        # OpenAI backends
-        print("\nInitializing OpenAI backends...")
+        print("Initializing OpenAI backends...")
         for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
             try:
                 backend = OpenAIBackend(backend_name)
@@ -378,13 +367,8 @@ class ModelBenchmark:
                 error=error_msg
             )
     
-    def _print_local_whisper_config(self):
-        """Print local whisper configuration details."""
-        if 'local_whisper' not in self.backends:
-            return
-
-        backend = self.backends['local_whisper']
-
+    def _print_local_whisper_config(self, backend):
+        """Print local whisper configuration details for a single backend."""
         print("\n" + "=" * 80)
         print("Local Whisper Configuration")
         print("=" * 80)
@@ -431,12 +415,11 @@ class ModelBenchmark:
         print("=" * 80)
         print("Model Benchmark Test")
         print("=" * 80)
-        print(f"\nTesting {len(self.backends)} models with {len(durations)} audio durations")
-        print(f"Models: {', '.join(self.backends.keys())}")
+        total_models = len(self.local_models_to_test) + len(self.backends)
+        print(f"\nTesting {total_models} models with {len(durations)} audio durations")
+        print(f"Local models: {', '.join([f'local_whisper_{m}' for m in self.local_models_to_test])}")
+        print(f"API models: {', '.join(self.backends.keys())}")
         print(f"Durations: {', '.join([f'{d}s' for d in durations])}")
-
-        # Print local whisper configuration if available
-        self._print_local_whisper_config()
         print("\n" + "=" * 80)
         
         # Generate test audio files
@@ -454,10 +437,12 @@ class ModelBenchmark:
         
         for duration in durations:
             filename = f"test_{int(duration)}s.wav"
-            audio_file = self.audio_generator.generate_tts_audio(duration, filename)
+            audio_result = self.audio_generator.generate_tts_audio(duration, filename)
             
-            if audio_file:
-                audio_files[duration] = audio_file
+            if audio_result:
+                # audio_result is a tuple: (file_path, expected_text)
+                # Extract just the file path for testing
+                audio_files[duration] = audio_result[0]  # Store just the file path
             else:
                 print(f"❌ Failed to generate {duration}s audio file")
                 return
@@ -466,39 +451,158 @@ class ModelBenchmark:
             print("❌ Failed to generate any test audio files. Exiting.")
             return
         
-        # Run tests
+        # Run tests for local models (initialize -> test all durations -> cleanup -> next)
         print("\n" + "=" * 80)
-        print("Running benchmark tests...")
+        print("Running benchmark tests for local models...")
         print("=" * 80)
+        print("\n⚠️  Note: Local models will be loaded one at a time to avoid memory issues")
+        print("   Each model will be tested with all durations, then unloaded before the next.\n")
         
-        for duration, audio_file in audio_files.items():
-            print(f"\n🎵 Testing with {duration}s audio file...")
+        config_printed = False
+        # Models that should use CUDA with float16
+        cuda_models = ['base', 'base.en', 'turbo']
+        
+        for model_idx, model_name in enumerate(self.local_models_to_test):
+            is_last_model = (model_idx == len(self.local_models_to_test) - 1)
+            backend_key = f'local_whisper_{model_name}'
+            backend = None
             
-            for backend_name, backend in self.backends.items():
-                try:
-                    result = self.test_model(backend_name, backend, audio_file, duration)
-                    self.results.append(result)
-                    
-                    if result.success:
-                        print(f"  ✅ {backend_name}: {result.transcription_time:.2f}s")
-                    else:
-                        print(f"  ❌ {backend_name}: {result.error}")
-                except KeyboardInterrupt:
-                    print("\n⚠️  Benchmark interrupted by user")
-                    raise
-                except Exception as e:
-                    # Catch any unexpected errors and continue
-                    error_msg = str(e)
-                    if len(error_msg) > 100:
-                        error_msg = error_msg[:97] + "..."
-                    print(f"  ❌ {backend_name}: Unexpected error - {error_msg}")
-                    self.results.append(TestResult(
-                        model_name=backend_name,
-                        audio_duration=duration,
-                        transcription_time=0.0,
-                        success=False,
-                        error=f"Unexpected error: {error_msg}"
-                    ))
+            try:
+                # For base, base.en, and turbo: use CUDA/float16 directly
+                if model_name in cuda_models:
+                    print(f"\n{'='*80}")
+                    print(f"Loading {backend_key} (CUDA/float16)...")
+                    print('='*80)
+                    # Pass device and compute_type directly to the constructor
+                    backend = LocalWhisperBackend(model_name=model_name, device='cuda', compute_type='float16')
+                else:
+                    print(f"\n{'='*80}")
+                    print(f"Loading {backend_key}...")
+                    print('='*80)
+                    # Use default settings for other models
+                    backend = LocalWhisperBackend(model_name=model_name)
+                
+                if not backend.is_available():
+                    print(f"⚠️  {backend_key} backend not available - skipping")
+                    continue
+                
+                # Print device/compute_type info for THIS model
+                print(f"\n  Model Configuration:")
+                print(f"    Model Name:    {backend.model_name}")
+                print(f"    Device:        {backend._device}")
+                print(f"    Compute Type:  {backend._compute_type}")
+                
+                # Print full hardware config for the first local model only
+                if not config_printed:
+                    print(f"\n  Hardware Configuration:")
+                    self._print_local_whisper_config(backend)
+                    config_printed = True
+                else:
+                    print()  # Just add a blank line for subsequent models
+                
+                print(f"✅ {backend_key} loaded successfully")
+                
+                # Test this model with all durations
+                for duration, audio_file in audio_files.items():
+                    print(f"\n🎵 Testing {backend_key} with {duration}s audio file...")
+                    try:
+                        result = self.test_model(backend_key, backend, audio_file, duration)
+                        self.results.append(result)
+                        
+                        if result.success:
+                            print(f"  ✅ {backend_key}: {result.transcription_time:.2f}s")
+                        else:
+                            print(f"  ❌ {backend_key}: {result.error}")
+                    except KeyboardInterrupt:
+                        print("\n⚠️  Benchmark interrupted by user")
+                        # Cleanup before raising
+                        if backend:
+                            backend.cleanup()
+                        raise
+                    except Exception as e:
+                        error_msg = str(e)
+                        if len(error_msg) > 100:
+                            error_msg = error_msg[:97] + "..."
+                        print(f"  ❌ {backend_key}: Unexpected error - {error_msg}")
+                        self.results.append(TestResult(
+                            model_name=backend_key,
+                            audio_duration=duration,
+                            transcription_time=0.0,
+                            success=False,
+                            error=f"Unexpected error: {error_msg}"
+                        ))
+                
+                # Cleanup this model before loading the next
+                # Skip cleanup for turbo model - ctranslate2 destructor crashes with large models
+                if model_name == 'turbo':
+                    print(f"\n⏭️  Skipping cleanup for {backend_key} (turbo model - known destructor issue)")
+                    # Keep reference alive to prevent GC from destroying it (causes segfault)
+                    # Store it so Python never tries to destroy it during script lifetime
+                    self._turbo_backend_ref = backend
+                    backend = None
+                elif is_last_model:
+                    print(f"\n⏭️  Skipping cleanup for {backend_key} (last local model)")
+                    backend = None
+                else:
+                    print(f"\n🧹 Unloading {backend_key}...")
+                    sys.stdout.flush()
+                    backend.cleanup()
+                    backend = None
+                    time.sleep(0.5)
+                    print(f"✅ {backend_key} unloaded")
+                    sys.stdout.flush()
+                
+            except KeyboardInterrupt:
+                print("\n⚠️  Benchmark interrupted by user")
+                if backend:
+                    backend.cleanup()
+                raise
+            except Exception as e:
+                error_msg = str(e)
+                if len(error_msg) > 150:
+                    error_msg = error_msg[:147] + "..."
+                print(f"⚠️  Failed to initialize {backend_key}: {error_msg}")
+                print("   (This may be due to CUDA/cuDNN issues - will skip this model)")
+                if backend:
+                    try:
+                        backend.cleanup()
+                    except:
+                        pass
+        
+        # Run tests for API backends (already initialized, lightweight)
+        if self.backends:
+            print("\n" + "=" * 80)
+            print("Running benchmark tests for API models...")
+            print("=" * 80)
+            
+            for duration, audio_file in audio_files.items():
+                print(f"\n🎵 Testing with {duration}s audio file...")
+                
+                for backend_name, backend in self.backends.items():
+                    try:
+                        result = self.test_model(backend_name, backend, audio_file, duration)
+                        self.results.append(result)
+                        
+                        if result.success:
+                            print(f"  ✅ {backend_name}: {result.transcription_time:.2f}s")
+                        else:
+                            print(f"  ❌ {backend_name}: {result.error}")
+                    except KeyboardInterrupt:
+                        print("\n⚠️  Benchmark interrupted by user")
+                        raise
+                    except Exception as e:
+                        # Catch any unexpected errors and continue
+                        error_msg = str(e)
+                        if len(error_msg) > 100:
+                            error_msg = error_msg[:97] + "..."
+                        print(f"  ❌ {backend_name}: Unexpected error - {error_msg}")
+                        self.results.append(TestResult(
+                            model_name=backend_name,
+                            audio_duration=duration,
+                            transcription_time=0.0,
+                            success=False,
+                            error=f"Unexpected error: {error_msg}"
+                        ))
         
         # Print results summary
         self.print_results()
