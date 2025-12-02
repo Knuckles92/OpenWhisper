@@ -31,7 +31,6 @@ def _patch_subprocess_for_windows():
     if platform.system() != "Windows":
         return
     
-    # Store the original Popen
     _original_popen = subprocess.Popen
     
     class _NoConsolePopen(_original_popen):
@@ -45,7 +44,6 @@ def _patch_subprocess_for_windows():
                 kwargs['creationflags'] |= subprocess.CREATE_NO_WINDOW
             super().__init__(*args, **kwargs)
     
-    # Replace subprocess.Popen globally
     subprocess.Popen = _NoConsolePopen
 
 
@@ -85,29 +83,24 @@ class ApplicationController(QObject):
     recording_state_changed = pyqtSignal(bool)  # True = started, False = stopped
 
     def __init__(self, ui_controller: UIController):
-        """Initialize the application controller."""
         super().__init__()
         self.ui_controller = ui_controller
         self.recorder = AudioRecorder()
         self.hotkey_manager: Optional[HotkeyManager] = None
         self.executor = ThreadPoolExecutor(max_workers=2)
 
-        # Transcription backends
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
         
-        # Track current model for history
         self._current_model_name: str = "local_whisper"
 
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
 
-        # Track transcription stats
         self._transcription_start_time: Optional[float] = None
         self._pending_audio_duration: Optional[float] = None
         self._pending_file_size: Optional[int] = None
 
-        # Setup components
         self._setup_transcription_backends()
         self._setup_hotkeys()
         self._setup_ui_callbacks()
@@ -118,15 +111,11 @@ class ApplicationController(QObject):
         """Initialize transcription backends."""
         logging.info("Setting up transcription backends...")
 
-        # Local Whisper backend
         self.transcription_backends['local_whisper'] = LocalWhisperBackend()
-
-        # OpenAI backends
         self.transcription_backends['api_whisper'] = OpenAIBackend('api_whisper')
         self.transcription_backends['api_gpt4o'] = OpenAIBackend('api_gpt4o')
         self.transcription_backends['api_gpt4o_mini'] = OpenAIBackend('api_gpt4o_mini')
 
-        # Load saved model selection and set backend
         saved_model = settings_manager.load_model_selection()
         self.current_backend = self.transcription_backends.get(
             saved_model, self.transcription_backends['local_whisper']
@@ -144,7 +133,6 @@ class ApplicationController(QObject):
             on_status_update=self.update_status_with_auto_hide,
             on_status_update_auto_hide=self.update_status_with_auto_hide
         )
-        # Initialize the hotkey display with current settings
         self.ui_controller.update_hotkey_display(hotkeys)
 
     def _setup_ui_callbacks(self):
@@ -176,7 +164,6 @@ class ApplicationController(QObject):
             # Reload the model (will pick up new settings)
             local_backend.reload_model()
 
-            # Update the device info display
             if hasattr(local_backend, 'device_info'):
                 self.ui_controller.set_device_info(local_backend.device_info)
                 logging.info(f"Whisper reloaded: {local_backend.device_info}")
@@ -190,7 +177,7 @@ class ApplicationController(QObject):
         """Setup audio level callback for waveform display."""
         def audio_level_callback(level: float):
             # Convert single level to list for compatibility
-            levels = [level] * 20  # Duplicate for all bars
+            levels = [level] * 20
             self.ui_controller.update_audio_levels(levels)
 
         self.recorder.set_audio_level_callback(audio_level_callback)
@@ -225,11 +212,9 @@ class ApplicationController(QObject):
         """Start audio recording."""
         if self.recorder.start_recording():
             logging.info("Recording started")
-            # Clear previous transcription stats
             self.ui_controller.clear_transcription_stats()
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(True)
-            # Emit status to trigger overlay display
             self.status_update.emit("Recording...")
         else:
             self.status_update.emit("Failed to start recording")
@@ -242,7 +227,6 @@ class ApplicationController(QObject):
 
         # Emit signal to update UI state (thread-safe for hotkey triggers)
         self.recording_state_changed.emit(False)
-        # Emit processing status to show overlay
         self.status_update.emit("Processing...")
 
         # Ensure the recorder thread has flushed the post-roll before saving
@@ -255,13 +239,11 @@ class ApplicationController(QObject):
             self._on_transcription_error("No audio data recorded")
             return
 
-        # Save recording
         if not self.recorder.save_recording():
             logging.error("Failed to save recording")
             self._on_transcription_error("Failed to save audio file")
             return
 
-        # Verify audio file
         if not os.path.exists(config.RECORDED_AUDIO_FILE):
             logging.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
             self._on_transcription_error("Audio file not created")
@@ -277,11 +259,9 @@ class ApplicationController(QObject):
         # Track the audio file for history saving
         self._pending_audio_file = config.RECORDED_AUDIO_FILE
 
-        # Capture audio stats for history
         self._pending_audio_duration = self.recorder.get_recording_duration()
         self._pending_file_size = file_size
 
-        # Start transcription in background
         try:
             needs_splitting, file_size_mb = audio_processor.check_file_size(
                 config.RECORDED_AUDIO_FILE
@@ -296,7 +276,6 @@ class ApplicationController(QObject):
                 self.status_update.emit(f"Splitting large file ({file_size_mb:.1f} MB)...")
                 self.executor.submit(self._transcribe_large_audio)
             elif needs_splitting:
-                # Large file but local backend can handle it without splitting
                 logging.info(f"Large file ({file_size_mb:.2f} MB), processing without splitting")
                 self._show_large_file_overlay(file_size_mb, is_splitting=False)
                 self.status_update.emit(f"Processing large file ({file_size_mb:.1f} MB)...")
@@ -331,10 +310,8 @@ class ApplicationController(QObject):
         if self.recorder.is_recording:
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(False)
-            # Perform the actual cancellation
             self.recorder.stop_recording()
             self.recorder.clear_recording_data()
-            # Emit status to show cancel animation (set_status handles the animation)
             self.status_update.emit("Recording cancelled")
             logging.info("Recording cancelled")
         elif self.current_backend and self.current_backend.is_transcribing:
@@ -358,12 +335,10 @@ class ApplicationController(QObject):
         logging.info(f"Re-transcribing audio file: {audio_file_path}")
         
         # Track the audio file for history (won't re-save since it's already in recordings)
-        self._pending_audio_file = None  # Don't duplicate the recording
+        self._pending_audio_file = None
         
-        # Show processing status
         self.status_update.emit("Processing...")
         
-        # Start transcription in background
         try:
             needs_splitting, file_size_mb = audio_processor.check_file_size(audio_file_path)
 
@@ -376,7 +351,6 @@ class ApplicationController(QObject):
                 self.status_update.emit(f"Splitting large file ({file_size_mb:.1f} MB)...")
                 self.executor.submit(self._retranscribe_large_audio, audio_file_path)
             elif needs_splitting:
-                # Large file but local backend can handle it without splitting
                 logging.info(f"Large file ({file_size_mb:.2f} MB), processing without splitting")
                 self._show_large_file_overlay(file_size_mb, is_splitting=False)
                 self.status_update.emit(f"Processing large file ({file_size_mb:.1f} MB)...")
@@ -407,10 +381,8 @@ class ApplicationController(QObject):
         # For uploaded files, we don't save to recordings folder (it's already external)
         self._pending_audio_file = None
         
-        # Show processing status
         self.status_update.emit("Processing uploaded file...")
         
-        # Start transcription in background using the same flow as retranscribe
         try:
             needs_splitting, file_size_mb = audio_processor.check_file_size(audio_file_path)
 
@@ -423,7 +395,6 @@ class ApplicationController(QObject):
                 self.status_update.emit(f"Splitting large file ({file_size_mb:.1f} MB)...")
                 self.executor.submit(self._retranscribe_large_audio, audio_file_path)
             elif needs_splitting:
-                # Large file but local backend can handle it without splitting
                 logging.info(f"Large uploaded file ({file_size_mb:.2f} MB), processing without splitting")
                 self._show_large_file_overlay(file_size_mb, is_splitting=False)
                 self.status_update.emit(f"Processing large file ({file_size_mb:.1f} MB)...")
@@ -438,10 +409,7 @@ class ApplicationController(QObject):
     def _retranscribe_audio_file(self, audio_file_path: str):
         """Re-transcribe a single audio file in background thread."""
         try:
-            # Capture file stats for retranscription
             self._pending_file_size = os.path.getsize(audio_file_path)
-            # Estimate audio duration from file (if available from recorder, otherwise use file-based estimate)
-            # For retranscription, we don't have recorder duration, so we'll leave it as None
             self._pending_audio_duration = None
 
             self.status_update.emit("Transcribing...")
@@ -455,7 +423,6 @@ class ApplicationController(QObject):
     def _retranscribe_large_audio(self, audio_file_path: str):
         """Re-transcribe a large audio file by splitting into chunks."""
         chunk_files = []
-        # Capture file stats for retranscription
         self._pending_file_size = os.path.getsize(audio_file_path)
         self._pending_audio_duration = None
         self._transcription_start_time = time.time()
@@ -468,7 +435,6 @@ class ApplicationController(QObject):
             if not chunk_files:
                 raise Exception("Failed to split audio file")
             
-            # Transcribe chunks
             if hasattr(self.current_backend, 'transcribe_chunks'):
                 self.status_update.emit(f"Transcribing {len(chunk_files)} chunks...")
                 transcribed_text = self.current_backend.transcribe_chunks(chunk_files)
@@ -496,8 +462,6 @@ class ApplicationController(QObject):
             self.status_update.emit("Transcribing...")
             self._transcription_start_time = time.time()
             transcribed_text = self.current_backend.transcribe(config.RECORDED_AUDIO_FILE)
-
-            # Emit signal to update UI on main thread
             self.transcription_completed.emit(transcribed_text)
 
         except Exception as e:
@@ -519,7 +483,6 @@ class ApplicationController(QObject):
             if not chunk_files:
                 raise Exception("Failed to split audio file")
 
-            # Transcribe chunks
             if hasattr(self.current_backend, 'transcribe_chunks'):
                 self.status_update.emit(f"Transcribing {len(chunk_files)} chunks...")
                 transcribed_text = self.current_backend.transcribe_chunks(chunk_files)
@@ -533,7 +496,6 @@ class ApplicationController(QObject):
 
                 transcribed_text = audio_processor.combine_transcriptions(transcriptions)
 
-            # Emit signal to update UI on main thread
             self.transcription_completed.emit(transcribed_text)
 
         except Exception as e:
@@ -549,17 +511,13 @@ class ApplicationController(QObject):
         """Handle transcription completion."""
         self.ui_controller.set_transcription(transcribed_text)
         self.ui_controller.set_status("Transcription complete!")
-
-        # Hide overlay after completion
         self.ui_controller.hide_overlay()
 
-        # Calculate transcription time
         transcription_time = None
         if self._transcription_start_time is not None:
             transcription_time = time.time() - self._transcription_start_time
             self._transcription_start_time = None
 
-        # Display stats in the UI
         if transcription_time is not None:
             audio_duration = self._pending_audio_duration or 0.0
             file_size = self._pending_file_size or 0
@@ -567,7 +525,6 @@ class ApplicationController(QObject):
                 transcription_time, audio_duration, file_size
             )
 
-        # Save to history (with audio file and stats if available)
         try:
             # Get detailed model info for local whisper
             model_info = self._current_model_name
@@ -584,23 +541,19 @@ class ApplicationController(QObject):
                 audio_duration=self._pending_audio_duration,
                 file_size=self._pending_file_size
             )
-            # Refresh the history sidebar
             self.ui_controller.refresh_history()
             logging.info("Transcription saved to history")
         except Exception as e:
             logging.error(f"Failed to save transcription to history: {e}")
         finally:
-            # Clear the pending data
             self._pending_audio_file = None
             self._pending_audio_duration = None
             self._pending_file_size = None
 
-        # Load settings
         settings = settings_manager.load_all_settings()
         copy_clipboard = settings.get('copy_clipboard', True)
         auto_paste = settings.get('auto_paste', True)
 
-        # Copy to clipboard if enabled
         if copy_clipboard:
             try:
                 pyperclip.copy(transcribed_text)
@@ -608,7 +561,6 @@ class ApplicationController(QObject):
             except Exception as e:
                 logging.error(f"Failed to copy to clipboard: {e}")
 
-        # Auto-paste if enabled
         if auto_paste:
             try:
                 keyboard.send('ctrl+v')
@@ -624,13 +576,10 @@ class ApplicationController(QObject):
         """Handle transcription error."""
         self.ui_controller.set_status(f"Error: {error_message}")
         self.ui_controller.set_transcription(f"Error: {error_message}")
-
-        # Hide overlay on error
         self.ui_controller.hide_overlay()
 
     def on_model_changed(self, model_name: str):
         """Handle model selection change."""
-        # Convert display name to internal value
         model_value = config.MODEL_VALUE_MAP.get(model_name)
         if model_value and model_value in self.transcription_backends:
             self.current_backend = self.transcription_backends[model_value]
@@ -638,7 +587,6 @@ class ApplicationController(QObject):
             settings_manager.save_model_selection(model_value)
             logging.info(f"Switched to model: {model_value}")
 
-            # Show device info only for local whisper, hide for API backends
             if model_value == 'local_whisper':
                 local_backend = self.transcription_backends.get('local_whisper')
                 if local_backend and hasattr(local_backend, 'device_info'):
@@ -651,7 +599,6 @@ class ApplicationController(QObject):
         # Use signals for thread-safe UI updates (called from hotkey thread)
         self.status_update.emit(status)
 
-        # Show overlay for STT enable/disable states
         if status == "STT Enabled":
             self.stt_state_changed.emit(True)
         elif status == "STT Disabled":
@@ -676,7 +623,6 @@ class ApplicationController(QObject):
         """Cleanup resources."""
         logging.info("Starting application cleanup...")
         
-        # Cancel any ongoing transcription first
         try:
             if self.current_backend and self.current_backend.is_transcribing:
                 logging.info("Cancelling ongoing transcription...")
@@ -696,7 +642,6 @@ class ApplicationController(QObject):
         except Exception as e:
             logging.debug(f"Error during recorder cleanup: {e}")
         
-        # Shutdown executor and wait briefly for pending tasks
         try:
             self.executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:
@@ -705,7 +650,6 @@ class ApplicationController(QObject):
         except Exception as e:
             logging.debug(f"Error during executor shutdown: {e}")
         
-        # Clean up all transcription backends (especially important for LocalWhisper)
         try:
             for backend_name, backend in self.transcription_backends.items():
                 try:
@@ -728,13 +672,11 @@ class ApplicationController(QObject):
 
 def main():
     """Main application entry point with modern PyQt6 UI."""
-    # Setup logging
     setup_logging()
     logging.info("=" * 60)
     logging.info("Starting OpenWhisper with Modern PyQt6 UI")
     logging.info("=" * 60)
 
-    # Create Qt application
     qt_app = QtApplication()
 
     loading_screen = None
@@ -742,34 +684,28 @@ def main():
     app_controller = None
 
     try:
-        # Show loading screen
         loading_screen = ModernLoadingScreen()
         loading_screen.show()
 
-        # Simulate initialization steps
         loading_screen.update_status("Initializing components...")
         loading_screen.update_progress("Loading theme...")
         loading_screen.repaint()
 
-        # Give Qt time to render
         from PyQt6.QtCore import QCoreApplication
         QCoreApplication.processEvents()
 
-        # Create UI controller
         loading_screen.update_status("Creating interface...")
         loading_screen.update_progress("Setting up windows...")
         QCoreApplication.processEvents()
 
         ui_controller = UIController()
 
-        # Create application controller (integrates logic with UI)
         loading_screen.update_status("Initializing audio system...")
         loading_screen.update_progress("Loading transcription models...")
         QCoreApplication.processEvents()
 
         app_controller = ApplicationController(ui_controller)
 
-        # Get device info from local whisper backend and show to user
         local_backend = app_controller.transcription_backends.get('local_whisper')
         if local_backend and hasattr(local_backend, 'device_info'):
             device_info = local_backend.device_info
@@ -777,14 +713,11 @@ def main():
             QCoreApplication.processEvents()
             logging.info(f"Whisper device: {device_info}")
 
-        # Hide loading screen and show main window
         loading_screen.destroy()
         loading_screen = None
 
-        # Show main window
         ui_controller.show_main_window()
 
-        # Show device info in persistent label
         if local_backend and hasattr(local_backend, 'device_info'):
             device_info = local_backend.device_info
             ui_controller.set_device_info(device_info)
@@ -792,16 +725,13 @@ def main():
         logging.info("Application initialization complete")
         logging.info("Starting event loop")
 
-        # Run the application
         return qt_app.run(ui_controller.main_window)
 
     except Exception as e:
         logging.exception("Application startup failed")
-        # Re-raise after logging
         raise
 
     finally:
-        # Cleanup
         try:
             if loading_screen is not None:
                 loading_screen.destroy()
