@@ -31,9 +31,16 @@ With an NVIDIA GPU and CUDA enabled, local Whisper runs 5-10x faster than CPU-on
 
 ## Installation
 
+**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase.
+
 ```bash
 git clone https://github.com/Knuckles92/OpenWhisper
 cd OpenWhisper
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
