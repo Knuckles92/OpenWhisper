@@ -37,13 +37,68 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._compute_type: Optional[str] = None
         self._load_model()
 
+    def _get_supported_compute_types(self, device: str) -> set:
+        """Get compute types supported by the current hardware.
+
+        Args:
+            device: "cpu" or "cuda"
+
+        Returns:
+            Set of supported compute type strings.
+        """
+        try:
+            import ctranslate2
+            supported = ctranslate2.get_supported_compute_types(device)
+            logging.debug(f"Supported compute types for {device}: {supported}")
+            return set(supported)
+        except Exception as e:
+            logging.warning(f"Could not query supported compute types: {e}")
+            # Return safe fallback - float32 is always supported
+            return {"float32"}
+
+    def _select_best_compute_type(self, device: str, preferred: str) -> str:
+        """Select the best available compute type, with fallback.
+
+        Args:
+            device: "cpu" or "cuda"
+            preferred: The preferred compute type to use if supported
+
+        Returns:
+            The best available compute type string.
+        """
+        supported = self._get_supported_compute_types(device)
+
+        if preferred in supported:
+            return preferred
+
+        # Preferred type not supported, try fallbacks
+        if device == "cpu":
+            # CPU fallback order: int8 (fastest) -> int8_float32 -> float32 (most compatible)
+            fallback_order = ["int8", "int8_float32", "float32"]
+        else:
+            # GPU fallback order: float16 (fastest) -> int8_float16 -> float32
+            fallback_order = ["float16", "int8_float16", "float32"]
+
+        for fallback in fallback_order:
+            if fallback in supported:
+                logging.warning(
+                    f"Compute type '{preferred}' not supported on this {device}. "
+                    f"Falling back to '{fallback}'. "
+                    f"(Supported types: {', '.join(sorted(supported))})"
+                )
+                return fallback
+
+        # Ultimate fallback - float32 should always work
+        logging.warning(f"No preferred compute types available, using float32")
+        return "float32"
+
     def _detect_hardware(self) -> Tuple[str, str, str]:
         """Auto-detect the best device, compute type, and model for transcription.
 
         Returns:
             Tuple of (device, compute_type, model) where:
             - device: "cuda" for GPU or "cpu" for CPU
-            - compute_type: "float16" for GPU, "int8" for CPU
+            - compute_type: "float16" for GPU, "int8" for CPU (if supported)
             - model: "turbo" for GPU, "base" for CPU
         """
         # Check user settings first, then config overrides
@@ -81,6 +136,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 compute_type = detected_compute
             if model == "auto":
                 model = detected_model
+
+        # Validate that the compute type is actually supported on this hardware
+        # This prevents crashes on CPUs without AVX2 when int8 is selected
+        compute_type = self._select_best_compute_type(device, compute_type)
 
         return device, compute_type, model
 
