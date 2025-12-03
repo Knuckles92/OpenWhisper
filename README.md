@@ -64,7 +64,7 @@ All hotkeys can be remapped in the settings.
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.8+(3.12 recommended)
 - Windows
 
 ## License
