@@ -27,7 +27,7 @@ For significantly faster transcription speeds, install CUDA support:
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-With an NVIDIA GPU and CUDA enabled, local Whisper runs 5-10x faster than CPU-only. The app now uses float16 precision by default for improved speed and lower memory usage (with little to no loss in accuracy). You can verify GPU detection in the status bar when the app starts.
+With an NVIDIA GPU and CUDA enabled, local Whisper runs much faster than CPU-only. In my tests it was at least 2-3x faster. 
 
 ## Installation
 
