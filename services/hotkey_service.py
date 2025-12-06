@@ -1,43 +1,57 @@
 """
 Hotkey management for the OpenWhisper application.
+
+Uses Qt signals for thread-safe communication with the main thread.
 """
 import keyboard
 import time
 import logging
-from typing import Dict, Callable, Optional
+from typing import Dict
+
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from config import config
 
 
-class HotkeyService:
-    """Manages global hotkeys and keyboard event handling."""
-    
+class HotkeyService(QObject):
+    """Manages global hotkeys and keyboard event handling.
+
+    Uses Qt signals instead of callbacks for thread-safe communication.
+    Keyboard events are handled in a background thread, but signals are
+    emitted and should be connected with QueuedConnection to ensure
+    handlers run on the main thread.
+    """
+
+    # Signals for thread-safe communication
+    record_toggle_requested = pyqtSignal()  # Request to toggle recording
+    cancel_requested = pyqtSignal()  # Request to cancel current operation
+    stt_enabled_changed = pyqtSignal(bool)  # STT state changed (True=enabled, False=disabled)
+    status_update = pyqtSignal(str)  # Status message update
+
     def __init__(self, hotkeys: Dict[str, str] = None):
         """Initialize the hotkey manager.
-        
+
         Args:
             hotkeys: Dictionary of hotkey mappings. Uses defaults if None.
         """
+        super().__init__()
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
         self._last_trigger_time = 0
-        
-        # Callback functions
-        self.on_record_toggle: Optional[Callable] = None
-        self.on_cancel: Optional[Callable] = None
-        self.on_enable_toggle: Optional[Callable] = None
-        self.on_status_update: Optional[Callable] = None
-        self.on_status_update_auto_hide: Optional[Callable] = None
-        self.is_transcribing_fn: Optional[Callable[[], bool]] = None
-        
+
         # Setup keyboard hook
         self._setup_keyboard_hook()
-    
+
     def _setup_keyboard_hook(self):
         """Setup the global keyboard hook."""
         keyboard.hook(self._handle_keyboard_event, suppress=True)
-    
+
     def _handle_keyboard_event(self, event):
-        """Global keyboard event handler with suppression."""
+        """Global keyboard event handler with suppression.
+
+        Note: This runs in the keyboard library's hook thread, not the main thread.
+        All communication with the main thread happens via Qt signals.
+        """
         if event.event_type == keyboard.KEY_DOWN:
             # Check enable/disable hotkey
             if self._matches_hotkey(event, self.hotkeys['enable_disable']):
@@ -51,48 +65,37 @@ class HotkeyService:
 
             # Check record toggle hotkey
             elif self._matches_hotkey(event, self.hotkeys['record_toggle']):
-                # Always suppress record toggle key first
-                suppress = False
                 if self._should_trigger_record_toggle():
-                    if self.on_record_toggle:
-                        # Run callback in a separate thread to avoid blocking
-                        import threading
-                        threading.Thread(target=self.on_record_toggle, daemon=True).start()
+                    # Emit signal - will be queued to main thread if connected with QueuedConnection
+                    self.record_toggle_requested.emit()
                 return False  # Always suppress record toggle key
 
             # Check cancel hotkey
             elif self._matches_hotkey(event, self.hotkeys['cancel']):
-                if self.on_cancel:
-                    # Run callback in a separate thread to avoid blocking
-                    import threading
-                    threading.Thread(target=self.on_cancel, daemon=True).start()
+                # Emit signal - will be queued to main thread if connected with QueuedConnection
+                self.cancel_requested.emit()
                 return False  # Suppress cancel key when handling
 
         # Let all other keys pass through
         return True
-    
+
     def _toggle_program_enabled(self):
         """Toggle the program enabled state."""
-        old_state = self.program_enabled
         self.program_enabled = not self.program_enabled
-        
+
         # Reset debounce timing when toggling to avoid stale state
         self._last_trigger_time = 0
-        
-        if self.on_status_update_auto_hide:
-            if not self.program_enabled:
-                self.on_status_update_auto_hide("STT Disabled")
-            else:
-                self.on_status_update_auto_hide("STT Enabled")
-        elif self.on_status_update:
-            # Fallback to regular status update if auto-hide not available
-            if not self.program_enabled:
-                self.on_status_update("STT Disabled")
-                logging.info("STT has been disabled")
-            else:
-                self.on_status_update("STT Enabled")
-                logging.info("STT has been enabled")
-    
+
+        # Emit signals for state change
+        self.stt_enabled_changed.emit(self.program_enabled)
+
+        if self.program_enabled:
+            self.status_update.emit("STT Enabled")
+            logging.info("STT has been enabled")
+        else:
+            self.status_update.emit("STT Disabled")
+            logging.info("STT has been disabled")
+
     def _should_trigger_record_toggle(self) -> bool:
         """Check if record toggle should trigger (with debounce)."""
         current_time = time.time()
@@ -100,29 +103,29 @@ class HotkeyService:
             self._last_trigger_time = current_time
             return True
         return False
-    
+
     def _matches_hotkey(self, event, hotkey_string: str) -> bool:
         """Check if the current event matches a hotkey string.
-        
+
         Args:
             event: Keyboard event from the keyboard library.
             hotkey_string: Hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1").
-            
+
         Returns:
             True if the event matches the hotkey string.
         """
         if not hotkey_string:
             return False
-            
+
         # Parse hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1")
         parts = hotkey_string.lower().split('+')
         main_key = parts[-1]  # Last part is the main key
         modifiers = parts[:-1]  # Everything else are modifiers
-        
+
         # Check if main key matches
         if not event.name or event.name.lower() != main_key:
             return False
-            
+
         # Check modifiers
         for modifier in modifiers:
             if modifier == 'ctrl' and not keyboard.is_pressed('ctrl'):
@@ -133,7 +136,7 @@ class HotkeyService:
                 return False
             elif modifier == 'win' and not keyboard.is_pressed('win'):
                 return False
-                
+
         # Check that no extra modifiers are pressed
         if 'ctrl' not in modifiers and keyboard.is_pressed('ctrl'):
             return False
@@ -143,12 +146,12 @@ class HotkeyService:
             return False
         if 'win' not in modifiers and keyboard.is_pressed('win'):
             return False
-            
+
         return True
-    
+
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Update the hotkey mappings.
-        
+
         Args:
             new_hotkeys: Dictionary of new hotkey mappings.
         """
@@ -175,28 +178,5 @@ class HotkeyService:
         except Exception as e:
             logging.error(f"Error cleaning up keyboard hooks: {e}")
 
-    def set_callbacks(self, 
-                     on_record_toggle: Callable = None,
-                     on_cancel: Callable = None,
-                     on_enable_toggle: Callable = None,
-                     on_status_update: Callable = None,
-                     on_status_update_auto_hide: Callable = None,
-                     is_transcribing_fn: Callable[[], bool] = None):
-        """Set callback functions for hotkey events.
-        
-        Args:
-            on_record_toggle: Called when record toggle hotkey is pressed.
-            on_cancel: Called when cancel hotkey is pressed.
-            on_enable_toggle: Called when enable/disable hotkey is pressed.
-            on_status_update: Called to update status display.
-            on_status_update_auto_hide: Called to update status with auto-hide.
-            is_transcribing_fn: Function to check if transcription is in progress.
-        """
-        self.on_record_toggle = on_record_toggle
-        self.on_cancel = on_cancel
-        self.on_enable_toggle = on_enable_toggle
-        self.on_status_update = on_status_update
-        self.on_status_update_auto_hide = on_status_update_auto_hide
-        self.is_transcribing_fn = is_transcribing_fn
 
 __all__ = ["HotkeyService"]

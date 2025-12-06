@@ -128,8 +128,10 @@ class LocalWhisperBackend(TranscriptionBackend):
             try:
                 import torch
                 has_cuda = torch.cuda.is_available()
+                logging.info(f"CUDA available: {has_cuda}")
             except ImportError:
                 has_cuda = False
+                logging.info("CUDA not available")
 
             if has_cuda:
                 detected_device = "cuda"

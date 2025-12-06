@@ -15,7 +15,7 @@ import subprocess
 import platform
 from typing import Dict, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, Qt
 
 from config import config
 
@@ -78,9 +78,6 @@ def setup_logging():
 class ApplicationController(QObject):
     """Main application controller that orchestrates all sub-controllers."""
 
-    # Qt signals for thread-safe UI updates
-    stt_state_changed = pyqtSignal(bool)  # True = enabled, False = disabled
-
     def __init__(self, ui_controller: UIController):
         super().__init__()
         self.ui_controller = ui_controller
@@ -105,16 +102,22 @@ class ApplicationController(QObject):
         self._setup_ui_callbacks()
 
     def _connect_controller_signals(self):
-        """Connect signals between sub-controllers."""
+        """Connect signals between sub-controllers.
+
+        Uses QueuedConnection for signals emitted from background threads.
+        """
         # Recording -> Workflow: when recording is ready, start transcription
+        # (emitted from main thread after recording completes)
         self.recording_ctrl.recording_ready.connect(self._on_recording_ready)
 
-        # Workflow -> Completion: when transcription completes
+        # Workflow -> Completion: when transcription completes (from ThreadPoolExecutor)
         self.workflow.transcription_completed.connect(
-            self.completion.on_transcription_complete
+            self.completion.on_transcription_complete,
+            Qt.ConnectionType.QueuedConnection
         )
         self.workflow.transcription_failed.connect(
-            self.completion.on_transcription_error
+            self.completion.on_transcription_error,
+            Qt.ConnectionType.QueuedConnection
         )
 
         # Transcription controller -> UI: device info changes
@@ -123,19 +126,35 @@ class ApplicationController(QObject):
         )
 
     def _connect_ui_signals(self):
-        """Connect sub-controller signals to UI updates."""
-        # Recording state -> UI
+        """Connect sub-controller signals to UI updates.
+
+        Uses QueuedConnection for signals that may be emitted from background threads
+        (audio callbacks, ThreadPoolExecutor) to ensure UI updates happen on main thread.
+        """
+        # Recording state -> UI (emitted from recording thread)
         self.recording_ctrl.recording_state_changed.connect(
-            self._on_recording_state_changed
+            self._on_recording_state_changed,
+            Qt.ConnectionType.QueuedConnection
         )
-        self.recording_ctrl.status_update.connect(self.ui_controller.set_status)
+        self.recording_ctrl.status_update.connect(
+            self.ui_controller.set_status,
+            Qt.ConnectionType.QueuedConnection
+        )
+        # Audio levels come from SoundDevice callback thread - must queue to main thread
         self.recording_ctrl.audio_levels_updated.connect(
-            self.ui_controller.update_audio_levels
+            self.ui_controller.update_audio_levels,
+            Qt.ConnectionType.QueuedConnection
         )
 
-        # Workflow status -> UI
-        self.workflow.status_update.connect(self.ui_controller.set_status)
-        self.workflow.show_large_file_overlay.connect(self._on_show_large_file_overlay)
+        # Workflow status -> UI (emitted from ThreadPoolExecutor)
+        self.workflow.status_update.connect(
+            self.ui_controller.set_status,
+            Qt.ConnectionType.QueuedConnection
+        )
+        self.workflow.show_large_file_overlay.connect(
+            self._on_show_large_file_overlay,
+            Qt.ConnectionType.QueuedConnection
+        )
 
         # Completion -> UI
         self.completion.status_update.connect(self.ui_controller.set_status)
@@ -145,20 +164,34 @@ class ApplicationController(QObject):
         self.completion.stats_update.connect(self.ui_controller.set_transcription_stats)
         self.completion.history_refresh.connect(self.ui_controller.refresh_history)
 
-        # STT state -> UI overlay
-        self.stt_state_changed.connect(self._on_stt_state_changed)
-
     def _setup_hotkeys(self):
-        """Setup hotkey management."""
+        """Setup hotkey management.
+
+        Connects to HotkeyService signals with QueuedConnection to ensure
+        all handlers run on the main thread (hotkeys are detected in a background thread).
+        """
         logging.info("Setting up hotkeys...")
         hotkeys = settings_manager.load_hotkey_settings()
         self.hotkey_manager = HotkeyService(hotkeys)
-        self.hotkey_manager.set_callbacks(
-            on_record_toggle=self._on_hotkey_toggle_recording,
-            on_cancel=self._on_hotkey_cancel,
-            on_status_update=self._on_hotkey_status_update,
-            on_status_update_auto_hide=self._on_hotkey_status_update
+
+        # Connect hotkey signals with QueuedConnection for thread safety
+        self.hotkey_manager.record_toggle_requested.connect(
+            self._on_hotkey_toggle_recording,
+            Qt.ConnectionType.QueuedConnection
         )
+        self.hotkey_manager.cancel_requested.connect(
+            self._on_hotkey_cancel,
+            Qt.ConnectionType.QueuedConnection
+        )
+        self.hotkey_manager.stt_enabled_changed.connect(
+            self._on_stt_state_changed,
+            Qt.ConnectionType.QueuedConnection
+        )
+        self.hotkey_manager.status_update.connect(
+            self.ui_controller.set_status,
+            Qt.ConnectionType.QueuedConnection
+        )
+
         self.ui_controller.update_hotkey_display(hotkeys)
 
     def _setup_ui_callbacks(self):
@@ -224,15 +257,6 @@ class ApplicationController(QObject):
     def _on_hotkey_cancel(self):
         """Handle hotkey cancel."""
         self._cancel_operation()
-
-    def _on_hotkey_status_update(self, status: str):
-        """Handle hotkey status update."""
-        self.ui_controller.set_status(status)
-
-        if status == "STT Enabled":
-            self.stt_state_changed.emit(True)
-        elif status == "STT Disabled":
-            self.stt_state_changed.emit(False)
 
     # ----- UI Callback Handlers -----
 

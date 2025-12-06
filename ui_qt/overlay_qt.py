@@ -535,7 +535,9 @@ class ModernWaveformOverlay(QWidget):
             # Update particles
             self._update_stt_particles(delta_time)
 
-        self.update()
+        # Only request repaint if overlay is visible (prevents GetDC errors on hidden windows)
+        if self.isVisible():
+            self.update()
 
     def set_state(self, state: str):
         """Set the overlay state."""
@@ -733,3 +735,9 @@ class ModernWaveformOverlay(QWidget):
         self.timer.stop()
         self.hidden_timer.stop()
         event.accept()
+
+    def hideEvent(self, event):
+        """Handle hide event - stop animation timers to prevent thread errors."""
+        self.timer.stop()
+        self.hidden_timer.stop()
+        super().hideEvent(event)
