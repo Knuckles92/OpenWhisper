@@ -17,7 +17,7 @@ from typing import Tuple, Optional
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from audio_processor import audio_processor
+from services import audio_processing_service
 from config import config
 from transcriber import LocalWhisperBackend
 
@@ -210,7 +210,7 @@ def test_chunking_workflow(audio_file: str, original_text: str):
     
     # Step 1: Check file size
     logger.info("\n1. Checking file size...")
-    needs_splitting, file_size_mb = audio_processor.check_file_size(audio_file)
+    needs_splitting, file_size_mb = audio_processing_service.check_file_size(audio_file)
     
     if not needs_splitting:
         logger.error(f"❌ File ({file_size_mb:.2f} MB) is below limit ({config.MAX_FILE_SIZE_MB} MB)")
@@ -224,7 +224,7 @@ def test_chunking_workflow(audio_file: str, original_text: str):
     def progress(msg):
         logger.info(f"   {msg}")
     
-    chunk_files = audio_processor.split_audio_file(audio_file, progress)
+    chunk_files = audio_processing_service.split_audio_file(audio_file, progress)
     
     if not chunk_files:
         logger.error("❌ Failed to split audio file")
@@ -245,7 +245,7 @@ def test_chunking_workflow(audio_file: str, original_text: str):
         logger.warning("⚠️  Local Whisper not available - skipping transcription test")
         logger.info("   (Chunking test passed - files were created successfully)")
         backend.cleanup()
-        audio_processor.cleanup_temp_files()
+        audio_processing_service.cleanup_temp_files()
         return True
     
     try:
@@ -279,14 +279,14 @@ def test_chunking_workflow(audio_file: str, original_text: str):
     except Exception as e:
         logger.error(f"❌ Transcription failed: {e}")
         backend.cleanup()
-        audio_processor.cleanup_temp_files()
+        audio_processing_service.cleanup_temp_files()
         return False
     finally:
         backend.cleanup()
     
     # Cleanup
     logger.info("\n5. Cleaning up...")
-    audio_processor.cleanup_temp_files()
+    audio_processing_service.cleanup_temp_files()
     logger.info("✅ Cleanup complete")
     
     logger.info("")

@@ -15,7 +15,7 @@ from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
-from audio_processor import audio_processor
+from services import audio_processing_service
 
 
 class UIController(QObject):
@@ -418,7 +418,7 @@ class UIController(QObject):
         
         # Analyze the file and show preview
         try:
-            preview = audio_processor.preview_file(file_path)
+            preview = audio_processing_service.preview_file(file_path)
             
             # Show preview dialog
             dialog = UploadPreviewDialog(preview, self.main_window)

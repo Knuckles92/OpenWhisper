@@ -74,7 +74,7 @@ class TranscriptionBackend(ABC):
             Exception: If transcription fails.
         """
         # Default implementation: transcribe each chunk and combine
-        from audio_processor import audio_processor
+        from services import audio_processing_service
         
         transcriptions = []
         for chunk_file in chunk_files:
@@ -84,7 +84,7 @@ class TranscriptionBackend(ABC):
             chunk_text = self.transcribe(chunk_file)
             transcriptions.append(chunk_text)
         
-        return audio_processor.combine_transcriptions(transcriptions)
+        return audio_processing_service.combine_transcriptions(transcriptions)
     
     def cleanup(self):
         """Clean up backend resources.

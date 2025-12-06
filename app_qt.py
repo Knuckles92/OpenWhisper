@@ -51,15 +51,15 @@ _patch_subprocess_for_windows()
 from ui_qt.app import QtApplication
 from ui_qt.loading_screen_qt import ModernLoadingScreen
 from ui_qt.ui_controller import UIController
-from hotkey_manager import HotkeyManager
-from settings import settings_manager
+from services import settings_manager
 
-# Import sub-controllers
-from controllers import (
-    TranscriptionController,
-    RecordingController,
-    TranscriptionWorkflow,
-    CompletionHandler,
+# Services
+from services import (
+    TranscriptionService,
+    RecordingService,
+    WorkflowService,
+    CompletionService,
+    HotkeyService,
 )
 
 
@@ -84,15 +84,15 @@ class ApplicationController(QObject):
     def __init__(self, ui_controller: UIController):
         super().__init__()
         self.ui_controller = ui_controller
-        self.hotkey_manager: Optional[HotkeyManager] = None
+        self.hotkey_manager: Optional[HotkeyService] = None
 
-        # Create sub-controllers
-        self.transcription_ctrl = TranscriptionController()
-        self.recording_ctrl = RecordingController()
-        self.workflow = TranscriptionWorkflow(
+        # Create services
+        self.transcription_ctrl = TranscriptionService()
+        self.recording_ctrl = RecordingService()
+        self.workflow = WorkflowService(
             get_backend=self.transcription_ctrl.get_current_backend
         )
-        self.completion = CompletionHandler(
+        self.completion = CompletionService(
             get_model_info=self.transcription_ctrl.get_model_info
         )
 
@@ -152,7 +152,7 @@ class ApplicationController(QObject):
         """Setup hotkey management."""
         logging.info("Setting up hotkeys...")
         hotkeys = settings_manager.load_hotkey_settings()
-        self.hotkey_manager = HotkeyManager(hotkeys)
+        self.hotkey_manager = HotkeyService(hotkeys)
         self.hotkey_manager.set_callbacks(
             on_record_toggle=self._on_hotkey_toggle_recording,
             on_cancel=self._on_hotkey_cancel,

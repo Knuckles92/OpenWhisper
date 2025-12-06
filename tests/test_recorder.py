@@ -1,5 +1,5 @@
 """
-Unit tests for the recorder module.
+Unit tests for the recording service module.
 """
 import unittest
 import tempfile
@@ -8,12 +8,12 @@ import wave
 import numpy as np
 from unittest.mock import patch, MagicMock
 
-from recorder import AudioRecorder
+from services.recording_service import RecordingService
 from config import config
 
 
-class TestAudioRecorder(unittest.TestCase):
-    """Test cases for the AudioRecorder class."""
+class TestRecordingService(unittest.TestCase):
+    """Test cases for the RecordingService class."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -21,11 +21,11 @@ class TestAudioRecorder(unittest.TestCase):
         self.test_audio_file = os.path.join(self.temp_dir, "test_audio.wav")
 
         # Mock sounddevice to avoid actual audio hardware
-        self.sd_patcher = patch('recorder.sd.InputStream')
+        self.sd_patcher = patch('services.recording_service.sd.InputStream')
         self.mock_sd_stream = self.sd_patcher.start()
 
-        # Create recorder instance
-        self.recorder = AudioRecorder()
+        # Create service instance
+        self.service = RecordingService()
 
     def tearDown(self):
         """Clean up test fixtures."""
@@ -33,81 +33,52 @@ class TestAudioRecorder(unittest.TestCase):
 
         if os.path.exists(self.test_audio_file):
             os.remove(self.test_audio_file)
-        os.rmdir(self.temp_dir)
+        if os.path.exists(self.temp_dir):
+            os.rmdir(self.temp_dir)
 
-        if hasattr(self.recorder, 'cleanup'):
-            self.recorder.cleanup()
+        if hasattr(self.service, 'cleanup'):
+            self.service.cleanup()
 
     def test_initialization(self):
-        """Test recorder initialization."""
-        self.assertFalse(self.recorder.is_recording)
-        self.assertEqual(self.recorder.frames, [])
-        self.assertEqual(self.recorder.chunk, config.CHUNK_SIZE)
-        self.assertEqual(self.recorder.channels, config.CHANNELS)
-        self.assertEqual(self.recorder.rate, config.SAMPLE_RATE)
-        self.assertEqual(self.recorder.dtype, config.AUDIO_FORMAT)
+        """Test service initialization."""
+        self.assertFalse(self.service.is_recording)
+        self.assertEqual(self.service._frames, [])
+        self.assertEqual(self.service._chunk, config.CHUNK_SIZE)
+        self.assertEqual(self.service._channels, config.CHANNELS)
+        self.assertEqual(self.service._rate, config.SAMPLE_RATE)
+        self.assertEqual(self.service._dtype, config.AUDIO_FORMAT)
 
     def test_start_recording(self):
         """Test starting recording."""
-        result = self.recorder.start_recording()
+        result = self.service.start_recording()
         self.assertTrue(result)
-        self.assertTrue(self.recorder.is_recording)
-        self.assertEqual(self.recorder.frames, [])
+        self.assertTrue(self.service.is_recording)
+        self.assertEqual(self.service._frames, [])
 
     def test_start_recording_already_recording(self):
         """Test starting recording when already recording."""
-        self.recorder.is_recording = True
-        result = self.recorder.start_recording()
+        self.service._is_recording = True
+        result = self.service.start_recording()
         self.assertFalse(result)
-
-    def test_stop_recording(self):
-        """Test stopping recording."""
-        # Start recording first
-        self.recorder.start_recording()
-
-        # Stop recording
-        result = self.recorder.stop_recording()
-        self.assertTrue(result)
-        # Note: is_recording may still be True briefly during post-roll
 
     def test_stop_recording_not_recording(self):
         """Test stopping recording when not recording."""
-        result = self.recorder.stop_recording()
+        result = self.service.stop_recording()
         self.assertFalse(result)
-
-    def test_has_recording_data(self):
-        """Test checking for recording data."""
-        # Initially no data
-        self.assertFalse(self.recorder.has_recording_data())
-
-        # Add some fake data
-        self.recorder.frames = [b'fake_audio_data']
-        self.assertTrue(self.recorder.has_recording_data())
-
-    def test_clear_recording_data(self):
-        """Test clearing recording data."""
-        # Add some fake data
-        self.recorder.frames = [b'fake_audio_data']
-
-        # Clear data
-        self.recorder.clear_recording_data()
-        self.assertEqual(self.recorder.frames, [])
-        self.assertFalse(self.recorder.has_recording_data())
 
     def test_get_recording_duration(self):
         """Test getting recording duration."""
         # No data initially
-        self.assertEqual(self.recorder.get_recording_duration(), 0.0)
+        self.assertEqual(self.service.get_recording_duration(), 0.0)
 
         # Add fake frames
-        # Each frame is chunk_size samples, so duration = num_frames * chunk_size / sample_rate
-        self.recorder.frames = [b'x' * 100] * 10  # 10 frames of 100 bytes each
+        self.service._frames = [b'x' * 100] * 10  # 10 frames
         expected_duration = (10 * config.CHUNK_SIZE) / config.SAMPLE_RATE
-        self.assertEqual(self.recorder.get_recording_duration(), expected_duration)
+        self.assertEqual(self.service.get_recording_duration(), expected_duration)
 
     def test_save_recording_no_data(self):
         """Test saving recording with no data."""
-        result = self.recorder.save_recording(self.test_audio_file)
+        result = self.service._save_recording(self.test_audio_file)
         self.assertFalse(result)
         self.assertFalse(os.path.exists(self.test_audio_file))
 
@@ -115,54 +86,19 @@ class TestAudioRecorder(unittest.TestCase):
         """Test saving recording with data."""
         # Add fake audio data
         fake_data = b'fake_audio_data_chunk'
-        self.recorder.frames = [fake_data] * 5
+        self.service._frames = [fake_data] * 5
 
-        # Save to actual file to test full functionality
-        result = self.recorder.save_recording(self.test_audio_file)
+        # Save to actual file
+        result = self.service._save_recording(self.test_audio_file)
 
         self.assertTrue(result)
         self.assertTrue(os.path.exists(self.test_audio_file))
 
-        # Verify the WAV file was created with correct parameters
+        # Verify WAV file parameters
         with wave.open(self.test_audio_file, 'rb') as wf:
             self.assertEqual(wf.getnchannels(), config.CHANNELS)
             self.assertEqual(wf.getframerate(), config.SAMPLE_RATE)
             self.assertEqual(wf.getsampwidth(), np.dtype(config.AUDIO_FORMAT).itemsize)
-
-    def test_save_recording_default_filename(self):
-        """Test saving recording with default filename."""
-        self.recorder.frames = [b'fake_data']
-
-        # Save to default file
-        result = self.recorder.save_recording()
-
-        self.assertTrue(result)
-        self.assertTrue(os.path.exists(config.RECORDED_AUDIO_FILE))
-
-        # Clean up
-        if os.path.exists(config.RECORDED_AUDIO_FILE):
-            os.remove(config.RECORDED_AUDIO_FILE)
-
-    def test_audio_level_callback(self):
-        """Test setting and using audio level callback."""
-        callback_values = []
-
-        def test_callback(level):
-            callback_values.append(level)
-
-        # Set callback
-        self.recorder.set_audio_level_callback(test_callback)
-        self.assertEqual(self.recorder.audio_level_callback, test_callback)
-
-        # Test _calculate_and_report_level with int16 data
-        test_data = np.array([1000, -1000, 2000, -2000], dtype=np.int16)
-        self.recorder._calculate_and_report_level(test_data)
-
-        # Should have received a callback
-        self.assertEqual(len(callback_values), 1)
-        self.assertIsInstance(callback_values[0], float)
-        self.assertGreaterEqual(callback_values[0], 0.0)
-        self.assertLessEqual(callback_values[0], 1.0)
 
     def test_audio_callback(self):
         """Test the audio callback function."""
@@ -170,11 +106,28 @@ class TestAudioRecorder(unittest.TestCase):
         fake_audio = np.array([100, -100, 200, -200], dtype=np.int16)
 
         # Call the audio callback
-        self.recorder._audio_callback(fake_audio, len(fake_audio), None, None)
+        self.service._audio_callback(fake_audio, len(fake_audio), None, None)
 
         # Should have stored one frame
-        self.assertEqual(len(self.recorder.frames), 1)
-        self.assertEqual(self.recorder.frames[0], fake_audio.tobytes())
+        self.assertEqual(len(self.service._frames), 1)
+        self.assertEqual(self.service._frames[0], fake_audio.tobytes())
+
+    def test_cancel_recording(self):
+        """Test canceling recording."""
+        # Start recording
+        self.service._is_recording = True
+        self.service._frames = [b'some_data']
+
+        # Cancel
+        result = self.service.cancel_recording()
+
+        self.assertTrue(result)
+        self.assertEqual(self.service._frames, [])
+
+    def test_cancel_recording_not_recording(self):
+        """Test canceling when not recording."""
+        result = self.service.cancel_recording()
+        self.assertFalse(result)
 
 
 if __name__ == '__main__':

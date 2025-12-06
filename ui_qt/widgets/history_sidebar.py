@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, pyqtProperty
 from PyQt6.QtGui import QFont, QCursor
 
-from history_manager import HistoryEntry, RecordingInfo, history_manager
+from services import HistoryEntry, RecordingInfo, history_service
 
 
 class HistoryItemWidget(QFrame):
@@ -142,7 +142,7 @@ class HistoryItemWidget(QFrame):
         
         # Re-transcribe action (only if audio exists)
         if self.entry.audio_file:
-            audio_path = history_manager.get_recording_path(self.entry.audio_file)
+            audio_path = history_service.get_recording_path(self.entry.audio_file)
             if audio_path:
                 retranscribe_action = menu.addAction("Re-transcribe")
                 retranscribe_action.triggered.connect(
@@ -479,7 +479,7 @@ class HistorySidebar(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         
-        recordings = history_manager.get_recordings()
+        recordings = history_service.get_recordings()
         
         if not recordings:
             no_recordings_label = QLabel("No saved recordings")
@@ -501,7 +501,7 @@ class HistorySidebar(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         
-        entries = history_manager.get_history()
+        entries = history_service.get_history()
         
         if not entries:
             no_history_label = QLabel("No transcription history")
@@ -520,14 +520,14 @@ class HistorySidebar(QWidget):
     
     def _on_entry_clicked(self, entry_id: str):
         """Handle history entry click."""
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = history_service.get_entry_by_id(entry_id)
         if entry:
             self.entry_selected.emit(entry_id)
             self.logger.debug(f"Entry selected: {entry_id[:8]}...")
     
     def _on_copy_requested(self, entry_id: str):
         """Handle copy request."""
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = history_service.get_entry_by_id(entry_id)
         if entry:
             try:
                 clipboard = QApplication.clipboard()
@@ -539,7 +539,7 @@ class HistorySidebar(QWidget):
     
     def _on_delete_requested(self, entry_id: str):
         """Handle delete request."""
-        if history_manager.delete_entry(entry_id):
+        if history_service.delete_entry(entry_id):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
             self.logger.info(f"Deleted entry: {entry_id[:8]}...")

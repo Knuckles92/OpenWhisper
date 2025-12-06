@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
-from settings import settings_manager
+from services import settings_manager
 from ui_qt.loading_screen_qt import ModernLoadingScreen
 
 
@@ -188,7 +188,7 @@ from ui_qt.widgets import (
     SuccessButton, WarningButton, ControlPanel, ModernButton,
     HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget
 )
-from history_manager import history_manager
+from services import history_service
 
 
 class ModernMainWindow(QMainWindow):
@@ -715,7 +715,7 @@ class ModernMainWindow(QMainWindow):
 
     def _on_history_entry_selected(self, entry_id: str):
         """Handle history entry selection - show full transcription and copy to clipboard."""
-        entry = history_manager.get_entry_by_id(entry_id)
+        entry = history_service.get_entry_by_id(entry_id)
         if entry:
             self.transcription_text.setText(entry.text)
             

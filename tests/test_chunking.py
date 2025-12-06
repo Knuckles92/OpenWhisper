@@ -11,7 +11,7 @@ from pathlib import Path
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from audio_processor import audio_processor
+from services import audio_processing_service
 from config import config
 
 # Configure logging
@@ -31,7 +31,7 @@ def test_chunking():
 
     try:
         # Step 1: Check file size
-        needs_splitting, file_size_mb = audio_processor.check_file_size(test_file)
+        needs_splitting, file_size_mb = audio_processing_service.check_file_size(test_file)
         logger.info(f"File size check: {file_size_mb:.1f} MB, needs_splitting: {needs_splitting}")
 
         if not needs_splitting:
@@ -44,7 +44,7 @@ def test_chunking():
         def progress_callback(message):
             logger.info(f"Progress: {message}")
 
-        chunk_files = audio_processor.split_audio_file(test_file, progress_callback)
+        chunk_files = audio_processing_service.split_audio_file(test_file, progress_callback)
 
         if not chunk_files:
             logger.error("Failed to split audio file")
@@ -65,20 +65,20 @@ def test_chunking():
 
         # Create mock transcriptions for testing
         mock_transcriptions = [f"Mock transcription for chunk {i+1}" for i in range(len(chunk_files))]
-        combined_text = audio_processor.combine_transcriptions(mock_transcriptions)
+        combined_text = audio_processing_service.combine_transcriptions(mock_transcriptions)
 
         logger.info(f"Combined {len(mock_transcriptions)} transcriptions into {len(combined_text)} characters")
 
         # Step 4: Cleanup
         logger.info("Cleaning up temporary files...")
-        audio_processor.cleanup_temp_files()
+        audio_processing_service.cleanup_temp_files()
 
         logger.info("✅ Chunking test completed successfully!")
         return True
 
     except Exception as e:
         logger.error(f"Chunking test failed: {e}")
-        audio_processor.cleanup_temp_files()
+        audio_processing_service.cleanup_temp_files()
         return False
 
 
