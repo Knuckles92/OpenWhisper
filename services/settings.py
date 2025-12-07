@@ -5,7 +5,7 @@ import json
 import os
 import logging
 import threading
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from config import config
 
 
@@ -312,6 +312,42 @@ class SettingsManager:
             if isinstance(e, ValueError):
                 raise  # Re-raise validation errors
             logging.error(f"Failed to save model selection: {e}")
+            raise
+
+    def load_audio_input_device(self) -> Optional[int]:
+        """Load the saved audio input device ID.
+
+        Returns:
+            The saved device ID, or None to use system default.
+        """
+        try:
+            settings = self.load_all_settings()
+            device_id = settings.get('audio_input_device')
+            if device_id is not None and isinstance(device_id, int):
+                return device_id
+        except Exception as e:
+            logging.warning(f"Failed to load audio input device: {e}")
+        return None
+
+    def save_audio_input_device(self, device_id: Optional[int]) -> None:
+        """Save the audio input device selection.
+
+        Args:
+            device_id: The device ID to save, or None for system default.
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            if device_id is None:
+                settings.pop('audio_input_device', None)
+            else:
+                settings['audio_input_device'] = device_id
+            self.save_all_settings(settings)
+            logging.info(f"Audio input device saved: {device_id}")
+        except Exception as e:
+            logging.error(f"Failed to save audio input device: {e}")
             raise
 
 

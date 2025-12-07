@@ -8,15 +8,37 @@ import logging
 import numpy as np
 import time
 
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Tuple
 from config import config
 
 
 class AudioRecorder:
     """Handles audio recording using SoundDevice."""
 
-    def __init__(self):
-        """Initialize the audio recorder."""
+    @staticmethod
+    def get_input_devices() -> List[Tuple[int, str]]:
+        """Get list of available audio input devices.
+
+        Returns:
+            List of tuples (device_id, device_name) for devices with input channels.
+        """
+        devices = []
+        try:
+            all_devices = sd.query_devices()
+            for i, device in enumerate(all_devices):
+                if device['max_input_channels'] > 0:
+                    devices.append((i, device['name']))
+        except Exception as e:
+            logging.error(f"Failed to enumerate audio devices: {e}")
+        return devices
+
+    def __init__(self, device_id: Optional[int] = None):
+        """Initialize the audio recorder.
+
+        Args:
+            device_id: Optional device ID for input. None uses system default.
+        """
+        self.device_id = device_id
         self.is_recording = False
         self.frames: List[bytes] = []
         self.stream: Optional[sd.InputStream] = None
@@ -169,6 +191,7 @@ class AudioRecorder:
         try:
             # Create input stream with callback
             self.stream = sd.InputStream(
+                device=self.device_id,
                 samplerate=self.rate,
                 channels=self.channels,
                 dtype=self.dtype,

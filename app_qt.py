@@ -85,7 +85,9 @@ class ApplicationController(QObject):
     def __init__(self, ui_controller: UIController):
         super().__init__()
         self.ui_controller = ui_controller
-        self.recorder = AudioRecorder()
+        # Load saved audio device and create recorder
+        saved_device_id = settings_manager.load_audio_input_device()
+        self.recorder = AudioRecorder(device_id=saved_device_id)
         self.hotkey_manager: Optional[HotkeyManager] = None
         self.executor = ThreadPoolExecutor(max_workers=2)
 
@@ -145,6 +147,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_retranscribe = self.retranscribe_audio
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
+        self.ui_controller.on_audio_device_changed = self.change_audio_device
 
     def update_hotkeys(self, hotkeys: Dict[str, str]):
         """Update application hotkeys."""
@@ -172,6 +175,31 @@ class ApplicationController(QObject):
         else:
             logging.warning("Local whisper backend not found")
             self.ui_controller.set_status("Ready")
+
+    def change_audio_device(self, device_id: Optional[int]):
+        """Change the audio input device.
+
+        Args:
+            device_id: New device ID, or None for system default.
+        """
+        logging.info(f"Changing audio device to: {device_id}")
+
+        # Don't change device while recording
+        if self.recorder.is_recording:
+            logging.warning("Cannot change audio device while recording")
+            self.ui_controller.set_status("Stop recording before changing device")
+            return
+
+        # Clean up old recorder
+        self.recorder.cleanup()
+
+        # Create new recorder with new device
+        self.recorder = AudioRecorder(device_id=device_id)
+        self._setup_audio_level_callback()
+
+        device_name = "System Default" if device_id is None else f"Device {device_id}"
+        logging.info(f"Audio device changed to: {device_name}")
+        self.ui_controller.set_status(f"Audio device changed")
 
     def _setup_audio_level_callback(self):
         """Setup audio level callback for waveform display."""

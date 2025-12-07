@@ -14,6 +14,7 @@ from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import settings_manager
+from services.recorder import AudioRecorder
 from ui_qt.widgets import PrimaryButton, ModernButton
 
 
@@ -201,6 +202,21 @@ class SettingsDialog(QDialog):
         threshold_layout.addWidget(self.threshold_value_label)
         layout.addLayout(threshold_layout)
 
+        # Input device selection
+        layout.addSpacing(16)
+        device_label = QLabel("Input Device:")
+        device_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(device_label)
+
+        self.audio_device_combo = QComboBox()
+        self.audio_device_combo.setMinimumHeight(36)
+        self._populate_audio_devices()
+        layout.addWidget(self.audio_device_combo)
+
+        device_info = QLabel("Select microphone for recording")
+        device_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        layout.addWidget(device_info)
+
         layout.addStretch()
         self.tabs.addTab(tab, "Audio")
 
@@ -325,6 +341,17 @@ class SettingsDialog(QDialog):
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
+    def _populate_audio_devices(self):
+        """Populate the audio device dropdown with available input devices."""
+        self.audio_device_combo.clear()
+        # Add system default option
+        self.audio_device_combo.addItem("System Default", None)
+
+        # Add available input devices
+        devices = AudioRecorder.get_input_devices()
+        for device_id, device_name in devices:
+            self.audio_device_combo.addItem(device_name, device_id)
+
     def _open_hotkey_dialog(self):
         """Open hotkey configuration dialog."""
         self.logger.info("Opening hotkey configuration dialog")
@@ -370,6 +397,15 @@ class SettingsDialog(QDialog):
             if compute_index >= 0:
                 self.whisper_compute_combo.setCurrentIndex(compute_index)
 
+            # Load audio input device
+            saved_device_id = settings.get('audio_input_device')
+            if saved_device_id is not None:
+                # Find the device in the combo box by its data (device ID)
+                for i in range(self.audio_device_combo.count()):
+                    if self.audio_device_combo.itemData(i) == saved_device_id:
+                        self.audio_device_combo.setCurrentIndex(i)
+                        break
+
             self.logger.info("Settings loaded successfully")
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
@@ -401,6 +437,11 @@ class SettingsDialog(QDialog):
                 old_compute != new_compute
             )
 
+            # Check if audio input device changed
+            old_audio_device = settings.get('audio_input_device')
+            new_audio_device = self.audio_device_combo.currentData()
+            audio_device_changed = old_audio_device != new_audio_device
+
             # Update with new values
             settings['selected_model'] = model_internal
             settings['auto_paste'] = self.auto_paste_check.isChecked()
@@ -409,6 +450,12 @@ class SettingsDialog(QDialog):
             settings['whisper_model'] = new_whisper_model
             settings['whisper_device'] = new_device
             settings['whisper_compute_type'] = new_compute
+
+            # Save audio input device (None for system default)
+            if new_audio_device is None:
+                settings.pop('audio_input_device', None)
+            else:
+                settings['audio_input_device'] = new_audio_device
 
             # Save to file
             settings_manager.save_all_settings(settings)
@@ -419,8 +466,9 @@ class SettingsDialog(QDialog):
             if self.on_settings_save:
                 self.on_settings_save(settings)
 
-            # Emit signal with whisper reload flag
+            # Emit signal with change flags
             settings['_whisper_settings_changed'] = whisper_settings_changed
+            settings['_audio_device_changed'] = audio_device_changed
             self.settings_changed.emit(settings)
 
             self.accept()
