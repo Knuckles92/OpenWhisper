@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from config import config
-from settings import settings_manager
+from services.settings import settings_manager
 from ui_qt.widgets import PrimaryButton, ModernButton
 
 

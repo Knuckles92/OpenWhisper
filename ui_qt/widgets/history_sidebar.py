@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, pyqtProperty
 from PyQt6.QtGui import QFont, QCursor
 
-from history_manager import HistoryEntry, RecordingInfo, history_manager
+from services.history_manager import HistoryEntry, RecordingInfo, history_manager
 
 
 class HistoryItemWidget(QFrame):

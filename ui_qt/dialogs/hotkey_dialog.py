@@ -270,7 +270,7 @@ class HotkeyDialog(QDialog):
         # we'll rely on the fact that we are setting them.
         # Actually, let's import settings_manager to be safe.
         try:
-            from settings import settings_manager
+            from services.settings import settings_manager
             saved_hotkeys = settings_manager.load_hotkey_settings()
             self.current_hotkeys.update(saved_hotkeys)
         except ImportError:

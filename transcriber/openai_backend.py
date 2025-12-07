@@ -173,7 +173,7 @@ class OpenAIBackend(TranscriptionBackend):
                 logging.info(f"Chunk {i+1}/{len(chunk_files)} completed. Length: {len(chunk_text)} characters")
             
             # Combine transcriptions
-            from audio_processor import audio_processor
+            from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)
             
             logging.info(f"OpenAI chunked transcription complete. Total length: {len(combined_text)} characters")

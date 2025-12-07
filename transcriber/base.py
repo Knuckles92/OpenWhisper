@@ -74,7 +74,7 @@ class TranscriptionBackend(ABC):
             Exception: If transcription fails.
         """
         # Default implementation: transcribe each chunk and combine
-        from audio_processor import audio_processor
+        from services.audio_processor import audio_processor
         
         transcriptions = []
         for chunk_file in chunk_files:

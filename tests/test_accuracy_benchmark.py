@@ -54,7 +54,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
 
-from settings import settings_manager
+from services.settings import settings_manager
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
 from config import config

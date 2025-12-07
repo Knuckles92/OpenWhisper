@@ -7,7 +7,7 @@ import os
 import json
 from unittest.mock import patch
 
-from settings import SettingsManager
+from services.settings import SettingsManager
 from config import config
 
 

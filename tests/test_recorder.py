@@ -8,7 +8,7 @@ import wave
 import numpy as np
 from unittest.mock import patch, MagicMock
 
-from recorder import AudioRecorder
+from services.recorder import AudioRecorder
 from config import config
 
 

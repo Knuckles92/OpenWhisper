@@ -52,12 +52,12 @@ _patch_subprocess_for_windows()
 from ui_qt.app import QtApplication
 from ui_qt.loading_screen_qt import ModernLoadingScreen
 from ui_qt.ui_controller import UIController
-from recorder import AudioRecorder
-from hotkey_manager import HotkeyManager
-from settings import settings_manager
+from services.recorder import AudioRecorder
+from services.hotkey_manager import HotkeyManager
+from services.settings import settings_manager
 from transcriber import TranscriptionBackend, LocalWhisperBackend, OpenAIBackend
-from audio_processor import audio_processor
-from history_manager import history_manager
+from services.audio_processor import audio_processor
+from services.history_manager import history_manager
 
 
 def setup_logging():

@@ -66,7 +66,7 @@ sys.path.insert(0, project_root)
 
 # Import settings_manager early to ensure it's initialized
 # (LocalWhisperBackend uses it internally, so we want it ready)
-from settings import settings_manager
+from services.settings import settings_manager
 
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend

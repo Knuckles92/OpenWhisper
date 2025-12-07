@@ -17,7 +17,7 @@ from typing import Tuple, Optional
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from audio_processor import audio_processor
+from services.audio_processor import audio_processor
 from config import config
 from transcriber import LocalWhisperBackend
 

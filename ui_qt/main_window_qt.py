@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
-from settings import settings_manager
+from services.settings import settings_manager
 from ui_qt.loading_screen_qt import ModernLoadingScreen
 
 
@@ -188,7 +188,7 @@ from ui_qt.widgets import (
     SuccessButton, WarningButton, ControlPanel, ModernButton,
     HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget
 )
-from history_manager import history_manager
+from services.history_manager import history_manager
 
 
 class ModernMainWindow(QMainWindow):

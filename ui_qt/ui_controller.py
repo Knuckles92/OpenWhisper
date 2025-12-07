@@ -15,7 +15,7 @@ from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
-from audio_processor import audio_processor
+from services.audio_processor import audio_processor
 
 
 class UIController(QObject):

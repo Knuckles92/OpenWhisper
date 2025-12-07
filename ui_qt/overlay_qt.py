@@ -14,7 +14,7 @@ from PyQt6.QtGui import (
     QLinearGradient, QFont, QCursor
 )
 from config import config
-from settings import settings_manager
+from services.settings import settings_manager
 from ui_qt.waveform_styles import style_factory
 from ui_qt.waveform_styles.base_style import BaseWaveformStyle
 

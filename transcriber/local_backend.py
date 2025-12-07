@@ -30,7 +30,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         super().__init__()
         # Read model from settings if not explicitly provided
         if model_name is None:
-            from settings import settings_manager
+            from services.settings import settings_manager
             settings = settings_manager.load_all_settings()
             model_name = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
         self.model_name = model_name  # May be "auto", resolved in _load_model
@@ -106,7 +106,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             - model: "turbo" for GPU, "base" for CPU
         """
         # Use override values if provided, otherwise check user settings
-        from settings import settings_manager
+        from services.settings import settings_manager
         settings = settings_manager.load_all_settings()
         
         if self._override_device is not None:
@@ -303,7 +303,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                            f"Length: {len(chunk_text)} characters")
 
             # Combine transcriptions using audio_processor
-            from audio_processor import audio_processor
+            from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)
 
             logging.info(f"Chunked transcription complete. "
@@ -336,7 +336,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.model_name = model_name
         else:
             # Read from settings when no explicit model provided
-            from settings import settings_manager
+            from services.settings import settings_manager
             settings = settings_manager.load_all_settings()
             self.model_name = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
         # Clean up existing model first
