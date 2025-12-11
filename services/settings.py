@@ -350,6 +350,50 @@ class SettingsManager:
             logging.error(f"Failed to save audio input device: {e}")
             raise
 
+    def load_window_geometry(self) -> Optional[Dict[str, int]]:
+        """Load the saved window geometry.
+
+        Returns:
+            Dictionary with x, y, width, height keys, or None if not saved.
+        """
+        try:
+            settings = self.load_all_settings()
+            geometry = settings.get('window_geometry')
+            if geometry and isinstance(geometry, dict):
+                # Validate all required keys exist
+                required_keys = {'x', 'y', 'width', 'height'}
+                if required_keys.issubset(geometry.keys()):
+                    return geometry
+        except Exception as e:
+            logging.warning(f"Failed to load window geometry: {e}")
+        return None
+
+    def save_window_geometry(self, x: int, y: int, width: int, height: int) -> None:
+        """Save the window geometry.
+
+        Args:
+            x: Window x position.
+            y: Window y position.
+            width: Window width.
+            height: Window height.
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            settings['window_geometry'] = {
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height
+            }
+            self.save_all_settings(settings)
+            logging.debug(f"Window geometry saved: {x}, {y}, {width}x{height}")
+        except Exception as e:
+            logging.error(f"Failed to save window geometry: {e}")
+            raise
+
 
 # Global settings manager instance
 settings_manager = SettingsManager() 

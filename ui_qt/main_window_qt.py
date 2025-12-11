@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QFrame, QPushButton
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
@@ -230,6 +230,16 @@ class ModernMainWindow(QMainWindow):
         self._sidebar_width = 380  # HistorySidebar.EXPANDED_WIDTH
         self._edge_tab_width = 24  # HistoryEdgeTab width
 
+        # Edge resize support for frameless window
+        self._resize_margin = 8  # Pixels from edge to trigger resize
+        self._resizing = False
+        self._resize_edge = None  # Tuple of (horizontal, vertical) edge flags
+        self._resize_start_pos = None
+        self._resize_start_geometry = None
+
+        # Geometry persistence
+        self._geometry_save_timer = None
+
         # Callbacks (will be set by controller)
         self.on_record_start: Optional[Callable] = None
         self.on_record_stop: Optional[Callable] = None
@@ -243,15 +253,31 @@ class ModernMainWindow(QMainWindow):
         self._setup_menu()
         self._connect_signals()
         self._load_saved_settings()
+        self._restore_window_geometry()
+
+        # Enable mouse tracking for resize cursor updates
+        self.setMouseTracking(True)
+        # Install event filter on application to catch mouse moves from all widgets
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
 
     def _setup_ui(self):
         """Setup the user interface."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
+        # Subtle border to indicate resize areas on frameless window
+        central_widget.setStyleSheet("""
+            QWidget#centralWidget {
+                border: 1px solid #3a3a3c;
+            }
+        """)
+        central_widget.setObjectName("centralWidget")
+        central_widget.setMouseTracking(True)
+
         # Outer layout for title bar + content
         outer_layout = QVBoxLayout(central_widget)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setContentsMargins(1, 1, 1, 1)  # 1px margin for border visibility
         outer_layout.setSpacing(0)
 
         # Custom title bar
@@ -795,7 +821,7 @@ class ModernMainWindow(QMainWindow):
     def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "Ctrl+Alt+*"):
         """
         Update the hotkey display on buttons.
-        
+
         Args:
             record_key: The key for recording
             cancel_key: The key for canceling
@@ -804,3 +830,203 @@ class ModernMainWindow(QMainWindow):
         self.record_button.set_hotkey(record_key)
         self.cancel_button.set_hotkey(cancel_key)
         self.stop_button.set_hotkey(record_key) # Stop uses same key as record usually
+
+    # ==================== Edge Resize Support ====================
+
+    def _get_resize_edge(self, pos) -> tuple:
+        """Determine which edge(s) the cursor is near.
+
+        Args:
+            pos: QPoint position relative to window.
+
+        Returns:
+            Tuple of (horizontal_edge, vertical_edge) where each is:
+            -1 for left/top, 0 for none, 1 for right/bottom.
+        """
+        rect = self.rect()
+        margin = self._resize_margin
+
+        horizontal = 0  # -1 = left, 0 = none, 1 = right
+        vertical = 0    # -1 = top, 0 = none, 1 = bottom
+
+        if pos.x() <= margin:
+            horizontal = -1
+        elif pos.x() >= rect.width() - margin:
+            horizontal = 1
+
+        if pos.y() <= margin:
+            vertical = -1
+        elif pos.y() >= rect.height() - margin:
+            vertical = 1
+
+        return (horizontal, vertical)
+
+    def _update_cursor_for_edge(self, edge: tuple):
+        """Update cursor shape based on edge.
+
+        Args:
+            edge: Tuple of (horizontal, vertical) edge flags.
+        """
+        from PyQt6.QtGui import QCursor
+
+        h, v = edge
+
+        if h == 0 and v == 0:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        elif h != 0 and v == 0:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif h == 0 and v != 0:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif (h == -1 and v == -1) or (h == 1 and v == 1):
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        else:  # (h == -1 and v == 1) or (h == 1 and v == -1)
+            self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for edge resize."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            edge = self._get_resize_edge(event.position().toPoint())
+            if edge != (0, 0):
+                self._resizing = True
+                self._resize_edge = edge
+                self._resize_start_pos = event.globalPosition().toPoint()
+                self._resize_start_geometry = self.geometry()
+                event.accept()
+                return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for resize cursor and resizing."""
+        if self._resizing and self._resize_edge:
+            # Calculate delta from start position
+            delta = event.globalPosition().toPoint() - self._resize_start_pos
+            geo = self._resize_start_geometry
+            h, v = self._resize_edge
+
+            new_x = geo.x()
+            new_y = geo.y()
+            new_width = geo.width()
+            new_height = geo.height()
+
+            # Handle horizontal resize
+            if h == -1:  # Left edge
+                new_width = max(self.minimumWidth(), geo.width() - delta.x())
+                new_x = geo.x() + geo.width() - new_width
+            elif h == 1:  # Right edge
+                new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() + delta.x()))
+
+            # Handle vertical resize
+            if v == -1:  # Top edge
+                new_height = max(self.minimumHeight(), geo.height() - delta.y())
+                new_y = geo.y() + geo.height() - new_height
+            elif v == 1:  # Bottom edge
+                new_height = max(self.minimumHeight(), geo.height() + delta.y())
+
+            self.setGeometry(new_x, new_y, new_width, new_height)
+            event.accept()
+            return
+
+        # Update cursor based on edge proximity
+        edge = self._get_resize_edge(event.position().toPoint())
+        self._update_cursor_for_edge(edge)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to end resize."""
+        if event.button() == Qt.MouseButton.LeftButton and self._resizing:
+            self._resizing = False
+            self._resize_edge = None
+            self._resize_start_pos = None
+            self._resize_start_geometry = None
+            # Save geometry after resize
+            self._schedule_geometry_save()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
+
+    # ==================== Geometry Persistence ====================
+
+    def _schedule_geometry_save(self):
+        """Schedule geometry save with debounce to avoid excessive writes."""
+        if self._geometry_save_timer is None:
+            self._geometry_save_timer = QTimer(self)
+            self._geometry_save_timer.setSingleShot(True)
+            self._geometry_save_timer.timeout.connect(self._save_geometry)
+
+        # Reset timer on each call (debounce)
+        self._geometry_save_timer.stop()
+        self._geometry_save_timer.start(500)  # Save 500ms after last change
+
+    def _save_geometry(self):
+        """Save current window geometry to settings."""
+        if self.isMaximized() or self.isMinimized():
+            return  # Don't save maximized/minimized state
+
+        geo = self.geometry()
+        try:
+            settings_manager.save_window_geometry(
+                geo.x(), geo.y(), geo.width(), geo.height()
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to save window geometry: {e}")
+
+    def _restore_window_geometry(self):
+        """Restore window geometry from settings."""
+        try:
+            geo = settings_manager.load_window_geometry()
+            if geo:
+                # Validate geometry is within screen bounds
+                from PyQt6.QtWidgets import QApplication
+                from PyQt6.QtCore import QRect
+
+                screen = QApplication.primaryScreen()
+                if screen:
+                    screen_geo = screen.availableGeometry()
+                    # Check if saved position is at least partially on screen
+                    saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
+                    if screen_geo.intersects(saved_rect):
+                        # Ensure minimum size constraints
+                        width = max(self.minimumWidth(), min(geo['width'], self.maximumWidth()))
+                        height = max(self.minimumHeight(), geo['height'])
+                        self.setGeometry(geo['x'], geo['y'], width, height)
+                        self.logger.info(f"Restored window geometry: {geo}")
+                        return
+
+            self.logger.debug("No valid saved geometry, using default")
+        except Exception as e:
+            self.logger.warning(f"Failed to restore window geometry: {e}")
+
+    def resizeEvent(self, event):
+        """Handle resize event to save geometry."""
+        super().resizeEvent(event)
+        if not self._resizing:  # Don't save during active drag resize (already handled)
+            self._schedule_geometry_save()
+
+    def moveEvent(self, event):
+        """Handle move event to save geometry."""
+        super().moveEvent(event)
+        self._schedule_geometry_save()
+
+    def showEvent(self, event):
+        """Handle show event - restore geometry when showing from tray."""
+        super().showEvent(event)
+        # Re-apply saved geometry in case it was corrupted while hidden
+        if not self.isMaximized():
+            self._restore_window_geometry()
+
+    def eventFilter(self, obj, event):
+        """Filter events to update resize cursor when hovering near edges."""
+        if event.type() == QEvent.Type.MouseMove and not self._resizing:
+            # Check if event has position info and is within our window
+            if hasattr(event, 'globalPosition'):
+                global_pos = event.globalPosition().toPoint()
+                local_pos = self.mapFromGlobal(global_pos)
+
+                # Only update cursor if mouse is within window bounds
+                if self.rect().contains(local_pos):
+                    edge = self._get_resize_edge(local_pos)
+                    self._update_cursor_for_edge(edge)
+
+        return super().eventFilter(obj, event)
