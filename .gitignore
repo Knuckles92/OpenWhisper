@@ -17,3 +17,5 @@ specs/PYQT6_FIXES_APPLIED.md
 transcription_history.json
 venv312/*
 openwhisper_settings.json
+node_modules/*
+.cursor/worktrees.json
