@@ -35,7 +35,7 @@ With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-d
 
 ## Installation
 
-**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase.
+**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase. **Python 3.14+ is incompatible.**
 
 ```bash
 git clone https://github.com/Knuckles92/OpenWhisper
@@ -87,7 +87,7 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 ## Requirements
 
-- Python 3.8+(3.12 recommended)
+- Python 3.8-3.13 (3.12 recommended)
 - Windows
 
 ## License

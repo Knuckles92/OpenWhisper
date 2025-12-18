@@ -1,6 +1,22 @@
 """
 Main application bootstrap
 """
+# Python version check - must run before any other imports
+import sys
+
+if sys.version_info < (3, 8) or sys.version_info >= (3, 14):
+    current_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    print(f"""{"=" * 70}
+ERROR: Incompatible Python Version
+{"=" * 70}
+
+Current Python version: {current_version}
+Supported version range: Python 3.8 - 3.13
+
+OpenWhisper requires Python 3.8 or higher, but not Python 3.14+
+{"=" * 70}""")
+    sys.exit(1)
+
 import warnings
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
