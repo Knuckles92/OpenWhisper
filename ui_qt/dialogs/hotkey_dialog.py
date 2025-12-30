@@ -94,7 +94,7 @@ class HotkeyDialog(QDialog):
         instructions = QLabel(
             "Click on a field to record a new hotkey.\n"
             "Press the desired key combination.\n"
-            "Note: Numpad keys (kp_1, kp_*, etc.) are distinct from regular keys."
+            "Note: Numpad keys (kp 1, kp *, etc.) are distinct from regular keys."
         )
         instructions.setStyleSheet("color: #a0a0c0;")
         instructions.setFont(QFont("Segoe UI", 10))
@@ -292,9 +292,9 @@ class HotkeyDialog(QDialog):
 
     def _update_displays(self):
         """Update the input field displays."""
-        self.record_input.setText(self.current_hotkeys.get("record_toggle", "kp_*"))
-        self.cancel_input.setText(self.current_hotkeys.get("cancel", "kp_-"))
-        self.enable_input.setText(self.current_hotkeys.get("enable_disable", "ctrl+alt+kp_*"))
+        self.record_input.setText(self.current_hotkeys.get("record_toggle", "kp *"))
+        self.cancel_input.setText(self.current_hotkeys.get("cancel", "kp -"))
+        self.enable_input.setText(self.current_hotkeys.get("enable_disable", "ctrl+alt+kp *"))
 
     def _save_hotkeys(self):
         """Save hotkey settings."""
