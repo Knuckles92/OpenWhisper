@@ -101,9 +101,9 @@ class AppConfig:
         """Initialize computed fields after dataclass creation."""
         if self.DEFAULT_HOTKEYS is None:
             self.DEFAULT_HOTKEYS = {
-                'record_toggle': '*',
-                'cancel': '-',
-                'enable_disable': 'ctrl+alt+*'
+                'record_toggle': 'kp *',
+                'cancel': 'kp -',
+                'enable_disable': 'ctrl+alt+kp *'
             }
         
         if self.MODEL_VALUE_MAP is None:
