@@ -169,14 +169,41 @@ class CustomTitleBar(QFrame):
             self.parent_window.close()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_position = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
+        if event.button() == Qt.MouseButton.LeftButton and self.parent_window:
+            global_pos = event.globalPosition().toPoint()
+            local_pos = self.parent_window.mapFromGlobal(global_pos)
+            edge = self.parent_window._get_resize_edge(local_pos)
+            if edge != (0, 0):
+                self.parent_window._begin_resize(edge, global_pos)
+                event.accept()
+                return
+            self._drag_position = global_pos - self.parent_window.frameGeometry().topLeft()
             event.accept()
+            return
+
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_position:
+        if self.parent_window and self.parent_window._resizing:
+            self.parent_window._apply_resize_delta(event.globalPosition().toPoint())
+            event.accept()
+            return
+        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_position and self.parent_window:
             self.parent_window.move(event.globalPosition().toPoint() - self._drag_position)
             event.accept()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.parent_window:
+            self._drag_position = None
+            if self.parent_window._resizing:
+                self.parent_window._finish_resize()
+                event.accept()
+                return
+
+        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -882,15 +909,59 @@ class ModernMainWindow(QMainWindow):
         else:  # (h == -1 and v == 1) or (h == 1 and v == -1)
             self.setCursor(Qt.CursorShape.SizeBDiagCursor)
 
+    def _begin_resize(self, edge: tuple, global_pos) -> None:
+        """Start a resize operation from a given edge and global position."""
+        self._resizing = True
+        self._resize_edge = edge
+        self._resize_start_pos = global_pos
+        self._resize_start_geometry = self.geometry()
+
+    def _apply_resize_delta(self, global_pos) -> None:
+        """Apply resize based on the stored start geometry and a global cursor position."""
+        if not self._resizing or not self._resize_edge or not self._resize_start_geometry:
+            return
+
+        delta = global_pos - self._resize_start_pos
+        geo = self._resize_start_geometry
+        h, v = self._resize_edge
+
+        new_x = geo.x()
+        new_y = geo.y()
+        new_width = geo.width()
+        new_height = geo.height()
+
+        # Handle horizontal resize
+        if h == -1:  # Left edge
+            new_width = max(self.minimumWidth(), geo.width() - delta.x())
+            new_x = geo.x() + geo.width() - new_width
+        elif h == 1:  # Right edge
+            new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() + delta.x()))
+
+        # Handle vertical resize
+        if v == -1:  # Top edge
+            new_height = max(self.minimumHeight(), geo.height() - delta.y())
+            new_y = geo.y() + geo.height() - new_height
+        elif v == 1:  # Bottom edge
+            new_height = max(self.minimumHeight(), geo.height() + delta.y())
+
+        self.setGeometry(new_x, new_y, new_width, new_height)
+
+    def _finish_resize(self) -> None:
+        """Finish a resize operation and persist geometry."""
+        if not self._resizing:
+            return
+        self._resizing = False
+        self._resize_edge = None
+        self._resize_start_pos = None
+        self._resize_start_geometry = None
+        self._schedule_geometry_save()
+
     def mousePressEvent(self, event):
         """Handle mouse press for edge resize."""
         if event.button() == Qt.MouseButton.LeftButton:
             edge = self._get_resize_edge(event.position().toPoint())
             if edge != (0, 0):
-                self._resizing = True
-                self._resize_edge = edge
-                self._resize_start_pos = event.globalPosition().toPoint()
-                self._resize_start_geometry = self.geometry()
+                self._begin_resize(edge, event.globalPosition().toPoint())
                 event.accept()
                 return
 
@@ -899,31 +970,7 @@ class ModernMainWindow(QMainWindow):
     def mouseMoveEvent(self, event):
         """Handle mouse move for resize cursor and resizing."""
         if self._resizing and self._resize_edge:
-            # Calculate delta from start position
-            delta = event.globalPosition().toPoint() - self._resize_start_pos
-            geo = self._resize_start_geometry
-            h, v = self._resize_edge
-
-            new_x = geo.x()
-            new_y = geo.y()
-            new_width = geo.width()
-            new_height = geo.height()
-
-            # Handle horizontal resize
-            if h == -1:  # Left edge
-                new_width = max(self.minimumWidth(), geo.width() - delta.x())
-                new_x = geo.x() + geo.width() - new_width
-            elif h == 1:  # Right edge
-                new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() + delta.x()))
-
-            # Handle vertical resize
-            if v == -1:  # Top edge
-                new_height = max(self.minimumHeight(), geo.height() - delta.y())
-                new_y = geo.y() + geo.height() - new_height
-            elif v == 1:  # Bottom edge
-                new_height = max(self.minimumHeight(), geo.height() + delta.y())
-
-            self.setGeometry(new_x, new_y, new_width, new_height)
+            self._apply_resize_delta(event.globalPosition().toPoint())
             event.accept()
             return
 
@@ -935,12 +982,7 @@ class ModernMainWindow(QMainWindow):
     def mouseReleaseEvent(self, event):
         """Handle mouse release to end resize."""
         if event.button() == Qt.MouseButton.LeftButton and self._resizing:
-            self._resizing = False
-            self._resize_edge = None
-            self._resize_start_pos = None
-            self._resize_start_geometry = None
-            # Save geometry after resize
-            self._schedule_geometry_save()
+            self._finish_resize()
             event.accept()
             return
 
