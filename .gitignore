@@ -19,3 +19,4 @@ venv312/*
 openwhisper_settings.json
 node_modules/*
 .cursor/worktrees.json
+.vscode/settings.json

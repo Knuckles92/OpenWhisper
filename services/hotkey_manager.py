@@ -106,7 +106,7 @@ class HotkeyManager:
         
         Args:
             event: Keyboard event from the keyboard library.
-            hotkey_string: Hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1").
+            hotkey_string: Hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1", "ctrl+kp *").
             
         Returns:
             True if the event matches the hotkey string.
@@ -119,8 +119,16 @@ class HotkeyManager:
         main_key = parts[-1]  # Last part is the main key
         modifiers = parts[:-1]  # Everything else are modifiers
         
+        # Check if main key is a numpad key (starts with "kp ")
+        is_numpad_hotkey = main_key.startswith('kp ')
+        expected_key_name = main_key[3:] if is_numpad_hotkey else main_key
+        
         # Check if main key matches
-        if not event.name or event.name.lower() != main_key:
+        if not event.name or event.name.lower() != expected_key_name:
+            return False
+        
+        # Check if numpad status matches
+        if (is_numpad_hotkey and not event.is_keypad) or (not is_numpad_hotkey and event.is_keypad):
             return False
             
         # Check modifiers

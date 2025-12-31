@@ -36,8 +36,19 @@ class HotkeyCaptureThread(QThread):
             # suppress=False to let the key event pass through if needed,
             # but here we probably want to consume it or just read it.
             # Using suppress=True might block other apps, but for configuration it's okay.
-            hotkey = keyboard.read_hotkey(suppress=False)
-            self.captured.emit(hotkey)
+            events = []
+            queue = keyboard._queue.Queue()
+            fn = lambda e: queue.put(e) or e.event_type == keyboard.KEY_DOWN
+            hooked = keyboard.hook(fn, suppress=False)
+            while True:
+                event = queue.get()
+                events.append(event)
+                if event.event_type == keyboard.KEY_UP:
+                    keyboard.unhook(hooked)
+                    names = [(e.name if not e.is_keypad else f"kp_{e.name}") for e in events]
+                    self.captured.emit(keyboard.get_hotkey_name(names))
+                    break
+                                
         except Exception as e:
             logging.error(f"Error capturing hotkey: {e}")
 
@@ -82,7 +93,8 @@ class HotkeyDialog(QDialog):
         # Instructions
         instructions = QLabel(
             "Click on a field to record a new hotkey.\n"
-            "Press the desired key combination."
+            "Press the desired key combination.\n"
+            "Note: Numpad keys (kp 1, kp *, etc.) are distinct from regular keys."
         )
         instructions.setStyleSheet("color: #a0a0c0;")
         instructions.setFont(QFont("Segoe UI", 10))
@@ -280,9 +292,9 @@ class HotkeyDialog(QDialog):
 
     def _update_displays(self):
         """Update the input field displays."""
-        self.record_input.setText(self.current_hotkeys.get("record_toggle", "*"))
-        self.cancel_input.setText(self.current_hotkeys.get("cancel", "-"))
-        self.enable_input.setText(self.current_hotkeys.get("enable_disable", "ctrl+alt+*"))
+        self.record_input.setText(self.current_hotkeys.get("record_toggle", "kp *"))
+        self.cancel_input.setText(self.current_hotkeys.get("cancel", "kp -"))
+        self.enable_input.setText(self.current_hotkeys.get("enable_disable", "ctrl+alt+kp *"))
 
     def _save_hotkeys(self):
         """Save hotkey settings."""
