@@ -5,8 +5,10 @@ import warnings
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
+import faulthandler
 import logging
 import os
+import signal
 import sys
 import subprocess
 import platform
@@ -20,6 +22,10 @@ from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from config import config
+
+
+_CRASH_LOG_FILE = None
+_QT_MESSAGE_HANDLER_INSTALLED = False
 
 
 def _patch_subprocess_for_windows():
@@ -68,8 +74,74 @@ def setup_logging():
         handlers=[
             logging.FileHandler(config.LOG_FILE),
             logging.StreamHandler()
-        ]
+        ],
+        force=True  # Required: removes handlers created during import-time logging
     )
+    _enable_crash_logging()
+    _install_qt_message_handler()
+
+
+def _enable_crash_logging():
+    """Enable faulthandler crash logging for hard crashes."""
+    global _CRASH_LOG_FILE
+
+    try:
+        crash_log_path = Path(config.LOG_FILE).with_suffix(".crash.log")
+        _CRASH_LOG_FILE = open(crash_log_path, "a", buffering=1)
+        faulthandler.enable(file=_CRASH_LOG_FILE, all_threads=True)
+
+        for sig in (signal.SIGSEGV, signal.SIGABRT, signal.SIGFPE, signal.SIGILL):
+            try:
+                faulthandler.register(sig, file=_CRASH_LOG_FILE, all_threads=True)
+            except (ValueError, RuntimeError, AttributeError):
+                # Some platforms or Python builds disallow registering these signals.
+                pass
+
+        logging.info(f"Faulthandler enabled for crash diagnostics: {crash_log_path}")
+    except Exception as e:
+        logging.warning(f"Failed to enable faulthandler: {e}")
+
+
+def _install_qt_message_handler():
+    """Route Qt warnings/errors to the Python logger."""
+    global _QT_MESSAGE_HANDLER_INSTALLED
+
+    if _QT_MESSAGE_HANDLER_INSTALLED:
+        return
+
+    try:
+        from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
+    except Exception as e:
+        logging.warning(f"Failed to install Qt message handler: {e}")
+        return
+
+    def _qt_message_handler(msg_type, context, message):
+        logger = logging.getLogger("qt")
+        context_info = ""
+        try:
+            if context and (context.file or context.function or context.line):
+                context_info = f" ({context.file}:{context.line} {context.function})"
+        except Exception:
+            context_info = ""
+
+        text = f"{message}{context_info}"
+
+        if msg_type == QtMsgType.QtDebugMsg:
+            logger.debug(text)
+        elif msg_type == QtMsgType.QtInfoMsg:
+            logger.info(text)
+        elif msg_type == QtMsgType.QtWarningMsg:
+            logger.warning(text)
+        elif msg_type == QtMsgType.QtCriticalMsg:
+            logger.error(text)
+        elif msg_type == QtMsgType.QtFatalMsg:
+            logger.critical(text)
+        else:
+            logger.info(text)
+
+    qInstallMessageHandler(_qt_message_handler)
+    _QT_MESSAGE_HANDLER_INSTALLED = True
+    logging.info("Qt message handler installed")
 
 
 class ApplicationController(QObject):
