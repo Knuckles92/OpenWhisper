@@ -251,6 +251,9 @@ class ModernMainWindow(QMainWindow):
         self.current_model = config.MODEL_CHOICES[0]
         self.test_loading_screen_instance = None  # Keep reference to prevent GC
         self._force_quit = False  # Flag to bypass minimize to tray on close
+
+        # Streaming transcription state
+        self._partial_buffer = []  # Store finalized chunks
         
         # Window sizing for sidebar toggle
         self._base_width = 580  # Optimal width without sidebar
@@ -591,6 +594,37 @@ class ModernMainWindow(QMainWindow):
     def clear_transcription(self):
         """Clear the transcription text."""
         self.transcription_text.clear()
+
+    def set_partial_transcription(self, text: str, is_final: bool):
+        """Display partial transcription with visual indicator.
+
+        Args:
+            text: Partial transcription text
+            is_final: Whether this chunk is finalized
+        """
+        if is_final:
+            # This chunk is finalized, add to buffer
+            self._partial_buffer.append(text)
+
+        # Combine finalized chunks + current partial
+        combined = " ".join(self._partial_buffer)
+        if not is_final:
+            # Still processing - add ellipsis indicator
+            if combined:
+                combined += " "
+            combined += text + " ..."
+
+        # Update display
+        self.transcription_text.setPlainText(combined)
+
+        # Auto-scroll to bottom
+        cursor = self.transcription_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.transcription_text.setTextCursor(cursor)
+
+    def clear_partial_transcription(self):
+        """Clear partial transcription buffer."""
+        self._partial_buffer.clear()
 
     def set_transcription_stats(
         self,

@@ -56,6 +56,9 @@ class AudioRecorder:
         # Audio level callback
         self.audio_level_callback: Optional[Callable[[float], None]] = None
 
+        # Streaming transcription callback
+        self.streaming_callback: Optional[Callable[[np.ndarray], None]] = None
+
         # Audio level calculation
         self.current_level = 0.0
         self.level_smoothing = config.WAVEFORM_LEVEL_SMOOTHING  # Smoothing factor for level changes
@@ -72,6 +75,14 @@ class AudioRecorder:
             callback: Function that will be called with audio level (0.0 to 1.0)
         """
         self.audio_level_callback = callback
+
+    def set_streaming_callback(self, callback: Callable[[np.ndarray], None]):
+        """Set callback function for real-time streaming transcription.
+
+        Args:
+            callback: Function that will be called with audio chunks (NumPy arrays)
+        """
+        self.streaming_callback = callback
 
     def start_recording(self) -> bool:
         """Start audio recording.
@@ -182,6 +193,13 @@ class AudioRecorder:
                 # Calculate audio level for waveform display
                 if self.audio_level_callback:
                     self._calculate_and_report_level(indata.copy())
+
+                # Feed to streaming transcriber (non-blocking)
+                if self.streaming_callback:
+                    try:
+                        self.streaming_callback(indata.copy())
+                    except Exception as stream_err:
+                        logging.debug(f"Streaming callback error: {stream_err}")
 
         except Exception as e:
             logging.error(f"Error in audio callback: {e}")

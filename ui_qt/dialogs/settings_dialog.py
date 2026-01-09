@@ -140,6 +140,26 @@ class SettingsDialog(QDialog):
         self.minimize_tray_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.minimize_tray_check)
 
+        # Streaming transcription checkbox
+        layout.addSpacing(24)
+        streaming_label = QLabel("Real-Time Transcription (Experimental)")
+        streaming_label_font = QFont("Segoe UI", 10)
+        streaming_label_font.setBold(True)
+        streaming_label.setFont(streaming_label_font)
+        streaming_label.setStyleSheet("color: #c0c0ff;")
+        layout.addWidget(streaming_label)
+
+        layout.addSpacing(8)
+        self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
+        self.streaming_enabled_check.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(self.streaming_enabled_check)
+
+        # Info label for streaming
+        streaming_info = QLabel("Shows transcribed text as you speak. Requires Local Whisper backend.\nMay impact performance on slower systems (CPU: ~40-60%, GPU: ~15-20%).")
+        streaming_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_info.setWordWrap(True)
+        layout.addWidget(streaming_info)
+
         layout.addStretch()
         self.tabs.addTab(tab, "General")
 
@@ -379,6 +399,7 @@ class SettingsDialog(QDialog):
             self.auto_paste_check.setChecked(settings.get('auto_paste', True))
             self.copy_clipboard_check.setChecked(settings.get('copy_clipboard', True))
             self.minimize_tray_check.setChecked(settings.get('minimize_tray', True))
+            self.streaming_enabled_check.setChecked(settings.get('streaming_enabled', config.STREAMING_ENABLED))
 
             # Load whisper engine settings
             whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
@@ -413,6 +434,7 @@ class SettingsDialog(QDialog):
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
             self.minimize_tray_check.setChecked(True)
+            self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -447,6 +469,7 @@ class SettingsDialog(QDialog):
             settings['auto_paste'] = self.auto_paste_check.isChecked()
             settings['copy_clipboard'] = self.copy_clipboard_check.isChecked()
             settings['minimize_tray'] = self.minimize_tray_check.isChecked()
+            settings['streaming_enabled'] = self.streaming_enabled_check.isChecked()
             settings['whisper_model'] = new_whisper_model
             settings['whisper_device'] = new_device
             settings['whisper_compute_type'] = new_compute

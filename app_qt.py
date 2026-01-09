@@ -61,6 +61,7 @@ from ui_qt.ui_controller import UIController
 from services.recorder import AudioRecorder
 from services.hotkey_manager import HotkeyManager
 from services.settings import settings_manager
+from services.streaming_transcriber import StreamingTranscriber
 from transcriber import TranscriptionBackend, LocalWhisperBackend, OpenAIBackend
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
@@ -153,6 +154,7 @@ class ApplicationController(QObject):
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)  # True = enabled, False = disabled
     recording_state_changed = pyqtSignal(bool)  # True = started, False = stopped
+    partial_transcription = pyqtSignal(str, bool)  # (text, is_final)
 
     def __init__(self, ui_controller: UIController):
         super().__init__()
@@ -165,8 +167,12 @@ class ApplicationController(QObject):
 
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
-        
+
         self._current_model_name: str = "local_whisper"
+
+        # Streaming transcription
+        self.streaming_transcriber: Optional[StreamingTranscriber] = None
+        self._streaming_enabled = False
 
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
@@ -179,6 +185,7 @@ class ApplicationController(QObject):
         self._setup_hotkeys()
         self._setup_ui_callbacks()
         self._setup_audio_level_callback()
+        self._setup_streaming()
         self._connect_signals()
 
     def _setup_transcription_backends(self):
@@ -282,6 +289,28 @@ class ApplicationController(QObject):
 
         self.recorder.set_audio_level_callback(audio_level_callback)
 
+    def _setup_streaming(self):
+        """Initialize streaming transcriber if enabled."""
+        try:
+            # Load streaming settings
+            settings = settings_manager.load_all_settings()
+            self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
+
+            if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
+                chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+                self.streaming_transcriber = StreamingTranscriber(
+                    backend=self.current_backend,
+                    chunk_duration_sec=chunk_duration
+                )
+                logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s)")
+            else:
+                if self._streaming_enabled:
+                    logging.info("Streaming requested but not available (requires Local Whisper backend)")
+                self._streaming_enabled = False
+        except Exception as e:
+            logging.error(f"Failed to setup streaming: {e}")
+            self._streaming_enabled = False
+
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""
         self.transcription_completed.connect(self._on_transcription_complete)
@@ -289,6 +318,7 @@ class ApplicationController(QObject):
         self.status_update.connect(self.ui_controller.set_status)
         self.stt_state_changed.connect(self._on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
+        self.partial_transcription.connect(self.ui_controller.main_window.set_partial_transcription)
 
     def _on_stt_state_changed(self, enabled: bool):
         """Handle STT state change on main thread."""
@@ -308,11 +338,32 @@ class ApplicationController(QObject):
             self.ui_controller.main_window.is_recording = is_recording
             self.ui_controller.main_window._update_recording_state()
 
+    def _on_partial_transcription(self, text: str, is_final: bool):
+        """Handle partial transcription from streaming worker (background thread).
+
+        Args:
+            text: Partial transcription text
+            is_final: Whether this chunk is finalized
+        """
+        # Emit signal for thread-safe UI update
+        self.partial_transcription.emit(text, is_final)
+
     def start_recording(self):
         """Start audio recording."""
         if self.recorder.start_recording():
             logging.info("Recording started")
             self.ui_controller.clear_transcription_stats()
+            self.ui_controller.main_window.clear_partial_transcription()
+
+            # Start streaming transcription if enabled
+            if self.streaming_transcriber:
+                self.recorder.set_streaming_callback(self.streaming_transcriber.feed_audio)
+                self.streaming_transcriber.start_streaming(
+                    sample_rate=config.SAMPLE_RATE,
+                    callback=self._on_partial_transcription
+                )
+                logging.info("Streaming transcription started")
+
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(True)
             self.status_update.emit("Recording...")
@@ -321,6 +372,13 @@ class ApplicationController(QObject):
 
     def stop_recording(self):
         """Stop audio recording and start transcription."""
+        # Stop streaming first and get accumulated text
+        streaming_text = ""
+        if self.streaming_transcriber:
+            streaming_text = self.streaming_transcriber.stop_streaming()
+            self.recorder.set_streaming_callback(None)  # Disconnect callback
+            logging.info(f"Streaming transcription stopped, got {len(streaming_text)} chars")
+
         if not self.recorder.stop_recording():
             self.status_update.emit("Failed to stop recording")
             return
@@ -408,6 +466,12 @@ class ApplicationController(QObject):
         logging.info(f"Cancel called. Recording: {self.recorder.is_recording}")
 
         if self.recorder.is_recording:
+            # Stop streaming if active
+            if self.streaming_transcriber:
+                self.streaming_transcriber.stop_streaming()
+                self.recorder.set_streaming_callback(None)
+                logging.info("Streaming transcription cancelled")
+
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(False)
             self.recorder.stop_recording()
@@ -741,7 +805,13 @@ class ApplicationController(QObject):
                 self.recorder.cleanup()
         except Exception as e:
             logging.debug(f"Error during recorder cleanup: {e}")
-        
+
+        try:
+            if self.streaming_transcriber:
+                self.streaming_transcriber.cleanup()
+        except Exception as e:
+            logging.debug(f"Error during streaming transcriber cleanup: {e}")
+
         try:
             self.executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:

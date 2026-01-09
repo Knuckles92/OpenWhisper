@@ -92,7 +92,13 @@ class AppConfig:
     FASTER_WHISPER_VAD_ENABLED: bool = True
     FASTER_WHISPER_VAD_MIN_SILENCE_MS: int = 500
     FASTER_WHISPER_BEAM_SIZE: int = 5
-    
+
+    # Streaming transcription settings
+    STREAMING_ENABLED: bool = False  # Opt-in feature for real-time transcription
+    STREAMING_CHUNK_DURATION_SEC: float = 3.0  # Process every N seconds
+    STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
+    STREAMING_BEAM_SIZE: int = 3  # Smaller beam size for faster processing
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None

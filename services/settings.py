@@ -394,6 +394,46 @@ class SettingsManager:
             logging.error(f"Failed to save window geometry: {e}")
             raise
 
+    def load_streaming_settings(self) -> Dict[str, Any]:
+        """Load streaming transcription settings.
+
+        Returns:
+            Dictionary containing streaming settings.
+        """
+        try:
+            settings = self.load_all_settings()
+            return {
+                'streaming_enabled': settings.get('streaming_enabled', config.STREAMING_ENABLED),
+                'streaming_chunk_duration': settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+            }
+        except Exception as e:
+            logging.warning(f"Failed to load streaming settings: {e}")
+            return {
+                'streaming_enabled': config.STREAMING_ENABLED,
+                'streaming_chunk_duration': config.STREAMING_CHUNK_DURATION_SEC
+            }
+
+    def save_streaming_settings(self, enabled: bool, chunk_duration: float = None) -> None:
+        """Save streaming transcription settings.
+
+        Args:
+            enabled: Whether streaming transcription is enabled.
+            chunk_duration: Duration of audio chunks in seconds (optional).
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            settings['streaming_enabled'] = enabled
+            if chunk_duration is not None:
+                settings['streaming_chunk_duration'] = chunk_duration
+            self.save_all_settings(settings)
+            logging.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}")
+        except Exception as e:
+            logging.error(f"Failed to save streaming settings: {e}")
+            raise
+
 
 # Global settings manager instance
 settings_manager = SettingsManager() 
