@@ -173,6 +173,9 @@ class ApplicationController(QObject):
         # Streaming transcription
         self.streaming_transcriber: Optional[StreamingTranscriber] = None
         self._streaming_enabled = False
+        self._streaming_paste_enabled = False
+        self._streaming_typing_delay = 0.02  # Delay between characters for live typing
+        self._streamed_char_count = 0  # Track characters typed during streaming
 
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
@@ -295,6 +298,8 @@ class ApplicationController(QObject):
             # Load streaming settings
             settings = settings_manager.load_all_settings()
             self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
+            self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+            self._streaming_typing_delay = settings.get('streaming_typing_delay', 0.02)
 
             if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
                 chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
@@ -302,14 +307,16 @@ class ApplicationController(QObject):
                     backend=self.current_backend,
                     chunk_duration_sec=chunk_duration
                 )
-                logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s)")
+                logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste={self._streaming_paste_enabled}, typing_delay={self._streaming_typing_delay}s)")
             else:
                 if self._streaming_enabled:
                     logging.info("Streaming requested but not available (requires Local Whisper backend)")
                 self._streaming_enabled = False
+                self._streaming_paste_enabled = False
         except Exception as e:
             logging.error(f"Failed to setup streaming: {e}")
             self._streaming_enabled = False
+            self._streaming_paste_enabled = False
 
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""
@@ -348,12 +355,30 @@ class ApplicationController(QObject):
         # Emit signal for thread-safe UI update
         self.partial_transcription.emit(text, is_final)
 
+        # Live type to cursor if enabled (only for finalized chunks)
+        if self._streaming_paste_enabled and is_final and text:
+            try:
+                # Add space separator if we've already typed something
+                text_to_type = text
+                if self._streamed_char_count > 0:
+                    text_to_type = " " + text
+
+                # Type with configurable character delay for natural effect
+                keyboard.write(text_to_type, delay=self._streaming_typing_delay)
+                self._streamed_char_count += len(text_to_type)
+                logging.debug(f"Live typed {len(text_to_type)} chars (total: {self._streamed_char_count})")
+            except Exception as e:
+                logging.error(f"Failed to live type text: {e}")
+
     def start_recording(self):
         """Start audio recording."""
         if self.recorder.start_recording():
             logging.info("Recording started")
             self.ui_controller.clear_transcription_stats()
             self.ui_controller.main_window.clear_partial_transcription()
+
+            # Reset streamed character count for live typing
+            self._streamed_char_count = 0
 
             # Start streaming transcription if enabled
             if self.streaming_transcriber:
@@ -471,6 +496,29 @@ class ApplicationController(QObject):
                 self.streaming_transcriber.stop_streaming()
                 self.recorder.set_streaming_callback(None)
                 logging.info("Streaming transcription cancelled")
+
+            # If we live-typed streaming text, delete it on cancel
+            if self._streaming_paste_enabled and self._streamed_char_count > 0:
+                try:
+                    logging.info(f"Deleting {self._streamed_char_count} streamed characters on cancel")
+                    
+                    # For long texts, use Shift+Home to select to start of line (faster)
+                    if self._streamed_char_count > 100:
+                        keyboard.send('shift+home')
+                        time.sleep(0.1)
+                    else:
+                        # Select character by character with periodic delays
+                        for i in range(self._streamed_char_count):
+                            keyboard.send('shift+left')
+                            if i > 0 and i % 20 == 0:
+                                time.sleep(0.02)
+                        time.sleep(0.1)
+                    
+                    keyboard.send('backspace')
+                except Exception as e:
+                    logging.error(f"Failed to delete streamed text: {e}")
+                finally:
+                    self._streamed_char_count = 0
 
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(False)
@@ -727,13 +775,41 @@ class ApplicationController(QObject):
 
         if auto_paste:
             try:
+                # If we live-typed streaming text, select and delete it first
+                if self._streaming_paste_enabled and self._streamed_char_count > 0:
+                    logging.info(f"Selecting {self._streamed_char_count} streamed characters for replacement")
+                    
+                    # For long texts, use Shift+Home to select to start of line (faster)
+                    # This assumes the user started on an empty line
+                    if self._streamed_char_count > 100:
+                        keyboard.send('shift+home')
+                        time.sleep(0.1)
+                    else:
+                        # For shorter texts, select character by character for precision
+                        # Add small delays every 20 chars for reliability
+                        for i in range(self._streamed_char_count):
+                            keyboard.send('shift+left')
+                            if i > 0 and i % 20 == 0:
+                                time.sleep(0.02)
+                        time.sleep(0.1)
+
                 keyboard.send('ctrl+v')
+                
+                # Press Right arrow to deselect and ensure cursor is at end
+                time.sleep(0.05)
+                keyboard.send('right')
+                
                 logging.info("Transcription auto-pasted")
                 self.ui_controller.set_status("Ready (Pasted)")
             except Exception as e:
                 logging.error(f"Failed to auto-paste: {e}")
                 self.ui_controller.set_status("Transcription complete (paste failed)")
+            finally:
+                # Reset streamed char count after paste attempt
+                self._streamed_char_count = 0
         else:
+            # Reset streamed char count even if not pasting
+            self._streamed_char_count = 0
             self.ui_controller.set_status("Ready")
 
     def _on_transcription_error(self, error_message: str):

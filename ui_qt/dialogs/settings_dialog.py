@@ -152,6 +152,7 @@ class SettingsDialog(QDialog):
         layout.addSpacing(8)
         self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
         self.streaming_enabled_check.setStyleSheet("color: #e0e0ff;")
+        self.streaming_enabled_check.stateChanged.connect(self._on_streaming_enabled_changed)
         layout.addWidget(self.streaming_enabled_check)
 
         # Info label for streaming
@@ -159,6 +160,47 @@ class SettingsDialog(QDialog):
         streaming_info.setStyleSheet("color: #808090; font-size: 10px;")
         streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
+
+        # Streaming paste (live typing) checkbox
+        layout.addSpacing(8)
+        self.streaming_paste_check = QCheckBox("Type live to cursor while recording")
+        self.streaming_paste_check.setStyleSheet("color: #e0e0ff;")
+        self.streaming_paste_check.stateChanged.connect(self._on_streaming_paste_changed)
+        layout.addWidget(self.streaming_paste_check)
+
+        # Info label for live typing
+        streaming_paste_info = QLabel("Types transcribed text character-by-character wherever your cursor is.\nFinal transcription will replace the streamed text.")
+        streaming_paste_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_paste_info.setWordWrap(True)
+        layout.addWidget(streaming_paste_info)
+
+        # Typing speed slider
+        layout.addSpacing(8)
+        typing_speed_label = QLabel("Typing Speed:")
+        typing_speed_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(typing_speed_label)
+
+        typing_speed_layout = QHBoxLayout()
+        self.typing_speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.typing_speed_slider.setMinimum(0)  # 0ms = instant
+        self.typing_speed_slider.setMaximum(50)  # 50ms = slow typing
+        self.typing_speed_slider.setValue(20)  # Default 20ms
+        self.typing_speed_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.typing_speed_slider.setTickInterval(10)
+
+        self.typing_speed_value_label = QLabel("20ms")
+        self.typing_speed_value_label.setStyleSheet("color: #00d4ff; font-weight: bold;")
+        self.typing_speed_value_label.setMinimumWidth(50)
+
+        self.typing_speed_slider.valueChanged.connect(self._update_typing_speed_display)
+
+        typing_speed_layout.addWidget(self.typing_speed_slider)
+        typing_speed_layout.addWidget(self.typing_speed_value_label)
+        layout.addLayout(typing_speed_layout)
+
+        typing_speed_info = QLabel("Lower = faster typing. 0 = instant, 50 = slow typewriter effect.")
+        typing_speed_info.setStyleSheet("color: #808090; font-size: 10px;")
+        layout.addWidget(typing_speed_info)
 
         layout.addStretch()
         self.tabs.addTab(tab, "General")
@@ -361,6 +403,32 @@ class SettingsDialog(QDialog):
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
+    def _on_streaming_enabled_changed(self, state):
+        """Handle streaming enabled checkbox state change."""
+        # Enable/disable live typing checkbox based on streaming enabled state
+        streaming_enabled = state == Qt.CheckState.Checked.value
+        self.streaming_paste_check.setEnabled(streaming_enabled)
+        if not streaming_enabled:
+            self.streaming_paste_check.setChecked(False)
+        # Also update typing speed slider state
+        self._update_typing_speed_slider_state()
+
+    def _on_streaming_paste_changed(self, state):
+        """Handle streaming paste checkbox state change."""
+        self._update_typing_speed_slider_state()
+
+    def _update_typing_speed_slider_state(self):
+        """Update typing speed slider enabled state based on checkbox states."""
+        paste_enabled = self.streaming_paste_check.isChecked() and self.streaming_paste_check.isEnabled()
+        self.typing_speed_slider.setEnabled(paste_enabled)
+
+    def _update_typing_speed_display(self, value):
+        """Update typing speed value display."""
+        if value == 0:
+            self.typing_speed_value_label.setText("Instant")
+        else:
+            self.typing_speed_value_label.setText(f"{value}ms")
+
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -399,7 +467,19 @@ class SettingsDialog(QDialog):
             self.auto_paste_check.setChecked(settings.get('auto_paste', True))
             self.copy_clipboard_check.setChecked(settings.get('copy_clipboard', True))
             self.minimize_tray_check.setChecked(settings.get('minimize_tray', True))
-            self.streaming_enabled_check.setChecked(settings.get('streaming_enabled', config.STREAMING_ENABLED))
+            
+            # Load streaming settings
+            streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
+            self.streaming_enabled_check.setChecked(streaming_enabled)
+            self.streaming_paste_check.setChecked(settings.get('streaming_paste_enabled', False))
+            self.streaming_paste_check.setEnabled(streaming_enabled)
+            
+            # Load typing speed (stored as seconds, convert to ms for slider)
+            typing_delay = settings.get('streaming_typing_delay', 0.02)
+            typing_delay_ms = int(typing_delay * 1000)
+            self.typing_speed_slider.setValue(typing_delay_ms)
+            self._update_typing_speed_display(typing_delay_ms)
+            self._update_typing_speed_slider_state()
 
             # Load whisper engine settings
             whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
@@ -435,6 +515,10 @@ class SettingsDialog(QDialog):
             self.copy_clipboard_check.setChecked(True)
             self.minimize_tray_check.setChecked(True)
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
+            self.streaming_paste_check.setChecked(False)
+            self.streaming_paste_check.setEnabled(config.STREAMING_ENABLED)
+            self.typing_speed_slider.setValue(20)
+            self._update_typing_speed_slider_state()
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -470,6 +554,8 @@ class SettingsDialog(QDialog):
             settings['copy_clipboard'] = self.copy_clipboard_check.isChecked()
             settings['minimize_tray'] = self.minimize_tray_check.isChecked()
             settings['streaming_enabled'] = self.streaming_enabled_check.isChecked()
+            settings['streaming_paste_enabled'] = self.streaming_paste_check.isChecked()
+            settings['streaming_typing_delay'] = self.typing_speed_slider.value() / 1000.0  # Convert ms to seconds
             settings['whisper_model'] = new_whisper_model
             settings['whisper_device'] = new_device
             settings['whisper_compute_type'] = new_compute

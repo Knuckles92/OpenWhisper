@@ -404,21 +404,31 @@ class SettingsManager:
             settings = self.load_all_settings()
             return {
                 'streaming_enabled': settings.get('streaming_enabled', config.STREAMING_ENABLED),
-                'streaming_chunk_duration': settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+                'streaming_chunk_duration': settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC),
+                'streaming_paste_enabled': settings.get('streaming_paste_enabled', False),
+                'streaming_typing_delay': settings.get('streaming_typing_delay', 0.02)
             }
         except Exception as e:
             logging.warning(f"Failed to load streaming settings: {e}")
             return {
                 'streaming_enabled': config.STREAMING_ENABLED,
-                'streaming_chunk_duration': config.STREAMING_CHUNK_DURATION_SEC
+                'streaming_chunk_duration': config.STREAMING_CHUNK_DURATION_SEC,
+                'streaming_paste_enabled': False,
+                'streaming_typing_delay': 0.02
             }
 
-    def save_streaming_settings(self, enabled: bool, chunk_duration: float = None) -> None:
+    def save_streaming_settings(
+        self,
+        enabled: bool,
+        chunk_duration: float = None,
+        paste_enabled: bool = None
+    ) -> None:
         """Save streaming transcription settings.
 
         Args:
             enabled: Whether streaming transcription is enabled.
             chunk_duration: Duration of audio chunks in seconds (optional).
+            paste_enabled: Whether to type streaming text to cursor (optional).
 
         Raises:
             Exception: If saving fails.
@@ -428,8 +438,10 @@ class SettingsManager:
             settings['streaming_enabled'] = enabled
             if chunk_duration is not None:
                 settings['streaming_chunk_duration'] = chunk_duration
+            if paste_enabled is not None:
+                settings['streaming_paste_enabled'] = paste_enabled
             self.save_all_settings(settings)
-            logging.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}")
+            logging.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}, paste_enabled={paste_enabled}")
         except Exception as e:
             logging.error(f"Failed to save streaming settings: {e}")
             raise
