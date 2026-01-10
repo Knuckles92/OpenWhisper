@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QMessageBox, QFileDialog
 from config import config
 from ui_qt.main_window_qt import ModernMainWindow
 from ui_qt.overlay_qt import ModernWaveformOverlay
+from ui_qt.streaming_text_overlay import StreamingTextOverlay
 from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
@@ -38,6 +39,7 @@ class UIController(QObject):
         # Create UI components
         self.main_window = ModernMainWindow()
         self.overlay = ModernWaveformOverlay()
+        self.streaming_overlay = StreamingTextOverlay()
         self.tray_manager = SystemTrayManager(self.main_window)
 
         # State
@@ -257,23 +259,36 @@ class UIController(QObject):
             self._start_cancel_animation()
             return
 
+        # Check if streaming overlay is active (replaces waveform overlay)
+        streaming_active = self.streaming_overlay.isVisible()
+
         # Map status messages to overlay states (similar to old Tkinter app)
         # This ensures overlay visibility is automatically managed
         if "recording" in lower_status:
-            if not self.overlay.isVisible():
-                self.overlay.show_at_cursor(self.overlay.STATE_RECORDING)
-            else:
-                self.overlay.set_state(self.overlay.STATE_RECORDING)
+            # Don't show waveform overlay if streaming overlay is active
+            if not streaming_active:
+                if not self.overlay.isVisible():
+                    self.overlay.show_at_cursor(self.overlay.STATE_RECORDING)
+                else:
+                    self.overlay.set_state(self.overlay.STATE_RECORDING)
         elif "processing" in lower_status:
-            if not self.overlay.isVisible():
-                self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
+            if streaming_active:
+                # Set streaming overlay to finalizing state
+                self.set_streaming_overlay_finalizing()
             else:
-                self.overlay.set_state(self.overlay.STATE_PROCESSING)
+                if not self.overlay.isVisible():
+                    self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
+                else:
+                    self.overlay.set_state(self.overlay.STATE_PROCESSING)
         elif "transcribing" in lower_status:
-            if not self.overlay.isVisible():
-                self.overlay.show_at_cursor(self.overlay.STATE_TRANSCRIBING)
+            if streaming_active:
+                # Keep streaming overlay in finalizing state
+                self.set_streaming_overlay_finalizing()
             else:
-                self.overlay.set_state(self.overlay.STATE_TRANSCRIBING)
+                if not self.overlay.isVisible():
+                    self.overlay.show_at_cursor(self.overlay.STATE_TRANSCRIBING)
+                else:
+                    self.overlay.set_state(self.overlay.STATE_TRANSCRIBING)
         elif "STT Enabled" in status:
             if not self.overlay.isVisible():
                 self.overlay.show_at_cursor(self.overlay.STATE_STT_ENABLE)
@@ -285,8 +300,9 @@ class UIController(QObject):
             else:
                 self.overlay.set_state(self.overlay.STATE_STT_DISABLE)
         elif any(keyword in lower_status for keyword in ["complete", "ready", "failed", "error"]):
-            # Hide overlay
+            # Hide both overlays
             self.hide_overlay()
+            self.hide_streaming_overlay()
 
     def update_audio_levels(self, levels: List[float]):
         """Update audio level display."""
@@ -311,6 +327,32 @@ class UIController(QObject):
             self.hide_overlay()
         else:
             self.show_overlay()
+
+    # Streaming text overlay methods
+    def show_streaming_overlay(self):
+        """Show the streaming text overlay near cursor."""
+        self.streaming_overlay.clear_text()
+        self.streaming_overlay.show_at_cursor()
+        self.logger.debug("Streaming overlay shown")
+
+    def update_streaming_text(self, text: str, is_final: bool):
+        """Update the streaming text display.
+
+        Args:
+            text: The transcription text chunk
+            is_final: Whether this chunk is finalized
+        """
+        self.streaming_overlay.update_streaming_text(text, is_final)
+
+    def hide_streaming_overlay(self):
+        """Hide the streaming text overlay with animation."""
+        if self.streaming_overlay.isVisible():
+            self.streaming_overlay.hide_with_animation()
+            self.logger.debug("Streaming overlay hiding")
+
+    def set_streaming_overlay_finalizing(self):
+        """Set the streaming overlay to finalizing state."""
+        self.streaming_overlay.set_state(self.streaming_overlay.STATE_FINALIZING)
 
     def _on_test_overlay_requested(self, state: str):
         """Handle test overlay state request from menu."""
@@ -526,7 +568,14 @@ class UIController(QObject):
             self.overlay.close()
         except Exception as e:
             self.logger.debug(f"Error closing overlay: {e}")
-        
+
+        # Cleanup streaming overlay
+        try:
+            if hasattr(self, 'streaming_overlay'):
+                self.streaming_overlay.cleanup()
+        except Exception as e:
+            self.logger.debug(f"Error closing streaming overlay: {e}")
+
         # Hide and cleanup system tray
         try:
             self.tray_manager.hide()

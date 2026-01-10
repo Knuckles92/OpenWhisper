@@ -63,7 +63,13 @@ class AppConfig:
     WAVEFORM_ACCENT_COLOR: str = "#00d4ff"
     WAVEFORM_SECONDARY_COLOR: str = "#0099cc"
     WAVEFORM_TEXT_COLOR: str = "#ffffff"
-    
+
+    # Streaming text overlay settings
+    STREAMING_OVERLAY_WIDTH: int = 450
+    STREAMING_OVERLAY_MIN_HEIGHT: int = 100
+    STREAMING_OVERLAY_MAX_HEIGHT: int = 300
+    STREAMING_OVERLAY_FONT_SIZE: int = 12
+
     # Timing settings
     HOTKEY_DEBOUNCE_MS: int = 300
     OVERLAY_HIDE_DELAY_MS: int = 1500
