@@ -156,6 +156,7 @@ class ApplicationController(QObject):
     recording_state_changed = pyqtSignal(bool)  # True = started, False = stopped
     partial_transcription = pyqtSignal(str, bool)  # (text, is_final)
     streaming_text_update = pyqtSignal(str, bool)  # (text, is_final) for streaming overlay
+    streaming_overlay_show = pyqtSignal()  # Signal to show streaming overlay (thread-safe)
     streaming_overlay_hide = pyqtSignal()  # Signal to hide streaming overlay
 
     def __init__(self, ui_controller: UIController):
@@ -326,6 +327,7 @@ class ApplicationController(QObject):
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.partial_transcription.connect(self.ui_controller.main_window.set_partial_transcription)
         self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
+        self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
 
     def _on_stt_state_changed(self, enabled: bool):
@@ -377,8 +379,9 @@ class ApplicationController(QObject):
                 logging.info("Streaming transcription started")
 
                 # Show streaming overlay instead of waveform when paste mode is enabled
+                # Use signal for thread-safe UI update (recording can be triggered via hotkey thread)
                 if self._streaming_paste_enabled:
-                    self.ui_controller.show_streaming_overlay()
+                    self.streaming_overlay_show.emit()
 
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(True)

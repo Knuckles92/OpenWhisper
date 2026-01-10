@@ -385,6 +385,11 @@ class UIController(QObject):
         """Show the cancel animation and schedule hide."""
         self.cancel_animation_timer.stop()
 
+        # Hide streaming overlay immediately if visible
+        if self.streaming_overlay.isVisible():
+            self.streaming_overlay.hide()  # Immediate hide, no animation for cancel
+            self.streaming_overlay.set_state(self.streaming_overlay.STATE_IDLE)
+
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
         else:

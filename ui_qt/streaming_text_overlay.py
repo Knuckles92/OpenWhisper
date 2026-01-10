@@ -70,6 +70,9 @@ class StreamingTextOverlay(QWidget):
         self._fade_animation = QPropertyAnimation(self._opacity_effect, b"opacity")
         self._fade_animation.setDuration(200)
         self._fade_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        # Connect finished signal once, use flag to track fade direction
+        self._is_fading_out = False
+        self._fade_animation.finished.connect(self._on_fade_animation_finished)
 
         # Setup UI
         self._setup_ui()
@@ -266,6 +269,7 @@ class StreamingTextOverlay(QWidget):
 
         # Fade in
         self._fade_animation.stop()
+        self._is_fading_out = False
         self._opacity_effect.setOpacity(0.0)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
@@ -276,18 +280,21 @@ class StreamingTextOverlay(QWidget):
 
     def hide_with_animation(self):
         """Hide the overlay with fade-out animation."""
+        if self._is_fading_out:
+            return  # Already fading out
         self._fade_animation.stop()
+        self._is_fading_out = True
         self._fade_animation.setStartValue(self._opacity_effect.opacity())
         self._fade_animation.setEndValue(0.0)
-        self._fade_animation.finished.connect(self._on_fade_out_finished)
         self._fade_animation.start()
 
-    def _on_fade_out_finished(self):
-        """Called when fade-out animation completes."""
-        self._fade_animation.finished.disconnect(self._on_fade_out_finished)
-        self.hide()
-        self.set_state(self.STATE_IDLE)
-        self.hidden.emit()
+    def _on_fade_animation_finished(self):
+        """Called when any fade animation completes."""
+        if self._is_fading_out:
+            self._is_fading_out = False
+            self.hide()
+            self.set_state(self.STATE_IDLE)
+            self.hidden.emit()
 
     def set_state(self, state: str):
         """Set the overlay state.
@@ -316,11 +323,12 @@ class StreamingTextOverlay(QWidget):
             self.logger.debug(f"Streaming overlay state changed to: {state}")
 
     def clear_text(self):
-        """Clear all accumulated text."""
+        """Clear all accumulated text and reset state for new session."""
         self._text_chunks = []
         self._current_partial = ""
         self._text_label.setText("")
         self.setFixedHeight(self.min_height)
+        self._is_fading_out = False  # Reset fade state for new session
         self.logger.debug("Streaming text cleared")
 
     def get_accumulated_text(self) -> str:
