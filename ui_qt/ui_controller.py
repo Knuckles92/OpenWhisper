@@ -330,9 +330,9 @@ class UIController(QObject):
 
     # Streaming text overlay methods
     def show_streaming_overlay(self):
-        """Show the streaming text overlay near cursor."""
+        """Show the streaming text overlay at saved position or screen center."""
         self.streaming_overlay.clear_text()
-        self.streaming_overlay.show_at_cursor()
+        self.streaming_overlay.show_overlay()
         self.logger.debug("Streaming overlay shown")
 
     def update_streaming_text(self, text: str, is_final: bool):

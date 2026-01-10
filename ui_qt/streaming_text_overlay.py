@@ -5,12 +5,13 @@ Replaces the fragile keyboard simulation approach with a clean popup.
 """
 import logging
 import time
-from typing import Optional, List
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QGraphicsOpacityEffect
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal
+from typing import Optional, List, Tuple
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QGraphicsOpacityEffect, QApplication
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal, QPoint
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QCursor, QPainterPath
 
 from config import config
+from services.settings import settings_manager
 
 
 class StreamingTextOverlay(QWidget):
@@ -53,6 +54,13 @@ class StreamingTextOverlay(QWidget):
         self.current_state = self.STATE_IDLE
         self._text_chunks: List[str] = []  # Accumulated finalized chunks
         self._current_partial: str = ""  # Current non-finalized text
+
+        # Drag state
+        self._drag_position: Optional[QPoint] = None
+        self._is_dragging = False
+
+        # Set cursor to indicate draggable
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         # Animation
         self._animation_time = 0.0
@@ -344,3 +352,133 @@ class StreamingTextOverlay(QWidget):
         self._animation_timer.stop()
         self._fade_animation.stop()
         self.close()
+
+    # -------------------------------------------------------------------------
+    # Drag Functionality
+    # -------------------------------------------------------------------------
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for dragging."""
+        if self._is_dragging and event.buttons() == Qt.MouseButton.LeftButton and self._drag_position:
+            self.move(event.globalPosition().toPoint() - self._drag_position)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to end drag and save position."""
+        if event.button() == Qt.MouseButton.LeftButton and self._is_dragging:
+            self._is_dragging = False
+            self._drag_position = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self._save_position()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    # -------------------------------------------------------------------------
+    # Position Management
+    # -------------------------------------------------------------------------
+
+    def _save_position(self):
+        """Save current position to settings."""
+        try:
+            pos = self.pos()
+            settings_manager.save_streaming_overlay_position(pos.x(), pos.y())
+            self.logger.debug(f"Streaming overlay position saved: {pos.x()}, {pos.y()}")
+        except Exception as e:
+            self.logger.warning(f"Failed to save streaming overlay position: {e}")
+
+    def _get_screen_center(self) -> QPoint:
+        """Get the center position of the primary screen.
+
+        Returns:
+            QPoint at screen center, adjusted for overlay size.
+        """
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen_geo = screen.availableGeometry()
+            center_x = screen_geo.center().x() - self.width() // 2
+            center_y = screen_geo.center().y() - self.height() // 2
+            return QPoint(center_x, center_y)
+        # Fallback if no screen detected
+        return QPoint(100, 100)
+
+    def _validate_position(self, x: int, y: int) -> Tuple[int, int]:
+        """Validate position is within screen bounds.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+
+        Returns:
+            Tuple of validated (x, y) coordinates.
+        """
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen_geo = screen.availableGeometry()
+            # Ensure at least part of the overlay is visible
+            # Clamp x to keep at least 100px visible
+            x = max(screen_geo.left() - self.width() + 100,
+                    min(x, screen_geo.right() - 100))
+            # Clamp y to keep at least 50px visible
+            y = max(screen_geo.top(),
+                    min(y, screen_geo.bottom() - 50))
+        return (x, y)
+
+    def _restore_position(self) -> bool:
+        """Restore position from settings.
+
+        Returns:
+            True if position was restored, False if using default.
+        """
+        try:
+            position = settings_manager.load_streaming_overlay_position()
+            if position:
+                x, y = self._validate_position(position['x'], position['y'])
+                self.move(x, y)
+                self.logger.debug(f"Restored streaming overlay position: {x}, {y}")
+                return True
+        except Exception as e:
+            self.logger.warning(f"Failed to restore streaming overlay position: {e}")
+        return False
+
+    def show_overlay(self, state: Optional[str] = None):
+        """Show overlay at saved position or screen center.
+
+        Args:
+            state: Optional state to set. Defaults to STREAMING.
+        """
+        # Try to restore saved position, otherwise use screen center
+        if not self._restore_position():
+            # No saved position - use screen center
+            center_pos = self._get_screen_center()
+            self.move(center_pos)
+            self.logger.debug(f"No saved position, using screen center: {center_pos.x()}, {center_pos.y()}")
+
+        # Set state
+        if state is not None:
+            self.set_state(state)
+        elif self.current_state == self.STATE_IDLE:
+            self.set_state(self.STATE_STREAMING)
+
+        # Fade in
+        self._fade_animation.stop()
+        self._is_fading_out = False
+        self._opacity_effect.setOpacity(0.0)
+        self._fade_animation.setStartValue(0.0)
+        self._fade_animation.setEndValue(1.0)
+        self._fade_animation.start()
+
+        self.show()
+        self.raise_()

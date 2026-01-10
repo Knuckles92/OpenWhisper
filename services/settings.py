@@ -394,6 +394,46 @@ class SettingsManager:
             logging.error(f"Failed to save window geometry: {e}")
             raise
 
+    def load_streaming_overlay_position(self) -> Optional[Dict[str, int]]:
+        """Load the saved streaming overlay position.
+
+        Returns:
+            Dictionary with x, y keys, or None if not saved.
+        """
+        try:
+            settings = self.load_all_settings()
+            position = settings.get('streaming_overlay_position')
+            if position and isinstance(position, dict):
+                # Validate required keys exist
+                required_keys = {'x', 'y'}
+                if required_keys.issubset(position.keys()):
+                    return position
+        except Exception as e:
+            logging.warning(f"Failed to load streaming overlay position: {e}")
+        return None
+
+    def save_streaming_overlay_position(self, x: int, y: int) -> None:
+        """Save the streaming overlay position.
+
+        Args:
+            x: Overlay x position.
+            y: Overlay y position.
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            settings['streaming_overlay_position'] = {
+                'x': x,
+                'y': y
+            }
+            self.save_all_settings(settings)
+            logging.debug(f"Streaming overlay position saved: {x}, {y}")
+        except Exception as e:
+            logging.error(f"Failed to save streaming overlay position: {e}")
+            raise
+
     def load_streaming_settings(self) -> Dict[str, Any]:
         """Load streaming transcription settings.
 
