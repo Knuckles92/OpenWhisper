@@ -497,6 +497,14 @@ class SettingsDialog(QDialog):
             new_audio_device = self.audio_device_combo.currentData()
             audio_device_changed = old_audio_device != new_audio_device
 
+            # Check if streaming settings changed
+            old_streaming_enabled = settings.get('streaming_enabled', False)
+            old_streaming_paste = settings.get('streaming_paste_enabled', False)
+            streaming_settings_changed = (
+                old_streaming_enabled != self.streaming_enabled_check.isChecked() or
+                old_streaming_paste != self.streaming_paste_check.isChecked()
+            )
+
             # Update with new values
             settings['selected_model'] = model_internal
             settings['auto_paste'] = self.auto_paste_check.isChecked()
@@ -526,6 +534,7 @@ class SettingsDialog(QDialog):
             # Emit signal with change flags
             settings['_whisper_settings_changed'] = whisper_settings_changed
             settings['_audio_device_changed'] = audio_device_changed
+            settings['_streaming_settings_changed'] = streaming_settings_changed
             self.settings_changed.emit(settings)
 
             self.accept()

@@ -233,6 +233,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
         self.ui_controller.on_audio_device_changed = self.change_audio_device
+        self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
 
     def update_hotkeys(self, hotkeys: Dict[str, str]):
         """Update application hotkeys."""
@@ -319,6 +320,59 @@ class ApplicationController(QObject):
             logging.error(f"Failed to setup streaming: {e}")
             self._streaming_enabled = False
             self._streaming_paste_enabled = False
+
+    def reconfigure_streaming(self):
+        """Reconfigure streaming transcriber based on current settings.
+        
+        Called when streaming settings are changed in the Settings Dialog.
+        Dynamically creates or destroys the StreamingTranscriber without restart.
+        """
+        logging.info("Reconfiguring streaming transcription...")
+
+        # Don't reconfigure while recording
+        if self.recorder.is_recording:
+            logging.warning("Cannot reconfigure streaming while recording")
+            self.ui_controller.set_status("Stop recording before changing streaming mode")
+            return
+
+        # Cleanup existing streaming transcriber if present
+        if self.streaming_transcriber:
+            try:
+                self.streaming_transcriber.cleanup()
+                logging.info("Cleaned up existing streaming transcriber")
+            except Exception as e:
+                logging.warning(f"Error cleaning up streaming transcriber: {e}")
+            self.streaming_transcriber = None
+
+        # Load fresh streaming settings
+        try:
+            settings = settings_manager.load_all_settings()
+            self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
+            self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+
+            if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
+                chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+                self.streaming_transcriber = StreamingTranscriber(
+                    backend=self.current_backend,
+                    chunk_duration_sec=chunk_duration
+                )
+                logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste_overlay={self._streaming_paste_enabled})")
+                self.ui_controller.set_status("Streaming mode enabled")
+            else:
+                if self._streaming_enabled:
+                    logging.info("Streaming requested but not available (requires Local Whisper backend)")
+                    self.ui_controller.set_status("Streaming requires Local Whisper backend")
+                else:
+                    logging.info("Streaming transcription disabled")
+                    self.ui_controller.set_status("Streaming mode disabled")
+                self._streaming_enabled = False
+                self._streaming_paste_enabled = False
+
+        except Exception as e:
+            logging.error(f"Failed to reconfigure streaming: {e}")
+            self._streaming_enabled = False
+            self._streaming_paste_enabled = False
+            self.ui_controller.set_status("Failed to reconfigure streaming")
 
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""

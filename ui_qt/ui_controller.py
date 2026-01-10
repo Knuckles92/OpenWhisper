@@ -59,6 +59,7 @@ class UIController(QObject):
         self.on_upload_audio: Optional[Callable] = None  # Callback for audio file upload
         self.on_whisper_settings_changed: Optional[Callable] = None  # Callback for whisper engine reload
         self.on_audio_device_changed: Optional[Callable] = None  # Callback for audio input device change
+        self.on_streaming_settings_changed: Optional[Callable] = None  # Callback for streaming mode change
 
         # Timer to hide overlay after cancel animation completes
         self.cancel_animation_timer = QTimer()
@@ -458,6 +459,9 @@ class UIController(QObject):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get('audio_input_device')
                     self.on_audio_device_changed(new_device_id)
+            if settings.get('_streaming_settings_changed', False):
+                if self.on_streaming_settings_changed:
+                    self.on_streaming_settings_changed()
 
         dialog.settings_changed.connect(on_settings_changed)
         dialog.exec()
