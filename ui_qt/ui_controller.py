@@ -12,6 +12,7 @@ from config import config
 from ui_qt.main_window_qt import ModernMainWindow
 from ui_qt.overlay_qt import ModernWaveformOverlay
 from ui_qt.streaming_text_overlay import StreamingTextOverlay
+from ui_qt.caret_paste_indicator import CaretPasteIndicator
 from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
@@ -40,11 +41,13 @@ class UIController(QObject):
         self.main_window = ModernMainWindow()
         self.overlay = ModernWaveformOverlay()
         self.streaming_overlay = StreamingTextOverlay()
+        self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
 
         # State
         self.is_recording = False
         self.audio_levels: List[float] = [0.0] * 20
+        self.streaming_flow_active = False
 
         # Callbacks for external handlers
         self.on_record_start: Optional[Callable] = None
@@ -259,8 +262,9 @@ class UIController(QObject):
             self._start_cancel_animation()
             return
 
-        # Check if streaming overlay is active (replaces waveform overlay)
-        streaming_active = self.streaming_overlay.isVisible()
+        # Check if streaming flow is active (replaces waveform overlay)
+        streaming_overlay_visible = self.streaming_overlay.isVisible()
+        streaming_active = streaming_overlay_visible or self.streaming_flow_active
 
         # Map status messages to overlay states (similar to old Tkinter app)
         # This ensures overlay visibility is automatically managed
@@ -272,18 +276,22 @@ class UIController(QObject):
                 else:
                     self.overlay.set_state(self.overlay.STATE_RECORDING)
         elif "processing" in lower_status:
-            if streaming_active:
+            if streaming_overlay_visible:
                 # Set streaming overlay to finalizing state
                 self.set_streaming_overlay_finalizing()
+            elif streaming_active:
+                pass
             else:
                 if not self.overlay.isVisible():
                     self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
                 else:
                     self.overlay.set_state(self.overlay.STATE_PROCESSING)
         elif "transcribing" in lower_status:
-            if streaming_active:
+            if streaming_overlay_visible:
                 # Keep streaming overlay in finalizing state
                 self.set_streaming_overlay_finalizing()
+            elif streaming_active:
+                pass
             else:
                 if not self.overlay.isVisible():
                     self.overlay.show_at_cursor(self.overlay.STATE_TRANSCRIBING)
@@ -299,8 +307,13 @@ class UIController(QObject):
                 self.overlay.show_at_cursor(self.overlay.STATE_STT_DISABLE)
             else:
                 self.overlay.set_state(self.overlay.STATE_STT_DISABLE)
-        elif any(keyword in lower_status for keyword in ["complete", "ready", "failed", "error"]):
+        elif any(keyword in lower_status for keyword in ["ready", "failed", "error"]):
             # Hide both overlays
+            self.hide_overlay()
+            self.hide_streaming_overlay()
+            self.hide_caret_paste_indicator()
+            self.streaming_flow_active = False
+        elif "complete" in lower_status:
             self.hide_overlay()
             self.hide_streaming_overlay()
 
@@ -331,8 +344,10 @@ class UIController(QObject):
     # Streaming text overlay methods
     def show_streaming_overlay(self):
         """Show the streaming text overlay at saved position or screen center."""
+        self.streaming_flow_active = True
         self.streaming_overlay.clear_text()
         self.streaming_overlay.show_overlay()
+        self.hide_overlay()
         self.logger.debug("Streaming overlay shown")
 
     def update_streaming_text(self, text: str, is_final: bool):
@@ -353,6 +368,16 @@ class UIController(QObject):
     def set_streaming_overlay_finalizing(self):
         """Set the streaming overlay to finalizing state."""
         self.streaming_overlay.set_state(self.streaming_overlay.STATE_FINALIZING)
+
+    def show_caret_paste_indicator(self):
+        """Show the caret paste indicator."""
+        self.caret_paste_indicator.show_indicator()
+        self.logger.debug("Caret paste indicator shown")
+
+    def hide_caret_paste_indicator(self):
+        """Hide the caret paste indicator."""
+        self.caret_paste_indicator.hide_indicator()
+        self.logger.debug("Caret paste indicator hidden")
 
     def _on_test_overlay_requested(self, state: str):
         """Handle test overlay state request from menu."""
@@ -389,6 +414,8 @@ class UIController(QObject):
         if self.streaming_overlay.isVisible():
             self.streaming_overlay.hide()  # Immediate hide, no animation for cancel
             self.streaming_overlay.set_state(self.streaming_overlay.STATE_IDLE)
+        self.hide_caret_paste_indicator()
+        self.streaming_flow_active = False
 
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
@@ -580,6 +607,13 @@ class UIController(QObject):
                 self.streaming_overlay.cleanup()
         except Exception as e:
             self.logger.debug(f"Error closing streaming overlay: {e}")
+
+        try:
+            if hasattr(self, 'caret_paste_indicator'):
+                self.caret_paste_indicator.hide_indicator()
+                self.caret_paste_indicator.close()
+        except Exception as e:
+            self.logger.debug(f"Error closing caret indicator: {e}")
 
         # Hide and cleanup system tray
         try:

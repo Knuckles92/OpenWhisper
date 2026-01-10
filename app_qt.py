@@ -158,6 +158,8 @@ class ApplicationController(QObject):
     streaming_text_update = pyqtSignal(str, bool)  # (text, is_final) for streaming overlay
     streaming_overlay_show = pyqtSignal()  # Signal to show streaming overlay (thread-safe)
     streaming_overlay_hide = pyqtSignal()  # Signal to hide streaming overlay
+    caret_indicator_show = pyqtSignal()  # Signal to show caret paste indicator
+    caret_indicator_hide = pyqtSignal()  # Signal to hide caret paste indicator
 
     def __init__(self, ui_controller: UIController):
         super().__init__()
@@ -329,6 +331,8 @@ class ApplicationController(QObject):
         self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
         self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
+        self.caret_indicator_show.connect(self.ui_controller.show_caret_paste_indicator)
+        self.caret_indicator_hide.connect(self.ui_controller.hide_caret_paste_indicator)
 
     def _on_stt_state_changed(self, enabled: bool):
         """Handle STT state change on main thread."""
@@ -391,6 +395,13 @@ class ApplicationController(QObject):
 
     def stop_recording(self):
         """Stop audio recording and start transcription."""
+        if self._streaming_paste_enabled:
+            self.streaming_overlay_hide.emit()
+            settings = settings_manager.load_all_settings()
+            auto_paste = settings.get('auto_paste', True)
+            if auto_paste:
+                self.caret_indicator_show.emit()
+
         # Stop streaming first and get accumulated text
         streaming_text = ""
         if self.streaming_transcriber:
@@ -494,6 +505,7 @@ class ApplicationController(QObject):
             # Hide streaming overlay if visible (no text deletion needed!)
             if self._streaming_paste_enabled:
                 self.streaming_overlay_hide.emit()
+                self.caret_indicator_hide.emit()
 
             # Emit signal to update UI state (thread-safe for hotkey triggers)
             self.recording_state_changed.emit(False)
@@ -762,11 +774,16 @@ class ApplicationController(QObject):
         else:
             self.ui_controller.set_status("Ready")
 
+        if self._streaming_paste_enabled:
+            self.caret_indicator_hide.emit()
+
     def _on_transcription_error(self, error_message: str):
         """Handle transcription error."""
         self.ui_controller.set_status(f"Error: {error_message}")
         self.ui_controller.set_transcription(f"Error: {error_message}")
         self.ui_controller.hide_overlay()
+        if self._streaming_paste_enabled:
+            self.caret_indicator_hide.emit()
 
     def on_model_changed(self, model_name: str):
         """Handle model selection change."""
