@@ -410,14 +410,18 @@ class UIController(QObject):
     def _start_cancel_animation(self):
         """Show the cancel animation and schedule hide."""
         self.cancel_animation_timer.stop()
-
-        # Hide streaming overlay immediately if visible
-        if self.streaming_overlay.isVisible():
-            self.streaming_overlay.hide()  # Immediate hide, no animation for cancel
-            self.streaming_overlay.set_state(self.streaming_overlay.STATE_IDLE)
         self.hide_caret_paste_indicator()
+
+        # Use streaming overlay's cancel animation if it's visible
+        if self.streaming_overlay.isVisible():
+            self.streaming_overlay.show_cancel_animation()
+            self.streaming_flow_active = False
+            # Streaming overlay handles its own hide after animation
+            return
+
         self.streaming_flow_active = False
 
+        # Use waveform overlay cancel animation for non-streaming case
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
         else:
