@@ -22,6 +22,9 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
+- **Live Streaming** – Real-time transcription preview while recording (experimental)
+- **Caret Indicator** – Visual marker at cursor location when pasting
+- **Window Memory** – Remembers window position and size between sessions
 
 ## GPU Acceleration
 
@@ -31,7 +34,7 @@ For significantly faster transcription speeds with an NVIDIA GPU, install CUDA s
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). 
+With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU. 
 
 ## Installation
 
@@ -77,18 +80,20 @@ All hotkeys can be remapped in the settings.
 
 Access settings via **File > Settings** or the system tray menu. Available options:
 
-**General:** Default model, auto-paste, clipboard copy, minimize to tray behavior
+**General:** Default model, auto-paste, clipboard copy, minimize to tray, streaming transcription (experimental)
 
 **Audio:** Sample rate, channels, silence threshold, input device selection
 
 **Hotkeys:** Customize all keyboard shortcuts
 
-**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, logging
+**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging
 
 ## Requirements
 
 - Python 3.8+(3.12 recommended)
 - Windows
+
+**Note:** Caret paste indicator is Windows-only (uses Windows API).
 
 ## License
 
