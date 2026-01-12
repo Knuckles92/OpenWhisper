@@ -424,6 +424,18 @@ class MeetingController:
         """
         return meeting_storage.delete_meeting(meeting_id)
     
+    def rename_meeting(self, meeting_id: str, new_title: str) -> bool:
+        """Rename a meeting.
+        
+        Args:
+            meeting_id: Meeting ID
+            new_title: New title for the meeting
+            
+        Returns:
+            True if renamed
+        """
+        return meeting_storage.update_meeting_title(meeting_id, new_title)
+    
     def cleanup(self):
         """Clean up all resources."""
         if self.is_recording:

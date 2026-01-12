@@ -393,6 +393,8 @@ class ApplicationController(QObject):
                     meeting_window.on_stop_meeting = self._on_stop_meeting
                     meeting_window.on_load_meeting = self._on_load_meeting
                     meeting_window.on_delete_meeting = self._on_delete_meeting
+                    meeting_window.on_rename_meeting = self._on_rename_meeting
+                    meeting_window.on_get_meeting = self._on_get_meeting
                     
                     # Refresh meetings list
                     self._refresh_meeting_list()
@@ -480,6 +482,27 @@ class ApplicationController(QObject):
             self._refresh_meeting_list()
         else:
             meeting_window.set_status("Failed to delete meeting")
+
+    def _on_rename_meeting(self, meeting_id: str, new_title: str):
+        """Handle meeting rename."""
+        if self.meeting_controller is None:
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window is None:
+            return
+        
+        if self.meeting_controller.rename_meeting(meeting_id, new_title):
+            meeting_window.set_status(f"Renamed to: {new_title}")
+            self._refresh_meeting_list()
+        else:
+            meeting_window.set_status("Failed to rename meeting")
+
+    def _on_get_meeting(self, meeting_id: str):
+        """Get meeting data for context menu actions."""
+        if self.meeting_controller is None:
+            return None
+        return self.meeting_controller.get_meeting(meeting_id)
 
     def _refresh_meeting_list(self):
         """Refresh the meetings list in the meeting window."""

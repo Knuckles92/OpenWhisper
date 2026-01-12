@@ -8,10 +8,11 @@ from typing import Optional, Callable, List
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QFrame, QPushButton, QLineEdit,
-    QSplitter, QListWidget, QListWidgetItem, QScrollArea
+    QSplitter, QListWidget, QListWidgetItem, QScrollArea,
+    QMenu, QInputDialog, QFileDialog, QApplication, QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QAction, QCursor
 
 from ui_qt.widgets import (
     Card, HeaderCard, ControlPanel,
@@ -92,12 +93,19 @@ class MeetingListItem(QFrame):
     
     clicked = pyqtSignal(str)  # meeting_id
     delete_requested = pyqtSignal(str)  # meeting_id
+    rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
+    copy_transcript_requested = pyqtSignal(str)  # meeting_id
+    export_requested = pyqtSignal(str)  # meeting_id
     
     def __init__(self, meeting_id: str, title: str, date: str, 
                  duration: str, preview: str, status: str = "completed", parent=None):
         super().__init__(parent)
         self.meeting_id = meeting_id
+        self._title = title
+        self._preview = preview
         self.setObjectName("meetingListItem")
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("""
             #meetingListItem {
@@ -183,6 +191,79 @@ class MeetingListItem(QFrame):
         """Handle delete button click."""
         self.delete_requested.emit(self.meeting_id)
     
+    def _show_context_menu(self, position):
+        """Show context menu with meeting options."""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2c2c2e;
+                color: #f5f5f7;
+                border: 1px solid #3a3a3c;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                background-color: transparent;
+                padding: 8px 24px 8px 12px;
+                border-radius: 4px;
+                margin: 2px 4px;
+            }
+            QMenu::item:selected {
+                background-color: #0a84ff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #3a3a3c;
+                margin: 4px 8px;
+            }
+        """)
+        
+        # Open/View action
+        open_action = QAction("📄 Open Meeting", self)
+        open_action.triggered.connect(lambda: self.clicked.emit(self.meeting_id))
+        menu.addAction(open_action)
+        
+        menu.addSeparator()
+        
+        # Copy transcript action
+        copy_action = QAction("📋 Copy Transcript", self)
+        copy_action.triggered.connect(lambda: self.copy_transcript_requested.emit(self.meeting_id))
+        menu.addAction(copy_action)
+        
+        # Export action
+        export_action = QAction("💾 Export as Text File", self)
+        export_action.triggered.connect(lambda: self.export_requested.emit(self.meeting_id))
+        menu.addAction(export_action)
+        
+        menu.addSeparator()
+        
+        # Rename action
+        rename_action = QAction("✏️ Rename", self)
+        rename_action.triggered.connect(self._on_rename_clicked)
+        menu.addAction(rename_action)
+        
+        menu.addSeparator()
+        
+        # Delete action (styled red)
+        delete_action = QAction("🗑️ Delete Meeting", self)
+        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.meeting_id))
+        menu.addAction(delete_action)
+        
+        # Show the menu at cursor position
+        menu.exec(self.mapToGlobal(position))
+    
+    def _on_rename_clicked(self):
+        """Handle rename action."""
+        new_title, ok = QInputDialog.getText(
+            self,
+            "Rename Meeting",
+            "Enter new meeting title:",
+            QLineEdit.EchoMode.Normal,
+            self._title
+        )
+        if ok and new_title.strip():
+            self.rename_requested.emit(self.meeting_id, new_title.strip())
+    
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             # Don't emit click if clicking on delete button
@@ -197,6 +278,9 @@ class PastMeetingsSidebar(QWidget):
     
     meeting_selected = pyqtSignal(str)  # meeting_id
     meeting_delete_requested = pyqtSignal(str)  # meeting_id
+    meeting_rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
+    meeting_copy_requested = pyqtSignal(str)  # meeting_id
+    meeting_export_requested = pyqtSignal(str)  # meeting_id
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -274,6 +358,9 @@ class PastMeetingsSidebar(QWidget):
                 )
                 item.clicked.connect(self._on_meeting_clicked)
                 item.delete_requested.connect(self._on_meeting_delete)
+                item.rename_requested.connect(self._on_meeting_rename)
+                item.copy_transcript_requested.connect(self._on_meeting_copy)
+                item.export_requested.connect(self._on_meeting_export)
                 self.list_layout.insertWidget(self.list_layout.count() - 1, item)
     
     def _on_meeting_clicked(self, meeting_id: str):
@@ -281,6 +368,15 @@ class PastMeetingsSidebar(QWidget):
     
     def _on_meeting_delete(self, meeting_id: str):
         self.meeting_delete_requested.emit(meeting_id)
+    
+    def _on_meeting_rename(self, meeting_id: str, new_title: str):
+        self.meeting_rename_requested.emit(meeting_id, new_title)
+    
+    def _on_meeting_copy(self, meeting_id: str):
+        self.meeting_copy_requested.emit(meeting_id)
+    
+    def _on_meeting_export(self, meeting_id: str):
+        self.meeting_export_requested.emit(meeting_id)
 
 
 class MeetingModeWindow(QMainWindow):
@@ -291,6 +387,9 @@ class MeetingModeWindow(QMainWindow):
     meeting_stopped = pyqtSignal()
     meeting_selected = pyqtSignal(str)  # meeting_id
     meeting_delete_requested = pyqtSignal(str)  # meeting_id
+    meeting_rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
+    meeting_copy_requested = pyqtSignal(str)  # meeting_id
+    meeting_export_requested = pyqtSignal(str)  # meeting_id
     
     # States
     STATE_IDLE = "idle"
@@ -314,6 +413,8 @@ class MeetingModeWindow(QMainWindow):
         self.on_stop_meeting: Optional[Callable] = None
         self.on_load_meeting: Optional[Callable[[str], None]] = None
         self.on_delete_meeting: Optional[Callable[[str], None]] = None
+        self.on_rename_meeting: Optional[Callable[[str, str], None]] = None
+        self.on_get_meeting: Optional[Callable[[str], Optional[dict]]] = None
         
         self._setup_ui()
         self._connect_signals()
@@ -495,6 +596,9 @@ class MeetingModeWindow(QMainWindow):
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.past_meetings_sidebar.meeting_selected.connect(self._on_meeting_selected)
         self.past_meetings_sidebar.meeting_delete_requested.connect(self._on_meeting_delete_requested)
+        self.past_meetings_sidebar.meeting_rename_requested.connect(self._on_meeting_rename_requested)
+        self.past_meetings_sidebar.meeting_copy_requested.connect(self._on_meeting_copy_requested)
+        self.past_meetings_sidebar.meeting_export_requested.connect(self._on_meeting_export_requested)
     
     def _on_start_clicked(self):
         """Handle start meeting button click."""
@@ -530,7 +634,6 @@ class MeetingModeWindow(QMainWindow):
         self.logger.info(f"Meeting delete requested: {meeting_id}")
         
         # Show confirmation dialog
-        from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self,
             "Delete Meeting",
@@ -544,6 +647,81 @@ class MeetingModeWindow(QMainWindow):
                 self.on_delete_meeting(meeting_id)
             
             self.meeting_delete_requested.emit(meeting_id)
+    
+    def _on_meeting_rename_requested(self, meeting_id: str, new_title: str):
+        """Handle meeting rename request."""
+        self.logger.info(f"Meeting rename requested: {meeting_id} -> {new_title}")
+        
+        if self.on_rename_meeting:
+            self.on_rename_meeting(meeting_id, new_title)
+        
+        self.meeting_rename_requested.emit(meeting_id, new_title)
+    
+    def _on_meeting_copy_requested(self, meeting_id: str):
+        """Handle copy transcript request."""
+        self.logger.info(f"Meeting copy requested: {meeting_id}")
+        
+        # Get meeting data and copy transcript
+        if self.on_get_meeting:
+            meeting = self.on_get_meeting(meeting_id)
+            if meeting and meeting.transcript:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(meeting.transcript)
+                self.set_status("Transcript copied to clipboard!")
+                QTimer.singleShot(2000, lambda: self.set_status(
+                    "Ready to start meeting" if self._state == self.STATE_IDLE 
+                    else "Recording in progress..."
+                ))
+            else:
+                self.set_status("No transcript to copy")
+                QTimer.singleShot(2000, lambda: self.set_status("Ready to start meeting"))
+        
+        self.meeting_copy_requested.emit(meeting_id)
+    
+    def _on_meeting_export_requested(self, meeting_id: str):
+        """Handle export meeting request."""
+        self.logger.info(f"Meeting export requested: {meeting_id}")
+        
+        if self.on_get_meeting:
+            meeting = self.on_get_meeting(meeting_id)
+            if meeting:
+                # Open file save dialog
+                default_filename = f"{meeting.title.replace(' ', '_')}.txt"
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Meeting Transcript",
+                    default_filename,
+                    "Text Files (*.txt);;Markdown Files (*.md);;All Files (*.*)"
+                )
+                
+                if file_path:
+                    try:
+                        # Build export content
+                        content = f"Meeting: {meeting.title}\n"
+                        content += f"Date: {meeting.formatted_start_time}\n"
+                        content += f"Duration: {meeting.formatted_duration}\n"
+                        content += f"Status: {meeting.status}\n"
+                        content += "-" * 50 + "\n\n"
+                        content += meeting.transcript or "(No transcript available)"
+                        
+                        # Write to file
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        
+                        self.set_status(f"Exported to {file_path}")
+                        QTimer.singleShot(3000, lambda: self.set_status(
+                            "Ready to start meeting" if self._state == self.STATE_IDLE 
+                            else "Recording in progress..."
+                        ))
+                    except Exception as e:
+                        self.logger.error(f"Failed to export meeting: {e}")
+                        QMessageBox.warning(
+                            self,
+                            "Export Failed",
+                            f"Failed to export meeting:\n{str(e)}"
+                        )
+        
+        self.meeting_export_requested.emit(meeting_id)
     
     def _set_state(self, state: str):
         """Update the UI state."""
