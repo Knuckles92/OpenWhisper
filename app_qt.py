@@ -62,6 +62,7 @@ from services.recorder import AudioRecorder
 from services.hotkey_manager import HotkeyManager
 from services.settings import settings_manager
 from services.streaming_transcriber import StreamingTranscriber
+from services.meeting_controller import MeetingController
 from transcriber import TranscriptionBackend, LocalWhisperBackend, OpenAIBackend
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
@@ -180,6 +181,9 @@ class ApplicationController(QObject):
         self._streaming_enabled = False
         self._streaming_paste_enabled = False
 
+        # Meeting mode controller
+        self.meeting_controller: Optional[MeetingController] = None
+
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
 
@@ -192,6 +196,7 @@ class ApplicationController(QObject):
         self._setup_ui_callbacks()
         self._setup_audio_level_callback()
         self._setup_streaming()
+        self._setup_meeting_mode()
         self._connect_signals()
 
     def _setup_transcription_backends(self):
@@ -373,6 +378,118 @@ class ApplicationController(QObject):
             self._streaming_enabled = False
             self._streaming_paste_enabled = False
             self.ui_controller.set_status("Failed to reconfigure streaming")
+
+    def _setup_meeting_mode(self):
+        """Initialize meeting mode controller."""
+        try:
+            local_backend = self.transcription_backends.get('local_whisper')
+            if local_backend and isinstance(local_backend, LocalWhisperBackend):
+                self.meeting_controller = MeetingController(backend=local_backend)
+                
+                # Connect meeting window callbacks
+                meeting_window = self.ui_controller.get_meeting_window()
+                if meeting_window:
+                    meeting_window.on_start_meeting = self._on_start_meeting
+                    meeting_window.on_stop_meeting = self._on_stop_meeting
+                    meeting_window.on_load_meeting = self._on_load_meeting
+                    meeting_window.on_delete_meeting = self._on_delete_meeting
+                    
+                    # Refresh meetings list
+                    self._refresh_meeting_list()
+                
+                logging.info("Meeting mode initialized")
+            else:
+                logging.warning("Meeting mode requires Local Whisper backend")
+        except Exception as e:
+            logging.error(f"Failed to initialize meeting mode: {e}")
+
+    def _on_start_meeting(self):
+        """Handle start meeting from meeting window."""
+        if self.meeting_controller is None:
+            logging.error("Meeting controller not available")
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window is None:
+            return
+        
+        title = meeting_window.get_meeting_title()
+        saved_device_id = settings_manager.load_audio_input_device()
+        
+        if self.meeting_controller.start_meeting(title, saved_device_id):
+            # Set up chunk callback
+            self.meeting_controller.on_chunk_transcribed = self._on_meeting_chunk
+            meeting_window.set_status("Recording in progress...")
+        else:
+            meeting_window.set_idle()
+            meeting_window.set_status("Failed to start meeting")
+
+    def _on_stop_meeting(self):
+        """Handle stop meeting from meeting window."""
+        if self.meeting_controller is None:
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window is None:
+            return
+        
+        meeting = self.meeting_controller.stop_meeting()
+        
+        if meeting:
+            meeting_window.set_status(f"Meeting saved ({meeting.formatted_duration})")
+        else:
+            meeting_window.set_status("Meeting ended")
+        
+        meeting_window.set_idle()
+        self._refresh_meeting_list()
+
+    def _on_meeting_chunk(self, text: str):
+        """Handle transcribed chunk from meeting."""
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window:
+            meeting_window.append_transcription(text)
+
+    def _on_load_meeting(self, meeting_id: str):
+        """Handle loading a past meeting."""
+        if self.meeting_controller is None:
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window is None:
+            return
+        
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        if meeting:
+            meeting_window.set_meeting_title(meeting.title)
+            meeting_window.set_transcription(meeting.transcript)
+            meeting_window.set_status(f"Loaded: {meeting.title}")
+
+    def _on_delete_meeting(self, meeting_id: str):
+        """Handle meeting deletion."""
+        if self.meeting_controller is None:
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window is None:
+            return
+        
+        if self.meeting_controller.delete_meeting(meeting_id):
+            meeting_window.set_status("Meeting deleted")
+            meeting_window.clear_transcription()
+            meeting_window.set_meeting_title("")
+            self._refresh_meeting_list()
+        else:
+            meeting_window.set_status("Failed to delete meeting")
+
+    def _refresh_meeting_list(self):
+        """Refresh the meetings list in the meeting window."""
+        if self.meeting_controller is None:
+            return
+        
+        meeting_window = self.ui_controller.meeting_window
+        if meeting_window:
+            meetings = self.meeting_controller.get_meetings_for_display()
+            meeting_window.refresh_meetings_list(meetings)
 
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""
@@ -908,6 +1025,12 @@ class ApplicationController(QObject):
                 self.streaming_transcriber.cleanup()
         except Exception as e:
             logging.debug(f"Error during streaming transcriber cleanup: {e}")
+
+        try:
+            if self.meeting_controller:
+                self.meeting_controller.cleanup()
+        except Exception as e:
+            logging.debug(f"Error during meeting controller cleanup: {e}")
 
         try:
             self.executor.shutdown(wait=True, cancel_futures=True)

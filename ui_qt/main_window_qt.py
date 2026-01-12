@@ -233,6 +233,7 @@ class ModernMainWindow(QMainWindow):
     retranscribe_requested = pyqtSignal(str)  # Emits audio file path
     upload_audio_requested = pyqtSignal()  # Request to upload audio file
     test_overlay_requested = pyqtSignal(str)  # Emits overlay state to test
+    meeting_mode_requested = pyqtSignal()  # Request to open Meeting Mode window
 
     def __init__(self):
         """Initialize the main window."""
@@ -449,6 +450,8 @@ class ModernMainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("File")
+        file_menu.addAction("Meeting Mode...", self.open_meeting_mode)
+        file_menu.addSeparator()
         file_menu.addAction("Upload Audio File...", self.upload_audio_file)
         file_menu.addSeparator()
         file_menu.addAction("Settings", self.open_settings)
@@ -683,6 +686,11 @@ class ModernMainWindow(QMainWindow):
         """Request to upload an audio file for transcription."""
         self.logger.info("Upload audio file requested")
         self.upload_audio_requested.emit()
+
+    def open_meeting_mode(self):
+        """Open the Meeting Mode window for long-form transcription."""
+        self.logger.info("Opening Meeting Mode")
+        self.meeting_mode_requested.emit()
 
     def toggle_overlay(self):
         """Toggle the overlay visibility."""

@@ -17,6 +17,7 @@ from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
+from ui_qt.meeting.meeting_window import MeetingModeWindow
 from services.audio_processor import audio_processor
 
 
@@ -43,6 +44,7 @@ class UIController(QObject):
         self.streaming_overlay = StreamingTextOverlay()
         self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
+        self.meeting_window: Optional[MeetingModeWindow] = None
 
         # State
         self.is_recording = False
@@ -80,6 +82,7 @@ class UIController(QObject):
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_audio_requested.connect(self.open_upload_audio_dialog)
+        self.main_window.meeting_mode_requested.connect(self.open_meeting_mode)
         
         # Set up the main window's retranscribe callback
         self.main_window.on_retranscribe = self._handle_retranscribe
@@ -544,6 +547,29 @@ class UIController(QObject):
         if self.on_upload_audio:
             self.on_upload_audio(file_path)
 
+    def open_meeting_mode(self):
+        """Open the Meeting Mode window for long-form transcription."""
+        self.logger.info("Opening Meeting Mode window")
+        
+        # Create meeting window if it doesn't exist
+        if self.meeting_window is None:
+            self.meeting_window = MeetingModeWindow()
+        
+        # Show and raise the window
+        self.meeting_window.show()
+        self.meeting_window.raise_()
+        self.meeting_window.activateWindow()
+
+    def get_meeting_window(self) -> Optional[MeetingModeWindow]:
+        """Get the meeting window instance, creating it if needed.
+        
+        Returns:
+            The MeetingModeWindow instance
+        """
+        if self.meeting_window is None:
+            self.meeting_window = MeetingModeWindow()
+        return self.meeting_window
+
     def update_hotkey_display(self, hotkeys: dict):
         """
         Update the hotkey display in the main window.
@@ -629,6 +655,14 @@ class UIController(QObject):
             self.tray_manager.setParent(None)
         except Exception as e:
             self.logger.debug(f"Error hiding system tray: {e}")
+
+        # Close meeting window if open
+        try:
+            if self.meeting_window is not None:
+                self.meeting_window.close()
+                self.meeting_window = None
+        except Exception as e:
+            self.logger.debug(f"Error closing meeting window: {e}")
         
         # Close main window (force quit to bypass minimize to tray)
         try:

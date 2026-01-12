@@ -105,6 +105,12 @@ class AppConfig:
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
     STREAMING_BEAM_SIZE: int = 3  # Smaller beam size for faster processing
 
+    # Meeting mode settings
+    MEETINGS_FILE: str = "meetings.json"
+    MEETING_AUDIO_FOLDER: str = "meeting_audio"
+    MEETING_CHUNK_DURATION_SEC: float = 30.0  # Larger chunks for better quality
+    MEETING_QUEUE_SIZE: int = 20  # Larger queue for long recordings
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
