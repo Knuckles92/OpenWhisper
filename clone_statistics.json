@@ -1,0 +1,20 @@
+{
+  "repository": "Knuckles92/OpenWhisper",
+  "schema_version": 2,
+  "last_updated": null,
+  "lifetime_stats": {
+    "total_clones": 0,
+    "total_unique_cloners": 0,
+    "tracking_start_date": null,
+    "tracking_end_date": null,
+    "days_tracked": 0
+  },
+  "daily_history": {},
+  "monthly_summaries": {},
+  "last_14_days": {
+    "clones": 0,
+    "unique_cloners": 0,
+    "period_start": null,
+    "period_end": null
+  }
+}
