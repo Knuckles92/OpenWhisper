@@ -7,7 +7,7 @@ pyperclip>=1.8.2
 faster-whisper>=1.0.0
 python-dotenv>=1.0.0
 PyQt6>=6.0.0
-
+scipy>=1.10.0
 # Note: faster-whisper automatically installs transitive dependencies:
 #   - av (audio/video processing)
 #   - ctranslate2 (inference engine)

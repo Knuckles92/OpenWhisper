@@ -20,3 +20,5 @@ openwhisper_settings.json
 node_modules/*
 .cursor/worktrees.json
 .vscode/settings.json
+test_sample.mp3
+*.mp3

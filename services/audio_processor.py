@@ -99,16 +99,12 @@ class AudioProcessor:
         
         # Load audio to get duration and metadata
         try:
-            audio_data, sample_rate = self._load_audio_data(file_path)
+            audio_data, sample_rate, channels = self._load_audio_metadata(file_path)
         except Exception as e:
             raise ValueError(f"Failed to read audio file: {e}")
         
         # Calculate duration
         duration_seconds = len(audio_data) / sample_rate
-        
-        # Get channel count from the file
-        with wave.open(file_path, 'rb') as wav_file:
-            channels = wav_file.getnchannels()
         
         # Check if splitting is needed
         needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
@@ -199,44 +195,69 @@ class AudioProcessor:
             raise
     
     def _load_audio_data(self, file_path: str) -> Tuple[np.ndarray, int]:
-        """Load audio data from WAV file.
+        """Load audio data from any supported audio format using PyAV.
+        
+        Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
         
         Args:
-            file_path: Path to the WAV file.
+            file_path: Path to the audio file.
             
         Returns:
-            Tuple of (audio_data, sample_rate)
+            Tuple of (audio_data, sample_rate) where audio_data is mono int16.
         """
-        with wave.open(file_path, 'rb') as wav_file:
-            # Get audio parameters
-            frames = wav_file.getnframes()
-            sample_rate = wav_file.getframerate()
-            channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()
+        audio_data, sample_rate, _ = self._load_audio_metadata(file_path)
+        return audio_data, sample_rate
+    
+    def _load_audio_metadata(self, file_path: str) -> Tuple[np.ndarray, int, int]:
+        """Load audio data and metadata from any supported audio format using PyAV.
+        
+        Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
+        
+        Args:
+            file_path: Path to the audio file.
             
-            # Read raw audio data
-            raw_data = wav_file.readframes(frames)
-            
-            # Convert to numpy array based on sample width
-            if sample_width == 1:
-                audio_data = np.frombuffer(raw_data, dtype=np.uint8)
-                # Convert to signed 16-bit for consistency
-                audio_data = (audio_data.astype(np.int16) - 128) * 256
-            elif sample_width == 2:
-                audio_data = np.frombuffer(raw_data, dtype=np.int16)
-            elif sample_width == 4:
-                audio_data = np.frombuffer(raw_data, dtype=np.int32)
-                # Convert to 16-bit for consistency
-                audio_data = (audio_data / 65536).astype(np.int16)
-            else:
-                raise ValueError(f"Unsupported sample width: {sample_width}")
-            
-            # Handle stereo by taking the average
-            if channels == 2:
-                audio_data = audio_data.reshape(-1, 2)
-                audio_data = np.mean(audio_data, axis=1).astype(np.int16)
-            
-            return audio_data, sample_rate
+        Returns:
+            Tuple of (audio_data, sample_rate, channels) where audio_data is mono int16.
+        """
+        import av
+        
+        container = av.open(file_path)
+        
+        # Get the audio stream
+        if not container.streams.audio:
+            raise ValueError("No audio stream found in file")
+        
+        stream = container.streams.audio[0]
+        sample_rate = stream.rate
+        channels = stream.channels
+        
+        # Decode all audio frames
+        frames = []
+        for frame in container.decode(audio=0):
+            # Convert frame to numpy array (float format, planar layout)
+            arr = frame.to_ndarray()
+            frames.append(arr)
+        
+        container.close()
+        
+        if not frames:
+            raise ValueError("No audio frames found in file")
+        
+        # Concatenate all frames
+        # PyAV returns shape (channels, samples) for planar formats
+        audio_float = np.concatenate(frames, axis=1 if len(frames[0].shape) > 1 else 0)
+        
+        # Handle stereo by taking the average of channels
+        if len(audio_float.shape) > 1 and audio_float.shape[0] > 1:
+            audio_float = np.mean(audio_float, axis=0)
+        elif len(audio_float.shape) > 1:
+            audio_float = audio_float[0]  # Single channel, just flatten
+        
+        # Convert from float [-1.0, 1.0] to int16 [-32768, 32767]
+        # PyAV decodes to float32 by default
+        audio_data = (audio_float * 32767).clip(-32768, 32767).astype(np.int16)
+        
+        return audio_data, sample_rate, channels
     
     def _find_split_points(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
         """Find optimal split points in audio using silence detection.
