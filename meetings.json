@@ -1,17 +1,6 @@
 {
   "meetings": [
     {
-      "id": "284190f4-217c-4abc-8e50-677c780503cc",
-      "title": "Meeting 2026-01-11 01:37",
-      "start_time": "2026-01-11T01:37:56.408422",
-      "end_time": "2026-01-11T01:37:58.126424",
-      "duration_seconds": 1.5789569160997732,
-      "transcript": "",
-      "chunks": [],
-      "audio_files": [],
-      "status": "completed"
-    },
-    {
       "id": "7a1851c5-bdaa-473c-bee3-2ba1fc6a2a33",
       "title": "Meeting 2026-01-11 01:37",
       "start_time": "2026-01-12T23:36:22.779800",
