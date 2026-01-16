@@ -385,20 +385,22 @@ class ApplicationController(QObject):
             local_backend = self.transcription_backends.get('local_whisper')
             if local_backend and isinstance(local_backend, LocalWhisperBackend):
                 self.meeting_controller = MeetingController(backend=local_backend)
-                
-                # Connect meeting window callbacks
-                meeting_window = self.ui_controller.get_meeting_window()
-                if meeting_window:
-                    meeting_window.on_start_meeting = self._on_start_meeting
-                    meeting_window.on_stop_meeting = self._on_stop_meeting
-                    meeting_window.on_load_meeting = self._on_load_meeting
-                    meeting_window.on_delete_meeting = self._on_delete_meeting
-                    meeting_window.on_rename_meeting = self._on_rename_meeting
-                    meeting_window.on_get_meeting = self._on_get_meeting
-                    
-                    # Refresh meetings list
-                    self._refresh_meeting_list()
-                
+
+                # Connect Meeting Mode tab callbacks
+                meeting_tab = self.ui_controller.get_meeting_tab()
+                if meeting_tab:
+                    meeting_tab.on_start_meeting = self._on_start_meeting
+                    meeting_tab.on_stop_meeting = self._on_stop_meeting
+
+                # Connect sidebar meeting callbacks through ui_controller
+                self.ui_controller.on_load_meeting = self._on_load_meeting
+                self.ui_controller.on_delete_meeting = self._on_delete_meeting
+                self.ui_controller.on_rename_meeting = self._on_rename_meeting
+                self.ui_controller.on_copy_meeting = self._on_copy_meeting
+
+                # Refresh meetings list in sidebar
+                self._refresh_meeting_list()
+
                 logging.info("Meeting mode initialized")
             else:
                 logging.warning("Meeting mode requires Local Whisper backend")
@@ -406,97 +408,121 @@ class ApplicationController(QObject):
             logging.error(f"Failed to initialize meeting mode: {e}")
 
     def _on_start_meeting(self):
-        """Handle start meeting from meeting window."""
+        """Handle start meeting from Meeting Mode tab."""
         if self.meeting_controller is None:
             logging.error("Meeting controller not available")
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window is None:
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
             return
-        
-        title = meeting_window.get_meeting_title()
+
+        title = meeting_tab.get_meeting_title()
         saved_device_id = settings_manager.load_audio_input_device()
-        
+
         if self.meeting_controller.start_meeting(title, saved_device_id):
             # Set up chunk callback
             self.meeting_controller.on_chunk_transcribed = self._on_meeting_chunk
-            meeting_window.set_status("Recording in progress...")
+            meeting_tab.set_status("Recording in progress...")
+
+            # Lock tabs during meeting recording
+            from ui_qt.widgets import TabbedContentWidget
+            self.ui_controller.main_window.tabbed_content.set_recording_state(
+                True, TabbedContentWidget.TAB_MEETING_MODE
+            )
         else:
-            meeting_window.set_idle()
-            meeting_window.set_status("Failed to start meeting")
+            meeting_tab.set_idle()
+            meeting_tab.set_status("Failed to start meeting")
 
     def _on_stop_meeting(self):
-        """Handle stop meeting from meeting window."""
+        """Handle stop meeting from Meeting Mode tab."""
         if self.meeting_controller is None:
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window is None:
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
             return
-        
+
         meeting = self.meeting_controller.stop_meeting()
-        
+
         if meeting:
-            meeting_window.set_status(f"Meeting saved ({meeting.formatted_duration})")
+            meeting_tab.set_status(f"Meeting saved ({meeting.formatted_duration})")
         else:
-            meeting_window.set_status("Meeting ended")
-        
-        meeting_window.set_idle()
+            meeting_tab.set_status("Meeting ended")
+
+        meeting_tab.set_idle()
+
+        # Unlock tabs after meeting ends
+        self.ui_controller.main_window.tabbed_content.set_recording_state(False, -1)
+
         self._refresh_meeting_list()
 
     def _on_meeting_chunk(self, text: str):
         """Handle transcribed chunk from meeting."""
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window:
-            meeting_window.append_transcription(text)
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab:
+            meeting_tab.append_transcription(text)
 
     def _on_load_meeting(self, meeting_id: str):
-        """Handle loading a past meeting."""
+        """Handle loading a past meeting from sidebar."""
         if self.meeting_controller is None:
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window is None:
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
             return
-        
+
         meeting = self.meeting_controller.get_meeting(meeting_id)
         if meeting:
-            meeting_window.set_meeting_title(meeting.title)
-            meeting_window.set_transcription(meeting.transcript)
-            meeting_window.set_status(f"Loaded: {meeting.title}")
+            meeting_tab.set_meeting_title(meeting.title)
+            meeting_tab.set_transcription(meeting.transcript)
+            meeting_tab.set_status(f"Loaded: {meeting.title}")
 
     def _on_delete_meeting(self, meeting_id: str):
-        """Handle meeting deletion."""
+        """Handle meeting deletion from sidebar."""
         if self.meeting_controller is None:
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window is None:
-            return
-        
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+
         if self.meeting_controller.delete_meeting(meeting_id):
-            meeting_window.set_status("Meeting deleted")
-            meeting_window.clear_transcription()
-            meeting_window.set_meeting_title("")
+            if meeting_tab:
+                meeting_tab.set_status("Meeting deleted")
+                meeting_tab.clear_transcription()
+                meeting_tab.set_meeting_title("")
             self._refresh_meeting_list()
         else:
-            meeting_window.set_status("Failed to delete meeting")
+            if meeting_tab:
+                meeting_tab.set_status("Failed to delete meeting")
 
     def _on_rename_meeting(self, meeting_id: str, new_title: str):
-        """Handle meeting rename."""
+        """Handle meeting rename from sidebar."""
         if self.meeting_controller is None:
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window is None:
-            return
-        
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+
         if self.meeting_controller.rename_meeting(meeting_id, new_title):
-            meeting_window.set_status(f"Renamed to: {new_title}")
+            if meeting_tab:
+                meeting_tab.set_status(f"Renamed to: {new_title}")
             self._refresh_meeting_list()
         else:
-            meeting_window.set_status("Failed to rename meeting")
+            if meeting_tab:
+                meeting_tab.set_status("Failed to rename meeting")
+
+    def _on_copy_meeting(self, meeting_id: str):
+        """Handle meeting transcript copy from sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        if meeting and meeting.transcript:
+            import pyperclip
+            pyperclip.copy(meeting.transcript)
+
+            meeting_tab = self.ui_controller.get_meeting_tab()
+            if meeting_tab:
+                meeting_tab.set_status("Transcript copied to clipboard")
 
     def _on_get_meeting(self, meeting_id: str):
         """Get meeting data for context menu actions."""
@@ -505,14 +531,12 @@ class ApplicationController(QObject):
         return self.meeting_controller.get_meeting(meeting_id)
 
     def _refresh_meeting_list(self):
-        """Refresh the meetings list in the meeting window."""
+        """Refresh the meetings list in the sidebar."""
         if self.meeting_controller is None:
             return
-        
-        meeting_window = self.ui_controller.meeting_window
-        if meeting_window:
-            meetings = self.meeting_controller.get_meetings_for_display()
-            meeting_window.refresh_meetings_list(meetings)
+
+        meetings = self.meeting_controller.get_meetings_for_display()
+        self.ui_controller.refresh_meetings_list(meetings)
 
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""
