@@ -97,7 +97,7 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 ## License
 
-MIT License. Just use the thing.
+MIT License. Free to use, clone, and modify.
 
 
 
