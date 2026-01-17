@@ -111,6 +111,15 @@ class AppConfig:
     MEETING_CHUNK_DURATION_SEC: float = 30.0  # Larger chunks for better quality
     MEETING_QUEUE_SIZE: int = 20  # Larger queue for long recordings
 
+    # Meeting Insights settings
+    INSIGHTS_PROVIDERS: List[str] = None  # ["openai", "openrouter"]
+    DEFAULT_INSIGHTS_PROVIDER: str = "openai"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    DEFAULT_OPENAI_INSIGHTS_MODEL: str = "gpt-4o"
+    DEFAULT_OPENROUTER_INSIGHTS_MODEL: str = "anthropic/claude-3.5-sonnet"
+    INSIGHTS_MAX_TOKENS: int = 3000
+    INSIGHTS_TEMPERATURE: float = 0.5
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
@@ -166,6 +175,9 @@ class AppConfig:
                     'color_shift_speed': 50
                 }
             }
+
+        if self.INSIGHTS_PROVIDERS is None:
+            self.INSIGHTS_PROVIDERS = ["openai", "openrouter"]
 
 
 # Global config instance

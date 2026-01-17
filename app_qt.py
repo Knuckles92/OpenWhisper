@@ -397,6 +397,7 @@ class ApplicationController(QObject):
                 self.ui_controller.on_delete_meeting = self._on_delete_meeting
                 self.ui_controller.on_rename_meeting = self._on_rename_meeting
                 self.ui_controller.on_copy_meeting = self._on_copy_meeting
+                self.ui_controller.on_generate_insights = self._on_generate_insights
 
                 # Refresh meetings list in sidebar
                 self._refresh_meeting_list()
@@ -523,6 +524,32 @@ class ApplicationController(QObject):
             meeting_tab = self.ui_controller.get_meeting_tab()
             if meeting_tab:
                 meeting_tab.set_status("Transcript copied to clipboard")
+
+    def _on_generate_insights(self, meeting_id: str):
+        """Handle meeting insights generation request from sidebar."""
+        if self.meeting_controller is None:
+            logging.warning("Meeting controller not available for insights")
+            return
+
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        if not meeting:
+            logging.warning(f"Meeting not found: {meeting_id}")
+            return
+
+        if not meeting.transcript or not meeting.transcript.strip():
+            meeting_tab = self.ui_controller.get_meeting_tab()
+            if meeting_tab:
+                meeting_tab.set_status("No transcript available for insights")
+            return
+
+        # Open the insights dialog
+        from ui_qt.dialogs.insights_dialog import InsightsDialog
+        dialog = InsightsDialog(
+            transcript=meeting.transcript,
+            meeting_title=meeting.title,
+            parent=self.ui_controller.main_window
+        )
+        dialog.exec()
 
     def _on_get_meeting(self, meeting_id: str):
         """Get meeting data for context menu actions."""

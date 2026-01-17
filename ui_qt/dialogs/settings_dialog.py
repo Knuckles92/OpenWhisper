@@ -7,7 +7,7 @@ from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QComboBox, QCheckBox, QSpinBox,
-    QSlider, QFrame
+    QSlider, QFrame, QLineEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -68,6 +68,7 @@ class SettingsDialog(QDialog):
         self._create_general_tab()
         self._create_audio_tab()
         self._create_hotkeys_tab()
+        self._create_insights_tab()
         self._create_advanced_tab()
 
         layout.addWidget(self.tabs)
@@ -283,6 +284,178 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         self.tabs.addTab(tab, "Hotkeys")
 
+    def _create_insights_tab(self):
+        """Create insights/AI settings tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Title
+        title = QLabel("Meeting Insights")
+        title_font = QFont("Segoe UI", 12)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(title)
+
+        # Description
+        description = QLabel(
+            "Configure AI providers for generating meeting insights.\n"
+            "Right-click on any saved meeting to generate summaries, action items, or custom analysis."
+        )
+        description.setStyleSheet("color: #a0a0c0; font-size: 11px;")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        # Provider selection
+        layout.addSpacing(12)
+        provider_label = QLabel("LLM Provider:")
+        provider_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(provider_label)
+
+        self.insights_provider_combo = QComboBox()
+        self.insights_provider_combo.addItems(["OpenAI", "OpenRouter"])
+        self.insights_provider_combo.setMinimumHeight(36)
+        self.insights_provider_combo.currentIndexChanged.connect(self._on_insights_provider_changed)
+        layout.addWidget(self.insights_provider_combo)
+
+        provider_info = QLabel(
+            "OpenRouter provides access to 100+ models (Claude, Llama, Mistral, etc.)"
+        )
+        provider_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        provider_info.setWordWrap(True)
+        layout.addWidget(provider_info)
+
+        # Model selection
+        layout.addSpacing(12)
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(model_label)
+
+        self.insights_model_combo = QComboBox()
+        self.insights_model_combo.setEditable(True)  # Allow custom model names
+        self.insights_model_combo.setMinimumHeight(36)
+        self._populate_insights_models()
+        layout.addWidget(self.insights_model_combo)
+
+        model_info = QLabel("You can type a custom model name if not listed")
+        model_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        layout.addWidget(model_info)
+
+        # Separator
+        layout.addSpacing(16)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator)
+
+        # API Keys section
+        layout.addSpacing(8)
+        api_keys_title = QLabel("API Keys")
+        api_keys_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(api_keys_title)
+
+        # OpenAI API Key
+        layout.addSpacing(8)
+        openai_key_label = QLabel("OpenAI API Key:")
+        openai_key_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(openai_key_label)
+
+        self.openai_key_input = QLineEdit()
+        self.openai_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_key_input.setPlaceholderText("sk-...")
+        self.openai_key_input.setMinimumHeight(36)
+        self.openai_key_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d44;
+                color: #e0e0ff;
+                border: 1px solid #404060;
+                border-radius: 6px;
+                padding: 8px 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6366f1;
+            }
+        """)
+        layout.addWidget(self.openai_key_input)
+
+        openai_info = QLabel("Used for OpenAI provider. Also used for transcription if configured.")
+        openai_info.setStyleSheet("color: #808090; font-size: 10px;")
+        layout.addWidget(openai_info)
+
+        # OpenRouter API Key
+        layout.addSpacing(12)
+        openrouter_key_label = QLabel("OpenRouter API Key:")
+        openrouter_key_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(openrouter_key_label)
+
+        self.openrouter_key_input = QLineEdit()
+        self.openrouter_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openrouter_key_input.setPlaceholderText("sk-or-...")
+        self.openrouter_key_input.setMinimumHeight(36)
+        self.openrouter_key_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d44;
+                color: #e0e0ff;
+                border: 1px solid #404060;
+                border-radius: 6px;
+                padding: 8px 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6366f1;
+            }
+        """)
+        layout.addWidget(self.openrouter_key_input)
+
+        openrouter_info = QLabel("Get your API key at openrouter.ai")
+        openrouter_info.setStyleSheet("color: #808090; font-size: 10px;")
+        layout.addWidget(openrouter_info)
+
+        layout.addStretch()
+        self.tabs.addTab(tab, "Insights")
+
+    def _on_insights_provider_changed(self, index: int):
+        """Handle insights provider selection change."""
+        self._populate_insights_models()
+
+    def _populate_insights_models(self):
+        """Populate the insights model dropdown based on selected provider."""
+        provider_index = self.insights_provider_combo.currentIndex()
+        current_model = self.insights_model_combo.currentText()
+        
+        self.insights_model_combo.clear()
+        
+        if provider_index == 0:  # OpenAI
+            models = [
+                "gpt-4o",
+                "gpt-4o-mini", 
+                "gpt-4-turbo",
+                "gpt-4",
+                "gpt-3.5-turbo"
+            ]
+        else:  # OpenRouter
+            models = [
+                "anthropic/claude-3.5-sonnet",
+                "anthropic/claude-3-opus",
+                "openai/gpt-4o",
+                "openai/gpt-4-turbo",
+                "google/gemini-pro-1.5",
+                "meta-llama/llama-3.1-70b-instruct",
+                "mistralai/mistral-large"
+            ]
+        
+        self.insights_model_combo.addItems(models)
+        
+        # Try to restore previous selection if valid for new provider
+        if current_model:
+            index = self.insights_model_combo.findText(current_model)
+            if index >= 0:
+                self.insights_model_combo.setCurrentIndex(index)
+            else:
+                # Set to first item
+                self.insights_model_combo.setCurrentIndex(0)
+
     def _create_advanced_tab(self):
         """Create advanced settings tab."""
         tab = QWidget()
@@ -458,6 +631,30 @@ class SettingsDialog(QDialog):
                         self.audio_device_combo.setCurrentIndex(i)
                         break
 
+            # Load insights settings
+            insights_provider = settings.get('insights_provider', 'openai')
+            if insights_provider == 'openrouter':
+                self.insights_provider_combo.setCurrentIndex(1)
+            else:
+                self.insights_provider_combo.setCurrentIndex(0)
+            
+            # Populate models first, then set saved model
+            self._populate_insights_models()
+            insights_model = settings.get('insights_model', '')
+            if insights_model:
+                index = self.insights_model_combo.findText(insights_model)
+                if index >= 0:
+                    self.insights_model_combo.setCurrentIndex(index)
+                else:
+                    # Custom model - set it directly
+                    self.insights_model_combo.setCurrentText(insights_model)
+            
+            # Load API keys (if saved)
+            openai_key = settings.get('insights_openai_key', '')
+            openrouter_key = settings.get('insights_openrouter_key', '')
+            self.openai_key_input.setText(openai_key)
+            self.openrouter_key_input.setText(openrouter_key)
+
             self.logger.info("Settings loaded successfully")
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
@@ -521,6 +718,23 @@ class SettingsDialog(QDialog):
                 settings.pop('audio_input_device', None)
             else:
                 settings['audio_input_device'] = new_audio_device
+
+            # Save insights settings
+            insights_provider = 'openrouter' if self.insights_provider_combo.currentIndex() == 1 else 'openai'
+            settings['insights_provider'] = insights_provider
+            settings['insights_model'] = self.insights_model_combo.currentText()
+            
+            # Save API keys (only if provided)
+            openai_key = self.openai_key_input.text().strip()
+            openrouter_key = self.openrouter_key_input.text().strip()
+            if openai_key:
+                settings['insights_openai_key'] = openai_key
+            else:
+                settings.pop('insights_openai_key', None)
+            if openrouter_key:
+                settings['insights_openrouter_key'] = openrouter_key
+            else:
+                settings.pop('insights_openrouter_key', None)
 
             # Save to file
             settings_manager.save_all_settings(settings)

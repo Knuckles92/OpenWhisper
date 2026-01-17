@@ -486,6 +486,119 @@ class SettingsManager:
             logging.error(f"Failed to save streaming settings: {e}")
             raise
 
+    def load_insights_settings(self) -> Dict[str, Any]:
+        """Load meeting insights settings.
+
+        Returns:
+            Dictionary containing insights settings with keys:
+            - provider: LLM provider name ('openai' or 'openrouter')
+            - model: Model identifier string
+            - openai_key: OpenAI API key (if saved)
+            - openrouter_key: OpenRouter API key (if saved)
+        """
+        try:
+            settings = self.load_all_settings()
+            return {
+                'provider': settings.get('insights_provider', 'openai'),
+                'model': settings.get('insights_model', 'gpt-4o'),
+                'openai_key': settings.get('insights_openai_key', ''),
+                'openrouter_key': settings.get('insights_openrouter_key', '')
+            }
+        except Exception as e:
+            logging.warning(f"Failed to load insights settings: {e}")
+            return {
+                'provider': 'openai',
+                'model': 'gpt-4o',
+                'openai_key': '',
+                'openrouter_key': ''
+            }
+
+    def save_insights_settings(
+        self,
+        provider: str = None,
+        model: str = None,
+        openai_key: str = None,
+        openrouter_key: str = None
+    ) -> None:
+        """Save meeting insights settings.
+
+        Args:
+            provider: LLM provider name ('openai' or 'openrouter').
+            model: Model identifier string.
+            openai_key: OpenAI API key (optional).
+            openrouter_key: OpenRouter API key (optional).
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            
+            if provider is not None:
+                if provider not in ('openai', 'openrouter'):
+                    raise ValueError(f"Invalid provider: {provider}. Must be 'openai' or 'openrouter'")
+                settings['insights_provider'] = provider
+            
+            if model is not None:
+                settings['insights_model'] = model
+            
+            if openai_key is not None:
+                if openai_key:
+                    settings['insights_openai_key'] = openai_key
+                else:
+                    settings.pop('insights_openai_key', None)
+            
+            if openrouter_key is not None:
+                if openrouter_key:
+                    settings['insights_openrouter_key'] = openrouter_key
+                else:
+                    settings.pop('insights_openrouter_key', None)
+            
+            self.save_all_settings(settings)
+            logging.info(f"Insights settings saved: provider={provider}, model={model}")
+        except Exception as e:
+            logging.error(f"Failed to save insights settings: {e}")
+            raise
+
+    def get_insights_api_key(self, provider: str = None) -> Optional[str]:
+        """Get the API key for the specified or current insights provider.
+
+        This method checks both saved settings and environment variables.
+
+        Args:
+            provider: Provider name ('openai' or 'openrouter'). 
+                     Uses saved provider setting if None.
+
+        Returns:
+            API key string, or None if not found.
+        """
+        import os
+        
+        try:
+            settings = self.load_all_settings()
+            if provider is None:
+                provider = settings.get('insights_provider', 'openai')
+            
+            # First check saved settings
+            if provider == 'openai':
+                key = settings.get('insights_openai_key', '')
+                if key:
+                    return key
+                # Fall back to environment variable
+                return os.getenv('OPENAI_API_KEY')
+            elif provider == 'openrouter':
+                key = settings.get('insights_openrouter_key', '')
+                if key:
+                    return key
+                # Fall back to environment variable
+                return os.getenv('OPENROUTER_API_KEY')
+            else:
+                logging.warning(f"Unknown provider: {provider}")
+                return None
+        except Exception as e:
+            logging.error(f"Failed to get insights API key: {e}")
+            return None
+
 
 # Global settings manager instance
 settings_manager = SettingsManager() 

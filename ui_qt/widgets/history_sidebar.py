@@ -256,6 +256,7 @@ class MeetingListItemWidget(QFrame):
     delete_requested = pyqtSignal(str)  # meeting_id
     rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
     copy_transcript_requested = pyqtSignal(str)  # meeting_id
+    insights_requested = pyqtSignal(str)  # meeting_id
 
     def __init__(self, meeting_id: str, title: str, date: str,
                  duration: str, preview: str, status: str = "completed", parent=None):
@@ -394,6 +395,12 @@ class MeetingListItemWidget(QFrame):
 
         menu.addSeparator()
 
+        # Generate Insights action
+        insights_action = menu.addAction("Generate Insights...")
+        insights_action.triggered.connect(lambda: self.insights_requested.emit(self.meeting_id))
+
+        menu.addSeparator()
+
         # Rename action
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(self._on_rename_clicked)
@@ -446,6 +453,7 @@ class HistorySidebar(QWidget):
     meeting_delete_requested = pyqtSignal(str)  # Emits meeting_id
     meeting_rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
     meeting_copy_requested = pyqtSignal(str)  # Emits meeting_id
+    meeting_insights_requested = pyqtSignal(str)  # Emits meeting_id for insights generation
 
     # Mode constants
     MODE_QUICK_RECORD = 0
@@ -461,6 +469,8 @@ class HistorySidebar(QWidget):
         self._current_width = self.COLLAPSED_WIDTH
         self._current_mode = self.MODE_QUICK_RECORD
         self._meetings_data: List[dict] = []  # Cached meetings data
+        self._quick_record_lock_width: Optional[int] = None
+        self._quick_record_locked = False
 
         self._setup_ui()
         self._apply_style()
@@ -609,10 +619,53 @@ class HistorySidebar(QWidget):
             self.setMinimumWidth(self.EXPANDED_WIDTH)
             self.setMaximumWidth(self.EXPANDED_WIDTH)
             # Refresh content after expansion is complete to avoid glitches during animation
+            self._cache_quick_record_lock_width()
+            self._unlock_quick_record_layout()
             self.refresh()
         else:
             self.setMinimumWidth(self.COLLAPSED_WIDTH)
             self.setMaximumWidth(self.COLLAPSED_WIDTH)
+            self._unlock_quick_record_layout()
+
+    def _cache_quick_record_lock_width(self):
+        """Cache the quick record viewport width for smoother animations."""
+        if self._current_mode != self.MODE_QUICK_RECORD:
+            return
+
+        viewport_width = self.scroll_area.viewport().width()
+        if viewport_width > 0:
+            self._quick_record_lock_width = viewport_width
+            return
+
+        margins = self.content_widget.contentsMargins()
+        frame_width = self.scroll_area.frameWidth()
+        fallback_width = self.EXPANDED_WIDTH - margins.left() - margins.right() - (frame_width * 2)
+        self._quick_record_lock_width = max(0, fallback_width)
+
+    def _lock_quick_record_layout(self):
+        """Lock history list width during animation to avoid heavy relayout."""
+        if self._current_mode != self.MODE_QUICK_RECORD:
+            return
+
+        if self._quick_record_lock_width is None:
+            self._cache_quick_record_lock_width()
+
+        if self._quick_record_lock_width is None:
+            return
+
+        self.scroll_area.setWidgetResizable(False)
+        self.history_list_widget.setFixedWidth(self._quick_record_lock_width)
+        self._quick_record_locked = True
+
+    def _unlock_quick_record_layout(self):
+        """Restore default list sizing after the animation completes."""
+        if not self._quick_record_locked:
+            return
+
+        self.scroll_area.setWidgetResizable(True)
+        self.history_list_widget.setMinimumWidth(0)
+        self.history_list_widget.setMaximumWidth(16777215)
+        self._quick_record_locked = False
     
     def _apply_style(self):
         """Apply custom styling."""
@@ -663,6 +716,7 @@ class HistorySidebar(QWidget):
             return
         
         self._is_expanded = True
+        self._lock_quick_record_layout()
         
         # Start animation immediately - no delay
         self.animation.stop()
@@ -681,6 +735,7 @@ class HistorySidebar(QWidget):
             return
         
         self._is_expanded = False
+        self._lock_quick_record_layout()
         
         # Start animation immediately - smooth collapse
         self.animation.stop()
@@ -827,6 +882,7 @@ class HistorySidebar(QWidget):
             item.delete_requested.connect(self._on_meeting_delete_requested)
             item.rename_requested.connect(self._on_meeting_rename_requested)
             item.copy_transcript_requested.connect(self._on_meeting_copy_requested)
+            item.insights_requested.connect(self._on_meeting_insights_requested)
             self.meetings_list_layout.addWidget(item)
     
     def _on_entry_clicked(self, entry_id: str):
@@ -872,6 +928,11 @@ class HistorySidebar(QWidget):
     def _on_meeting_copy_requested(self, meeting_id: str):
         """Handle meeting copy transcript request."""
         self.meeting_copy_requested.emit(meeting_id)
+
+    def _on_meeting_insights_requested(self, meeting_id: str):
+        """Handle meeting insights generation request."""
+        self.meeting_insights_requested.emit(meeting_id)
+        self.logger.debug(f"Meeting insights requested: {meeting_id[:8]}...")
 
 
 class HistoryToggleButton(QPushButton):
@@ -960,4 +1021,3 @@ class HistoryEdgeTab(QPushButton):
                 background-color: #1c1c1e;
             }
         """)
-

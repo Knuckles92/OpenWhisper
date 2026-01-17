@@ -87,6 +87,7 @@ class UIController(QObject):
         self.main_window.history_sidebar.meeting_delete_requested.connect(self._on_sidebar_meeting_delete)
         self.main_window.history_sidebar.meeting_rename_requested.connect(self._on_sidebar_meeting_rename)
         self.main_window.history_sidebar.meeting_copy_requested.connect(self._on_sidebar_meeting_copy)
+        self.main_window.history_sidebar.meeting_insights_requested.connect(self._on_sidebar_meeting_insights)
 
         # Set up the main window's retranscribe callback
         self.main_window.on_retranscribe = self._handle_retranscribe
@@ -615,6 +616,12 @@ class UIController(QObject):
         self.logger.info(f"Sidebar: meeting copy requested: {meeting_id}")
         if hasattr(self, 'on_copy_meeting') and self.on_copy_meeting:
             self.on_copy_meeting(meeting_id)
+
+    def _on_sidebar_meeting_insights(self, meeting_id: str):
+        """Handle meeting insights generation request from sidebar."""
+        self.logger.info(f"Sidebar: meeting insights requested: {meeting_id}")
+        if hasattr(self, 'on_generate_insights') and self.on_generate_insights:
+            self.on_generate_insights(meeting_id)
 
     def update_hotkey_display(self, hotkeys: dict):
         """
