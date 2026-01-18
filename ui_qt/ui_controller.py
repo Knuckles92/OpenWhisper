@@ -621,7 +621,13 @@ class UIController(QObject):
         """Handle meeting insights generation request from sidebar."""
         self.logger.info(f"Sidebar: meeting insights requested: {meeting_id}")
         if hasattr(self, 'on_generate_insights') and self.on_generate_insights:
-            self.on_generate_insights(meeting_id)
+            self.logger.info(f"Calling on_generate_insights callback for meeting: {meeting_id}")
+            try:
+                self.on_generate_insights(meeting_id)
+            except Exception as e:
+                self.logger.error(f"Error calling on_generate_insights: {e}", exc_info=True)
+        else:
+            self.logger.warning(f"on_generate_insights callback not set (hasattr={hasattr(self, 'on_generate_insights')}, value={getattr(self, 'on_generate_insights', None)})")
 
     def update_hotkey_display(self, hotkeys: dict):
         """

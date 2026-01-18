@@ -92,7 +92,7 @@ class LLMProvider(ABC):
 class OpenAILLMProvider(LLMProvider):
     """OpenAI LLM provider for chat completions."""
     
-    DEFAULT_MODEL = "gpt-4o"
+    DEFAULT_MODEL = "gpt-5-nano"
     
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the OpenAI LLM provider.

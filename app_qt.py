@@ -527,22 +527,28 @@ class ApplicationController(QObject):
 
     def _on_generate_insights(self, meeting_id: str):
         """Handle meeting insights generation request from sidebar."""
+        logging.info(f"_on_generate_insights called with meeting_id: {meeting_id}")
+        
         if self.meeting_controller is None:
             logging.warning("Meeting controller not available for insights")
             return
 
         meeting = self.meeting_controller.get_meeting(meeting_id)
+        logging.info(f"Retrieved meeting: {meeting}")
+        
         if not meeting:
             logging.warning(f"Meeting not found: {meeting_id}")
             return
 
         if not meeting.transcript or not meeting.transcript.strip():
+            logging.warning(f"Meeting has no transcript: {meeting_id}")
             meeting_tab = self.ui_controller.get_meeting_tab()
             if meeting_tab:
                 meeting_tab.set_status("No transcript available for insights")
             return
 
         # Open the insights dialog
+        logging.info(f"Opening InsightsDialog for meeting: {meeting.title}")
         from ui_qt.dialogs.insights_dialog import InsightsDialog
         dialog = InsightsDialog(
             transcript=meeting.transcript,
@@ -550,6 +556,7 @@ class ApplicationController(QObject):
             parent=self.ui_controller.main_window
         )
         dialog.exec()
+        logging.info("InsightsDialog closed")
 
     def _on_get_meeting(self, meeting_id: str):
         """Get meeting data for context menu actions."""
