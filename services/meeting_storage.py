@@ -2,16 +2,17 @@
 Meeting Storage for persistent meeting data and auto-save.
 Manages meeting metadata, transcriptions, and audio files.
 """
-import json
+import logging
 import os
 import shutil
-import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict, field
 import uuid
+
+from config import config
+from services.database import db
 
 
 @dataclass
@@ -66,11 +67,23 @@ class MeetingEntry:
         chunks = []
         for chunk_data in chunks_data:
             if isinstance(chunk_data, dict):
+                # Handle database row format (has 'chunk_index' instead of 'index')
+                if 'chunk_index' in chunk_data and 'index' not in chunk_data:
+                    chunk_data['index'] = chunk_data.pop('chunk_index')
+                # Remove extra fields from database
+                chunk_data.pop('id', None)
+                chunk_data.pop('meeting_id', None)
                 chunks.append(MeetingChunk(**chunk_data))
             else:
                 chunks.append(chunk_data)
         
-        return cls(chunks=chunks, **data)
+        # Remove fields not in dataclass (from database)
+        data.pop('audio_files', None)  # We'll compute this from chunks
+        
+        entry = cls(chunks=chunks, **data)
+        # Rebuild audio_files from chunks
+        entry.audio_files = [c.audio_file for c in chunks if c.audio_file]
+        return entry
     
     @property
     def formatted_start_time(self) -> str:
@@ -152,66 +165,33 @@ class MeetingEntry:
 class MeetingStorage:
     """Manages persistent storage for meeting data."""
     
-    def __init__(self, 
-                 meetings_file: str = "meetings.json",
-                 audio_folder: str = "meeting_audio"):
+    def __init__(self, audio_folder: str = "meeting_audio"):
         """Initialize meeting storage.
         
         Args:
-            meetings_file: Path to the JSON file for meeting metadata
             audio_folder: Path to folder for meeting audio files
         """
-        self.meetings_file = meetings_file
         self.audio_folder = audio_folder
-        
-        self._lock = threading.Lock()
-        self._meetings: Dict[str, MeetingEntry] = {}
         self._current_meeting_id: Optional[str] = None
         
         # Ensure audio folder exists
         os.makedirs(self.audio_folder, exist_ok=True)
         
-        # Load existing meetings
-        self._load_meetings()
-        
         # Check for interrupted meetings
         self._check_interrupted_meetings()
-    
-    def _load_meetings(self) -> None:
-        """Load meetings from file."""
-        with self._lock:
-            try:
-                if os.path.exists(self.meetings_file):
-                    with open(self.meetings_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        for meeting_data in data.get('meetings', []):
-                            meeting = MeetingEntry.from_dict(meeting_data)
-                            self._meetings[meeting.id] = meeting
-                    logging.info(f"Loaded {len(self._meetings)} meetings")
-            except Exception as e:
-                logging.error(f"Failed to load meetings: {e}")
-                self._meetings = {}
-    
-    def _save_meetings(self) -> None:
-        """Save all meetings to file."""
-        try:
-            with open(self.meetings_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'meetings': [m.to_dict() for m in self._meetings.values()]
-                }, f, indent=2, ensure_ascii=False)
-            logging.debug("Meetings saved successfully")
-        except Exception as e:
-            logging.error(f"Failed to save meetings: {e}")
+        
+        logging.info(f"MeetingStorage initialized (audio: {self.audio_folder})")
     
     def _check_interrupted_meetings(self) -> None:
         """Check for meetings that were interrupted (app crash during recording)."""
-        with self._lock:
-            for meeting in self._meetings.values():
-                if meeting.status == "in_progress":
-                    # This meeting was interrupted
-                    logging.warning(f"Found interrupted meeting: {meeting.id[:8]}... ({meeting.title})")
-                    meeting.mark_interrupted(meeting.duration_seconds)
-            self._save_meetings()
+        in_progress = db.get_in_progress_meetings()
+        for meeting_data in in_progress:
+            logging.warning(f"Found interrupted meeting: {meeting_data['id'][:8]}... ({meeting_data['title']})")
+            db.mark_meeting_interrupted(
+                meeting_data['id'],
+                datetime.now().isoformat(),
+                meeting_data.get('duration_seconds', 0)
+            )
     
     def start_meeting(self, title: str = "") -> MeetingEntry:
         """Start a new meeting.
@@ -224,10 +204,9 @@ class MeetingStorage:
         """
         meeting = MeetingEntry.create(title)
         
-        with self._lock:
-            self._meetings[meeting.id] = meeting
-            self._current_meeting_id = meeting.id
-            self._save_meetings()
+        # Save to database
+        db.create_meeting(meeting.id, meeting.title, meeting.start_time)
+        self._current_meeting_id = meeting.id
         
         logging.info(f"Started meeting: {meeting.id[:8]}... ({meeting.title})")
         return meeting
@@ -242,29 +221,29 @@ class MeetingStorage:
         Returns:
             True if successful, False if no active meeting
         """
-        with self._lock:
-            if self._current_meeting_id is None:
-                logging.warning("No active meeting to add chunk to")
-                return False
-            
-            meeting = self._meetings.get(self._current_meeting_id)
-            if meeting is None:
-                logging.error("Current meeting not found in storage")
-                return False
-            
-            # Save audio chunk if provided
-            audio_file = None
-            if audio_data:
-                audio_file = self._save_audio_chunk(meeting.id, len(meeting.chunks), audio_data)
-            
-            # Add chunk to meeting
-            meeting.add_chunk(text, audio_file)
-            
-            # Auto-save after each chunk (crash safety)
-            self._save_meetings()
-            
-            logging.debug(f"Added chunk to meeting {meeting.id[:8]}...: {len(text)} chars")
-            return True
+        if self._current_meeting_id is None:
+            logging.warning("No active meeting to add chunk to")
+            return False
+        
+        # Get current chunk count for index
+        chunk_index = db.get_meeting_chunk_count(self._current_meeting_id)
+        
+        # Save audio chunk if provided
+        audio_file = None
+        if audio_data:
+            audio_file = self._save_audio_chunk(self._current_meeting_id, chunk_index, audio_data)
+        
+        # Add chunk to database
+        db.add_meeting_chunk(
+            meeting_id=self._current_meeting_id,
+            chunk_index=chunk_index,
+            text=text,
+            timestamp=datetime.now().isoformat(),
+            audio_file=audio_file
+        )
+        
+        logging.debug(f"Added chunk to meeting {self._current_meeting_id[:8]}...: {len(text)} chars")
+        return True
     
     def _save_audio_chunk(self, meeting_id: str, chunk_index: int, 
                           audio_data: bytes) -> Optional[str]:
@@ -306,22 +285,24 @@ class MeetingStorage:
         Returns:
             The completed MeetingEntry, or None if no active meeting
         """
-        with self._lock:
-            if self._current_meeting_id is None:
-                logging.warning("No active meeting to end")
-                return None
-            
-            meeting = self._meetings.get(self._current_meeting_id)
-            if meeting is None:
-                logging.error("Current meeting not found in storage")
-                return None
-            
-            meeting.complete(duration_seconds)
-            self._current_meeting_id = None
-            self._save_meetings()
-            
+        if self._current_meeting_id is None:
+            logging.warning("No active meeting to end")
+            return None
+        
+        meeting_id = self._current_meeting_id
+        
+        # Update in database
+        db.end_meeting(meeting_id, datetime.now().isoformat(), duration_seconds)
+        
+        self._current_meeting_id = None
+        
+        # Get the completed meeting
+        meeting = self.get_meeting(meeting_id)
+        
+        if meeting:
             logging.info(f"Ended meeting: {meeting.id[:8]}... (duration: {meeting.formatted_duration})")
-            return meeting
+        
+        return meeting
     
     def get_meeting(self, meeting_id: str) -> Optional[MeetingEntry]:
         """Get a meeting by ID.
@@ -332,8 +313,8 @@ class MeetingStorage:
         Returns:
             The MeetingEntry, or None if not found
         """
-        with self._lock:
-            return self._meetings.get(meeting_id)
+        data = db.get_meeting(meeting_id)
+        return MeetingEntry.from_dict(data) if data else None
     
     def get_current_meeting(self) -> Optional[MeetingEntry]:
         """Get the current active meeting.
@@ -341,10 +322,9 @@ class MeetingStorage:
         Returns:
             The current MeetingEntry, or None if no active meeting
         """
-        with self._lock:
-            if self._current_meeting_id is None:
-                return None
-            return self._meetings.get(self._current_meeting_id)
+        if self._current_meeting_id is None:
+            return None
+        return self.get_meeting(self._current_meeting_id)
     
     def get_all_meetings(self) -> List[MeetingEntry]:
         """Get all meetings sorted by start time (newest first).
@@ -352,10 +332,8 @@ class MeetingStorage:
         Returns:
             List of MeetingEntry objects
         """
-        with self._lock:
-            meetings = list(self._meetings.values())
-            meetings.sort(key=lambda m: m.start_time, reverse=True)
-            return meetings
+        meetings_data = db.get_all_meetings()
+        return [MeetingEntry.from_dict(data) for data in meetings_data]
     
     def get_meetings_for_display(self) -> List[Dict[str, str]]:
         """Get meeting data formatted for UI display.
@@ -385,27 +363,27 @@ class MeetingStorage:
         Returns:
             True if deleted, False if not found
         """
-        with self._lock:
-            if meeting_id not in self._meetings:
-                return False
-            
-            meeting = self._meetings[meeting_id]
-            
-            # Delete audio folder if it exists
-            audio_folder = os.path.join(self.audio_folder, meeting_id[:8])
-            if os.path.exists(audio_folder):
-                try:
-                    shutil.rmtree(audio_folder)
-                    logging.info(f"Deleted audio folder for meeting {meeting_id[:8]}...")
-                except Exception as e:
-                    logging.warning(f"Failed to delete audio folder: {e}")
-            
-            # Remove from storage
-            del self._meetings[meeting_id]
-            self._save_meetings()
-            
+        # Get meeting info first for logging
+        meeting = self.get_meeting(meeting_id)
+        if not meeting:
+            return False
+        
+        # Delete audio folder if it exists
+        audio_folder = os.path.join(self.audio_folder, meeting_id[:8])
+        if os.path.exists(audio_folder):
+            try:
+                shutil.rmtree(audio_folder)
+                logging.info(f"Deleted audio folder for meeting {meeting_id[:8]}...")
+            except Exception as e:
+                logging.warning(f"Failed to delete audio folder: {e}")
+        
+        # Delete from database
+        result = db.delete_meeting(meeting_id)
+        
+        if result:
             logging.info(f"Deleted meeting: {meeting_id[:8]}... ({meeting.title})")
-            return True
+        
+        return result
     
     def update_meeting_title(self, meeting_id: str, title: str) -> bool:
         """Update a meeting's title.
@@ -417,13 +395,7 @@ class MeetingStorage:
         Returns:
             True if updated, False if not found
         """
-        with self._lock:
-            if meeting_id not in self._meetings:
-                return False
-            
-            self._meetings[meeting_id].title = title
-            self._save_meetings()
-            return True
+        return db.update_meeting_title(meeting_id, title)
 
 
 # Global meeting storage instance

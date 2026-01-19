@@ -91,8 +91,15 @@ class LLMProvider(ABC):
 
 class OpenAILLMProvider(LLMProvider):
     """OpenAI LLM provider for chat completions."""
-    
+
     DEFAULT_MODEL = "gpt-5-nano"
+
+    # Models that don't support temperature parameter (reasoning models)
+    NO_TEMPERATURE_MODELS = frozenset([
+        "o1", "o1-mini", "o1-preview",
+        "o3", "o3-mini",
+        "gpt-5-nano",  # Newer lightweight model without temperature support
+    ])
     
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the OpenAI LLM provider.
@@ -147,7 +154,25 @@ class OpenAILLMProvider(LLMProvider):
         else:
             logging.debug("No OpenAI API key found for LLM provider")
             self.client = None
-    
+
+    def _model_excludes_temperature(self, model: str) -> bool:
+        """Check if a model doesn't support the temperature parameter.
+
+        Args:
+            model: The model name to check.
+
+        Returns:
+            True if temperature should be excluded for this model.
+        """
+        # Check exact match first
+        if model in self.NO_TEMPERATURE_MODELS:
+            return True
+        # Check if model name starts with any known prefix (handles versioned models)
+        for prefix in self.NO_TEMPERATURE_MODELS:
+            if model.startswith(prefix):
+                return True
+        return False
+
     def generate_completion(
         self, 
         prompt: str, 
@@ -193,15 +218,22 @@ class OpenAILLMProvider(LLMProvider):
             })
             
             logging.info(f"Generating response with OpenAI model: {model}")
-            
+
+            # Build API request parameters
+            api_params = {
+                "model": model,
+                "input": input_content,
+                "max_output_tokens": max_tokens,
+                "store": False,  # Stateless - don't persist conversation
+            }
+
+            # Only add temperature for models that support it
+            # Reasoning models (o1, o3 series) and gpt-5-nano don't support temperature
+            if not self._model_excludes_temperature(model):
+                api_params["temperature"] = temperature
+
             # Use Responses API (the new recommended API)
-            response = self.client.responses.create(
-                model=model,
-                input=input_content,
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-                store=False  # Stateless - don't persist conversation
-            )
+            response = self.client.responses.create(**api_params)
             
             if self._should_cancel:
                 raise Exception("Generation cancelled by user")

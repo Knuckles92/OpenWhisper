@@ -23,3 +23,7 @@ node_modules/*
 test_sample.mp3
 *.mp3
 meetings.json
+meetings.json.bak
+openwhisper.db
+transcription_history.json.bak
+meetings.json

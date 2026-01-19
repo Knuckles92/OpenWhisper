@@ -135,16 +135,19 @@ class MeetingTranscriber:
                         accumulated_duration = 0.0
                     
                 except queue.Empty:
-                    # Process remaining audio on stop
-                    if self._stop_requested and accumulated_audio:
-                        self._process_audio(accumulated_audio)
-                        accumulated_audio.clear()
-                        accumulated_duration = 0.0
+                    # No data available, continue waiting or exit if stop requested
                     continue
-                    
+
         except Exception as e:
             logging.error(f"Error in meeting transcription worker: {e}", exc_info=True)
         finally:
+            # ALWAYS process any remaining accumulated audio when exiting
+            if accumulated_audio:
+                logging.info(f"Processing final audio chunk: {accumulated_duration:.2f}s accumulated")
+                try:
+                    self._process_audio(accumulated_audio)
+                except Exception as e:
+                    logging.error(f"Error processing final audio chunk: {e}", exc_info=True)
             logging.info("Meeting transcription worker exiting")
     
     def _process_audio(self, audio_chunks: List[np.ndarray]):

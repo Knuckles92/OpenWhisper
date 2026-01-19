@@ -20,6 +20,7 @@ class AppConfig:
     HISTORY_FILE: str = "transcription_history.json"
     RECORDINGS_FOLDER: str = "recordings"
     MAX_SAVED_RECORDINGS: int = 3
+    DATABASE_FILE: str = "openwhisper.db"
     
     # Audio settings
     CHUNK_SIZE: int = 1024
