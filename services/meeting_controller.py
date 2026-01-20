@@ -333,49 +333,71 @@ class MeetingController:
     
     def stop_meeting(self) -> Optional[MeetingEntry]:
         """Stop the current meeting.
-        
+
         Returns:
             The completed MeetingEntry, or None if no meeting was active
         """
+        from services.settings import settings_manager
+
         if not self.is_recording:
             logging.warning("No meeting in progress")
             return None
-        
+
         logging.info("Stopping meeting...")
-        
+
         try:
             # Stop transcriber first (will process remaining audio)
             if self.transcriber:
                 self.transcriber.stop()
-            
+
             # Get recording duration
             duration = 0.0
             if self.recorder:
                 duration = self.recorder.get_recording_duration()
                 self.recorder.stop_recording()
-            
-            # End meeting in storage
-            meeting = meeting_storage.end_meeting(duration)
-            
+                # Wait for post-roll to complete so we capture all audio
+                self.recorder.wait_for_stop_completion()
+
+            # Save complete recording BEFORE cleanup clears frames
+            audio_file = None
+            if self.recorder and self.recorder.has_recording_data() and self._current_meeting:
+                try:
+                    settings = settings_manager.load_meeting_recording_settings()
+                    if settings.get('enabled', True):
+                        audio_file = meeting_storage.save_complete_recording(
+                            meeting_id=self._current_meeting.id,
+                            recorder=self.recorder
+                        )
+                        if audio_file:
+                            logging.info(f"Saved complete meeting recording: {audio_file}")
+                        else:
+                            logging.warning("Failed to save meeting recording (no data or error)")
+                except Exception as save_err:
+                    # Log error but don't fail meeting end
+                    logging.error(f"Error saving meeting recording: {save_err}")
+
+            # End meeting in storage WITH audio file path
+            meeting = meeting_storage.end_meeting(duration, audio_file=audio_file)
+
             # Cleanup
             if self.transcriber:
                 self.transcriber.cleanup()
                 self.transcriber = None
-            
+
             if self.recorder:
                 self.recorder.cleanup()
                 self.recorder = None
-            
+
             self.is_recording = False
             self._current_meeting = None
-            
+
             # Notify
             if meeting and self.on_meeting_ended:
                 self.on_meeting_ended(meeting)
-            
+
             logging.info(f"Meeting ended: {meeting.id[:8] if meeting else 'unknown'}...")
             return meeting
-            
+
         except Exception as e:
             logging.error(f"Error stopping meeting: {e}", exc_info=True)
             self.is_recording = False

@@ -16,7 +16,7 @@ from config import config
 
 
 # Schema version for future migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -112,14 +112,45 @@ class DatabaseManager:
         """Initialize database schema."""
         with self._get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
-            
-            # Set schema version if not exists
+
+            # Check and handle schema version
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
-            if cursor.fetchone() is None:
+            row = cursor.fetchone()
+
+            if row is None:
+                # New database, set current version
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
-            
+            else:
+                current_version = row[0]
+                if current_version < SCHEMA_VERSION:
+                    self._run_migrations(conn, current_version)
+
             conn.commit()
             logging.info("Database schema initialized")
+
+    def _run_migrations(self, conn, from_version: int) -> None:
+        """Run database migrations from one version to another.
+
+        Args:
+            conn: Database connection.
+            from_version: Current schema version in the database.
+        """
+        logging.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
+
+        # Migration from v1 to v2: Add audio_file column to meetings table
+        if from_version < 2:
+            try:
+                conn.execute("ALTER TABLE meetings ADD COLUMN audio_file TEXT DEFAULT NULL")
+                logging.info("Migration v1->v2: Added audio_file column to meetings table")
+            except sqlite3.OperationalError as e:
+                # Column might already exist if migration was partially completed
+                if "duplicate column name" not in str(e).lower():
+                    raise
+                logging.warning("Migration v1->v2: audio_file column already exists")
+
+        # Update schema version
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        logging.info(f"Database migrated to schema version {SCHEMA_VERSION}")
     
     def _migrate_from_json(self) -> None:
         """Migrate existing JSON data to SQLite on first run."""
@@ -404,20 +435,22 @@ class DatabaseManager:
             
             conn.commit()
     
-    def end_meeting(self, meeting_id: str, end_time: str, duration_seconds: float) -> None:
+    def end_meeting(self, meeting_id: str, end_time: str, duration_seconds: float,
+                    audio_file: Optional[str] = None) -> None:
         """Mark a meeting as completed.
-        
+
         Args:
             meeting_id: Meeting ID.
             end_time: ISO format end time.
             duration_seconds: Total meeting duration.
+            audio_file: Optional path to the complete meeting audio recording.
         """
         with self._get_connection() as conn:
             conn.execute("""
-                UPDATE meetings 
-                SET end_time = ?, duration_seconds = ?, status = 'completed'
+                UPDATE meetings
+                SET end_time = ?, duration_seconds = ?, status = 'completed', audio_file = ?
                 WHERE id = ?
-            """, (end_time, duration_seconds, meeting_id))
+            """, (end_time, duration_seconds, audio_file, meeting_id))
             conn.commit()
     
     def mark_meeting_interrupted(self, meeting_id: str, end_time: str, duration_seconds: float) -> None:
@@ -529,10 +562,10 @@ class DatabaseManager:
     
     def get_meeting_chunk_count(self, meeting_id: str) -> int:
         """Get the number of chunks for a meeting.
-        
+
         Args:
             meeting_id: Meeting ID.
-            
+
         Returns:
             Number of chunks.
         """
@@ -542,6 +575,23 @@ class DatabaseManager:
                 (meeting_id,)
             )
             return cursor.fetchone()[0]
+
+    def get_meeting_audio_file(self, meeting_id: str) -> Optional[str]:
+        """Get the audio file path for a meeting.
+
+        Args:
+            meeting_id: Meeting ID.
+
+        Returns:
+            Audio file path, or None if not found or no audio file.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT audio_file FROM meetings WHERE id = ?",
+                (meeting_id,)
+            )
+            row = cursor.fetchone()
+            return row['audio_file'] if row else None
     
     def close(self) -> None:
         """Close the database connection for the current thread."""

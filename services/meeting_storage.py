@@ -5,14 +5,19 @@ Manages meeting metadata, transcriptions, and audio files.
 import logging
 import os
 import shutil
+import wave
+import numpy as np
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from dataclasses import dataclass, asdict, field
 import uuid
 
 from config import config
 from services.database import db
+
+if TYPE_CHECKING:
+    from services.recorder import AudioRecorder
 
 
 @dataclass
@@ -35,6 +40,7 @@ class MeetingEntry:
     transcript: str  # Full accumulated transcript
     chunks: List[MeetingChunk] = field(default_factory=list)
     audio_files: List[str] = field(default_factory=list)  # Paths to audio chunk files
+    audio_file: Optional[str] = None  # Path to complete meeting recording
     status: str = "in_progress"  # "in_progress", "completed", "interrupted"
     
     @classmethod
@@ -49,6 +55,7 @@ class MeetingEntry:
             transcript="",
             chunks=[],
             audio_files=[],
+            audio_file=None,
             status="in_progress"
         )
     
@@ -76,10 +83,14 @@ class MeetingEntry:
                 chunks.append(MeetingChunk(**chunk_data))
             else:
                 chunks.append(chunk_data)
-        
+
         # Remove fields not in dataclass (from database)
         data.pop('audio_files', None)  # We'll compute this from chunks
-        
+
+        # Ensure audio_file is set (may come from database as None)
+        if 'audio_file' not in data:
+            data['audio_file'] = None
+
         entry = cls(chunks=chunks, **data)
         # Rebuild audio_files from chunks
         entry.audio_files = [c.audio_file for c in chunks if c.audio_file]
@@ -164,23 +175,27 @@ class MeetingEntry:
 
 class MeetingStorage:
     """Manages persistent storage for meeting data."""
-    
-    def __init__(self, audio_folder: str = "meeting_audio"):
+
+    def __init__(self, audio_folder: str = "meeting_audio",
+                 recordings_folder: str = None):
         """Initialize meeting storage.
-        
+
         Args:
-            audio_folder: Path to folder for meeting audio files
+            audio_folder: Path to folder for meeting audio chunk files
+            recordings_folder: Path to folder for complete meeting recordings
         """
         self.audio_folder = audio_folder
+        self.recordings_folder = recordings_folder or config.MEETING_RECORDINGS_FOLDER
         self._current_meeting_id: Optional[str] = None
-        
-        # Ensure audio folder exists
+
+        # Ensure audio folders exist
         os.makedirs(self.audio_folder, exist_ok=True)
-        
+        os.makedirs(self.recordings_folder, exist_ok=True)
+
         # Check for interrupted meetings
         self._check_interrupted_meetings()
-        
-        logging.info(f"MeetingStorage initialized (audio: {self.audio_folder})")
+
+        logging.info(f"MeetingStorage initialized (audio: {self.audio_folder}, recordings: {self.recordings_folder})")
     
     def _check_interrupted_meetings(self) -> None:
         """Check for meetings that were interrupted (app crash during recording)."""
@@ -276,40 +291,168 @@ class MeetingStorage:
             logging.error(f"Failed to save audio chunk: {e}")
             return None
     
-    def end_meeting(self, duration_seconds: float) -> Optional[MeetingEntry]:
+    def end_meeting(self, duration_seconds: float,
+                    audio_file: Optional[str] = None) -> Optional[MeetingEntry]:
         """End the current meeting.
-        
+
         Args:
             duration_seconds: Total meeting duration
-            
+            audio_file: Optional path to the complete meeting audio recording
+
         Returns:
             The completed MeetingEntry, or None if no active meeting
         """
         if self._current_meeting_id is None:
             logging.warning("No active meeting to end")
             return None
-        
+
         meeting_id = self._current_meeting_id
-        
-        # Update in database
-        db.end_meeting(meeting_id, datetime.now().isoformat(), duration_seconds)
-        
+
+        # Update in database (with audio_file if provided)
+        db.end_meeting(meeting_id, datetime.now().isoformat(), duration_seconds, audio_file)
+
         self._current_meeting_id = None
-        
+
         # Get the completed meeting
         meeting = self.get_meeting(meeting_id)
-        
+
         if meeting:
-            logging.info(f"Ended meeting: {meeting.id[:8]}... (duration: {meeting.formatted_duration})")
-        
+            audio_info = f", audio: {audio_file}" if audio_file else ""
+            logging.info(f"Ended meeting: {meeting.id[:8]}... (duration: {meeting.formatted_duration}{audio_info})")
+
         return meeting
     
+    def save_complete_recording(self, meeting_id: str, recorder: 'AudioRecorder',
+                                 max_recordings: int = None) -> Optional[str]:
+        """Save the complete recording from the recorder to a WAV file.
+
+        Args:
+            meeting_id: Meeting ID for the filename
+            recorder: AudioRecorder instance with recorded frames
+            max_recordings: Maximum recordings to keep (for rotation). Uses config default if None.
+
+        Returns:
+            Relative path to saved file, or None if failed or no data
+        """
+        from services.settings import settings_manager
+
+        if not recorder or not recorder.has_recording_data():
+            logging.warning("No recording data to save for meeting")
+            return None
+
+        # Get max recordings from settings if not provided
+        if max_recordings is None:
+            settings = settings_manager.load_meeting_recording_settings()
+            max_recordings = settings.get('max_recordings', config.MAX_MEETING_RECORDINGS)
+
+        try:
+            # Rotate old recordings if needed
+            self._rotate_recordings(max_recordings)
+
+            # Generate filename: meeting_YYYYMMDD_HHMMSS_{id[:8]}.wav
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"meeting_{timestamp}_{meeting_id[:8]}.wav"
+            file_path = os.path.join(self.recordings_folder, filename)
+
+            # Check disk space (warn if less than 2x estimated file size)
+            estimated_size = self._estimate_recording_size(recorder)
+            self._check_disk_space(file_path, estimated_size * 2)
+
+            # Get a snapshot of frames while holding the callback lock
+            with recorder._callback_lock:
+                frames_to_write = list(recorder.frames)
+
+            if not frames_to_write:
+                logging.warning("No frames to write for meeting recording")
+                return None
+
+            # Write WAV file
+            with wave.open(file_path, 'wb') as wf:
+                wf.setnchannels(recorder.channels)
+                wf.setsampwidth(np.dtype(recorder.dtype).itemsize)
+                wf.setframerate(recorder.rate)
+                wf.writeframes(b''.join(frames_to_write))
+
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            logging.info(f"Saved complete meeting recording: {filename} ({file_size_mb:.1f} MB)")
+
+            return filename
+
+        except Exception as e:
+            logging.error(f"Failed to save complete meeting recording: {e}")
+            return None
+
+    def _estimate_recording_size(self, recorder: 'AudioRecorder') -> int:
+        """Estimate the size of the recording in bytes.
+
+        Args:
+            recorder: AudioRecorder instance
+
+        Returns:
+            Estimated size in bytes
+        """
+        if not recorder.frames:
+            return 0
+        total_bytes = sum(len(frame) for frame in recorder.frames)
+        # Add WAV header overhead (~44 bytes)
+        return total_bytes + 44
+
+    def _check_disk_space(self, file_path: str, required_bytes: int) -> None:
+        """Check if there's enough disk space for the file.
+
+        Args:
+            file_path: Path where the file will be saved
+            required_bytes: Required space in bytes
+
+        Logs a warning if space is low but does not raise an exception.
+        """
+        try:
+            folder = os.path.dirname(file_path) or '.'
+            stat = os.statvfs(folder)
+            free_bytes = stat.f_frsize * stat.f_bavail
+            if free_bytes < required_bytes:
+                required_mb = required_bytes / (1024 * 1024)
+                free_mb = free_bytes / (1024 * 1024)
+                logging.warning(f"Low disk space for meeting recording. "
+                               f"Required: ~{required_mb:.1f} MB, Available: {free_mb:.1f} MB")
+        except Exception as e:
+            logging.debug(f"Could not check disk space: {e}")
+
+    def _rotate_recordings(self, max_recordings: int) -> None:
+        """Delete oldest recordings if exceeding the maximum count.
+
+        Args:
+            max_recordings: Maximum number of recordings to keep
+        """
+        try:
+            # Get all WAV files in the recordings folder
+            recordings = []
+            for filename in os.listdir(self.recordings_folder):
+                if filename.startswith('meeting_') and filename.endswith('.wav'):
+                    file_path = os.path.join(self.recordings_folder, filename)
+                    recordings.append((file_path, os.path.getmtime(file_path)))
+
+            # Sort by modification time (oldest first)
+            recordings.sort(key=lambda x: x[1])
+
+            # Delete oldest if we're at or over the limit (leave room for new one)
+            while len(recordings) >= max_recordings:
+                oldest_path, _ = recordings.pop(0)
+                try:
+                    os.remove(oldest_path)
+                    logging.info(f"Rotated out old meeting recording: {os.path.basename(oldest_path)}")
+                except Exception as e:
+                    logging.warning(f"Failed to delete old recording {oldest_path}: {e}")
+
+        except Exception as e:
+            logging.warning(f"Error during recording rotation: {e}")
+
     def get_meeting(self, meeting_id: str) -> Optional[MeetingEntry]:
         """Get a meeting by ID.
-        
+
         Args:
             meeting_id: Meeting ID
-            
+
         Returns:
             The MeetingEntry, or None if not found
         """
@@ -356,33 +499,43 @@ class MeetingStorage:
     
     def delete_meeting(self, meeting_id: str) -> bool:
         """Delete a meeting and its associated audio files.
-        
+
         Args:
             meeting_id: Meeting ID to delete
-            
+
         Returns:
             True if deleted, False if not found
         """
-        # Get meeting info first for logging
+        # Get meeting info first for logging and audio file path
         meeting = self.get_meeting(meeting_id)
         if not meeting:
             return False
-        
-        # Delete audio folder if it exists
+
+        # Delete audio chunk folder if it exists
         audio_folder = os.path.join(self.audio_folder, meeting_id[:8])
         if os.path.exists(audio_folder):
             try:
                 shutil.rmtree(audio_folder)
-                logging.info(f"Deleted audio folder for meeting {meeting_id[:8]}...")
+                logging.info(f"Deleted audio chunk folder for meeting {meeting_id[:8]}...")
             except Exception as e:
-                logging.warning(f"Failed to delete audio folder: {e}")
-        
+                logging.warning(f"Failed to delete audio chunk folder: {e}")
+
+        # Delete complete recording if it exists
+        if meeting.audio_file:
+            recording_path = os.path.join(self.recordings_folder, meeting.audio_file)
+            if os.path.exists(recording_path):
+                try:
+                    os.remove(recording_path)
+                    logging.info(f"Deleted complete recording for meeting {meeting_id[:8]}...")
+                except Exception as e:
+                    logging.warning(f"Failed to delete complete recording: {e}")
+
         # Delete from database
         result = db.delete_meeting(meeting_id)
-        
+
         if result:
             logging.info(f"Deleted meeting: {meeting_id[:8]}... ({meeting.title})")
-        
+
         return result
     
     def update_meeting_title(self, meeting_id: str, title: str) -> bool:

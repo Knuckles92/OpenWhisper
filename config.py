@@ -112,6 +112,10 @@ class AppConfig:
     MEETING_CHUNK_DURATION_SEC: float = 30.0  # Larger chunks for better quality
     MEETING_QUEUE_SIZE: int = 20  # Larger queue for long recordings
 
+    # Meeting recording settings (complete WAV recordings)
+    MEETING_RECORDINGS_FOLDER: str = "meeting_recordings"
+    MAX_MEETING_RECORDINGS: int = 10  # ~3GB at 1hr/meeting (44.1kHz 16-bit mono ~5.3MB/min)
+
     # Meeting Insights settings
     INSIGHTS_PROVIDERS: List[str] = None  # ["openai", "openrouter"]
     DEFAULT_INSIGHTS_PROVIDER: str = "openai"

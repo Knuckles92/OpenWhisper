@@ -566,19 +566,19 @@ class SettingsManager:
         This method checks both saved settings and environment variables.
 
         Args:
-            provider: Provider name ('openai' or 'openrouter'). 
+            provider: Provider name ('openai' or 'openrouter').
                      Uses saved provider setting if None.
 
         Returns:
             API key string, or None if not found.
         """
         import os
-        
+
         try:
             settings = self.load_all_settings()
             if provider is None:
                 provider = settings.get('insights_provider', 'openai')
-            
+
             # First check saved settings
             if provider == 'openai':
                 key = settings.get('insights_openai_key', '')
@@ -598,6 +598,62 @@ class SettingsManager:
         except Exception as e:
             logging.error(f"Failed to get insights API key: {e}")
             return None
+
+    def load_meeting_recording_settings(self) -> Dict[str, Any]:
+        """Load meeting recording settings.
+
+        Returns:
+            Dictionary containing meeting recording settings:
+            - enabled: Whether to save complete meeting recordings (default: True)
+            - max_recordings: Maximum number of recordings to keep (default: 10)
+        """
+        try:
+            settings = self.load_all_settings()
+            return {
+                'enabled': settings.get('meeting_recording_enabled', True),
+                'max_recordings': settings.get('meeting_max_recordings', config.MAX_MEETING_RECORDINGS)
+            }
+        except Exception as e:
+            logging.warning(f"Failed to load meeting recording settings: {e}")
+            return {
+                'enabled': True,
+                'max_recordings': config.MAX_MEETING_RECORDINGS
+            }
+
+    def save_meeting_recording_settings(
+        self,
+        enabled: bool = None,
+        max_recordings: int = None
+    ) -> None:
+        """Save meeting recording settings.
+
+        Args:
+            enabled: Whether to save complete meeting recordings.
+            max_recordings: Maximum number of recordings to keep.
+
+        Raises:
+            ValueError: If max_recordings is out of valid range.
+            Exception: If saving fails.
+        """
+        if max_recordings is not None and (max_recordings < 1 or max_recordings > 100):
+            raise ValueError("max_recordings must be between 1 and 100")
+
+        try:
+            settings = self.load_all_settings()
+
+            if enabled is not None:
+                settings['meeting_recording_enabled'] = enabled
+
+            if max_recordings is not None:
+                settings['meeting_max_recordings'] = max_recordings
+
+            self.save_all_settings(settings)
+            logging.info(f"Meeting recording settings saved: enabled={enabled}, max_recordings={max_recordings}")
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logging.error(f"Failed to save meeting recording settings: {e}")
+            raise
 
 
 # Global settings manager instance

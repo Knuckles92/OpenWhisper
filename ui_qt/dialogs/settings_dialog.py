@@ -521,6 +521,55 @@ class SettingsDialog(QDialog):
         separator.setStyleSheet("background-color: #404060;")
         layout.addWidget(separator)
 
+        # Meeting Recording Settings section
+        layout.addSpacing(12)
+        meeting_rec_title = QLabel("Meeting Recordings")
+        meeting_rec_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(meeting_rec_title)
+
+        # Enable meeting recording checkbox
+        self.meeting_recording_check = QCheckBox("Save complete audio recording of meetings")
+        self.meeting_recording_check.setStyleSheet("color: #e0e0ff;")
+        self.meeting_recording_check.stateChanged.connect(self._on_meeting_recording_changed)
+        layout.addWidget(self.meeting_recording_check)
+
+        # Info label for meeting recording
+        meeting_rec_info = QLabel(
+            "Saves uncut WAV file (~300MB/hour). Stored in 'meeting_recordings' folder.\n"
+            "Useful for archiving meetings that cannot be replicated if lost."
+        )
+        meeting_rec_info.setStyleSheet("color: #808090; font-size: 10px;")
+        meeting_rec_info.setWordWrap(True)
+        layout.addWidget(meeting_rec_info)
+
+        # Max recordings spinbox
+        layout.addSpacing(8)
+        max_rec_layout = QHBoxLayout()
+        max_rec_label = QLabel("Maximum recordings to keep:")
+        max_rec_label.setStyleSheet("color: #e0e0ff;")
+        max_rec_layout.addWidget(max_rec_label)
+
+        self.max_recordings_spinbox = QSpinBox()
+        self.max_recordings_spinbox.setMinimum(1)
+        self.max_recordings_spinbox.setMaximum(50)
+        self.max_recordings_spinbox.setValue(config.MAX_MEETING_RECORDINGS)
+        self.max_recordings_spinbox.setMinimumHeight(36)
+        self.max_recordings_spinbox.setMaximumWidth(80)
+        max_rec_layout.addWidget(self.max_recordings_spinbox)
+        max_rec_layout.addStretch()
+        layout.addLayout(max_rec_layout)
+
+        max_rec_info = QLabel("Oldest recordings are automatically deleted when limit is reached")
+        max_rec_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        layout.addWidget(max_rec_info)
+
+        # Separator
+        layout.addSpacing(16)
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator2)
+
         # Max file size
         layout.addSpacing(12)
         max_size_label = QLabel("Maximum File Size (MB):")
@@ -542,6 +591,11 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         self.tabs.addTab(tab, "Advanced")
+
+    def _on_meeting_recording_changed(self, state):
+        """Handle meeting recording checkbox state change."""
+        enabled = state == Qt.CheckState.Checked.value
+        self.max_recordings_spinbox.setEnabled(enabled)
 
     def _update_threshold_display(self, value):
         """Update threshold value display."""
@@ -655,6 +709,13 @@ class SettingsDialog(QDialog):
             self.openai_key_input.setText(openai_key)
             self.openrouter_key_input.setText(openrouter_key)
 
+            # Load meeting recording settings
+            meeting_rec_enabled = settings.get('meeting_recording_enabled', True)
+            max_recordings = settings.get('meeting_max_recordings', config.MAX_MEETING_RECORDINGS)
+            self.meeting_recording_check.setChecked(meeting_rec_enabled)
+            self.max_recordings_spinbox.setValue(max_recordings)
+            self.max_recordings_spinbox.setEnabled(meeting_rec_enabled)
+
             self.logger.info("Settings loaded successfully")
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
@@ -665,6 +726,9 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_paste_check.setChecked(False)
             self.streaming_paste_check.setEnabled(config.STREAMING_ENABLED)
+            self.meeting_recording_check.setChecked(True)
+            self.max_recordings_spinbox.setValue(config.MAX_MEETING_RECORDINGS)
+            self.max_recordings_spinbox.setEnabled(True)
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -735,6 +799,10 @@ class SettingsDialog(QDialog):
                 settings['insights_openrouter_key'] = openrouter_key
             else:
                 settings.pop('insights_openrouter_key', None)
+
+            # Save meeting recording settings
+            settings['meeting_recording_enabled'] = self.meeting_recording_check.isChecked()
+            settings['meeting_max_recordings'] = self.max_recordings_spinbox.value()
 
             # Save to file
             settings_manager.save_all_settings(settings)

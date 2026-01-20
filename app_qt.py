@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from config import config
+from services.database import db
 
 
 _CRASH_LOG_FILE = None
@@ -1137,7 +1138,12 @@ class ApplicationController(QObject):
             self.ui_controller.cleanup()
         except Exception as e:
             logging.debug(f"Error during UI controller cleanup: {e}")
-        
+
+        try:
+            db.close()
+        except Exception as e:
+            logging.debug(f"Error closing database: {e}")
+
         logging.info("Application controller cleaned up")
 
 
