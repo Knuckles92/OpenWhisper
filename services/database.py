@@ -16,7 +16,7 @@ from config import config
 
 
 # Schema version for future migrations
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -58,10 +58,26 @@ CREATE TABLE IF NOT EXISTS meeting_chunks (
     FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
 
+-- Meeting insights table (one-to-many with meetings)
+CREATE TABLE IF NOT EXISTS meeting_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT NOT NULL,
+    insight_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    custom_prompt TEXT,
+    generated_at TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_history_timestamp ON transcription_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_meetings_start_time ON meetings(start_time);
 CREATE INDEX IF NOT EXISTS idx_chunks_meeting_id ON meeting_chunks(meeting_id);
+CREATE INDEX IF NOT EXISTS idx_insights_meeting_id ON meeting_insights(meeting_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_unique
+    ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''));
 """
 
 
@@ -147,6 +163,35 @@ class DatabaseManager:
                 if "duplicate column name" not in str(e).lower():
                     raise
                 logging.warning("Migration v1->v2: audio_file column already exists")
+
+        # Migration from v2 to v3: Add meeting_insights table
+        if from_version < 3:
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS meeting_insights (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        meeting_id TEXT NOT NULL,
+                        insight_type TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        custom_prompt TEXT,
+                        generated_at TEXT NOT NULL,
+                        provider TEXT,
+                        model TEXT,
+                        FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_insights_meeting_id ON meeting_insights(meeting_id)"
+                )
+                conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_unique
+                    ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''))
+                """)
+                logging.info("Migration v2->v3: Added meeting_insights table")
+            except sqlite3.OperationalError as e:
+                if "already exists" not in str(e).lower():
+                    raise
+                logging.warning("Migration v2->v3: meeting_insights table already exists")
 
         # Update schema version
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
@@ -526,6 +571,7 @@ class DatabaseManager:
                 "SELECT * FROM meetings WHERE status = 'in_progress'"
             )
             return [dict(row) for row in cursor.fetchall()]
+
     
     def delete_meeting(self, meeting_id: str) -> bool:
         """Delete a meeting and its chunks.
@@ -592,7 +638,142 @@ class DatabaseManager:
             )
             row = cursor.fetchone()
             return row['audio_file'] if row else None
-    
+
+    # -------------------------------------------------------------------------
+    # Meeting Insights Methods
+    # -------------------------------------------------------------------------
+
+    def save_insight(
+        self,
+        meeting_id: str,
+        insight_type: str,
+        content: str,
+        custom_prompt: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> int:
+        """Save or update an insight for a meeting.
+
+        Uses upsert logic - replaces existing insight if one exists for the
+        same meeting_id, insight_type, and custom_prompt combination.
+
+        Args:
+            meeting_id: Meeting ID.
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+            content: The generated insight content.
+            custom_prompt: Custom prompt (only for 'custom' type).
+            provider: LLM provider used ('openai', 'openrouter').
+            model: Model name used.
+
+        Returns:
+            The row ID of the saved insight.
+        """
+        generated_at = datetime.now().isoformat()
+
+        with self._get_connection() as conn:
+            # Use INSERT OR REPLACE with the unique constraint
+            # First, try to find existing insight
+            cursor = conn.execute("""
+                SELECT id FROM meeting_insights
+                WHERE meeting_id = ? AND insight_type = ?
+                AND COALESCE(custom_prompt, '') = COALESCE(?, '')
+            """, (meeting_id, insight_type, custom_prompt))
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing
+                conn.execute("""
+                    UPDATE meeting_insights
+                    SET content = ?, generated_at = ?, provider = ?, model = ?
+                    WHERE id = ?
+                """, (content, generated_at, provider, model, existing['id']))
+                insight_id = existing['id']
+            else:
+                # Insert new
+                cursor = conn.execute("""
+                    INSERT INTO meeting_insights
+                    (meeting_id, insight_type, content, custom_prompt, generated_at, provider, model)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (meeting_id, insight_type, content, custom_prompt, generated_at, provider, model))
+                insight_id = cursor.lastrowid
+
+            conn.commit()
+            return insight_id
+
+    def get_insight(
+        self,
+        meeting_id: str,
+        insight_type: str,
+        custom_prompt: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a specific insight for a meeting.
+
+        Args:
+            meeting_id: Meeting ID.
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+            custom_prompt: Custom prompt (only for 'custom' type).
+
+        Returns:
+            Insight dictionary or None if not found.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT * FROM meeting_insights
+                WHERE meeting_id = ? AND insight_type = ?
+                AND COALESCE(custom_prompt, '') = COALESCE(?, '')
+            """, (meeting_id, insight_type, custom_prompt))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_insights(self, meeting_id: str) -> List[Dict[str, Any]]:
+        """Get all insights for a meeting.
+
+        Args:
+            meeting_id: Meeting ID.
+
+        Returns:
+            List of insight dictionaries.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM meeting_insights WHERE meeting_id = ? ORDER BY generated_at DESC",
+                (meeting_id,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_insight(self, insight_id: int) -> bool:
+        """Delete an insight by ID.
+
+        Args:
+            insight_id: The insight ID to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM meeting_insights WHERE id = ?",
+                (insight_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def has_insights(self, meeting_id: str) -> bool:
+        """Check if a meeting has any saved insights.
+
+        Args:
+            meeting_id: Meeting ID.
+
+        Returns:
+            True if the meeting has at least one saved insight.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM meeting_insights WHERE meeting_id = ? LIMIT 1",
+                (meeting_id,)
+            )
+            return cursor.fetchone() is not None
+
     def close(self) -> None:
         """Close the database connection for the current thread."""
         if hasattr(self._local, 'connection') and self._local.connection is not None:

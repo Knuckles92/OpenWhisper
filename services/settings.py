@@ -89,6 +89,25 @@ class SettingsManager:
             logging.error(f"Failed to save all settings: {e}")
             raise
     
+    def save_setting(self, key: str, value: Any) -> None:
+        """Save a single setting value.
+        
+        Args:
+            key: Setting key to save.
+            value: Value to save for the key.
+            
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+            settings[key] = value
+            self.save_all_settings(settings)
+            logging.debug(f"Setting saved: {key}={value}")
+        except Exception as e:
+            logging.error(f"Failed to save setting '{key}': {e}")
+            raise
+    
     def load_waveform_style_settings(self) -> Tuple[str, Dict[str, Dict]]:
         """Load waveform style settings from file.
         

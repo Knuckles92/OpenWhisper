@@ -554,6 +554,7 @@ class ApplicationController(QObject):
         dialog = InsightsDialog(
             transcript=meeting.transcript,
             meeting_title=meeting.title,
+            meeting_id=meeting.id,
             parent=self.ui_controller.main_window
         )
         dialog.exec()

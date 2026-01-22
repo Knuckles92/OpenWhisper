@@ -272,5 +272,210 @@ class TestJsonMigration:
             config.config.MEETINGS_FILE = original_meetings
 
 
+class TestMeetingInsights:
+    """Tests for the meeting insights functionality."""
+
+    @pytest.fixture
+    def temp_db(self, tmp_path):
+        """Create a temporary database for testing."""
+        db_path = str(tmp_path / "test.db")
+        from services.database import DatabaseManager
+        manager = DatabaseManager(db_path=db_path)
+        yield manager
+        manager.close()
+
+    @pytest.fixture
+    def meeting_with_transcript(self, temp_db):
+        """Create a meeting with transcript for testing insights."""
+        meeting_id = str(uuid.uuid4())
+        start_time = datetime.now().isoformat()
+        temp_db.create_meeting(meeting_id, "Test Meeting", start_time)
+        temp_db.add_meeting_chunk(
+            meeting_id=meeting_id,
+            chunk_index=0,
+            text="This is a test transcript.",
+            timestamp=datetime.now().isoformat()
+        )
+        temp_db.end_meeting(meeting_id, datetime.now().isoformat(), 60.0)
+        return meeting_id
+
+    def test_save_insight(self, temp_db, meeting_with_transcript):
+        """Test saving a new insight."""
+        meeting_id = meeting_with_transcript
+
+        insight_id = temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='summary',
+            content='This is a test summary.',
+            custom_prompt=None,
+            provider='openai',
+            model='gpt-4o'
+        )
+
+        assert insight_id is not None
+        assert insight_id > 0
+
+    def test_get_insight(self, temp_db, meeting_with_transcript):
+        """Test retrieving a saved insight."""
+        meeting_id = meeting_with_transcript
+
+        temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='summary',
+            content='This is a test summary.',
+            provider='openai',
+            model='gpt-4o'
+        )
+
+        insight = temp_db.get_insight(meeting_id, 'summary')
+
+        assert insight is not None
+        assert insight['meeting_id'] == meeting_id
+        assert insight['insight_type'] == 'summary'
+        assert insight['content'] == 'This is a test summary.'
+        assert insight['provider'] == 'openai'
+        assert insight['model'] == 'gpt-4o'
+        assert insight['generated_at'] is not None
+
+    def test_get_nonexistent_insight(self, temp_db, meeting_with_transcript):
+        """Test retrieving a nonexistent insight returns None."""
+        meeting_id = meeting_with_transcript
+        insight = temp_db.get_insight(meeting_id, 'summary')
+        assert insight is None
+
+    def test_save_custom_insight_with_prompt(self, temp_db, meeting_with_transcript):
+        """Test saving a custom insight with a custom prompt."""
+        meeting_id = meeting_with_transcript
+
+        temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='custom',
+            content='Custom analysis result.',
+            custom_prompt='What were the main topics?',
+            provider='openrouter',
+            model='claude-3'
+        )
+
+        insight = temp_db.get_insight(meeting_id, 'custom', custom_prompt='What were the main topics?')
+
+        assert insight is not None
+        assert insight['custom_prompt'] == 'What were the main topics?'
+        assert insight['content'] == 'Custom analysis result.'
+
+    def test_upsert_insight(self, temp_db, meeting_with_transcript):
+        """Test that saving an insight with the same type updates it."""
+        meeting_id = meeting_with_transcript
+
+        # Save initial insight
+        temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='summary',
+            content='Initial summary.',
+            provider='openai'
+        )
+
+        # Save updated insight
+        temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='summary',
+            content='Updated summary.',
+            provider='openai'
+        )
+
+        # Verify only one insight exists and it's updated
+        insight = temp_db.get_insight(meeting_id, 'summary')
+        assert insight['content'] == 'Updated summary.'
+
+        all_insights = temp_db.get_all_insights(meeting_id)
+        assert len(all_insights) == 1
+
+    def test_get_all_insights(self, temp_db, meeting_with_transcript):
+        """Test retrieving all insights for a meeting."""
+        meeting_id = meeting_with_transcript
+
+        # Save multiple insights
+        temp_db.save_insight(meeting_id, 'summary', 'Summary content.')
+        temp_db.save_insight(meeting_id, 'action_items', 'Action items content.')
+        temp_db.save_insight(meeting_id, 'custom', 'Custom content.', 'Custom prompt 1')
+        temp_db.save_insight(meeting_id, 'custom', 'Another custom content.', 'Custom prompt 2')
+
+        all_insights = temp_db.get_all_insights(meeting_id)
+
+        assert len(all_insights) == 4
+        types = [i['insight_type'] for i in all_insights]
+        assert 'summary' in types
+        assert 'action_items' in types
+        assert types.count('custom') == 2
+
+    def test_has_insights(self, temp_db, meeting_with_transcript):
+        """Test checking if a meeting has insights."""
+        meeting_id = meeting_with_transcript
+
+        # Initially no insights
+        assert temp_db.has_insights(meeting_id) is False
+
+        # Add insight
+        temp_db.save_insight(meeting_id, 'summary', 'Summary content.')
+
+        # Now has insights
+        assert temp_db.has_insights(meeting_id) is True
+
+    def test_delete_insight(self, temp_db, meeting_with_transcript):
+        """Test deleting an insight."""
+        meeting_id = meeting_with_transcript
+
+        insight_id = temp_db.save_insight(
+            meeting_id=meeting_id,
+            insight_type='summary',
+            content='To be deleted.'
+        )
+
+        result = temp_db.delete_insight(insight_id)
+        assert result is True
+
+        insight = temp_db.get_insight(meeting_id, 'summary')
+        assert insight is None
+
+    def test_delete_nonexistent_insight(self, temp_db):
+        """Test deleting a nonexistent insight returns False."""
+        result = temp_db.delete_insight(99999)
+        assert result is False
+
+    def test_cascade_delete_meeting_removes_insights(self, temp_db, meeting_with_transcript):
+        """Test that deleting a meeting also deletes its insights."""
+        meeting_id = meeting_with_transcript
+
+        # Add insights
+        temp_db.save_insight(meeting_id, 'summary', 'Summary content.')
+        temp_db.save_insight(meeting_id, 'action_items', 'Action items content.')
+
+        # Verify insights exist
+        assert temp_db.has_insights(meeting_id) is True
+
+        # Delete meeting
+        temp_db.delete_meeting(meeting_id)
+
+        # Verify insights are deleted
+        assert temp_db.has_insights(meeting_id) is False
+        assert temp_db.get_all_insights(meeting_id) == []
+
+    def test_unique_constraint_different_custom_prompts(self, temp_db, meeting_with_transcript):
+        """Test that different custom prompts create different insights."""
+        meeting_id = meeting_with_transcript
+
+        # Save two custom insights with different prompts
+        temp_db.save_insight(meeting_id, 'custom', 'Result 1', 'Prompt 1')
+        temp_db.save_insight(meeting_id, 'custom', 'Result 2', 'Prompt 2')
+
+        # Both should exist
+        insight1 = temp_db.get_insight(meeting_id, 'custom', 'Prompt 1')
+        insight2 = temp_db.get_insight(meeting_id, 'custom', 'Prompt 2')
+
+        assert insight1 is not None
+        assert insight2 is not None
+        assert insight1['content'] == 'Result 1'
+        assert insight2['content'] == 'Result 2'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -480,9 +480,9 @@ class MeetingStorage:
     
     def get_meetings_for_display(self) -> List[Dict[str, str]]:
         """Get meeting data formatted for UI display.
-        
+
         Returns:
-            List of meeting dicts with id, title, date, duration, preview
+            List of meeting dicts with id, title, date, duration, preview, has_insights
         """
         meetings = self.get_all_meetings()
         return [
@@ -492,7 +492,8 @@ class MeetingStorage:
                 'date': m.formatted_start_time,
                 'duration': m.formatted_duration,
                 'preview': m.preview_text,
-                'status': m.status
+                'status': m.status,
+                'has_insights': db.has_insights(m.id)
             }
             for m in meetings
         ]
