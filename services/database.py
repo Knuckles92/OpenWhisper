@@ -16,7 +16,7 @@ from config import config
 
 
 # Schema version for future migrations
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -192,6 +192,27 @@ class DatabaseManager:
                 if "already exists" not in str(e).lower():
                     raise
                 logging.warning("Migration v2->v3: meeting_insights table already exists")
+
+        # Migration from v3 to v4: Rename created_at to generated_at in meeting_insights
+        if from_version < 4:
+            try:
+                # Check if we need to rename (created_at exists but generated_at doesn't)
+                cursor = conn.execute("PRAGMA table_info(meeting_insights)")
+                columns = [row[1] for row in cursor.fetchall()]
+
+                if 'created_at' in columns and 'generated_at' not in columns:
+                    conn.execute("""
+                        ALTER TABLE meeting_insights
+                        RENAME COLUMN created_at TO generated_at
+                    """)
+                    logging.info("Migration v3->v4: Renamed created_at to generated_at in meeting_insights")
+                elif 'generated_at' in columns:
+                    logging.info("Migration v3->v4: generated_at column already exists")
+                else:
+                    logging.warning("Migration v3->v4: Neither created_at nor generated_at found")
+            except sqlite3.OperationalError as e:
+                logging.error(f"Migration v3->v4 failed: {e}")
+                raise
 
         # Update schema version
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))

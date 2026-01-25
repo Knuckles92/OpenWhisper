@@ -5,7 +5,7 @@ import json
 import os
 import logging
 import threading
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 from config import config
 
 
@@ -673,6 +673,291 @@ class SettingsManager:
                 raise
             logging.error(f"Failed to save meeting recording settings: {e}")
             raise
+
+    # -------------------------------------------------------------------------
+    # Insight Generation Options & Presets
+    # -------------------------------------------------------------------------
+
+    def load_insights_generation_defaults(self, insight_type: str = None) -> Dict[str, Any]:
+        """Load default insight generation options.
+
+        Args:
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+                         If None, returns defaults for all types.
+
+        Returns:
+            Dictionary of default generation options for the specified type,
+            or all types if insight_type is None.
+        """
+        # Default options for each insight type
+        type_defaults = {
+            "summary": {
+                "output_length": "standard",
+                "formatting_style": "bullet_points",
+                "tone": "professional",
+                "focus_areas": ["decisions", "discussions"],
+                "participant_filter": None,
+                "topic_filter": None,
+                "creativity": 0.5,
+                "language": "english",
+                "include_timestamps": False,
+                "include_speaker_attribution": True
+            },
+            "action_items": {
+                "output_length": "standard",
+                "formatting_style": "numbered_list",
+                "tone": "professional",
+                "focus_areas": ["decisions"],
+                "participant_filter": None,
+                "topic_filter": None,
+                "creativity": 0.3,
+                "language": "english",
+                "include_timestamps": False,
+                "include_speaker_attribution": True
+            },
+            "custom": {
+                "output_length": "standard",
+                "formatting_style": "markdown",
+                "tone": "professional",
+                "focus_areas": [],
+                "participant_filter": None,
+                "topic_filter": None,
+                "creativity": 0.5,
+                "language": "english",
+                "include_timestamps": False,
+                "include_speaker_attribution": True
+            }
+        }
+
+        try:
+            settings = self.load_all_settings()
+            saved_defaults = settings.get('insights_generation_defaults', {})
+
+            if insight_type:
+                # Return defaults for specific type
+                base = type_defaults.get(insight_type, type_defaults["summary"])
+                saved = saved_defaults.get(insight_type, {})
+                # Merge saved over base
+                return {**base, **saved}
+            else:
+                # Return all defaults
+                result = {}
+                for itype in type_defaults:
+                    base = type_defaults[itype]
+                    saved = saved_defaults.get(itype, {})
+                    result[itype] = {**base, **saved}
+                return result
+
+        except Exception as e:
+            logging.warning(f"Failed to load insights generation defaults: {e}")
+            if insight_type:
+                return type_defaults.get(insight_type, type_defaults["summary"])
+            return type_defaults
+
+    def save_insights_generation_defaults(
+        self,
+        insight_type: str,
+        options: Dict[str, Any]
+    ) -> None:
+        """Save default insight generation options for a type.
+
+        Args:
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+            options: Dictionary of generation options to save.
+
+        Raises:
+            ValueError: If insight_type is invalid.
+            Exception: If saving fails.
+        """
+        valid_types = ['summary', 'action_items', 'custom']
+        if insight_type not in valid_types:
+            raise ValueError(f"Invalid insight_type: {insight_type}. Must be one of {valid_types}")
+
+        try:
+            settings = self.load_all_settings()
+
+            if 'insights_generation_defaults' not in settings:
+                settings['insights_generation_defaults'] = {}
+
+            settings['insights_generation_defaults'][insight_type] = options
+            self.save_all_settings(settings)
+            logging.info(f"Insights generation defaults saved for {insight_type}")
+
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logging.error(f"Failed to save insights generation defaults: {e}")
+            raise
+
+    def load_insights_last_used(self, insight_type: str) -> Optional[Dict[str, Any]]:
+        """Load the last used generation options for an insight type.
+
+        Args:
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+
+        Returns:
+            Dictionary of last used options, or None if not found.
+        """
+        try:
+            settings = self.load_all_settings()
+            last_used = settings.get('insights_last_used', {})
+            return last_used.get(insight_type)
+        except Exception as e:
+            logging.warning(f"Failed to load insights last used: {e}")
+            return None
+
+    def save_insights_last_used(
+        self,
+        insight_type: str,
+        options: Dict[str, Any]
+    ) -> None:
+        """Save the last used generation options for an insight type.
+
+        Args:
+            insight_type: Type of insight ('summary', 'action_items', 'custom').
+            options: Dictionary of generation options.
+
+        Raises:
+            Exception: If saving fails.
+        """
+        try:
+            settings = self.load_all_settings()
+
+            if 'insights_last_used' not in settings:
+                settings['insights_last_used'] = {}
+
+            settings['insights_last_used'][insight_type] = options
+            self.save_all_settings(settings)
+            logging.debug(f"Insights last used saved for {insight_type}")
+
+        except Exception as e:
+            logging.error(f"Failed to save insights last used: {e}")
+            raise
+
+    def load_insights_presets(self) -> List[Dict[str, Any]]:
+        """Load all insight presets (built-in + custom).
+
+        Returns:
+            List of preset dictionaries, with built-in presets first.
+        """
+        try:
+            # Start with built-in presets from config
+            builtin_presets = config.INSIGHT_BUILTIN_PRESETS.copy()
+
+            # Load custom presets from settings
+            settings = self.load_all_settings()
+            custom_presets = settings.get('insights_custom_presets', [])
+
+            # Combine: built-in first, then custom
+            return builtin_presets + custom_presets
+
+        except Exception as e:
+            logging.warning(f"Failed to load insights presets: {e}")
+            return config.INSIGHT_BUILTIN_PRESETS.copy()
+
+    def save_insights_preset(self, preset: Dict[str, Any]) -> None:
+        """Save a custom insight preset.
+
+        Args:
+            preset: Preset dictionary with id, name, insight_type, options.
+
+        Raises:
+            ValueError: If preset is missing required fields.
+            Exception: If saving fails.
+        """
+        required_fields = ['id', 'name', 'insight_type', 'options']
+        for field in required_fields:
+            if field not in preset:
+                raise ValueError(f"Preset missing required field: {field}")
+
+        # Mark as not built-in
+        preset['is_builtin'] = False
+
+        try:
+            settings = self.load_all_settings()
+
+            if 'insights_custom_presets' not in settings:
+                settings['insights_custom_presets'] = []
+
+            # Check if preset with same ID exists, update it
+            existing_idx = None
+            for i, p in enumerate(settings['insights_custom_presets']):
+                if p.get('id') == preset['id']:
+                    existing_idx = i
+                    break
+
+            if existing_idx is not None:
+                settings['insights_custom_presets'][existing_idx] = preset
+            else:
+                settings['insights_custom_presets'].append(preset)
+
+            self.save_all_settings(settings)
+            logging.info(f"Insights preset saved: {preset['name']}")
+
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logging.error(f"Failed to save insights preset: {e}")
+            raise
+
+    def delete_insights_preset(self, preset_id: str) -> bool:
+        """Delete a custom insight preset.
+
+        Args:
+            preset_id: ID of the preset to delete.
+
+        Returns:
+            True if preset was deleted, False if not found.
+
+        Raises:
+            ValueError: If trying to delete a built-in preset.
+            Exception: If saving fails.
+        """
+        # Check if it's a built-in preset
+        for preset in config.INSIGHT_BUILTIN_PRESETS:
+            if preset.get('id') == preset_id:
+                raise ValueError(f"Cannot delete built-in preset: {preset_id}")
+
+        try:
+            settings = self.load_all_settings()
+            custom_presets = settings.get('insights_custom_presets', [])
+
+            # Find and remove the preset
+            original_len = len(custom_presets)
+            custom_presets = [p for p in custom_presets if p.get('id') != preset_id]
+
+            if len(custom_presets) == original_len:
+                return False  # Not found
+
+            settings['insights_custom_presets'] = custom_presets
+            self.save_all_settings(settings)
+            logging.info(f"Insights preset deleted: {preset_id}")
+            return True
+
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logging.error(f"Failed to delete insights preset: {e}")
+            raise
+
+    def get_insights_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific preset by ID.
+
+        Args:
+            preset_id: ID of the preset to retrieve.
+
+        Returns:
+            Preset dictionary, or None if not found.
+        """
+        try:
+            all_presets = self.load_insights_presets()
+            for preset in all_presets:
+                if preset.get('id') == preset_id:
+                    return preset
+            return None
+        except Exception as e:
+            logging.error(f"Failed to get insights preset: {e}")
+            return None
 
 
 # Global settings manager instance
