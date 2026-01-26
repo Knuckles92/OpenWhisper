@@ -135,6 +135,22 @@ class TabbedContentWidget(QWidget):
         self.logger.debug(f"Added tab '{title}' at index {index}")
         return index
 
+    def sync_stack_with_tab_bar(self):
+        """Synchronize the stacked widget with the tab bar selection.
+
+        This method should be called AFTER all tabs have been added via add_tab().
+        It fixes a timing issue where _restore_last_tab() sets the tab bar index
+        before the stack has any widgets, causing a desync between the visual
+        tab selection and the displayed content.
+        """
+        current_tab = self.tab_bar.currentIndex()
+        if self.stack.currentIndex() != current_tab:
+            self.logger.debug(
+                f"Syncing stack (was {self.stack.currentIndex()}) "
+                f"with tab bar (index {current_tab})"
+            )
+            self.stack.setCurrentIndex(current_tab)
+
     def current_index(self) -> int:
         """Get the current tab index."""
         return self.tab_bar.currentIndex()

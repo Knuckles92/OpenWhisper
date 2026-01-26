@@ -335,8 +335,15 @@ class ModernMainWindow(QMainWindow):
         self.tabbed_content.add_tab(self.quick_record_tab, "Quick Record")
         self.tabbed_content.add_tab(self.meeting_tab, "Meeting Mode")
 
+        # Sync the stack with the tab bar after all tabs are added
+        # (fixes timing issue where tab bar index is restored before stack has widgets)
+        self.tabbed_content.sync_stack_with_tab_bar()
+
         # Connect tab changed signal to update sidebar and emit signal
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
+
+        # Sync the sidebar with the restored tab (sidebar defaults to Quick Record mode)
+        self._on_tab_changed(self.tabbed_content.current_index())
 
         # Connect Quick Record tab signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
