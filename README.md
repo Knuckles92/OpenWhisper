@@ -23,6 +23,8 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** – Real-time transcription preview while recording (experimental)
+- **Meeting Mode** – Long-form transcription with live streaming and auto-save
+- **Meeting Insights** – AI-powered summaries, action items, and custom analysis (OpenAI/OpenRouter)
 - **Caret Indicator** – Visual marker at cursor location when pasting
 - **Window Memory** – Remembers window position and size between sessions
 
@@ -58,7 +60,12 @@ set OPENAI_API_KEY=your-key
 
 # Or create a .env file
 OPENAI_API_KEY=your-key
+
+# Optional: For meeting insights via OpenRouter (access to Claude, Llama, Mistral, etc.)
+OPENROUTER_API_KEY=your-openrouter-key
 ```
+
+**Note:** API keys can also be configured in Settings > Insights for the meeting insights feature.
 
 ## Usage
 
@@ -88,6 +95,18 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 **Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging
 
+## Offline Usage
+
+Local Whisper transcription works fully offline after the initial model download. However, on startup, the `faster-whisper` library makes a brief metadata check to HuggingFace to see if a newer model version is available. This is not a model download—just a lightweight API call. If you're offline, the check will fail silently and the cached local model loads normally.
+
+To force fully offline operation (skip the metadata check), set this environment variable before running:
+
+```bash
+export HF_HUB_OFFLINE=1  # Linux/Mac
+set HF_HUB_OFFLINE=1     # Windows
+python app_qt.py
+```
+
 ## Requirements
 
 - Python 3.8+(3.12 recommended)
@@ -97,7 +116,7 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 ## License
 
-MIT License. Just use the thing.
+MIT License. Free to use, clone, and modify.
 
 
 

@@ -2,16 +2,17 @@
 History management for transcriptions and recordings.
 Stores transcription history and manages the last N audio recordings.
 """
-import json
+import logging
 import os
 import shutil
-import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 import uuid
+
+from config import config
+from services.database import db
 
 
 @dataclass
@@ -106,56 +107,20 @@ class RecordingInfo:
 class HistoryManager:
     """Manages transcription history and saved recordings."""
     
-    def __init__(self, history_file: str = None, recordings_folder: str = None, max_recordings: int = 3):
+    def __init__(self, recordings_folder: str = None, max_recordings: int = None):
         """Initialize the history manager.
         
         Args:
-            history_file: Path to the JSON history file.
             recordings_folder: Path to folder for saved recordings.
             max_recordings: Maximum number of recordings to keep.
         """
-        # Import config here to avoid circular imports
-        from config import config
-        
-        self.history_file = history_file or config.HISTORY_FILE
         self.recordings_folder = recordings_folder or config.RECORDINGS_FOLDER
         self.max_recordings = max_recordings or config.MAX_SAVED_RECORDINGS
-        
-        self._lock = threading.Lock()
-        self._history: List[HistoryEntry] = []
         
         # Ensure recordings folder exists
         os.makedirs(self.recordings_folder, exist_ok=True)
         
-        # Load existing history
-        self._load_history()
-    
-    def _load_history(self) -> None:
-        """Load history from file."""
-        with self._lock:
-            try:
-                if os.path.exists(self.history_file):
-                    with open(self.history_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        self._history = [
-                            HistoryEntry.from_dict(entry) 
-                            for entry in data.get('entries', [])
-                        ]
-                    logging.info(f"Loaded {len(self._history)} history entries")
-            except Exception as e:
-                logging.error(f"Failed to load history: {e}")
-                self._history = []
-    
-    def _save_history(self) -> None:
-        """Save history to file."""
-        try:
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'entries': [entry.to_dict() for entry in self._history]
-                }, f, indent=2, ensure_ascii=False)
-            logging.debug("History saved successfully")
-        except Exception as e:
-            logging.error(f"Failed to save history: {e}")
+        logging.info(f"HistoryManager initialized (recordings: {self.recordings_folder})")
     
     def add_entry(
         self,
@@ -185,7 +150,7 @@ class HistoryManager:
         if source_audio_file and os.path.exists(source_audio_file):
             saved_audio_path = self._save_recording(source_audio_file)
 
-        # Create and add the entry
+        # Create the entry
         entry = HistoryEntry.create(
             text=text,
             model=model,
@@ -195,10 +160,17 @@ class HistoryManager:
             file_size=file_size
         )
         
-        with self._lock:
-            # Add to beginning (newest first)
-            self._history.insert(0, entry)
-            self._save_history()
+        # Save to database
+        db.add_history_entry(
+            entry_id=entry.id,
+            text=entry.text,
+            timestamp=entry.timestamp,
+            model=entry.model,
+            audio_file=entry.audio_file,
+            transcription_time=entry.transcription_time,
+            audio_duration=entry.audio_duration,
+            file_size=entry.file_size
+        )
         
         logging.info(f"Added history entry: {entry.id[:8]}...")
         return entry
@@ -247,12 +219,8 @@ class HistoryManager:
                         os.remove(rec.file_path)
                         logging.info(f"Removed old recording: {rec.filename}")
                         
-                        # Clear audio_file reference in history entries
-                        with self._lock:
-                            for entry in self._history:
-                                if entry.audio_file == rec.filename:
-                                    entry.audio_file = None
-                            self._save_history()
+                        # Clear audio_file reference in database
+                        db.update_history_audio_file(rec.filename)
                             
                     except Exception as e:
                         logging.error(f"Failed to remove recording {rec.filename}: {e}")
@@ -269,10 +237,8 @@ class HistoryManager:
         Returns:
             List of HistoryEntry objects (newest first).
         """
-        with self._lock:
-            if limit is not None:
-                return self._history[:limit]
-            return list(self._history)
+        rows = db.get_history_entries(limit)
+        return [HistoryEntry.from_dict(row) for row in rows]
     
     def get_recordings(self) -> List[RecordingInfo]:
         """Get list of saved recordings.
@@ -326,11 +292,8 @@ class HistoryManager:
         Returns:
             The HistoryEntry or None if not found.
         """
-        with self._lock:
-            for entry in self._history:
-                if entry.id == entry_id:
-                    return entry
-        return None
+        row = db.get_history_entry_by_id(entry_id)
+        return HistoryEntry.from_dict(row) if row else None
     
     def delete_entry(self, entry_id: str) -> bool:
         """Delete a history entry.
@@ -341,21 +304,14 @@ class HistoryManager:
         Returns:
             True if deleted, False if not found.
         """
-        with self._lock:
-            for i, entry in enumerate(self._history):
-                if entry.id == entry_id:
-                    # Don't delete the associated audio file - it may be used by other entries
-                    del self._history[i]
-                    self._save_history()
-                    logging.info(f"Deleted history entry: {entry_id[:8]}...")
-                    return True
-        return False
+        result = db.delete_history_entry(entry_id)
+        if result:
+            logging.info(f"Deleted history entry: {entry_id[:8]}...")
+        return result
     
     def clear_history(self) -> None:
         """Clear all history entries (keeps recordings)."""
-        with self._lock:
-            self._history = []
-            self._save_history()
+        db.clear_history()
         logging.info("History cleared")
     
     def get_recording_path(self, filename: str) -> Optional[str]:
@@ -378,4 +334,3 @@ class HistoryManager:
 
 # Global history manager instance
 history_manager = HistoryManager()
-

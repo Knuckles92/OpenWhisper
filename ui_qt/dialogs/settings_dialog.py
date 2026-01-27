@@ -7,7 +7,7 @@ from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QComboBox, QCheckBox, QSpinBox,
-    QSlider, QFrame
+    QSlider, QFrame, QLineEdit, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -68,6 +68,7 @@ class SettingsDialog(QDialog):
         self._create_general_tab()
         self._create_audio_tab()
         self._create_hotkeys_tab()
+        self._create_insights_tab()
         self._create_advanced_tab()
 
         layout.addWidget(self.tabs)
@@ -283,10 +284,213 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         self.tabs.addTab(tab, "Hotkeys")
 
-    def _create_advanced_tab(self):
-        """Create advanced settings tab."""
+    def _create_insights_tab(self):
+        """Create insights/AI settings tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Title
+        title = QLabel("Meeting Insights")
+        title_font = QFont("Segoe UI", 12)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(title)
+
+        # Description
+        description = QLabel(
+            "Configure AI providers for generating meeting insights.\n"
+            "Right-click on any saved meeting to generate summaries, action items, or custom analysis."
+        )
+        description.setStyleSheet("color: #a0a0c0; font-size: 11px;")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        # Provider selection
+        layout.addSpacing(12)
+        provider_label = QLabel("LLM Provider:")
+        provider_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(provider_label)
+
+        self.insights_provider_combo = QComboBox()
+        self.insights_provider_combo.addItems(["OpenAI", "OpenRouter"])
+        self.insights_provider_combo.setMinimumHeight(36)
+        self.insights_provider_combo.currentIndexChanged.connect(self._on_insights_provider_changed)
+        layout.addWidget(self.insights_provider_combo)
+
+        provider_info = QLabel(
+            "OpenRouter provides access to 100+ models (Claude, Llama, Mistral, etc.)"
+        )
+        provider_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        provider_info.setWordWrap(True)
+        layout.addWidget(provider_info)
+
+        # Model selection
+        layout.addSpacing(12)
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(model_label)
+
+        self.insights_model_combo = QComboBox()
+        self.insights_model_combo.setEditable(True)  # Allow custom model names
+        self.insights_model_combo.setMinimumHeight(36)
+        self._populate_insights_models()
+        layout.addWidget(self.insights_model_combo)
+
+        model_info = QLabel("You can type a custom model name if not listed")
+        model_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        layout.addWidget(model_info)
+
+        # Separator
+        layout.addSpacing(16)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator)
+
+        # API Keys section
+        layout.addSpacing(8)
+        api_keys_title = QLabel("API Keys")
+        api_keys_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(api_keys_title)
+
+        # OpenAI API Key
+        layout.addSpacing(8)
+        openai_key_label = QLabel("OpenAI API Key:")
+        openai_key_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(openai_key_label)
+
+        self.openai_key_input = QLineEdit()
+        self.openai_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_key_input.setPlaceholderText("sk-...")
+        self.openai_key_input.setMinimumHeight(36)
+        self.openai_key_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d44;
+                color: #e0e0ff;
+                border: 1px solid #404060;
+                border-radius: 6px;
+                padding: 8px 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6366f1;
+            }
+        """)
+        layout.addWidget(self.openai_key_input)
+
+        openai_info = QLabel("Used for OpenAI provider. Also used for transcription if configured.")
+        openai_info.setStyleSheet("color: #808090; font-size: 10px;")
+        layout.addWidget(openai_info)
+
+        # OpenRouter API Key
+        layout.addSpacing(12)
+        openrouter_key_label = QLabel("OpenRouter API Key:")
+        openrouter_key_label.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(openrouter_key_label)
+
+        self.openrouter_key_input = QLineEdit()
+        self.openrouter_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openrouter_key_input.setPlaceholderText("sk-or-...")
+        self.openrouter_key_input.setMinimumHeight(36)
+        self.openrouter_key_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d44;
+                color: #e0e0ff;
+                border: 1px solid #404060;
+                border-radius: 6px;
+                padding: 8px 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6366f1;
+            }
+        """)
+        layout.addWidget(self.openrouter_key_input)
+
+        openrouter_info = QLabel("Get your API key at openrouter.ai")
+        openrouter_info.setStyleSheet("color: #808090; font-size: 10px;")
+        layout.addWidget(openrouter_info)
+
+        layout.addStretch()
+        self.tabs.addTab(tab, "Insights")
+
+    def _on_insights_provider_changed(self, index: int):
+        """Handle insights provider selection change."""
+        self._populate_insights_models()
+
+    def _populate_insights_models(self):
+        """Populate the insights model dropdown based on selected provider."""
+        provider_index = self.insights_provider_combo.currentIndex()
+        current_model = self.insights_model_combo.currentText()
+        
+        self.insights_model_combo.clear()
+        
+        if provider_index == 0:  # OpenAI
+            models = [
+                "gpt-4o",
+                "gpt-4o-mini", 
+                "gpt-4-turbo",
+                "gpt-4",
+                "gpt-3.5-turbo"
+            ]
+        else:  # OpenRouter
+            models = [
+                "anthropic/claude-3.5-sonnet",
+                "anthropic/claude-3-opus",
+                "openai/gpt-4o",
+                "openai/gpt-4-turbo",
+                "google/gemini-pro-1.5",
+                "meta-llama/llama-3.1-70b-instruct",
+                "mistralai/mistral-large"
+            ]
+        
+        self.insights_model_combo.addItems(models)
+        
+        # Try to restore previous selection if valid for new provider
+        if current_model:
+            index = self.insights_model_combo.findText(current_model)
+            if index >= 0:
+                self.insights_model_combo.setCurrentIndex(index)
+            else:
+                # Set to first item
+                self.insights_model_combo.setCurrentIndex(0)
+
+    def _create_advanced_tab(self):
+        """Create advanced settings tab with scrollable content."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d44;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #6366f1;
+                border-radius: 5px;
+                min-height: 30px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        # Content widget for scrollable area
+        content = QWidget()
+        content.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
@@ -341,12 +545,85 @@ class SettingsDialog(QDialog):
         compute_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
         layout.addWidget(compute_info)
 
+        # Streaming Preview Model section
+        layout.addSpacing(16)
+        separator_streaming = QFrame()
+        separator_streaming.setFrameShape(QFrame.Shape.HLine)
+        separator_streaming.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator_streaming)
+
+        layout.addSpacing(12)
+        streaming_model_title = QLabel("Streaming Preview Model")
+        streaming_model_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(streaming_model_title)
+
+        self.streaming_tiny_model_check = QCheckBox("Use tiny.en model for streaming preview")
+        self.streaming_tiny_model_check.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(self.streaming_tiny_model_check)
+
+        streaming_model_info = QLabel(
+            "Uses the fast tiny.en model for real-time preview while keeping\n"
+            "your main model for final transcription. Uses additional memory."
+        )
+        streaming_model_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_model_info.setWordWrap(True)
+        layout.addWidget(streaming_model_info)
+
         # Separator
         layout.addSpacing(16)
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet("background-color: #404060;")
         layout.addWidget(separator)
+
+        # Meeting Recording Settings section
+        layout.addSpacing(12)
+        meeting_rec_title = QLabel("Meeting Recordings")
+        meeting_rec_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(meeting_rec_title)
+
+        # Enable meeting recording checkbox
+        self.meeting_recording_check = QCheckBox("Save complete audio recording of meetings")
+        self.meeting_recording_check.setStyleSheet("color: #e0e0ff;")
+        self.meeting_recording_check.stateChanged.connect(self._on_meeting_recording_changed)
+        layout.addWidget(self.meeting_recording_check)
+
+        # Info label for meeting recording
+        meeting_rec_info = QLabel(
+            "Saves uncut WAV file (~300MB/hour). Stored in 'meeting_recordings' folder.\n"
+            "Useful for archiving meetings that cannot be replicated if lost."
+        )
+        meeting_rec_info.setStyleSheet("color: #808090; font-size: 10px;")
+        meeting_rec_info.setWordWrap(True)
+        layout.addWidget(meeting_rec_info)
+
+        # Max recordings spinbox
+        layout.addSpacing(8)
+        max_rec_layout = QHBoxLayout()
+        max_rec_label = QLabel("Maximum recordings to keep:")
+        max_rec_label.setStyleSheet("color: #e0e0ff;")
+        max_rec_layout.addWidget(max_rec_label)
+
+        self.max_recordings_spinbox = QSpinBox()
+        self.max_recordings_spinbox.setMinimum(1)
+        self.max_recordings_spinbox.setMaximum(50)
+        self.max_recordings_spinbox.setValue(config.MAX_MEETING_RECORDINGS)
+        self.max_recordings_spinbox.setMinimumHeight(36)
+        self.max_recordings_spinbox.setMaximumWidth(80)
+        max_rec_layout.addWidget(self.max_recordings_spinbox)
+        max_rec_layout.addStretch()
+        layout.addLayout(max_rec_layout)
+
+        max_rec_info = QLabel("Oldest recordings are automatically deleted when limit is reached")
+        max_rec_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        layout.addWidget(max_rec_info)
+
+        # Separator
+        layout.addSpacing(16)
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator2)
 
         # Max file size
         layout.addSpacing(12)
@@ -368,7 +645,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.logging_check)
 
         layout.addStretch()
+
+        # Wire up scroll area
+        scroll_area.setWidget(content)
+        tab_layout.addWidget(scroll_area)
         self.tabs.addTab(tab, "Advanced")
+
+    def _on_meeting_recording_changed(self, state):
+        """Handle meeting recording checkbox state change."""
+        enabled = state == Qt.CheckState.Checked.value
+        self.max_recordings_spinbox.setEnabled(enabled)
 
     def _update_threshold_display(self, value):
         """Update threshold value display."""
@@ -377,9 +663,10 @@ class SettingsDialog(QDialog):
 
     def _on_streaming_enabled_changed(self, state):
         """Handle streaming enabled checkbox state change."""
-        # Enable/disable live typing checkbox based on streaming enabled state
+        # Enable/disable streaming-related checkboxes based on streaming enabled state
         streaming_enabled = state == Qt.CheckState.Checked.value
         self.streaming_paste_check.setEnabled(streaming_enabled)
+        self.streaming_tiny_model_check.setEnabled(streaming_enabled)
         if not streaming_enabled:
             self.streaming_paste_check.setChecked(False)
 
@@ -432,6 +719,11 @@ class SettingsDialog(QDialog):
             self.streaming_paste_check.setChecked(settings.get('streaming_paste_enabled', False))
             self.streaming_paste_check.setEnabled(streaming_enabled)
 
+            # Load streaming tiny model setting
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
+            self.streaming_tiny_model_check.setChecked(streaming_tiny_enabled)
+            self.streaming_tiny_model_check.setEnabled(streaming_enabled)
+
             # Load whisper engine settings
             whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
             whisper_device = settings.get('whisper_device', 'auto')
@@ -458,6 +750,37 @@ class SettingsDialog(QDialog):
                         self.audio_device_combo.setCurrentIndex(i)
                         break
 
+            # Load insights settings
+            insights_provider = settings.get('insights_provider', 'openai')
+            if insights_provider == 'openrouter':
+                self.insights_provider_combo.setCurrentIndex(1)
+            else:
+                self.insights_provider_combo.setCurrentIndex(0)
+            
+            # Populate models first, then set saved model
+            self._populate_insights_models()
+            insights_model = settings.get('insights_model', '')
+            if insights_model:
+                index = self.insights_model_combo.findText(insights_model)
+                if index >= 0:
+                    self.insights_model_combo.setCurrentIndex(index)
+                else:
+                    # Custom model - set it directly
+                    self.insights_model_combo.setCurrentText(insights_model)
+            
+            # Load API keys (if saved)
+            openai_key = settings.get('insights_openai_key', '')
+            openrouter_key = settings.get('insights_openrouter_key', '')
+            self.openai_key_input.setText(openai_key)
+            self.openrouter_key_input.setText(openrouter_key)
+
+            # Load meeting recording settings
+            meeting_rec_enabled = settings.get('meeting_recording_enabled', True)
+            max_recordings = settings.get('meeting_max_recordings', config.MAX_MEETING_RECORDINGS)
+            self.meeting_recording_check.setChecked(meeting_rec_enabled)
+            self.max_recordings_spinbox.setValue(max_recordings)
+            self.max_recordings_spinbox.setEnabled(meeting_rec_enabled)
+
             self.logger.info("Settings loaded successfully")
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
@@ -468,6 +791,11 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_paste_check.setChecked(False)
             self.streaming_paste_check.setEnabled(config.STREAMING_ENABLED)
+            self.streaming_tiny_model_check.setChecked(False)
+            self.streaming_tiny_model_check.setEnabled(config.STREAMING_ENABLED)
+            self.meeting_recording_check.setChecked(True)
+            self.max_recordings_spinbox.setValue(config.MAX_MEETING_RECORDINGS)
+            self.max_recordings_spinbox.setEnabled(True)
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -500,9 +828,11 @@ class SettingsDialog(QDialog):
             # Check if streaming settings changed
             old_streaming_enabled = settings.get('streaming_enabled', False)
             old_streaming_paste = settings.get('streaming_paste_enabled', False)
+            old_streaming_tiny = settings.get('streaming_tiny_model_enabled', False)
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
-                old_streaming_paste != self.streaming_paste_check.isChecked()
+                old_streaming_paste != self.streaming_paste_check.isChecked() or
+                old_streaming_tiny != self.streaming_tiny_model_check.isChecked()
             )
 
             # Update with new values
@@ -512,6 +842,7 @@ class SettingsDialog(QDialog):
             settings['minimize_tray'] = self.minimize_tray_check.isChecked()
             settings['streaming_enabled'] = self.streaming_enabled_check.isChecked()
             settings['streaming_paste_enabled'] = self.streaming_paste_check.isChecked()
+            settings['streaming_tiny_model_enabled'] = self.streaming_tiny_model_check.isChecked()
             settings['whisper_model'] = new_whisper_model
             settings['whisper_device'] = new_device
             settings['whisper_compute_type'] = new_compute
@@ -521,6 +852,27 @@ class SettingsDialog(QDialog):
                 settings.pop('audio_input_device', None)
             else:
                 settings['audio_input_device'] = new_audio_device
+
+            # Save insights settings
+            insights_provider = 'openrouter' if self.insights_provider_combo.currentIndex() == 1 else 'openai'
+            settings['insights_provider'] = insights_provider
+            settings['insights_model'] = self.insights_model_combo.currentText()
+            
+            # Save API keys (only if provided)
+            openai_key = self.openai_key_input.text().strip()
+            openrouter_key = self.openrouter_key_input.text().strip()
+            if openai_key:
+                settings['insights_openai_key'] = openai_key
+            else:
+                settings.pop('insights_openai_key', None)
+            if openrouter_key:
+                settings['insights_openrouter_key'] = openrouter_key
+            else:
+                settings.pop('insights_openrouter_key', None)
+
+            # Save meeting recording settings
+            settings['meeting_recording_enabled'] = self.meeting_recording_check.isChecked()
+            settings['meeting_max_recordings'] = self.max_recordings_spinbox.value()
 
             # Save to file
             settings_manager.save_all_settings(settings)

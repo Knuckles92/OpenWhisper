@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from config import config
+from services.database import db
 
 
 _CRASH_LOG_FILE = None
@@ -62,6 +63,7 @@ from services.recorder import AudioRecorder
 from services.hotkey_manager import HotkeyManager
 from services.settings import settings_manager
 from services.streaming_transcriber import StreamingTranscriber
+from services.meeting_controller import MeetingController
 from transcriber import TranscriptionBackend, LocalWhisperBackend, OpenAIBackend
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
@@ -179,6 +181,10 @@ class ApplicationController(QObject):
         self.streaming_transcriber: Optional[StreamingTranscriber] = None
         self._streaming_enabled = False
         self._streaming_paste_enabled = False
+        self._streaming_backend: Optional[LocalWhisperBackend] = None
+
+        # Meeting mode controller
+        self.meeting_controller: Optional[MeetingController] = None
 
         # Track source audio file for history (to save recording)
         self._pending_audio_file: Optional[str] = None
@@ -192,6 +198,7 @@ class ApplicationController(QObject):
         self._setup_ui_callbacks()
         self._setup_audio_level_callback()
         self._setup_streaming()
+        self._setup_meeting_mode()
         self._connect_signals()
 
     def _setup_transcription_backends(self):
@@ -303,11 +310,25 @@ class ApplicationController(QObject):
             settings = settings_manager.load_all_settings()
             self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
             self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
 
             if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
                 chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+
+                # Determine which backend to use for streaming
+                if streaming_tiny_enabled:
+                    # Create dedicated tiny.en backend for streaming
+                    logging.info("Creating dedicated tiny.en backend for streaming...")
+                    self._streaming_backend = LocalWhisperBackend(model_name='tiny.en')
+                    streaming_backend = self._streaming_backend
+                    logging.info("Streaming will use dedicated tiny.en model")
+                else:
+                    # Use the same backend as main transcription
+                    streaming_backend = self.current_backend
+                    logging.info("Streaming will share main transcription model")
+
                 self.streaming_transcriber = StreamingTranscriber(
-                    backend=self.current_backend,
+                    backend=streaming_backend,
                     chunk_duration_sec=chunk_duration
                 )
                 logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste_overlay={self._streaming_paste_enabled})")
@@ -323,7 +344,7 @@ class ApplicationController(QObject):
 
     def reconfigure_streaming(self):
         """Reconfigure streaming transcriber based on current settings.
-        
+
         Called when streaming settings are changed in the Settings Dialog.
         Dynamically creates or destroys the StreamingTranscriber without restart.
         """
@@ -344,16 +365,40 @@ class ApplicationController(QObject):
                 logging.warning(f"Error cleaning up streaming transcriber: {e}")
             self.streaming_transcriber = None
 
+        # Cleanup existing streaming backend if present
+        if self._streaming_backend:
+            try:
+                logging.info("Cleaning up dedicated streaming backend...")
+                self._streaming_backend.cleanup()
+                logging.info("Cleaned up dedicated streaming backend")
+            except Exception as e:
+                logging.warning(f"Error cleaning up streaming backend: {e}")
+            self._streaming_backend = None
+
         # Load fresh streaming settings
         try:
             settings = settings_manager.load_all_settings()
             self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
             self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
 
             if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
                 chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+
+                # Determine which backend to use for streaming
+                if streaming_tiny_enabled:
+                    # Create dedicated tiny.en backend for streaming
+                    logging.info("Creating dedicated tiny.en backend for streaming...")
+                    self._streaming_backend = LocalWhisperBackend(model_name='tiny.en')
+                    streaming_backend = self._streaming_backend
+                    logging.info("Streaming reconfigured with dedicated tiny.en model")
+                else:
+                    # Use the same backend as main transcription
+                    streaming_backend = self.current_backend
+                    logging.info("Streaming reconfigured to share main transcription model")
+
                 self.streaming_transcriber = StreamingTranscriber(
-                    backend=self.current_backend,
+                    backend=streaming_backend,
                     chunk_duration_sec=chunk_duration
                 )
                 logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste_overlay={self._streaming_paste_enabled})")
@@ -373,6 +418,200 @@ class ApplicationController(QObject):
             self._streaming_enabled = False
             self._streaming_paste_enabled = False
             self.ui_controller.set_status("Failed to reconfigure streaming")
+
+    def _setup_meeting_mode(self):
+        """Initialize meeting mode controller."""
+        try:
+            local_backend = self.transcription_backends.get('local_whisper')
+            if local_backend and isinstance(local_backend, LocalWhisperBackend):
+                self.meeting_controller = MeetingController(backend=local_backend)
+
+                # Connect Meeting Mode tab callbacks
+                meeting_tab = self.ui_controller.get_meeting_tab()
+                if meeting_tab:
+                    meeting_tab.on_start_meeting = self._on_start_meeting
+                    meeting_tab.on_stop_meeting = self._on_stop_meeting
+
+                # Connect sidebar meeting callbacks through ui_controller
+                self.ui_controller.on_load_meeting = self._on_load_meeting
+                self.ui_controller.on_delete_meeting = self._on_delete_meeting
+                self.ui_controller.on_rename_meeting = self._on_rename_meeting
+                self.ui_controller.on_copy_meeting = self._on_copy_meeting
+                self.ui_controller.on_generate_insights = self._on_generate_insights
+
+                # Refresh meetings list in sidebar
+                self._refresh_meeting_list()
+
+                logging.info("Meeting mode initialized")
+            else:
+                logging.warning("Meeting mode requires Local Whisper backend")
+        except Exception as e:
+            logging.error(f"Failed to initialize meeting mode: {e}")
+
+    def _on_start_meeting(self):
+        """Handle start meeting from Meeting Mode tab."""
+        if self.meeting_controller is None:
+            logging.error("Meeting controller not available")
+            return
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
+            return
+
+        title = meeting_tab.get_meeting_title()
+        saved_device_id = settings_manager.load_audio_input_device()
+
+        if self.meeting_controller.start_meeting(title, saved_device_id):
+            # Set up chunk callback
+            self.meeting_controller.on_chunk_transcribed = self._on_meeting_chunk
+            meeting_tab.set_status("Recording in progress...")
+
+            # Lock tabs during meeting recording
+            from ui_qt.widgets import TabbedContentWidget
+            self.ui_controller.main_window.tabbed_content.set_recording_state(
+                True, TabbedContentWidget.TAB_MEETING_MODE
+            )
+        else:
+            meeting_tab.set_idle()
+            meeting_tab.set_status("Failed to start meeting")
+
+    def _on_stop_meeting(self):
+        """Handle stop meeting from Meeting Mode tab."""
+        if self.meeting_controller is None:
+            return
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
+            return
+
+        meeting = self.meeting_controller.stop_meeting()
+
+        if meeting:
+            meeting_tab.set_status(f"Meeting saved ({meeting.formatted_duration})")
+        else:
+            meeting_tab.set_status("Meeting ended")
+
+        meeting_tab.set_idle()
+
+        # Unlock tabs after meeting ends
+        self.ui_controller.main_window.tabbed_content.set_recording_state(False, -1)
+
+        self._refresh_meeting_list()
+
+    def _on_meeting_chunk(self, text: str):
+        """Handle transcribed chunk from meeting."""
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab:
+            meeting_tab.append_transcription(text)
+
+    def _on_load_meeting(self, meeting_id: str):
+        """Handle loading a past meeting from sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+        if meeting_tab is None:
+            return
+
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        if meeting:
+            meeting_tab.set_meeting_title(meeting.title)
+            meeting_tab.set_transcription(meeting.transcript)
+            meeting_tab.set_status(f"Loaded: {meeting.title}")
+
+    def _on_delete_meeting(self, meeting_id: str):
+        """Handle meeting deletion from sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+
+        if self.meeting_controller.delete_meeting(meeting_id):
+            if meeting_tab:
+                meeting_tab.set_status("Meeting deleted")
+                meeting_tab.clear_transcription()
+                meeting_tab.set_meeting_title("")
+            self._refresh_meeting_list()
+        else:
+            if meeting_tab:
+                meeting_tab.set_status("Failed to delete meeting")
+
+    def _on_rename_meeting(self, meeting_id: str, new_title: str):
+        """Handle meeting rename from sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meeting_tab = self.ui_controller.get_meeting_tab()
+
+        if self.meeting_controller.rename_meeting(meeting_id, new_title):
+            if meeting_tab:
+                meeting_tab.set_status(f"Renamed to: {new_title}")
+            self._refresh_meeting_list()
+        else:
+            if meeting_tab:
+                meeting_tab.set_status("Failed to rename meeting")
+
+    def _on_copy_meeting(self, meeting_id: str):
+        """Handle meeting transcript copy from sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        if meeting and meeting.transcript:
+            import pyperclip
+            pyperclip.copy(meeting.transcript)
+
+            meeting_tab = self.ui_controller.get_meeting_tab()
+            if meeting_tab:
+                meeting_tab.set_status("Transcript copied to clipboard")
+
+    def _on_generate_insights(self, meeting_id: str):
+        """Handle meeting insights generation request from sidebar."""
+        logging.info(f"_on_generate_insights called with meeting_id: {meeting_id}")
+        
+        if self.meeting_controller is None:
+            logging.warning("Meeting controller not available for insights")
+            return
+
+        meeting = self.meeting_controller.get_meeting(meeting_id)
+        logging.info(f"Retrieved meeting: {meeting}")
+        
+        if not meeting:
+            logging.warning(f"Meeting not found: {meeting_id}")
+            return
+
+        if not meeting.transcript or not meeting.transcript.strip():
+            logging.warning(f"Meeting has no transcript: {meeting_id}")
+            meeting_tab = self.ui_controller.get_meeting_tab()
+            if meeting_tab:
+                meeting_tab.set_status("No transcript available for insights")
+            return
+
+        # Open the insights dialog
+        logging.info(f"Opening InsightsDialog for meeting: {meeting.title}")
+        from ui_qt.dialogs.insights_dialog import InsightsDialog
+        dialog = InsightsDialog(
+            transcript=meeting.transcript,
+            meeting_title=meeting.title,
+            meeting_id=meeting.id,
+            parent=self.ui_controller.main_window
+        )
+        dialog.exec()
+        logging.info("InsightsDialog closed")
+
+    def _on_get_meeting(self, meeting_id: str):
+        """Get meeting data for context menu actions."""
+        if self.meeting_controller is None:
+            return None
+        return self.meeting_controller.get_meeting(meeting_id)
+
+    def _refresh_meeting_list(self):
+        """Refresh the meetings list in the sidebar."""
+        if self.meeting_controller is None:
+            return
+
+        meetings = self.meeting_controller.get_meetings_for_display()
+        self.ui_controller.refresh_meetings_list(meetings)
 
     def _connect_signals(self):
         """Connect Qt signals to UI controller methods."""
@@ -910,6 +1149,20 @@ class ApplicationController(QObject):
             logging.debug(f"Error during streaming transcriber cleanup: {e}")
 
         try:
+            if self._streaming_backend:
+                logging.info("Cleaning up dedicated streaming backend...")
+                self._streaming_backend.cleanup()
+                self._streaming_backend = None
+        except Exception as e:
+            logging.debug(f"Error during streaming backend cleanup: {e}")
+
+        try:
+            if self.meeting_controller:
+                self.meeting_controller.cleanup()
+        except Exception as e:
+            logging.debug(f"Error during meeting controller cleanup: {e}")
+
+        try:
             self.executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:
             # Python < 3.9 doesn't support cancel_futures
@@ -933,7 +1186,12 @@ class ApplicationController(QObject):
             self.ui_controller.cleanup()
         except Exception as e:
             logging.debug(f"Error during UI controller cleanup: {e}")
-        
+
+        try:
+            db.close()
+        except Exception as e:
+            logging.debug(f"Error closing database: {e}")
+
         logging.info("Application controller cleaned up")
 
 

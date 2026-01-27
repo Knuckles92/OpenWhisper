@@ -17,6 +17,7 @@ from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
+from ui_qt.widgets import QuickRecordTab, MeetingTab, TabbedContentWidget
 from services.audio_processor import audio_processor
 
 
@@ -80,7 +81,14 @@ class UIController(QObject):
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_audio_requested.connect(self.open_upload_audio_dialog)
-        
+
+        # Connect sidebar meeting signals for tab-based Meeting Mode
+        self.main_window.history_sidebar.meeting_selected.connect(self._on_sidebar_meeting_selected)
+        self.main_window.history_sidebar.meeting_delete_requested.connect(self._on_sidebar_meeting_delete)
+        self.main_window.history_sidebar.meeting_rename_requested.connect(self._on_sidebar_meeting_rename)
+        self.main_window.history_sidebar.meeting_copy_requested.connect(self._on_sidebar_meeting_copy)
+        self.main_window.history_sidebar.meeting_insights_requested.connect(self._on_sidebar_meeting_insights)
+
         # Set up the main window's retranscribe callback
         self.main_window.on_retranscribe = self._handle_retranscribe
         
@@ -544,6 +552,83 @@ class UIController(QObject):
         if self.on_upload_audio:
             self.on_upload_audio(file_path)
 
+    def get_quick_record_tab(self) -> QuickRecordTab:
+        """Get the Quick Record tab widget.
+
+        Returns:
+            The QuickRecordTab instance
+        """
+        return self.main_window.quick_record_tab
+
+    def get_meeting_tab(self) -> MeetingTab:
+        """Get the Meeting Mode tab widget.
+
+        Returns:
+            The MeetingTab instance
+        """
+        return self.main_window.meeting_tab
+
+    def switch_to_tab(self, index: int):
+        """Switch to a specific tab.
+
+        Args:
+            index: Tab index (0 for Quick Record, 1 for Meeting Mode)
+        """
+        self.main_window.tabbed_content.set_current_index(index)
+
+    def switch_to_quick_record(self):
+        """Switch to the Quick Record tab."""
+        self.switch_to_tab(TabbedContentWidget.TAB_QUICK_RECORD)
+
+    def switch_to_meeting_mode(self):
+        """Switch to the Meeting Mode tab."""
+        self.switch_to_tab(TabbedContentWidget.TAB_MEETING_MODE)
+
+    def refresh_meetings_list(self, meetings: List[dict]):
+        """Refresh the meetings list in the sidebar.
+
+        Args:
+            meetings: List of meeting dictionaries
+        """
+        self.main_window.history_sidebar.refresh_meetings(meetings)
+
+    # Sidebar meeting event handlers (will be connected to MeetingController by app_qt.py)
+    def _on_sidebar_meeting_selected(self, meeting_id: str):
+        """Handle meeting selection from sidebar."""
+        self.logger.info(f"Sidebar: meeting selected: {meeting_id}")
+        if hasattr(self, 'on_load_meeting') and self.on_load_meeting:
+            self.on_load_meeting(meeting_id)
+
+    def _on_sidebar_meeting_delete(self, meeting_id: str):
+        """Handle meeting delete request from sidebar."""
+        self.logger.info(f"Sidebar: meeting delete requested: {meeting_id}")
+        if hasattr(self, 'on_delete_meeting') and self.on_delete_meeting:
+            self.on_delete_meeting(meeting_id)
+
+    def _on_sidebar_meeting_rename(self, meeting_id: str, new_title: str):
+        """Handle meeting rename request from sidebar."""
+        self.logger.info(f"Sidebar: meeting rename requested: {meeting_id} -> {new_title}")
+        if hasattr(self, 'on_rename_meeting') and self.on_rename_meeting:
+            self.on_rename_meeting(meeting_id, new_title)
+
+    def _on_sidebar_meeting_copy(self, meeting_id: str):
+        """Handle meeting copy request from sidebar."""
+        self.logger.info(f"Sidebar: meeting copy requested: {meeting_id}")
+        if hasattr(self, 'on_copy_meeting') and self.on_copy_meeting:
+            self.on_copy_meeting(meeting_id)
+
+    def _on_sidebar_meeting_insights(self, meeting_id: str):
+        """Handle meeting insights generation request from sidebar."""
+        self.logger.info(f"Sidebar: meeting insights requested: {meeting_id}")
+        if hasattr(self, 'on_generate_insights') and self.on_generate_insights:
+            self.logger.info(f"Calling on_generate_insights callback for meeting: {meeting_id}")
+            try:
+                self.on_generate_insights(meeting_id)
+            except Exception as e:
+                self.logger.error(f"Error calling on_generate_insights: {e}", exc_info=True)
+        else:
+            self.logger.warning(f"on_generate_insights callback not set (hasattr={hasattr(self, 'on_generate_insights')}, value={getattr(self, 'on_generate_insights', None)})")
+
     def update_hotkey_display(self, hotkeys: dict):
         """
         Update the hotkey display in the main window.
@@ -629,7 +714,7 @@ class UIController(QObject):
             self.tray_manager.setParent(None)
         except Exception as e:
             self.logger.debug(f"Error hiding system tray: {e}")
-        
+
         # Close main window (force quit to bypass minimize to tray)
         try:
             self.main_window._force_quit = True

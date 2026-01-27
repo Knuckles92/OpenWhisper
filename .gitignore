@@ -22,8 +22,10 @@ node_modules/*
 .vscode/settings.json
 test_sample.mp3
 *.mp3
-specs/fix-streaming-transcription-concatenation.md
-specs/streaming-tiny-model-setting.md
+meetings.json
 meetings.json.bak
 openwhisper.db
 transcription_history.json.bak
+meetings.json
+specs/fix-streaming-transcription-concatenation.md
+specs/streaming-tiny-model-setting.md

@@ -20,6 +20,7 @@ class AppConfig:
     HISTORY_FILE: str = "transcription_history.json"
     RECORDINGS_FOLDER: str = "recordings"
     MAX_SAVED_RECORDINGS: int = 3
+    DATABASE_FILE: str = "openwhisper.db"
     
     # Audio settings
     CHUNK_SIZE: int = 1024
@@ -105,6 +106,33 @@ class AppConfig:
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
     STREAMING_BEAM_SIZE: int = 3  # Smaller beam size for faster processing
 
+    # Meeting mode settings
+    MEETINGS_FILE: str = "meetings.json"
+    MEETING_AUDIO_FOLDER: str = "meeting_audio"
+    MEETING_CHUNK_DURATION_SEC: float = 30.0  # Larger chunks for better quality
+    MEETING_QUEUE_SIZE: int = 20  # Larger queue for long recordings
+
+    # Meeting recording settings (complete WAV recordings)
+    MEETING_RECORDINGS_FOLDER: str = "meeting_recordings"
+    MAX_MEETING_RECORDINGS: int = 10  # ~3GB at 1hr/meeting (44.1kHz 16-bit mono ~5.3MB/min)
+
+    # Meeting Insights settings
+    INSIGHTS_PROVIDERS: List[str] = None  # ["openai", "openrouter"]
+    DEFAULT_INSIGHTS_PROVIDER: str = "openai"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    DEFAULT_OPENAI_INSIGHTS_MODEL: str = "gpt-4o"
+    DEFAULT_OPENROUTER_INSIGHTS_MODEL: str = "anthropic/claude-3.5-sonnet"
+    INSIGHTS_MAX_TOKENS: int = 3000
+    INSIGHTS_TEMPERATURE: float = 0.5
+
+    # Insight Generation Options
+    INSIGHT_LENGTH_OPTIONS: Dict[str, Dict] = None
+    INSIGHT_FORMAT_OPTIONS: Dict[str, str] = None
+    INSIGHT_TONE_OPTIONS: Dict[str, str] = None
+    INSIGHT_FOCUS_AREAS: Dict[str, str] = None
+    INSIGHT_LANGUAGE_OPTIONS: List[str] = None
+    INSIGHT_BUILTIN_PRESETS: List[Dict] = None
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
@@ -160,6 +188,158 @@ class AppConfig:
                     'color_shift_speed': 50
                 }
             }
+
+        if self.INSIGHTS_PROVIDERS is None:
+            self.INSIGHTS_PROVIDERS = ["openai", "openrouter"]
+
+        if self.INSIGHT_LENGTH_OPTIONS is None:
+            self.INSIGHT_LENGTH_OPTIONS = {
+                "brief": {
+                    "label": "Brief",
+                    "description": "2-3 key points",
+                    "max_tokens": 500,
+                    "instruction": "Keep the response concise, 2-3 key points maximum"
+                },
+                "standard": {
+                    "label": "Standard",
+                    "description": "Balanced coverage",
+                    "max_tokens": 1500,
+                    "instruction": "Provide a balanced summary covering main points"
+                },
+                "detailed": {
+                    "label": "Detailed",
+                    "description": "Comprehensive analysis",
+                    "max_tokens": 3000,
+                    "instruction": "Include comprehensive coverage of all significant points"
+                }
+            }
+
+        if self.INSIGHT_FORMAT_OPTIONS is None:
+            self.INSIGHT_FORMAT_OPTIONS = {
+                "bullet_points": {
+                    "label": "Bullet Points",
+                    "instruction": "Use bullet points for easy scanning"
+                },
+                "narrative": {
+                    "label": "Narrative",
+                    "instruction": "Write in flowing paragraph form"
+                },
+                "numbered_list": {
+                    "label": "Numbered List",
+                    "instruction": "Use numbered lists with clear hierarchy"
+                },
+                "markdown": {
+                    "label": "Markdown",
+                    "instruction": "Use full markdown formatting with headers and emphasis"
+                }
+            }
+
+        if self.INSIGHT_TONE_OPTIONS is None:
+            self.INSIGHT_TONE_OPTIONS = {
+                "professional": {
+                    "label": "Professional",
+                    "instruction": "Use formal business language appropriate for stakeholders"
+                },
+                "casual": {
+                    "label": "Casual",
+                    "instruction": "Use conversational and accessible language"
+                },
+                "technical": {
+                    "label": "Technical",
+                    "instruction": "Use detailed technical terminology and precise descriptions"
+                },
+                "executive": {
+                    "label": "Executive",
+                    "instruction": "Focus on high-level strategic points for executive audience"
+                }
+            }
+
+        if self.INSIGHT_FOCUS_AREAS is None:
+            self.INSIGHT_FOCUS_AREAS = {
+                "decisions": {
+                    "label": "Decisions",
+                    "instruction": "Key decisions made during the meeting"
+                },
+                "discussions": {
+                    "label": "Discussions",
+                    "instruction": "Main discussion topics and debates"
+                },
+                "technical": {
+                    "label": "Technical",
+                    "instruction": "Technical details and specifications"
+                },
+                "people": {
+                    "label": "People/Roles",
+                    "instruction": "Participant contributions and roles"
+                },
+                "timelines": {
+                    "label": "Timelines",
+                    "instruction": "Deadlines, milestones, and schedules"
+                },
+                "risks": {
+                    "label": "Risks/Issues",
+                    "instruction": "Risks, concerns, and issues raised"
+                }
+            }
+
+        if self.INSIGHT_LANGUAGE_OPTIONS is None:
+            self.INSIGHT_LANGUAGE_OPTIONS = [
+                "english", "spanish", "french", "german",
+                "portuguese", "italian", "dutch", "chinese",
+                "japanese", "korean"
+            ]
+
+        if self.INSIGHT_BUILTIN_PRESETS is None:
+            self.INSIGHT_BUILTIN_PRESETS = [
+                {
+                    "id": "executive_brief",
+                    "name": "Executive Brief",
+                    "insight_type": "summary",
+                    "is_builtin": True,
+                    "options": {
+                        "output_length": "brief",
+                        "formatting_style": "bullet_points",
+                        "tone": "executive",
+                        "focus_areas": ["decisions", "risks"],
+                        "creativity": 0.3,
+                        "language": "english",
+                        "include_timestamps": False,
+                        "include_speaker_attribution": False
+                    }
+                },
+                {
+                    "id": "technical_deepdive",
+                    "name": "Technical Deep-dive",
+                    "insight_type": "summary",
+                    "is_builtin": True,
+                    "options": {
+                        "output_length": "detailed",
+                        "formatting_style": "markdown",
+                        "tone": "technical",
+                        "focus_areas": ["technical", "discussions", "decisions"],
+                        "creativity": 0.5,
+                        "language": "english",
+                        "include_timestamps": False,
+                        "include_speaker_attribution": True
+                    }
+                },
+                {
+                    "id": "project_status",
+                    "name": "Project Status",
+                    "insight_type": "summary",
+                    "is_builtin": True,
+                    "options": {
+                        "output_length": "standard",
+                        "formatting_style": "numbered_list",
+                        "tone": "professional",
+                        "focus_areas": ["decisions", "timelines", "risks"],
+                        "creativity": 0.4,
+                        "language": "english",
+                        "include_timestamps": False,
+                        "include_speaker_attribution": False
+                    }
+                }
+            ]
 
 
 # Global config instance
