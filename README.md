@@ -22,10 +22,10 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
-- **Live Streaming** – Real-time transcription preview while recording (experimental)
-- **Meeting Mode** – Long-form transcription with live streaming and auto-save
-- **Meeting Insights** – AI-powered summaries, action items, and custom analysis (OpenAI/OpenRouter)
-- **Caret Indicator** – Visual marker at cursor location when pasting
+- **Live Streaming** *(experimental)* – Real-time transcription preview while recording
+- **Meeting Mode** *(experimental)* – Long-form transcription with live streaming and auto-save
+- **Meeting Insights** *(experimental)* – AI-powered summaries, action items, and custom analysis (OpenAI/OpenRouter)
+- **Caret Indicator** *(experimental)* – Visual marker at cursor location when pasting
 - **Window Memory** – Remembers window position and size between sessions
 
 ## GPU Acceleration
