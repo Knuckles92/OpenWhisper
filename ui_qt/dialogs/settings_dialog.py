@@ -7,7 +7,7 @@ from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QComboBox, QCheckBox, QSpinBox,
-    QSlider, QFrame, QLineEdit
+    QSlider, QFrame, QLineEdit, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -457,9 +457,40 @@ class SettingsDialog(QDialog):
                 self.insights_model_combo.setCurrentIndex(0)
 
     def _create_advanced_tab(self):
-        """Create advanced settings tab."""
+        """Create advanced settings tab with scrollable content."""
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d44;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #6366f1;
+                border-radius: 5px;
+                min-height: 30px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        # Content widget for scrollable area
+        content = QWidget()
+        content.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
@@ -513,6 +544,30 @@ class SettingsDialog(QDialog):
         compute_info = QLabel("Changes require restarting the whisper engine")
         compute_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
         layout.addWidget(compute_info)
+
+        # Streaming Preview Model section
+        layout.addSpacing(16)
+        separator_streaming = QFrame()
+        separator_streaming.setFrameShape(QFrame.Shape.HLine)
+        separator_streaming.setStyleSheet("background-color: #404060;")
+        layout.addWidget(separator_streaming)
+
+        layout.addSpacing(12)
+        streaming_model_title = QLabel("Streaming Preview Model")
+        streaming_model_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        layout.addWidget(streaming_model_title)
+
+        self.streaming_tiny_model_check = QCheckBox("Use tiny.en model for streaming preview")
+        self.streaming_tiny_model_check.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(self.streaming_tiny_model_check)
+
+        streaming_model_info = QLabel(
+            "Uses the fast tiny.en model for real-time preview while keeping\n"
+            "your main model for final transcription. Uses additional memory."
+        )
+        streaming_model_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_model_info.setWordWrap(True)
+        layout.addWidget(streaming_model_info)
 
         # Separator
         layout.addSpacing(16)
@@ -590,6 +645,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.logging_check)
 
         layout.addStretch()
+
+        # Wire up scroll area
+        scroll_area.setWidget(content)
+        tab_layout.addWidget(scroll_area)
         self.tabs.addTab(tab, "Advanced")
 
     def _on_meeting_recording_changed(self, state):
@@ -604,9 +663,10 @@ class SettingsDialog(QDialog):
 
     def _on_streaming_enabled_changed(self, state):
         """Handle streaming enabled checkbox state change."""
-        # Enable/disable live typing checkbox based on streaming enabled state
+        # Enable/disable streaming-related checkboxes based on streaming enabled state
         streaming_enabled = state == Qt.CheckState.Checked.value
         self.streaming_paste_check.setEnabled(streaming_enabled)
+        self.streaming_tiny_model_check.setEnabled(streaming_enabled)
         if not streaming_enabled:
             self.streaming_paste_check.setChecked(False)
 
@@ -658,6 +718,11 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_paste_check.setChecked(settings.get('streaming_paste_enabled', False))
             self.streaming_paste_check.setEnabled(streaming_enabled)
+
+            # Load streaming tiny model setting
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
+            self.streaming_tiny_model_check.setChecked(streaming_tiny_enabled)
+            self.streaming_tiny_model_check.setEnabled(streaming_enabled)
 
             # Load whisper engine settings
             whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
@@ -726,6 +791,8 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_paste_check.setChecked(False)
             self.streaming_paste_check.setEnabled(config.STREAMING_ENABLED)
+            self.streaming_tiny_model_check.setChecked(False)
+            self.streaming_tiny_model_check.setEnabled(config.STREAMING_ENABLED)
             self.meeting_recording_check.setChecked(True)
             self.max_recordings_spinbox.setValue(config.MAX_MEETING_RECORDINGS)
             self.max_recordings_spinbox.setEnabled(True)
@@ -761,9 +828,11 @@ class SettingsDialog(QDialog):
             # Check if streaming settings changed
             old_streaming_enabled = settings.get('streaming_enabled', False)
             old_streaming_paste = settings.get('streaming_paste_enabled', False)
+            old_streaming_tiny = settings.get('streaming_tiny_model_enabled', False)
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
-                old_streaming_paste != self.streaming_paste_check.isChecked()
+                old_streaming_paste != self.streaming_paste_check.isChecked() or
+                old_streaming_tiny != self.streaming_tiny_model_check.isChecked()
             )
 
             # Update with new values
@@ -773,6 +842,7 @@ class SettingsDialog(QDialog):
             settings['minimize_tray'] = self.minimize_tray_check.isChecked()
             settings['streaming_enabled'] = self.streaming_enabled_check.isChecked()
             settings['streaming_paste_enabled'] = self.streaming_paste_check.isChecked()
+            settings['streaming_tiny_model_enabled'] = self.streaming_tiny_model_check.isChecked()
             settings['whisper_model'] = new_whisper_model
             settings['whisper_device'] = new_device
             settings['whisper_compute_type'] = new_compute

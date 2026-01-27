@@ -181,6 +181,7 @@ class ApplicationController(QObject):
         self.streaming_transcriber: Optional[StreamingTranscriber] = None
         self._streaming_enabled = False
         self._streaming_paste_enabled = False
+        self._streaming_backend: Optional[LocalWhisperBackend] = None
 
         # Meeting mode controller
         self.meeting_controller: Optional[MeetingController] = None
@@ -309,11 +310,25 @@ class ApplicationController(QObject):
             settings = settings_manager.load_all_settings()
             self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
             self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
 
             if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
                 chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+
+                # Determine which backend to use for streaming
+                if streaming_tiny_enabled:
+                    # Create dedicated tiny.en backend for streaming
+                    logging.info("Creating dedicated tiny.en backend for streaming...")
+                    self._streaming_backend = LocalWhisperBackend(model_name='tiny.en')
+                    streaming_backend = self._streaming_backend
+                    logging.info("Streaming will use dedicated tiny.en model")
+                else:
+                    # Use the same backend as main transcription
+                    streaming_backend = self.current_backend
+                    logging.info("Streaming will share main transcription model")
+
                 self.streaming_transcriber = StreamingTranscriber(
-                    backend=self.current_backend,
+                    backend=streaming_backend,
                     chunk_duration_sec=chunk_duration
                 )
                 logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste_overlay={self._streaming_paste_enabled})")
@@ -329,7 +344,7 @@ class ApplicationController(QObject):
 
     def reconfigure_streaming(self):
         """Reconfigure streaming transcriber based on current settings.
-        
+
         Called when streaming settings are changed in the Settings Dialog.
         Dynamically creates or destroys the StreamingTranscriber without restart.
         """
@@ -350,16 +365,40 @@ class ApplicationController(QObject):
                 logging.warning(f"Error cleaning up streaming transcriber: {e}")
             self.streaming_transcriber = None
 
+        # Cleanup existing streaming backend if present
+        if self._streaming_backend:
+            try:
+                logging.info("Cleaning up dedicated streaming backend...")
+                self._streaming_backend.cleanup()
+                logging.info("Cleaned up dedicated streaming backend")
+            except Exception as e:
+                logging.warning(f"Error cleaning up streaming backend: {e}")
+            self._streaming_backend = None
+
         # Load fresh streaming settings
         try:
             settings = settings_manager.load_all_settings()
             self._streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
             self._streaming_paste_enabled = settings.get('streaming_paste_enabled', False)
+            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
 
             if self._streaming_enabled and isinstance(self.current_backend, LocalWhisperBackend):
                 chunk_duration = settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC)
+
+                # Determine which backend to use for streaming
+                if streaming_tiny_enabled:
+                    # Create dedicated tiny.en backend for streaming
+                    logging.info("Creating dedicated tiny.en backend for streaming...")
+                    self._streaming_backend = LocalWhisperBackend(model_name='tiny.en')
+                    streaming_backend = self._streaming_backend
+                    logging.info("Streaming reconfigured with dedicated tiny.en model")
+                else:
+                    # Use the same backend as main transcription
+                    streaming_backend = self.current_backend
+                    logging.info("Streaming reconfigured to share main transcription model")
+
                 self.streaming_transcriber = StreamingTranscriber(
-                    backend=self.current_backend,
+                    backend=streaming_backend,
                     chunk_duration_sec=chunk_duration
                 )
                 logging.info(f"Streaming transcription enabled (chunk_duration={chunk_duration}s, paste_overlay={self._streaming_paste_enabled})")
@@ -1108,6 +1147,14 @@ class ApplicationController(QObject):
                 self.streaming_transcriber.cleanup()
         except Exception as e:
             logging.debug(f"Error during streaming transcriber cleanup: {e}")
+
+        try:
+            if self._streaming_backend:
+                logging.info("Cleaning up dedicated streaming backend...")
+                self._streaming_backend.cleanup()
+                self._streaming_backend = None
+        except Exception as e:
+            logging.debug(f"Error during streaming backend cleanup: {e}")
 
         try:
             if self.meeting_controller:

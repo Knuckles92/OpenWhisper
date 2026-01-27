@@ -253,6 +253,7 @@ class ModernMainWindow(QMainWindow):
         self.current_model = config.MODEL_CHOICES[0]
         self.test_loading_screen_instance = None  # Keep reference to prevent GC
         self._force_quit = False  # Flag to bypass minimize to tray on close
+        self._initial_show_complete = False  # Track if initial show has completed
 
         # Window sizing for sidebar toggle
         self._base_width = 580  # Optimal width without sidebar
@@ -342,9 +343,6 @@ class ModernMainWindow(QMainWindow):
         # Connect tab changed signal to update sidebar and emit signal
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
 
-        # Sync the sidebar with the restored tab (sidebar defaults to Quick Record mode)
-        self._on_tab_changed(self.tabbed_content.current_index())
-
         # Connect Quick Record tab signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
@@ -369,6 +367,9 @@ class ModernMainWindow(QMainWindow):
         self.history_sidebar.entry_deleted.connect(self._on_history_entry_deleted)
         self.history_sidebar.retranscribe_requested.connect(self._on_retranscribe_requested)
         root_layout.addWidget(self.history_sidebar)
+
+        # Sync the sidebar with the restored tab (must be after history_sidebar is created)
+        self._on_tab_changed(self.tabbed_content.current_index())
 
     def _setup_menu(self):
         """Setup the menu bar in the custom title bar."""
@@ -968,9 +969,11 @@ class ModernMainWindow(QMainWindow):
                     # Check if saved position is at least partially on screen
                     saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
                     if screen_geo.intersects(saved_rect):
-                        # Ensure minimum size constraints
+                        # Ensure size constraints - both min and max for width and height
                         width = max(self.minimumWidth(), min(geo['width'], self.maximumWidth()))
-                        height = max(self.minimumHeight(), geo['height'])
+                        # Cap height at screen height to prevent excessively tall windows
+                        max_height = screen_geo.height()
+                        height = max(self.minimumHeight(), min(geo['height'], max_height))
                         self.setGeometry(geo['x'], geo['y'], width, height)
                         self.logger.info(f"Restored window geometry: {geo}")
                         return
@@ -993,7 +996,14 @@ class ModernMainWindow(QMainWindow):
     def showEvent(self, event):
         """Handle show event - restore geometry when showing from tray."""
         super().showEvent(event)
-        # Re-apply saved geometry in case it was corrupted while hidden
+
+        # Skip geometry restoration on initial show (already handled in __init__)
+        # This prevents interference with Qt's initial layout calculation
+        if not self._initial_show_complete:
+            self._initial_show_complete = True
+            return
+
+        # Re-apply saved geometry when restoring from tray (subsequent shows)
         if not self.isMaximized():
             self._restore_window_geometry()
 

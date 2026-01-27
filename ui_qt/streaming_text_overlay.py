@@ -53,8 +53,8 @@ class StreamingTextOverlay(QWidget):
 
         # State
         self.current_state = self.STATE_IDLE
-        self._text_chunks: List[str] = []  # Accumulated finalized chunks
-        self._current_partial: str = ""  # Current non-finalized text
+        self._full_text: str = ""  # Complete transcription (replaced each update with rolling re-transcription)
+        self._current_partial: str = ""  # Current non-finalized text (for future partial word support)
 
         # Drag state
         self._drag_position: Optional[QPoint] = None
@@ -304,22 +304,22 @@ class StreamingTextOverlay(QWidget):
 
     def _update_display_text(self):
         """Update the display with current text and animated ellipsis."""
-        # Combine all finalized chunks
-        full_text = " ".join(self._text_chunks)
+        # Use the complete transcription (rolling re-transcription replaces this each update)
+        display_text = self._full_text
 
-        # Add current partial if exists
+        # Add current partial if exists (for future partial word support)
         if self._current_partial:
-            if full_text:
-                full_text += " " + self._current_partial
+            if display_text:
+                display_text += " " + self._current_partial
             else:
-                full_text = self._current_partial
+                display_text = self._current_partial
 
         # Add animated ellipsis when streaming and we have text
-        if self.current_state == self.STATE_STREAMING and full_text:
+        if self.current_state == self.STATE_STREAMING and display_text:
             dots = "." * (1 + int(self._animation_time * 2) % 3)
-            full_text += dots
+            display_text += dots
 
-        self._text_label.setText(full_text)
+        self._text_label.setText(display_text)
 
         # Auto-scroll to bottom
         scrollbar = self._scroll_area.verticalScrollBar()
@@ -348,21 +348,23 @@ class StreamingTextOverlay(QWidget):
     def update_streaming_text(self, text: str, is_final: bool):
         """Update the streaming transcription text.
 
+        With rolling re-transcription, each update REPLACES the entire text
+        (not appends), giving Whisper full context to self-correct.
+
         Args:
-            text: The transcription text chunk
-            is_final: Whether this chunk is finalized
+            text: The complete transcription text (replaces previous)
+            is_final: Whether this is a finalized transcription
         """
         if is_final:
-            # Add to finalized chunks
-            if text.strip():
-                self._text_chunks.append(text.strip())
+            # Replace entire text with new complete transcription
+            self._full_text = text.strip() if text else ""
             self._current_partial = ""
         else:
-            # Update partial text
+            # Partial update (for future partial word support)
             self._current_partial = text.strip() if text else ""
 
         self._update_display_text()
-        self.logger.debug(f"Streaming text updated: chunks={len(self._text_chunks)}, partial={bool(self._current_partial)}")
+        self.logger.debug(f"Streaming text updated: length={len(self._full_text)}, partial={bool(self._current_partial)}")
 
     def show_at_cursor(self, state: Optional[str] = None):
         """Show overlay near the cursor.
@@ -468,7 +470,7 @@ class StreamingTextOverlay(QWidget):
 
     def clear_text(self):
         """Clear all accumulated text and reset state for new session."""
-        self._text_chunks = []
+        self._full_text = ""
         self._current_partial = ""
         self._text_label.setText("")
         self.setFixedHeight(self.min_height)
@@ -476,12 +478,12 @@ class StreamingTextOverlay(QWidget):
         self.logger.debug("Streaming text cleared")
 
     def get_accumulated_text(self) -> str:
-        """Get all accumulated finalized text.
+        """Get the complete transcription text.
 
         Returns:
-            Combined text from all finalized chunks.
+            The full transcription text.
         """
-        return " ".join(self._text_chunks)
+        return self._full_text
 
     def cleanup(self):
         """Clean up resources."""

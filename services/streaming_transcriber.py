@@ -42,6 +42,9 @@ class StreamingTranscriber:
         # Transcription accumulation
         self.all_transcriptions: List[str] = []
 
+        # Master audio buffer - holds ALL audio from session for rolling re-transcription
+        self._all_audio_buffer: List[np.ndarray] = []
+
         # Audio parameters
         self.sample_rate = 0
         self.callback: Optional[Callable[[str, bool], None]] = None
@@ -69,6 +72,7 @@ class StreamingTranscriber:
         self.is_streaming = True
         self._stop_requested = False
         self.all_transcriptions.clear()
+        self._all_audio_buffer.clear()  # Clear master audio buffer
         self._chunk_count = 0
         self._slow_chunks = 0
 
@@ -115,9 +119,13 @@ class StreamingTranscriber:
         self.is_streaming = False
         self.worker_thread = None
 
-        # Combine all transcriptions
+        # Get the final transcription (now stored as complete text)
         final_text = " ".join(self.all_transcriptions).strip()
-        logging.info(f"Streaming stopped. Total chunks: {self._chunk_count}, "
+
+        # Clear buffers
+        self._all_audio_buffer.clear()
+
+        logging.info(f"Streaming stopped. Re-transcription cycles: {self._chunk_count}, "
                     f"Final length: {len(final_text)} chars")
 
         return final_text
@@ -136,25 +144,28 @@ class StreamingTranscriber:
                     # Get audio chunk from queue (with timeout to check stop flag)
                     audio_chunk = self.audio_queue.get(timeout=0.1)
 
-                    # Add to accumulation buffer
+                    # Add to MASTER buffer (keeps all audio for rolling re-transcription)
+                    self._all_audio_buffer.append(audio_chunk)
+
+                    # Track accumulated duration for threshold triggering
                     accumulated_audio.append(audio_chunk)
                     chunk_duration = len(audio_chunk) / self.sample_rate
                     accumulated_duration += chunk_duration
 
-                    # Check if we have enough audio to transcribe
+                    # Check if we have enough NEW audio to trigger re-transcription
                     if accumulated_duration >= self.chunk_duration_sec:
-                        # Process accumulated audio
-                        self._process_accumulated_audio(accumulated_audio, accumulated_duration)
+                        # Re-transcribe ALL audio (rolling re-transcription for context)
+                        self._process_all_audio()
 
-                        # Reset accumulation buffer
+                        # Reset threshold tracker (but NOT the master buffer)
                         accumulated_audio.clear()
                         accumulated_duration = 0.0
 
                 except queue.Empty:
-                    # No audio available, check if we should process partial buffer
-                    if self._stop_requested and accumulated_audio:
-                        # Final chunk - process whatever we have
-                        self._process_accumulated_audio(accumulated_audio, accumulated_duration)
+                    # No audio available, check if we should process final buffer
+                    if self._stop_requested and self._all_audio_buffer:
+                        # Final transcription - process all accumulated audio
+                        self._process_all_audio()
                         accumulated_audio.clear()
                         accumulated_duration = 0.0
                     continue
@@ -164,22 +175,25 @@ class StreamingTranscriber:
         finally:
             logging.info("Streaming worker thread exiting")
 
-    def _process_accumulated_audio(self, audio_chunks: List[np.ndarray], duration: float):
-        """Process accumulated audio chunks and emit transcription.
+    def _process_all_audio(self):
+        """Re-transcribe ALL accumulated audio (rolling re-transcription).
 
-        Args:
-            audio_chunks: List of NumPy audio arrays
-            duration: Total duration of accumulated audio (seconds)
+        This method transcribes the complete master audio buffer each time,
+        giving Whisper full context to handle words split across chunk boundaries
+        and self-correct earlier transcription mistakes.
         """
-        if not audio_chunks:
+        if not self._all_audio_buffer:
             return
 
         try:
             # Start timing
             start_time = time.time()
 
-            # Concatenate all chunks into single array
-            audio_array = np.concatenate(audio_chunks)
+            # Concatenate ALL audio from session into single array
+            audio_array = np.concatenate(self._all_audio_buffer)
+
+            # Calculate total duration
+            total_duration = len(audio_array) / self.sample_rate
 
             # Convert to float32 format expected by faster-whisper (range: -1.0 to 1.0)
             if audio_array.dtype == np.int16:
@@ -198,49 +212,46 @@ class StreamingTranscriber:
                 logging.debug(f"Resampled audio from {self.sample_rate}Hz to {WHISPER_SAMPLE_RATE}Hz")
 
             # Transcribe using faster-whisper model
-            # Note: We don't use initial_prompt with previous text because that causes
-            # Whisper to repeat the prompt text instead of transcribing new audio
             segments, info = self.backend.model.transcribe(
                 audio_array,
                 beam_size=config.STREAMING_BEAM_SIZE,
-                vad_filter=False  # Disable VAD for short chunks (faster)
+                vad_filter=False  # Disable VAD for streaming (faster)
             )
 
-            # Collect text from segments
+            # Collect text from all segments
             text_parts = []
             for segment in segments:
                 if self._stop_requested:
                     break
                 text_parts.append(segment.text)
 
-            # Combine segment texts
-            chunk_text = " ".join(text_parts).strip()
+            # Combine segment texts - this is the COMPLETE transcription
+            full_text = " ".join(text_parts).strip()
 
             # Update metrics
             processing_time = time.time() - start_time
             self._chunk_count += 1
 
-            logging.info(f"Chunk {self._chunk_count} transcribed: "
-                        f"{duration:.1f}s audio -> {processing_time:.2f}s processing "
-                        f"({len(chunk_text)} chars)")
+            logging.info(f"Rolling transcription #{self._chunk_count}: "
+                        f"{total_duration:.1f}s audio -> {processing_time:.2f}s processing "
+                        f"({len(full_text)} chars)")
 
             # Performance monitoring
             if processing_time > 5.0:
                 self._slow_chunks += 1
                 if self._slow_chunks >= 3 and time.time() - self._last_warning_time > 30:
-                    logging.warning("Streaming transcription falling behind (3+ slow chunks)")
+                    logging.warning("Rolling transcription falling behind (3+ slow chunks)")
                     self._last_warning_time = time.time()
 
-            if chunk_text:
-                # Store transcription
-                self.all_transcriptions.append(chunk_text)
+            # Store the complete transcription (replaces previous)
+            self.all_transcriptions = [full_text] if full_text else []
 
-                # Emit callback with partial result (is_final=True for this chunk)
-                if self.callback:
-                    self.callback(chunk_text, True)
+            # Emit callback with COMPLETE transcription (is_final=True means replace)
+            if self.callback and full_text:
+                self.callback(full_text, True)
 
         except Exception as e:
-            logging.error(f"Error processing audio chunk: {e}", exc_info=True)
+            logging.error(f"Error in rolling transcription: {e}", exc_info=True)
 
     def cleanup(self):
         """Clean up resources and stop streaming."""

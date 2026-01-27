@@ -27,3 +27,5 @@ meetings.json.bak
 openwhisper.db
 transcription_history.json.bak
 meetings.json
+specs/fix-streaming-transcription-concatenation.md
+specs/streaming-tiny-model-setting.md

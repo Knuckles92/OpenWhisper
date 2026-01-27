@@ -246,8 +246,9 @@ class QuickRecordTab(QWidget):
             is_final: Whether this chunk is finalized
         """
         if is_final:
-            # This chunk is finalized, add to buffer
-            self._partial_buffer.append(text)
+            # Rolling re-transcription: each final result contains the COMPLETE
+            # transcription of all audio so far, so we REPLACE (not append)
+            self._partial_buffer = [text] if text else []
 
         # Combine finalized chunks + current partial
         combined = " ".join(self._partial_buffer)
