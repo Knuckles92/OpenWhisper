@@ -19,7 +19,7 @@ class HotkeyManager:
         """
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
-        self._last_trigger_time = 0
+        self._last_trigger_time: Optional[float] = None
         
         # Callback functions
         self.on_record_toggle: Optional[Callable] = None
@@ -76,8 +76,8 @@ class HotkeyManager:
         old_state = self.program_enabled
         self.program_enabled = not self.program_enabled
         
-        # Reset debounce timing when toggling to avoid stale state
-        self._last_trigger_time = 0
+        # Reset debounce timing when toggling to avoid stale state.
+        self._last_trigger_time = None
         
         if self.on_status_update_auto_hide:
             if not self.program_enabled:
@@ -95,7 +95,11 @@ class HotkeyManager:
     
     def _should_trigger_record_toggle(self) -> bool:
         """Check if record toggle should trigger (with debounce)."""
-        current_time = time.time()
+        current_time = time.monotonic()
+        if self._last_trigger_time is None:
+            self._last_trigger_time = current_time
+            return True
+
         if current_time - self._last_trigger_time > (config.HOTKEY_DEBOUNCE_MS / 1000.0):
             self._last_trigger_time = current_time
             return True
