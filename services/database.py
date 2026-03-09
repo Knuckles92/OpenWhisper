@@ -16,7 +16,7 @@ from config import config
 
 
 # Schema version for future migrations
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS meetings (
     end_time TEXT,
     duration_seconds REAL DEFAULT 0,
     transcript TEXT DEFAULT '',
-    status TEXT DEFAULT 'in_progress'
+    status TEXT DEFAULT 'in_progress',
+    audio_file TEXT
 );
 
 -- Meeting chunks table (one-to-many with meetings)
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS meeting_chunks (
     text TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     audio_file TEXT,
+    status TEXT DEFAULT 'transcribed',
+    start_offset_sec REAL,
+    end_offset_sec REAL,
+    attempt_count INTEGER DEFAULT 0,
+    last_error TEXT,
     FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
 
@@ -212,6 +218,26 @@ class DatabaseManager:
                     logging.warning("Migration v3->v4: Neither created_at nor generated_at found")
             except sqlite3.OperationalError as e:
                 logging.error(f"Migration v3->v4 failed: {e}")
+                raise
+
+        # Migration from v4 to v5: add durable spool metadata to meeting_chunks
+        if from_version < 5:
+            try:
+                cursor = conn.execute("PRAGMA table_info(meeting_chunks)")
+                columns = [row[1] for row in cursor.fetchall()]
+                new_columns = [
+                    ('status', "TEXT DEFAULT 'transcribed'"),
+                    ('start_offset_sec', "REAL"),
+                    ('end_offset_sec', "REAL"),
+                    ('attempt_count', "INTEGER DEFAULT 0"),
+                    ('last_error', "TEXT"),
+                ]
+                for column_name, column_def in new_columns:
+                    if column_name not in columns:
+                        conn.execute(f"ALTER TABLE meeting_chunks ADD COLUMN {column_name} {column_def}")
+                        logging.info(f"Migration v4->v5: Added {column_name} to meeting_chunks")
+            except sqlite3.OperationalError as e:
+                logging.error(f"Migration v4->v5 failed: {e}")
                 raise
 
         # Update schema version
@@ -642,6 +668,92 @@ class DatabaseManager:
                 (meeting_id,)
             )
             return cursor.fetchone()[0]
+
+    def register_spool_chunk(
+        self,
+        meeting_id: str,
+        chunk_index: int,
+        audio_file: str,
+        start_offset_sec: float,
+        end_offset_sec: float,
+    ) -> None:
+        """Register a spooled audio chunk pending transcription."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO meeting_chunks
+                (meeting_id, chunk_index, text, timestamp, audio_file, status,
+                 start_offset_sec, end_offset_sec, attempt_count)
+                VALUES (?, ?, '', ?, ?, 'pending', ?, ?, 0)
+            """, (
+                meeting_id,
+                chunk_index,
+                datetime.now().isoformat(),
+                audio_file,
+                start_offset_sec,
+                end_offset_sec,
+            ))
+            conn.commit()
+
+    def mark_chunk_processing(self, meeting_id: str, chunk_index: int) -> None:
+        """Mark a chunk as actively being transcribed."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE meeting_chunks
+                SET status = 'processing'
+                WHERE meeting_id = ? AND chunk_index = ?
+            """, (meeting_id, chunk_index))
+            conn.commit()
+
+    def update_chunk_transcribed(self, meeting_id: str, chunk_index: int, text: str) -> None:
+        """Save a chunk transcript and rebuild the meeting transcript deterministically."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE meeting_chunks
+                SET text = ?, status = 'transcribed', timestamp = ?, last_error = NULL
+                WHERE meeting_id = ? AND chunk_index = ?
+            """, (text, datetime.now().isoformat(), meeting_id, chunk_index))
+
+            cursor = conn.execute("""
+                SELECT text FROM meeting_chunks
+                WHERE meeting_id = ? AND status = 'transcribed'
+                ORDER BY chunk_index
+            """, (meeting_id,))
+            transcript = " ".join(row['text'] for row in cursor.fetchall() if row['text']).strip()
+            conn.execute(
+                "UPDATE meetings SET transcript = ? WHERE id = ?",
+                (transcript, meeting_id)
+            )
+            conn.commit()
+
+    def mark_chunk_failed(self, meeting_id: str, chunk_index: int, error: str) -> None:
+        """Mark a chunk as failed so it can be retried later."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE meeting_chunks
+                SET status = 'failed', attempt_count = attempt_count + 1, last_error = ?
+                WHERE meeting_id = ? AND chunk_index = ?
+            """, (error, meeting_id, chunk_index))
+            conn.commit()
+
+    def get_pending_chunks_for_meeting(self, meeting_id: str) -> List[Dict[str, Any]]:
+        """Get pending chunks ordered by chunk index."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT * FROM meeting_chunks
+                WHERE meeting_id = ? AND status = 'pending'
+                ORDER BY chunk_index
+            """, (meeting_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def reset_processing_chunks_to_pending(self, meeting_id: str) -> None:
+        """Reset stale processing chunks after an interrupted meeting."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE meeting_chunks
+                SET status = 'pending'
+                WHERE meeting_id = ? AND status = 'processing'
+            """, (meeting_id,))
+            conn.commit()
 
     def get_meeting_audio_file(self, meeting_id: str) -> Optional[str]:
         """Get the audio file path for a meeting.

@@ -441,6 +441,8 @@ class ApplicationController(QObject):
 
                 # Refresh meetings list in sidebar
                 self._refresh_meeting_list()
+                self.meeting_controller.recover_pending_chunks()
+                self._refresh_meeting_list()
 
                 logging.info("Meeting mode initialized")
             else:
@@ -484,6 +486,8 @@ class ApplicationController(QObject):
         if meeting_tab is None:
             return
 
+        meeting_tab.set_processing()
+        meeting_tab.set_status("Finalizing transcription...")
         meeting = self.meeting_controller.stop_meeting()
 
         if meeting:

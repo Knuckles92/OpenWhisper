@@ -74,12 +74,21 @@ class MeetingEntry:
         chunks = []
         for chunk_data in chunks_data:
             if isinstance(chunk_data, dict):
+                chunk_data = dict(chunk_data)
                 # Handle database row format (has 'chunk_index' instead of 'index')
                 if 'chunk_index' in chunk_data and 'index' not in chunk_data:
                     chunk_data['index'] = chunk_data.pop('chunk_index')
                 # Remove extra fields from database
-                chunk_data.pop('id', None)
-                chunk_data.pop('meeting_id', None)
+                for key in (
+                    'id',
+                    'meeting_id',
+                    'status',
+                    'start_offset_sec',
+                    'end_offset_sec',
+                    'attempt_count',
+                    'last_error',
+                ):
+                    chunk_data.pop(key, None)
                 chunks.append(MeetingChunk(**chunk_data))
             else:
                 chunks.append(chunk_data)
@@ -201,12 +210,14 @@ class MeetingStorage:
         """Check for meetings that were interrupted (app crash during recording)."""
         in_progress = db.get_in_progress_meetings()
         for meeting_data in in_progress:
-            logging.warning(f"Found interrupted meeting: {meeting_data['id'][:8]}... ({meeting_data['title']})")
+            meeting_id = meeting_data['id']
+            logging.warning(f"Found interrupted meeting: {meeting_id[:8]}... ({meeting_data['title']})")
             db.mark_meeting_interrupted(
-                meeting_data['id'],
+                meeting_id,
                 datetime.now().isoformat(),
                 meeting_data.get('duration_seconds', 0)
             )
+            db.reset_processing_chunks_to_pending(meeting_id)
     
     def start_meeting(self, title: str = "") -> MeetingEntry:
         """Start a new meeting.
@@ -225,6 +236,32 @@ class MeetingStorage:
         
         logging.info(f"Started meeting: {meeting.id[:8]}... ({meeting.title})")
         return meeting
+
+    def register_spool_chunk(
+        self,
+        meeting_id: str,
+        chunk_index: int,
+        audio_file: str,
+        start_offset_sec: float,
+        end_offset_sec: float,
+    ) -> bool:
+        """Register a durable audio chunk file for later transcription."""
+        if self._current_meeting_id is None or self._current_meeting_id != meeting_id:
+            logging.warning("No active meeting to register spool chunk for")
+            return False
+
+        try:
+            db.register_spool_chunk(
+                meeting_id=meeting_id,
+                chunk_index=chunk_index,
+                audio_file=audio_file,
+                start_offset_sec=start_offset_sec,
+                end_offset_sec=end_offset_sec,
+            )
+            return True
+        except Exception as e:
+            logging.error(f"Failed to register spool chunk: {e}")
+            return False
     
     def add_chunk(self, text: str, audio_data: Optional[bytes] = None) -> bool:
         """Add a transcription chunk to the current meeting.
@@ -408,8 +445,7 @@ class MeetingStorage:
         """
         try:
             folder = os.path.dirname(file_path) or '.'
-            stat = os.statvfs(folder)
-            free_bytes = stat.f_frsize * stat.f_bavail
+            free_bytes = shutil.disk_usage(folder).free
             if free_bytes < required_bytes:
                 required_mb = required_bytes / (1024 * 1024)
                 free_mb = free_bytes / (1024 * 1024)
