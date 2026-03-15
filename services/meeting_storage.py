@@ -9,177 +9,14 @@ import wave
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from dataclasses import dataclass, asdict, field
-import uuid
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from config import config
 from services.database import db
+from services.models import Meeting as MeetingEntry
 
 if TYPE_CHECKING:
     from services.recorder import AudioRecorder
-
-
-@dataclass
-class MeetingChunk:
-    """Represents a single transcription chunk from a meeting."""
-    index: int
-    text: str
-    timestamp: str  # ISO format
-    audio_file: Optional[str] = None  # Relative path to audio chunk if saved
-
-
-@dataclass
-class MeetingEntry:
-    """Represents a complete meeting record."""
-    id: str
-    title: str
-    start_time: str  # ISO format
-    end_time: Optional[str]  # ISO format, None if still in progress
-    duration_seconds: float
-    transcript: str  # Full accumulated transcript
-    chunks: List[MeetingChunk] = field(default_factory=list)
-    audio_files: List[str] = field(default_factory=list)  # Paths to audio chunk files
-    audio_file: Optional[str] = None  # Path to complete meeting recording
-    status: str = "in_progress"  # "in_progress", "completed", "interrupted"
-    
-    @classmethod
-    def create(cls, title: str = "") -> 'MeetingEntry':
-        """Create a new meeting entry with auto-generated id and start time."""
-        return cls(
-            id=str(uuid.uuid4()),
-            title=title or f"Meeting {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            start_time=datetime.now().isoformat(),
-            end_time=None,
-            duration_seconds=0.0,
-            transcript="",
-            chunks=[],
-            audio_files=[],
-            audio_file=None,
-            status="in_progress"
-        )
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        data = asdict(self)
-        # Convert chunks to dicts
-        data['chunks'] = [asdict(c) if hasattr(c, '__dict__') else c for c in self.chunks]
-        return data
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'MeetingEntry':
-        """Create from dictionary."""
-        # Convert chunk dicts back to MeetingChunk objects
-        chunks_data = data.pop('chunks', [])
-        chunks = []
-        for chunk_data in chunks_data:
-            if isinstance(chunk_data, dict):
-                chunk_data = dict(chunk_data)
-                # Handle database row format (has 'chunk_index' instead of 'index')
-                if 'chunk_index' in chunk_data and 'index' not in chunk_data:
-                    chunk_data['index'] = chunk_data.pop('chunk_index')
-                # Remove extra fields from database
-                for key in (
-                    'id',
-                    'meeting_id',
-                    'status',
-                    'start_offset_sec',
-                    'end_offset_sec',
-                    'attempt_count',
-                    'last_error',
-                ):
-                    chunk_data.pop(key, None)
-                chunks.append(MeetingChunk(**chunk_data))
-            else:
-                chunks.append(chunk_data)
-
-        # Remove fields not in dataclass (from database)
-        data.pop('audio_files', None)  # We'll compute this from chunks
-
-        # Ensure audio_file is set (may come from database as None)
-        if 'audio_file' not in data:
-            data['audio_file'] = None
-
-        entry = cls(chunks=chunks, **data)
-        # Rebuild audio_files from chunks
-        entry.audio_files = [c.audio_file for c in chunks if c.audio_file]
-        return entry
-    
-    @property
-    def formatted_start_time(self) -> str:
-        """Get human-readable start time."""
-        try:
-            dt = datetime.fromisoformat(self.start_time)
-            return dt.strftime("%b %d, %Y %I:%M %p")
-        except Exception:
-            return self.start_time
-    
-    @property
-    def formatted_duration(self) -> str:
-        """Get human-readable duration."""
-        seconds = int(self.duration_seconds)
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        
-        if hours > 0:
-            return f"{hours}h {minutes}m"
-        elif minutes > 0:
-            return f"{minutes}m {secs}s"
-        else:
-            return f"{secs}s"
-    
-    @property
-    def preview_text(self) -> str:
-        """Get truncated preview of transcript."""
-        max_len = 100
-        if len(self.transcript) <= max_len:
-            return self.transcript
-        return self.transcript[:max_len].rsplit(' ', 1)[0] + "..."
-    
-    def add_chunk(self, text: str, audio_file: Optional[str] = None):
-        """Add a transcription chunk to the meeting.
-        
-        Args:
-            text: Transcribed text
-            audio_file: Optional path to audio chunk file
-        """
-        chunk = MeetingChunk(
-            index=len(self.chunks),
-            text=text,
-            timestamp=datetime.now().isoformat(),
-            audio_file=audio_file
-        )
-        self.chunks.append(chunk)
-        
-        # Update full transcript
-        if self.transcript:
-            self.transcript += " " + text
-        else:
-            self.transcript = text
-        
-        if audio_file:
-            self.audio_files.append(audio_file)
-    
-    def complete(self, duration_seconds: float):
-        """Mark the meeting as completed.
-        
-        Args:
-            duration_seconds: Total meeting duration in seconds
-        """
-        self.end_time = datetime.now().isoformat()
-        self.duration_seconds = duration_seconds
-        self.status = "completed"
-    
-    def mark_interrupted(self, duration_seconds: float):
-        """Mark the meeting as interrupted (e.g., crash recovery).
-        
-        Args:
-            duration_seconds: Duration before interruption
-        """
-        self.end_time = datetime.now().isoformat()
-        self.duration_seconds = duration_seconds
-        self.status = "interrupted"
 
 
 class MeetingStorage:
@@ -209,15 +46,14 @@ class MeetingStorage:
     def _check_interrupted_meetings(self) -> None:
         """Check for meetings that were interrupted (app crash during recording)."""
         in_progress = db.get_in_progress_meetings()
-        for meeting_data in in_progress:
-            meeting_id = meeting_data['id']
-            logging.warning(f"Found interrupted meeting: {meeting_id[:8]}... ({meeting_data['title']})")
+        for meeting in in_progress:
+            logging.warning(f"Found interrupted meeting: {meeting.id[:8]}... ({meeting.title})")
             db.mark_meeting_interrupted(
-                meeting_id,
+                meeting.id,
                 datetime.now().isoformat(),
-                meeting_data.get('duration_seconds', 0)
+                meeting.duration_seconds or 0,
             )
-            db.reset_processing_chunks_to_pending(meeting_id)
+            db.reset_processing_chunks_to_pending(meeting.id)
     
     def start_meeting(self, title: str = "") -> MeetingEntry:
         """Start a new meeting.
@@ -492,8 +328,7 @@ class MeetingStorage:
         Returns:
             The MeetingEntry, or None if not found
         """
-        data = db.get_meeting(meeting_id)
-        return MeetingEntry.from_dict(data) if data else None
+        return db.get_meeting(meeting_id)
     
     def get_current_meeting(self) -> Optional[MeetingEntry]:
         """Get the current active meeting.
@@ -511,8 +346,7 @@ class MeetingStorage:
         Returns:
             List of MeetingEntry objects
         """
-        meetings_data = db.get_all_meetings()
-        return [MeetingEntry.from_dict(data) for data in meetings_data]
+        return db.get_all_meetings()
     
     def get_meetings_for_display(self) -> List[Dict[str, str]]:
         """Get meeting data formatted for UI display.

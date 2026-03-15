@@ -201,7 +201,7 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     return similarity, message
 
 
-def test_chunking_workflow(audio_file: str, original_text: str):
+def run_chunking_workflow(audio_file: str, original_text: str):
     """Test the complete chunking workflow and validate transcription accuracy."""
     logger.info("")
     logger.info("=" * 60)
@@ -317,7 +317,7 @@ def main():
         logger.info(f"Original text preview: {original_text[:150]}...\n")
         
         # Test the workflow
-        success = test_chunking_workflow(test_audio_file, original_text)
+        success = run_chunking_workflow(test_audio_file, original_text)
         
         return 0 if success else 1
         

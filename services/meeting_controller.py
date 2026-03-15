@@ -172,8 +172,8 @@ class AsyncTranscriptionWorker:
                 continue
 
             chunk = pending_chunks[0]
-            chunk_index = chunk['chunk_index']
-            audio_file = chunk.get('audio_file')
+            chunk_index = chunk.chunk_index
+            audio_file = chunk.audio_file
             if not audio_file:
                 db.mark_chunk_failed(self.meeting_id, chunk_index, "Missing audio_file")
                 continue
@@ -386,10 +386,10 @@ class MeetingController:
             return
 
         for meeting in db.get_all_meetings():
-            if meeting.get('status') != 'interrupted':
+            if meeting.status != 'interrupted':
                 continue
 
-            meeting_id = meeting['id']
+            meeting_id = meeting.id
             pending_chunks = db.get_pending_chunks_for_meeting(meeting_id)
             if not pending_chunks:
                 continue

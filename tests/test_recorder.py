@@ -21,7 +21,7 @@ class TestAudioRecorder(unittest.TestCase):
         self.test_audio_file = os.path.join(self.temp_dir, "test_audio.wav")
 
         # Mock sounddevice to avoid actual audio hardware
-        self.sd_patcher = patch('recorder.sd.InputStream')
+        self.sd_patcher = patch('services.recorder.sd.InputStream')
         self.mock_sd_stream = self.sd_patcher.start()
 
         # Create recorder instance

@@ -11,6 +11,7 @@ from enum import Enum
 from services.llm_provider import LLMProvider, get_llm_provider
 from services.settings import settings_manager
 from services.database import db
+from services.models import MeetingInsight as InsightEntry
 from config import config
 
 
@@ -19,43 +20,6 @@ class InsightType(Enum):
     SUMMARY = "summary"
     ACTION_ITEMS = "action_items"
     CUSTOM = "custom"
-
-
-@dataclass
-class InsightEntry:
-    """Represents a saved insight entry."""
-    id: int
-    meeting_id: str
-    insight_type: str
-    content: str
-    custom_prompt: Optional[str]
-    generated_at: str
-    provider: Optional[str]
-    model: Optional[str]
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'InsightEntry':
-        """Create an InsightEntry from a dictionary."""
-        return cls(
-            id=data['id'],
-            meeting_id=data['meeting_id'],
-            insight_type=data['insight_type'],
-            content=data['content'],
-            custom_prompt=data.get('custom_prompt'),
-            generated_at=data['generated_at'],
-            provider=data.get('provider'),
-            model=data.get('model')
-        )
-
-    @property
-    def generated_at_datetime(self) -> datetime:
-        """Parse generated_at as datetime."""
-        return datetime.fromisoformat(self.generated_at)
-
-    @property
-    def type_enum(self) -> InsightType:
-        """Get the InsightType enum value."""
-        return InsightType(self.insight_type)
 
 
 @dataclass
@@ -628,12 +592,11 @@ class InsightsService:
         Returns:
             InsightEntry or None if not found.
         """
-        data = db.get_insight(
+        return db.get_insight(
             meeting_id=meeting_id,
             insight_type=insight_type.value,
-            custom_prompt=custom_prompt
+            custom_prompt=custom_prompt,
         )
-        return InsightEntry.from_dict(data) if data else None
 
     def get_all_saved_insights(self, meeting_id: str) -> List[InsightEntry]:
         """Get all saved insights for a meeting.
@@ -644,8 +607,7 @@ class InsightsService:
         Returns:
             List of InsightEntry objects.
         """
-        data_list = db.get_all_insights(meeting_id)
-        return [InsightEntry.from_dict(data) for data in data_list]
+        return db.get_all_insights(meeting_id)
 
     def meeting_has_insights(self, meeting_id: str) -> bool:
         """Check if a meeting has any saved insights.

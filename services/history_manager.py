@@ -8,72 +8,11 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
-import uuid
+from dataclasses import dataclass
 
 from config import config
 from services.database import db
-
-
-@dataclass
-class HistoryEntry:
-    """Represents a single transcription history entry."""
-    id: str
-    text: str
-    timestamp: str
-    model: str
-    audio_file: Optional[str] = None  # Relative path to saved recording if available
-    transcription_time: Optional[float] = None  # Time taken to transcribe in seconds
-    audio_duration: Optional[float] = None  # Duration of the audio in seconds
-    file_size: Optional[int] = None  # Size of the audio file in bytes
-
-    @classmethod
-    def create(
-        cls,
-        text: str,
-        model: str,
-        audio_file: Optional[str] = None,
-        transcription_time: Optional[float] = None,
-        audio_duration: Optional[float] = None,
-        file_size: Optional[int] = None
-    ) -> 'HistoryEntry':
-        """Create a new history entry with auto-generated id and timestamp."""
-        return cls(
-            id=str(uuid.uuid4()),
-            text=text,
-            timestamp=datetime.now().isoformat(),
-            model=model,
-            audio_file=audio_file,
-            transcription_time=transcription_time,
-            audio_duration=audio_duration,
-            file_size=file_size
-        )
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return asdict(self)
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'HistoryEntry':
-        """Create from dictionary."""
-        return cls(**data)
-    
-    @property
-    def formatted_timestamp(self) -> str:
-        """Get human-readable timestamp."""
-        try:
-            dt = datetime.fromisoformat(self.timestamp)
-            return dt.strftime("%b %d, %Y %I:%M %p")
-        except Exception:
-            return self.timestamp
-    
-    @property
-    def preview_text(self) -> str:
-        """Get truncated preview of transcription text."""
-        max_len = 100
-        if len(self.text) <= max_len:
-            return self.text
-        return self.text[:max_len].rsplit(' ', 1)[0] + "..."
+from services.models import TranscriptionHistory as HistoryEntry
 
 
 @dataclass
@@ -237,8 +176,7 @@ class HistoryManager:
         Returns:
             List of HistoryEntry objects (newest first).
         """
-        rows = db.get_history_entries(limit)
-        return [HistoryEntry.from_dict(row) for row in rows]
+        return db.get_history_entries(limit)
     
     def get_recordings(self) -> List[RecordingInfo]:
         """Get list of saved recordings.
@@ -292,8 +230,7 @@ class HistoryManager:
         Returns:
             The HistoryEntry or None if not found.
         """
-        row = db.get_history_entry_by_id(entry_id)
-        return HistoryEntry.from_dict(row) if row else None
+        return db.get_history_entry_by_id(entry_id)
     
     def delete_entry(self, entry_id: str) -> bool:
         """Delete a history entry.

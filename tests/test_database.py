@@ -1,5 +1,5 @@
 """
-Tests for SQLite database layer.
+Tests for SQLAlchemy database layer.
 """
 import os
 import json
@@ -15,45 +15,35 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TestDatabaseManager:
     """Tests for the DatabaseManager class."""
-    
+
     @pytest.fixture
     def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
         db_path = str(tmp_path / "test.db")
-        
+
         # Import here to avoid circular imports
         from services.database import DatabaseManager
-        
+
         manager = DatabaseManager(db_path=db_path)
         yield manager
         manager.close()
-    
+
     def test_schema_creation(self, temp_db):
         """Verify tables are created correctly on fresh DB."""
-        with temp_db._get_connection() as conn:
-            # Check transcription_history table exists
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='transcription_history'"
-            )
-            assert cursor.fetchone() is not None
-            
-            # Check meetings table exists
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='meetings'"
-            )
-            assert cursor.fetchone() is not None
-            
-            # Check meeting_chunks table exists
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='meeting_chunks'"
-            )
-            assert cursor.fetchone() is not None
-    
+        from sqlalchemy import inspect
+        insp = inspect(temp_db.engine)
+        table_names = insp.get_table_names()
+
+        assert 'transcription_history' in table_names
+        assert 'meetings' in table_names
+        assert 'meeting_chunks' in table_names
+        assert 'meeting_insights' in table_names
+
     def test_history_crud(self, temp_db):
         """Test history entry create, read, update, delete."""
         entry_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
-        
+
         # Create
         temp_db.add_history_entry(
             entry_id=entry_id,
@@ -65,34 +55,34 @@ class TestDatabaseManager:
             audio_duration=3.0,
             file_size=48000
         )
-        
+
         # Read all
         entries = temp_db.get_history_entries()
         assert len(entries) == 1
-        assert entries[0]['id'] == entry_id
-        assert entries[0]['text'] == "Test transcription"
-        
+        assert entries[0].id == entry_id
+        assert entries[0].text == "Test transcription"
+
         # Read by ID
         entry = temp_db.get_history_entry_by_id(entry_id)
         assert entry is not None
-        assert entry['model'] == "local_whisper"
-        
+        assert entry.model == "local_whisper"
+
         # Delete
         result = temp_db.delete_history_entry(entry_id)
         assert result is True
-        
+
         # Verify deleted
         entry = temp_db.get_history_entry_by_id(entry_id)
         assert entry is None
-    
+
     def test_meeting_crud(self, temp_db):
         """Test meeting create, add chunks, end, read, delete."""
         meeting_id = str(uuid.uuid4())
         start_time = datetime.now().isoformat()
-        
+
         # Create meeting
         temp_db.create_meeting(meeting_id, "Test Meeting", start_time)
-        
+
         # Add chunks
         temp_db.add_meeting_chunk(
             meeting_id=meeting_id,
@@ -106,53 +96,48 @@ class TestDatabaseManager:
             text="Second chunk",
             timestamp=datetime.now().isoformat()
         )
-        
+
         # Get meeting
         meeting = temp_db.get_meeting(meeting_id)
         assert meeting is not None
-        assert meeting['title'] == "Test Meeting"
-        assert len(meeting['chunks']) == 2
-        assert "First chunk" in meeting['transcript']
-        assert "Second chunk" in meeting['transcript']
-        
+        assert meeting.title == "Test Meeting"
+        assert len(meeting.chunks) == 2
+        assert "First chunk" in meeting.transcript
+        assert "Second chunk" in meeting.transcript
+
         # End meeting
         temp_db.end_meeting(meeting_id, datetime.now().isoformat(), 120.5)
-        
+
         meeting = temp_db.get_meeting(meeting_id)
-        assert meeting['status'] == 'completed'
-        assert meeting['duration_seconds'] == 120.5
-        
+        assert meeting.status == 'completed'
+        assert meeting.duration_seconds == 120.5
+
         # Delete meeting (should cascade delete chunks)
         result = temp_db.delete_meeting(meeting_id)
         assert result is True
-        
+
         # Verify deleted
         meeting = temp_db.get_meeting(meeting_id)
         assert meeting is None
-        
-        # Verify chunks deleted
-        with temp_db._get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM meeting_chunks WHERE meeting_id = ?",
-                (meeting_id,)
-            )
-            assert cursor.fetchone()[0] == 0
-    
+
+        # Verify chunks deleted via cascade
+        assert temp_db.get_meeting_chunk_count(meeting_id) == 0
+
     def test_meeting_update_title(self, temp_db):
         """Test updating meeting title."""
         meeting_id = str(uuid.uuid4())
         temp_db.create_meeting(meeting_id, "Original Title", datetime.now().isoformat())
-        
+
         result = temp_db.update_meeting_title(meeting_id, "New Title")
         assert result is True
-        
+
         meeting = temp_db.get_meeting(meeting_id)
-        assert meeting['title'] == "New Title"
+        assert meeting.title == "New Title"
 
 
 class TestJsonMigration:
     """Tests for JSON to SQLite migration."""
-    
+
     def test_history_migration(self, tmp_path):
         """Test migrating history from JSON file."""
         # Create mock JSON history file
@@ -180,34 +165,34 @@ class TestJsonMigration:
                 }
             ]
         }
-        
+
         json_path = tmp_path / "transcription_history.json"
         with open(json_path, 'w') as f:
             json.dump(history_data, f)
-        
+
         # Create database manager - should auto-migrate
         db_path = str(tmp_path / "test.db")
-        
+
         # Temporarily patch config
         import config
         original_history = config.config.HISTORY_FILE
         config.config.HISTORY_FILE = str(json_path)
-        
+
         try:
             from services.database import DatabaseManager
             manager = DatabaseManager(db_path=db_path)
-            
+
             # Verify migration
             entries = manager.get_history_entries()
             assert len(entries) == 2
-            
+
             # Verify backup was created
             assert os.path.exists(str(json_path) + '.bak')
-            
+
             manager.close()
         finally:
             config.config.HISTORY_FILE = original_history
-    
+
     def test_meetings_migration(self, tmp_path):
         """Test migrating meetings from JSON file."""
         meeting_id = str(uuid.uuid4())
@@ -239,34 +224,34 @@ class TestJsonMigration:
                 }
             ]
         }
-        
+
         json_path = tmp_path / "meetings.json"
         with open(json_path, 'w') as f:
             json.dump(meetings_data, f)
-        
+
         # Create database manager - should auto-migrate
         db_path = str(tmp_path / "test.db")
-        
+
         # Temporarily patch config
         import config
         original_meetings = config.config.MEETINGS_FILE
         config.config.MEETINGS_FILE = str(json_path)
-        
+
         try:
             from services.database import DatabaseManager
             manager = DatabaseManager(db_path=db_path)
-            
+
             # Verify migration
             meetings = manager.get_all_meetings()
             assert len(meetings) == 1
-            
+
             meeting = manager.get_meeting(meeting_id)
-            assert meeting['title'] == 'Old Meeting'
-            assert len(meeting['chunks']) == 2
-            
+            assert meeting.title == 'Old Meeting'
+            assert len(meeting.chunks) == 2
+
             # Verify backup was created
             assert os.path.exists(str(json_path) + '.bak')
-            
+
             manager.close()
         finally:
             config.config.MEETINGS_FILE = original_meetings
@@ -330,12 +315,12 @@ class TestMeetingInsights:
         insight = temp_db.get_insight(meeting_id, 'summary')
 
         assert insight is not None
-        assert insight['meeting_id'] == meeting_id
-        assert insight['insight_type'] == 'summary'
-        assert insight['content'] == 'This is a test summary.'
-        assert insight['provider'] == 'openai'
-        assert insight['model'] == 'gpt-4o'
-        assert insight['generated_at'] is not None
+        assert insight.meeting_id == meeting_id
+        assert insight.insight_type == 'summary'
+        assert insight.content == 'This is a test summary.'
+        assert insight.provider == 'openai'
+        assert insight.model == 'gpt-4o'
+        assert insight.generated_at is not None
 
     def test_get_nonexistent_insight(self, temp_db, meeting_with_transcript):
         """Test retrieving a nonexistent insight returns None."""
@@ -359,8 +344,8 @@ class TestMeetingInsights:
         insight = temp_db.get_insight(meeting_id, 'custom', custom_prompt='What were the main topics?')
 
         assert insight is not None
-        assert insight['custom_prompt'] == 'What were the main topics?'
-        assert insight['content'] == 'Custom analysis result.'
+        assert insight.custom_prompt == 'What were the main topics?'
+        assert insight.content == 'Custom analysis result.'
 
     def test_upsert_insight(self, temp_db, meeting_with_transcript):
         """Test that saving an insight with the same type updates it."""
@@ -384,7 +369,7 @@ class TestMeetingInsights:
 
         # Verify only one insight exists and it's updated
         insight = temp_db.get_insight(meeting_id, 'summary')
-        assert insight['content'] == 'Updated summary.'
+        assert insight.content == 'Updated summary.'
 
         all_insights = temp_db.get_all_insights(meeting_id)
         assert len(all_insights) == 1
@@ -402,7 +387,7 @@ class TestMeetingInsights:
         all_insights = temp_db.get_all_insights(meeting_id)
 
         assert len(all_insights) == 4
-        types = [i['insight_type'] for i in all_insights]
+        types = [i.insight_type for i in all_insights]
         assert 'summary' in types
         assert 'action_items' in types
         assert types.count('custom') == 2
@@ -473,8 +458,8 @@ class TestMeetingInsights:
 
         assert insight1 is not None
         assert insight2 is not None
-        assert insight1['content'] == 'Result 1'
-        assert insight2['content'] == 'Result 2'
+        assert insight1.content == 'Result 1'
+        assert insight2.content == 'Result 2'
 
 
 if __name__ == '__main__':
