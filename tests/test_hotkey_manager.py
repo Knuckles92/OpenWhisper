@@ -62,5 +62,26 @@ class TestHotkeyManager(unittest.TestCase):
             self.assertTrue(manager._should_trigger_record_toggle())
 
 
+    @patch.object(HotkeyManager, "_setup_keyboard_hook")
+    def test_rehook_preserves_state(self, _mock_setup):
+        """rehook() should re-register hook without changing hotkeys or enabled state."""
+        manager = HotkeyManager()
+        manager.program_enabled = False
+        original_hotkeys = manager.hotkeys.copy()
+        callback = lambda: None
+        manager.on_record_toggle = callback
+
+        with patch.object(manager, 'cleanup') as mock_cleanup:
+            manager.rehook()
+            mock_cleanup.assert_called_once()
+
+        # _setup_keyboard_hook: once in __init__, once in rehook
+        self.assertEqual(_mock_setup.call_count, 2)
+        # State preserved
+        self.assertFalse(manager.program_enabled)
+        self.assertEqual(manager.hotkeys, original_hotkeys)
+        self.assertIs(manager.on_record_toggle, callback)
+
+
 if __name__ == "__main__":
     unittest.main()

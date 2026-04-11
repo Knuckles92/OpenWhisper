@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
 from config import config
 from services.database import db
@@ -200,6 +200,7 @@ class ApplicationController(QObject):
         self._setup_streaming()
         self._setup_meeting_mode()
         self._connect_signals()
+        self._setup_hook_watchdog()
 
     def _setup_transcription_backends(self):
         """Initialize transcription backends."""
@@ -630,6 +631,58 @@ class ApplicationController(QObject):
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
         self.caret_indicator_show.connect(self.ui_controller.show_caret_paste_indicator)
         self.caret_indicator_hide.connect(self.ui_controller.hide_caret_paste_indicator)
+
+    def _setup_hook_watchdog(self):
+        """Setup timers to detect system sleep and periodically refresh the keyboard hook."""
+        # Sleep detection: fires every 10s, rehooks if time gap > 30s
+        self._watchdog_interval_ms = 10_000
+        self._sleep_gap_threshold_sec = 30.0
+        self._expected_watchdog_time = time.monotonic() + (self._watchdog_interval_ms / 1000.0)
+        self._last_rehook_time = 0.0
+
+        self._watchdog_timer = QTimer()
+        self._watchdog_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._watchdog_timer.timeout.connect(self._on_watchdog_tick)
+        self._watchdog_timer.start(self._watchdog_interval_ms)
+
+        # Periodic refresh: unconditionally rehook every 5 minutes
+        self._periodic_refresh_interval_ms = 5 * 60 * 1000
+        self._periodic_refresh_timer = QTimer()
+        self._periodic_refresh_timer.setTimerType(Qt.TimerType.VeryCoarseTimer)
+        self._periodic_refresh_timer.timeout.connect(self._on_periodic_hook_refresh)
+        self._periodic_refresh_timer.start(self._periodic_refresh_interval_ms)
+
+        logging.info("Hook watchdog started: sleep detection every 10s, periodic refresh every 5m")
+
+    def _on_watchdog_tick(self):
+        """Check for time gaps indicating system sleep/resume."""
+        now = time.monotonic()
+        gap = now - self._expected_watchdog_time
+        self._expected_watchdog_time = now + (self._watchdog_interval_ms / 1000.0)
+
+        if gap > self._sleep_gap_threshold_sec:
+            logging.warning(f"Sleep/resume detected: time gap of {gap:.1f}s. Re-registering keyboard hook.")
+            self._rehook_keyboard()
+
+    def _on_periodic_hook_refresh(self):
+        """Periodically re-register the keyboard hook to guard against silent degradation."""
+        now = time.monotonic()
+        # Skip if we rehoked recently (within 60s) to avoid redundant work
+        if now - self._last_rehook_time < 60.0:
+            return
+        logging.info("Periodic keyboard hook refresh")
+        self._rehook_keyboard()
+
+    def _rehook_keyboard(self):
+        """Re-register the keyboard hook via HotkeyManager."""
+        if self.hotkey_manager:
+            try:
+                self.hotkey_manager.rehook()
+                self._last_rehook_time = time.monotonic()
+                # Reset expected time to avoid double-trigger from watchdog
+                self._expected_watchdog_time = time.monotonic() + (self._watchdog_interval_ms / 1000.0)
+            except Exception as e:
+                logging.error(f"Failed to re-register keyboard hook: {e}")
 
     def _on_stt_state_changed(self, enabled: bool):
         """Handle STT state change on main thread."""
@@ -1134,6 +1187,14 @@ class ApplicationController(QObject):
         except Exception as e:
             logging.debug(f"Error cancelling transcription: {e}")
         
+        try:
+            if hasattr(self, '_watchdog_timer') and self._watchdog_timer:
+                self._watchdog_timer.stop()
+            if hasattr(self, '_periodic_refresh_timer') and self._periodic_refresh_timer:
+                self._periodic_refresh_timer.stop()
+        except Exception as e:
+            logging.debug(f"Error stopping watchdog timers: {e}")
+
         try:
             if self.hotkey_manager:
                 self.hotkey_manager.cleanup()

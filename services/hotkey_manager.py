@@ -158,6 +158,23 @@ class HotkeyManager:
             
         return True
     
+    def rehook(self):
+        """Re-register the keyboard hook after sleep/resume or degradation.
+
+        Preserves all state (hotkeys, callbacks, enabled status).
+        Must be called from the main thread.
+        """
+        logging.info("Re-registering keyboard hook...")
+        try:
+            self.cleanup()
+        except Exception as e:
+            logging.warning(f"Error during rehook cleanup: {e}")
+        try:
+            self._setup_keyboard_hook()
+            logging.info("Keyboard hook re-registered successfully")
+        except Exception as e:
+            logging.error(f"Failed to re-register keyboard hook: {e}")
+
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Update the hotkey mappings.
         
