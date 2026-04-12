@@ -2,8 +2,13 @@
 Configuration constants for the OpenWhisper application.
 """
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Dict, List, Tuple
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - lightweight fallback for test/import environments
+    np = SimpleNamespace(int16="int16")
 
 
 @dataclass
