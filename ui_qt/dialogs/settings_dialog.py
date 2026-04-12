@@ -489,7 +489,8 @@ class SettingsDialog(QDialog):
 
         # Content widget for scrollable area
         content = QWidget()
-        content.setStyleSheet("background-color: transparent;")
+        content.setObjectName("advancedScrollContent")
+        content.setStyleSheet("#advancedScrollContent { background-color: transparent; }")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
