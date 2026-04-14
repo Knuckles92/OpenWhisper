@@ -37,9 +37,6 @@ class MeetingRuntime:
                 self.controller.ui_controller.on_delete_meeting = self.on_delete_meeting
                 self.controller.ui_controller.on_rename_meeting = self.on_rename_meeting
                 self.controller.ui_controller.on_copy_meeting = self.on_copy_meeting
-                self.controller.ui_controller.on_generate_insights = (
-                    self.on_generate_insights
-                )
 
                 self.refresh_meeting_list()
                 self.controller.meeting_controller.recover_pending_chunks()
@@ -161,39 +158,6 @@ class MeetingRuntime:
             meeting_tab = self.controller.ui_controller.get_meeting_tab()
             if meeting_tab:
                 meeting_tab.set_status("Transcript copied to clipboard")
-
-    def on_generate_insights(self, meeting_id: str) -> None:
-        """Handle meeting insights generation request from the sidebar."""
-        logging.info(f"_on_generate_insights called with meeting_id: {meeting_id}")
-
-        if self.controller.meeting_controller is None:
-            logging.warning("Meeting controller not available for insights")
-            return
-
-        meeting = self.controller.meeting_controller.get_meeting(meeting_id)
-        logging.info(f"Retrieved meeting: {meeting}")
-        if not meeting:
-            logging.warning(f"Meeting not found: {meeting_id}")
-            return
-
-        if not meeting.transcript or not meeting.transcript.strip():
-            logging.warning(f"Meeting has no transcript: {meeting_id}")
-            meeting_tab = self.controller.ui_controller.get_meeting_tab()
-            if meeting_tab:
-                meeting_tab.set_status("No transcript available for insights")
-            return
-
-        from ui_qt.dialogs.insights_dialog import InsightsDialog
-
-        logging.info(f"Opening InsightsDialog for meeting: {meeting.title}")
-        dialog = InsightsDialog(
-            transcript=meeting.transcript,
-            meeting_title=meeting.title,
-            meeting_id=meeting.id,
-            parent=self.controller.ui_controller.main_window,
-        )
-        dialog.exec()
-        logging.info("InsightsDialog closed")
 
     def on_get_meeting(self, meeting_id: str):
         """Get meeting data for context menu actions."""

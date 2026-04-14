@@ -1,6 +1,6 @@
 """
 SQLAlchemy ORM models for OpenWhisper database.
-Defines all persistent entities: transcription history, meetings, chunks, and insights.
+Defines all persistent entities: transcription history, meetings, and chunks.
 """
 import uuid
 from datetime import datetime
@@ -8,7 +8,6 @@ from typing import List, Optional
 
 from sqlalchemy import (
     Float, ForeignKey, Index, Integer, String, Text,
-    event, text as sa_text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase, Mapped, mapped_column, relationship,
@@ -115,11 +114,6 @@ class Meeting(Base):
         back_populates='meeting',
         cascade='all, delete-orphan',
         order_by='MeetingChunk.chunk_index',
-        passive_deletes=True,
-    )
-    insights: Mapped[List['MeetingInsight']] = relationship(
-        back_populates='meeting',
-        cascade='all, delete-orphan',
         passive_deletes=True,
     )
 
@@ -235,57 +229,3 @@ class MeetingChunk(Base):
     __table_args__ = (
         Index('idx_chunks_meeting_id', 'meeting_id'),
     )
-
-
-# ---------------------------------------------------------------------------
-# Meeting insights
-# ---------------------------------------------------------------------------
-
-class MeetingInsight(Base):
-    """A generated insight for a meeting (replaces InsightEntry dataclass)."""
-    __tablename__ = 'meeting_insights'
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    meeting_id: Mapped[str] = mapped_column(
-        String, ForeignKey('meetings.id', ondelete='CASCADE'), nullable=False,
-    )
-    insight_type: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    custom_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    generated_at: Mapped[str] = mapped_column(String, nullable=False)
-    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-    meeting: Mapped['Meeting'] = relationship(back_populates='insights')
-
-    __table_args__ = (
-        Index('idx_insights_meeting_id', 'meeting_id'),
-        # NOTE: The COALESCE-based unique index (idx_insights_unique) cannot be
-        # expressed as a SQLAlchemy constraint.  It is created via DDL event in
-        # database.py after create_all().
-    )
-
-    # -- Display helpers (ported from InsightEntry dataclass) -------------
-
-    @property
-    def generated_at_datetime(self) -> datetime:
-        return datetime.fromisoformat(self.generated_at)
-
-    @property
-    def type_enum(self):
-        # Lazy import to avoid circular dependency with insights_service.py
-        from services.insights_service import InsightType
-        return InsightType(self.insight_type)
-
-
-# ---------------------------------------------------------------------------
-# DDL event: create expression-based unique index that SQLAlchemy can't model
-# ---------------------------------------------------------------------------
-
-@event.listens_for(Base.metadata, 'after_create')
-def _create_expression_indexes(target, connection, **kw):
-    """Create the COALESCE-based unique index on meeting_insights."""
-    connection.execute(sa_text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_unique "
-        "ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''))"
-    ))

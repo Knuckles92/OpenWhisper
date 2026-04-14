@@ -24,7 +24,6 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** *(experimental)* – Real-time transcription preview while recording
 - **Meeting Mode** *(experimental)* – Long-form transcription with live streaming and auto-save
-- **Meeting Insights** *(experimental)* – AI-powered summaries, action items, and custom analysis (OpenAI/OpenRouter)
 - **Caret Indicator** *(experimental)* – Visual marker at cursor location when pasting
 - **Window Memory** – Remembers window position and size between sessions
 
@@ -60,12 +59,7 @@ set OPENAI_API_KEY=your-key
 
 # Or create a .env file
 OPENAI_API_KEY=your-key
-
-# Optional: For meeting insights via OpenRouter (access to Claude, Llama, Mistral, etc.)
-OPENROUTER_API_KEY=your-openrouter-key
 ```
-
-**Note:** API keys can also be configured in Settings > Insights for the meeting insights feature.
 
 ## Usage
 

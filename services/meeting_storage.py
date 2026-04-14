@@ -352,7 +352,7 @@ class MeetingStorage:
         """Get meeting data formatted for UI display.
 
         Returns:
-            List of meeting dicts with id, title, date, duration, preview, has_insights
+            List of meeting dicts with id, title, date, duration, preview, status
         """
         meetings = self.get_all_meetings()
         return [
@@ -363,7 +363,6 @@ class MeetingStorage:
                 'duration': m.formatted_duration,
                 'preview': m.preview_text,
                 'status': m.status,
-                'has_insights': db.has_insights(m.id)
             }
             for m in meetings
         ]

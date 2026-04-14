@@ -232,9 +232,6 @@ class ApplicationController(QObject):
     def _on_copy_meeting(self, meeting_id: str) -> None:
         self.meeting_runtime.on_copy_meeting(meeting_id)
 
-    def _on_generate_insights(self, meeting_id: str) -> None:
-        self.meeting_runtime.on_generate_insights(meeting_id)
-
     def _on_get_meeting(self, meeting_id: str):
         return self.meeting_runtime.on_get_meeting(meeting_id)
 

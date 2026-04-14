@@ -5,7 +5,6 @@ Provides unified data persistence via SQLAlchemy ORM with migration support.
 import json
 import logging
 import os
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import List, Optional
@@ -15,12 +14,12 @@ from sqlalchemy.orm import joinedload, scoped_session, sessionmaker
 
 from config import config
 from services.models import (
-    Base, MeetingChunk, MeetingInsight, Meeting,
+    Base, MeetingChunk, Meeting,
     SchemaVersion, TranscriptionHistory,
 )
 
 # Schema version for future migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class DatabaseManager:
@@ -119,49 +118,6 @@ class DatabaseManager:
                     raise
                 logging.warning("Migration v1->v2: audio_file column already exists")
 
-        if from_version < 3:
-            try:
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS meeting_insights (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        meeting_id TEXT NOT NULL,
-                        insight_type TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        custom_prompt TEXT,
-                        generated_at TEXT NOT NULL,
-                        provider TEXT,
-                        model TEXT,
-                        FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-                    )
-                """))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS idx_insights_meeting_id ON meeting_insights(meeting_id)"
-                ))
-                conn.execute(text("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_unique
-                    ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''))
-                """))
-                logging.info("Migration v2->v3: Added meeting_insights table")
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    raise
-                logging.warning("Migration v2->v3: meeting_insights table already exists")
-
-        if from_version < 4:
-            try:
-                result = conn.execute(text("PRAGMA table_info(meeting_insights)"))
-                columns = [row[1] for row in result.fetchall()]
-                if 'created_at' in columns and 'generated_at' not in columns:
-                    conn.execute(text(
-                        "ALTER TABLE meeting_insights RENAME COLUMN created_at TO generated_at"
-                    ))
-                    logging.info("Migration v3->v4: Renamed created_at to generated_at")
-                elif 'generated_at' in columns:
-                    logging.info("Migration v3->v4: generated_at column already exists")
-            except Exception as e:
-                logging.error(f"Migration v3->v4 failed: {e}")
-                raise
-
         if from_version < 5:
             try:
                 result = conn.execute(text("PRAGMA table_info(meeting_chunks)"))
@@ -181,6 +137,16 @@ class DatabaseManager:
                         logging.info(f"Migration v4->v5: Added {col_name} to meeting_chunks")
             except Exception as e:
                 logging.error(f"Migration v4->v5 failed: {e}")
+                raise
+
+        if from_version < 6:
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
+                conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
+                conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
+                logging.info("Migration v5->v6: Removed meeting_insights table")
+            except Exception as e:
+                logging.error(f"Migration v5->v6 failed: {e}")
                 raise
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
@@ -406,7 +372,7 @@ class DatabaseManager:
         with self.get_session() as session:
             meeting = session.get(Meeting, meeting_id)
             if meeting:
-                session.delete(meeting)  # CASCADE handles chunks + insights
+                session.delete(meeting)  # CASCADE handles chunks
                 return True
             return False
 
@@ -519,88 +485,6 @@ class DatabaseManager:
         with self.get_session() as session:
             meeting = session.get(Meeting, meeting_id)
             return meeting.audio_file if meeting else None
-
-    # =====================================================================
-    # Meeting Insights
-    # =====================================================================
-
-    def save_insight(
-        self,
-        meeting_id: str,
-        insight_type: str,
-        content: str,
-        custom_prompt: Optional[str] = None,
-        provider: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> int:
-        generated_at = datetime.now().isoformat()
-        with self.get_session() as session:
-            # Upsert: find existing by (meeting_id, insight_type, custom_prompt)
-            q = session.query(MeetingInsight).filter(
-                MeetingInsight.meeting_id == meeting_id,
-                MeetingInsight.insight_type == insight_type,
-                func.coalesce(MeetingInsight.custom_prompt, '') == func.coalesce(custom_prompt, ''),
-            )
-            existing = q.first()
-
-            if existing:
-                existing.content = content
-                existing.generated_at = generated_at
-                existing.provider = provider
-                existing.model = model
-                session.flush()
-                return existing.id
-            else:
-                insight = MeetingInsight(
-                    meeting_id=meeting_id, insight_type=insight_type,
-                    content=content, custom_prompt=custom_prompt,
-                    generated_at=generated_at, provider=provider, model=model,
-                )
-                session.add(insight)
-                session.flush()
-                return insight.id
-
-    def get_insight(
-        self,
-        meeting_id: str,
-        insight_type: str,
-        custom_prompt: Optional[str] = None,
-    ) -> Optional[MeetingInsight]:
-        with self.get_session() as session:
-            return (
-                session.query(MeetingInsight)
-                .filter(
-                    MeetingInsight.meeting_id == meeting_id,
-                    MeetingInsight.insight_type == insight_type,
-                    func.coalesce(MeetingInsight.custom_prompt, '') == func.coalesce(custom_prompt, ''),
-                )
-                .first()
-            )
-
-    def get_all_insights(self, meeting_id: str) -> List[MeetingInsight]:
-        with self.get_session() as session:
-            return (
-                session.query(MeetingInsight)
-                .filter(MeetingInsight.meeting_id == meeting_id)
-                .order_by(MeetingInsight.generated_at.desc())
-                .all()
-            )
-
-    def delete_insight(self, insight_id: int) -> bool:
-        with self.get_session() as session:
-            insight = session.get(MeetingInsight, insight_id)
-            if insight:
-                session.delete(insight)
-                return True
-            return False
-
-    def has_insights(self, meeting_id: str) -> bool:
-        with self.get_session() as session:
-            return (
-                session.query(MeetingInsight.id)
-                .filter(MeetingInsight.meeting_id == meeting_id)
-                .first()
-            ) is not None
 
     # ------------------------------------------------------------------
     # Lifecycle

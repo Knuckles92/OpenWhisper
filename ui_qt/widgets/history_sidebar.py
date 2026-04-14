@@ -256,16 +256,14 @@ class MeetingListItemWidget(QFrame):
     delete_requested = pyqtSignal(str)  # meeting_id
     rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
     copy_transcript_requested = pyqtSignal(str)  # meeting_id
-    insights_requested = pyqtSignal(str)  # meeting_id
 
     def __init__(self, meeting_id: str, title: str, date: str,
                  duration: str, preview: str, status: str = "completed",
-                 has_insights: bool = False, parent=None):
+                 parent=None):
         super().__init__(parent)
         self.meeting_id = meeting_id
         self._title = title
         self._preview = preview
-        self._has_insights = has_insights
         self.setObjectName("meetingListItem")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
@@ -276,7 +274,7 @@ class MeetingListItemWidget(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(4)
 
-        # Header row: title + status + insights badge
+        # Header row: title + status
         header_layout = QHBoxLayout()
 
         # Status indicator for interrupted meetings
@@ -291,13 +289,6 @@ class MeetingListItemWidget(QFrame):
         title_label.setStyleSheet("color: #f5f5f7; background: transparent;")
 
         header_layout.addWidget(title_label)
-
-        # Insights indicator badge
-        if has_insights:
-            insights_badge = QLabel("\u2728")  # Sparkles emoji
-            insights_badge.setToolTip("Has saved insights")
-            insights_badge.setStyleSheet("color: #fbbf24; background: transparent; font-size: 12px;")
-            header_layout.addWidget(insights_badge)
 
         header_layout.addStretch()
 
@@ -405,12 +396,6 @@ class MeetingListItemWidget(QFrame):
 
         menu.addSeparator()
 
-        # Generate Insights action
-        insights_action = menu.addAction("Generate Insights...")
-        insights_action.triggered.connect(lambda: self.insights_requested.emit(self.meeting_id))
-
-        menu.addSeparator()
-
         # Rename action
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(self._on_rename_clicked)
@@ -463,7 +448,6 @@ class HistorySidebar(QWidget):
     meeting_delete_requested = pyqtSignal(str)  # Emits meeting_id
     meeting_rename_requested = pyqtSignal(str, str)  # meeting_id, new_title
     meeting_copy_requested = pyqtSignal(str)  # Emits meeting_id
-    meeting_insights_requested = pyqtSignal(str)  # Emits meeting_id for insights generation
 
     # Mode constants
     MODE_QUICK_RECORD = 0
@@ -886,14 +870,12 @@ class HistorySidebar(QWidget):
                 date=meeting.get('date', ''),
                 duration=meeting.get('duration', ''),
                 preview=meeting.get('preview', ''),
-                status=meeting.get('status', 'completed'),
-                has_insights=meeting.get('has_insights', False)
+                status=meeting.get('status', 'completed')
             )
             item.clicked.connect(self._on_meeting_clicked)
             item.delete_requested.connect(self._on_meeting_delete_requested)
             item.rename_requested.connect(self._on_meeting_rename_requested)
             item.copy_transcript_requested.connect(self._on_meeting_copy_requested)
-            item.insights_requested.connect(self._on_meeting_insights_requested)
             self.meetings_list_layout.addWidget(item)
     
     def _on_entry_clicked(self, entry_id: str):
@@ -939,11 +921,6 @@ class HistorySidebar(QWidget):
     def _on_meeting_copy_requested(self, meeting_id: str):
         """Handle meeting copy transcript request."""
         self.meeting_copy_requested.emit(meeting_id)
-
-    def _on_meeting_insights_requested(self, meeting_id: str):
-        """Handle meeting insights generation request."""
-        self.meeting_insights_requested.emit(meeting_id)
-        self.logger.debug(f"Meeting insights requested: {meeting_id[:8]}...")
 
 
 class HistoryToggleButton(QPushButton):
