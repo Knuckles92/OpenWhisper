@@ -205,6 +205,7 @@ class UIController(QObject):
         if self.main_window.is_recording:
             self.main_window.is_recording = False
             self.main_window._update_recording_state()
+            self.logger.info("Main window recording state updated")
 
         if self.on_record_stop:
             self.on_record_stop()
@@ -220,13 +221,16 @@ class UIController(QObject):
         if self.main_window.is_recording:
             self.main_window.is_recording = False
             self.main_window._update_recording_state()
+            self.logger.info("Main window recording state updated")
 
         if self.on_record_cancel:
             self.on_record_cancel()
+            self.logger.info("Record cancel callback called")
 
         self.record_canceled.emit()
         self.main_window.clear_transcription()
         self._start_cancel_animation()
+        self.logger.info("Cancel animation started")
 
     def set_transcription(self, text: str):
         """Set transcription text."""
