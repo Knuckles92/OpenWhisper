@@ -105,6 +105,23 @@ class DatabaseManager:
                 self._run_migrations(conn, current_version)
                 conn.commit()
 
+            # Self-heal: ensure columns exist even if version is current
+            # (handles databases where create_all ran before a column was
+            # added to the model and version was already bumped).
+            self._ensure_columns(conn)
+            conn.commit()
+
+    def _ensure_columns(self, conn) -> None:
+        """Add any model columns missing from existing tables."""
+        insp = inspect(self.engine)
+        if insp.has_table('meetings'):
+            cols = [c['name'] for c in insp.get_columns('meetings')]
+            if 'audio_file' not in cols:
+                conn.execute(text(
+                    "ALTER TABLE meetings ADD COLUMN audio_file TEXT DEFAULT NULL"
+                ))
+                logging.info("Schema heal: added missing audio_file column to meetings")
+
     def _run_migrations(self, conn, from_version: int) -> None:
         """Run progressive migrations using raw SQL (standard for non-Alembic projects)."""
         logging.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
