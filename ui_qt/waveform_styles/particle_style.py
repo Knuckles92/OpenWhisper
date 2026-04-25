@@ -101,7 +101,7 @@ class ParticleStyle(BaseWaveformStyle):
         dt = 1/30  # Approximate dt since we don't have exact frame delta here easily without passing it
         # Actually base_style has update_animation_time which updates self.animation_time
         # We can use a fixed dt for physics stability or calculate it if we tracked last time
-        
+
         # Calculate audio energy
         audio_energy = sum(self.audio_levels) / len(self.audio_levels) if self.audio_levels else 0.0
 
@@ -148,7 +148,7 @@ class ParticleStyle(BaseWaveformStyle):
     def draw_transcribing_state(self, painter: QPainter, rect: QRect, message: str = "Transcribing..."):
         """Draw particles converging to center."""
         dt = 1/30
-        
+
         # Emit particles from edges - multiple per frame for density
         particles_per_frame = random.randint(2, 4)
         for _ in range(particles_per_frame):
@@ -166,20 +166,20 @@ class ParticleStyle(BaseWaveformStyle):
             else:           # Left
                 x = -10
                 y = random.uniform(0, self.height)
-            
+
             # Initial velocity towards center
             center_x = self.width // 2
             center_y = self.height // 2
             angle = math.atan2(center_y - y, center_x - x)
-            
+
             # Faster initial speed for rapid convergence
             speed = random.uniform(200, 400)
             vx = math.cos(angle) * speed
             vy = math.sin(angle) * speed
-            
+
             particle = Particle(x, y, vx, vy)
             # Full spectrum of colors for transcription
-            particle.color_hue = random.uniform(0, 360) 
+            particle.color_hue = random.uniform(0, 360)
             self.particles.append(particle)
 
         self._update_particles(dt, 0.3, converge_mode=True)
@@ -237,117 +237,117 @@ class ParticleStyle(BaseWaveformStyle):
         for _ in range(min(count, self.max_particles - len(self.particles))):
             x = random.uniform(20, self.width - 20)
             y = self.height - 30
-            
+
             vx = random.uniform(-30, 30) * (1 + audio_energy)
             vy = random.uniform(-80, -40) * (1 + audio_energy * 0.5)
-            
+
             particle = Particle(x, y, vx, vy)
-            particle.color_hue = (self.animation_time * self.color_shift_speed + 
+            particle.color_hue = (self.animation_time * self.color_shift_speed +
                                 random.uniform(0, 60)) % 360
             self.particles.append(particle)
 
-    def _update_particles(self, dt: float, audio_energy: float = 0.0, 
+    def _update_particles(self, dt: float, audio_energy: float = 0.0,
                          vortex_mode: bool = False, stream_mode: bool = False, converge_mode: bool = False):
         """Update all particles."""
         center_x = self.width // 2
         center_y = self.height // 2
-        
+
         alive_particles = []
-        
+
         for particle in self.particles:
             if vortex_mode:
                 dx = particle.x - center_x
                 dy = particle.y - center_y
                 distance = math.sqrt(dx*dx + dy*dy)
-                
+
                 if distance > 0:
                     radial_force = -50 / (distance + 1)
                     particle.vx += (dx / distance) * radial_force * dt
                     particle.vy += (dy / distance) * radial_force * dt
-                    
+
                     tangent_force = 100
                     particle.vx += (-dy / distance) * tangent_force * dt
                     particle.vy += (dx / distance) * tangent_force * dt
-                
+
                 if particle.update(dt, 0, 0.95):
                     alive_particles.append(particle)
-            
+
             elif converge_mode:
                 # Rapid attraction to center with swirl
                 dx = center_x - particle.x
                 dy = center_y - particle.y
                 distance = math.sqrt(dx*dx + dy*dy)
-                
+
                 if distance > 5:
                     # Normalized direction
                     nx = dx / distance
                     ny = dy / distance
-                    
+
                     # Strong attraction force that increases closer to center
                     # Base pull + inverse distance pull for snap
                     attraction = 15000 / (distance + 10) + 500
-                    
+
                     # Swirl force (tangential) for "beautiful" effect
                     swirl = 300
-                    
+
                     particle.vx += (nx * attraction - ny * swirl) * dt
                     particle.vy += (ny * attraction + nx * swirl) * dt
-                    
+
                     # Damping to keep it smooth but fast
                     particle.vx *= 0.9
                     particle.vy *= 0.9
                 else:
                     # Reached center, vanish quickly
                     particle.life -= dt * 5.0
-                
+
                 if particle.update(dt, 0, 1.0):
                     alive_particles.append(particle)
 
             elif stream_mode:
                 turbulence_x = math.sin(self.animation_time * 2 + particle.y * 0.1) * self.turbulence_strength
                 turbulence_y = math.cos(self.animation_time * 1.5 + particle.x * 0.1) * self.turbulence_strength * 0.5
-                
+
                 particle.vx += turbulence_x * dt
                 particle.vy += turbulence_y * dt
-                
-                if (particle.x < -10 or particle.x > self.width + 10 or 
+
+                if (particle.x < -10 or particle.x > self.width + 10 or
                     particle.y < -10 or particle.y > self.height + 10):
                     continue
-                    
+
                 if particle.update(dt, self.gravity * 0.3, self.damping):
                     alive_particles.append(particle)
-            
+
             else:
                 # Normal mode
                 turbulence_multiplier = 1.0 + audio_energy * 2
-                turbulence_x = (math.sin(self.animation_time * 3 + particle.x * 0.1) * 
+                turbulence_x = (math.sin(self.animation_time * 3 + particle.x * 0.1) *
                               self.turbulence_strength * turbulence_multiplier)
-                turbulence_y = (math.cos(self.animation_time * 2.5 + particle.y * 0.1) * 
+                turbulence_y = (math.cos(self.animation_time * 2.5 + particle.y * 0.1) *
                               self.turbulence_strength * turbulence_multiplier * 0.7)
-                
+
                 particle.vx += turbulence_x * dt
                 particle.vy += turbulence_y * dt
-                
+
                 wind_x = math.sin(self.animation_time) * self.wind_strength
                 particle.vx += wind_x * dt
-                
+
                 if particle.x <= 0 or particle.x >= self.width:
                     particle.vx *= -0.8
                     particle.x = max(0, min(self.width, particle.x))
-                
+
                 if particle.y >= self.height - 25:
                     particle.vy *= -0.6
                     particle.y = self.height - 25
-                
+
                 if particle.update(dt, self.gravity, self.damping):
                     alive_particles.append(particle)
-        
+
         # Filter out any invalid particles and ensure we have Particle objects
         valid_particles = []
         for p in alive_particles:
             if isinstance(p, Particle) and hasattr(p, 'x') and hasattr(p, 'y'):
                 valid_particles.append(p)
-        
+
         self.particles = valid_particles
         if len(self.particles) > self.max_particles:
             self.particles = self.particles[-self.max_particles:]
@@ -355,19 +355,19 @@ class ParticleStyle(BaseWaveformStyle):
     def _draw_particles(self, painter: QPainter):
         """Draw all particles."""
         painter.setPen(Qt.PenStyle.NoPen)
-        
+
         for particle in self.particles:
             try:
                 # Ensure particle is a Particle object, not a tuple or list
                 if not hasattr(particle, 'x') or not hasattr(particle, 'y'):
                     continue
-                    
+
                 color = particle.get_qcolor()
                 painter.setBrush(color)
-                
+
                 size = particle.size * particle.life
                 painter.drawEllipse(QRectF(particle.x - size, particle.y - size, size * 2, size * 2))
-                
+
                 if self.glow_effect and particle.life > 0.5:
                     glow_color = QColor(color)
                     glow_color.setAlpha(100)

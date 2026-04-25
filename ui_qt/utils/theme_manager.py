@@ -3,6 +3,7 @@ Theme management for PyQt6 UI.
 Handles stylesheet loading and theme switching.
 """
 from pathlib import Path
+import logging
 from typing import Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -27,7 +28,7 @@ class ThemeManager(QObject):
                     self._stylesheet = f.read()
                     return self._stylesheet
         except Exception as e:
-            print(f"Error loading stylesheet: {e}")
+            logging.warning(f"Error loading stylesheet: {e}")
 
         return None
 
@@ -44,16 +45,16 @@ class ThemeManager(QObject):
     def get_color(self, color_name: str) -> str:
         """Get a color value from the theme."""
         colors = {
-            'primary': '#6366f1',
-            'primary_hover': '#818cf8',
-            'secondary': '#8b5cf6',
-            'danger': '#ef4444',
-            'success': '#10b981',
-            'accent': '#00d4ff',
-            'background': '#1e1e2e',
-            'surface': '#2d2d44',
-            'border': '#404060',
-            'text': '#e0e0ff',
-            'text_secondary': '#a0a0c0',
+            'primary': '#0a84ff',
+            'primary_hover': '#007aff',
+            'secondary': '#8e8e93',
+            'danger': '#ff453a',
+            'success': '#30d158',
+            'accent': '#64d2ff',
+            'background': '#1c1c1e',
+            'surface': '#2c2c2e',
+            'border': '#3a3a3c',
+            'text': '#f5f5f7',
+            'text_secondary': '#8e8e93',
         }
         return colors.get(color_name, '#ffffff')

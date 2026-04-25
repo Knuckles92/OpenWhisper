@@ -228,21 +228,6 @@ class FakeStreamingTranscriber:
         self.cleaned_up = True
 
 
-class FakeMeetingController:
-    def __init__(self, backend=None):
-        self.backend = backend
-        self.cleaned_up = False
-
-    def recover_pending_chunks(self):
-        pass
-
-    def get_meetings_for_display(self):
-        return []
-
-    def cleanup(self):
-        self.cleaned_up = True
-
-
 class FakeExecutor:
     def __init__(self):
         self.submissions = []
@@ -395,12 +380,6 @@ class DummyUIController:
     def hide_overlay(self):
         pass
 
-    def get_meeting_tab(self):
-        return None
-
-    def refresh_meetings_list(self, _meetings):
-        pass
-
     def cleanup(self):
         self.cleaned_up = True
 
@@ -437,9 +416,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     streaming_module = types.ModuleType("services.streaming_transcriber")
     streaming_module.StreamingTranscriber = FakeStreamingTranscriber
 
-    meeting_controller_module = types.ModuleType("services.meeting_controller")
-    meeting_controller_module.MeetingController = FakeMeetingController
-
     database_module = types.ModuleType("services.database")
     database_module.db = types.SimpleNamespace(
         close=lambda: db_state.__setitem__("closed", True)
@@ -461,7 +437,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         "services.history_manager": history_module,
         "services.audio_processor": audio_processor_module,
         "services.streaming_transcriber": streaming_module,
-        "services.meeting_controller": meeting_controller_module,
         "services.database": database_module,
         "keyboard": keyboard_module,
         "pyperclip": pyperclip_module,
@@ -496,7 +471,6 @@ class TestApplicationController(unittest.TestCase):
             "services.runtime",
             "services.runtime.hotkeys",
             "services.runtime.streaming",
-            "services.runtime.meeting",
             "services.runtime.transcription",
             "services.application_controller",
         ]:
@@ -598,7 +572,6 @@ class TestApplicationController(unittest.TestCase):
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()
         controller.hotkey_manager = None
-        controller.meeting_controller = None
         controller.streaming_transcriber = FakeStreamingTranscriber(
             backend=FakeLocalBackend(),
             chunk_duration_sec=2.0,

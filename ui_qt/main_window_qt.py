@@ -214,7 +214,7 @@ from ui_qt.widgets import (
     HeaderCard, Card, PrimaryButton, DangerButton,
     SuccessButton, WarningButton, ControlPanel, ModernButton,
     HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget,
-    TabbedContentWidget, QuickRecordTab, MeetingTab
+    TabbedContentWidget, QuickRecordTab
 )
 from services.history_manager import history_manager
 
@@ -224,6 +224,7 @@ class ModernMainWindow(QMainWindow):
 
     # Signals for application events
     record_toggled = pyqtSignal(bool)
+    record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
@@ -271,11 +272,6 @@ class ModernMainWindow(QMainWindow):
         self._geometry_save_timer = None
 
         # Callbacks (will be set by controller)
-        self.on_record_start: Optional[Callable] = None
-        self.on_record_stop: Optional[Callable] = None
-        self.on_record_cancel: Optional[Callable] = None
-        self.on_model_changed: Optional[Callable] = None
-        self.on_retranscribe: Optional[Callable] = None
         self.on_show_copied_animation: Optional[Callable] = None
 
         # Setup UI
@@ -327,14 +323,11 @@ class ModernMainWindow(QMainWindow):
         main_area_layout.setContentsMargins(0, 0, 0, 0)
         main_area_layout.setSpacing(0)
 
-        # Tabbed Content Widget (Quick Record / Meeting Mode)
+        # Tabbed Content Widget (Quick Record)
         self.tabbed_content = TabbedContentWidget()
         self.quick_record_tab = QuickRecordTab()
-        self.meeting_tab = MeetingTab()
 
-        # Add tabs to the stacked widget (order matters - must match tab bar order)
         self.tabbed_content.add_tab(self.quick_record_tab, "Quick Record")
-        self.tabbed_content.add_tab(self.meeting_tab, "Meeting Mode")
 
         # Sync the stack with the tab bar after all tabs are added
         # (fixes timing issue where tab bar index is restored before stack has widgets)
@@ -345,6 +338,7 @@ class ModernMainWindow(QMainWindow):
 
         # Connect Quick Record tab signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
+        self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
 
         # Connect stats visibility change
@@ -437,11 +431,7 @@ class ModernMainWindow(QMainWindow):
         """Handle tab selection change."""
         self.logger.debug(f"Tab changed to index {index}")
 
-        # Update sidebar mode based on active tab
-        if index == TabbedContentWidget.TAB_QUICK_RECORD:
-            self.history_sidebar.set_mode(HistorySidebar.MODE_QUICK_RECORD)
-        else:
-            self.history_sidebar.set_mode(HistorySidebar.MODE_MEETING)
+        self.history_sidebar.refresh()
 
         # Emit signal for external listeners
         self.tab_changed.emit(index)
@@ -456,20 +446,18 @@ class ModernMainWindow(QMainWindow):
         else:
             self.tabbed_content.set_recording_state(False, -1)
 
-        if is_recording:
-            if self.on_record_start:
-                self.on_record_start()
-        else:
-            if self.on_record_stop:
-                self.on_record_stop()
-
         self.record_toggled.emit(is_recording)
+
+    def _on_quick_record_canceled(self):
+        """Handle cancel from Quick Record tab."""
+        self.is_recording = False
+        self.tabbed_content.set_recording_state(False, -1)
+
+        self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
         self.current_model = model_name
-        if self.on_model_changed:
-            self.on_model_changed(model_name)
         self.model_changed.emit(model_name)
 
     def _update_recording_state(self):
@@ -582,11 +570,6 @@ class ModernMainWindow(QMainWindow):
         self.logger.info("Upload audio file requested")
         self.upload_audio_requested.emit()
 
-    def switch_to_meeting_mode(self):
-        """Switch to the Meeting Mode tab."""
-        self.logger.info("Switching to Meeting Mode tab")
-        self.tabbed_content.set_current_index(TabbedContentWidget.TAB_MEETING_MODE)
-
     def switch_to_quick_record(self):
         """Switch to the Quick Record tab."""
         self.logger.info("Switching to Quick Record tab")
@@ -605,29 +588,29 @@ class ModernMainWindow(QMainWindow):
     def test_loading_screen(self):
         """Show the loading screen for testing purposes."""
         self.logger.info("Testing loading screen")
-        
+
         if self.test_loading_screen_instance:
             self.test_loading_screen_instance.destroy()
             self.test_loading_screen_instance = None
-            
+
         self.test_loading_screen_instance = ModernLoadingScreen()
         self.test_loading_screen_instance.show()
-        
+
         # Simulate some activity
         QTimer.singleShot(1000, lambda: self.test_loading_screen_instance.update_status("Loading resources..."))
         QTimer.singleShot(2000, lambda: self.test_loading_screen_instance.update_progress("Connecting to services..."))
         QTimer.singleShot(3000, lambda: self.test_loading_screen_instance.update_status("Almost ready..."))
-        
+
         # Auto close after 5 seconds
         QTimer.singleShot(5000, lambda: self.test_loading_screen_instance.destroy())
-        
+
         # Allow click to close
         original_mouse_press = self.test_loading_screen_instance.mousePressEvent
-        
+
         def close_on_click(event):
             self.test_loading_screen_instance.destroy()
             self.test_loading_screen_instance = None
-            
+
         self.test_loading_screen_instance.mousePressEvent = close_on_click
 
     def show_about(self):
@@ -650,55 +633,55 @@ class ModernMainWindow(QMainWindow):
     def toggle_history(self):
         """Toggle the history sidebar visibility."""
         self.logger.info("Toggling history sidebar")
-        
+
         # Update the edge tab arrow direction immediately for instant visual feedback
         will_be_expanded = not self.history_sidebar.is_expanded
         self.history_edge_tab.set_expanded(will_be_expanded)
-        
+
         # Start sidebar animation immediately
         self.history_sidebar.toggle()
-        
+
         # Resize window immediately to match sidebar animation
         self._resize_for_sidebar(will_be_expanded)
-        
+
         self.history_toggle_requested.emit()
-    
+
     def _resize_for_sidebar(self, expanded: bool):
         """Resize window when sidebar is toggled.
-        
+
         Args:
             expanded: True if sidebar is being expanded, False if collapsed.
         """
         current_height = self.height()
-        
+
         if expanded:
             # Expand window to fit sidebar
             new_width = self._base_width + self._sidebar_width + self._edge_tab_width
         else:
             # Collapse window back to base size
             new_width = self._base_width + self._edge_tab_width
-        
+
         # Animate the resize for smooth transition
         self._animate_resize(new_width, current_height)
-    
+
     def _animate_resize(self, target_width: int, target_height: int):
         """Animate window resize.
-        
+
         Args:
             target_width: Target window width.
             target_height: Target window height.
         """
         from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QRect
-        
+
         # Create animation for geometry
         if not hasattr(self, '_resize_animation'):
             self._resize_animation = QPropertyAnimation(self, b"geometry")
             self._resize_animation.setDuration(250)
             self._resize_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        
+
         current_geo = self.geometry()
         target_geo = QRect(current_geo.x(), current_geo.y(), target_width, target_height)
-        
+
         self._resize_animation.stop()
         self._resize_animation.setStartValue(current_geo)
         self._resize_animation.setEndValue(target_geo)
@@ -747,8 +730,6 @@ class ModernMainWindow(QMainWindow):
         """Handle re-transcription request."""
         self.logger.info(f"Re-transcribe requested: {audio_file_path}")
         self.retranscribe_requested.emit(audio_file_path)
-        if self.on_retranscribe:
-            self.on_retranscribe(audio_file_path)
 
     def closeEvent(self, event):
         """Handle window close event."""
@@ -758,13 +739,13 @@ class ModernMainWindow(QMainWindow):
                 self.test_loading_screen_instance.destroy()
         except Exception as e:
             self.logger.debug(f"Error destroying loading screen: {e}")
-        
+
         # If force quit is set, close immediately
         if self._force_quit:
             self.logger.info("Force quit - closing application")
             event.accept()
             return
-        
+
         # Check if minimize to tray is enabled (default: True)
         try:
             settings = settings_manager.load_all_settings()
@@ -772,7 +753,7 @@ class ModernMainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error
-        
+
         if minimize_tray:
             # Hide window instead of closing (X button behavior)
             event.ignore()

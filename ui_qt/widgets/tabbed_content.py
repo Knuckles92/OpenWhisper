@@ -1,6 +1,6 @@
 """
-Tabbed content widget for switching between Quick Record and Meeting Mode.
-Provides a tab bar with a stacked widget to display the appropriate content.
+Tabbed content widget for the Quick Record workspace.
+Keeps the existing tab container API while exposing only Quick Record.
 """
 import logging
 from typing import Optional
@@ -14,14 +14,13 @@ from services.settings import settings_manager
 
 
 class TabbedContentWidget(QWidget):
-    """Container widget with tab bar and stacked widget for Quick Record / Meeting Mode."""
+    """Container widget with a tab bar and stacked content area."""
 
     # Signals
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
 
     # Tab indices
     TAB_QUICK_RECORD = 0
-    TAB_MEETING_MODE = 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,9 +48,7 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.setDrawBase(False)  # Don't draw base line
         self.tab_bar.setExpanding(False)  # Don't expand tabs to fill width
 
-        # Add tabs
         self.tab_bar.addTab("Quick Record")
-        self.tab_bar.addTab("Meeting Mode")
 
         # Center the tab bar
         tab_container = QWidget()
@@ -159,16 +156,13 @@ class TabbedContentWidget(QWidget):
         """Set the current tab index.
 
         Args:
-            index: Tab index to switch to
+            index: Tab index to switch to.
         """
         if 0 <= index < self.tab_bar.count():
             self.tab_bar.setCurrentIndex(index)
 
     def set_recording_state(self, is_recording: bool, source_tab: int):
-        """Lock or unlock tabs based on recording state.
-
-        When recording is active, the other tab is disabled to prevent
-        accidental tab switching that could disrupt the recording.
+        """Track recording state for the active content tab.
 
         Args:
             is_recording: True if recording started, False if stopped
@@ -177,14 +171,8 @@ class TabbedContentWidget(QWidget):
         self._recording_active = is_recording
         self._active_recording_tab = source_tab if is_recording else -1
 
-        if is_recording:
-            # Disable the other tab
-            for i in range(self.tab_bar.count()):
-                self.tab_bar.setTabEnabled(i, i == source_tab)
-        else:
-            # Re-enable all tabs
-            for i in range(self.tab_bar.count()):
-                self.tab_bar.setTabEnabled(i, True)
+        for i in range(self.tab_bar.count()):
+            self.tab_bar.setTabEnabled(i, not is_recording or i == source_tab)
 
         self.logger.debug(
             f"Recording state: active={is_recording}, source_tab={source_tab}"

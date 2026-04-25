@@ -17,7 +17,7 @@ from ui_qt.system_tray_qt import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
-from ui_qt.widgets import QuickRecordTab, MeetingTab, TabbedContentWidget
+from ui_qt.widgets import QuickRecordTab, TabbedContentWidget
 from services.audio_processor import audio_processor
 
 
@@ -73,6 +73,7 @@ class UIController(QObject):
         """Setup signal connections between UI components."""
         # Main window signals
         self.main_window.record_toggled.connect(self._on_record_toggled)
+        self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
@@ -82,15 +83,6 @@ class UIController(QObject):
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_audio_requested.connect(self.open_upload_audio_dialog)
 
-        # Connect sidebar meeting signals for tab-based Meeting Mode
-        self.main_window.history_sidebar.meeting_selected.connect(self._on_sidebar_meeting_selected)
-        self.main_window.history_sidebar.meeting_delete_requested.connect(self._on_sidebar_meeting_delete)
-        self.main_window.history_sidebar.meeting_rename_requested.connect(self._on_sidebar_meeting_rename)
-        self.main_window.history_sidebar.meeting_copy_requested.connect(self._on_sidebar_meeting_copy)
-
-        # Set up the main window's retranscribe callback
-        self.main_window.on_retranscribe = self._handle_retranscribe
-        
         # Set up the copied animation callback
         self.main_window.on_show_copied_animation = self.show_copied_animation
 
@@ -484,45 +476,45 @@ class UIController(QObject):
     def open_hotkey_dialog(self):
         """Open the hotkey configuration dialog."""
         dialog = HotkeyDialog(self.main_window)
-        
+
         def on_hotkeys_save(hotkeys):
             if self.on_hotkeys_changed:
                 self.on_hotkeys_changed(hotkeys)
             # Update the hotkey display in the main window
             self.update_hotkey_display(hotkeys)
-                
+
         dialog.on_hotkeys_save = on_hotkeys_save
         dialog.exec()
 
     def open_upload_audio_dialog(self):
         """Open file dialog to select an audio file for transcription."""
         self.logger.info("Opening upload audio dialog")
-        
+
         # Define supported audio formats
         audio_filters = "Audio Files (*.wav *.mp3 *.m4a *.ogg *.flac *.wma);;WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*.*)"
-        
+
         file_path, _ = QFileDialog.getOpenFileName(
             self.main_window,
             "Select Audio File",
             "",
             audio_filters
         )
-        
+
         if not file_path:
             self.logger.info("Audio file selection cancelled")
             return
-        
+
         self.logger.info(f"Selected audio file: {file_path}")
-        
+
         # Analyze the file and show preview
         try:
             preview = audio_processor.preview_file(file_path)
-            
+
             # Show preview dialog
             dialog = UploadPreviewDialog(preview, self.main_window)
             dialog.on_proceed = self._handle_upload_audio
             dialog.exec()
-            
+
         except FileNotFoundError as e:
             self.logger.error(f"File not found: {e}")
             QMessageBox.warning(
@@ -547,7 +539,7 @@ class UIController(QObject):
 
     def _handle_upload_audio(self, file_path: str):
         """Handle the audio file upload after user confirms in preview dialog.
-        
+
         Args:
             file_path: Path to the audio file to transcribe.
         """
@@ -563,19 +555,11 @@ class UIController(QObject):
         """
         return self.main_window.quick_record_tab
 
-    def get_meeting_tab(self) -> MeetingTab:
-        """Get the Meeting Mode tab widget.
-
-        Returns:
-            The MeetingTab instance
-        """
-        return self.main_window.meeting_tab
-
     def switch_to_tab(self, index: int):
         """Switch to a specific tab.
 
         Args:
-            index: Tab index (0 for Quick Record, 1 for Meeting Mode)
+            index: Tab index.
         """
         self.main_window.tabbed_content.set_current_index(index)
 
@@ -583,47 +567,10 @@ class UIController(QObject):
         """Switch to the Quick Record tab."""
         self.switch_to_tab(TabbedContentWidget.TAB_QUICK_RECORD)
 
-    def switch_to_meeting_mode(self):
-        """Switch to the Meeting Mode tab."""
-        self.switch_to_tab(TabbedContentWidget.TAB_MEETING_MODE)
-
-    def refresh_meetings_list(self, meetings: List[dict]):
-        """Refresh the meetings list in the sidebar.
-
-        Args:
-            meetings: List of meeting dictionaries
-        """
-        self.main_window.history_sidebar.refresh_meetings(meetings)
-
-    # Sidebar meeting event handlers (will be connected to MeetingController by app_qt.py)
-    def _on_sidebar_meeting_selected(self, meeting_id: str):
-        """Handle meeting selection from sidebar."""
-        self.logger.info(f"Sidebar: meeting selected: {meeting_id}")
-        if hasattr(self, 'on_load_meeting') and self.on_load_meeting:
-            self.on_load_meeting(meeting_id)
-
-    def _on_sidebar_meeting_delete(self, meeting_id: str):
-        """Handle meeting delete request from sidebar."""
-        self.logger.info(f"Sidebar: meeting delete requested: {meeting_id}")
-        if hasattr(self, 'on_delete_meeting') and self.on_delete_meeting:
-            self.on_delete_meeting(meeting_id)
-
-    def _on_sidebar_meeting_rename(self, meeting_id: str, new_title: str):
-        """Handle meeting rename request from sidebar."""
-        self.logger.info(f"Sidebar: meeting rename requested: {meeting_id} -> {new_title}")
-        if hasattr(self, 'on_rename_meeting') and self.on_rename_meeting:
-            self.on_rename_meeting(meeting_id, new_title)
-
-    def _on_sidebar_meeting_copy(self, meeting_id: str):
-        """Handle meeting copy request from sidebar."""
-        self.logger.info(f"Sidebar: meeting copy requested: {meeting_id}")
-        if hasattr(self, 'on_copy_meeting') and self.on_copy_meeting:
-            self.on_copy_meeting(meeting_id)
-
     def update_hotkey_display(self, hotkeys: dict):
         """
         Update the hotkey display in the main window.
-        
+
         Args:
             hotkeys: Dictionary with hotkey mappings
         """
@@ -669,14 +616,14 @@ class UIController(QObject):
     def cleanup(self):
         """Cleanup resources."""
         self.logger.info("Starting UI Controller cleanup...")
-        
+
         # Stop the cancel animation timer
         try:
             if self.cancel_animation_timer.isActive():
                 self.cancel_animation_timer.stop()
         except Exception as e:
             self.logger.debug(f"Error stopping cancel animation timer: {e}")
-        
+
         # Stop overlay timer and close
         try:
             if hasattr(self.overlay, 'timer') and self.overlay.timer.isActive():
@@ -712,5 +659,5 @@ class UIController(QObject):
             self.main_window.close()
         except Exception as e:
             self.logger.debug(f"Error closing main window: {e}")
-        
+
         self.logger.info("UI Controller cleaned up")

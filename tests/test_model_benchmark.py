@@ -8,7 +8,7 @@ and measures transcription time to compare performance.
 Usage:
     From project root:
         python tests/test_model_benchmark.py
-    
+
     Or from tests folder:
         python test_model_benchmark.py
 """
@@ -31,19 +31,19 @@ warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 
 def _patch_subprocess_for_windows():
     """Patch subprocess.Popen to hide console windows on Windows.
-    
+
     This prevents the console flash when running with pythonw.exe,
     especially when whisper calls ffmpeg internally via subprocess.
     """
     if platform.system() != "Windows":
         return
-    
+
     # Store the original Popen
     _original_popen = subprocess.Popen
-    
+
     class _NoConsolePopen(_original_popen):
         """Popen wrapper that adds CREATE_NO_WINDOW flag on Windows."""
-        
+
         def __init__(self, *args, **kwargs):
             # Add CREATE_NO_WINDOW to creationflags if not already set
             if 'creationflags' not in kwargs:
@@ -51,7 +51,7 @@ def _patch_subprocess_for_windows():
             elif not (kwargs['creationflags'] & subprocess.CREATE_NO_WINDOW):
                 kwargs['creationflags'] |= subprocess.CREATE_NO_WINDOW
             super().__init__(*args, **kwargs)
-    
+
     # Replace subprocess.Popen globally
     subprocess.Popen = _NoConsolePopen
 
@@ -154,7 +154,7 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
 
 class AudioGenerator:
     """Generate test audio files of specified durations."""
-    
+
     def __init__(self):
         """Initialize the audio generator."""
         # Use the tests folder (same folder as this script) for audio files
@@ -162,7 +162,7 @@ class AudioGenerator:
         self.temp_dir = script_dir
         self._tts_available = None  # Cache TTS availability check
         logger.info(f"Using audio directory: {self.temp_dir}")
-    
+
     def _check_tts_available(self) -> bool:
         """Check if TTS dependencies are available."""
         if self._tts_available is None:
@@ -173,7 +173,7 @@ class AudioGenerator:
             except ImportError:
                 self._tts_available = False
         return self._tts_available
-    
+
     def generate_tts_audio(self, duration_seconds: float, output_filename: str) -> Optional[Tuple[str, str]]:
         """
         Generate speech audio using gTTS.
@@ -252,8 +252,8 @@ class AudioGenerator:
         except Exception as e:
             logger.error(f"Failed to generate TTS audio: {e}")
             return None
-    
-    
+
+
     def cleanup(self):
         """Clean up generated audio files."""
         try:
@@ -272,20 +272,20 @@ class AudioGenerator:
 
 class ModelBenchmark:
     """Benchmark all transcription models."""
-    
+
     def __init__(self):
         """Initialize the benchmark."""
         self.audio_generator = AudioGenerator()
         self.results: List[TestResult] = []
-        
+
         # Store list of local models to test (will be initialized one at a time)
         # NOTE: turbo is placed LAST because its cleanup can crash (ctranslate2 destructor bug)
         # By putting it last, we don't need to clean it up before loading another model
         self.local_models_to_test = ['base', 'base.en', 'tiny', 'tiny.en', 'turbo']
-        
+
         # Initialize API backends (lightweight, can stay loaded)
         self.backends: Dict[str, any] = {}
-        
+
         print("Initializing OpenAI backends...")
         for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
             try:
@@ -300,22 +300,22 @@ class ModelBenchmark:
                 if len(error_msg) > 150:
                     error_msg = error_msg[:147] + "..."
                 print(f"⚠️  Failed to initialize {backend_name}: {error_msg}")
-    
+
     def test_model(self, backend_name: str, backend: any, audio_file: str, duration: float) -> TestResult:
         """
         Test a single model with a single audio file.
-        
+
         Args:
             backend_name: Name of the backend
             backend: Backend instance
             audio_file: Path to audio file
             duration: Duration of audio in seconds
-            
+
         Returns:
             TestResult object
         """
         print(f"\n  Testing {backend_name}...")
-        
+
         try:
             if not backend.is_available():
                 return TestResult(
@@ -333,15 +333,15 @@ class ModelBenchmark:
                 success=False,
                 error=f"Backend check failed: {str(e)}"
             )
-        
+
         try:
             # Time the transcription
             start_time = time.time()
             transcribed_text = backend.transcribe(audio_file)
             end_time = time.time()
-            
+
             transcription_time = end_time - start_time
-            
+
             return TestResult(
                 model_name=backend_name,
                 audio_duration=duration,
@@ -349,7 +349,7 @@ class ModelBenchmark:
                 success=True,
                 transcribed_text_length=len(transcribed_text)
             )
-            
+
         except KeyboardInterrupt:
             # Re-raise keyboard interrupts
             raise
@@ -366,7 +366,7 @@ class ModelBenchmark:
                 success=False,
                 error=error_msg
             )
-    
+
     def _print_local_whisper_config(self, backend):
         """Print local whisper configuration details for a single backend."""
         print("\n" + "=" * 80)
@@ -421,11 +421,11 @@ class ModelBenchmark:
         print(f"API models: {', '.join(self.backends.keys())}")
         print(f"Durations: {', '.join([f'{d}s' for d in durations])}")
         print("\n" + "=" * 80)
-        
+
         # Generate test audio files
         print("\n📁 Generating test audio files...")
         audio_files = {}
-        
+
         # Check if TTS is available - required for meaningful transcription tests
         if not self.audio_generator._check_tts_available():
             print("\n❌ ERROR: gTTS and pydub are required for transcription benchmarking")
@@ -434,11 +434,11 @@ class ModelBenchmark:
             print("\n   These dependencies are needed to generate actual speech audio")
             print("   that transcription models can transcribe to real words.")
             return
-        
+
         for duration in durations:
             filename = f"test_{int(duration)}s.wav"
             audio_result = self.audio_generator.generate_tts_audio(duration, filename)
-            
+
             if audio_result:
                 # audio_result is a tuple: (file_path, expected_text)
                 # Extract just the file path for testing
@@ -446,27 +446,27 @@ class ModelBenchmark:
             else:
                 print(f"❌ Failed to generate {duration}s audio file")
                 return
-        
+
         if not audio_files:
             print("❌ Failed to generate any test audio files. Exiting.")
             return
-        
+
         # Run tests for local models (initialize -> test all durations -> cleanup -> next)
         print("\n" + "=" * 80)
         print("Running benchmark tests for local models...")
         print("=" * 80)
         print("\n⚠️  Note: Local models will be loaded one at a time to avoid memory issues")
         print("   Each model will be tested with all durations, then unloaded before the next.\n")
-        
+
         config_printed = False
         # Models that should use CUDA with float16
         cuda_models = ['base', 'base.en', 'turbo']
-        
+
         for model_idx, model_name in enumerate(self.local_models_to_test):
             is_last_model = (model_idx == len(self.local_models_to_test) - 1)
             backend_key = f'local_whisper_{model_name}'
             backend = None
-            
+
             try:
                 # For base, base.en, and turbo: use CUDA/float16 directly
                 if model_name in cuda_models:
@@ -481,17 +481,17 @@ class ModelBenchmark:
                     print('='*80)
                     # Use default settings for other models
                     backend = LocalWhisperBackend(model_name=model_name)
-                
+
                 if not backend.is_available():
                     print(f"⚠️  {backend_key} backend not available - skipping")
                     continue
-                
+
                 # Print device/compute_type info for THIS model
                 print(f"\n  Model Configuration:")
                 print(f"    Model Name:    {backend.model_name}")
                 print(f"    Device:        {backend._device}")
                 print(f"    Compute Type:  {backend._compute_type}")
-                
+
                 # Print full hardware config for the first local model only
                 if not config_printed:
                     print(f"\n  Hardware Configuration:")
@@ -499,16 +499,16 @@ class ModelBenchmark:
                     config_printed = True
                 else:
                     print()  # Just add a blank line for subsequent models
-                
+
                 print(f"✅ {backend_key} loaded successfully")
-                
+
                 # Test this model with all durations
                 for duration, audio_file in audio_files.items():
                     print(f"\n🎵 Testing {backend_key} with {duration}s audio file...")
                     try:
                         result = self.test_model(backend_key, backend, audio_file, duration)
                         self.results.append(result)
-                        
+
                         if result.success:
                             print(f"  ✅ {backend_key}: {result.transcription_time:.2f}s")
                         else:
@@ -531,7 +531,7 @@ class ModelBenchmark:
                             success=False,
                             error=f"Unexpected error: {error_msg}"
                         ))
-                
+
                 # Cleanup this model before loading the next
                 # Skip cleanup for turbo model - ctranslate2 destructor crashes with large models
                 if model_name == 'turbo':
@@ -551,7 +551,7 @@ class ModelBenchmark:
                     time.sleep(0.5)
                     print(f"✅ {backend_key} unloaded")
                     sys.stdout.flush()
-                
+
             except KeyboardInterrupt:
                 print("\n⚠️  Benchmark interrupted by user")
                 if backend:
@@ -568,21 +568,21 @@ class ModelBenchmark:
                         backend.cleanup()
                     except:
                         pass
-        
+
         # Run tests for API backends (already initialized, lightweight)
         if self.backends:
             print("\n" + "=" * 80)
             print("Running benchmark tests for API models...")
             print("=" * 80)
-            
+
             for duration, audio_file in audio_files.items():
                 print(f"\n🎵 Testing with {duration}s audio file...")
-                
+
                 for backend_name, backend in self.backends.items():
                     try:
                         result = self.test_model(backend_name, backend, audio_file, duration)
                         self.results.append(result)
-                        
+
                         if result.success:
                             print(f"  ✅ {backend_name}: {result.transcription_time:.2f}s")
                         else:
@@ -603,42 +603,42 @@ class ModelBenchmark:
                             success=False,
                             error=f"Unexpected error: {error_msg}"
                         ))
-        
+
         # Print results summary
         self.print_results()
-    
+
     def print_results(self):
         """Print formatted benchmark results."""
         print("\n" + "=" * 80)
         print("Benchmark Results Summary")
         print("=" * 80)
-        
+
         if not self.results:
             print("No results to display.")
             return
-        
+
         # Group results by duration
         durations = sorted(set(r.audio_duration for r in self.results))
         models = sorted(set(r.model_name for r in self.results))
-        
+
         # Print table header
         print(f"\n{'Model':<25} {'Duration':<12} {'Time (s)':<12} {'Speed (x)':<12} {'Status':<10}")
         print("-" * 80)
-        
+
         for duration in durations:
             print(f"\n📊 Audio Duration: {duration:.0f} seconds")
             print("-" * 80)
-            
+
             # Get results for this duration
             duration_results = [r for r in self.results if r.audio_duration == duration]
-            
+
             # Find fastest successful result for speed comparison
             successful_results = [r for r in duration_results if r.success]
             if successful_results:
                 fastest_time = min(r.transcription_time for r in successful_results)
             else:
                 fastest_time = None
-            
+
             for model in models:
                 result = next((r for r in duration_results if r.model_name == model), None)
                 if result:
@@ -649,41 +649,41 @@ class ModelBenchmark:
                     else:
                         print(f"{result.model_name:<25} {result.audio_duration:<12.0f} "
                               f"{'N/A':<12} {'N/A':<12} ❌ {result.error}")
-        
+
         # Print fastest model summary
         print("\n" + "=" * 80)
         print("Fastest Model by Duration")
         print("=" * 80)
-        
+
         for duration in durations:
-            duration_results = [r for r in self.results 
+            duration_results = [r for r in self.results
                                if r.audio_duration == duration and r.success]
             if duration_results:
                 fastest = min(duration_results, key=lambda r: r.transcription_time)
                 print(f"{duration:.0f}s: {fastest.model_name} ({fastest.transcription_time:.2f}s)")
-        
+
         # Print overall statistics
         print("\n" + "=" * 80)
         print("Overall Statistics")
         print("=" * 80)
-        
+
         successful_results = [r for r in self.results if r.success]
         if successful_results:
             total_tests = len(self.results)
             successful_tests = len(successful_results)
             avg_time = sum(r.transcription_time for r in successful_results) / len(successful_results)
-            
+
             print(f"Total tests: {total_tests}")
             print(f"Successful: {successful_tests} ({successful_tests/total_tests*100:.1f}%)")
             print(f"Failed: {total_tests - successful_tests}")
             print(f"Average transcription time: {avg_time:.2f}s")
-        
+
         print("\n" + "=" * 80)
-    
+
     def cleanup(self):
         """Clean up resources."""
         self.audio_generator.cleanup()
-        
+
         # Cleanup backends
         for backend_name, backend in self.backends.items():
             try:
@@ -695,20 +695,20 @@ class ModelBenchmark:
 def main():
     """Main entry point."""
     benchmark = None
-    
+
     try:
         benchmark = ModelBenchmark()
-        
+
         if not benchmark.backends:
             print("\n❌ No transcription backends available!")
             print("   Please check:")
             print("   - Local Whisper: Ensure faster-whisper is installed")
             print("   - API models: Set OPENAI_API_KEY environment variable")
             return
-        
+
         # Run benchmark with default durations: 10s, 30s, 2min
         benchmark.run_benchmark(durations=[10.0, 30.0, 120.0])
-        
+
     except KeyboardInterrupt:
         print("\n\n⚠️  Benchmark interrupted by user")
     except Exception as e:

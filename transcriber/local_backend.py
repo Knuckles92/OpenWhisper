@@ -108,17 +108,17 @@ class LocalWhisperBackend(TranscriptionBackend):
         # Use override values if provided, otherwise check user settings
         from services.settings import settings_manager
         settings = settings_manager.load_all_settings()
-        
+
         if self._override_device is not None:
             device = self._override_device
         else:
             device = settings.get('whisper_device', config.FASTER_WHISPER_DEVICE)
-        
+
         if self._override_compute_type is not None:
             compute_type = self._override_compute_type
         else:
             compute_type = settings.get('whisper_compute_type', config.FASTER_WHISPER_COMPUTE_TYPE)
-        
+
         # Get model from settings (no override for model, use model_name parameter instead)
         model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
 

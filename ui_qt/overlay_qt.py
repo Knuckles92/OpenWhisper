@@ -376,18 +376,18 @@ class ModernWaveformOverlay(QWidget):
         if self.animation_time > 0.3:
             progress = min(1.0, (self.animation_time - 0.3) / 0.3)
             alpha = int(220 * progress)
-            
+
             # Draw a stylized clipboard/document icon
             icon_color = QColor(0, 180, 255, alpha)
             painter.setPen(QPen(icon_color, 2))
-            
+
             # Clipboard body
             cx, cy = w // 2, h // 2 - 5
             painter.drawRoundedRect(cx - 12, cy - 10, 24, 28, 3, 3)
-            
+
             # Clipboard clip at top
             painter.drawRect(cx - 6, cy - 14, 12, 6)
-            
+
             # Lines representing text
             painter.setPen(QPen(icon_color, 1.5))
             painter.drawLine(cx - 7, cy + 2, cx + 7, cy + 2)

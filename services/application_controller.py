@@ -14,7 +14,6 @@ from services.database import db
 from services.recorder import AudioRecorder
 from services.runtime import (
     HotkeyRuntime,
-    MeetingRuntime,
     StreamingRuntime,
     TranscriptionRuntime,
 )
@@ -46,7 +45,6 @@ class ApplicationController(QObject):
         self.executor = ThreadPoolExecutor(max_workers=2)
 
         self.hotkey_manager = None
-        self.meeting_controller = None
         self.streaming_transcriber = None
         self._streaming_backend = None
 
@@ -64,7 +62,6 @@ class ApplicationController(QObject):
 
         self.hotkey_runtime = HotkeyRuntime(self)
         self.streaming_runtime = StreamingRuntime(self)
-        self.meeting_runtime = MeetingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
 
         self._setup_transcription_backends()
@@ -72,7 +69,6 @@ class ApplicationController(QObject):
         self.hotkey_runtime.setup_hotkeys()
         self.streaming_runtime.setup_audio_level_callback()
         self.streaming_runtime.setup_streaming()
-        self.meeting_runtime.setup_meeting_mode()
         self._connect_signals()
         self.hotkey_runtime.setup_hook_watchdog()
 
@@ -190,9 +186,6 @@ class ApplicationController(QObject):
     def _setup_audio_level_callback(self) -> None:
         self.streaming_runtime.setup_audio_level_callback()
 
-    def _setup_meeting_mode(self) -> None:
-        self.meeting_runtime.setup_meeting_mode()
-
     def _setup_hook_watchdog(self) -> None:
         self.hotkey_runtime.setup_hook_watchdog()
 
@@ -210,33 +203,6 @@ class ApplicationController(QObject):
 
     def _on_partial_transcription(self, text: str, is_final: bool) -> None:
         self.streaming_runtime.on_partial_transcription(text, is_final)
-
-    def _on_start_meeting(self) -> None:
-        self.meeting_runtime.on_start_meeting()
-
-    def _on_stop_meeting(self) -> None:
-        self.meeting_runtime.on_stop_meeting()
-
-    def _on_meeting_chunk(self, text: str) -> None:
-        self.meeting_runtime.on_meeting_chunk(text)
-
-    def _on_load_meeting(self, meeting_id: str) -> None:
-        self.meeting_runtime.on_load_meeting(meeting_id)
-
-    def _on_delete_meeting(self, meeting_id: str) -> None:
-        self.meeting_runtime.on_delete_meeting(meeting_id)
-
-    def _on_rename_meeting(self, meeting_id: str, new_title: str) -> None:
-        self.meeting_runtime.on_rename_meeting(meeting_id, new_title)
-
-    def _on_copy_meeting(self, meeting_id: str) -> None:
-        self.meeting_runtime.on_copy_meeting(meeting_id)
-
-    def _on_get_meeting(self, meeting_id: str):
-        return self.meeting_runtime.on_get_meeting(meeting_id)
-
-    def _refresh_meeting_list(self) -> None:
-        self.meeting_runtime.refresh_meeting_list()
 
     def _connect_signals(self) -> None:
         """Connect Qt signals to UI controller methods."""
@@ -306,12 +272,6 @@ class ApplicationController(QObject):
             self.streaming_runtime.cleanup()
         except Exception as exc:
             logging.debug(f"Error during streaming cleanup: {exc}")
-
-        try:
-            if self.meeting_controller:
-                self.meeting_controller.cleanup()
-        except Exception as exc:
-            logging.debug(f"Error during meeting controller cleanup: {exc}")
 
         try:
             self.executor.shutdown(wait=True, cancel_futures=True)

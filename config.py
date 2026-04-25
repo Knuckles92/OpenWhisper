@@ -14,28 +14,28 @@ except ImportError:  # pragma: no cover - lightweight fallback for test/import e
 @dataclass
 class AppConfig:
     """Centralized configuration for the OpenWhisper application."""
-    
+
     # File paths
     SETTINGS_FILE: str = "openwhisper_settings.json"
     RECORDED_AUDIO_FILE: str = "recorded_audio.wav"
     LOG_FILE: str = "openwhisper.log"
     ENV_FILE: str = ".env"
-    
+
     # History and recordings
     HISTORY_FILE: str = "transcription_history.json"
     RECORDINGS_FOLDER: str = "recordings"
     MAX_SAVED_RECORDINGS: int = 3
     DATABASE_FILE: str = "openwhisper.db"
-    
+
     # Audio settings
     CHUNK_SIZE: int = 1024
     AUDIO_FORMAT: type = np.int16  # NumPy dtype for audio format
     CHANNELS: int = 1
     SAMPLE_RATE: int = 44100
-    
+
     # Default hotkeys
     DEFAULT_HOTKEYS: Dict[str, str] = None
-    
+
     # Model configurations
     MODEL_CHOICES: Tuple[str, ...] = (
         'Local Whisper',
@@ -43,7 +43,7 @@ class AppConfig:
         'API: GPT-4o Transcribe',
         'API: GPT-4o Mini Transcribe'
     )
-    
+
     MODEL_VALUE_MAP: Dict[str, str] = None
 
     # Whisper model choices for faster-whisper
@@ -54,7 +54,7 @@ class AppConfig:
     LOADING_WINDOW_SIZE: str = "300x300"
     HOTKEY_DIALOG_SIZE: str = "400x300"
     OVERLAY_SIZE: str = "200x30"
-    
+
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
     WAVEFORM_OVERLAY_HEIGHT: int = 80
@@ -63,7 +63,7 @@ class AppConfig:
     WAVEFORM_BAR_SPACING: int = 2
     WAVEFORM_FRAME_RATE: int = 30
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
-    
+
     # Waveform colors (hex format)
     WAVEFORM_BG_COLOR: str = "#1a1a1a"
     WAVEFORM_ACCENT_COLOR: str = "#00d4ff"
@@ -87,14 +87,14 @@ class AppConfig:
     POST_ROLL_FINALIZE_GRACE_MS: int = 800
     # Extra silence appended to the end of saved audio so ASR models don't drop the last word
     END_PADDING_MS: int = 500
-    
+
     # Audio splitting settings
     MAX_FILE_SIZE_MB: int = 23  # Maximum file size before splitting
     SILENCE_THRESHOLD: float = 0.01  # Volume threshold to detect silence
     MIN_CHUNK_DURATION_SEC: int = 30  # Minimum duration for each chunk in seconds
     SILENCE_DURATION_SEC: float = 0.5  # Duration of silence needed for split point
     OVERLAP_DURATION_SEC: float = 2.0  # Overlap between chunks to avoid word cutoffs
-    
+
     # Whisper model - "auto" selects based on hardware (turbo for GPU, base for CPU)
     DEFAULT_WHISPER_MODEL: str = "auto"
 
@@ -111,20 +111,10 @@ class AppConfig:
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
     STREAMING_BEAM_SIZE: int = 3  # Smaller beam size for faster processing
 
-    # Meeting mode settings
-    MEETINGS_FILE: str = "meetings.json"
-    MEETING_AUDIO_FOLDER: str = "meeting_audio"
-    MEETING_CHUNK_DURATION_SEC: float = 30.0  # Larger chunks for better quality
-    MEETING_QUEUE_SIZE: int = 20  # Larger queue for long recordings
-
-    # Meeting recording settings (complete WAV recordings)
-    MEETING_RECORDINGS_FOLDER: str = "meeting_recordings"
-    MAX_MEETING_RECORDINGS: int = 10  # ~3GB at 1hr/meeting (44.1kHz 16-bit mono ~5.3MB/min)
-
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
-    
+
     def __post_init__(self):
         """Initialize computed fields after dataclass creation."""
         if self.DEFAULT_HOTKEYS is None:
@@ -133,7 +123,7 @@ class AppConfig:
                 'cancel': 'kp -',
                 'enable_disable': 'ctrl+alt+kp *'
             }
-        
+
         if self.MODEL_VALUE_MAP is None:
             self.MODEL_VALUE_MAP = {
                 'Local Whisper': 'local_whisper',
@@ -178,4 +168,4 @@ class AppConfig:
             }
 
 # Global config instance
-config = AppConfig() 
+config = AppConfig()

@@ -1,29 +1,27 @@
 """
-SQLite database manager for transcription history and meeting storage.
+SQLite database manager for transcription history.
 Provides unified data persistence via SQLAlchemy ORM with migration support.
 """
 import json
 import logging
 import os
 from contextlib import contextmanager
-from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import create_engine, event, func, inspect, text
-from sqlalchemy.orm import joinedload, scoped_session, sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 from config import config
 from services.models import (
-    Base, MeetingChunk, Meeting,
-    SchemaVersion, TranscriptionHistory,
+    Base, SchemaVersion, TranscriptionHistory,
 )
 
 # Schema version for future migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class DatabaseManager:
-    """Manages SQLite database for transcription and meeting storage."""
+    """Manages SQLite database for transcription history storage."""
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or getattr(config, 'DATABASE_FILE', 'openwhisper.db')
@@ -79,6 +77,7 @@ class DatabaseManager:
         self._maybe_run_migrations()
 
         Base.metadata.create_all(self.engine)
+        self._drop_removed_meeting_tables()
 
         # Ensure schema_version row exists
         with self.get_session() as session:
@@ -89,6 +88,17 @@ class DatabaseManager:
                 session.add(SchemaVersion(version=SCHEMA_VERSION))
 
         logging.info("Database schema initialized")
+
+    def _drop_removed_meeting_tables(self) -> None:
+        """Drop meeting-mode tables that may exist from older app versions."""
+        with self.engine.begin() as conn:
+            conn.execute(text("DROP INDEX IF EXISTS idx_chunks_meeting_id"))
+            conn.execute(text("DROP INDEX IF EXISTS idx_meetings_start_time"))
+            conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
+            conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
+            conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
+            conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
+            conn.execute(text("DROP TABLE IF EXISTS meetings"))
 
     def _maybe_run_migrations(self) -> None:
         """Check if the database already exists and needs migrations."""
@@ -105,56 +115,11 @@ class DatabaseManager:
                 self._run_migrations(conn, current_version)
                 conn.commit()
 
-            # Self-heal: ensure columns exist even if version is current
-            # (handles databases where create_all ran before a column was
-            # added to the model and version was already bumped).
-            self._ensure_columns(conn)
             conn.commit()
-
-    def _ensure_columns(self, conn) -> None:
-        """Add any model columns missing from existing tables."""
-        insp = inspect(self.engine)
-        if insp.has_table('meetings'):
-            cols = [c['name'] for c in insp.get_columns('meetings')]
-            if 'audio_file' not in cols:
-                conn.execute(text(
-                    "ALTER TABLE meetings ADD COLUMN audio_file TEXT DEFAULT NULL"
-                ))
-                logging.info("Schema heal: added missing audio_file column to meetings")
 
     def _run_migrations(self, conn, from_version: int) -> None:
         """Run progressive migrations using raw SQL (standard for non-Alembic projects)."""
         logging.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
-
-        if from_version < 2:
-            try:
-                conn.execute(text("ALTER TABLE meetings ADD COLUMN audio_file TEXT DEFAULT NULL"))
-                logging.info("Migration v1->v2: Added audio_file column to meetings table")
-            except Exception as e:
-                if "duplicate column name" not in str(e).lower():
-                    raise
-                logging.warning("Migration v1->v2: audio_file column already exists")
-
-        if from_version < 5:
-            try:
-                result = conn.execute(text("PRAGMA table_info(meeting_chunks)"))
-                columns = [row[1] for row in result.fetchall()]
-                new_cols = [
-                    ('status', "TEXT DEFAULT 'transcribed'"),
-                    ('start_offset_sec', "REAL"),
-                    ('end_offset_sec', "REAL"),
-                    ('attempt_count', "INTEGER DEFAULT 0"),
-                    ('last_error', "TEXT"),
-                ]
-                for col_name, col_def in new_cols:
-                    if col_name not in columns:
-                        conn.execute(text(
-                            f"ALTER TABLE meeting_chunks ADD COLUMN {col_name} {col_def}"
-                        ))
-                        logging.info(f"Migration v4->v5: Added {col_name} to meeting_chunks")
-            except Exception as e:
-                logging.error(f"Migration v4->v5 failed: {e}")
-                raise
 
         if from_version < 6:
             try:
@@ -164,6 +129,20 @@ class DatabaseManager:
                 logging.info("Migration v5->v6: Removed meeting_insights table")
             except Exception as e:
                 logging.error(f"Migration v5->v6 failed: {e}")
+                raise
+
+        if from_version < 7:
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS idx_chunks_meeting_id"))
+                conn.execute(text("DROP INDEX IF EXISTS idx_meetings_start_time"))
+                conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
+                conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
+                conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
+                conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
+                conn.execute(text("DROP TABLE IF EXISTS meetings"))
+                logging.info("Migration v6->v7: Removed meeting mode tables")
+            except Exception as e:
+                logging.error(f"Migration v6->v7 failed: {e}")
                 raise
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
@@ -176,16 +155,11 @@ class DatabaseManager:
     def _migrate_from_json(self) -> None:
         """Migrate existing JSON data to SQLite on first run."""
         history_file = getattr(config, 'HISTORY_FILE', 'transcription_history.json')
-        meetings_file = getattr(config, 'MEETINGS_FILE', 'meetings.json')
-
         with self.get_session() as session:
             history_count = session.query(func.count(TranscriptionHistory.id)).scalar()
-            meetings_count = session.query(func.count(Meeting.id)).scalar()
 
         if os.path.exists(history_file) and history_count == 0:
             self._migrate_history_from_json(history_file)
-        if os.path.exists(meetings_file) and meetings_count == 0:
-            self._migrate_meetings_from_json(meetings_file)
 
     def _migrate_history_from_json(self, json_path: str) -> None:
         try:
@@ -215,42 +189,6 @@ class DatabaseManager:
             logging.info(f"Migrated {len(entries)} history entries from JSON. Backup: {backup_path}")
         except Exception as e:
             logging.error(f"Failed to migrate history from JSON: {e}")
-
-    def _migrate_meetings_from_json(self, json_path: str) -> None:
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            meetings = data.get('meetings', [])
-            if not meetings:
-                logging.info("No meetings to migrate")
-                return
-
-            with self.get_session() as session:
-                for m in meetings:
-                    meeting = Meeting(
-                        id=m.get('id'),
-                        title=m.get('title', ''),
-                        start_time=m.get('start_time', ''),
-                        end_time=m.get('end_time'),
-                        duration_seconds=m.get('duration_seconds', 0),
-                        transcript=m.get('transcript', ''),
-                        status=m.get('status', 'completed'),
-                    )
-                    session.merge(meeting)
-                    for chunk in m.get('chunks', []):
-                        session.add(MeetingChunk(
-                            meeting_id=m.get('id'),
-                            chunk_index=chunk.get('index', 0),
-                            text=chunk.get('text', ''),
-                            timestamp=chunk.get('timestamp', ''),
-                            audio_file=chunk.get('audio_file'),
-                        ))
-
-            backup_path = json_path + '.bak'
-            os.rename(json_path, backup_path)
-            logging.info(f"Migrated {len(meetings)} meetings from JSON. Backup: {backup_path}")
-        except Exception as e:
-            logging.error(f"Failed to migrate meetings from JSON: {e}")
 
     # =====================================================================
     # Transcription History
@@ -305,204 +243,6 @@ class DatabaseManager:
                 TranscriptionHistory.audio_file == audio_filename
             ).update({TranscriptionHistory.audio_file: None})
 
-    # =====================================================================
-    # Meetings
-    # =====================================================================
-
-    def create_meeting(self, meeting_id: str, title: str, start_time: str) -> None:
-        with self.get_session() as session:
-            session.add(Meeting(
-                id=meeting_id, title=title, start_time=start_time,
-                status='in_progress',
-            ))
-
-    def add_meeting_chunk(
-        self,
-        meeting_id: str,
-        chunk_index: int,
-        text: str,
-        timestamp: str,
-        audio_file: Optional[str] = None,
-    ) -> None:
-        with self.get_session() as session:
-            session.add(MeetingChunk(
-                meeting_id=meeting_id, chunk_index=chunk_index,
-                text=text, timestamp=timestamp, audio_file=audio_file,
-            ))
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                current = meeting.transcript or ''
-                meeting.transcript = (current + ' ' + text).strip() if current else text
-
-    def end_meeting(
-        self,
-        meeting_id: str,
-        end_time: str,
-        duration_seconds: float,
-        audio_file: Optional[str] = None,
-    ) -> None:
-        with self.get_session() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                meeting.end_time = end_time
-                meeting.duration_seconds = duration_seconds
-                meeting.status = 'completed'
-                meeting.audio_file = audio_file
-
-    def mark_meeting_interrupted(
-        self, meeting_id: str, end_time: str, duration_seconds: float,
-    ) -> None:
-        with self.get_session() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                meeting.end_time = end_time
-                meeting.duration_seconds = duration_seconds
-                meeting.status = 'interrupted'
-
-    def get_meeting(self, meeting_id: str) -> Optional[Meeting]:
-        with self.get_session() as session:
-            return (
-                session.query(Meeting)
-                .options(joinedload(Meeting.chunks))
-                .filter(Meeting.id == meeting_id)
-                .first()
-            )
-
-    def get_all_meetings(self) -> List[Meeting]:
-        with self.get_session() as session:
-            return (
-                session.query(Meeting)
-                .options(joinedload(Meeting.chunks))
-                .order_by(Meeting.start_time.desc())
-                .all()
-            )
-
-    def get_in_progress_meetings(self) -> List[Meeting]:
-        with self.get_session() as session:
-            return (
-                session.query(Meeting)
-                .filter(Meeting.status == 'in_progress')
-                .all()
-            )
-
-    def delete_meeting(self, meeting_id: str) -> bool:
-        with self.get_session() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                session.delete(meeting)  # CASCADE handles chunks
-                return True
-            return False
-
-    def update_meeting_title(self, meeting_id: str, title: str) -> bool:
-        with self.get_session() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                meeting.title = title
-                return True
-            return False
-
-    def get_meeting_chunk_count(self, meeting_id: str) -> int:
-        with self.get_session() as session:
-            return (
-                session.query(func.count(MeetingChunk.id))
-                .filter(MeetingChunk.meeting_id == meeting_id)
-                .scalar()
-            )
-
-    # -- Chunk spool (durable queue) ------------------------------------
-
-    def register_spool_chunk(
-        self,
-        meeting_id: str,
-        chunk_index: int,
-        audio_file: str,
-        start_offset_sec: float,
-        end_offset_sec: float,
-    ) -> None:
-        with self.get_session() as session:
-            session.add(MeetingChunk(
-                meeting_id=meeting_id,
-                chunk_index=chunk_index,
-                text='',
-                timestamp=datetime.now().isoformat(),
-                audio_file=audio_file,
-                status='pending',
-                start_offset_sec=start_offset_sec,
-                end_offset_sec=end_offset_sec,
-                attempt_count=0,
-            ))
-
-    def mark_chunk_processing(self, meeting_id: str, chunk_index: int) -> None:
-        with self.get_session() as session:
-            chunk = (
-                session.query(MeetingChunk)
-                .filter_by(meeting_id=meeting_id, chunk_index=chunk_index)
-                .first()
-            )
-            if chunk:
-                chunk.status = 'processing'
-
-    def update_chunk_transcribed(
-        self, meeting_id: str, chunk_index: int, text: str,
-    ) -> None:
-        with self.get_session() as session:
-            chunk = (
-                session.query(MeetingChunk)
-                .filter_by(meeting_id=meeting_id, chunk_index=chunk_index)
-                .first()
-            )
-            if chunk:
-                chunk.text = text
-                chunk.status = 'transcribed'
-                chunk.timestamp = datetime.now().isoformat()
-                chunk.last_error = None
-
-            # Rebuild entire meeting transcript deterministically
-            transcribed = (
-                session.query(MeetingChunk)
-                .filter_by(meeting_id=meeting_id, status='transcribed')
-                .order_by(MeetingChunk.chunk_index)
-                .all()
-            )
-            transcript = " ".join(c.text for c in transcribed if c.text).strip()
-            meeting = session.get(Meeting, meeting_id)
-            if meeting:
-                meeting.transcript = transcript
-
-    def mark_chunk_failed(
-        self, meeting_id: str, chunk_index: int, error: str,
-    ) -> None:
-        with self.get_session() as session:
-            chunk = (
-                session.query(MeetingChunk)
-                .filter_by(meeting_id=meeting_id, chunk_index=chunk_index)
-                .first()
-            )
-            if chunk:
-                chunk.status = 'failed'
-                chunk.attempt_count = (chunk.attempt_count or 0) + 1
-                chunk.last_error = error
-
-    def get_pending_chunks_for_meeting(self, meeting_id: str) -> List[MeetingChunk]:
-        with self.get_session() as session:
-            return (
-                session.query(MeetingChunk)
-                .filter_by(meeting_id=meeting_id, status='pending')
-                .order_by(MeetingChunk.chunk_index)
-                .all()
-            )
-
-    def reset_processing_chunks_to_pending(self, meeting_id: str) -> None:
-        with self.get_session() as session:
-            session.query(MeetingChunk).filter_by(
-                meeting_id=meeting_id, status='processing',
-            ).update({MeetingChunk.status: 'pending'})
-
-    def get_meeting_audio_file(self, meeting_id: str) -> Optional[str]:
-        with self.get_session() as session:
-            meeting = session.get(Meeting, meeting_id)
-            return meeting.audio_file if meeting else None
-
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -513,5 +253,25 @@ class DatabaseManager:
         self.engine.dispose()
 
 
-# Global database manager instance
-db = DatabaseManager()
+class _LazyDatabaseManager:
+    """Create the database manager only when persistence is first used."""
+
+    def __init__(self) -> None:
+        self._instance: Optional[DatabaseManager] = None
+
+    def _get_instance(self) -> DatabaseManager:
+        if self._instance is None:
+            self._instance = DatabaseManager()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self._get_instance(), name)
+
+    def close(self) -> None:
+        if self._instance is not None:
+            self._instance.close()
+            self._instance = None
+
+
+# Public lazy database manager proxy.
+db = _LazyDatabaseManager()

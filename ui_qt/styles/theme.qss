@@ -344,7 +344,7 @@ QWidget#header {
     border-bottom: 1px solid #2c2c2e;
 }
 
-/* Content Tab Bar - Quick Record / Meeting Mode tabs */
+/* Content Tab Bar */
 QTabBar#contentTabBar::tab {
     background-color: transparent;
     color: #8e8e93;

@@ -23,7 +23,6 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** *(experimental)* – Real-time transcription preview while recording
-- **Meeting Mode** *(experimental)* – Long-form transcription with live streaming and auto-save
 - **Caret Indicator** *(experimental)* – Visual marker at cursor location when pasting
 - **Window Memory** – Remembers window position and size between sessions
 
@@ -35,7 +34,7 @@ For significantly faster transcription speeds with an NVIDIA GPU, install CUDA s
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU. 
+With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU.
 
 ## Installation
 

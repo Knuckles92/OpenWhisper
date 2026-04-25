@@ -18,7 +18,7 @@ from ui_qt.widgets import PrimaryButton, ModernButton, HeaderCard
 class ClickableLineEdit(QLineEdit):
     """QLineEdit that emits a clicked signal when clicked."""
     clicked = pyqtSignal()
-    
+
     def mousePressEvent(self, event: QMouseEvent):
         """Emit clicked signal on mouse press."""
         self.clicked.emit()
@@ -48,7 +48,7 @@ class HotkeyCaptureThread(QThread):
                     names = [(e.name if not e.is_keypad else f"kp_{e.name}") for e in events]
                     self.captured.emit(keyboard.get_hotkey_name(names))
                     break
-                                
+
         except Exception as e:
             logging.error(f"Error capturing hotkey: {e}")
 
@@ -205,7 +205,7 @@ class HotkeyDialog(QDialog):
 
             self.capturing = hotkey_type
             self.current_input_field = input_field
-            
+
             input_field.setText("Press keys...")
             input_field.setStyleSheet("""
                 QLineEdit {
@@ -219,7 +219,7 @@ class HotkeyDialog(QDialog):
             """)
 
             self.logger.info(f"Capturing hotkey for: {hotkey_type}")
-            
+
             # Start capture thread
             self.capture_thread = HotkeyCaptureThread()
             self.capture_thread.captured.connect(self._on_hotkey_captured)
@@ -235,11 +235,11 @@ class HotkeyDialog(QDialog):
             return
 
         self.logger.info(f"Captured hotkey: {hotkey}")
-        
+
         # Update state
         self.current_hotkeys[self.capturing] = hotkey
         self.current_input_field.setText(hotkey)
-        
+
         # Reset UI
         self._reset_input_styles()
         self.capturing = None
@@ -275,7 +275,7 @@ class HotkeyDialog(QDialog):
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
         # Load from settings if available (passed via parent or config)
         # For now we use defaults as base, but in real app we should load from settings_manager
-        # However, the dialog is initialized with defaults. 
+        # However, the dialog is initialized with defaults.
         # Ideally we should pass current hotkeys to __init__ or load them here.
         # Let's try to load from settings_manager if possible, or rely on what's passed.
         # Since we don't have direct access to settings_manager here (to avoid circular imports if any),
@@ -287,7 +287,7 @@ class HotkeyDialog(QDialog):
             self.current_hotkeys.update(saved_hotkeys)
         except ImportError:
             pass
-            
+
         self._update_displays()
 
     def _update_displays(self):

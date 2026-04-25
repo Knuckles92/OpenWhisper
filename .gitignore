@@ -7,13 +7,12 @@ temp_audio.wav
 .claude/settings.local.json
 **/__pycache__/
 *__pycache__*
+.pytest_cache/
 venv/*
 CLAUDE.md
 AGENTS.md
 specs/ANIMATION_STATE_TRANSITION_FIX.md
 wsl_venv/*
-specs/COMPLETE_PYQT6_IMPLEMENTATION.md
-specs/PYQT6_FIXES_APPLIED.md
 transcription_history.json
 venv312/*
 openwhisper_settings.json
@@ -27,5 +26,3 @@ meetings.json.bak
 openwhisper.db
 transcription_history.json.bak
 meetings.json
-specs/fix-streaming-transcription-concatenation.md
-specs/streaming-tiny-model-setting.md

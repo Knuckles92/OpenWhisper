@@ -4,7 +4,6 @@ Contains the model selection, recording controls, and transcription display
 for quick recording and transcription sessions.
 """
 import logging
-from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit
 )
@@ -22,6 +21,7 @@ class QuickRecordTab(QWidget):
 
     # Signals
     record_toggled = pyqtSignal(bool)  # True = start, False = stop
+    record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)  # Model display name
     retranscribe_requested = pyqtSignal(str)  # Audio file path
 
@@ -35,12 +35,6 @@ class QuickRecordTab(QWidget):
 
         # Streaming transcription state
         self._partial_buffer = []  # Store finalized chunks
-
-        # Callbacks (will be set by controller)
-        self.on_record_start: Optional[Callable] = None
-        self.on_record_stop: Optional[Callable] = None
-        self.on_record_cancel: Optional[Callable] = None
-        self.on_model_changed: Optional[Callable] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -158,18 +152,12 @@ class QuickRecordTab(QWidget):
         self.is_recording = True
         self._update_recording_state()
 
-        if self.on_record_start:
-            self.on_record_start()
-
         self.record_toggled.emit(True)
 
     def _on_stop_clicked(self):
         """Handle stop button click."""
         self.is_recording = False
         self._update_recording_state()
-
-        if self.on_record_stop:
-            self.on_record_stop()
 
         self.record_toggled.emit(False)
 
@@ -178,14 +166,11 @@ class QuickRecordTab(QWidget):
         self.is_recording = False
         self._update_recording_state()
 
-        if self.on_record_cancel:
-            self.on_record_cancel()
+        self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
         self.current_model = model_name
-        if self.on_model_changed:
-            self.on_model_changed(model_name)
         self.model_changed.emit(model_name)
 
     def _update_recording_state(self):

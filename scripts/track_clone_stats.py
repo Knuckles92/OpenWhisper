@@ -83,10 +83,10 @@ def get_default_stats() -> dict:
 def migrate_stats_if_needed(stats: dict) -> dict:
     """Migrate old stats format to new format if needed."""
     schema_version = stats.get('schema_version', 1)
-    
+
     if schema_version < 2:
         print("Migrating statistics to schema version 2...")
-        
+
         # Convert daily_history from list to dict
         old_history = stats.get('daily_history', [])
         if isinstance(old_history, list):
@@ -100,14 +100,14 @@ def migrate_stats_if_needed(stats: dict) -> dict:
                         'source': 'migrated'
                     }
             stats['daily_history'] = new_history
-        
+
         # Add monthly_summaries if missing
         if 'monthly_summaries' not in stats:
             stats['monthly_summaries'] = {}
-        
+
         stats['schema_version'] = 2
         print(f"Migration complete. Converted {len(stats['daily_history'])} daily entries.")
-    
+
     return stats
 
 
@@ -123,7 +123,7 @@ def validate_clone_count(value: Any) -> int:
 def extract_daily_data_from_api(api_data: dict) -> dict:
     """
     Extract individual daily clone counts from API response.
-    
+
     API returns:
     {
         "count": 123,  # Total clones in 14-day period
@@ -134,26 +134,26 @@ def extract_daily_data_from_api(api_data: dict) -> dict:
             ...
         ]
     }
-    
+
     Returns dict: {"2026-01-01": {"clones": 10, "unique_cloners": 5}, ...}
     """
     daily_data = {}
     clones_list = api_data.get('clones', [])
-    
+
     if not isinstance(clones_list, list):
         print("Warning: API 'clones' field is not a list", file=sys.stderr)
         return daily_data
-    
+
     for entry in clones_list:
         if not isinstance(entry, dict):
             continue
-            
+
         timestamp = entry.get('timestamp', '')
         date = parse_api_timestamp(timestamp)
-        
+
         clones = validate_clone_count(entry.get('count', 0))
         uniques = validate_clone_count(entry.get('uniques', 0))
-        
+
         # Only store if we have valid data
         if date and (clones > 0 or uniques > 0):
             daily_data[date] = {
@@ -161,7 +161,7 @@ def extract_daily_data_from_api(api_data: dict) -> dict:
                 'unique_cloners': uniques,
                 'source': 'api'
             }
-    
+
     return daily_data
 
 
@@ -171,29 +171,29 @@ def update_monthly_summaries(stats: dict) -> None:
     Keeps data compact for long-term storage.
     """
     monthly = {}
-    
+
     for date, data in stats.get('daily_history', {}).items():
         # Extract month: "2026-01-14" -> "2026-01"
         month = date[:7]
-        
+
         if month not in monthly:
             monthly[month] = {
                 'clones': 0,
                 'unique_cloners': 0,
                 'days_with_data': 0
             }
-        
+
         monthly[month]['clones'] += data.get('clones', 0)
         monthly[month]['unique_cloners'] += data.get('unique_cloners', 0)
         monthly[month]['days_with_data'] += 1
-    
+
     stats['monthly_summaries'] = monthly
 
 
 def calculate_lifetime_stats(stats: dict) -> None:
     """Calculate lifetime statistics from daily history."""
     daily_history = stats.get('daily_history', {})
-    
+
     if not daily_history:
         stats['lifetime_stats'] = {
             'total_clones': 0,
@@ -202,13 +202,13 @@ def calculate_lifetime_stats(stats: dict) -> None:
             'days_tracked': 0
         }
         return
-    
+
     # Sum all daily clones
     total_clones = sum(
-        data.get('clones', 0) 
+        data.get('clones', 0)
         for data in daily_history.values()
     )
-    
+
     # For unique cloners, we can't simply sum (same person might clone on multiple days)
     # Best estimate: use the maximum daily unique count we've seen
     # This is a lower bound on true unique cloners
@@ -216,10 +216,10 @@ def calculate_lifetime_stats(stats: dict) -> None:
         (data.get('unique_cloners', 0) for data in daily_history.values()),
         default=0
     )
-    
+
     # Get date range
     dates = sorted(daily_history.keys())
-    
+
     stats['lifetime_stats'] = {
         'total_clones': total_clones,
         'total_unique_cloners': max_daily_unique,  # Best available estimate
@@ -233,28 +233,28 @@ def process_clone_data() -> None:
     """Process clone data from API and update statistics file."""
     now = get_utc_now()
     today = now.strftime('%Y-%m-%d')
-    
+
     # Load current API response
     api_data = load_json_file(CLONE_DATA_FILE, {'count': 0, 'uniques': 0, 'clones': []})
-    
+
     # Load existing statistics and migrate if needed
     stats = load_json_file(STATS_FILE, get_default_stats())
     stats = migrate_stats_if_needed(stats)
-    
+
     # Ensure required fields exist
     if 'daily_history' not in stats or not isinstance(stats['daily_history'], dict):
         stats['daily_history'] = {}
     if 'monthly_summaries' not in stats:
         stats['monthly_summaries'] = {}
-    
+
     # Extract daily data from API response
     api_daily_data = extract_daily_data_from_api(api_data)
-    
+
     # Merge API data into our history (API data takes precedence for overlapping dates)
     daily_history = stats['daily_history']
     new_dates = []
     updated_dates = []
-    
+
     for date, data in api_daily_data.items():
         if date not in daily_history:
             # New date we haven't seen before
@@ -266,41 +266,41 @@ def process_clone_data() -> None:
             if data['clones'] > existing.get('clones', 0):
                 daily_history[date] = data
                 updated_dates.append(date)
-    
+
     stats['daily_history'] = daily_history
-    
+
     # Update 14-day window stats
     total_clones_14d = validate_clone_count(api_data.get('count', 0))
     total_uniques_14d = validate_clone_count(api_data.get('uniques', 0))
-    
+
     clones_list = api_data.get('clones', [])
     period_start = None
     period_end = None
     if clones_list:
         period_start = parse_api_timestamp(clones_list[0].get('timestamp', ''))
         period_end = parse_api_timestamp(clones_list[-1].get('timestamp', ''))
-    
+
     stats['last_14_days'] = {
         'clones': total_clones_14d,
         'unique_cloners': total_uniques_14d,
         'period_start': period_start,
         'period_end': period_end
     }
-    
+
     # Calculate lifetime stats
     calculate_lifetime_stats(stats)
-    
+
     # Update monthly summaries
     update_monthly_summaries(stats)
-    
+
     # Update metadata
     stats['repository'] = f'{REPO_OWNER}/{REPO_NAME}'
     stats['schema_version'] = 2
     stats['last_updated'] = now.isoformat()
-    
+
     # Save updated statistics
     save_json_file(STATS_FILE, stats)
-    
+
     # Print summary
     lifetime = stats['lifetime_stats']
     print(f"\n{'='*60}")

@@ -115,12 +115,12 @@ class ModernLoadingScreen(QWidget):
         painter.setPen(self.text_color)
         painter.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         painter.drawText(QRectF(0, h - 90, w, 30), Qt.AlignmentFlag.AlignCenter, "OpenWhisper")
-        
+
         # Status
         painter.setPen(self.accent_color)
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         painter.drawText(QRectF(0, h - 55, w, 20), Qt.AlignmentFlag.AlignCenter, self.status_text)
-        
+
         # Progress/Details
         painter.setPen(self.subtext_color)
         painter.setFont(QFont("Segoe UI", 9))
