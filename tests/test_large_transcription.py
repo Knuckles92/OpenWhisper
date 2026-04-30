@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """
-Simple test script for large transcription chunking feature.
+End-to-end test for large-file transcription using production dispatch.
 
-Generates a large audio file (>23MB) using TTS and tests the complete chunking workflow.
-Validates that chunking preserves transcription accuracy by comparing transcribed text
-with the original TTS source text.
+Generates a large audio file (>23MB) using TTS and runs it through the same
+dispatch path the running app uses (see services/runtime/transcription.py):
+
+  - If backend.requires_file_splitting is True (e.g. OpenAI API backends),
+    the file is split via audio_processor.split_audio_file() and passed to
+    backend.transcribe_chunks().
+  - If backend.requires_file_splitting is False (e.g. LocalWhisperBackend,
+    which uses faster-whisper and handles long audio natively), the original
+    file is passed straight to backend.transcribe().
+
+Validates accuracy by comparing the transcribed text with the original TTS
+source text.
 """
 
 import os
@@ -201,14 +210,20 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     return similarity, message
 
 
-def run_chunking_workflow(audio_file: str, original_text: str):
-    """Test the complete chunking workflow and validate transcription accuracy."""
+def run_large_file_workflow(audio_file: str, original_text: str):
+    """Test the production large-file transcription path and validate accuracy.
+
+    Mirrors the dispatch logic in services/runtime/transcription.py
+    (_submit_transcription_job): only backends that opt in via
+    requires_file_splitting=True go through split + transcribe_chunks. The
+    local backend opts out (faster-whisper handles long audio natively), so
+    its production path is a single transcribe() call on the original file.
+    """
     logger.info("")
     logger.info("=" * 60)
-    logger.info("Testing chunking workflow")
+    logger.info("Testing large-file transcription workflow")
     logger.info("=" * 60)
 
-    # Step 1: Check file size
     logger.info("\n1. Checking file size...")
     needs_splitting, file_size_mb = audio_processor.check_file_size(audio_file)
 
@@ -216,47 +231,49 @@ def run_chunking_workflow(audio_file: str, original_text: str):
         logger.error(f"❌ File ({file_size_mb:.2f} MB) is below limit ({config.MAX_FILE_SIZE_MB} MB)")
         return False
 
-    logger.info(f"✅ File exceeds limit - will be split")
+    logger.info(f"✅ File size {file_size_mb:.2f} MB exceeds {config.MAX_FILE_SIZE_MB} MB limit")
 
-    # Step 2: Split audio file
-    logger.info("\n2. Splitting audio file...")
-
-    def progress(msg):
-        logger.info(f"   {msg}")
-
-    chunk_files = audio_processor.split_audio_file(audio_file, progress)
-
-    if not chunk_files:
-        logger.error("❌ Failed to split audio file")
-        return False
-
-    logger.info(f"✅ Created {len(chunk_files)} chunks")
-
-    # Show chunk info
-    for i, chunk_file in enumerate(chunk_files):
-        size_mb = os.path.getsize(chunk_file) / (1024 * 1024)
-        logger.info(f"   Chunk {i+1}: {size_mb:.2f} MB")
-
-    # Step 3: Test transcription (if backend available)
-    logger.info("\n3. Testing transcription...")
-
+    logger.info("\n2. Initializing transcription backend...")
     backend = LocalWhisperBackend()
     if not backend.is_available():
         logger.warning("⚠️  Local Whisper not available - skipping transcription test")
-        logger.info("   (Chunking test passed - files were created successfully)")
         backend.cleanup()
-        audio_processor.cleanup_temp_files()
         return True
 
+    should_split = backend.requires_file_splitting
+    logger.info(f"   Backend.requires_file_splitting = {should_split}")
+
+    chunk_files = []
     try:
-        logger.info("   Transcribing chunks...")
-        transcribed_text = backend.transcribe_chunks(chunk_files)
+        if should_split:
+            logger.info("\n3. Splitting audio file (backend requires splitting)...")
+
+            def progress(msg):
+                logger.info(f"   {msg}")
+
+            chunk_files = audio_processor.split_audio_file(audio_file, progress)
+            if not chunk_files:
+                logger.error("❌ Failed to split audio file")
+                return False
+
+            logger.info(f"✅ Created {len(chunk_files)} chunks")
+            for i, chunk_file in enumerate(chunk_files):
+                size_mb = os.path.getsize(chunk_file) / (1024 * 1024)
+                logger.info(f"   Chunk {i+1}: {size_mb:.2f} MB")
+
+            logger.info("\n4. Transcribing chunks via transcribe_chunks()...")
+            transcribed_text = backend.transcribe_chunks(chunk_files)
+        else:
+            logger.info("\n3. Backend handles large files natively - skipping split")
+            logger.info("   (Production passes the original file straight to transcribe())")
+
+            logger.info("\n4. Transcribing original file via transcribe()...")
+            transcribed_text = backend.transcribe(audio_file)
 
         logger.info(f"✅ Transcription complete: {len(transcribed_text)} characters")
         logger.info(f"   Preview: {transcribed_text[:150]}...")
 
-        # Step 4: Validate transcription accuracy
-        logger.info("\n4. Validating transcription accuracy...")
+        logger.info("\n5. Validating transcription accuracy...")
         similarity, analysis = compare_texts(original_text, transcribed_text)
         logger.info(f"   {analysis}")
 
@@ -267,9 +284,8 @@ def run_chunking_workflow(audio_file: str, original_text: str):
             logger.warning("   This may be due to TTS quality or Whisper model limitations")
         else:
             logger.warning("⚠️  Low transcription accuracy detected")
-            logger.warning("   This could indicate issues with chunking or transcription")
+            logger.warning("   This could indicate issues with the transcription pipeline")
 
-        # Show sample comparison
         logger.info("\n   Sample comparison:")
         orig_sample = normalize_text_for_comparison(original_text[:200])
         trans_sample = normalize_text_for_comparison(transcribed_text[:200])
@@ -278,16 +294,14 @@ def run_chunking_workflow(audio_file: str, original_text: str):
 
     except Exception as e:
         logger.error(f"❌ Transcription failed: {e}")
-        backend.cleanup()
-        audio_processor.cleanup_temp_files()
         return False
     finally:
         backend.cleanup()
-
-    # Cleanup
-    logger.info("\n5. Cleaning up...")
-    audio_processor.cleanup_temp_files()
-    logger.info("✅ Cleanup complete")
+        if chunk_files:
+            try:
+                audio_processor.cleanup_temp_files()
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp files: {cleanup_error}")
 
     logger.info("")
     logger.info("=" * 60)
@@ -300,7 +314,7 @@ def run_chunking_workflow(audio_file: str, original_text: str):
 def main():
     """Main test function."""
     logger.info("=" * 60)
-    logger.info("Large Transcription Chunking Test")
+    logger.info("Large File Transcription Test")
     logger.info("=" * 60)
 
     # Create temporary audio file
@@ -317,7 +331,7 @@ def main():
         logger.info(f"Original text preview: {original_text[:150]}...\n")
 
         # Test the workflow
-        success = run_chunking_workflow(test_audio_file, original_text)
+        success = run_large_file_workflow(test_audio_file, original_text)
 
         return 0 if success else 1
 
