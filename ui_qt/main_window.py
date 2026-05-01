@@ -522,7 +522,7 @@ class MainWindow(QMainWindow):
         """Clear partial transcription buffer."""
         self.quick_record_tab.clear_partial_transcription()
 
-    def set_transcript_stats(
+    def set_transcription_stats(
         self,
         transcription_time: float,
         audio_duration: float,
@@ -535,7 +535,7 @@ class MainWindow(QMainWindow):
             audio_duration: Duration of the audio in seconds.
             file_size: Size of the audio file in bytes.
         """
-        self.quick_record_tab.set_transcript_stats(
+        self.quick_record_tab.set_transcription_stats(
             transcription_time, audio_duration, file_size
         )
 
