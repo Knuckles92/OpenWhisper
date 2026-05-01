@@ -13,6 +13,8 @@ from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QCursor, QPainter
 from config import config
 from services.settings import settings_manager
 
+logger = logging.getLogger(__name__)
+
 
 class StreamingTextOverlay(QWidget):
     """Overlay for displaying streaming transcription text in real-time."""
@@ -25,12 +27,11 @@ class StreamingTextOverlay(QWidget):
     STATE_IDLE = "idle"
     STATE_STREAMING = "streaming"
     STATE_FINALIZING = "finalizing"
-    STATE_CANCELING = "canceling"
+    STATE_CANCELLING = "cancelling"
 
     def __init__(self):
         """Initialize the streaming text overlay."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
 
         # Window properties - frameless, always on top
         self.setWindowFlags(
@@ -155,8 +156,8 @@ class StreamingTextOverlay(QWidget):
         path.addRoundedRect(float(rect.x()), float(rect.y()),
                            float(rect.width()), float(rect.height()), 12, 12)
 
-        # Semi-transparent dark background (with red tint when canceling)
-        if self.current_state == self.STATE_CANCELING:
+        # Semi-transparent dark background (with red tint when cancelling)
+        if self.current_state == self.STATE_CANCELLING:
             # Blend in red based on flash intensity
             red_blend = int(45 + 30 * self._cancel_flash_intensity)
             green_blend = int(45 - 20 * self._cancel_flash_intensity)
@@ -173,7 +174,7 @@ class StreamingTextOverlay(QWidget):
             pulse = (1 + abs(self._pulse_phase)) / 2  # 0.5 to 1.0
             alpha = int(100 + 100 * pulse)
             border_color = QColor(99, 102, 241, alpha)
-        elif self.current_state == self.STATE_CANCELING:
+        elif self.current_state == self.STATE_CANCELLING:
             # Red border with flash effect
             flash = self._cancel_flash_intensity
             # Transition from purple to red
@@ -185,8 +186,8 @@ class StreamingTextOverlay(QWidget):
         else:
             border_color = QColor(99, 102, 241, 150)
 
-        # Draw border (thicker when canceling)
-        border_width = 3 if self.current_state == self.STATE_CANCELING else 2
+        # Draw border (thicker when cancelling)
+        border_width = 3 if self.current_state == self.STATE_CANCELLING else 2
         painter.setPen(QPen(border_color, border_width))
         painter.drawPath(path)
 
@@ -202,7 +203,7 @@ class StreamingTextOverlay(QWidget):
                                int(dot_size), int(dot_size))
 
         # Cancel animation effects
-        if self.current_state == self.STATE_CANCELING:
+        if self.current_state == self.STATE_CANCELLING:
             self._draw_cancel_effects(painter, rect)
 
         painter.end()
@@ -277,7 +278,7 @@ class StreamingTextOverlay(QWidget):
         self._animation_time += delta_time
 
         # Handle cancel animation
-        if self.current_state == self.STATE_CANCELING:
+        if self.current_state == self.STATE_CANCELLING:
             self._cancel_progress = min(1.0, self._animation_time / self._cancel_duration)
 
             # Flash intensity decays quickly at start
@@ -288,7 +289,7 @@ class StreamingTextOverlay(QWidget):
 
             # Check if animation is complete
             if self._cancel_progress >= 1.0:
-                self.logger.debug("Cancel animation complete, hiding overlay")
+                logger.debug("Cancel animation complete, hiding overlay")
                 self._animation_timer.stop()
                 self.hide_with_animation()
                 return
@@ -297,7 +298,7 @@ class StreamingTextOverlay(QWidget):
         self._pulse_phase = abs(self._animation_time * 4) % 2 - 1  # -1 to 1
 
         # Update display text with animated ellipsis (not during cancel)
-        if self.current_state != self.STATE_CANCELING:
+        if self.current_state != self.STATE_CANCELLING:
             self._update_display_text()
 
         self.update()
@@ -364,7 +365,7 @@ class StreamingTextOverlay(QWidget):
             self._current_partial = text.strip() if text else ""
 
         self._update_display_text()
-        self.logger.debug(f"Streaming text updated: length={len(self._full_text)}, partial={bool(self._current_partial)}")
+        logger.debug(f"Streaming text updated: length={len(self._full_text)}, partial={bool(self._current_partial)}")
 
     def show_at_cursor(self, state: Optional[str] = None):
         """Show overlay near the cursor.
@@ -414,10 +415,10 @@ class StreamingTextOverlay(QWidget):
         Transitions the overlay to cancel state with visual effects,
         then automatically hides after the animation completes.
         """
-        if self.current_state == self.STATE_CANCELING:
-            return  # Already canceling
+        if self.current_state == self.STATE_CANCELLING:
+            return  # Already cancelling
 
-        self.logger.debug("Starting streaming overlay cancel animation")
+        logger.debug("Starting streaming overlay cancel animation")
 
         # Initialize cancel state
         self._cancel_progress = 0.0
@@ -425,7 +426,7 @@ class StreamingTextOverlay(QWidget):
         self._init_cancel_particles()
 
         # Set state (this will update header and start animation timer)
-        self.set_state(self.STATE_CANCELING)
+        self.set_state(self.STATE_CANCELLING)
 
     def _on_fade_animation_finished(self):
         """Called when any fade animation completes."""
@@ -439,7 +440,7 @@ class StreamingTextOverlay(QWidget):
         """Set the overlay state.
 
         Args:
-            state: The state to set (STATE_IDLE, STATE_STREAMING, STATE_FINALIZING, STATE_CANCELING)
+            state: The state to set (STATE_IDLE, STATE_STREAMING, STATE_FINALIZING, STATE_CANCELLING)
         """
         if self.current_state != state:
             self.current_state = state
@@ -456,7 +457,7 @@ class StreamingTextOverlay(QWidget):
                 self._header_label.setText("Finalizing...")
                 self._header_label.setStyleSheet("color: #a5b4fc; background: transparent;")
                 self._animation_timer.start(33)
-            elif state == self.STATE_CANCELING:
+            elif state == self.STATE_CANCELLING:
                 self._header_label.setText("Cancelled")
                 self._header_label.setStyleSheet("color: #ef4444; background: transparent;")
                 self._animation_timer.start(33)
@@ -466,7 +467,7 @@ class StreamingTextOverlay(QWidget):
                 self._animation_timer.stop()
 
             self.state_changed.emit(state)
-            self.logger.debug(f"Streaming overlay state changed to: {state}")
+            logger.debug(f"Streaming overlay state changed to: {state}")
 
     def clear_text(self):
         """Clear all accumulated text and reset state for new session."""
@@ -475,7 +476,7 @@ class StreamingTextOverlay(QWidget):
         self._text_label.setText("")
         self.setFixedHeight(self.min_height)
         self._is_fading_out = False  # Reset fade state for new session
-        self.logger.debug("Streaming text cleared")
+        logger.debug("Streaming text cleared")
 
     def get_accumulated_text(self) -> str:
         """Get the complete transcription text.
@@ -533,9 +534,9 @@ class StreamingTextOverlay(QWidget):
         try:
             pos = self.pos()
             settings_manager.save_streaming_overlay_position(pos.x(), pos.y())
-            self.logger.debug(f"Streaming overlay position saved: {pos.x()}, {pos.y()}")
+            logger.debug(f"Streaming overlay position saved: {pos.x()}, {pos.y()}")
         except Exception as e:
-            self.logger.warning(f"Failed to save streaming overlay position: {e}")
+            logger.warning(f"Failed to save streaming overlay position: {e}")
 
     def _get_screen_center(self) -> QPoint:
         """Get the center position of the primary screen.
@@ -585,10 +586,10 @@ class StreamingTextOverlay(QWidget):
             if position:
                 x, y = self._validate_position(position['x'], position['y'])
                 self.move(x, y)
-                self.logger.debug(f"Restored streaming overlay position: {x}, {y}")
+                logger.debug(f"Restored streaming overlay position: {x}, {y}")
                 return True
         except Exception as e:
-            self.logger.warning(f"Failed to restore streaming overlay position: {e}")
+            logger.warning(f"Failed to restore streaming overlay position: {e}")
         return False
 
     def show_overlay(self, state: Optional[str] = None):
@@ -602,7 +603,7 @@ class StreamingTextOverlay(QWidget):
             # No saved position - use screen center
             center_pos = self._get_screen_center()
             self.move(center_pos)
-            self.logger.debug(f"No saved position, using screen center: {center_pos.x()}, {center_pos.y()}")
+            logger.debug(f"No saved position, using screen center: {center_pos.x()}, {center_pos.y()}")
 
         # Set state
         if state is not None:

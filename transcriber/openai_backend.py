@@ -66,11 +66,11 @@ class OpenAIBackend(TranscriptionBackend):
         else:  # api_whisper or default
             return "whisper-1"
 
-    def transcribe(self, audio_file_path: str) -> str:
+    def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file using OpenAI API.
 
         Args:
-            audio_file_path: Path to the audio file to transcribe.
+            audio_path: Path to the audio file to transcribe.
 
         Returns:
             Transcribed text.
@@ -89,7 +89,7 @@ class OpenAIBackend(TranscriptionBackend):
             logging.info(f"Using OpenAI API model: {api_model}")
             logging.info("Sending audio file to OpenAI API...")
 
-            with open(audio_file_path, "rb") as audio_file:
+            with open(audio_path, "rb") as audio_file:
                 response = self.client.audio.transcriptions.create(
                     model=api_model,
                     file=audio_file,
@@ -100,10 +100,10 @@ class OpenAIBackend(TranscriptionBackend):
                 logging.info("Transcription cancelled by user")
                 raise Exception("Transcription cancelled")
 
-            transcribed_text = response.strip()
-            logging.info(f"API transcription complete. Length: {len(transcribed_text)} characters")
+            transcript = response.strip()
+            logging.info(f"API transcription complete. Length: {len(transcript)} characters")
 
-            return transcribed_text
+            return transcript
 
         except Exception as e:
             logging.error(f"OpenAI API transcription failed: {e}")

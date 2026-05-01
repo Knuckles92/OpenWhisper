@@ -44,12 +44,14 @@ else:
     _GUITHREADINFO = None
 
 
+logger = logging.getLogger(__name__)
+
+
 class CaretPasteIndicator(QWidget):
     """Animated overlay that tracks the caret position for pending paste."""
 
     def __init__(self):
         super().__init__()
-        self.logger = logging.getLogger(__name__)
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
@@ -137,7 +139,7 @@ class CaretPasteIndicator(QWidget):
             x, y = self._scale_point_for_qt(gui.hwndCaret, x, y)
             return QPoint(x, y)
         except Exception as exc:
-            self.logger.debug(f"Failed to read caret position: {exc}")
+            logger.debug(f"Failed to read caret position: {exc}")
             return None
 
     def _scale_point_for_qt(self, hwnd, x: int, y: int) -> Tuple[int, int]:

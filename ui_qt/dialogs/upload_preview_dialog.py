@@ -12,7 +12,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 from services.audio_processor import AudioFilePreview
-from ui_qt.widgets import PrimaryButton, ModernButton
+from ui_qt.widgets import PrimaryButton, Button
+
+logger = logging.getLogger(__name__)
 
 
 class ChunkPreviewItem(QFrame):
@@ -81,7 +83,6 @@ class UploadPreviewDialog(QDialog):
             parent: Parent widget.
         """
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
         self.preview = preview
         self.setWindowTitle("Audio File Preview")
         self.setMinimumSize(450, 350)
@@ -205,7 +206,7 @@ class UploadPreviewDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(12)
 
-        cancel_btn = ModernButton("Cancel")
+        cancel_btn = Button("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -227,7 +228,7 @@ class UploadPreviewDialog(QDialog):
 
     def _on_proceed(self):
         """Handle proceed button click."""
-        self.logger.info(f"Proceeding with transcription: {self.preview.file_path}")
+        logger.info(f"Proceeding with transcription: {self.preview.file_path}")
         if self.on_proceed:
             self.on_proceed(self.preview.file_path)
         self.accept()

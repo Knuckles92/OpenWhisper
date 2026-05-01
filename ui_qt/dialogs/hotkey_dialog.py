@@ -12,7 +12,9 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QFont, QKeySequence, QMouseEvent
 
 from config import config
-from ui_qt.widgets import PrimaryButton, ModernButton, HeaderCard
+from ui_qt.widgets import PrimaryButton, Button, HeaderCard
+
+logger = logging.getLogger(__name__)
 
 
 class ClickableLineEdit(QLineEdit):
@@ -61,7 +63,6 @@ class HotkeyDialog(QDialog):
     def __init__(self, parent=None):
         """Initialize hotkey dialog."""
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
         self.setWindowTitle("Hotkey Configuration")
         self.setMinimumSize(500, 400)
 
@@ -139,7 +140,7 @@ class HotkeyDialog(QDialog):
         layout.addSpacing(16)
 
         # Reset button
-        reset_btn = ModernButton("Reset to Defaults")
+        reset_btn = Button("Reset to Defaults")
         reset_btn.setMaximumWidth(200)
         reset_btn.clicked.connect(self._reset_to_defaults)
         layout.addWidget(reset_btn)
@@ -152,7 +153,7 @@ class HotkeyDialog(QDialog):
 
         button_layout.addStretch()
 
-        cancel_btn = ModernButton("Cancel")
+        cancel_btn = Button("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -218,14 +219,14 @@ class HotkeyDialog(QDialog):
                 }
             """)
 
-            self.logger.info(f"Capturing hotkey for: {hotkey_type}")
+            logger.info(f"Capturing hotkey for: {hotkey_type}")
 
             # Start capture thread
             self.capture_thread = HotkeyCaptureThread()
             self.capture_thread.captured.connect(self._on_hotkey_captured)
             self.capture_thread.start()
         except Exception as e:
-            self.logger.error(f"Failed to start hotkey capture: {e}")
+            logger.error(f"Failed to start hotkey capture: {e}")
             self._reset_input_styles()
             self.capturing = None
 
@@ -234,7 +235,7 @@ class HotkeyDialog(QDialog):
         if not self.capturing or not self.current_input_field:
             return
 
-        self.logger.info(f"Captured hotkey: {hotkey}")
+        logger.info(f"Captured hotkey: {hotkey}")
 
         # Update state
         self.current_hotkeys[self.capturing] = hotkey
@@ -268,7 +269,7 @@ class HotkeyDialog(QDialog):
         """Reset hotkeys to default values."""
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
         self._update_displays()
-        self.logger.info("Hotkeys reset to defaults")
+        logger.info("Hotkeys reset to defaults")
 
     def _load_hotkeys(self):
         """Load current hotkey settings."""
@@ -302,7 +303,7 @@ class HotkeyDialog(QDialog):
             self.on_hotkeys_save(self.current_hotkeys)
 
         self.hotkeys_changed.emit(self.current_hotkeys)
-        self.logger.info("Hotkeys saved")
+        logger.info("Hotkeys saved")
         self.accept()
 
     def closeEvent(self, event):
@@ -312,6 +313,6 @@ class HotkeyDialog(QDialog):
                 self.capture_thread.terminate()
                 self.capture_thread.wait(1000)  # Wait with timeout
         except Exception as e:
-            self.logger.debug(f"Error stopping capture thread: {e}")
+            logger.debug(f"Error stopping capture thread: {e}")
         finally:
             super().closeEvent(event)

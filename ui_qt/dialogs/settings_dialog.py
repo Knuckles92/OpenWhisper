@@ -15,7 +15,9 @@ from PyQt6.QtGui import QFont
 from config import config
 from services.settings import settings_manager
 from services.recorder import AudioRecorder
-from ui_qt.widgets import PrimaryButton, ModernButton
+from ui_qt.widgets import PrimaryButton, Button
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsDialog(QDialog):
@@ -26,7 +28,6 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         """Initialize settings dialog."""
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
         self.setWindowTitle("Settings")
         self.setMinimumSize(600, 500)
         self.setMaximumWidth(800)
@@ -79,7 +80,7 @@ class SettingsDialog(QDialog):
 
         button_layout.addStretch()
 
-        cancel_btn = ModernButton("Cancel")
+        cancel_btn = Button("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -454,7 +455,7 @@ class SettingsDialog(QDialog):
 
     def _open_hotkey_dialog(self):
         """Open hotkey configuration dialog."""
-        self.logger.info("Opening hotkey configuration dialog")
+        logger.info("Opening hotkey configuration dialog")
         from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 
         dialog = HotkeyDialog(self)
@@ -517,9 +518,9 @@ class SettingsDialog(QDialog):
                         self.audio_device_combo.setCurrentIndex(i)
                         break
 
-            self.logger.info("Settings loaded successfully")
+            logger.info("Settings loaded successfully")
         except Exception as e:
-            self.logger.error(f"Failed to load settings: {e}")
+            logger.error(f"Failed to load settings: {e}")
             # Use defaults on error
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
@@ -589,7 +590,7 @@ class SettingsDialog(QDialog):
             # Save to file
             settings_manager.save_all_settings(settings)
 
-            self.logger.info("Settings saved successfully")
+            logger.info("Settings saved successfully")
 
             # Call callback if set
             if self.on_settings_save:
@@ -603,5 +604,5 @@ class SettingsDialog(QDialog):
 
             self.accept()
         except Exception as e:
-            self.logger.error(f"Failed to save settings: {e}")
+            logger.error(f"Failed to save settings: {e}")
             self.reject()

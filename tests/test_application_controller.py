@@ -169,8 +169,8 @@ class FakeLocalBackend:
         self.is_transcribing = False
         self.cleaned_up = False
 
-    def transcribe(self, audio_file_path):
-        return f"local:{audio_file_path}"
+    def transcribe(self, audio_path):
+        return f"local:{audio_path}"
 
     def transcribe_chunks(self, chunk_files):
         return " ".join(chunk_files)
@@ -193,8 +193,8 @@ class FakeOpenAIBackend:
         self.is_transcribing = False
         self.cleaned_up = False
 
-    def transcribe(self, audio_file_path):
-        return f"api:{audio_file_path}"
+    def transcribe(self, audio_path):
+        return f"api:{audio_path}"
 
     def transcribe_chunks(self, chunk_files):
         return "api chunks"
@@ -254,11 +254,11 @@ class FakeAudioProcessor:
     def __init__(self):
         self.check_result = (False, 1.0)
 
-    def check_file_size(self, _audio_file_path):
+    def check_file_size(self, _audio_path):
         return self.check_result
 
-    def split_audio_file(self, audio_file_path, _callback):
-        return [audio_file_path + ".part1", audio_file_path + ".part2"]
+    def split_audio_file(self, audio_path, _callback):
+        return [audio_path + ".part1", audio_path + ".part2"]
 
     def combine_transcriptions(self, transcriptions):
         return " ".join(transcriptions)
@@ -368,7 +368,7 @@ class DummyUIController:
     def clear_transcription_stats(self):
         self.stats = None
 
-    def set_transcription(self, text):
+    def set_transcript(self, text):
         self.transcription_text = text
 
     def set_transcription_stats(self, transcription_time, audio_duration, file_size):
@@ -550,7 +550,7 @@ class TestApplicationController(unittest.TestCase):
 
     def test_transcription_complete_saves_history_and_resets_pending_state(self):
         controller = self._create_controller()
-        controller._pending_audio_file = "source.wav"
+        controller._pending_audio_path = "source.wav"
         controller._pending_audio_duration = 9.5
         controller._pending_file_size = 2048
         controller._transcription_start_time = time.time() - 1.0
@@ -560,12 +560,12 @@ class TestApplicationController(unittest.TestCase):
         self.assertEqual(len(self.history_manager.entries), 1)
         entry = self.history_manager.entries[0]
         self.assertEqual(entry["text"], "hello world")
-        self.assertEqual(entry["source_audio_file"], "source.wav")
+        self.assertEqual(entry["source_audio_path"], "source.wav")
         self.assertEqual(entry["audio_duration"], 9.5)
         self.assertEqual(entry["file_size"], 2048)
         self.assertTrue(controller.ui_controller.refreshed_history)
         self.assertEqual(self.pyperclip.copied[-1], "hello world")
-        self.assertIsNone(controller._pending_audio_file)
+        self.assertIsNone(controller._pending_audio_path)
         self.assertIsNone(controller._pending_audio_duration)
         self.assertIsNone(controller._pending_file_size)
 

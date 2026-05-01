@@ -94,10 +94,10 @@ def get_runtime_components():
     """Load the runtime classes used during startup."""
     from services.application_controller import ApplicationController
     from ui_qt.app import QtApplication
-    from ui_qt.loading_screen_qt import ModernLoadingScreen
+    from ui_qt.loading_screen import LoadingScreen
     from ui_qt.ui_controller import UIController
 
-    return QtApplication, ModernLoadingScreen, UIController, ApplicationController
+    return QtApplication, LoadingScreen, UIController, ApplicationController
 
 
 def process_qt_events() -> None:
@@ -108,13 +108,13 @@ def process_qt_events() -> None:
 
 
 def main() -> int:
-    """Main application entry point with modern PyQt6 UI."""
+    """Main application entry point"""
     setup_logging()
     logging.info("=" * 60)
-    logging.info("Starting OpenWhisper with Modern PyQt6 UI")
+    logging.info("Starting OpenWhisper")
     logging.info("=" * 60)
 
-    QtApplication, ModernLoadingScreen, UIController, ApplicationController = (
+    QtApplication, LoadingScreen, UIController, ApplicationController = (
         get_runtime_components()
     )
 
@@ -124,7 +124,7 @@ def main() -> int:
     app_controller = None
 
     try:
-        loading_screen = ModernLoadingScreen()
+        loading_screen = LoadingScreen()
         loading_screen.show()
 
         loading_screen.update_status("Initializing components...")

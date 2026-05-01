@@ -13,6 +13,8 @@ from PyQt6.QtGui import QFont
 
 from services.history_manager import HistoryEntry, RecordingInfo, history_manager
 
+logger = logging.getLogger(__name__)
+
 
 class HistoryItemWidget(QFrame):
     """Widget displaying a single history entry."""
@@ -261,7 +263,6 @@ class HistorySidebar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
         self._is_expanded = False
         self._current_width = self.COLLAPSED_WIDTH
         self._quick_record_lock_width: Optional[int] = None
@@ -483,7 +484,7 @@ class HistorySidebar(QWidget):
 
         # Refresh will happen automatically when animation finishes (in _on_animation_finished)
 
-        self.logger.debug("Sidebar expanded")
+        logger.debug("Sidebar expanded")
 
     def collapse(self):
         """Collapse the sidebar."""
@@ -500,7 +501,7 @@ class HistorySidebar(QWidget):
         self.animation.setEndValue(self.COLLAPSED_WIDTH)
         self.animation.start()
 
-        self.logger.debug("Sidebar collapsed")
+        logger.debug("Sidebar collapsed")
 
     def toggle(self):
         """Toggle sidebar visibility."""
@@ -571,7 +572,7 @@ class HistorySidebar(QWidget):
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
             self.entry_selected.emit(entry_id)
-            self.logger.debug(f"Entry selected: {entry_id[:8]}...")
+            logger.debug(f"Entry selected: {entry_id[:8]}...")
 
     def _on_copy_requested(self, entry_id: str):
         """Handle copy request."""
@@ -581,16 +582,16 @@ class HistorySidebar(QWidget):
                 clipboard = QApplication.clipboard()
                 clipboard.setText(entry.text)
                 self.entry_copied.emit(entry_id)
-                self.logger.info(f"Copied entry to clipboard: {entry_id[:8]}...")
+                logger.info(f"Copied entry to clipboard: {entry_id[:8]}...")
             except Exception as e:
-                self.logger.error(f"Failed to copy to clipboard: {e}")
+                logger.error(f"Failed to copy to clipboard: {e}")
 
     def _on_delete_requested(self, entry_id: str):
         """Handle delete request."""
         if history_manager.delete_entry(entry_id):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
-            self.logger.info(f"Deleted entry: {entry_id[:8]}...")
+            logger.info(f"Deleted entry: {entry_id[:8]}...")
 
 class HistoryToggleButton(QPushButton):
     """Toggle button to show/hide the history sidebar."""

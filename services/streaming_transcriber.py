@@ -14,9 +14,6 @@ from scipy import signal
 from typing import Callable, Optional, List
 from config import config
 
-# Whisper models expect 16kHz audio
-WHISPER_SAMPLE_RATE = 16000
-
 
 class StreamingTranscriber:
     """Manages real-time streaming transcription using a worker thread."""
@@ -205,11 +202,11 @@ class StreamingTranscriber:
 
             # Resample from recording sample rate (44.1kHz) to Whisper's expected rate (16kHz)
             # This is critical - passing 44.1kHz audio to Whisper results in gibberish
-            if self.sample_rate != WHISPER_SAMPLE_RATE:
+            if self.sample_rate != config.WHISPER_TARGET_SAMPLE_RATE:
                 # Calculate number of samples needed at target rate
-                num_samples = int(len(audio_array) * WHISPER_SAMPLE_RATE / self.sample_rate)
+                num_samples = int(len(audio_array) * config.WHISPER_TARGET_SAMPLE_RATE / self.sample_rate)
                 audio_array = signal.resample(audio_array, num_samples)
-                logging.debug(f"Resampled audio from {self.sample_rate}Hz to {WHISPER_SAMPLE_RATE}Hz")
+                logging.debug(f"Resampled audio from {self.sample_rate}Hz to {config.WHISPER_TARGET_SAMPLE_RATE}Hz")
 
             # Transcribe using faster-whisper model
             segments, info = self.backend.model.transcribe(

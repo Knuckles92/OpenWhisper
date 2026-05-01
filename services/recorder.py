@@ -60,8 +60,8 @@ class AudioRecorder:
         self.streaming_callback: Optional[Callable[[np.ndarray], None]] = None
 
         # Audio level calculation
-        self.current_level = 0.0
-        self.level_smoothing = config.WAVEFORM_LEVEL_SMOOTHING  # Smoothing factor for level changes
+        self._current_audio_level = 0.0
+        self._level_smoothing = config.WAVEFORM_LEVEL_SMOOTHING  # Smoothing factor for level changes
 
         # Thread safety for callback
         self._callback_lock = threading.Lock()
@@ -267,17 +267,17 @@ class AudioRecorder:
                     return  # Unsupported format
 
                 # Apply smoothing
-                self.current_level = (
-                    self.level_smoothing * self.current_level +
-                    (1.0 - self.level_smoothing) * rms_level
+                self._current_audio_level = (
+                    self._level_smoothing * self._current_audio_level +
+                    (1.0 - self._level_smoothing) * rms_level
                 )
 
                 # Clamp to valid range
-                self.current_level = max(0.0, min(1.0, self.current_level))
+                self._current_audio_level = max(0.0, min(1.0, self._current_audio_level))
 
                 # Call the callback with the calculated level
                 if self.audio_level_callback:
-                    self.audio_level_callback(self.current_level)
+                    self.audio_level_callback(self._current_audio_level)
 
         except Exception as e:
             logging.debug(f"Error calculating audio level: {e}")

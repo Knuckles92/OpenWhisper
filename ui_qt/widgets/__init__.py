@@ -2,7 +2,7 @@
 PyQt6 custom widgets package.
 """
 from ui_qt.widgets.buttons import (
-    ModernButton,
+    Button,
     PrimaryButton,
     DangerButton,
     SuccessButton,
@@ -28,7 +28,7 @@ from ui_qt.widgets.tabbed_content import TabbedContentWidget
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
 
 __all__ = [
-    "ModernButton",
+    "Button",
     "PrimaryButton",
     "DangerButton",
     "SuccessButton",

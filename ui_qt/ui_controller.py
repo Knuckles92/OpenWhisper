@@ -4,16 +4,56 @@ Manages the main window, overlay, and dialogs.
 Bridges between UI and application logic.
 """
 import logging
+from enum import Enum
 from typing import Optional, Callable, List
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox, QFileDialog
 
 from config import config
-from ui_qt.main_window_qt import ModernMainWindow
-from ui_qt.overlay_qt import ModernWaveformOverlay
-from ui_qt.streaming_text_overlay import StreamingTextOverlay
-from ui_qt.caret_paste_indicator import CaretPasteIndicator
-from ui_qt.system_tray_qt import SystemTrayManager
+
+logger = logging.getLogger(__name__)
+
+
+class OverlayState(Enum):
+    """Logical overlay states. Routed by UIController.set_overlay_state.
+
+    These describe *what to show*, not the human-readable status text. Status
+    text is kept separate so renaming a status string never breaks UI routing.
+    """
+    NONE = "none"  # Hide all overlays
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    TRANSCRIBING = "transcribing"
+    CANCELLING = "cancelling"
+    STT_ENABLED = "stt_enabled"
+    STT_DISABLED = "stt_disabled"
+
+
+def _status_to_overlay_state(status: str) -> Optional[OverlayState]:
+    """Infer the appropriate overlay state from a human-readable status string.
+
+    Used to bridge legacy callers that emit only text. New code should call
+    `UIController.set_overlay_state()` directly with an `OverlayState` value.
+    """
+    lower = status.lower()
+    if "cancel" in lower:
+        return OverlayState.CANCELLING
+    if "STT Enabled" in status:
+        return OverlayState.STT_ENABLED
+    if "STT Disabled" in status:
+        return OverlayState.STT_DISABLED
+    if "recording" in lower:
+        return OverlayState.RECORDING
+    if "processing" in lower:
+        return OverlayState.PROCESSING
+    if "transcribing" in lower:
+        return OverlayState.TRANSCRIBING
+    if any(k in lower for k in ("ready", "failed", "error", "complete")):
+        return OverlayState.NONE
+    return None
+from ui_qt.main_window import MainWindow
+from ui_qt.overlays import CaretPasteIndicator, StreamingTextOverlay, WaveformOverlay
+from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
@@ -27,7 +67,7 @@ class UIController(QObject):
     # Signals
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
-    record_canceled = pyqtSignal()
+    record_cancelled = pyqtSignal()
     model_changed = pyqtSignal(str)
     transcription_received = pyqtSignal(str)
     status_changed = pyqtSignal(str)
@@ -36,11 +76,10 @@ class UIController(QObject):
     def __init__(self):
         """Initialize UI controller."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
 
         # Create UI components
-        self.main_window = ModernMainWindow()
-        self.overlay = ModernWaveformOverlay()
+        self.main_window = MainWindow()
+        self.overlay = WaveformOverlay()
         self.streaming_overlay = StreamingTextOverlay()
         self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
@@ -73,7 +112,7 @@ class UIController(QObject):
         """Setup signal connections between UI components."""
         # Main window signals
         self.main_window.record_toggled.connect(self._on_record_toggled)
-        self.main_window.record_canceled.connect(self.cancel_recording)
+        self.main_window.record_cancelled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
@@ -96,11 +135,11 @@ class UIController(QObject):
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
 
         # Internal signals
-        self.record_started.connect(self._on_internal_record_started)
-        self.record_stopped.connect(self._on_internal_record_stopped)
-        self.transcription_received.connect(self._on_internal_transcription)
-        self.status_changed.connect(self._on_internal_status_changed)
-        self.audio_levels_updated.connect(self._on_internal_audio_levels)
+        self.record_started.connect(self._show_recording_overlay)
+        self.record_stopped.connect(self._show_processing_overlay)
+        self.transcription_received.connect(self._display_transcript)
+        self.status_changed.connect(self._apply_status_to_main_window)
+        self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
 
     def _on_record_toggled(self, is_recording: bool):
         """Handle record button toggle from main window."""
@@ -111,7 +150,7 @@ class UIController(QObject):
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
-        self.logger.info(f"Model changed to: {model_name}")
+        logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
         self.model_changed.emit(model_name)
@@ -119,16 +158,16 @@ class UIController(QObject):
     def _on_tray_show(self):
         """Handle show from tray."""
         self.main_window.showNormal()
-        self.logger.debug("Window shown from tray")
+        logger.debug("Window shown from tray")
 
     def _on_tray_hide(self):
         """Handle hide from tray."""
         self.main_window.hide()
-        self.logger.debug("Window hidden to tray")
+        logger.debug("Window hidden to tray")
 
     def _on_tray_exit(self):
         """Handle exit from tray."""
-        self.logger.info("Exit requested from tray")
+        logger.info("Exit requested from tray")
 
     def _on_tray_toggle_recording(self):
         """Handle toggle recording from tray."""
@@ -139,44 +178,41 @@ class UIController(QObject):
 
     def _on_overlay_state_changed(self, state: str):
         """Handle overlay state change."""
-        self.logger.debug(f"Overlay state changed to: {state}")
+        logger.debug(f"Overlay state changed to: {state}")
 
-    def _on_internal_record_started(self):
-        """Handle internal record started signal."""
+    def _show_recording_overlay(self):
+        """Show the waveform overlay in recording state."""
         self.tray_manager.set_recording(True)
-        # Show overlay with recording state if not already visible
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_RECORDING)
         else:
             self.overlay.set_state(self.overlay.STATE_RECORDING)
 
-    def _on_internal_record_stopped(self):
-        """Handle internal record stopped signal."""
+    def _show_processing_overlay(self):
+        """Show the waveform overlay in processing state."""
         self.tray_manager.set_recording(False)
-        # Show overlay with processing state if not already visible
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
         else:
             self.overlay.set_state(self.overlay.STATE_PROCESSING)
 
-    def _on_internal_transcription(self, text: str):
-        """Handle transcription received."""
-        self.main_window.set_transcription(text)
-        # Hide overlay when transcription is complete
+    def _display_transcript(self, text: str):
+        """Display the completed transcript in the main window."""
+        self.main_window.set_transcript(text)
         self.hide_overlay()
 
-    def _on_internal_status_changed(self, status: str):
-        """Handle status change."""
+    def _apply_status_to_main_window(self, status: str):
+        """Forward a status string to the main window status label."""
         self.main_window.set_status(status)
 
-    def _on_internal_audio_levels(self, levels: List[float]):
-        """Handle audio levels update."""
+    def _apply_audio_levels_to_overlay(self, levels: List[float]):
+        """Forward audio level updates to the waveform overlay."""
         self.overlay.update_audio_levels(levels)
 
     def start_recording(self):
         """Start recording."""
         self.is_recording = True
-        self.logger.info("Recording started")
+        logger.info("Recording started")
 
         # Sync main window state (important for hotkey-triggered recordings)
         if not self.main_window.is_recording:
@@ -191,13 +227,13 @@ class UIController(QObject):
     def stop_recording(self):
         """Stop recording."""
         self.is_recording = False
-        self.logger.info("Recording stopped")
+        logger.info("Recording stopped")
 
         # Sync main window state (important for hotkey-triggered recordings)
         if self.main_window.is_recording:
             self.main_window.is_recording = False
             self.main_window._update_recording_state()
-            self.logger.info("Main window recording state updated")
+            logger.info("Main window recording state updated")
 
         if self.on_record_stop:
             self.on_record_stop()
@@ -207,25 +243,25 @@ class UIController(QObject):
     def cancel_recording(self):
         """Cancel recording."""
         self.is_recording = False
-        self.logger.info("Recording canceled")
+        logger.info("Recording cancelled")
 
         # Sync main window state (important for hotkey-triggered cancellations)
         if self.main_window.is_recording:
             self.main_window.is_recording = False
             self.main_window._update_recording_state()
-            self.logger.info("Main window recording state updated")
+            logger.info("Main window recording state updated")
 
         if self.on_record_cancel:
             self.on_record_cancel()
-            self.logger.info("Record cancel callback called")
+            logger.info("Record cancel callback called")
 
-        self.record_canceled.emit()
+        self.record_cancelled.emit()
         self.main_window.clear_transcription()
         self._start_cancel_animation()
-        self.logger.info("Cancel animation started")
+        logger.info("Cancel animation started")
 
-    def set_transcription(self, text: str):
-        """Set transcription text."""
+    def set_transcript(self, text: str):
+        """Set transcript text."""
         self.transcription_received.emit(text)
 
     def set_device_info(self, device_info: str):
@@ -258,68 +294,60 @@ class UIController(QObject):
         self.main_window.clear_transcription_stats()
 
     def set_status(self, status: str):
-        """Set status message and update overlay state based on status."""
-        self.status_changed.emit(status)
-        lower_status = status.lower()
+        """Update the status text and infer the overlay state from it.
 
-        if "cancel" in lower_status:
+        Legacy convenience for callers that only emit text. New code should
+        call `set_overlay_state` separately for explicit control.
+        """
+        self.status_changed.emit(status)
+        inferred_state = _status_to_overlay_state(status)
+        if inferred_state is not None:
+            self.set_overlay_state(inferred_state)
+
+    def set_overlay_state(self, state: OverlayState) -> None:
+        """Route an explicit overlay-state change to the correct overlay component.
+
+        Centralizes all "show waveform vs streaming overlay vs hide everything"
+        logic in one place.
+        """
+        if state is OverlayState.CANCELLING:
             self._start_cancel_animation()
             return
 
-        # Check if streaming flow is active (replaces waveform overlay)
-        streaming_overlay_visible = self.streaming_overlay.isVisible()
-        streaming_active = streaming_overlay_visible or self.streaming_flow_active
-
-        # Map status messages to overlay states (similar to old Tkinter app)
-        # This ensures overlay visibility is automatically managed
-        if "recording" in lower_status:
-            # Don't show waveform overlay if streaming overlay is active
-            if not streaming_active:
-                if not self.overlay.isVisible():
-                    self.overlay.show_at_cursor(self.overlay.STATE_RECORDING)
-                else:
-                    self.overlay.set_state(self.overlay.STATE_RECORDING)
-        elif "processing" in lower_status:
-            if streaming_overlay_visible:
-                # Set streaming overlay to finalizing state
-                self.set_streaming_overlay_finalizing()
-            elif streaming_active:
-                pass
-            else:
-                if not self.overlay.isVisible():
-                    self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
-                else:
-                    self.overlay.set_state(self.overlay.STATE_PROCESSING)
-        elif "transcribing" in lower_status:
-            if streaming_overlay_visible:
-                # Keep streaming overlay in finalizing state
-                self.set_streaming_overlay_finalizing()
-            elif streaming_active:
-                pass
-            else:
-                if not self.overlay.isVisible():
-                    self.overlay.show_at_cursor(self.overlay.STATE_TRANSCRIBING)
-                else:
-                    self.overlay.set_state(self.overlay.STATE_TRANSCRIBING)
-        elif "STT Enabled" in status:
-            if not self.overlay.isVisible():
-                self.overlay.show_at_cursor(self.overlay.STATE_STT_ENABLE)
-            else:
-                self.overlay.set_state(self.overlay.STATE_STT_ENABLE)
-        elif "STT Disabled" in status:
-            if not self.overlay.isVisible():
-                self.overlay.show_at_cursor(self.overlay.STATE_STT_DISABLE)
-            else:
-                self.overlay.set_state(self.overlay.STATE_STT_DISABLE)
-        elif any(keyword in lower_status for keyword in ["ready", "failed", "error"]):
-            # Hide both overlays
+        if state is OverlayState.NONE:
             self.hide_overlay()
             self.hide_streaming_overlay()
             self.hide_caret_paste_indicator()
             self.streaming_flow_active = False
-        elif "complete" in lower_status:
-            self.hide_overlay()
-            self.hide_streaming_overlay()
+            return
+
+        streaming_overlay_visible = self.streaming_overlay.isVisible()
+        streaming_active = streaming_overlay_visible or self.streaming_flow_active
+
+        if state is OverlayState.RECORDING:
+            if not streaming_active:
+                self._show_or_set_overlay(self.overlay.STATE_RECORDING)
+        elif state is OverlayState.PROCESSING:
+            if streaming_overlay_visible:
+                self.set_streaming_overlay_finalizing()
+            elif not streaming_active:
+                self._show_or_set_overlay(self.overlay.STATE_PROCESSING)
+        elif state is OverlayState.TRANSCRIBING:
+            if streaming_overlay_visible:
+                self.set_streaming_overlay_finalizing()
+            elif not streaming_active:
+                self._show_or_set_overlay(self.overlay.STATE_TRANSCRIBING)
+        elif state is OverlayState.STT_ENABLED:
+            self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
+        elif state is OverlayState.STT_DISABLED:
+            self._show_or_set_overlay(self.overlay.STATE_STT_DISABLE)
+
+    def _show_or_set_overlay(self, overlay_state: str) -> None:
+        """Show overlay at cursor if hidden, otherwise just transition its state."""
+        if not self.overlay.isVisible():
+            self.overlay.show_at_cursor(overlay_state)
+        else:
+            self.overlay.set_state(overlay_state)
 
     def update_audio_levels(self, levels: List[float]):
         """Update audio level display."""
@@ -352,7 +380,7 @@ class UIController(QObject):
         self.streaming_overlay.clear_text()
         self.streaming_overlay.show_overlay()
         self.hide_overlay()
-        self.logger.debug("Streaming overlay shown")
+        logger.debug("Streaming overlay shown")
 
     def update_streaming_text(self, text: str, is_final: bool):
         """Update the streaming text display.
@@ -367,7 +395,7 @@ class UIController(QObject):
         """Hide the streaming text overlay with animation."""
         if self.streaming_overlay.isVisible():
             self.streaming_overlay.hide_with_animation()
-            self.logger.debug("Streaming overlay hiding")
+            logger.debug("Streaming overlay hiding")
 
     def set_streaming_overlay_finalizing(self):
         """Set the streaming overlay to finalizing state."""
@@ -376,23 +404,23 @@ class UIController(QObject):
     def show_caret_paste_indicator(self):
         """Show the caret paste indicator."""
         self.caret_paste_indicator.show_indicator()
-        self.logger.debug("Caret paste indicator shown")
+        logger.debug("Caret paste indicator shown")
 
     def hide_caret_paste_indicator(self):
         """Hide the caret paste indicator."""
         self.caret_paste_indicator.hide_indicator()
-        self.logger.debug("Caret paste indicator hidden")
+        logger.debug("Caret paste indicator hidden")
 
     def _on_test_overlay_requested(self, state: str):
         """Handle test overlay state request from menu."""
-        self.logger.info(f"Testing overlay state: {state}")
+        logger.info(f"Testing overlay state: {state}")
 
         # Map state string to overlay state constant
         state_map = {
             "recording": self.overlay.STATE_RECORDING,
             "processing": self.overlay.STATE_PROCESSING,
             "transcribing": self.overlay.STATE_TRANSCRIBING,
-            "canceling": self.overlay.STATE_CANCELING,
+            "cancelling": self.overlay.STATE_CANCELLING,
             "stt_enable": self.overlay.STATE_STT_ENABLE,
             "stt_disable": self.overlay.STATE_STT_DISABLE,
             "copied": self.overlay.STATE_COPIED,
@@ -408,7 +436,7 @@ class UIController(QObject):
 
             self.overlay.show_at_cursor(overlay_state)
         else:
-            self.logger.warning(f"Unknown overlay state: {state}")
+            logger.warning(f"Unknown overlay state: {state}")
 
     def _start_cancel_animation(self):
         """Show the cancel animation and schedule hide."""
@@ -426,16 +454,18 @@ class UIController(QObject):
 
         # Use waveform overlay cancel animation for non-streaming case
         if not self.overlay.isVisible():
-            self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
+            self.overlay.show_at_cursor(self.overlay.STATE_CANCELLING)
         else:
-            self.overlay.set_state(self.overlay.STATE_CANCELING)
+            self.overlay.set_state(self.overlay.STATE_CANCELLING)
 
-        self.cancel_animation_timer.start(config.CANCELLATION_ANIMATION_DURATION_MS + 200)
+        self.cancel_animation_timer.start(
+            config.CANCELLATION_ANIMATION_DURATION_MS + config.CANCELLATION_GRACE_MS
+        )
 
     def _on_cancel_animation_finished(self):
         """Cleanup after cancel animation completes."""
         if self.overlay.current_state not in {
-            self.overlay.STATE_CANCELING,
+            self.overlay.STATE_CANCELLING,
             self.overlay.STATE_IDLE
         }:
             return
@@ -488,7 +518,7 @@ class UIController(QObject):
 
     def open_upload_audio_dialog(self):
         """Open file dialog to select an audio file for transcription."""
-        self.logger.info("Opening upload audio dialog")
+        logger.info("Opening upload audio dialog")
 
         # Define supported audio formats
         audio_filters = "Audio Files (*.wav *.mp3 *.m4a *.ogg *.flac *.wma);;WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*.*)"
@@ -501,10 +531,10 @@ class UIController(QObject):
         )
 
         if not file_path:
-            self.logger.info("Audio file selection cancelled")
+            logger.info("Audio file selection cancelled")
             return
 
-        self.logger.info(f"Selected audio file: {file_path}")
+        logger.info(f"Selected audio file: {file_path}")
 
         # Analyze the file and show preview
         try:
@@ -516,36 +546,36 @@ class UIController(QObject):
             dialog.exec()
 
         except FileNotFoundError as e:
-            self.logger.error(f"File not found: {e}")
+            logger.error(f"File not found: {e}")
             QMessageBox.warning(
                 self.main_window,
                 "File Not Found",
                 f"The selected file could not be found:\n{file_path}"
             )
         except ValueError as e:
-            self.logger.error(f"Invalid audio file: {e}")
+            logger.error(f"Invalid audio file: {e}")
             QMessageBox.warning(
                 self.main_window,
                 "Invalid Audio File",
                 f"The selected file could not be read as audio.\n\nError: {e}"
             )
         except Exception as e:
-            self.logger.error(f"Error analyzing audio file: {e}")
+            logger.error(f"Error analyzing audio file: {e}")
             QMessageBox.critical(
                 self.main_window,
                 "Error",
                 f"Failed to analyze audio file:\n{e}"
             )
 
-    def _handle_upload_audio(self, file_path: str):
+    def _handle_upload_audio(self, audio_path: str):
         """Handle the audio file upload after user confirms in preview dialog.
 
         Args:
-            file_path: Path to the audio file to transcribe.
+            audio_path: Path to the audio file to transcribe.
         """
-        self.logger.info(f"Processing uploaded audio: {file_path}")
+        logger.info(f"Processing uploaded audio: {audio_path}")
         if self.on_upload_audio:
-            self.on_upload_audio(file_path)
+            self.on_upload_audio(audio_path)
 
     def get_quick_record_tab(self) -> QuickRecordTab:
         """Get the Quick Record tab widget.
@@ -603,26 +633,26 @@ class UIController(QObject):
         """Refresh the history sidebar."""
         self.main_window.refresh_history()
 
-    def _on_retranscribe_requested(self, audio_file_path: str):
+    def _on_retranscribe_requested(self, audio_path: str):
         """Handle re-transcription request from main window signal."""
-        self._handle_retranscribe(audio_file_path)
+        self._handle_retranscribe(audio_path)
 
-    def _handle_retranscribe(self, audio_file_path: str):
+    def _handle_retranscribe(self, audio_path: str):
         """Handle re-transcription request."""
-        self.logger.info(f"Re-transcribe requested: {audio_file_path}")
+        logger.info(f"Re-transcribe requested: {audio_path}")
         if self.on_retranscribe:
-            self.on_retranscribe(audio_file_path)
+            self.on_retranscribe(audio_path)
 
     def cleanup(self):
         """Cleanup resources."""
-        self.logger.info("Starting UI Controller cleanup...")
+        logger.info("Starting UI Controller cleanup...")
 
         # Stop the cancel animation timer
         try:
             if self.cancel_animation_timer.isActive():
                 self.cancel_animation_timer.stop()
         except Exception as e:
-            self.logger.debug(f"Error stopping cancel animation timer: {e}")
+            logger.debug(f"Error stopping cancel animation timer: {e}")
 
         # Stop overlay timer and close
         try:
@@ -630,34 +660,34 @@ class UIController(QObject):
                 self.overlay.timer.stop()
             self.overlay.close()
         except Exception as e:
-            self.logger.debug(f"Error closing overlay: {e}")
+            logger.debug(f"Error closing overlay: {e}")
 
         # Cleanup streaming overlay
         try:
             if hasattr(self, 'streaming_overlay'):
                 self.streaming_overlay.cleanup()
         except Exception as e:
-            self.logger.debug(f"Error closing streaming overlay: {e}")
+            logger.debug(f"Error closing streaming overlay: {e}")
 
         try:
             if hasattr(self, 'caret_paste_indicator'):
                 self.caret_paste_indicator.hide_indicator()
                 self.caret_paste_indicator.close()
         except Exception as e:
-            self.logger.debug(f"Error closing caret indicator: {e}")
+            logger.debug(f"Error closing caret indicator: {e}")
 
         # Hide and cleanup system tray
         try:
             self.tray_manager.hide()
             self.tray_manager.setParent(None)
         except Exception as e:
-            self.logger.debug(f"Error hiding system tray: {e}")
+            logger.debug(f"Error hiding system tray: {e}")
 
         # Close main window (force quit to bypass minimize to tray)
         try:
             self.main_window._force_quit = True
             self.main_window.close()
         except Exception as e:
-            self.logger.debug(f"Error closing main window: {e}")
+            logger.debug(f"Error closing main window: {e}")
 
-        self.logger.info("UI Controller cleaned up")
+        logger.info("UI Controller cleaned up")

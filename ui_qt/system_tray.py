@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter
 from PyQt6.QtCore import Qt, pyqtSignal
 
+logger = logging.getLogger(__name__)
+
 
 class SystemTrayManager(QSystemTrayIcon):
     """Manages system tray icon and menu."""
@@ -21,7 +23,6 @@ class SystemTrayManager(QSystemTrayIcon):
     def __init__(self, main_window=None):
         """Initialize system tray manager."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
         self.main_window = main_window
 
         # Callbacks
@@ -34,7 +35,7 @@ class SystemTrayManager(QSystemTrayIcon):
         self._connect_signals()
 
         self.show()
-        self.logger.info("System tray initialized")
+        logger.info("System tray initialized")
 
     def _setup_icon(self):
         """Setup the tray icon."""

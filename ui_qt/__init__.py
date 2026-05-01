@@ -4,16 +4,16 @@ from importlib import import_module
 
 __all__ = [
     "QtApplication",
-    "ModernMainWindow",
-    "ModernLoadingScreen",
-    "ModernWaveformOverlay",
+    "MainWindow",
+    "LoadingScreen",
+    "WaveformOverlay",
 ]
 
 _EXPORT_MAP = {
     "QtApplication": ("ui_qt.app", "QtApplication"),
-    "ModernMainWindow": ("ui_qt.main_window_qt", "ModernMainWindow"),
-    "ModernLoadingScreen": ("ui_qt.loading_screen_qt", "ModernLoadingScreen"),
-    "ModernWaveformOverlay": ("ui_qt.overlay_qt", "ModernWaveformOverlay"),
+    "MainWindow": ("ui_qt.main_window", "MainWindow"),
+    "LoadingScreen": ("ui_qt.loading_screen", "LoadingScreen"),
+    "WaveformOverlay": ("ui_qt.overlays.waveform_overlay", "WaveformOverlay"),
 }
 
 

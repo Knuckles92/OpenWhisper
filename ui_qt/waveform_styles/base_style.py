@@ -81,19 +81,19 @@ class BaseWaveformStyle(ABC):
         """
         from config import config
 
-        if hasattr(self, '_canceling_start_time'):
+        if hasattr(self, '_cancelling_start_time'):
             cancellation_duration = config.CANCELLATION_ANIMATION_DURATION_MS / 1000.0
-            elapsed = time.time() - self._canceling_start_time
+            elapsed = time.time() - self._cancelling_start_time
             return min(1.0, max(0.0, elapsed / cancellation_duration))
         return 0.0
 
-    def set_canceling_start_time(self, start_time: float):
+    def set_cancelling_start_time(self, start_time: float):
         """Set the cancellation animation start time.
 
         Args:
             start_time: Start time from time.time()
         """
-        self._canceling_start_time = start_time
+        self._cancelling_start_time = start_time
 
     @abstractmethod
     def draw_recording_state(self, painter: QPainter, rect: QRect, message: str = "Recording..."):
@@ -128,8 +128,8 @@ class BaseWaveformStyle(ABC):
         """
         pass
 
-    def draw_canceling_state(self, painter: QPainter, rect: QRect, message: str = "Cancelled"):
-        """Draw a universal canceling animation with shrinking red X.
+    def draw_cancelling_state(self, painter: QPainter, rect: QRect, message: str = "Cancelled"):
+        """Draw a universal cancelling animation with shrinking red X.
 
         Args:
             painter: QPainter instance for drawing

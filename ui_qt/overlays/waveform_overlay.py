@@ -1,11 +1,12 @@
 """
-Modern PyQt6 Waveform Overlay.
+PyQt6 waveform overlay.
 Real-time audio visualization overlay with blur effects and animations.
 """
 import logging
 import math
 import random
 import time
+from dataclasses import dataclass
 from typing import Optional, List
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
@@ -17,6 +18,15 @@ from config import config
 from services.settings import settings_manager
 from ui_qt.waveform_styles import style_factory
 from ui_qt.waveform_styles.base_style import BaseWaveformStyle
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LargeFileOverlayInfo:
+    """Display info for the large-file overlay states."""
+    file_size_mb: float = 0.0
+    chunk_count: int = 0
 
 
 class STTParticle:
@@ -46,7 +56,7 @@ class STTParticle:
         return QColor.fromHsv(int(self.hue) % 360, 200, 230, alpha)
 
 
-class ModernWaveformOverlay(QWidget):
+class WaveformOverlay(QWidget):
     """Modern waveform overlay with smooth animations."""
 
     state_changed = pyqtSignal(str)
@@ -56,7 +66,7 @@ class ModernWaveformOverlay(QWidget):
     STATE_RECORDING = "recording"
     STATE_PROCESSING = "processing"
     STATE_TRANSCRIBING = "transcribing"
-    STATE_CANCELING = "canceling"
+    STATE_CANCELLING = "cancelling"
     STATE_STT_ENABLE = "stt_enable"
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
@@ -66,7 +76,6 @@ class ModernWaveformOverlay(QWidget):
     def __init__(self):
         """Initialize the overlay."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
 
         # Window properties
         self.setWindowFlags(
@@ -89,10 +98,7 @@ class ModernWaveformOverlay(QWidget):
         self.stt_particles: List[STTParticle] = []
 
         # Large file information for warning states
-        self.large_file_info = {
-            'file_size_mb': 0.0,
-            'chunk_count': 0
-        }
+        self.large_file_info = LargeFileOverlayInfo()
 
         # Load waveform style
         current_style, style_configs = settings_manager.load_waveform_style_settings()
@@ -106,7 +112,7 @@ class ModernWaveformOverlay(QWidget):
             )
         except (ValueError, KeyError):
             # Fallback to particle style if loading fails
-            self.logger.warning(f"Failed to load style '{current_style}', using particle")
+            logger.warning(f"Failed to load style '{current_style}', using particle")
             self.style = style_factory.create_style('particle', self.overlay_width, self.overlay_height)
 
         # Animation
@@ -143,9 +149,9 @@ class ModernWaveformOverlay(QWidget):
             elif self.current_state == self.STATE_TRANSCRIBING:
                 if self.style:
                     self.style.draw_transcribing_state(painter, rect, "Transcribing...")
-            elif self.current_state == self.STATE_CANCELING:
+            elif self.current_state == self.STATE_CANCELLING:
                 if self.style:
-                    self.style.draw_canceling_state(painter, rect, "Cancelled")
+                    self.style.draw_cancelling_state(painter, rect, "Cancelled")
             elif self.current_state == self.STATE_STT_ENABLE:
                 self._draw_stt_enable_state(painter)
             elif self.current_state == self.STATE_STT_DISABLE:
@@ -158,7 +164,7 @@ class ModernWaveformOverlay(QWidget):
                 self._draw_large_file_processing_state(painter)
         except Exception as e:
             # Log error but don't crash the overlay
-            self.logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
+            logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             # Draw a simple fallback
             try:
                 painter = QPainter(self)
@@ -253,8 +259,8 @@ class ModernWaveformOverlay(QWidget):
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Transcribing...")
 
-    def _draw_canceling_state(self, painter: QPainter):
-        """Draw canceling state with shrinking X."""
+    def _draw_cancelling_state(self, painter: QPainter):
+        """Draw cancelling state with shrinking X."""
         rect = self.rect()
         w, h = rect.width(), rect.height()
 
@@ -280,7 +286,7 @@ class ModernWaveformOverlay(QWidget):
         # Status text
         painter.setPen(QPen(QColor(224, 224, 255)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Canceling...")
+        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Cancelling...")
 
     def _draw_stt_enable_state(self, painter: QPainter):
         """Draw STT enable state with power up particle effect."""
@@ -429,10 +435,10 @@ class ModernWaveformOverlay(QWidget):
             file_size_mb: File size in megabytes.
             chunk_count: Number of chunks (for splitting backends).
         """
-        self.large_file_info = {
-            'file_size_mb': file_size_mb,
-            'chunk_count': chunk_count
-        }
+        self.large_file_info = LargeFileOverlayInfo(
+            file_size_mb=file_size_mb,
+            chunk_count=chunk_count,
+        )
 
     def _draw_large_file_splitting_state(self, painter: QPainter):
         """Draw large file splitting warning (for API backends)."""
@@ -468,7 +474,7 @@ class ModernWaveformOverlay(QWidget):
         # Status text with file size
         painter.setPen(QPen(amber))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Splitting ({self.large_file_info['file_size_mb']:.1f} MB)..."
+        text = f"Splitting ({self.large_file_info.file_size_mb:.1f} MB)..."
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_large_file_processing_state(self, painter: QPainter):
@@ -510,7 +516,7 @@ class ModernWaveformOverlay(QWidget):
         # Status text with file size
         painter.setPen(QPen(cyan))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        text = f"Processing ({self.large_file_info['file_size_mb']:.1f} MB)..."
+        text = f"Processing ({self.large_file_info.file_size_mb:.1f} MB)..."
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
     def _update_animation(self):
@@ -526,7 +532,7 @@ class ModernWaveformOverlay(QWidget):
         if self.style:
             self.style.update_animation_time(delta_time)
 
-        if self.current_state == self.STATE_CANCELING:
+        if self.current_state == self.STATE_CANCELLING:
             self.cancel_progress = min(1.0, self.animation_time / 0.8)
             if self.cancel_progress >= 1.0:
                 self.set_state(self.STATE_IDLE)
@@ -545,9 +551,9 @@ class ModernWaveformOverlay(QWidget):
             self.cancel_progress = 0.0
             self.last_frame_time = time.time()  # Reset to prevent huge delta on first frame
 
-            # Set canceling start time for style
-            if state == self.STATE_CANCELING and self.style:
-                self.style.set_canceling_start_time(time.time())
+            # Set cancelling start time for style
+            if state == self.STATE_CANCELLING and self.style:
+                self.style.set_cancelling_start_time(time.time())
 
             # Initialize particles for STT and copied states
             if state == self.STATE_STT_ENABLE:
@@ -565,7 +571,7 @@ class ModernWaveformOverlay(QWidget):
                 self.timer.start(1000 // self.frame_rate)
 
             self.state_changed.emit(state)
-            self.logger.debug(f"Overlay state changed to: {state}")
+            logger.debug(f"Overlay state changed to: {state}")
 
             # Auto-hide after delay for certain states
             if state in [self.STATE_STT_ENABLE, self.STATE_STT_DISABLE, self.STATE_COPIED]:

@@ -15,19 +15,20 @@ from ui_qt.widgets.cards import Card, HeaderCard, ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 
+logger = logging.getLogger(__name__)
+
 
 class QuickRecordTab(QWidget):
     """Tab widget for quick recording and transcription."""
 
     # Signals
     record_toggled = pyqtSignal(bool)  # True = start, False = stop
-    record_canceled = pyqtSignal()
+    record_cancelled = pyqtSignal()
     model_changed = pyqtSignal(str)  # Model display name
     retranscribe_requested = pyqtSignal(str)  # Audio file path
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
 
         # State
         self.is_recording = False
@@ -166,7 +167,7 @@ class QuickRecordTab(QWidget):
         self.is_recording = False
         self._update_recording_state()
 
-        self.record_canceled.emit()
+        self.record_cancelled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
@@ -208,8 +209,8 @@ class QuickRecordTab(QWidget):
         else:
             self.device_info_label.hide()
 
-    def set_transcription(self, text: str):
-        """Set the transcription text."""
+    def set_transcript(self, text: str):
+        """Set the transcript text."""
         self.transcription_text.setText(text)
 
     def append_transcription(self, text: str):
@@ -299,7 +300,7 @@ class QuickRecordTab(QWidget):
 
         Args:
             record_key: The key for recording
-            cancel_key: The key for canceling
+            cancel_key: The key for cancelling
             enable_disable_key: The key for enabling/disabling STT
         """
         self.record_button.set_hotkey(record_key)

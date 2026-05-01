@@ -12,6 +12,8 @@ from PyQt6.QtGui import QFont
 
 from services.settings import settings_manager
 
+logger = logging.getLogger(__name__)
+
 
 class TabbedContentWidget(QWidget):
     """Container widget with a tab bar and stacked content area."""
@@ -24,7 +26,6 @@ class TabbedContentWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
 
         # State
         self._recording_active = False
@@ -100,7 +101,7 @@ class TabbedContentWidget(QWidget):
             if 0 <= last_tab < self.tab_bar.count():
                 self.tab_bar.setCurrentIndex(last_tab)
         except Exception as e:
-            self.logger.warning(f"Failed to restore last tab: {e}")
+            logger.warning(f"Failed to restore last tab: {e}")
 
     def _on_tab_changed(self, index: int):
         """Handle tab selection change."""
@@ -110,10 +111,10 @@ class TabbedContentWidget(QWidget):
         try:
             settings_manager.save_setting('last_tab_index', index)
         except Exception as e:
-            self.logger.warning(f"Failed to save tab selection: {e}")
+            logger.warning(f"Failed to save tab selection: {e}")
 
         self.tab_changed.emit(index)
-        self.logger.debug(f"Tab changed to index {index}")
+        logger.debug(f"Tab changed to index {index}")
 
     def add_tab(self, widget: QWidget, title: str) -> int:
         """Add a widget to the stacked widget.
@@ -129,7 +130,7 @@ class TabbedContentWidget(QWidget):
             Index of the added widget
         """
         index = self.stack.addWidget(widget)
-        self.logger.debug(f"Added tab '{title}' at index {index}")
+        logger.debug(f"Added tab '{title}' at index {index}")
         return index
 
     def sync_stack_with_tab_bar(self):
@@ -142,7 +143,7 @@ class TabbedContentWidget(QWidget):
         """
         current_tab = self.tab_bar.currentIndex()
         if self.stack.currentIndex() != current_tab:
-            self.logger.debug(
+            logger.debug(
                 f"Syncing stack (was {self.stack.currentIndex()}) "
                 f"with tab bar (index {current_tab})"
             )
@@ -174,7 +175,7 @@ class TabbedContentWidget(QWidget):
         for i in range(self.tab_bar.count()):
             self.tab_bar.setTabEnabled(i, not is_recording or i == source_tab)
 
-        self.logger.debug(
+        logger.debug(
             f"Recording state: active={is_recording}, source_tab={source_tab}"
         )
 

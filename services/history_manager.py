@@ -65,7 +65,7 @@ class HistoryManager:
         self,
         text: str,
         model: str,
-        source_audio_file: Optional[str] = None,
+        source_audio_path: Optional[str] = None,
         transcription_time: Optional[float] = None,
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None
@@ -75,7 +75,7 @@ class HistoryManager:
         Args:
             text: The transcribed text.
             model: The model used for transcription (display name or internal value).
-            source_audio_file: Optional path to source audio file to save.
+            source_audio_path: Optional path to source audio file to save.
             transcription_time: Time taken to transcribe in seconds.
             audio_duration: Duration of the audio in seconds.
             file_size: Size of the audio file in bytes.
@@ -86,8 +86,8 @@ class HistoryManager:
         saved_audio_path = None
 
         # Save the audio recording if provided
-        if source_audio_file and os.path.exists(source_audio_file):
-            saved_audio_path = self._save_recording(source_audio_file)
+        if source_audio_path and os.path.exists(source_audio_path):
+            saved_audio_path = self._save_recording(source_audio_path)
 
         # Create the entry
         entry = HistoryEntry.create(
@@ -114,11 +114,11 @@ class HistoryManager:
         logging.info(f"Added history entry: {entry.id[:8]}...")
         return entry
 
-    def _save_recording(self, source_file: str) -> Optional[str]:
+    def _save_recording(self, source_path: str) -> Optional[str]:
         """Save a recording to the recordings folder with rotation.
 
         Args:
-            source_file: Path to the source audio file.
+            source_path: Path to the source audio file.
 
         Returns:
             Relative path to saved recording, or None if failed.
@@ -130,7 +130,7 @@ class HistoryManager:
             dest_path = os.path.join(self.recordings_folder, filename)
 
             # Copy the file
-            shutil.copy2(source_file, dest_path)
+            shutil.copy2(source_path, dest_path)
             logging.info(f"Saved recording: {filename}")
 
             # Rotate old recordings

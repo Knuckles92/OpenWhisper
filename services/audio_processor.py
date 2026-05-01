@@ -9,7 +9,7 @@ import tempfile
 import logging
 import shutil
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Callable, List, Tuple, Optional, Dict, Any
 from pathlib import Path
 from config import config
 
@@ -147,11 +147,11 @@ class AudioProcessor:
             chunk_durations=chunk_durations
         )
 
-    def split_audio_file(self, input_file: str, progress_callback: Optional[callable] = None) -> List[str]:
+    def split_audio_file(self, audio_path: str, progress_callback: Optional[Callable[[str], None]] = None) -> List[str]:
         """Split audio file into smaller chunks using silence detection.
 
         Args:
-            input_file: Path to the input audio file.
+            audio_path: Path to the input audio file.
             progress_callback: Optional callback function for progress updates.
 
         Returns:
@@ -165,7 +165,7 @@ class AudioProcessor:
                 progress_callback("Loading audio file...")
 
             # Load audio data
-            audio_data, sample_rate = self._load_audio_data(input_file)
+            audio_data, sample_rate = self._load_audio_data(audio_path)
 
             if progress_callback:
                 progress_callback("Analyzing audio for optimal split points...")
@@ -184,7 +184,7 @@ class AudioProcessor:
                 progress_callback(f"Creating {len(split_points)} audio chunks...")
 
             # Create chunks
-            chunk_files = self._create_chunks(audio_data, sample_rate, split_points, input_file)
+            chunk_files = self._create_chunks(audio_data, sample_rate, split_points, audio_path)
 
             logging.info(f"Successfully split audio into {len(chunk_files)} chunks")
             return chunk_files

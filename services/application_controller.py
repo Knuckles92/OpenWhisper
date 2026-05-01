@@ -55,7 +55,7 @@ class ApplicationController(QObject):
         self._streaming_enabled = False
         self._streaming_paste_enabled = False
 
-        self._pending_audio_file: Optional[str] = None
+        self._pending_audio_path: Optional[str] = None
         self._pending_audio_duration: Optional[float] = None
         self._pending_file_size: Optional[int] = None
         self._transcription_start_time: Optional[float] = None
@@ -91,7 +91,7 @@ class ApplicationController(QObject):
         """Setup UI event callbacks."""
         self.ui_controller.on_record_start = self.start_recording
         self.ui_controller.on_record_stop = self.stop_recording
-        self.ui_controller.on_record_cancel = self.cancel_recording
+        self.ui_controller.on_record_cancel = self.cancel
         self.ui_controller.on_model_changed = self.on_model_changed
         self.ui_controller.on_hotkeys_changed = self.update_hotkeys
         self.ui_controller.on_retranscribe = self.retranscribe_audio
@@ -142,74 +142,43 @@ class ApplicationController(QObject):
         self.streaming_runtime.reconfigure_streaming()
 
     def start_recording(self) -> None:
+        """Start audio recording (UI callback target)."""
         self.transcription_runtime.start_recording()
 
     def stop_recording(self) -> None:
+        """Stop recording and submit transcription (UI callback target)."""
         self.transcription_runtime.stop_recording()
 
     def toggle_recording(self) -> None:
+        """Toggle recording on/off (hotkey callback target)."""
         self.transcription_runtime.toggle_recording()
 
-    def cancel_recording(self) -> None:
-        self.transcription_runtime.cancel_recording()
+    def cancel(self) -> None:
+        """Cancel an active recording or transcription (UI/hotkey callback target)."""
+        self.transcription_runtime.cancel()
 
-    def retranscribe_audio(self, audio_file_path: str) -> None:
-        self.transcription_runtime.retranscribe_audio(audio_file_path)
+    def retranscribe_audio(self, audio_path: str) -> None:
+        """Re-transcribe an existing audio file (UI callback target)."""
+        self.transcription_runtime.retranscribe_audio(audio_path)
 
-    def upload_audio_file(self, audio_file_path: str) -> None:
-        self.transcription_runtime.upload_audio_file(audio_file_path)
-
-    def _retranscribe_audio_file(self, audio_file_path: str) -> None:
-        self.transcription_runtime.transcribe_audio_file(audio_file_path)
-
-    def _retranscribe_large_audio(self, audio_file_path: str) -> None:
-        self.transcription_runtime.transcribe_large_audio_file(audio_file_path)
-
-    def _transcribe_audio(self) -> None:
-        self.transcription_runtime.transcribe_audio_file(config.RECORDED_AUDIO_FILE)
-
-    def _transcribe_large_audio(self) -> None:
-        self.transcription_runtime.transcribe_large_audio_file(config.RECORDED_AUDIO_FILE)
+    def upload_audio_file(self, audio_path: str) -> None:
+        """Transcribe an uploaded audio file (UI callback target)."""
+        self.transcription_runtime.upload_audio_file(audio_path)
 
     def on_model_changed(self, model_name: str) -> None:
+        """Switch the active transcription backend (UI callback target)."""
         self.transcription_runtime.on_model_changed(model_name)
 
     def update_status_with_auto_hide(self, status: str) -> None:
+        """Emit a thread-safe status update (HotkeyManager callback target)."""
         self.hotkey_runtime.update_status_with_auto_hide(status)
-
-    def _show_large_file_overlay(self, file_size_mb: float, is_splitting: bool) -> None:
-        self.transcription_runtime.show_large_file_overlay(file_size_mb, is_splitting)
-
-    def _setup_streaming(self) -> None:
-        self.streaming_runtime.setup_streaming()
-
-    def _setup_audio_level_callback(self) -> None:
-        self.streaming_runtime.setup_audio_level_callback()
-
-    def _setup_hook_watchdog(self) -> None:
-        self.hotkey_runtime.setup_hook_watchdog()
-
-    def _on_watchdog_tick(self) -> None:
-        self.hotkey_runtime.on_watchdog_tick()
-
-    def _on_periodic_hook_refresh(self) -> None:
-        self.hotkey_runtime.on_periodic_hook_refresh()
-
-    def _rehook_keyboard(self) -> None:
-        self.hotkey_runtime.rehook_keyboard()
-
-    def _on_stt_state_changed(self, enabled: bool) -> None:
-        self.hotkey_runtime.on_stt_state_changed(enabled)
-
-    def _on_partial_transcription(self, text: str, is_final: bool) -> None:
-        self.streaming_runtime.on_partial_transcription(text, is_final)
 
     def _connect_signals(self) -> None:
         """Connect Qt signals to UI controller methods."""
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.status_update.connect(self.ui_controller.set_status)
-        self.stt_state_changed.connect(self._on_stt_state_changed)
+        self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.partial_transcription.connect(
             self.ui_controller.main_window.set_partial_transcription
@@ -231,8 +200,8 @@ class ApplicationController(QObject):
             self.ui_controller.main_window.is_recording = is_recording
             self.ui_controller.main_window._update_recording_state()
 
-    def _on_transcription_complete(self, transcribed_text: str) -> None:
-        self.transcription_runtime.on_transcription_complete(transcribed_text)
+    def _on_transcription_complete(self, transcript: str) -> None:
+        self.transcription_runtime.on_transcription_complete(transcript)
 
     def _on_transcription_error(self, error_message: str) -> None:
         self.transcription_runtime.on_transcription_error(error_message)

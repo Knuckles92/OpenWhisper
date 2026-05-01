@@ -14,11 +14,11 @@ class TranscriptionBackend(ABC):
         self.should_cancel = False
 
     @abstractmethod
-    def transcribe(self, audio_file_path: str) -> str:
+    def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file to text.
 
         Args:
-            audio_file_path: Path to the audio file to transcribe.
+            audio_path: Path to the audio file to transcribe.
 
         Returns:
             Transcribed text.

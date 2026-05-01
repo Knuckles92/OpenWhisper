@@ -180,11 +180,11 @@ class LocalWhisperBackend(TranscriptionBackend):
             logging.error(f"Failed to load faster-whisper model: {e}")
             self.model = None
 
-    def transcribe(self, audio_file_path: str) -> str:
+    def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file using faster-whisper model.
 
         Args:
-            audio_file_path: Path to the audio file to transcribe.
+            audio_path: Path to the audio file to transcribe.
 
         Returns:
             Transcribed text.
@@ -210,7 +210,7 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             # Transcribe - returns a generator of segments and transcription info
             segments, info = self.model.transcribe(
-                audio_file_path,
+                audio_path,
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
                 vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
                 vad_parameters=vad_params
@@ -228,15 +228,15 @@ class LocalWhisperBackend(TranscriptionBackend):
                     raise Exception("Transcription cancelled")
                 text_parts.append(segment.text)
 
-            transcribed_text = " ".join(text_parts).strip()
+            transcript = " ".join(text_parts).strip()
 
             # Clean up extra whitespace
             import re
-            transcribed_text = re.sub(r'\s+', ' ', transcribed_text)
+            transcript = re.sub(r'\s+', ' ', transcript)
 
-            logging.info(f"Transcription complete. Length: {len(transcribed_text)} characters")
+            logging.info(f"Transcription complete. Length: {len(transcript)} characters")
 
-            return transcribed_text
+            return transcript
 
         except Exception as e:
             if "cancelled" not in str(e).lower():

@@ -80,6 +80,7 @@ class AppConfig:
     HOTKEY_DEBOUNCE_MS: int = 300
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
+    CANCELLATION_GRACE_MS: int = 200  # Extra delay after cancel animation before hiding overlay
     PROGRESS_BAR_INTERVAL_MS: int = 10
     # Continue capturing this many ms after stop to avoid end cut-offs
     POST_ROLL_MS: int = 1200
@@ -87,6 +88,12 @@ class AppConfig:
     POST_ROLL_FINALIZE_GRACE_MS: int = 800
     # Extra silence appended to the end of saved audio so ASR models don't drop the last word
     END_PADDING_MS: int = 500
+    # Hotkey watchdog: detects sleep/resume gaps; periodic refresh re-registers the hook
+    HOTKEY_WATCHDOG_INTERVAL_MS: int = 10_000
+    HOTKEY_SLEEP_GAP_THRESHOLD_SEC: float = 30.0
+    HOTKEY_HOOK_REFRESH_INTERVAL_MS: int = 5 * 60 * 1000
+    # Whisper expects 16 kHz audio regardless of recorder sample rate
+    WHISPER_TARGET_SAMPLE_RATE: int = 16000
 
     # Audio splitting settings
     MAX_FILE_SIZE_MB: int = 23  # Maximum file size before splitting

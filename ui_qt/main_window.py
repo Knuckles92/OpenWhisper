@@ -13,11 +13,95 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
 from services.settings import settings_manager
-from ui_qt.loading_screen_qt import ModernLoadingScreen
+from ui_qt.loading_screen import LoadingScreen
+
+logger = logging.getLogger(__name__)
 
 
 class CustomTitleBar(QFrame):
     """Custom title bar for frameless window with integrated menu."""
+
+    _MENU_BAR_STYLE = """
+        QMenuBar {
+            background-color: transparent;
+            color: #c0c0d0;
+            font-size: 12px;
+            border: none;
+            spacing: 0px;
+        }
+        QMenuBar::item {
+            background-color: transparent;
+            padding: 8px 10px 4px 10px;
+        }
+        QMenuBar::item:selected {
+            background-color: #5a5a5c;
+            color: #ffffff;
+        }
+        QMenuBar::item:pressed {
+            background-color: #6a6a6c;
+        }
+        QMenu {
+            background-color: #3a3a3c;
+            color: #e0e0ff;
+            border: 1px solid #5a5a5c;
+        }
+        QMenu::item {
+            padding: 6px 24px;
+        }
+        QMenu::item:selected {
+            background-color: #6366f1;
+        }
+        QMenu::separator {
+            height: 1px;
+            background-color: #5a5a5c;
+            margin: 4px 8px;
+        }
+    """
+
+    _TITLE_LABEL_STYLE = """
+        QLabel {
+            background-color: transparent;
+            color: #e0e0ff;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'Segoe UI', sans-serif;
+        }
+    """
+
+    _WINDOW_BUTTON_STYLE = """
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            color: #808098;
+            font-size: 14px;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        QPushButton:hover {
+            background-color: #3d3d5c;
+            color: #ffffff;
+        }
+    """
+
+    _CLOSE_BUTTON_STYLE = """
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            color: #808098;
+            font-size: 14px;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        QPushButton:hover {
+            background-color: #e81123;
+            color: #ffffff;
+        }
+    """
+
+    _TITLE_BAR_STYLE = """
+        #customTitleBar {
+            background-color: #2c2c2e;
+            border-bottom: 1px solid #3a3a3c;
+        }
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,118 +117,47 @@ class CustomTitleBar(QFrame):
         layout.setContentsMargins(8, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Menu bar (File, View, Help) - LEFT
-        from PyQt6.QtWidgets import QMenuBar, QMenu
+        self._build_menu_bar(layout)
+        layout.addStretch()
+        self._build_title_label(layout)
+        layout.addStretch()
+        self._build_window_buttons(layout)
+
+        self.setStyleSheet(self._TITLE_BAR_STYLE)
+
+    def _build_menu_bar(self, layout: QHBoxLayout) -> None:
+        """Create the integrated menu bar widget on the title bar."""
+        from PyQt6.QtWidgets import QMenuBar
         self.menu_bar = QMenuBar()
-        self.menu_bar.setStyleSheet("""
-            QMenuBar {
-                background-color: transparent;
-                color: #c0c0d0;
-                font-size: 12px;
-                border: none;
-                spacing: 0px;
-            }
-            QMenuBar::item {
-                background-color: transparent;
-                padding: 8px 10px 4px 10px;
-            }
-            QMenuBar::item:selected {
-                background-color: #5a5a5c;
-                color: #ffffff;
-            }
-            QMenuBar::item:pressed {
-                background-color: #6a6a6c;
-            }
-            QMenu {
-                background-color: #3a3a3c;
-                color: #e0e0ff;
-                border: 1px solid #5a5a5c;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-            }
-            QMenu::item:selected {
-                background-color: #6366f1;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #5a5a5c;
-                margin: 4px 8px;
-            }
-        """)
+        self.menu_bar.setStyleSheet(self._MENU_BAR_STYLE)
         layout.addWidget(self.menu_bar)
 
-        layout.addStretch()
-
-        # App title - CENTER
+    def _build_title_label(self, layout: QHBoxLayout) -> None:
+        """Create the centered application title label."""
         self.title_label = QLabel("OpenWhisper")
-        self.title_label.setStyleSheet("""
-            QLabel {
-                background-color: transparent;
-                color: #e0e0ff;
-                font-size: 13px;
-                font-weight: 600;
-                font-family: 'Segoe UI', sans-serif;
-            }
-        """)
+        self.title_label.setStyleSheet(self._TITLE_LABEL_STYLE)
         layout.addWidget(self.title_label)
 
-        layout.addStretch()
-
-        # Window buttons
-        button_style = """
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                color: #808098;
-                font-size: 14px;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QPushButton:hover {
-                background-color: #3d3d5c;
-                color: #ffffff;
-            }
-        """
-        close_button_style = """
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                color: #808098;
-                font-size: 14px;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QPushButton:hover {
-                background-color: #e81123;
-                color: #ffffff;
-            }
-        """
-
+    def _build_window_buttons(self, layout: QHBoxLayout) -> None:
+        """Create the minimize/maximize/close window-control buttons."""
         self.minimize_btn = QPushButton("─")
         self.minimize_btn.setFixedSize(46, 32)
-        self.minimize_btn.setStyleSheet(button_style)
+        self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.minimize_btn.clicked.connect(self._minimize)
 
         self.maximize_btn = QPushButton("□")
         self.maximize_btn.setFixedSize(46, 32)
-        self.maximize_btn.setStyleSheet(button_style)
+        self.maximize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.maximize_btn.clicked.connect(self._toggle_maximize)
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(46, 32)
-        self.close_btn.setStyleSheet(close_button_style)
+        self.close_btn.setStyleSheet(self._CLOSE_BUTTON_STYLE)
         self.close_btn.clicked.connect(self._close)
 
         layout.addWidget(self.minimize_btn)
         layout.addWidget(self.maximize_btn)
         layout.addWidget(self.close_btn)
-
-        # Match transcription box and dropdown background
-        self.setStyleSheet("""
-            #customTitleBar {
-                background-color: #2c2c2e;
-                border-bottom: 1px solid #3a3a3c;
-            }
-        """)
 
     def _minimize(self):
         if self.parent_window:
@@ -212,19 +225,19 @@ class CustomTitleBar(QFrame):
 
 from ui_qt.widgets import (
     HeaderCard, Card, PrimaryButton, DangerButton,
-    SuccessButton, WarningButton, ControlPanel, ModernButton,
+    SuccessButton, WarningButton, ControlPanel, Button,
     HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget,
     TabbedContentWidget, QuickRecordTab
 )
 from services.history_manager import history_manager
 
 
-class ModernMainWindow(QMainWindow):
+class MainWindow(QMainWindow):
     """Modern PyQt6 main window with clean, professional design."""
 
     # Signals for application events
     record_toggled = pyqtSignal(bool)
-    record_canceled = pyqtSignal()
+    record_cancelled = pyqtSignal()
     model_changed = pyqtSignal(str)
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
@@ -240,7 +253,6 @@ class ModernMainWindow(QMainWindow):
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
         self.setWindowTitle("OpenWhisper")
 
         # Frameless window with custom title bar
@@ -338,7 +350,7 @@ class ModernMainWindow(QMainWindow):
 
         # Connect Quick Record tab signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
-        self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
+        self.quick_record_tab.record_cancelled.connect(self._on_quick_record_cancelled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
 
         # Connect stats visibility change
@@ -396,7 +408,7 @@ class ModernMainWindow(QMainWindow):
         test_overlays_menu.addAction("Recording", lambda: self.test_overlay("recording"))
         test_overlays_menu.addAction("Processing", lambda: self.test_overlay("processing"))
         test_overlays_menu.addAction("Transcribing", lambda: self.test_overlay("transcribing"))
-        test_overlays_menu.addAction("Canceling", lambda: self.test_overlay("canceling"))
+        test_overlays_menu.addAction("Cancelling", lambda: self.test_overlay("cancelling"))
         test_overlays_menu.addSeparator()
         test_overlays_menu.addAction("STT Enable", lambda: self.test_overlay("stt_enable"))
         test_overlays_menu.addAction("STT Disable", lambda: self.test_overlay("stt_disable"))
@@ -422,14 +434,14 @@ class ModernMainWindow(QMainWindow):
             saved_model = settings_manager.load_model_selection()
             self.quick_record_tab.set_model_selection(saved_model)
             self.current_model = self.quick_record_tab.current_model
-            self.logger.info(f"Loaded saved model selection: {saved_model}")
+            logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
-            self.logger.error(f"Failed to load saved settings: {e}")
+            logger.error(f"Failed to load saved settings: {e}")
             # Use default (already set)
 
     def _on_tab_changed(self, index: int):
         """Handle tab selection change."""
-        self.logger.debug(f"Tab changed to index {index}")
+        logger.debug(f"Tab changed to index {index}")
 
         self.history_sidebar.refresh()
 
@@ -448,12 +460,12 @@ class ModernMainWindow(QMainWindow):
 
         self.record_toggled.emit(is_recording)
 
-    def _on_quick_record_canceled(self):
+    def _on_quick_record_cancelled(self):
         """Handle cancel from Quick Record tab."""
         self.is_recording = False
         self.tabbed_content.set_recording_state(False, -1)
 
-        self.record_canceled.emit()
+        self.record_cancelled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
@@ -485,9 +497,9 @@ class ModernMainWindow(QMainWindow):
         """
         self.quick_record_tab.set_device_info(device_info)
 
-    def set_transcription(self, text: str):
+    def set_transcript(self, text: str):
         """Set the transcription text."""
-        self.quick_record_tab.set_transcription(text)
+        self.quick_record_tab.set_transcript(text)
 
     def append_transcription(self, text: str):
         """Append text to the transcription."""
@@ -510,7 +522,7 @@ class ModernMainWindow(QMainWindow):
         """Clear partial transcription buffer."""
         self.quick_record_tab.clear_partial_transcription()
 
-    def set_transcription_stats(
+    def set_transcript_stats(
         self,
         transcription_time: float,
         audio_duration: float,
@@ -523,7 +535,7 @@ class ModernMainWindow(QMainWindow):
             audio_duration: Duration of the audio in seconds.
             file_size: Size of the audio file in bytes.
         """
-        self.quick_record_tab.set_transcription_stats(
+        self.quick_record_tab.set_transcript_stats(
             transcription_time, audio_duration, file_size
         )
 
@@ -557,43 +569,43 @@ class ModernMainWindow(QMainWindow):
 
     def open_settings(self):
         """Open settings dialog."""
-        self.logger.info("Opening settings dialog")
+        logger.info("Opening settings dialog")
         self.settings_requested.emit()
 
     def open_hotkey_settings(self):
         """Open hotkey settings dialog."""
-        self.logger.info("Opening hotkey settings")
+        logger.info("Opening hotkey settings")
         self.hotkeys_requested.emit()
 
     def upload_audio_file(self):
         """Request to upload an audio file for transcription."""
-        self.logger.info("Upload audio file requested")
+        logger.info("Upload audio file requested")
         self.upload_audio_requested.emit()
 
     def switch_to_quick_record(self):
         """Switch to the Quick Record tab."""
-        self.logger.info("Switching to Quick Record tab")
+        logger.info("Switching to Quick Record tab")
         self.tabbed_content.set_current_index(TabbedContentWidget.TAB_QUICK_RECORD)
 
     def toggle_overlay(self):
         """Toggle the overlay visibility."""
-        self.logger.info("Toggling overlay")
+        logger.info("Toggling overlay")
         self.overlay_toggle_requested.emit()
 
     def test_overlay(self, state: str):
         """Test a specific overlay state."""
-        self.logger.info(f"Testing overlay state: {state}")
+        logger.info(f"Testing overlay state: {state}")
         self.test_overlay_requested.emit(state)
 
     def test_loading_screen(self):
         """Show the loading screen for testing purposes."""
-        self.logger.info("Testing loading screen")
+        logger.info("Testing loading screen")
 
         if self.test_loading_screen_instance:
             self.test_loading_screen_instance.destroy()
             self.test_loading_screen_instance = None
 
-        self.test_loading_screen_instance = ModernLoadingScreen()
+        self.test_loading_screen_instance = LoadingScreen()
         self.test_loading_screen_instance.show()
 
         # Simulate some activity
@@ -615,24 +627,24 @@ class ModernMainWindow(QMainWindow):
 
     def show_about(self):
         """Show about dialog."""
-        self.logger.info("Showing about dialog")
+        logger.info("Showing about dialog")
         self.about_requested.emit()
 
     def minimize_to_tray(self):
         """Minimize the window to the system tray."""
-        self.logger.info("Minimizing to tray")
+        logger.info("Minimizing to tray")
         self.hide()
 
     def quit_application(self):
         """Quit the application completely (bypasses minimize to tray)."""
-        self.logger.info("Quitting application")
+        logger.info("Quitting application")
         self._force_quit = True
         from PyQt6.QtWidgets import QApplication
         QApplication.instance().quit()
 
     def toggle_history(self):
         """Toggle the history sidebar visibility."""
-        self.logger.info("Toggling history sidebar")
+        logger.info("Toggling history sidebar")
 
         # Update the edge tab arrow direction immediately for instant visual feedback
         will_be_expanded = not self.history_sidebar.is_expanded
@@ -695,7 +707,7 @@ class ModernMainWindow(QMainWindow):
         """Handle history entry selection - show full transcription and copy to clipboard."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
-            self.quick_record_tab.set_transcription(entry.text)
+            self.quick_record_tab.set_transcript(entry.text)
 
             # Copy to clipboard
             try:
@@ -709,10 +721,10 @@ class ModernMainWindow(QMainWindow):
                 if self.on_show_copied_animation:
                     self.on_show_copied_animation()
 
-                self.logger.info(f"Loaded and copied history entry: {entry_id[:8]}...")
+                logger.info(f"Loaded and copied history entry: {entry_id[:8]}...")
             except Exception as e:
-                self.logger.error(f"Failed to copy to clipboard: {e}")
-                self.logger.info(f"Loaded history entry: {entry_id[:8]}...")
+                logger.error(f"Failed to copy to clipboard: {e}")
+                logger.info(f"Loaded history entry: {entry_id[:8]}...")
 
     def _on_history_entry_copied(self, entry_id: str):
         """Handle history entry copied notification."""
@@ -726,23 +738,23 @@ class ModernMainWindow(QMainWindow):
         # Auto-clear status after delay
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
-    def _on_retranscribe_requested(self, audio_file_path: str):
+    def _on_retranscribe_requested(self, audio_path: str):
         """Handle re-transcription request."""
-        self.logger.info(f"Re-transcribe requested: {audio_file_path}")
-        self.retranscribe_requested.emit(audio_file_path)
+        logger.info(f"Re-transcribe requested: {audio_path}")
+        self.retranscribe_requested.emit(audio_path)
 
     def closeEvent(self, event):
         """Handle window close event."""
-        self.logger.info("Main window closing")
+        logger.info("Main window closing")
         try:
             if self.test_loading_screen_instance:
                 self.test_loading_screen_instance.destroy()
         except Exception as e:
-            self.logger.debug(f"Error destroying loading screen: {e}")
+            logger.debug(f"Error destroying loading screen: {e}")
 
         # If force quit is set, close immediately
         if self._force_quit:
-            self.logger.info("Force quit - closing application")
+            logger.info("Force quit - closing application")
             event.accept()
             return
 
@@ -751,7 +763,7 @@ class ModernMainWindow(QMainWindow):
             settings = settings_manager.load_all_settings()
             minimize_tray = settings.get('minimize_tray', True)  # Default to True
         except Exception as e:
-            self.logger.error(f"Failed to load settings: {e}")
+            logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error
 
         if minimize_tray:
@@ -759,9 +771,9 @@ class ModernMainWindow(QMainWindow):
             event.ignore()
             try:
                 self.hide()
-                self.logger.info("Window hidden to system tray")
+                logger.info("Window hidden to system tray")
             except Exception as e:
-                self.logger.debug(f"Error hiding window: {e}")
+                logger.debug(f"Error hiding window: {e}")
                 # If hiding fails, accept the close event
                 event.accept()
         else:
@@ -774,7 +786,7 @@ class ModernMainWindow(QMainWindow):
 
         Args:
             record_key: The key for recording
-            cancel_key: The key for canceling
+            cancel_key: The key for cancelling
             enable_disable_key: The key for enabling/disabling STT
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
@@ -933,7 +945,7 @@ class ModernMainWindow(QMainWindow):
                 geo.x(), geo.y(), geo.width(), geo.height()
             )
         except Exception as e:
-            self.logger.warning(f"Failed to save window geometry: {e}")
+            logger.warning(f"Failed to save window geometry: {e}")
 
     def _restore_window_geometry(self):
         """Restore window geometry from settings."""
@@ -956,12 +968,12 @@ class ModernMainWindow(QMainWindow):
                         max_height = screen_geo.height()
                         height = max(self.minimumHeight(), min(geo['height'], max_height))
                         self.setGeometry(geo['x'], geo['y'], width, height)
-                        self.logger.info(f"Restored window geometry: {geo}")
+                        logger.info(f"Restored window geometry: {geo}")
                         return
 
-            self.logger.debug("No valid saved geometry, using default")
+            logger.debug("No valid saved geometry, using default")
         except Exception as e:
-            self.logger.warning(f"Failed to restore window geometry: {e}")
+            logger.warning(f"Failed to restore window geometry: {e}")
 
     def resizeEvent(self, event):
         """Handle resize event to save geometry."""

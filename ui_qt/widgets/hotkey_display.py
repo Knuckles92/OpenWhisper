@@ -52,7 +52,7 @@ class HotkeyKey(QLabel):
         Set the visual state of the key.
 
         Args:
-            state: One of 'idle', 'recording', 'processing', 'canceling'
+            state: One of 'idle', 'recording', 'processing', 'cancelling'
         """
         self._state = state
 
@@ -61,7 +61,7 @@ class HotkeyKey(QLabel):
             'idle': '#48484a',
             'recording': '#30d158',
             'processing': '#0a84ff',
-            'canceling': '#ff453a'
+            'cancelling': '#ff453a'
         }
 
         target_color = color_map.get(state, '#48484a')
@@ -160,7 +160,7 @@ class HotkeyDisplay(QWidget):
         Set the visual state of all hotkey buttons.
 
         Args:
-            state: One of 'idle', 'recording', 'processing', 'canceling'
+            state: One of 'idle', 'recording', 'processing', 'cancelling'
         """
         for widget in self._hotkey_widgets:
             if isinstance(widget, HotkeyKey):
@@ -172,7 +172,7 @@ class HotkeyDisplay(QWidget):
 
         Args:
             record_key: The key for recording
-            cancel_key: The key for canceling
+            cancel_key: The key for cancelling
             enable_disable_key: The key for enabling/disabling STT
         """
         # Get the key widgets (indices 1, 4, and 7 in the layout)

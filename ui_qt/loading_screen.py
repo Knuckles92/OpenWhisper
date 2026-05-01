@@ -11,8 +11,10 @@ from PyQt6.QtGui import (
     QLinearGradient, QRadialGradient
 )
 
+logger = logging.getLogger(__name__)
 
-class ModernLoadingScreen(QWidget):
+
+class LoadingScreen(QWidget):
     """
     Unified modern loading screen with custom painting.
     Features a dark theme with static display for fast startup.
@@ -24,7 +26,6 @@ class ModernLoadingScreen(QWidget):
     def __init__(self):
         """Initialize loading screen."""
         super().__init__()
-        self.logger = logging.getLogger(__name__)
 
         # Window setup
         self.setWindowFlags(
@@ -139,7 +140,7 @@ class ModernLoadingScreen(QWidget):
     def closeEvent(self, event):
         """Handle closing."""
         event.accept()
-        self.logger.info("Loading screen closed")
+        logger.info("Loading screen closed")
 
     def destroy(self, destroyWindow=True, destroySubWindows=True):
         """Destroy the widget."""

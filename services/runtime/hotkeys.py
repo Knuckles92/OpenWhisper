@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Dict
 
 from PyQt6.QtCore import QTimer, Qt
 
+from config import config
 from services.hotkey_manager import HotkeyManager
 from services.settings import settings_manager
 
@@ -28,7 +29,7 @@ class HotkeyRuntime:
         self.controller.hotkey_manager = HotkeyManager(hotkeys)
         self.controller.hotkey_manager.set_callbacks(
             on_record_toggle=self.controller.toggle_recording,
-            on_cancel=self.controller.cancel_recording,
+            on_cancel=self.controller.cancel,
             on_status_update=self.controller.update_status_with_auto_hide,
             on_status_update_auto_hide=self.controller.update_status_with_auto_hide,
         )
@@ -44,8 +45,8 @@ class HotkeyRuntime:
 
     def setup_hook_watchdog(self) -> None:
         """Setup timers to detect sleep and refresh the keyboard hook."""
-        self.controller._watchdog_interval_ms = 10_000
-        self.controller._sleep_gap_threshold_sec = 30.0
+        self.controller._watchdog_interval_ms = config.HOTKEY_WATCHDOG_INTERVAL_MS
+        self.controller._sleep_gap_threshold_sec = config.HOTKEY_SLEEP_GAP_THRESHOLD_SEC
         self.controller._expected_watchdog_time = time.monotonic() + (
             self.controller._watchdog_interval_ms / 1000.0
         )
@@ -56,7 +57,7 @@ class HotkeyRuntime:
         self.controller._watchdog_timer.timeout.connect(self.on_watchdog_tick)
         self.controller._watchdog_timer.start(self.controller._watchdog_interval_ms)
 
-        self.controller._periodic_refresh_interval_ms = 5 * 60 * 1000
+        self.controller._periodic_refresh_interval_ms = config.HOTKEY_HOOK_REFRESH_INTERVAL_MS
         self.controller._periodic_refresh_timer = QTimer()
         self.controller._periodic_refresh_timer.setTimerType(Qt.TimerType.VeryCoarseTimer)
         self.controller._periodic_refresh_timer.timeout.connect(
@@ -67,7 +68,9 @@ class HotkeyRuntime:
         )
 
         logging.info(
-            "Hook watchdog started: sleep detection every 10s, periodic refresh every 5m"
+            "Hook watchdog started: sleep detection every %dms, periodic refresh every %dms",
+            config.HOTKEY_WATCHDOG_INTERVAL_MS,
+            config.HOTKEY_HOOK_REFRESH_INTERVAL_MS,
         )
 
     def on_watchdog_tick(self) -> None:

@@ -186,8 +186,8 @@ class ParticleStyle(BaseWaveformStyle):
         self._draw_particles(painter)
         self._draw_text(painter, rect, message)
 
-    def draw_canceling_state(self, painter: QPainter, rect: QRect, message: str = "Cancelled"):
-        """Draw canceling state with a quick red burst."""
+    def draw_cancelling_state(self, painter: QPainter, rect: QRect, message: str = "Cancelled"):
+        """Draw cancelling state with a quick red burst."""
         progress = self.get_cancellation_progress()
 
         # Reinitialize burst when a new cancel starts (progress resets)

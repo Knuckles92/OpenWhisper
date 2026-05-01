@@ -5,8 +5,30 @@ import json
 import os
 import logging
 import threading
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Final, Tuple, Optional, List
 from config import config
+
+
+class SettingsKey:
+    """String keys used in the settings JSON file. Avoids magic strings at call sites."""
+    HOTKEYS: Final[str] = "hotkeys"
+    SELECTED_MODEL: Final[str] = "selected_model"
+    AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
+    CURRENT_WAVEFORM_STYLE: Final[str] = "current_waveform_style"
+    WAVEFORM_STYLE_CONFIGS: Final[str] = "waveform_style_configs"
+    WINDOW_GEOMETRY: Final[str] = "window_geometry"
+    STREAMING_OVERLAY_POSITION: Final[str] = "streaming_overlay_position"
+    AUTO_PASTE: Final[str] = "auto_paste"
+    COPY_CLIPBOARD: Final[str] = "copy_clipboard"
+    MINIMIZE_TRAY: Final[str] = "minimize_tray"
+    STREAMING_ENABLED: Final[str] = "streaming_enabled"
+    STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
+    STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
+    STREAMING_TYPING_DELAY: Final[str] = "streaming_typing_delay"
+    STREAMING_TINY_MODEL_ENABLED: Final[str] = "streaming_tiny_model_enabled"
+    WHISPER_MODEL: Final[str] = "whisper_model"
+    WHISPER_DEVICE: Final[str] = "whisper_device"
+    WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
 
 
 class SettingsManager:

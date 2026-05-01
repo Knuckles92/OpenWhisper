@@ -82,7 +82,7 @@ class TranscriptionRuntime:
             self.on_transcription_error("Audio file is empty or corrupted")
             return
 
-        self.controller._pending_audio_file = config.RECORDED_AUDIO_FILE
+        self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
         self.controller._pending_audio_duration = (
             self.controller.recorder.get_recording_duration()
         )
@@ -108,89 +108,97 @@ class TranscriptionRuntime:
         else:
             self.stop_recording()
 
-    def cancel_recording(self) -> None:
-        """Cancel recording or transcription."""
+    def cancel(self) -> None:
+        """Cancel an active recording or transcription, depending on state."""
         logging.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
 
         if self.controller.recorder.is_recording:
-            self.controller.streaming_runtime.cancel_streaming_session()
-            self.controller.recording_state_changed.emit(False)
-            self.controller.recorder.stop_recording()
-            self.controller.recorder.clear_recording_data()
-            self.controller.status_update.emit("Recording cancelled")
-            logging.info("Recording cancelled")
+            self._cancel_recording()
         elif self.controller.current_backend and self.controller.current_backend.is_transcribing:
-            self.controller.current_backend.cancel_transcription()
-            self.controller.status_update.emit("Transcription cancelled")
-            logging.info("Transcription cancelled")
+            self._cancel_transcription()
         else:
             self.controller.status_update.emit("Cancelled")
 
-    def retranscribe_audio(self, audio_file_path: str) -> None:
+    def _cancel_recording(self) -> None:
+        """Discard the active recording without transcribing."""
+        self.controller.streaming_runtime.cancel_streaming_session()
+        self.controller.recording_state_changed.emit(False)
+        self.controller.recorder.stop_recording()
+        self.controller.recorder.clear_recording_data()
+        self.controller.status_update.emit("Recording cancelled")
+        logging.info("Recording cancelled")
+
+    def _cancel_transcription(self) -> None:
+        """Cancel an in-progress transcription job."""
+        self.controller.current_backend.cancel_transcription()
+        self.controller.status_update.emit("Transcription cancelled")
+        logging.info("Transcription cancelled")
+
+    def retranscribe_audio(self, audio_path: str) -> None:
         """Re-transcribe an existing audio file."""
-        if not os.path.exists(audio_file_path):
+        if not os.path.exists(audio_path):
             logging.error(
-                f"Audio file not found for re-transcription: {audio_file_path}"
+                f"Audio file not found for re-transcription: {audio_path}"
             )
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
-        logging.info(f"Re-transcribing audio file: {audio_file_path}")
-        self.controller._pending_audio_file = None
+        logging.info(f"Re-transcribing audio file: {audio_path}")
+        self.controller._pending_audio_path = None
         self.controller.status_update.emit("Processing...")
 
         try:
-            self.controller._pending_file_size = os.path.getsize(audio_file_path)
+            self.controller._pending_file_size = os.path.getsize(audio_path)
             self.controller._pending_audio_duration = None
-            self._submit_transcription_job(audio_file_path)
+            self._submit_transcription_job(audio_path)
         except Exception as exc:
             logging.error(f"Failed to start re-transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
-    def upload_audio_file(self, audio_file_path: str) -> None:
+    def upload_audio_file(self, audio_path: str) -> None:
         """Transcribe an uploaded audio file."""
-        if not os.path.exists(audio_file_path):
-            logging.error(f"Uploaded audio file not found: {audio_file_path}")
+        if not os.path.exists(audio_path):
+            logging.error(f"Uploaded audio file not found: {audio_path}")
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
-        logging.info(f"Processing uploaded audio file: {audio_file_path}")
-        self.controller._pending_audio_file = None
+        logging.info(f"Processing uploaded audio file: {audio_path}")
+        self.controller._pending_audio_path = None
         self.controller.status_update.emit("Processing uploaded file...")
 
         try:
-            self.controller._pending_file_size = os.path.getsize(audio_file_path)
+            self.controller._pending_file_size = os.path.getsize(audio_path)
             self.controller._pending_audio_duration = None
-            self._submit_transcription_job(audio_file_path)
+            self._submit_transcription_job(audio_path)
         except Exception as exc:
             logging.error(f"Failed to process uploaded audio: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
-    def transcribe_audio_file(self, audio_file_path: str) -> None:
+    def transcribe_audio_file(self, audio_path: str) -> None:
         """Transcribe a single audio file in a background thread."""
         try:
             if self.controller._pending_file_size is None:
-                self.controller._pending_file_size = os.path.getsize(audio_file_path)
+                self.controller._pending_file_size = os.path.getsize(audio_path)
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
-            transcribed_text = self.controller.current_backend.transcribe(audio_file_path)
-            self.controller.transcription_completed.emit(transcribed_text)
+            transcript = self.controller.current_backend.transcribe(audio_path)
+            self.controller.transcription_completed.emit(transcript)
         except Exception as exc:
             logging.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
 
-    def transcribe_large_audio_file(self, audio_file_path: str) -> None:
+    def transcribe_large_audio_file(self, audio_path: str) -> None:
         """Transcribe a large audio file by splitting it into chunks."""
         chunk_files = []
         if self.controller._pending_file_size is None:
-            self.controller._pending_file_size = os.path.getsize(audio_file_path)
+            self.controller._pending_file_size = os.path.getsize(audio_path)
         self.controller._transcription_start_time = time.time()
         try:
             def progress_callback(message: str) -> None:
                 self.controller.status_update.emit(message)
 
             chunk_files = audio_processor.split_audio_file(
-                audio_file_path, progress_callback
+                audio_path, progress_callback
             )
             if not chunk_files:
                 raise Exception("Failed to split audio file")
@@ -199,21 +207,21 @@ class TranscriptionRuntime:
                 self.controller.status_update.emit(
                     f"Transcribing {len(chunk_files)} chunks..."
                 )
-                transcribed_text = self.controller.current_backend.transcribe_chunks(
+                transcript = self.controller.current_backend.transcribe_chunks(
                     chunk_files
                 )
             else:
-                transcriptions = []
+                transcripts = []
                 for index, chunk_file in enumerate(chunk_files):
                     self.controller.status_update.emit(
                         f"Transcribing chunk {index + 1}/{len(chunk_files)}..."
                     )
-                    transcriptions.append(
+                    transcripts.append(
                         self.controller.current_backend.transcribe(chunk_file)
                     )
-                transcribed_text = audio_processor.combine_transcriptions(transcriptions)
+                transcript = audio_processor.combine_transcriptions(transcripts)
 
-            self.controller.transcription_completed.emit(transcribed_text)
+            self.controller.transcription_completed.emit(transcript)
         except Exception as exc:
             logging.error(f"Large audio transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -225,9 +233,9 @@ class TranscriptionRuntime:
                     f"Failed to cleanup temp files: {cleanup_error}"
                 )
 
-    def on_transcription_complete(self, transcribed_text: str) -> None:
+    def on_transcription_complete(self, transcript: str) -> None:
         """Handle transcription completion."""
-        self.controller.ui_controller.set_transcription(transcribed_text)
+        self.controller.ui_controller.set_transcript(transcript)
         self.controller.ui_controller.set_status("Transcription complete!")
         self.controller.ui_controller.hide_overlay()
 
@@ -251,9 +259,9 @@ class TranscriptionRuntime:
                     model_info = f"local_whisper ({local_backend.device_info})"
 
             history_manager.add_entry(
-                text=transcribed_text,
+                text=transcript,
                 model=model_info,
-                source_audio_file=self.controller._pending_audio_file,
+                source_audio_path=self.controller._pending_audio_path,
                 transcription_time=transcription_time,
                 audio_duration=self.controller._pending_audio_duration,
                 file_size=self.controller._pending_file_size,
@@ -263,7 +271,7 @@ class TranscriptionRuntime:
         except Exception as exc:
             logging.error(f"Failed to save transcription to history: {exc}")
         finally:
-            self.controller._pending_audio_file = None
+            self.controller._pending_audio_path = None
             self.controller._pending_audio_duration = None
             self.controller._pending_file_size = None
 
@@ -273,7 +281,7 @@ class TranscriptionRuntime:
 
         if copy_clipboard:
             try:
-                pyperclip.copy(transcribed_text)
+                pyperclip.copy(transcript)
                 logging.info("Transcription copied to clipboard")
             except Exception as exc:
                 logging.error(f"Failed to copy to clipboard: {exc}")
@@ -297,7 +305,7 @@ class TranscriptionRuntime:
     def on_transcription_error(self, error_message: str) -> None:
         """Handle transcription error."""
         self.controller.ui_controller.set_status(f"Error: {error_message}")
-        self.controller.ui_controller.set_transcription(f"Error: {error_message}")
+        self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.ui_controller.hide_overlay()
         if self.controller._streaming_paste_enabled:
             self.controller.caret_indicator_hide.emit()
@@ -332,8 +340,8 @@ class TranscriptionRuntime:
         else:
             overlay.show_at_cursor(overlay.STATE_LARGE_FILE_PROCESSING)
 
-    def _submit_transcription_job(self, audio_file_path: str) -> None:
-        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_file_path)
+    def _submit_transcription_job(self, audio_path: str) -> None:
+        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
         should_split = (
             needs_splitting and self.controller.current_backend.requires_file_splitting
         )
@@ -347,7 +355,7 @@ class TranscriptionRuntime:
                 f"Splitting large file ({file_size_mb:.1f} MB)..."
             )
             self.controller.executor.submit(
-                self.transcribe_large_audio_file, audio_file_path
+                self.transcribe_large_audio_file, audio_path
             )
         elif needs_splitting:
             logging.info(
@@ -357,6 +365,6 @@ class TranscriptionRuntime:
             self.controller.status_update.emit(
                 f"Processing large file ({file_size_mb:.1f} MB)..."
             )
-            self.controller.executor.submit(self.transcribe_audio_file, audio_file_path)
+            self.controller.executor.submit(self.transcribe_audio_file, audio_path)
         else:
-            self.controller.executor.submit(self.transcribe_audio_file, audio_file_path)
+            self.controller.executor.submit(self.transcribe_audio_file, audio_path)

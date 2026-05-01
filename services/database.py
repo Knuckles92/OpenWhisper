@@ -90,7 +90,11 @@ class DatabaseManager:
         logging.info("Database schema initialized")
 
     def _drop_removed_meeting_tables(self) -> None:
-        """Drop meeting-mode tables that may exist from older app versions."""
+        """Drop meeting-mode tables that may exist from older app versions.
+
+        Safe to remove once schema v8 ships and all users have migrated past v7.
+        Track removal target: 2026-12-01.
+        """
         with self.engine.begin() as conn:
             conn.execute(text("DROP INDEX IF EXISTS idx_chunks_meeting_id"))
             conn.execute(text("DROP INDEX IF EXISTS idx_meetings_start_time"))

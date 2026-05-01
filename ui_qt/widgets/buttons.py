@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
 from PyQt6.QtGui import QFont
 
 
-class ModernButton(QPushButton):
+class Button(QPushButton):
     """Modern button with smooth hover and click animations."""
 
     clicked_smooth = pyqtSignal()
@@ -42,7 +42,7 @@ class ModernButton(QPushButton):
             super().setText(self._base_text)
 
 
-class PrimaryButton(ModernButton):
+class PrimaryButton(Button):
     """Primary action button with gradient."""
 
     def __init__(self, text: str = "", parent=None):
@@ -53,7 +53,7 @@ class PrimaryButton(ModernButton):
         self.setMinimumWidth(140)
 
 
-class DangerButton(ModernButton):
+class DangerButton(Button):
     """Danger button for destructive actions."""
 
     def __init__(self, text: str = "", parent=None):
@@ -64,7 +64,7 @@ class DangerButton(ModernButton):
         self.setMinimumWidth(140)
 
 
-class SuccessButton(ModernButton):
+class SuccessButton(Button):
     """Success button for positive actions."""
 
     def __init__(self, text: str = "", parent=None):
@@ -75,7 +75,7 @@ class SuccessButton(ModernButton):
         self.setMinimumWidth(140)
 
 
-class WarningButton(ModernButton):
+class WarningButton(Button):
     """Warning button for caution actions (yellow/amber)."""
 
     def __init__(self, text: str = "", parent=None):
@@ -86,7 +86,7 @@ class WarningButton(ModernButton):
         self.setMinimumWidth(140)
 
 
-class IconButton(ModernButton):
+class IconButton(Button):
     """Small button, typically used for icons."""
 
     def __init__(self, icon=None, parent=None):
