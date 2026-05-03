@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from services.settings import settings_manager
+from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class TabbedContentWidget(QWidget):
         """Restore the last selected tab from settings."""
         try:
             settings = settings_manager.load_all_settings()
-            last_tab = settings.get('last_tab_index', self.TAB_QUICK_RECORD)
+            last_tab = settings.get(SettingsKey.LAST_TAB_INDEX, self.TAB_QUICK_RECORD)
             if 0 <= last_tab < self.tab_bar.count():
                 self.tab_bar.setCurrentIndex(last_tab)
         except Exception as e:
@@ -109,7 +109,7 @@ class TabbedContentWidget(QWidget):
 
         # Save the selected tab
         try:
-            settings_manager.save_setting('last_tab_index', index)
+            settings_manager.save_setting(SettingsKey.LAST_TAB_INDEX, index)
         except Exception as e:
             logger.warning(f"Failed to save tab selection: {e}")
 

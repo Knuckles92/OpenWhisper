@@ -30,9 +30,9 @@ class LocalWhisperBackend(TranscriptionBackend):
         super().__init__()
         # Read model from settings if not explicitly provided
         if model_name is None:
-            from services.settings import settings_manager
+            from services.settings import SettingsKey, settings_manager
             settings = settings_manager.load_all_settings()
-            model_name = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
+            model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
         self.model_name = model_name  # May be "auto", resolved in _load_model
         self.model: Optional[WhisperModel] = None
         self._device: Optional[str] = None
@@ -106,21 +106,21 @@ class LocalWhisperBackend(TranscriptionBackend):
             - model: "turbo" for GPU, "base" for CPU
         """
         # Use override values if provided, otherwise check user settings
-        from services.settings import settings_manager
+        from services.settings import SettingsKey, settings_manager
         settings = settings_manager.load_all_settings()
 
         if self._override_device is not None:
             device = self._override_device
         else:
-            device = settings.get('whisper_device', config.FASTER_WHISPER_DEVICE)
+            device = settings.get(SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE)
 
         if self._override_compute_type is not None:
             compute_type = self._override_compute_type
         else:
-            compute_type = settings.get('whisper_compute_type', config.FASTER_WHISPER_COMPUTE_TYPE)
+            compute_type = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, config.FASTER_WHISPER_COMPUTE_TYPE)
 
         # Get model from settings (no override for model, use model_name parameter instead)
-        model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
+        model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
 
         # Auto-detect based on CUDA availability
         has_cuda = False
@@ -224,8 +224,8 @@ class LocalWhisperBackend(TranscriptionBackend):
             text_parts = []
             for segment in segments:
                 if self.should_cancel:
-                    logging.info("Transcription cancelled by user")
-                    raise Exception("Transcription cancelled")
+                    logging.info("Transcription canceled by user")
+                    raise Exception("Transcription canceled")
                 text_parts.append(segment.text)
 
             transcript = " ".join(text_parts).strip()
@@ -239,7 +239,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             return transcript
 
         except Exception as e:
-            if "cancelled" not in str(e).lower():
+            if "canceled" not in str(e).lower():
                 logging.error(f"Transcription failed: {e}")
             raise
         finally:
@@ -275,8 +275,8 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             for i, chunk_file in enumerate(chunk_files):
                 if self.should_cancel:
-                    logging.info("Chunked transcription cancelled by user")
-                    raise Exception("Transcription cancelled")
+                    logging.info("Chunked transcription canceled by user")
+                    raise Exception("Transcription canceled")
 
                 logging.info(f"Processing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
 
@@ -292,8 +292,8 @@ class LocalWhisperBackend(TranscriptionBackend):
                 text_parts = []
                 for segment in segments:
                     if self.should_cancel:
-                        logging.info("Transcription cancelled during chunk processing")
-                        raise Exception("Transcription cancelled")
+                        logging.info("Transcription canceled during chunk processing")
+                        raise Exception("Transcription canceled")
                     text_parts.append(segment.text)
 
                 chunk_text = " ".join(text_parts).strip()
@@ -312,7 +312,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             return combined_text
 
         except Exception as e:
-            if "cancelled" not in str(e).lower():
+            if "canceled" not in str(e).lower():
                 logging.error(f"Chunked transcription failed: {e}")
             raise
         finally:
@@ -336,9 +336,9 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.model_name = model_name
         else:
             # Read from settings when no explicit model provided
-            from services.settings import settings_manager
+            from services.settings import SettingsKey, settings_manager
             settings = settings_manager.load_all_settings()
-            self.model_name = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
+            self.model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
         # Clean up existing model first
         self.cleanup()
         self._load_model()

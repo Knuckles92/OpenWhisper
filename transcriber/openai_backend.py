@@ -97,8 +97,8 @@ class OpenAIBackend(TranscriptionBackend):
                 )
 
             if self.should_cancel:
-                logging.info("Transcription cancelled by user")
-                raise Exception("Transcription cancelled")
+                logging.info("Transcription canceled by user")
+                raise Exception("Transcription canceled")
 
             transcript = response.strip()
             logging.info(f"API transcription complete. Length: {len(transcript)} characters")
@@ -154,8 +154,8 @@ class OpenAIBackend(TranscriptionBackend):
 
             for i, chunk_file in enumerate(chunk_files):
                 if self.should_cancel:
-                    logging.info("Chunked transcription cancelled by user")
-                    raise Exception("Transcription cancelled")
+                    logging.info("Chunked transcription canceled by user")
+                    raise Exception("Transcription canceled")
 
                 logging.info(f"Processing chunk {i+1}/{len(chunk_files)} with OpenAI API: {chunk_file}")
 

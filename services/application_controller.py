@@ -35,6 +35,7 @@ class ApplicationController(QObject):
     streaming_overlay_hide = pyqtSignal()
     caret_indicator_show = pyqtSignal()
     caret_indicator_hide = pyqtSignal()
+    overlay_state_update = pyqtSignal(object)
 
     def __init__(self, ui_controller):
         super().__init__()
@@ -178,6 +179,8 @@ class ApplicationController(QObject):
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.status_update.connect(self.ui_controller.set_status)
+        if hasattr(self.ui_controller, "set_overlay_state"):
+            self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.partial_transcription.connect(
@@ -212,10 +215,10 @@ class ApplicationController(QObject):
 
         try:
             if self.current_backend and self.current_backend.is_transcribing:
-                logging.info("Cancelling ongoing transcription...")
+                logging.info("Canceling ongoing transcription...")
                 self.current_backend.cancel_transcription()
         except Exception as exc:
-            logging.debug(f"Error cancelling transcription: {exc}")
+            logging.debug(f"Error canceling transcription: {exc}")
 
         try:
             if hasattr(self, "_watchdog_timer") and self._watchdog_timer:

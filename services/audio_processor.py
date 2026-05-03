@@ -13,6 +13,9 @@ from typing import Callable, List, Tuple, Optional, Dict, Any
 from pathlib import Path
 from config import config
 
+INT16_MIN = -32768
+INT16_MAX = 32767
+
 
 @dataclass
 class AudioFilePreview:
@@ -51,19 +54,19 @@ class AudioProcessor:
         """Initialize the audio processor."""
         self.temp_files: List[str] = []  # Track temporary files for cleanup
 
-    def check_file_size(self, file_path: str) -> Tuple[bool, float]:
+    def check_file_size(self, audio_path: str) -> Tuple[bool, float]:
         """Check if audio file exceeds size limit.
 
         Args:
-            file_path: Path to the audio file to check.
+            audio_path: Path to the audio file to check.
 
         Returns:
             Tuple of (needs_splitting, file_size_mb)
         """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Audio file not found: {file_path}")
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        file_size_bytes = os.path.getsize(file_path)
+        file_size_bytes = os.path.getsize(audio_path)
         file_size_mb = file_size_bytes / (1024 * 1024)  # Convert to MB
 
         needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
@@ -74,14 +77,14 @@ class AudioProcessor:
 
         return needs_splitting, file_size_mb
 
-    def preview_file(self, file_path: str) -> AudioFilePreview:
+    def preview_file(self, audio_path: str) -> AudioFilePreview:
         """Analyze an audio file and return preview information.
 
         This method provides metadata about the file including estimated
         chunk information without actually splitting the file.
 
         Args:
-            file_path: Path to the audio file to analyze.
+            audio_path: Path to the audio file to analyze.
 
         Returns:
             AudioFilePreview with file metadata and chunk estimates.
@@ -90,16 +93,16 @@ class AudioProcessor:
             FileNotFoundError: If the file doesn't exist.
             ValueError: If the file format is not supported.
         """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Audio file not found: {file_path}")
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        file_name = os.path.basename(file_path)
-        file_size_bytes = os.path.getsize(file_path)
+        file_name = os.path.basename(audio_path)
+        file_size_bytes = os.path.getsize(audio_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
 
         # Load audio to get duration and metadata
         try:
-            audio_data, sample_rate, channels = self._load_audio_metadata(file_path)
+            audio_data, sample_rate, channels = self._load_audio_metadata(audio_path)
         except Exception as e:
             raise ValueError(f"Failed to read audio file: {e}")
 
@@ -136,7 +139,7 @@ class AudioProcessor:
                     f"{duration_seconds:.1f}s, {estimated_chunks} chunk(s)")
 
         return AudioFilePreview(
-            file_path=file_path,
+            file_path=audio_path,
             file_name=file_name,
             file_size_mb=file_size_mb,
             duration_seconds=duration_seconds,
@@ -194,34 +197,34 @@ class AudioProcessor:
             self.cleanup_temp_files()
             raise
 
-    def _load_audio_data(self, file_path: str) -> Tuple[np.ndarray, int]:
+    def _load_audio_data(self, audio_path: str) -> Tuple[np.ndarray, int]:
         """Load audio data from any supported audio format using PyAV.
 
         Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
 
         Args:
-            file_path: Path to the audio file.
+            audio_path: Path to the audio file.
 
         Returns:
             Tuple of (audio_data, sample_rate) where audio_data is mono int16.
         """
-        audio_data, sample_rate, _ = self._load_audio_metadata(file_path)
+        audio_data, sample_rate, _ = self._load_audio_metadata(audio_path)
         return audio_data, sample_rate
 
-    def _load_audio_metadata(self, file_path: str) -> Tuple[np.ndarray, int, int]:
+    def _load_audio_metadata(self, audio_path: str) -> Tuple[np.ndarray, int, int]:
         """Load audio data and metadata from any supported audio format using PyAV.
 
         Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
 
         Args:
-            file_path: Path to the audio file.
+            audio_path: Path to the audio file.
 
         Returns:
             Tuple of (audio_data, sample_rate, channels) where audio_data is mono int16.
         """
         import av
 
-        container = av.open(file_path)
+        container = av.open(audio_path)
 
         # Get the audio stream
         if not container.streams.audio:
@@ -255,7 +258,7 @@ class AudioProcessor:
 
         # Convert from float [-1.0, 1.0] to int16 [-32768, 32767]
         # PyAV decodes to float32 by default
-        audio_data = (audio_float * 32767).clip(-32768, 32767).astype(np.int16)
+        audio_data = (audio_float * INT16_MAX).clip(INT16_MIN, INT16_MAX).astype(np.int16)
 
         return audio_data, sample_rate, channels
 

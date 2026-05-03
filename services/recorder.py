@@ -8,8 +8,10 @@ import logging
 import numpy as np
 import time
 
-from typing import List, Optional, Callable, Tuple
+from typing import Callable, List, Optional, Tuple
 from config import config
+
+AudioLevelCallback = Callable[[float], None]
 
 
 class AudioRecorder:
@@ -54,7 +56,7 @@ class AudioRecorder:
         self.rate = config.SAMPLE_RATE
 
         # Audio level callback
-        self.audio_level_callback: Optional[Callable[[float], None]] = None
+        self.audio_level_callback: Optional[AudioLevelCallback] = None
 
         # Streaming transcription callback
         self.streaming_callback: Optional[Callable[[np.ndarray], None]] = None
@@ -68,7 +70,7 @@ class AudioRecorder:
 
         logging.info("Audio recorder initialized")
 
-    def set_audio_level_callback(self, callback: Callable[[float], None]):
+    def set_audio_level_callback(self, callback: AudioLevelCallback):
         """Set callback function for real-time audio level updates.
 
         Args:

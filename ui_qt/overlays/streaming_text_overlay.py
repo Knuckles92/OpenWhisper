@@ -27,7 +27,7 @@ class StreamingTextOverlay(QWidget):
     STATE_IDLE = "idle"
     STATE_STREAMING = "streaming"
     STATE_FINALIZING = "finalizing"
-    STATE_CANCELLING = "cancelling"
+    STATE_CANCELING = "canceling"
 
     def __init__(self):
         """Initialize the streaming text overlay."""
@@ -156,8 +156,8 @@ class StreamingTextOverlay(QWidget):
         path.addRoundedRect(float(rect.x()), float(rect.y()),
                            float(rect.width()), float(rect.height()), 12, 12)
 
-        # Semi-transparent dark background (with red tint when cancelling)
-        if self.current_state == self.STATE_CANCELLING:
+        # Semi-transparent dark background (with red tint when canceling)
+        if self.current_state == self.STATE_CANCELING:
             # Blend in red based on flash intensity
             red_blend = int(45 + 30 * self._cancel_flash_intensity)
             green_blend = int(45 - 20 * self._cancel_flash_intensity)
@@ -174,7 +174,7 @@ class StreamingTextOverlay(QWidget):
             pulse = (1 + abs(self._pulse_phase)) / 2  # 0.5 to 1.0
             alpha = int(100 + 100 * pulse)
             border_color = QColor(99, 102, 241, alpha)
-        elif self.current_state == self.STATE_CANCELLING:
+        elif self.current_state == self.STATE_CANCELING:
             # Red border with flash effect
             flash = self._cancel_flash_intensity
             # Transition from purple to red
@@ -186,8 +186,8 @@ class StreamingTextOverlay(QWidget):
         else:
             border_color = QColor(99, 102, 241, 150)
 
-        # Draw border (thicker when cancelling)
-        border_width = 3 if self.current_state == self.STATE_CANCELLING else 2
+        # Draw border (thicker when canceling)
+        border_width = 3 if self.current_state == self.STATE_CANCELING else 2
         painter.setPen(QPen(border_color, border_width))
         painter.drawPath(path)
 
@@ -203,7 +203,7 @@ class StreamingTextOverlay(QWidget):
                                int(dot_size), int(dot_size))
 
         # Cancel animation effects
-        if self.current_state == self.STATE_CANCELLING:
+        if self.current_state == self.STATE_CANCELING:
             self._draw_cancel_effects(painter, rect)
 
         painter.end()
@@ -278,7 +278,7 @@ class StreamingTextOverlay(QWidget):
         self._animation_time += delta_time
 
         # Handle cancel animation
-        if self.current_state == self.STATE_CANCELLING:
+        if self.current_state == self.STATE_CANCELING:
             self._cancel_progress = min(1.0, self._animation_time / self._cancel_duration)
 
             # Flash intensity decays quickly at start
@@ -298,7 +298,7 @@ class StreamingTextOverlay(QWidget):
         self._pulse_phase = abs(self._animation_time * 4) % 2 - 1  # -1 to 1
 
         # Update display text with animated ellipsis (not during cancel)
-        if self.current_state != self.STATE_CANCELLING:
+        if self.current_state != self.STATE_CANCELING:
             self._update_display_text()
 
         self.update()
@@ -415,8 +415,8 @@ class StreamingTextOverlay(QWidget):
         Transitions the overlay to cancel state with visual effects,
         then automatically hides after the animation completes.
         """
-        if self.current_state == self.STATE_CANCELLING:
-            return  # Already cancelling
+        if self.current_state == self.STATE_CANCELING:
+            return  # Already canceling
 
         logger.debug("Starting streaming overlay cancel animation")
 
@@ -426,7 +426,7 @@ class StreamingTextOverlay(QWidget):
         self._init_cancel_particles()
 
         # Set state (this will update header and start animation timer)
-        self.set_state(self.STATE_CANCELLING)
+        self.set_state(self.STATE_CANCELING)
 
     def _on_fade_animation_finished(self):
         """Called when any fade animation completes."""
@@ -440,7 +440,7 @@ class StreamingTextOverlay(QWidget):
         """Set the overlay state.
 
         Args:
-            state: The state to set (STATE_IDLE, STATE_STREAMING, STATE_FINALIZING, STATE_CANCELLING)
+            state: The state to set (STATE_IDLE, STATE_STREAMING, STATE_FINALIZING, STATE_CANCELING)
         """
         if self.current_state != state:
             self.current_state = state
@@ -457,8 +457,8 @@ class StreamingTextOverlay(QWidget):
                 self._header_label.setText("Finalizing...")
                 self._header_label.setStyleSheet("color: #a5b4fc; background: transparent;")
                 self._animation_timer.start(33)
-            elif state == self.STATE_CANCELLING:
-                self._header_label.setText("Cancelled")
+            elif state == self.STATE_CANCELING:
+                self._header_label.setText("Canceled")
                 self._header_label.setStyleSheet("color: #ef4444; background: transparent;")
                 self._animation_timer.start(33)
             else:

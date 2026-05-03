@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from config import config
-from services.settings import settings_manager
+try:
+    from services.settings import SettingsKey, settings_manager
+except ImportError:  # pragma: no cover - supports lightweight test stubs
+    from services.settings import settings_manager
+
+    class SettingsKey:
+        STREAMING_ENABLED = "streaming_enabled"
+        STREAMING_CHUNK_DURATION = "streaming_chunk_duration"
+        STREAMING_PASTE_ENABLED = "streaming_paste_enabled"
+        STREAMING_TINY_MODEL_ENABLED = "streaming_tiny_model_enabled"
+
+if TYPE_CHECKING:
+    from services.recorder import AudioLevelCallback
+else:
+    AudioLevelCallback = Callable[[float], None]
 from services.streaming_transcriber import StreamingTranscriber
 from transcriber import LocalWhisperBackend
 
@@ -27,7 +41,8 @@ class StreamingRuntime:
             levels = [level] * 20
             self.controller.ui_controller.update_audio_levels(levels)
 
-        self.controller.recorder.set_audio_level_callback(audio_level_callback)
+        callback: AudioLevelCallback = audio_level_callback
+        self.controller.recorder.set_audio_level_callback(callback)
 
     def setup_streaming(self) -> None:
         """Initialize streaming transcriber if enabled."""
@@ -87,7 +102,7 @@ class StreamingRuntime:
         if self.controller.streaming_transcriber:
             self.controller.streaming_transcriber.stop_streaming()
             self.controller.recorder.set_streaming_callback(None)
-            logging.info("Streaming transcription cancelled")
+            logging.info("Streaming transcription canceled")
 
         if self.controller._streaming_paste_enabled:
             self.controller.streaming_overlay_hide.emit()
@@ -101,19 +116,19 @@ class StreamingRuntime:
         try:
             settings = settings_manager.load_all_settings()
             self.controller._streaming_enabled = settings.get(
-                "streaming_enabled", config.STREAMING_ENABLED
+                SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
             )
             self.controller._streaming_paste_enabled = settings.get(
-                "streaming_paste_enabled", False
+                SettingsKey.STREAMING_PASTE_ENABLED, False
             )
-            streaming_tiny_enabled = settings.get("streaming_tiny_model_enabled", False)
+            streaming_tiny_enabled = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
 
             if (
                 self.controller._streaming_enabled
                 and isinstance(self.controller.current_backend, LocalWhisperBackend)
             ):
                 chunk_duration = settings.get(
-                    "streaming_chunk_duration", config.STREAMING_CHUNK_DURATION_SEC
+                    SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
                 )
 
                 if streaming_tiny_enabled:

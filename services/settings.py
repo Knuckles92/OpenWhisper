@@ -29,6 +29,7 @@ class SettingsKey:
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
+    LAST_TAB_INDEX: Final[str] = "last_tab_index"
 
 
 class SettingsManager:
@@ -53,7 +54,7 @@ class SettingsManager:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
                     settings = json.load(f)
-                    return settings.get('hotkeys', config.DEFAULT_HOTKEYS)
+                    return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
         except Exception as e:
             logging.warning(f"Failed to load settings: {e}")
 
@@ -71,7 +72,7 @@ class SettingsManager:
         try:
             # Load existing settings first to preserve other settings
             settings = self.load_all_settings()
-            settings['hotkeys'] = hotkeys  # Update only hotkeys
+            settings[SettingsKey.HOTKEYS] = hotkeys  # Update only hotkeys
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
             logging.info("Hotkey settings saved successfully")
@@ -144,10 +145,10 @@ class SettingsManager:
                         settings = json.load(f)
 
                     # Get current style
-                    current_style = settings.get('current_waveform_style', config.CURRENT_WAVEFORM_STYLE)
+                    current_style = settings.get(SettingsKey.CURRENT_WAVEFORM_STYLE, config.CURRENT_WAVEFORM_STYLE)
 
                     # Get style configurations
-                    saved_configs = settings.get('waveform_style_configs', {})
+                    saved_configs = settings.get(SettingsKey.WAVEFORM_STYLE_CONFIGS, {})
 
                     # Start with default configurations
                     all_configs = config.WAVEFORM_STYLE_CONFIGS.copy()
@@ -207,8 +208,8 @@ class SettingsManager:
                 settings = self.load_all_settings()
 
                 # Update waveform style settings
-                settings['current_waveform_style'] = current_style
-                settings['waveform_style_configs'] = style_configs
+                settings[SettingsKey.CURRENT_WAVEFORM_STYLE] = current_style
+                settings[SettingsKey.WAVEFORM_STYLE_CONFIGS] = style_configs
 
                 # Save all settings
                 with open(self.settings_file, 'w') as f:
@@ -307,7 +308,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            selected_model = settings.get('selected_model')
+            selected_model = settings.get(SettingsKey.SELECTED_MODEL)
 
             # Validate that the model exists in the available models
             if selected_model and selected_model in config.MODEL_VALUE_MAP.values():
@@ -342,7 +343,7 @@ class SettingsManager:
             settings = self.load_all_settings()
 
             # Update model selection
-            settings['selected_model'] = model_value
+            settings[SettingsKey.SELECTED_MODEL] = model_value
 
             # Save all settings
             self.save_all_settings(settings)
@@ -363,7 +364,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            device_id = settings.get('audio_input_device')
+            device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if device_id is not None and isinstance(device_id, int):
                 return device_id
         except Exception as e:
@@ -382,9 +383,9 @@ class SettingsManager:
         try:
             settings = self.load_all_settings()
             if device_id is None:
-                settings.pop('audio_input_device', None)
+                settings.pop(SettingsKey.AUDIO_INPUT_DEVICE, None)
             else:
-                settings['audio_input_device'] = device_id
+                settings[SettingsKey.AUDIO_INPUT_DEVICE] = device_id
             self.save_all_settings(settings)
             logging.info(f"Audio input device saved: {device_id}")
         except Exception as e:
@@ -399,7 +400,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            geometry = settings.get('window_geometry')
+            geometry = settings.get(SettingsKey.WINDOW_GEOMETRY)
             if geometry and isinstance(geometry, dict):
                 # Validate all required keys exist
                 required_keys = {'x', 'y', 'width', 'height'}
@@ -423,7 +424,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            settings['window_geometry'] = {
+            settings[SettingsKey.WINDOW_GEOMETRY] = {
                 'x': x,
                 'y': y,
                 'width': width,
@@ -443,7 +444,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            position = settings.get('streaming_overlay_position')
+            position = settings.get(SettingsKey.STREAMING_OVERLAY_POSITION)
             if position and isinstance(position, dict):
                 # Validate required keys exist
                 required_keys = {'x', 'y'}
@@ -465,7 +466,7 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            settings['streaming_overlay_position'] = {
+            settings[SettingsKey.STREAMING_OVERLAY_POSITION] = {
                 'x': x,
                 'y': y
             }
@@ -484,18 +485,18 @@ class SettingsManager:
         try:
             settings = self.load_all_settings()
             return {
-                'streaming_enabled': settings.get('streaming_enabled', config.STREAMING_ENABLED),
-                'streaming_chunk_duration': settings.get('streaming_chunk_duration', config.STREAMING_CHUNK_DURATION_SEC),
-                'streaming_paste_enabled': settings.get('streaming_paste_enabled', False),
-                'streaming_typing_delay': settings.get('streaming_typing_delay', 0.02)
+                SettingsKey.STREAMING_ENABLED: settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED),
+                SettingsKey.STREAMING_CHUNK_DURATION: settings.get(SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC),
+                SettingsKey.STREAMING_PASTE_ENABLED: settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False),
+                SettingsKey.STREAMING_TYPING_DELAY: settings.get(SettingsKey.STREAMING_TYPING_DELAY, 0.02)
             }
         except Exception as e:
             logging.warning(f"Failed to load streaming settings: {e}")
             return {
-                'streaming_enabled': config.STREAMING_ENABLED,
-                'streaming_chunk_duration': config.STREAMING_CHUNK_DURATION_SEC,
-                'streaming_paste_enabled': False,
-                'streaming_typing_delay': 0.02
+                SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
+                SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
+                SettingsKey.STREAMING_PASTE_ENABLED: False,
+                SettingsKey.STREAMING_TYPING_DELAY: 0.02
             }
 
     def save_streaming_settings(
@@ -516,11 +517,11 @@ class SettingsManager:
         """
         try:
             settings = self.load_all_settings()
-            settings['streaming_enabled'] = enabled
+            settings[SettingsKey.STREAMING_ENABLED] = enabled
             if chunk_duration is not None:
-                settings['streaming_chunk_duration'] = chunk_duration
+                settings[SettingsKey.STREAMING_CHUNK_DURATION] = chunk_duration
             if paste_enabled is not None:
-                settings['streaming_paste_enabled'] = paste_enabled
+                settings[SettingsKey.STREAMING_PASTE_ENABLED] = paste_enabled
             self.save_all_settings(settings)
             logging.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}, paste_enabled={paste_enabled}")
         except Exception as e:

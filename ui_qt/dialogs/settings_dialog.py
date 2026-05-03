@@ -1,5 +1,5 @@
 """
-Modern Settings Dialog for PyQt6 UI.
+Settings dialog for PyQt6 UI.
 Tabbed interface for managing application settings.
 """
 import logging
@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from config import config
-from services.settings import settings_manager
+from services.settings import SettingsKey, settings_manager
 from services.recorder import AudioRecorder
 from ui_qt.widgets import PrimaryButton, Button
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsDialog(QDialog):
-    """Modern settings dialog with tabbed interface."""
+    """Settings dialog with tabbed interface."""
 
     settings_changed = pyqtSignal(dict)
 
@@ -467,7 +467,7 @@ class SettingsDialog(QDialog):
             settings = settings_manager.load_all_settings()
 
             # Load model selection
-            saved_model = settings.get('selected_model', 'local_whisper')
+            saved_model = settings.get(SettingsKey.SELECTED_MODEL, 'local_whisper')
             # Find display name for saved model
             for display_name, internal_value in config.MODEL_VALUE_MAP.items():
                 if internal_value == saved_model:
@@ -477,25 +477,25 @@ class SettingsDialog(QDialog):
                     break
 
             # Load checkboxes
-            self.auto_paste_check.setChecked(settings.get('auto_paste', True))
-            self.copy_clipboard_check.setChecked(settings.get('copy_clipboard', True))
-            self.minimize_tray_check.setChecked(settings.get('minimize_tray', True))
+            self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
+            self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
+            self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
 
             # Load streaming settings
-            streaming_enabled = settings.get('streaming_enabled', config.STREAMING_ENABLED)
+            streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
             self.streaming_enabled_check.setChecked(streaming_enabled)
-            self.streaming_paste_check.setChecked(settings.get('streaming_paste_enabled', False))
+            self.streaming_paste_check.setChecked(settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False))
             self.streaming_paste_check.setEnabled(streaming_enabled)
 
             # Load streaming tiny model setting
-            streaming_tiny_enabled = settings.get('streaming_tiny_model_enabled', False)
+            streaming_tiny_enabled = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
             self.streaming_tiny_model_check.setChecked(streaming_tiny_enabled)
             self.streaming_tiny_model_check.setEnabled(streaming_enabled)
 
             # Load whisper engine settings
-            whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
-            whisper_device = settings.get('whisper_device', 'auto')
-            whisper_compute = settings.get('whisper_compute_type', 'auto')
+            whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
+            whisper_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
+            whisper_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
 
             model_index = self.whisper_model_combo.findText(whisper_model)
             if model_index >= 0:
@@ -510,7 +510,7 @@ class SettingsDialog(QDialog):
                 self.whisper_compute_combo.setCurrentIndex(compute_index)
 
             # Load audio input device
-            saved_device_id = settings.get('audio_input_device')
+            saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if saved_device_id is not None:
                 # Find the device in the combo box by its data (device ID)
                 for i in range(self.audio_device_combo.count()):
@@ -542,9 +542,9 @@ class SettingsDialog(QDialog):
             settings = settings_manager.load_all_settings()
 
             # Check if whisper engine settings changed
-            old_whisper_model = settings.get('whisper_model', config.DEFAULT_WHISPER_MODEL)
-            old_device = settings.get('whisper_device', 'auto')
-            old_compute = settings.get('whisper_compute_type', 'auto')
+            old_whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
+            old_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
+            old_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
             new_whisper_model = self.whisper_model_combo.currentText()
             new_device = self.whisper_device_combo.currentText()
             new_compute = self.whisper_compute_combo.currentText()
@@ -555,14 +555,14 @@ class SettingsDialog(QDialog):
             )
 
             # Check if audio input device changed
-            old_audio_device = settings.get('audio_input_device')
+            old_audio_device = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             new_audio_device = self.audio_device_combo.currentData()
             audio_device_changed = old_audio_device != new_audio_device
 
             # Check if streaming settings changed
-            old_streaming_enabled = settings.get('streaming_enabled', False)
-            old_streaming_paste = settings.get('streaming_paste_enabled', False)
-            old_streaming_tiny = settings.get('streaming_tiny_model_enabled', False)
+            old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
+            old_streaming_paste = settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False)
+            old_streaming_tiny = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
                 old_streaming_paste != self.streaming_paste_check.isChecked() or
@@ -570,22 +570,22 @@ class SettingsDialog(QDialog):
             )
 
             # Update with new values
-            settings['selected_model'] = model_internal
-            settings['auto_paste'] = self.auto_paste_check.isChecked()
-            settings['copy_clipboard'] = self.copy_clipboard_check.isChecked()
-            settings['minimize_tray'] = self.minimize_tray_check.isChecked()
-            settings['streaming_enabled'] = self.streaming_enabled_check.isChecked()
-            settings['streaming_paste_enabled'] = self.streaming_paste_check.isChecked()
-            settings['streaming_tiny_model_enabled'] = self.streaming_tiny_model_check.isChecked()
-            settings['whisper_model'] = new_whisper_model
-            settings['whisper_device'] = new_device
-            settings['whisper_compute_type'] = new_compute
+            settings[SettingsKey.SELECTED_MODEL] = model_internal
+            settings[SettingsKey.AUTO_PASTE] = self.auto_paste_check.isChecked()
+            settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
+            settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
+            settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
+            settings[SettingsKey.STREAMING_PASTE_ENABLED] = self.streaming_paste_check.isChecked()
+            settings[SettingsKey.STREAMING_TINY_MODEL_ENABLED] = self.streaming_tiny_model_check.isChecked()
+            settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
+            settings[SettingsKey.WHISPER_DEVICE] = new_device
+            settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute
 
             # Save audio input device (None for system default)
             if new_audio_device is None:
-                settings.pop('audio_input_device', None)
+                settings.pop(SettingsKey.AUDIO_INPUT_DEVICE, None)
             else:
-                settings['audio_input_device'] = new_audio_device
+                settings[SettingsKey.AUDIO_INPUT_DEVICE] = new_audio_device
 
             # Save to file
             settings_manager.save_all_settings(settings)

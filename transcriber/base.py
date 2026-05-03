@@ -79,7 +79,7 @@ class TranscriptionBackend(ABC):
         transcriptions = []
         for chunk_file in chunk_files:
             if self.should_cancel:
-                raise Exception("Transcription cancelled")
+                raise Exception("Transcription canceled")
 
             chunk_text = self.transcribe(chunk_file)
             transcriptions.append(chunk_text)

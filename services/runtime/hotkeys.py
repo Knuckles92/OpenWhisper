@@ -11,6 +11,7 @@ from PyQt6.QtCore import QTimer, Qt
 from config import config
 from services.hotkey_manager import HotkeyManager
 from services.settings import settings_manager
+from ui_qt.overlay_state import OverlayState
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
@@ -111,11 +112,8 @@ class HotkeyRuntime:
 
     def on_stt_state_changed(self, enabled: bool) -> None:
         """Handle STT state changes on the main thread."""
-        overlay = self.controller.ui_controller.overlay
-        if enabled:
-            overlay.show_at_cursor(overlay.STATE_STT_ENABLE)
-        else:
-            overlay.show_at_cursor(overlay.STATE_STT_DISABLE)
+        state = OverlayState.STT_ENABLED if enabled else OverlayState.STT_DISABLED
+        self.controller.overlay_state_update.emit(state)
 
     def update_status_with_auto_hide(self, status: str) -> None:
         """Emit a thread-safe status update and optional STT state change."""

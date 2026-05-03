@@ -57,7 +57,7 @@ class STTParticle:
 
 
 class WaveformOverlay(QWidget):
-    """Modern waveform overlay with smooth animations."""
+    """Waveform overlay with smooth animations."""
 
     state_changed = pyqtSignal(str)
 
@@ -66,7 +66,7 @@ class WaveformOverlay(QWidget):
     STATE_RECORDING = "recording"
     STATE_PROCESSING = "processing"
     STATE_TRANSCRIBING = "transcribing"
-    STATE_CANCELLING = "cancelling"
+    STATE_CANCELING = "canceling"
     STATE_STT_ENABLE = "stt_enable"
     STATE_STT_DISABLE = "stt_disable"
     STATE_COPIED = "copied"
@@ -149,9 +149,9 @@ class WaveformOverlay(QWidget):
             elif self.current_state == self.STATE_TRANSCRIBING:
                 if self.style:
                     self.style.draw_transcribing_state(painter, rect, "Transcribing...")
-            elif self.current_state == self.STATE_CANCELLING:
+            elif self.current_state == self.STATE_CANCELING:
                 if self.style:
-                    self.style.draw_cancelling_state(painter, rect, "Cancelled")
+                    self.style.draw_canceling_state(painter, rect, "Canceled")
             elif self.current_state == self.STATE_STT_ENABLE:
                 self._draw_stt_enable_state(painter)
             elif self.current_state == self.STATE_STT_DISABLE:
@@ -259,8 +259,8 @@ class WaveformOverlay(QWidget):
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Transcribing...")
 
-    def _draw_cancelling_state(self, painter: QPainter):
-        """Draw cancelling state with shrinking X."""
+    def _draw_canceling_state(self, painter: QPainter):
+        """Draw canceling state with shrinking X."""
         rect = self.rect()
         w, h = rect.width(), rect.height()
 
@@ -286,7 +286,7 @@ class WaveformOverlay(QWidget):
         # Status text
         painter.setPen(QPen(QColor(224, 224, 255)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Cancelling...")
+        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Canceling...")
 
     def _draw_stt_enable_state(self, painter: QPainter):
         """Draw STT enable state with power up particle effect."""
@@ -532,7 +532,7 @@ class WaveformOverlay(QWidget):
         if self.style:
             self.style.update_animation_time(delta_time)
 
-        if self.current_state == self.STATE_CANCELLING:
+        if self.current_state == self.STATE_CANCELING:
             self.cancel_progress = min(1.0, self.animation_time / 0.8)
             if self.cancel_progress >= 1.0:
                 self.set_state(self.STATE_IDLE)
@@ -551,9 +551,9 @@ class WaveformOverlay(QWidget):
             self.cancel_progress = 0.0
             self.last_frame_time = time.time()  # Reset to prevent huge delta on first frame
 
-            # Set cancelling start time for style
-            if state == self.STATE_CANCELLING and self.style:
-                self.style.set_cancelling_start_time(time.time())
+            # Set canceling start time for style
+            if state == self.STATE_CANCELING and self.style:
+                self.style.set_canceling_start_time(time.time())
 
             # Initialize particles for STT and copied states
             if state == self.STATE_STT_ENABLE:

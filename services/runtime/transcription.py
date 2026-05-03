@@ -13,7 +13,16 @@ import pyperclip
 from config import config
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
-from services.settings import settings_manager
+try:
+    from services.settings import SettingsKey, settings_manager
+except ImportError:  # pragma: no cover - supports lightweight test stubs
+    from services.settings import settings_manager
+
+    class SettingsKey:
+        AUTO_PASTE = "auto_paste"
+        COPY_CLIPBOARD = "copy_clipboard"
+
+from ui_qt.overlay_state import OverlayState
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
@@ -33,8 +42,10 @@ class TranscriptionRuntime:
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
             self.controller.recording_state_changed.emit(True)
+            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit("Recording...")
         else:
+            self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Failed to start recording")
 
     def stop_recording(self) -> None:
@@ -42,16 +53,18 @@ class TranscriptionRuntime:
         if self.controller._streaming_paste_enabled:
             self.controller.streaming_overlay_hide.emit()
             settings = settings_manager.load_all_settings()
-            if settings.get("auto_paste", True):
+            if settings.get(SettingsKey.AUTO_PASTE, True):
                 self.controller.caret_indicator_show.emit()
 
         self.controller.streaming_runtime.stop_streaming_session()
 
         if not self.controller.recorder.stop_recording():
+            self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Failed to stop recording")
             return
 
         self.controller.recording_state_changed.emit(False)
+        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
 
         if not self.controller.recorder.wait_for_stop_completion():
@@ -117,7 +130,8 @@ class TranscriptionRuntime:
         elif self.controller.current_backend and self.controller.current_backend.is_transcribing:
             self._cancel_transcription()
         else:
-            self.controller.status_update.emit("Cancelled")
+            self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+            self.controller.status_update.emit("Canceled")
 
     def _cancel_recording(self) -> None:
         """Discard the active recording without transcribing."""
@@ -125,14 +139,16 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.recorder.stop_recording()
         self.controller.recorder.clear_recording_data()
-        self.controller.status_update.emit("Recording cancelled")
-        logging.info("Recording cancelled")
+        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.status_update.emit("Recording canceled")
+        logging.info("Recording canceled")
 
     def _cancel_transcription(self) -> None:
         """Cancel an in-progress transcription job."""
         self.controller.current_backend.cancel_transcription()
-        self.controller.status_update.emit("Transcription cancelled")
-        logging.info("Transcription cancelled")
+        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.status_update.emit("Transcription canceled")
+        logging.info("Transcription canceled")
 
     def retranscribe_audio(self, audio_path: str) -> None:
         """Re-transcribe an existing audio file."""
@@ -140,11 +156,13 @@ class TranscriptionRuntime:
             logging.error(
                 f"Audio file not found for re-transcription: {audio_path}"
             )
+            self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
         logging.info(f"Re-transcribing audio file: {audio_path}")
         self.controller._pending_audio_path = None
+        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
 
         try:
@@ -159,11 +177,13 @@ class TranscriptionRuntime:
         """Transcribe an uploaded audio file."""
         if not os.path.exists(audio_path):
             logging.error(f"Uploaded audio file not found: {audio_path}")
+            self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
         logging.info(f"Processing uploaded audio file: {audio_path}")
         self.controller._pending_audio_path = None
+        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing uploaded file...")
 
         try:
@@ -179,6 +199,7 @@ class TranscriptionRuntime:
         try:
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
+            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
             transcript = self.controller.current_backend.transcribe(audio_path)
@@ -204,6 +225,7 @@ class TranscriptionRuntime:
                 raise Exception("Failed to split audio file")
 
             if hasattr(self.controller.current_backend, "transcribe_chunks"):
+                self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
                 self.controller.status_update.emit(
                     f"Transcribing {len(chunk_files)} chunks..."
                 )
@@ -213,6 +235,7 @@ class TranscriptionRuntime:
             else:
                 transcripts = []
                 for index, chunk_file in enumerate(chunk_files):
+                    self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
                     self.controller.status_update.emit(
                         f"Transcribing chunk {index + 1}/{len(chunk_files)}..."
                     )
@@ -237,7 +260,7 @@ class TranscriptionRuntime:
         """Handle transcription completion."""
         self.controller.ui_controller.set_transcript(transcript)
         self.controller.ui_controller.set_status("Transcription complete!")
-        self.controller.ui_controller.hide_overlay()
+        self.controller.overlay_state_update.emit(OverlayState.NONE)
 
         transcription_time = None
         if self.controller._transcription_start_time is not None:
@@ -276,8 +299,8 @@ class TranscriptionRuntime:
             self.controller._pending_file_size = None
 
         settings = settings_manager.load_all_settings()
-        copy_clipboard = settings.get("copy_clipboard", True)
-        auto_paste = settings.get("auto_paste", True)
+        copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
+        auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
 
         if copy_clipboard:
             try:
@@ -306,7 +329,7 @@ class TranscriptionRuntime:
         """Handle transcription error."""
         self.controller.ui_controller.set_status(f"Error: {error_message}")
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
-        self.controller.ui_controller.hide_overlay()
+        self.controller.overlay_state_update.emit(OverlayState.NONE)
         if self.controller._streaming_paste_enabled:
             self.controller.caret_indicator_hide.emit()
 

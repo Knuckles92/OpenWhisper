@@ -4,53 +4,12 @@ Manages the main window, overlay, and dialogs.
 Bridges between UI and application logic.
 """
 import logging
-from enum import Enum
-from typing import Optional, Callable, List
+from typing import Callable, List, Optional
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox, QFileDialog
 
 from config import config
-
-logger = logging.getLogger(__name__)
-
-
-class OverlayState(Enum):
-    """Logical overlay states. Routed by UIController.set_overlay_state.
-
-    These describe *what to show*, not the human-readable status text. Status
-    text is kept separate so renaming a status string never breaks UI routing.
-    """
-    NONE = "none"  # Hide all overlays
-    RECORDING = "recording"
-    PROCESSING = "processing"
-    TRANSCRIBING = "transcribing"
-    CANCELLING = "cancelling"
-    STT_ENABLED = "stt_enabled"
-    STT_DISABLED = "stt_disabled"
-
-
-def _status_to_overlay_state(status: str) -> Optional[OverlayState]:
-    """Infer the appropriate overlay state from a human-readable status string.
-
-    Used to bridge legacy callers that emit only text. New code should call
-    `UIController.set_overlay_state()` directly with an `OverlayState` value.
-    """
-    lower = status.lower()
-    if "cancel" in lower:
-        return OverlayState.CANCELLING
-    if "STT Enabled" in status:
-        return OverlayState.STT_ENABLED
-    if "STT Disabled" in status:
-        return OverlayState.STT_DISABLED
-    if "recording" in lower:
-        return OverlayState.RECORDING
-    if "processing" in lower:
-        return OverlayState.PROCESSING
-    if "transcribing" in lower:
-        return OverlayState.TRANSCRIBING
-    if any(k in lower for k in ("ready", "failed", "error", "complete")):
-        return OverlayState.NONE
-    return None
+from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, StreamingTextOverlay, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
@@ -59,6 +18,9 @@ from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.dialogs.upload_preview_dialog import UploadPreviewDialog
 from ui_qt.widgets import QuickRecordTab, TabbedContentWidget
 from services.audio_processor import audio_processor
+from services.settings import SettingsKey
+
+logger = logging.getLogger(__name__)
 
 
 class UIController(QObject):
@@ -67,7 +29,7 @@ class UIController(QObject):
     # Signals
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
-    record_cancelled = pyqtSignal()
+    record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     transcription_received = pyqtSignal(str)
     status_changed = pyqtSignal(str)
@@ -112,7 +74,7 @@ class UIController(QObject):
         """Setup signal connections between UI components."""
         # Main window signals
         self.main_window.record_toggled.connect(self._on_record_toggled)
-        self.main_window.record_cancelled.connect(self.cancel_recording)
+        self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
@@ -221,8 +183,8 @@ class UIController(QObject):
 
         if self.on_record_start:
             self.on_record_start()
-
-        self.record_started.emit()
+        else:
+            self.record_started.emit()
 
     def stop_recording(self):
         """Stop recording."""
@@ -237,13 +199,13 @@ class UIController(QObject):
 
         if self.on_record_stop:
             self.on_record_stop()
-
-        self.record_stopped.emit()
+        else:
+            self.record_stopped.emit()
 
     def cancel_recording(self):
         """Cancel recording."""
         self.is_recording = False
-        logger.info("Recording cancelled")
+        logger.info("Recording canceled")
 
         # Sync main window state (important for hotkey-triggered cancellations)
         if self.main_window.is_recording:
@@ -255,10 +217,8 @@ class UIController(QObject):
             self.on_record_cancel()
             logger.info("Record cancel callback called")
 
-        self.record_cancelled.emit()
+        self.record_canceled.emit()
         self.main_window.clear_transcription()
-        self._start_cancel_animation()
-        logger.info("Cancel animation started")
 
     def set_transcript(self, text: str):
         """Set transcript text."""
@@ -294,15 +254,8 @@ class UIController(QObject):
         self.main_window.clear_transcription_stats()
 
     def set_status(self, status: str):
-        """Update the status text and infer the overlay state from it.
-
-        Legacy convenience for callers that only emit text. New code should
-        call `set_overlay_state` separately for explicit control.
-        """
+        """Update only the human-readable status text."""
         self.status_changed.emit(status)
-        inferred_state = _status_to_overlay_state(status)
-        if inferred_state is not None:
-            self.set_overlay_state(inferred_state)
 
     def set_overlay_state(self, state: OverlayState) -> None:
         """Route an explicit overlay-state change to the correct overlay component.
@@ -310,11 +263,13 @@ class UIController(QObject):
         Centralizes all "show waveform vs streaming overlay vs hide everything"
         logic in one place.
         """
-        if state is OverlayState.CANCELLING:
+        if state is OverlayState.CANCELING:
+            self.tray_manager.set_recording(False)
             self._start_cancel_animation()
             return
 
         if state is OverlayState.NONE:
+            self.tray_manager.set_recording(False)
             self.hide_overlay()
             self.hide_streaming_overlay()
             self.hide_caret_paste_indicator()
@@ -325,14 +280,17 @@ class UIController(QObject):
         streaming_active = streaming_overlay_visible or self.streaming_flow_active
 
         if state is OverlayState.RECORDING:
+            self.tray_manager.set_recording(True)
             if not streaming_active:
                 self._show_or_set_overlay(self.overlay.STATE_RECORDING)
         elif state is OverlayState.PROCESSING:
+            self.tray_manager.set_recording(False)
             if streaming_overlay_visible:
                 self.set_streaming_overlay_finalizing()
             elif not streaming_active:
                 self._show_or_set_overlay(self.overlay.STATE_PROCESSING)
         elif state is OverlayState.TRANSCRIBING:
+            self.tray_manager.set_recording(False)
             if streaming_overlay_visible:
                 self.set_streaming_overlay_finalizing()
             elif not streaming_active:
@@ -420,7 +378,7 @@ class UIController(QObject):
             "recording": self.overlay.STATE_RECORDING,
             "processing": self.overlay.STATE_PROCESSING,
             "transcribing": self.overlay.STATE_TRANSCRIBING,
-            "cancelling": self.overlay.STATE_CANCELLING,
+            "canceling": self.overlay.STATE_CANCELING,
             "stt_enable": self.overlay.STATE_STT_ENABLE,
             "stt_disable": self.overlay.STATE_STT_DISABLE,
             "copied": self.overlay.STATE_COPIED,
@@ -454,9 +412,9 @@ class UIController(QObject):
 
         # Use waveform overlay cancel animation for non-streaming case
         if not self.overlay.isVisible():
-            self.overlay.show_at_cursor(self.overlay.STATE_CANCELLING)
+            self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
         else:
-            self.overlay.set_state(self.overlay.STATE_CANCELLING)
+            self.overlay.set_state(self.overlay.STATE_CANCELING)
 
         self.cancel_animation_timer.start(
             config.CANCELLATION_ANIMATION_DURATION_MS + config.CANCELLATION_GRACE_MS
@@ -465,7 +423,7 @@ class UIController(QObject):
     def _on_cancel_animation_finished(self):
         """Cleanup after cancel animation completes."""
         if self.overlay.current_state not in {
-            self.overlay.STATE_CANCELLING,
+            self.overlay.STATE_CANCELING,
             self.overlay.STATE_IDLE
         }:
             return
@@ -494,7 +452,7 @@ class UIController(QObject):
                     self.on_whisper_settings_changed()
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
-                    new_device_id = settings.get('audio_input_device')
+                    new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
                     self.on_audio_device_changed(new_device_id)
             if settings.get('_streaming_settings_changed', False):
                 if self.on_streaming_settings_changed:
@@ -523,26 +481,26 @@ class UIController(QObject):
         # Define supported audio formats
         audio_filters = "Audio Files (*.wav *.mp3 *.m4a *.ogg *.flac *.wma);;WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*.*)"
 
-        file_path, _ = QFileDialog.getOpenFileName(
+        audio_path, _ = QFileDialog.getOpenFileName(
             self.main_window,
             "Select Audio File",
             "",
             audio_filters
         )
 
-        if not file_path:
-            logger.info("Audio file selection cancelled")
+        if not audio_path:
+            logger.info("Audio file selection canceled")
             return
 
-        logger.info(f"Selected audio file: {file_path}")
+        logger.info(f"Selected audio file: {audio_path}")
 
         # Analyze the file and show preview
         try:
-            preview = audio_processor.preview_file(file_path)
+            preview = audio_processor.preview_file(audio_path)
 
             # Show preview dialog
             dialog = UploadPreviewDialog(preview, self.main_window)
-            dialog.on_proceed = self._handle_upload_audio
+            dialog.on_proceed = self._start_uploaded_audio_transcription
             dialog.exec()
 
         except FileNotFoundError as e:
@@ -550,7 +508,7 @@ class UIController(QObject):
             QMessageBox.warning(
                 self.main_window,
                 "File Not Found",
-                f"The selected file could not be found:\n{file_path}"
+                f"The selected file could not be found:\n{audio_path}"
             )
         except ValueError as e:
             logger.error(f"Invalid audio file: {e}")
@@ -567,8 +525,8 @@ class UIController(QObject):
                 f"Failed to analyze audio file:\n{e}"
             )
 
-    def _handle_upload_audio(self, audio_path: str):
-        """Handle the audio file upload after user confirms in preview dialog.
+    def _start_uploaded_audio_transcription(self, audio_path: str):
+        """Start uploaded-audio transcription after preview confirmation.
 
         Args:
             audio_path: Path to the audio file to transcribe.
@@ -635,10 +593,10 @@ class UIController(QObject):
 
     def _on_retranscribe_requested(self, audio_path: str):
         """Handle re-transcription request from main window signal."""
-        self._handle_retranscribe(audio_path)
+        self._request_retranscription(audio_path)
 
-    def _handle_retranscribe(self, audio_path: str):
-        """Handle re-transcription request."""
+    def _request_retranscription(self, audio_path: str):
+        """Request re-transcription for an existing audio file."""
         logger.info(f"Re-transcribe requested: {audio_path}")
         if self.on_retranscribe:
             self.on_retranscribe(audio_path)

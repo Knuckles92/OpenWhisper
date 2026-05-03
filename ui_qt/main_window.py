@@ -1,5 +1,5 @@
 """
-Modern PyQt6 Main Window.
+PyQt6 main window.
 Main application window with recording controls and transcription display.
 """
 import logging
@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
-from services.settings import settings_manager
+from services.settings import SettingsKey, settings_manager
 from ui_qt.loading_screen import LoadingScreen
 
 logger = logging.getLogger(__name__)
@@ -233,11 +233,11 @@ from services.history_manager import history_manager
 
 
 class MainWindow(QMainWindow):
-    """Modern PyQt6 main window with clean, professional design."""
+    """PyQt6 main window with clean, professional design."""
 
     # Signals for application events
     record_toggled = pyqtSignal(bool)
-    record_cancelled = pyqtSignal()
+    record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
 
         # Connect Quick Record tab signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
-        self.quick_record_tab.record_cancelled.connect(self._on_quick_record_cancelled)
+        self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
 
         # Connect stats visibility change
@@ -408,7 +408,7 @@ class MainWindow(QMainWindow):
         test_overlays_menu.addAction("Recording", lambda: self.test_overlay("recording"))
         test_overlays_menu.addAction("Processing", lambda: self.test_overlay("processing"))
         test_overlays_menu.addAction("Transcribing", lambda: self.test_overlay("transcribing"))
-        test_overlays_menu.addAction("Cancelling", lambda: self.test_overlay("cancelling"))
+        test_overlays_menu.addAction("Canceling", lambda: self.test_overlay("canceling"))
         test_overlays_menu.addSeparator()
         test_overlays_menu.addAction("STT Enable", lambda: self.test_overlay("stt_enable"))
         test_overlays_menu.addAction("STT Disable", lambda: self.test_overlay("stt_disable"))
@@ -460,12 +460,12 @@ class MainWindow(QMainWindow):
 
         self.record_toggled.emit(is_recording)
 
-    def _on_quick_record_cancelled(self):
+    def _on_quick_record_canceled(self):
         """Handle cancel from Quick Record tab."""
         self.is_recording = False
         self.tabbed_content.set_recording_state(False, -1)
 
-        self.record_cancelled.emit()
+        self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
@@ -761,7 +761,7 @@ class MainWindow(QMainWindow):
         # Check if minimize to tray is enabled (default: True)
         try:
             settings = settings_manager.load_all_settings()
-            minimize_tray = settings.get('minimize_tray', True)  # Default to True
+            minimize_tray = settings.get(SettingsKey.MINIMIZE_TRAY, True)  # Default to True
         except Exception as e:
             logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error
@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
 
         Args:
             record_key: The key for recording
-            cancel_key: The key for cancelling
+            cancel_key: The key for canceling
             enable_disable_key: The key for enabling/disabling STT
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)

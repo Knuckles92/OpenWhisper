@@ -23,7 +23,7 @@ class QuickRecordTab(QWidget):
 
     # Signals
     record_toggled = pyqtSignal(bool)  # True = start, False = stop
-    record_cancelled = pyqtSignal()
+    record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)  # Model display name
     retranscribe_requested = pyqtSignal(str)  # Audio file path
 
@@ -167,7 +167,7 @@ class QuickRecordTab(QWidget):
         self.is_recording = False
         self._update_recording_state()
 
-        self.record_cancelled.emit()
+        self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
         """Handle model selection change."""
@@ -300,7 +300,7 @@ class QuickRecordTab(QWidget):
 
         Args:
             record_key: The key for recording
-            cancel_key: The key for cancelling
+            cancel_key: The key for canceling
             enable_disable_key: The key for enabling/disabling STT
         """
         self.record_button.set_hotkey(record_key)
