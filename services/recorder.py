@@ -100,9 +100,7 @@ class AudioRecorder:
             # Reset completion signal for this session
             self._recording_complete_event = threading.Event()
 
-            # Clear any old recording data
-            self.frames = []
-            logging.info(f"Cleared recording frames. Old frame count: {len(self.frames)}")
+            self.clear_recording_data()
 
             # Delete old audio file if it exists
             import os
@@ -373,8 +371,11 @@ class AudioRecorder:
 
     def clear_recording_data(self):
         """Clear the recorded audio data."""
-        self.frames = []
-        logging.info("Recording data cleared")
+        with self._callback_lock:
+            old_frame_count = len(self.frames)
+            self.frames = []
+
+        logging.info(f"Cleared recording data. Old frame count: {old_frame_count}")
 
     def cleanup(self):
         """Clean up audio resources."""

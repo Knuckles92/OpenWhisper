@@ -13,7 +13,6 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
 from services.settings import SettingsKey, settings_manager
-from ui_qt.loading_screen import LoadingScreen
 
 logger = logging.getLogger(__name__)
 
@@ -242,12 +241,10 @@ class MainWindow(QMainWindow):
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
-    overlay_toggle_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # Emits audio file path
     upload_audio_requested = pyqtSignal()  # Request to upload audio file
-    test_overlay_requested = pyqtSignal(str)  # Emits overlay state to test
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
 
     def __init__(self):
@@ -264,7 +261,6 @@ class MainWindow(QMainWindow):
         # State
         self.is_recording = False
         self.current_model = config.MODEL_CHOICES[0]
-        self.test_loading_screen_instance = None  # Keep reference to prevent GC
         self._force_quit = False  # Flag to bypass minimize to tray on close
         self._initial_show_complete = False  # Track if initial show has completed
 
@@ -398,24 +394,6 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menubar.addMenu("View")
         view_menu.addAction("History", self.toggle_history)
-        view_menu.addSeparator()
-        view_menu.addAction("Show Overlay", self.toggle_overlay)
-        view_menu.addAction("Show Loading Screen", self.test_loading_screen)
-        view_menu.addSeparator()
-
-        # Test Overlays submenu
-        test_overlays_menu = view_menu.addMenu("Test Overlays")
-        test_overlays_menu.addAction("Recording", lambda: self.test_overlay("recording"))
-        test_overlays_menu.addAction("Processing", lambda: self.test_overlay("processing"))
-        test_overlays_menu.addAction("Transcribing", lambda: self.test_overlay("transcribing"))
-        test_overlays_menu.addAction("Canceling", lambda: self.test_overlay("canceling"))
-        test_overlays_menu.addSeparator()
-        test_overlays_menu.addAction("STT Enable", lambda: self.test_overlay("stt_enable"))
-        test_overlays_menu.addAction("STT Disable", lambda: self.test_overlay("stt_disable"))
-        test_overlays_menu.addAction("Copied", lambda: self.test_overlay("copied"))
-        test_overlays_menu.addSeparator()
-        test_overlays_menu.addAction("Large File Splitting (Amber)", lambda: self.test_overlay("large_file_splitting"))
-        test_overlays_menu.addAction("Large File Processing (Cyan)", lambda: self.test_overlay("large_file_processing"))
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -587,44 +565,6 @@ class MainWindow(QMainWindow):
         logger.info("Switching to Quick Record tab")
         self.tabbed_content.set_current_index(TabbedContentWidget.TAB_QUICK_RECORD)
 
-    def toggle_overlay(self):
-        """Toggle the overlay visibility."""
-        logger.info("Toggling overlay")
-        self.overlay_toggle_requested.emit()
-
-    def test_overlay(self, state: str):
-        """Test a specific overlay state."""
-        logger.info(f"Testing overlay state: {state}")
-        self.test_overlay_requested.emit(state)
-
-    def test_loading_screen(self):
-        """Show the loading screen for testing purposes."""
-        logger.info("Testing loading screen")
-
-        if self.test_loading_screen_instance:
-            self.test_loading_screen_instance.destroy()
-            self.test_loading_screen_instance = None
-
-        self.test_loading_screen_instance = LoadingScreen()
-        self.test_loading_screen_instance.show()
-
-        # Simulate some activity
-        QTimer.singleShot(1000, lambda: self.test_loading_screen_instance.update_status("Loading resources..."))
-        QTimer.singleShot(2000, lambda: self.test_loading_screen_instance.update_progress("Connecting to services..."))
-        QTimer.singleShot(3000, lambda: self.test_loading_screen_instance.update_status("Almost ready..."))
-
-        # Auto close after 5 seconds
-        QTimer.singleShot(5000, lambda: self.test_loading_screen_instance.destroy())
-
-        # Allow click to close
-        original_mouse_press = self.test_loading_screen_instance.mousePressEvent
-
-        def close_on_click(event):
-            self.test_loading_screen_instance.destroy()
-            self.test_loading_screen_instance = None
-
-        self.test_loading_screen_instance.mousePressEvent = close_on_click
-
     def show_about(self):
         """Show about dialog."""
         logger.info("Showing about dialog")
@@ -746,12 +686,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event."""
         logger.info("Main window closing")
-        try:
-            if self.test_loading_screen_instance:
-                self.test_loading_screen_instance.destroy()
-        except Exception as e:
-            logger.debug(f"Error destroying loading screen: {e}")
-
         # If force quit is set, close immediately
         if self._force_quit:
             logger.info("Force quit - closing application")
