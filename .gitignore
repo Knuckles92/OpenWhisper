@@ -1,5 +1,6 @@
 recorded_audio.wav
 *.log
+*.log.*
 *.env
 *.spec
 temp_audio.wav
@@ -27,6 +28,11 @@ openwhisper.db
 transcription_history.json.bak
 meetings.json
 .pi/*
+.codex
+.codex/
 .claude/settings.local.json.bak
+recordings/
+meeting_audio/
+meeting_recordings/
 specs/
 specs/*
