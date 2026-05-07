@@ -13,6 +13,8 @@ from typing import Callable, List, Tuple, Optional, Dict, Any
 from pathlib import Path
 from config import config
 
+logger = logging.getLogger(__name__)
+
 INT16_MIN = -32768
 INT16_MAX = 32767
 
@@ -71,9 +73,9 @@ class AudioProcessor:
 
         needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
 
-        logging.info(f"Audio file size: {file_size_mb:.2f} MB (limit: {config.MAX_FILE_SIZE_MB} MB)")
+        logger.info(f"Audio file size: {file_size_mb:.2f} MB (limit: {config.MAX_FILE_SIZE_MB} MB)")
         if needs_splitting:
-            logging.info("File exceeds size limit, splitting will be required")
+            logger.info("File exceeds size limit, splitting will be required")
 
         return needs_splitting, file_size_mb
 
@@ -135,7 +137,7 @@ class AudioProcessor:
             estimated_chunks = 1
             chunk_durations = [duration_seconds]
 
-        logging.info(f"Audio preview: {file_name}, {file_size_mb:.2f} MB, "
+        logger.info(f"Audio preview: {file_name}, {file_size_mb:.2f} MB, "
                     f"{duration_seconds:.1f}s, {estimated_chunks} chunk(s)")
 
         return AudioFilePreview(
@@ -178,7 +180,7 @@ class AudioProcessor:
 
             if not split_points:
                 # Fallback to time-based splitting if no silence found
-                logging.warning("No suitable silence points found, using time-based splitting")
+                logger.warning("No suitable silence points found, using time-based splitting")
                 if progress_callback:
                     progress_callback("Generating time-based splits...")
                 split_points = self._generate_time_based_splits(len(audio_data), sample_rate)
@@ -189,11 +191,11 @@ class AudioProcessor:
             # Create chunks
             chunk_files = self._create_chunks(audio_data, sample_rate, split_points, audio_path)
 
-            logging.info(f"Successfully split audio into {len(chunk_files)} chunks")
+            logger.info(f"Successfully split audio into {len(chunk_files)} chunks")
             return chunk_files
 
         except Exception as e:
-            logging.error(f"Failed to split audio file: {e}")
+            logger.error(f"Failed to split audio file: {e}")
             self.cleanup_temp_files()
             raise
 
@@ -414,7 +416,7 @@ class AudioProcessor:
 
             start_idx = end_idx
 
-            logging.info(f"Created chunk {i+1}: {chunk_filename} "
+            logger.info(f"Created chunk {i+1}: {chunk_filename} "
                         f"({len(chunk_data)/sample_rate:.1f}s, "
                         f"{os.path.getsize(chunk_filename)/(1024*1024):.1f}MB)")
 
@@ -444,10 +446,10 @@ class AudioProcessor:
                 elif os.path.isdir(temp_path):
                     shutil.rmtree(temp_path)
             except Exception as e:
-                logging.warning(f"Failed to cleanup temp file {temp_path}: {e}")
+                logger.warning(f"Failed to cleanup temp file {temp_path}: {e}")
 
         self.temp_files.clear()
-        logging.info("Temporary files cleaned up")
+        logger.info("Temporary files cleaned up")
 
     def combine_transcriptions(self, transcriptions: List[str]) -> str:
         """Combine multiple transcriptions into a single text.

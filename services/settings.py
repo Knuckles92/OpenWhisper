@@ -8,6 +8,8 @@ import threading
 from typing import Dict, Any, Final, Tuple, Optional, List
 from config import config
 
+logger = logging.getLogger(__name__)
+
 
 class SettingsKey:
     """String keys used in the settings JSON file. Avoids magic strings at call sites."""
@@ -56,7 +58,7 @@ class SettingsManager:
                     settings = json.load(f)
                     return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
         except Exception as e:
-            logging.warning(f"Failed to load settings: {e}")
+            logger.warning(f"Failed to load settings: {e}")
 
         return config.DEFAULT_HOTKEYS.copy()
 
@@ -75,9 +77,9 @@ class SettingsManager:
             settings[SettingsKey.HOTKEYS] = hotkeys  # Update only hotkeys
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
-            logging.info("Hotkey settings saved successfully")
+            logger.info("Hotkey settings saved successfully")
         except Exception as e:
-            logging.error(f"Failed to save settings: {e}")
+            logger.error(f"Failed to save settings: {e}")
             raise
 
     def load_all_settings(self) -> Dict[str, Any]:
@@ -91,7 +93,7 @@ class SettingsManager:
                 with open(self.settings_file, 'r') as f:
                     return json.load(f)
         except Exception as e:
-            logging.warning(f"Failed to load all settings: {e}")
+            logger.warning(f"Failed to load all settings: {e}")
 
         return {}
 
@@ -107,9 +109,9 @@ class SettingsManager:
         try:
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
-            logging.info("All settings saved successfully")
+            logger.info("All settings saved successfully")
         except Exception as e:
-            logging.error(f"Failed to save all settings: {e}")
+            logger.error(f"Failed to save all settings: {e}")
             raise
 
     def save_setting(self, key: str, value: Any) -> None:
@@ -126,9 +128,9 @@ class SettingsManager:
             settings = self.load_all_settings()
             settings[key] = value
             self.save_all_settings(settings)
-            logging.debug(f"Setting saved: {key}={value}")
+            logger.debug(f"Setting saved: {key}={value}")
         except Exception as e:
-            logging.error(f"Failed to save setting '{key}': {e}")
+            logger.error(f"Failed to save setting '{key}': {e}")
             raise
 
     def load_waveform_style_settings(self) -> Tuple[str, Dict[str, Dict]]:
@@ -161,13 +163,13 @@ class SettingsManager:
 
                     # Validate current style exists
                     if current_style not in all_configs:
-                        logging.warning(f"Invalid current style '{current_style}', falling back to default")
+                        logger.warning(f"Invalid current style '{current_style}', falling back to default")
                         current_style = config.CURRENT_WAVEFORM_STYLE
 
                     return current_style, all_configs
 
             except Exception as e:
-                logging.warning(f"Failed to load waveform style settings: {e}")
+                logger.warning(f"Failed to load waveform style settings: {e}")
 
             # Return defaults on any error
             return config.CURRENT_WAVEFORM_STYLE, config.WAVEFORM_STYLE_CONFIGS.copy()
@@ -215,10 +217,10 @@ class SettingsManager:
                 with open(self.settings_file, 'w') as f:
                     json.dump(settings, f, indent=2)
 
-                logging.info("Waveform style settings saved successfully")
+                logger.info("Waveform style settings saved successfully")
 
             except Exception as e:
-                logging.error(f"Failed to save waveform style settings: {e}")
+                logger.error(f"Failed to save waveform style settings: {e}")
                 raise
 
     def get_style_config(self, style_name: str) -> Dict[str, Any]:
@@ -245,7 +247,7 @@ class SettingsManager:
             else:
                 # Check if it's a valid style with default config
                 if style_name in config.WAVEFORM_STYLE_CONFIGS:
-                    logging.info(f"Style '{style_name}' not found in saved settings, returning default")
+                    logger.info(f"Style '{style_name}' not found in saved settings, returning default")
                     return config.WAVEFORM_STYLE_CONFIGS[style_name].copy()
                 else:
                     raise ValueError(f"Unknown style '{style_name}'. Valid styles: {list(config.WAVEFORM_STYLE_CONFIGS.keys())}")
@@ -253,7 +255,7 @@ class SettingsManager:
         except Exception as e:
             if isinstance(e, ValueError):
                 raise  # Re-raise validation errors
-            logging.error(f"Failed to get style config for '{style_name}': {e}")
+            logger.error(f"Failed to get style config for '{style_name}': {e}")
             # Return default for the style if it exists
             if style_name in config.WAVEFORM_STYLE_CONFIGS:
                 return config.WAVEFORM_STYLE_CONFIGS[style_name].copy()
@@ -292,12 +294,12 @@ class SettingsManager:
             # Save back to file
             self.save_waveform_style_settings(current_style, all_configs)
 
-            logging.info(f"Configuration saved successfully for style '{style_name}'")
+            logger.info(f"Configuration saved successfully for style '{style_name}'")
 
         except Exception as e:
             if isinstance(e, ValueError):
                 raise  # Re-raise validation errors
-            logging.error(f"Failed to save style config for '{style_name}': {e}")
+            logger.error(f"Failed to save style config for '{style_name}': {e}")
             raise
 
     def load_model_selection(self) -> str:
@@ -315,7 +317,7 @@ class SettingsManager:
                 return selected_model
 
         except Exception as e:
-            logging.warning(f"Failed to load model selection: {e}")
+            logger.warning(f"Failed to load model selection: {e}")
 
         # Return default (first model choice mapped to internal value)
         return config.MODEL_VALUE_MAP[config.MODEL_CHOICES[0]]
@@ -348,12 +350,12 @@ class SettingsManager:
             # Save all settings
             self.save_all_settings(settings)
 
-            logging.info(f"Model selection saved: {model_value}")
+            logger.info(f"Model selection saved: {model_value}")
 
         except Exception as e:
             if isinstance(e, ValueError):
                 raise  # Re-raise validation errors
-            logging.error(f"Failed to save model selection: {e}")
+            logger.error(f"Failed to save model selection: {e}")
             raise
 
     def load_audio_input_device(self) -> Optional[int]:
@@ -368,7 +370,7 @@ class SettingsManager:
             if device_id is not None and isinstance(device_id, int):
                 return device_id
         except Exception as e:
-            logging.warning(f"Failed to load audio input device: {e}")
+            logger.warning(f"Failed to load audio input device: {e}")
         return None
 
     def save_audio_input_device(self, device_id: Optional[int]) -> None:
@@ -387,9 +389,9 @@ class SettingsManager:
             else:
                 settings[SettingsKey.AUDIO_INPUT_DEVICE] = device_id
             self.save_all_settings(settings)
-            logging.info(f"Audio input device saved: {device_id}")
+            logger.info(f"Audio input device saved: {device_id}")
         except Exception as e:
-            logging.error(f"Failed to save audio input device: {e}")
+            logger.error(f"Failed to save audio input device: {e}")
             raise
 
     def load_window_geometry(self) -> Optional[Dict[str, int]]:
@@ -407,7 +409,7 @@ class SettingsManager:
                 if required_keys.issubset(geometry.keys()):
                     return geometry
         except Exception as e:
-            logging.warning(f"Failed to load window geometry: {e}")
+            logger.warning(f"Failed to load window geometry: {e}")
         return None
 
     def save_window_geometry(self, x: int, y: int, width: int, height: int) -> None:
@@ -431,9 +433,9 @@ class SettingsManager:
                 'height': height
             }
             self.save_all_settings(settings)
-            logging.debug(f"Window geometry saved: {x}, {y}, {width}x{height}")
+            logger.debug(f"Window geometry saved: {x}, {y}, {width}x{height}")
         except Exception as e:
-            logging.error(f"Failed to save window geometry: {e}")
+            logger.error(f"Failed to save window geometry: {e}")
             raise
 
     def load_streaming_overlay_position(self) -> Optional[Dict[str, int]]:
@@ -451,7 +453,7 @@ class SettingsManager:
                 if required_keys.issubset(position.keys()):
                     return position
         except Exception as e:
-            logging.warning(f"Failed to load streaming overlay position: {e}")
+            logger.warning(f"Failed to load streaming overlay position: {e}")
         return None
 
     def save_streaming_overlay_position(self, x: int, y: int) -> None:
@@ -471,9 +473,9 @@ class SettingsManager:
                 'y': y
             }
             self.save_all_settings(settings)
-            logging.debug(f"Streaming overlay position saved: {x}, {y}")
+            logger.debug(f"Streaming overlay position saved: {x}, {y}")
         except Exception as e:
-            logging.error(f"Failed to save streaming overlay position: {e}")
+            logger.error(f"Failed to save streaming overlay position: {e}")
             raise
 
     def load_streaming_settings(self) -> Dict[str, Any]:
@@ -491,7 +493,7 @@ class SettingsManager:
                 SettingsKey.STREAMING_TYPING_DELAY: settings.get(SettingsKey.STREAMING_TYPING_DELAY, 0.02)
             }
         except Exception as e:
-            logging.warning(f"Failed to load streaming settings: {e}")
+            logger.warning(f"Failed to load streaming settings: {e}")
             return {
                 SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
                 SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
@@ -523,9 +525,9 @@ class SettingsManager:
             if paste_enabled is not None:
                 settings[SettingsKey.STREAMING_PASTE_ENABLED] = paste_enabled
             self.save_all_settings(settings)
-            logging.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}, paste_enabled={paste_enabled}")
+            logger.info(f"Streaming settings saved: enabled={enabled}, chunk_duration={chunk_duration}, paste_enabled={paste_enabled}")
         except Exception as e:
-            logging.error(f"Failed to save streaming settings: {e}")
+            logger.error(f"Failed to save streaming settings: {e}")
             raise
 
 # Global settings manager instance

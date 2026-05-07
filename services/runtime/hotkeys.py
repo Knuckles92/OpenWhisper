@@ -16,6 +16,8 @@ from ui_qt.overlay_state import OverlayState
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
 
+logger = logging.getLogger(__name__)
+
 
 class HotkeyRuntime:
     """Owns hotkey configuration and keyboard hook lifecycle."""
@@ -25,7 +27,7 @@ class HotkeyRuntime:
 
     def setup_hotkeys(self) -> None:
         """Setup hotkey management."""
-        logging.info("Setting up hotkeys...")
+        logger.info("Setting up hotkeys...")
         hotkeys = settings_manager.load_hotkey_settings()
         self.controller.hotkey_manager = HotkeyManager(hotkeys)
         self.controller.hotkey_manager.set_callbacks(
@@ -38,7 +40,7 @@ class HotkeyRuntime:
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
         """Update application hotkeys."""
-        logging.info(f"Updating hotkeys: {hotkeys}")
+        logger.info(f"Updating hotkeys: {hotkeys}")
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.update_hotkeys(hotkeys)
             settings_manager.save_hotkey_settings(hotkeys)
@@ -68,7 +70,7 @@ class HotkeyRuntime:
             self.controller._periodic_refresh_interval_ms
         )
 
-        logging.info(
+        logger.info(
             "Hook watchdog started: sleep detection every %dms, periodic refresh every %dms",
             config.HOTKEY_WATCHDOG_INTERVAL_MS,
             config.HOTKEY_HOOK_REFRESH_INTERVAL_MS,
@@ -83,7 +85,7 @@ class HotkeyRuntime:
         )
 
         if gap > self.controller._sleep_gap_threshold_sec:
-            logging.warning(
+            logger.warning(
                 f"Sleep/resume detected: time gap of {gap:.1f}s. "
                 "Re-registering keyboard hook."
             )
@@ -95,7 +97,7 @@ class HotkeyRuntime:
         if now - self.controller._last_rehook_time < 60.0:
             return
 
-        logging.info("Periodic keyboard hook refresh")
+        logger.info("Periodic keyboard hook refresh")
         self.rehook_keyboard()
 
     def rehook_keyboard(self) -> None:
@@ -108,7 +110,7 @@ class HotkeyRuntime:
                     self.controller._watchdog_interval_ms / 1000.0
                 )
             except Exception as exc:
-                logging.error(f"Failed to re-register keyboard hook: {exc}")
+                logger.error(f"Failed to re-register keyboard hook: {exc}")
 
     def on_stt_state_changed(self, enabled: bool) -> None:
         """Handle STT state changes on the main thread."""

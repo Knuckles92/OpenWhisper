@@ -13,6 +13,8 @@ from faster_whisper import WhisperModel
 from .base import TranscriptionBackend
 from config import config
 
+logger = logging.getLogger(__name__)
+
 
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
@@ -53,10 +55,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         try:
             import ctranslate2
             supported = ctranslate2.get_supported_compute_types(device)
-            logging.debug(f"Supported compute types for {device}: {supported}")
+            logger.debug(f"Supported compute types for {device}: {supported}")
             return set(supported)
         except Exception as e:
-            logging.warning(f"Could not query supported compute types: {e}")
+            logger.warning(f"Could not query supported compute types: {e}")
             # Return safe fallback - float32 is always supported
             return {"float32"}
 
@@ -85,7 +87,7 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         for fallback in fallback_order:
             if fallback in supported:
-                logging.warning(
+                logger.warning(
                     f"Compute type '{preferred}' not supported on this {device}. "
                     f"Falling back to '{fallback}'. "
                     f"(Supported types: {', '.join(sorted(supported))})"
@@ -93,7 +95,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                 return fallback
 
         # Ultimate fallback - float32 should always work
-        logging.warning(f"No preferred compute types available, using float32")
+        logger.warning(f"No preferred compute types available, using float32")
         return "float32"
 
     def _detect_hardware(self) -> Tuple[str, str, str]:
@@ -135,12 +137,12 @@ class LocalWhisperBackend(TranscriptionBackend):
                 detected_device = "cuda"
                 detected_compute = "float16"
                 detected_model = "turbo"
-                logging.info("CUDA detected - using GPU acceleration with float16 and turbo model")
+                logger.info("CUDA detected - using GPU acceleration with float16 and turbo model")
             else:
                 detected_device = "cpu"
                 detected_compute = "int8"
                 detected_model = "base"
-                logging.info("No CUDA available - using CPU with int8 quantization and base model")
+                logger.info("No CUDA available - using CPU with int8 quantization and base model")
 
             # Apply auto-detected values only where needed
             if device == "auto":
@@ -165,7 +167,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             if self.model_name == "auto":
                 self.model_name = detected_model
 
-            logging.info(f"Loading faster-whisper model: {self.model_name} "
+            logger.info(f"Loading faster-whisper model: {self.model_name} "
                         f"(device={self._device}, compute_type={self._compute_type})")
 
             self.model = WhisperModel(
@@ -174,10 +176,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 compute_type=self._compute_type
             )
 
-            logging.info("Faster-whisper model loaded successfully")
+            logger.info("Faster-whisper model loaded successfully")
 
         except Exception as e:
-            logging.error(f"Failed to load faster-whisper model: {e}")
+            logger.error(f"Failed to load faster-whisper model: {e}")
             self.model = None
 
     def transcribe(self, audio_path: str) -> str:
@@ -199,7 +201,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.is_transcribing = True
             self.reset_cancel_flag()
 
-            logging.info(f"Processing audio with faster-whisper (VAD={config.FASTER_WHISPER_VAD_ENABLED})...")
+            logger.info(f"Processing audio with faster-whisper (VAD={config.FASTER_WHISPER_VAD_ENABLED})...")
 
             # Configure VAD parameters if enabled
             vad_params = None
@@ -216,7 +218,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                 vad_parameters=vad_params
             )
 
-            logging.info(f"Detected language: {info.language} "
+            logger.info(f"Detected language: {info.language} "
                         f"(probability: {info.language_probability:.2f})")
 
             # Iterate through segments to get transcribed text
@@ -224,7 +226,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             text_parts = []
             for segment in segments:
                 if self.should_cancel:
-                    logging.info("Transcription canceled by user")
+                    logger.info("Transcription canceled by user")
                     raise Exception("Transcription canceled")
                 text_parts.append(segment.text)
 
@@ -234,13 +236,13 @@ class LocalWhisperBackend(TranscriptionBackend):
             import re
             transcript = re.sub(r'\s+', ' ', transcript)
 
-            logging.info(f"Transcription complete. Length: {len(transcript)} characters")
+            logger.info(f"Transcription complete. Length: {len(transcript)} characters")
 
             return transcript
 
         except Exception as e:
             if "canceled" not in str(e).lower():
-                logging.error(f"Transcription failed: {e}")
+                logger.error(f"Transcription failed: {e}")
             raise
         finally:
             self.is_transcribing = False
@@ -275,10 +277,10 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             for i, chunk_file in enumerate(chunk_files):
                 if self.should_cancel:
-                    logging.info("Chunked transcription canceled by user")
+                    logger.info("Chunked transcription canceled by user")
                     raise Exception("Transcription canceled")
 
-                logging.info(f"Processing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
+                logger.info(f"Processing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
 
                 # Transcribe individual chunk
                 segments, info = self.model.transcribe(
@@ -292,28 +294,28 @@ class LocalWhisperBackend(TranscriptionBackend):
                 text_parts = []
                 for segment in segments:
                     if self.should_cancel:
-                        logging.info("Transcription canceled during chunk processing")
+                        logger.info("Transcription canceled during chunk processing")
                         raise Exception("Transcription canceled")
                     text_parts.append(segment.text)
 
                 chunk_text = " ".join(text_parts).strip()
                 transcriptions.append(chunk_text)
 
-                logging.info(f"Chunk {i+1}/{len(chunk_files)} completed. "
+                logger.info(f"Chunk {i+1}/{len(chunk_files)} completed. "
                            f"Length: {len(chunk_text)} characters")
 
             # Combine transcriptions using audio_processor
             from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)
 
-            logging.info(f"Chunked transcription complete. "
+            logger.info(f"Chunked transcription complete. "
                         f"Total length: {len(combined_text)} characters")
 
             return combined_text
 
         except Exception as e:
             if "canceled" not in str(e).lower():
-                logging.error(f"Chunked transcription failed: {e}")
+                logger.error(f"Chunked transcription failed: {e}")
             raise
         finally:
             self.is_transcribing = False
@@ -352,60 +354,60 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         try:
             if self.model is not None:
-                print("    [cleanup] Starting cleanup...", flush=True)
+                logger.debug("[cleanup] Starting cleanup...")
 
                 # Cancel any ongoing transcription
                 self.should_cancel = True
 
                 # Force CUDA to finish ALL pending operations before destroying model
                 # This is critical for large models like turbo
-                print("    [cleanup] Synchronizing CUDA...", flush=True)
+                logger.debug("[cleanup] Synchronizing CUDA...")
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
-                        print("    [cleanup] CUDA synchronized", flush=True)
+                        logger.debug("[cleanup] CUDA synchronized")
                 except ImportError:
                     pass
                 except Exception as e:
-                    print(f"    [cleanup] CUDA sync error: {e}", flush=True)
+                    logger.debug(f"[cleanup] CUDA sync error: {e}")
 
                 # Small delay after sync
                 time.sleep(0.3)
 
-                print("    [cleanup] Setting model = None...", flush=True)
+                logger.debug("[cleanup] Setting model = None...")
                 self.model = None
-                print("    [cleanup] Model set to None", flush=True)
+                logger.debug("[cleanup] Model set to None")
 
                 # Give CUDA/ctranslate2 time to finish destructor work
-                print("    [cleanup] Sleeping 0.5s...", flush=True)
+                logger.debug("[cleanup] Sleeping 0.5s...")
                 time.sleep(0.5)
-                print("    [cleanup] Sleep done", flush=True)
+                logger.debug("[cleanup] Sleep done")
 
                 # Force garbage collection to release memory
-                print("    [cleanup] Calling gc.collect()...", flush=True)
+                logger.debug("[cleanup] Calling gc.collect()...")
                 import gc
                 gc.collect()
-                print("    [cleanup] gc.collect() done", flush=True)
+                logger.debug("[cleanup] gc.collect() done")
 
                 # Another delay before touching CUDA cache
                 time.sleep(0.2)
 
                 # Clear GPU cache
-                print("    [cleanup] Clearing CUDA cache...", flush=True)
+                logger.debug("[cleanup] Clearing CUDA cache...")
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                        print("    [cleanup] CUDA cache cleared", flush=True)
+                        logger.debug("[cleanup] CUDA cache cleared")
                 except ImportError:
                     pass
                 except Exception as e:
-                    print(f"    [cleanup] CUDA error: {e}", flush=True)
+                    logger.debug(f"[cleanup] CUDA error: {e}")
 
-                print("    [cleanup] Cleanup complete!", flush=True)
+                logger.debug("[cleanup] Cleanup complete!")
         except Exception as e:
-            print(f"    [cleanup] Exception: {e}", flush=True)
+            logger.debug(f"[cleanup] Exception: {e}")
 
     @property
     def name(self) -> str:

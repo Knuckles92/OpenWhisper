@@ -27,6 +27,8 @@ from transcriber import LocalWhisperBackend
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
 
+logger = logging.getLogger(__name__)
+
 
 class StreamingRuntime:
     """Owns streaming transcription setup and lifecycle."""
@@ -50,10 +52,10 @@ class StreamingRuntime:
 
     def reconfigure_streaming(self) -> None:
         """Reconfigure streaming transcriber based on current settings."""
-        logging.info("Reconfiguring streaming transcription...")
+        logger.info("Reconfiguring streaming transcription...")
 
         if self.controller.recorder.is_recording:
-            logging.warning("Cannot reconfigure streaming while recording")
+            logger.warning("Cannot reconfigure streaming while recording")
             self.controller.ui_controller.set_status(
                 "Stop recording before changing streaming mode"
             )
@@ -80,7 +82,7 @@ class StreamingRuntime:
             sample_rate=config.SAMPLE_RATE,
             callback=self.on_partial_transcription,
         )
-        logging.info("Streaming transcription started")
+        logger.info("Streaming transcription started")
 
         if self.controller._streaming_paste_enabled:
             self.controller.streaming_overlay_show.emit()
@@ -92,7 +94,7 @@ class StreamingRuntime:
 
         streaming_text = self.controller.streaming_transcriber.stop_streaming()
         self.controller.recorder.set_streaming_callback(None)
-        logging.info(
+        logger.info(
             f"Streaming transcription stopped, got {len(streaming_text)} chars"
         )
         return streaming_text
@@ -102,7 +104,7 @@ class StreamingRuntime:
         if self.controller.streaming_transcriber:
             self.controller.streaming_transcriber.stop_streaming()
             self.controller.recorder.set_streaming_callback(None)
-            logging.info("Streaming transcription canceled")
+            logger.info("Streaming transcription canceled")
 
         if self.controller._streaming_paste_enabled:
             self.controller.streaming_overlay_hide.emit()
@@ -132,18 +134,18 @@ class StreamingRuntime:
                 )
 
                 if streaming_tiny_enabled:
-                    logging.info("Creating dedicated tiny.en backend for streaming...")
+                    logger.info("Creating dedicated tiny.en backend for streaming...")
                     self.controller._streaming_backend = LocalWhisperBackend(
                         model_name="tiny.en"
                     )
                     streaming_backend = self.controller._streaming_backend
-                    logging.info(
+                    logger.info(
                         "Streaming %s dedicated tiny.en model",
                         "will use" if initial_setup else "reconfigured with",
                     )
                 else:
                     streaming_backend = self.controller.current_backend
-                    logging.info(
+                    logger.info(
                         "Streaming %s main transcription model",
                         "will share" if initial_setup else "reconfigured to share",
                     )
@@ -152,7 +154,7 @@ class StreamingRuntime:
                     backend=streaming_backend,
                     chunk_duration_sec=chunk_duration,
                 )
-                logging.info(
+                logger.info(
                     "Streaming transcription enabled "
                     f"(chunk_duration={chunk_duration}s, "
                     f"paste_overlay={self.controller._streaming_paste_enabled})"
@@ -161,7 +163,7 @@ class StreamingRuntime:
                     self.controller.ui_controller.set_status("Streaming mode enabled")
             else:
                 if self.controller._streaming_enabled:
-                    logging.info(
+                    logger.info(
                         "Streaming requested but not available "
                         "(requires Local Whisper backend)"
                     )
@@ -170,14 +172,14 @@ class StreamingRuntime:
                             "Streaming requires Local Whisper backend"
                         )
                 else:
-                    logging.info("Streaming transcription disabled")
+                    logger.info("Streaming transcription disabled")
                     if not initial_setup:
                         self.controller.ui_controller.set_status("Streaming mode disabled")
 
                 self.controller._streaming_enabled = False
                 self.controller._streaming_paste_enabled = False
         except Exception as exc:
-            logging.error(f"Failed to setup streaming: {exc}")
+            logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
             self.controller._streaming_paste_enabled = False
             if not initial_setup:
@@ -187,16 +189,16 @@ class StreamingRuntime:
         if self.controller.streaming_transcriber:
             try:
                 self.controller.streaming_transcriber.cleanup()
-                logging.info("Cleaned up existing streaming transcriber")
+                logger.info("Cleaned up existing streaming transcriber")
             except Exception as exc:
-                logging.warning(f"Error cleaning up streaming transcriber: {exc}")
+                logger.warning(f"Error cleaning up streaming transcriber: {exc}")
             self.controller.streaming_transcriber = None
 
         if self.controller._streaming_backend:
             try:
-                logging.info("Cleaning up dedicated streaming backend...")
+                logger.info("Cleaning up dedicated streaming backend...")
                 self.controller._streaming_backend.cleanup()
-                logging.info("Cleaned up dedicated streaming backend")
+                logger.info("Cleaned up dedicated streaming backend")
             except Exception as exc:
-                logging.warning(f"Error cleaning up streaming backend: {exc}")
+                logger.warning(f"Error cleaning up streaming backend: {exc}")
             self.controller._streaming_backend = None

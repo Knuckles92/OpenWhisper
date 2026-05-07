@@ -7,6 +7,8 @@ import logging
 from typing import Dict, Callable, Optional
 from config import config
 
+logger = logging.getLogger(__name__)
+
 
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
@@ -88,10 +90,10 @@ class HotkeyManager:
             # Fallback to regular status update if auto-hide not available
             if not self.program_enabled:
                 self.on_status_update("STT Disabled")
-                logging.info("STT has been disabled")
+                logger.info("STT has been disabled")
             else:
                 self.on_status_update("STT Enabled")
-                logging.info("STT has been enabled")
+                logger.info("STT has been enabled")
 
     def _should_trigger_record_toggle(self) -> bool:
         """Check if record toggle should trigger (with debounce)."""
@@ -164,16 +166,16 @@ class HotkeyManager:
         Preserves all state (hotkeys, callbacks, enabled status).
         Must be called from the main thread.
         """
-        logging.info("Re-registering keyboard hook...")
+        logger.info("Re-registering keyboard hook...")
         try:
             self.cleanup()
         except Exception as e:
-            logging.warning(f"Error during rehook cleanup: {e}")
+            logger.warning(f"Error during rehook cleanup: {e}")
         try:
             self._setup_keyboard_hook()
-            logging.info("Keyboard hook re-registered successfully")
+            logger.info("Keyboard hook re-registered successfully")
         except Exception as e:
-            logging.error(f"Failed to re-register keyboard hook: {e}")
+            logger.error(f"Failed to re-register keyboard hook: {e}")
 
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Update the hotkey mappings.
@@ -185,7 +187,7 @@ class HotkeyManager:
         # Restart keyboard hook with new hotkeys
         self.cleanup()
         self._setup_keyboard_hook()
-        logging.info("Hotkeys updated successfully")
+        logger.info("Hotkeys updated successfully")
 
     def cleanup(self):
         """Clean up keyboard hooks."""
@@ -196,13 +198,13 @@ class HotkeyManager:
                 keyboard.unhook_all()
             else:
                 # If called from non-main thread, just log a warning
-                logging.warning("Hotkey cleanup called from non-main thread, skipping unhook")
+                logger.warning("Hotkey cleanup called from non-main thread, skipping unhook")
         except RuntimeError as e:
             # Ignore "cannot join current thread" errors - they're harmless during shutdown
             if "cannot join" not in str(e).lower():
-                logging.error(f"Error cleaning up keyboard hooks: {e}")
+                logger.error(f"Error cleaning up keyboard hooks: {e}")
         except Exception as e:
-            logging.error(f"Error cleaning up keyboard hooks: {e}")
+            logger.error(f"Error cleaning up keyboard hooks: {e}")
 
     def set_callbacks(self,
                      on_record_toggle: Callable = None,

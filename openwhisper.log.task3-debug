@@ -1,0 +1,160 @@
+2026-05-06 20:06:31,314 - INFO - root - Faulthandler enabled for crash diagnostics: openwhisper.crash.log
+2026-05-06 20:06:31,323 - INFO - root - Qt message handler installed
+2026-05-06 20:06:31,323 - INFO - root - ============================================================
+2026-05-06 20:06:31,323 - INFO - root - Starting OpenWhisper
+2026-05-06 20:06:31,323 - INFO - root - ============================================================
+2026-05-06 20:06:33,804 - DEBUG - ui_qt.widgets.tabbed_content - Added tab 'Quick Record' at index 0
+2026-05-06 20:06:33,807 - DEBUG - ui_qt.widgets.tabbed_content - Added tab 'Upload File' at index 1
+2026-05-06 20:06:33,814 - DEBUG - ui_qt.main_window - Tab changed to index 0
+2026-05-06 20:06:33,816 - INFO - ui_qt.main_window - Loaded saved model selection: local_whisper
+2026-05-06 20:06:33,816 - INFO - ui_qt.main_window - Restored window geometry: {'x': 758, 'y': 97, 'width': 984, 'height': 965}
+2026-05-06 20:06:33,848 - INFO - ui_qt.system_tray - System tray initialized
+2026-05-06 20:06:33,854 - INFO - services.recorder - Audio recorder initialized
+2026-05-06 20:06:33,854 - INFO - services.application_controller - Setting up transcription backends...
+2026-05-06 20:06:33,864 - INFO - transcriber.local_backend - CUDA detected - using GPU acceleration with float16 and turbo model
+2026-05-06 20:06:33,864 - DEBUG - transcriber.local_backend - Supported compute types for cuda: {'float32', 'int8', 'int8_float32', 'int8_float16', 'float16'}
+2026-05-06 20:06:33,864 - INFO - transcriber.local_backend - Loading faster-whisper model: turbo (device=cuda, compute_type=float16)
+2026-05-06 20:06:34,063 - DEBUG - httpcore.connection - connect_tcp.started host='huggingface.co' port=443 local_address=None timeout=None socket_options=None
+2026-05-06 20:06:34,126 - DEBUG - httpcore.connection - connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x00000218EA30BA70>
+2026-05-06 20:06:34,126 - DEBUG - httpcore.connection - start_tls.started ssl_context=<ssl.SSLContext object at 0x00000218EA4F3050> server_hostname='huggingface.co' timeout=None
+2026-05-06 20:06:34,145 - DEBUG - httpcore.connection - start_tls.complete return_value=<httpcore._backends.sync.SyncStream object at 0x00000218EA3A6270>
+2026-05-06 20:06:34,146 - DEBUG - httpcore.http11 - send_request_headers.started request=<Request [b'GET']>
+2026-05-06 20:06:34,146 - DEBUG - httpcore.http11 - send_request_headers.complete
+2026-05-06 20:06:34,146 - DEBUG - httpcore.http11 - send_request_body.started request=<Request [b'GET']>
+2026-05-06 20:06:34,146 - DEBUG - httpcore.http11 - send_request_body.complete
+2026-05-06 20:06:34,146 - DEBUG - httpcore.http11 - receive_response_headers.started request=<Request [b'GET']>
+2026-05-06 20:06:34,241 - DEBUG - httpcore.http11 - receive_response_headers.complete return_value=(b'HTTP/1.1', 307, b'Temporary Redirect', [(b'Content-Type', b'text/plain; charset=utf-8'), (b'Content-Length', b'103'), (b'Connection', b'keep-alive'), (b'Date', b'Thu, 07 May 2026 03:06:34 GMT'), (b'Location', b'/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main'), (b'X-Powered-By', b'huggingface-moon'), (b'X-Request-Id', b'Root=1-69fc01ba-7c8665d2097443a676c184ff;eaa7af24-9d23-430e-a9ba-9c90ece21acd'), (b'RateLimit', b'"api";r=499;t=286'), (b'RateLimit-Policy', b'"fixed window";"api";q=500;w=300'), (b'cross-origin-opener-policy', b'same-origin'), (b'Referrer-Policy', b'strict-origin-when-cross-origin'), (b'Access-Control-Max-Age', b'86400'), (b'Access-Control-Allow-Origin', b'https://huggingface.co'), (b'Vary', b'Origin, Accept'), (b'Access-Control-Expose-Headers', b'X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash'), (b'X-Cache', b'Miss from cloudfront'), (b'Via', b'1.1 eac5ff8c8951bc7fa5bbf706c830ab88.cloudfront.net (CloudFront)'), (b'X-Amz-Cf-Pop', b'SFO5-P1'), (b'X-Amz-Cf-Id', b'Nu2F0llCAq0ik6OKZ-rwp3dCsZPvS7s9CjKj2qQMWFRfGoiDW0TXdw==')])
+2026-05-06 20:06:34,241 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - receive_response_body.started request=<Request [b'GET']>
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - receive_response_body.complete
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - response_closed.started
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - response_closed.complete
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - send_request_headers.started request=<Request [b'GET']>
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - send_request_headers.complete
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - send_request_body.started request=<Request [b'GET']>
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - send_request_body.complete
+2026-05-06 20:06:34,242 - DEBUG - httpcore.http11 - receive_response_headers.started request=<Request [b'GET']>
+2026-05-06 20:06:34,335 - DEBUG - httpcore.http11 - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Content-Type', b'application/json; charset=utf-8'), (b'Content-Length', b'790'), (b'Connection', b'keep-alive'), (b'Date', b'Thu, 07 May 2026 03:06:34 GMT'), (b'ETag', b'W/"316-ZCLrvMr2zTFdsq+nlXpGJAMhNZo"'), (b'X-Powered-By', b'huggingface-moon'), (b'X-Request-Id', b'Root=1-69fc01ba-030b0fd4400b5db27a0eb1a1;eaa7af24-9d23-430e-a9ba-9c90ece21acd'), (b'RateLimit', b'"api";r=498;t=286'), (b'RateLimit-Policy', b'"fixed window";"api";q=500;w=300'), (b'cross-origin-opener-policy', b'same-origin'), (b'Referrer-Policy', b'strict-origin-when-cross-origin'), (b'Access-Control-Max-Age', b'86400'), (b'Access-Control-Allow-Origin', b'https://huggingface.co'), (b'Vary', b'Origin'), (b'Access-Control-Expose-Headers', b'X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash'), (b'X-Cache', b'Miss from cloudfront'), (b'Via', b'1.1 eac5ff8c8951bc7fa5bbf706c830ab88.cloudfront.net (CloudFront)'), (b'X-Amz-Cf-Pop', b'SFO5-P1'), (b'X-Amz-Cf-Id', b'iOIDeTZb07bIvz4ym-AJc5fyGOYnvesgFZMkC5qdIgwYqa_7H4g2Nw==')])
+2026-05-06 20:06:34,335 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-05-06 20:06:34,335 - DEBUG - httpcore.http11 - receive_response_body.started request=<Request [b'GET']>
+2026-05-06 20:06:34,335 - DEBUG - httpcore.http11 - receive_response_body.complete
+2026-05-06 20:06:34,335 - DEBUG - httpcore.http11 - response_closed.started
+2026-05-06 20:06:34,335 - DEBUG - httpcore.http11 - response_closed.complete
+2026-05-06 20:06:35,746 - INFO - transcriber.local_backend - Faster-whisper model loaded successfully
+2026-05-06 20:06:35,875 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:06:36,002 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:06:36,137 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:06:36,137 - INFO - services.application_controller - Using transcription backend: local_whisper
+2026-05-06 20:06:36,137 - INFO - services.runtime.hotkeys - Setting up hotkeys...
+2026-05-06 20:06:36,186 - INFO - services.runtime.streaming - Streaming transcription disabled
+2026-05-06 20:06:36,187 - INFO - services.runtime.hotkeys - Hook watchdog started: sleep detection every 10000ms, periodic refresh every 300000ms
+2026-05-06 20:06:36,188 - INFO - root - Whisper device: turbo | cuda (float16)
+2026-05-06 20:06:36,357 - INFO - ui_qt.startup_profiler - Startup timing summary:
+2026-05-06 20:06:36,357 - INFO - ui_qt.startup_profiler -   main_entered                     total=  0.000s delta=  0.000s
+2026-05-06 20:06:36,357 - INFO - ui_qt.startup_profiler -   logging_ready                    total=  0.009s delta=  0.009s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   early_imports_started            total=  0.009s delta=  0.000s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   early_imports_finished           total=  0.017s delta=  0.008s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   qt_app_created                   total=  0.089s delta=  0.071s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   loading_screen_constructed       total=  0.096s delta=  0.007s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   loading_screen_shown             total=  0.138s delta=  0.043s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   first_visual_flushed             total=  0.155s delta=  0.017s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   late_imports_started             total=  0.156s delta=  0.001s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   late_imports_finished            total=  2.464s delta=  2.309s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   ui_controller_created            total=  2.535s delta=  0.071s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   application_controller_created   total=  4.873s delta=  2.338s
+2026-05-06 20:06:36,358 - INFO - ui_qt.startup_profiler -   main_window_shown                total=  5.043s delta=  0.170s
+2026-05-06 20:06:36,358 - INFO - root - Application initialization complete
+2026-05-06 20:06:36,358 - INFO - root - Starting event loop
+2026-05-06 20:06:36,358 - INFO - root - Starting PyQt6 event loop
+2026-05-06 20:06:36,825 - INFO - services.settings - All settings saved successfully
+2026-05-06 20:06:36,825 - DEBUG - services.settings - Window geometry saved: 758, 97, 984x965
+2026-05-06 20:07:29,431 - INFO - services.runtime.transcription - Toggle recording. Current state: False
+2026-05-06 20:07:29,432 - INFO - services.recorder - Cleared recording data. Old frame count: 0
+2026-05-06 20:07:29,432 - INFO - services.recorder - Deleted old audio file: recorded_audio.wav
+2026-05-06 20:07:29,433 - INFO - services.recorder - Recording started - frames cleared, old file removed
+2026-05-06 20:07:29,434 - INFO - services.runtime.transcription - Recording started
+2026-05-06 20:07:29,434 - DEBUG - ui_qt.widgets.tabbed_content - Recording state: active=True, source_tab=0
+2026-05-06 20:07:29,476 - INFO - services.recorder - Audio stream started
+2026-05-06 20:07:29,476 - DEBUG - ui_qt.ui_controller - Overlay state changed to: recording
+2026-05-06 20:07:29,476 - DEBUG - ui_qt.overlays.waveform_overlay - Overlay state changed to: recording
+2026-05-06 20:07:32,434 - INFO - services.runtime.transcription - Toggle recording. Current state: True
+2026-05-06 20:07:32,434 - INFO - services.recorder - Recording stop requested, post-roll continuing in background
+2026-05-06 20:07:32,434 - DEBUG - ui_qt.widgets.tabbed_content - Recording state: active=False, source_tab=-1
+2026-05-06 20:07:32,435 - DEBUG - ui_qt.ui_controller - Overlay state changed to: processing
+2026-05-06 20:07:32,435 - DEBUG - ui_qt.overlays.waveform_overlay - Overlay state changed to: processing
+2026-05-06 20:07:33,665 - INFO - services.recorder - Audio stream stopped and closed
+2026-05-06 20:07:33,666 - INFO - services.recorder - Appended 500ms of silence to protect the tail of the recording
+2026-05-06 20:07:33,666 - INFO - services.recorder - Audio saved to recorded_audio.wav at 2026-05-06 20:07:33 - 176 frames, 404548 bytes, 4.09s
+2026-05-06 20:07:33,666 - INFO - services.runtime.transcription - Audio file size: 404592 bytes
+2026-05-06 20:07:33,666 - INFO - services.audio_processor - Audio file size: 0.39 MB (limit: 23 MB)
+2026-05-06 20:07:33,667 - INFO - services.runtime.transcription - Transcription started. Duration: 4.09s
+2026-05-06 20:07:33,667 - INFO - transcriber.local_backend - Processing audio with faster-whisper (VAD=True)...
+2026-05-06 20:07:33,667 - DEBUG - ui_qt.ui_controller - Overlay state changed to: transcribing
+2026-05-06 20:07:33,667 - DEBUG - ui_qt.overlays.waveform_overlay - Overlay state changed to: transcribing
+2026-05-06 20:07:33,744 - INFO - faster_whisper - Processing audio with duration 00:04.587
+2026-05-06 20:07:33,795 - INFO - faster_whisper - VAD filter removed 00:04.587 of audio
+2026-05-06 20:07:33,795 - DEBUG - faster_whisper - VAD filter kept the following audio segments: 
+2026-05-06 20:07:34,164 - INFO - faster_whisper - Detected language 'en' with probability 0.51
+2026-05-06 20:07:34,165 - INFO - transcriber.local_backend - Detected language: en (probability: 0.51)
+2026-05-06 20:07:34,166 - INFO - transcriber.local_backend - Transcription complete. Length: 0 characters
+2026-05-06 20:07:34,168 - DEBUG - ui_qt.ui_controller - Caret paste indicator hidden
+2026-05-06 20:07:34,169 - INFO - services.history_manager - HistoryManager initialized (recordings: recordings)
+2026-05-06 20:07:34,170 - INFO - services.history_manager - Saved recording: recording_20260506_200734.wav
+2026-05-06 20:07:34,171 - INFO - services.history_manager - Removed old recording: recording_20260503_133433.wav
+2026-05-06 20:07:34,183 - INFO - services.database - Database schema initialized
+2026-05-06 20:07:34,185 - INFO - services.database - DatabaseManager initialized: openwhisper.db
+2026-05-06 20:07:34,342 - INFO - services.history_manager - Added history entry: 81cc706a...
+2026-05-06 20:07:34,342 - INFO - services.runtime.transcription - Transcription saved to history
+2026-05-06 20:07:34,365 - INFO - services.runtime.transcription - Transcription copied to clipboard
+2026-05-06 20:07:34,369 - INFO - services.runtime.transcription - Transcription auto-pasted
+2026-05-06 20:07:35,128 - INFO - services.settings - All settings saved successfully
+2026-05-06 20:07:35,128 - DEBUG - services.settings - Window geometry saved: 758, 97, 984x1025
+2026-05-06 20:09:09,857 - INFO - root - Faulthandler enabled for crash diagnostics: openwhisper.crash.log
+2026-05-06 20:09:09,865 - INFO - root - Qt message handler installed
+2026-05-06 20:09:09,865 - INFO - verify - === verify-cleanup script start ===
+2026-05-06 20:09:11,406 - INFO - transcriber.local_backend - CUDA detected - using GPU acceleration with float16 and turbo model
+2026-05-06 20:09:11,406 - DEBUG - transcriber.local_backend - Supported compute types for cuda: {'float32', 'int8', 'int8_float16', 'int8_float32', 'float16'}
+2026-05-06 20:09:11,406 - INFO - transcriber.local_backend - Loading faster-whisper model: turbo (device=cuda, compute_type=float16)
+2026-05-06 20:09:11,603 - DEBUG - httpcore.connection - connect_tcp.started host='huggingface.co' port=443 local_address=None timeout=None socket_options=None
+2026-05-06 20:09:11,645 - DEBUG - httpcore.connection - connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x0000016E667C36B0>
+2026-05-06 20:09:11,645 - DEBUG - httpcore.connection - start_tls.started ssl_context=<ssl.SSLContext object at 0x0000016E667D97D0> server_hostname='huggingface.co' timeout=None
+2026-05-06 20:09:11,667 - DEBUG - httpcore.connection - start_tls.complete return_value=<httpcore._backends.sync.SyncStream object at 0x0000016E5F7B1EE0>
+2026-05-06 20:09:11,667 - DEBUG - httpcore.http11 - send_request_headers.started request=<Request [b'GET']>
+2026-05-06 20:09:11,668 - DEBUG - httpcore.http11 - send_request_headers.complete
+2026-05-06 20:09:11,668 - DEBUG - httpcore.http11 - send_request_body.started request=<Request [b'GET']>
+2026-05-06 20:09:11,668 - DEBUG - httpcore.http11 - send_request_body.complete
+2026-05-06 20:09:11,668 - DEBUG - httpcore.http11 - receive_response_headers.started request=<Request [b'GET']>
+2026-05-06 20:09:11,756 - DEBUG - httpcore.http11 - receive_response_headers.complete return_value=(b'HTTP/1.1', 307, b'Temporary Redirect', [(b'Content-Type', b'text/plain; charset=utf-8'), (b'Content-Length', b'103'), (b'Connection', b'keep-alive'), (b'Date', b'Thu, 07 May 2026 03:09:11 GMT'), (b'Location', b'/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main'), (b'X-Powered-By', b'huggingface-moon'), (b'X-Request-Id', b'Root=1-69fc0257-2c4237c373c4f4681ab82fe3;602be79a-7652-48db-bd19-010a26387e19'), (b'RateLimit', b'"api";r=497;t=129'), (b'RateLimit-Policy', b'"fixed window";"api";q=500;w=300'), (b'cross-origin-opener-policy', b'same-origin'), (b'Referrer-Policy', b'strict-origin-when-cross-origin'), (b'Access-Control-Max-Age', b'86400'), (b'Access-Control-Allow-Origin', b'https://huggingface.co'), (b'Vary', b'Origin, Accept'), (b'Access-Control-Expose-Headers', b'X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash'), (b'X-Cache', b'Miss from cloudfront'), (b'Via', b'1.1 1610908c71e02a3a4a7c5003a074ddd2.cloudfront.net (CloudFront)'), (b'X-Amz-Cf-Pop', b'SFO5-P1'), (b'X-Amz-Cf-Id', b'G8dgTyQ1pY4LpxAtKf7_caDe1I9JsJLiRlb8B9Y7N1YS3T7wv_LGDA==')])
+2026-05-06 20:09:11,757 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - receive_response_body.started request=<Request [b'GET']>
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - receive_response_body.complete
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - response_closed.started
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - response_closed.complete
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - send_request_headers.started request=<Request [b'GET']>
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - send_request_headers.complete
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - send_request_body.started request=<Request [b'GET']>
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - send_request_body.complete
+2026-05-06 20:09:11,757 - DEBUG - httpcore.http11 - receive_response_headers.started request=<Request [b'GET']>
+2026-05-06 20:09:11,855 - DEBUG - httpcore.http11 - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Content-Type', b'application/json; charset=utf-8'), (b'Content-Length', b'790'), (b'Connection', b'keep-alive'), (b'Date', b'Thu, 07 May 2026 03:09:11 GMT'), (b'ETag', b'W/"316-ZCLrvMr2zTFdsq+nlXpGJAMhNZo"'), (b'X-Powered-By', b'huggingface-moon'), (b'X-Request-Id', b'Root=1-69fc0257-4872fee851ed8e8168ae3752;602be79a-7652-48db-bd19-010a26387e19'), (b'RateLimit', b'"api";r=496;t=129'), (b'RateLimit-Policy', b'"fixed window";"api";q=500;w=300'), (b'cross-origin-opener-policy', b'same-origin'), (b'Referrer-Policy', b'strict-origin-when-cross-origin'), (b'Access-Control-Max-Age', b'86400'), (b'Access-Control-Allow-Origin', b'https://huggingface.co'), (b'Vary', b'Origin'), (b'Access-Control-Expose-Headers', b'X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash'), (b'X-Cache', b'Miss from cloudfront'), (b'Via', b'1.1 1610908c71e02a3a4a7c5003a074ddd2.cloudfront.net (CloudFront)'), (b'X-Amz-Cf-Pop', b'SFO5-P1'), (b'X-Amz-Cf-Id', b'BnTd8Jupr6ATczjGdRBE-aGdD7GdV-gFANqZq7e-Ozu7J1SxfTXwJg==')])
+2026-05-06 20:09:11,855 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-05-06 20:09:11,855 - DEBUG - httpcore.http11 - receive_response_body.started request=<Request [b'GET']>
+2026-05-06 20:09:11,855 - DEBUG - httpcore.http11 - receive_response_body.complete
+2026-05-06 20:09:11,855 - DEBUG - httpcore.http11 - response_closed.started
+2026-05-06 20:09:11,855 - DEBUG - httpcore.http11 - response_closed.complete
+2026-05-06 20:09:13,156 - INFO - transcriber.local_backend - Faster-whisper model loaded successfully
+2026-05-06 20:09:13,156 - INFO - verify - === calling cleanup ===
+2026-05-06 20:09:13,156 - DEBUG - transcriber.local_backend - [cleanup] Starting cleanup...
+2026-05-06 20:09:13,156 - DEBUG - transcriber.local_backend - [cleanup] Synchronizing CUDA...
+2026-05-06 20:09:13,169 - DEBUG - transcriber.local_backend - [cleanup] CUDA synchronized
+2026-05-06 20:09:13,470 - DEBUG - transcriber.local_backend - [cleanup] Setting model = None...
+2026-05-06 20:09:13,489 - DEBUG - transcriber.local_backend - [cleanup] Model set to None
+2026-05-06 20:09:13,489 - DEBUG - transcriber.local_backend - [cleanup] Sleeping 0.5s...
+2026-05-06 20:09:13,991 - DEBUG - transcriber.local_backend - [cleanup] Sleep done
+2026-05-06 20:09:13,991 - DEBUG - transcriber.local_backend - [cleanup] Calling gc.collect()...
+2026-05-06 20:09:14,025 - DEBUG - transcriber.local_backend - [cleanup] gc.collect() done
+2026-05-06 20:09:14,226 - DEBUG - transcriber.local_backend - [cleanup] Clearing CUDA cache...
+2026-05-06 20:09:14,226 - DEBUG - transcriber.local_backend - [cleanup] CUDA cache cleared
+2026-05-06 20:09:14,226 - DEBUG - transcriber.local_backend - [cleanup] Cleanup complete!
+2026-05-06 20:09:14,226 - INFO - verify - === cleanup returned ===
+2026-05-06 20:09:14,226 - DEBUG - httpcore.connection - close.started
+2026-05-06 20:09:14,226 - DEBUG - httpcore.connection - close.complete

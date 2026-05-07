@@ -11,6 +11,8 @@ import time
 from typing import Callable, List, Optional, Tuple
 from config import config
 
+logger = logging.getLogger(__name__)
+
 AudioLevelCallback = Callable[[float], None]
 
 
@@ -31,7 +33,7 @@ class AudioRecorder:
                 if device['max_input_channels'] > 0:
                     devices.append((i, device['name']))
         except Exception as e:
-            logging.error(f"Failed to enumerate audio devices: {e}")
+            logger.error(f"Failed to enumerate audio devices: {e}")
         return devices
 
     def __init__(self, device_id: Optional[int] = None):
@@ -68,7 +70,7 @@ class AudioRecorder:
         # Thread safety for callback
         self._callback_lock = threading.Lock()
 
-        logging.info("Audio recorder initialized")
+        logger.info("Audio recorder initialized")
 
     def set_audio_level_callback(self, callback: AudioLevelCallback):
         """Set callback function for real-time audio level updates.
@@ -93,7 +95,7 @@ class AudioRecorder:
             True if recording started successfully, False otherwise.
         """
         if self.is_recording:
-            logging.warning("Recording already in progress")
+            logger.warning("Recording already in progress")
             return False
 
         try:
@@ -107,9 +109,9 @@ class AudioRecorder:
             if os.path.exists(config.RECORDED_AUDIO_FILE):
                 try:
                     os.remove(config.RECORDED_AUDIO_FILE)
-                    logging.info(f"Deleted old audio file: {config.RECORDED_AUDIO_FILE}")
+                    logger.info(f"Deleted old audio file: {config.RECORDED_AUDIO_FILE}")
                 except Exception as e:
-                    logging.warning(f"Could not delete old audio file: {e}")
+                    logger.warning(f"Could not delete old audio file: {e}")
 
             self.is_recording = True
             self._stop_requested = False
@@ -119,11 +121,11 @@ class AudioRecorder:
             self.recording_thread = threading.Thread(target=self._record_audio, daemon=True)
             self.recording_thread.start()
 
-            logging.info("Recording started - frames cleared, old file removed")
+            logger.info("Recording started - frames cleared, old file removed")
             return True
 
         except Exception as e:
-            logging.error(f"Failed to start recording: {e}")
+            logger.error(f"Failed to start recording: {e}")
             self.is_recording = False
             return False
 
@@ -134,7 +136,7 @@ class AudioRecorder:
             True if recording stopped successfully, False otherwise.
         """
         if not self.is_recording:
-            logging.warning("No recording in progress")
+            logger.warning("No recording in progress")
             return False
 
         try:
@@ -144,11 +146,11 @@ class AudioRecorder:
 
             # Don't wait for recording thread to finish - let post-roll happen in background
             # The thread will naturally finish after the post-roll period
-            logging.info("Recording stop requested, post-roll continuing in background")
+            logger.info("Recording stop requested, post-roll continuing in background")
             return True
 
         except Exception as e:
-            logging.error(f"Failed to stop recording: {e}")
+            logger.error(f"Failed to stop recording: {e}")
             return False
 
     def wait_for_stop_completion(self, timeout: float = None) -> bool:
@@ -169,7 +171,7 @@ class AudioRecorder:
 
         finished = self._recording_complete_event.wait(wait_timeout)
         if not finished:
-            logging.warning("Recording thread did not finish during post-roll wait; proceeding with available audio")
+            logger.warning("Recording thread did not finish during post-roll wait; proceeding with available audio")
         return finished
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status):
@@ -182,7 +184,7 @@ class AudioRecorder:
             status: Stream status
         """
         if status:
-            logging.warning(f"Audio stream status: {status}")
+            logger.warning(f"Audio stream status: {status}")
 
         try:
             # Thread-safe frame appending
@@ -199,10 +201,10 @@ class AudioRecorder:
                     try:
                         self.streaming_callback(indata.copy())
                     except Exception as stream_err:
-                        logging.debug(f"Streaming callback error: {stream_err}")
+                        logger.debug(f"Streaming callback error: {stream_err}")
 
         except Exception as e:
-            logging.error(f"Error in audio callback: {e}")
+            logger.error(f"Error in audio callback: {e}")
 
     def _record_audio(self):
         """Record audio data in a separate thread until recording is stopped."""
@@ -219,7 +221,7 @@ class AudioRecorder:
 
             # Start the stream
             self.stream.start()
-            logging.info("Audio stream started")
+            logger.info("Audio stream started")
 
             # Wait until stop is requested and post-roll window has elapsed
             while True:
@@ -230,15 +232,15 @@ class AudioRecorder:
                     break
 
         except Exception as e:
-            logging.error(f"Error opening audio stream: {e}")
+            logger.error(f"Error opening audio stream: {e}")
         finally:
             if self.stream:
                 try:
                     self.stream.stop()
                     self.stream.close()
-                    logging.info("Audio stream stopped and closed")
+                    logger.info("Audio stream stopped and closed")
                 except Exception as e:
-                    logging.error(f"Error closing audio stream: {e}")
+                    logger.error(f"Error closing audio stream: {e}")
             # Mark not recording and clear internal flags
             self.is_recording = False
             self._stop_requested = False
@@ -280,7 +282,7 @@ class AudioRecorder:
                     self.audio_level_callback(self._current_audio_level)
 
         except Exception as e:
-            logging.debug(f"Error calculating audio level: {e}")
+            logger.debug(f"Error calculating audio level: {e}")
 
     def save_recording(self, filename: str = None) -> bool:
         """Save the recorded audio frames to a WAV file.
@@ -292,7 +294,7 @@ class AudioRecorder:
             True if saved successfully, False otherwise.
         """
         if not self.frames:
-            logging.warning("No audio data to save")
+            logger.warning("No audio data to save")
             return False
 
         filename = filename or config.RECORDED_AUDIO_FILE
@@ -335,8 +337,8 @@ class AudioRecorder:
 
                 import time
                 if padding_bytes:
-                    logging.info(f"Appended {config.END_PADDING_MS}ms of silence to protect the tail of the recording")
-                logging.info(f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} - {frame_count} frames, {total_bytes} bytes, {self.get_recording_duration():.2f}s")
+                    logger.info(f"Appended {config.END_PADDING_MS}ms of silence to protect the tail of the recording")
+                logger.info(f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} - {frame_count} frames, {total_bytes} bytes, {self.get_recording_duration():.2f}s")
                 return True
 
             except Exception as e:
@@ -346,7 +348,7 @@ class AudioRecorder:
                 raise
 
         except Exception as e:
-            logging.error(f"Failed to save audio to {filename}: {e}")
+            logger.error(f"Failed to save audio to {filename}: {e}")
             return False
 
     def get_recording_duration(self) -> float:
@@ -375,7 +377,7 @@ class AudioRecorder:
             old_frame_count = len(self.frames)
             self.frames = []
 
-        logging.info(f"Cleared recording data. Old frame count: {old_frame_count}")
+        logger.info(f"Cleared recording data. Old frame count: {old_frame_count}")
 
     def cleanup(self):
         """Clean up audio resources."""
@@ -387,7 +389,7 @@ class AudioRecorder:
                     # Wait briefly for thread to finish, but don't block forever
                     self.recording_thread.join(timeout=0.5)
                     if self.recording_thread.is_alive():
-                        logging.warning("Recording thread did not finish during cleanup timeout")
+                        logger.warning("Recording thread did not finish during cleanup timeout")
 
             # Close stream if still open
             if self.stream:
@@ -399,8 +401,8 @@ class AudioRecorder:
                 self.stream = None
 
             # SoundDevice doesn't require explicit termination like PyAudio
-            logging.info("Audio recorder cleaned up")
+            logger.info("Audio recorder cleaned up")
 
         except Exception as e:
             # Don't log errors during shutdown - they're often harmless
-            logging.debug(f"Error during audio recorder cleanup: {e}")
+            logger.debug(f"Error during audio recorder cleanup: {e}")

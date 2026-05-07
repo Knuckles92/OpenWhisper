@@ -8,6 +8,8 @@ from openai import OpenAI
 from .base import TranscriptionBackend
 from config import config
 
+logger = logging.getLogger(__name__)
+
 
 class OpenAIBackend(TranscriptionBackend):
     """OpenAI API transcription backend."""
@@ -38,9 +40,9 @@ class OpenAIBackend(TranscriptionBackend):
                 load_dotenv(env_path)
                 api_key = os.getenv('OPENAI_API_KEY')
             except ImportError:
-                logging.warning("python-dotenv not installed. Skipping .env file loading.")
+                logger.warning("python-dotenv not installed. Skipping .env file loading.")
             except Exception as e:
-                logging.warning(f"Failed to load .env file: {e}")
+                logger.warning(f"Failed to load .env file: {e}")
 
         return api_key
 
@@ -49,12 +51,12 @@ class OpenAIBackend(TranscriptionBackend):
         if self.api_key:
             try:
                 self.client = OpenAI(api_key=self.api_key)
-                logging.info("OpenAI client initialized successfully")
+                logger.info("OpenAI client initialized successfully")
             except Exception as e:
-                logging.error(f"Failed to initialize OpenAI client: {e}")
+                logger.error(f"Failed to initialize OpenAI client: {e}")
                 self.client = None
         else:
-            logging.warning("No OpenAI API key found")
+            logger.warning("No OpenAI API key found")
             self.client = None
 
     def _get_api_model_name(self) -> str:
@@ -86,8 +88,8 @@ class OpenAIBackend(TranscriptionBackend):
             self.reset_cancel_flag()
 
             api_model = self._get_api_model_name()
-            logging.info(f"Using OpenAI API model: {api_model}")
-            logging.info("Sending audio file to OpenAI API...")
+            logger.info(f"Using OpenAI API model: {api_model}")
+            logger.info("Sending audio file to OpenAI API...")
 
             with open(audio_path, "rb") as audio_file:
                 response = self.client.audio.transcriptions.create(
@@ -97,16 +99,16 @@ class OpenAIBackend(TranscriptionBackend):
                 )
 
             if self.should_cancel:
-                logging.info("Transcription canceled by user")
+                logger.info("Transcription canceled by user")
                 raise Exception("Transcription canceled")
 
             transcript = response.strip()
-            logging.info(f"API transcription complete. Length: {len(transcript)} characters")
+            logger.info(f"API transcription complete. Length: {len(transcript)} characters")
 
             return transcript
 
         except Exception as e:
-            logging.error(f"OpenAI API transcription failed: {e}")
+            logger.error(f"OpenAI API transcription failed: {e}")
             raise
         finally:
             self.is_transcribing = False
@@ -150,14 +152,14 @@ class OpenAIBackend(TranscriptionBackend):
             api_model = self._get_api_model_name()
             transcriptions = []
 
-            logging.info(f"Starting chunked transcription with OpenAI API model: {api_model}")
+            logger.info(f"Starting chunked transcription with OpenAI API model: {api_model}")
 
             for i, chunk_file in enumerate(chunk_files):
                 if self.should_cancel:
-                    logging.info("Chunked transcription canceled by user")
+                    logger.info("Chunked transcription canceled by user")
                     raise Exception("Transcription canceled")
 
-                logging.info(f"Processing chunk {i+1}/{len(chunk_files)} with OpenAI API: {chunk_file}")
+                logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with OpenAI API: {chunk_file}")
 
                 # Transcribe individual chunk
                 with open(chunk_file, "rb") as audio_file:
@@ -170,17 +172,17 @@ class OpenAIBackend(TranscriptionBackend):
                 chunk_text = response.strip()
                 transcriptions.append(chunk_text)
 
-                logging.info(f"Chunk {i+1}/{len(chunk_files)} completed. Length: {len(chunk_text)} characters")
+                logger.info(f"Chunk {i+1}/{len(chunk_files)} completed. Length: {len(chunk_text)} characters")
 
             # Combine transcriptions
             from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)
 
-            logging.info(f"OpenAI chunked transcription complete. Total length: {len(combined_text)} characters")
+            logger.info(f"OpenAI chunked transcription complete. Total length: {len(combined_text)} characters")
             return combined_text
 
         except Exception as e:
-            logging.error(f"OpenAI chunked transcription failed: {e}")
+            logger.error(f"OpenAI chunked transcription failed: {e}")
             raise
         finally:
             self.is_transcribing = False
@@ -192,13 +194,13 @@ class OpenAIBackend(TranscriptionBackend):
             model_type: New model type to use.
         """
         self.model_type = model_type
-        logging.info(f"Model type changed to: {model_type}")
+        logger.info(f"Model type changed to: {model_type}")
 
     def cleanup(self):
         """Clean up OpenAI client resources."""
         try:
             if self.client is not None:
-                logging.info(f"Cleaning up OpenAI backend ({self.model_type})...")
+                logger.info(f"Cleaning up OpenAI backend ({self.model_type})...")
 
                 # Cancel any ongoing transcription
                 self.should_cancel = True
@@ -207,9 +209,9 @@ class OpenAIBackend(TranscriptionBackend):
                 self.client.close()
                 self.client = None
 
-                logging.info(f"OpenAI backend ({self.model_type}) cleaned up successfully")
+                logger.info(f"OpenAI backend ({self.model_type}) cleaned up successfully")
         except Exception as e:
-            logging.debug(f"Error during OpenAI backend cleanup: {e}")
+            logger.debug(f"Error during OpenAI backend cleanup: {e}")
 
     @property
     def name(self) -> str:

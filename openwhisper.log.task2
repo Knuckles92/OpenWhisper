@@ -1,0 +1,72 @@
+2026-05-06 20:04:16,514 - INFO - root - Faulthandler enabled for crash diagnostics: openwhisper.crash.log
+2026-05-06 20:04:16,759 - INFO - root - Qt message handler installed
+2026-05-06 20:04:16,759 - INFO - root - ============================================================
+2026-05-06 20:04:16,759 - INFO - root - Starting OpenWhisper
+2026-05-06 20:04:16,759 - INFO - root - ============================================================
+2026-05-06 20:04:25,807 - INFO - ui_qt.main_window - Loaded saved model selection: local_whisper
+2026-05-06 20:04:25,808 - INFO - ui_qt.main_window - Restored window geometry: {'x': 758, 'y': 97, 'width': 984, 'height': 905}
+2026-05-06 20:04:25,841 - INFO - ui_qt.system_tray - System tray initialized
+2026-05-06 20:04:25,848 - INFO - services.recorder - Audio recorder initialized
+2026-05-06 20:04:25,848 - INFO - services.application_controller - Setting up transcription backends...
+2026-05-06 20:04:25,863 - INFO - transcriber.local_backend - CUDA detected - using GPU acceleration with float16 and turbo model
+2026-05-06 20:04:25,863 - INFO - transcriber.local_backend - Loading faster-whisper model: turbo (device=cuda, compute_type=float16)
+2026-05-06 20:04:26,309 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-05-06 20:04:26,398 - INFO - httpx - HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-05-06 20:04:27,877 - INFO - transcriber.local_backend - Faster-whisper model loaded successfully
+2026-05-06 20:04:28,002 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:04:28,125 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:04:28,253 - INFO - transcriber.openai_backend - OpenAI client initialized successfully
+2026-05-06 20:04:28,253 - INFO - services.application_controller - Using transcription backend: local_whisper
+2026-05-06 20:04:28,253 - INFO - services.runtime.hotkeys - Setting up hotkeys...
+2026-05-06 20:04:28,301 - INFO - services.runtime.streaming - Streaming transcription disabled
+2026-05-06 20:04:28,302 - INFO - services.runtime.hotkeys - Hook watchdog started: sleep detection every 10000ms, periodic refresh every 300000ms
+2026-05-06 20:04:28,303 - INFO - root - Whisper device: turbo | cuda (float16)
+2026-05-06 20:04:28,474 - INFO - ui_qt.startup_profiler - Startup timing summary:
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   main_entered                     total=  0.000s delta=  0.000s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   logging_ready                    total=  0.245s delta=  0.245s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   early_imports_started            total=  0.246s delta=  0.000s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   early_imports_finished           total=  0.741s delta=  0.496s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   qt_app_created                   total=  0.982s delta=  0.241s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   loading_screen_constructed       total=  0.989s delta=  0.007s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   loading_screen_shown             total=  1.031s delta=  0.042s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   first_visual_flushed             total=  1.065s delta=  0.034s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   late_imports_started             total=  1.066s delta=  0.001s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   late_imports_finished            total=  8.953s delta=  7.887s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   ui_controller_created            total=  9.328s delta=  0.375s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   application_controller_created   total= 11.788s delta=  2.461s
+2026-05-06 20:04:28,476 - INFO - ui_qt.startup_profiler -   main_window_shown                total= 11.961s delta=  0.173s
+2026-05-06 20:04:28,477 - INFO - root - Application initialization complete
+2026-05-06 20:04:28,477 - INFO - root - Starting event loop
+2026-05-06 20:04:28,477 - INFO - root - Starting PyQt6 event loop
+2026-05-06 20:04:28,951 - INFO - services.settings - All settings saved successfully
+2026-05-06 20:05:09,871 - INFO - services.runtime.transcription - Toggle recording. Current state: False
+2026-05-06 20:05:09,872 - INFO - services.recorder - Cleared recording data. Old frame count: 0
+2026-05-06 20:05:09,881 - INFO - services.recorder - Recording started - frames cleared, old file removed
+2026-05-06 20:05:09,881 - INFO - services.runtime.transcription - Recording started
+2026-05-06 20:05:09,987 - INFO - services.recorder - Audio stream started
+2026-05-06 20:05:12,873 - INFO - services.runtime.transcription - Toggle recording. Current state: True
+2026-05-06 20:05:12,873 - INFO - services.recorder - Recording stop requested, post-roll continuing in background
+2026-05-06 20:05:14,125 - INFO - services.recorder - Audio stream stopped and closed
+2026-05-06 20:05:14,127 - INFO - services.recorder - Appended 500ms of silence to protect the tail of the recording
+2026-05-06 20:05:14,127 - INFO - services.recorder - Audio saved to recorded_audio.wav at 2026-05-06 20:05:14 - 176 frames, 404548 bytes, 4.09s
+2026-05-06 20:05:14,127 - INFO - services.runtime.transcription - Audio file size: 404592 bytes
+2026-05-06 20:05:14,127 - INFO - services.audio_processor - Audio file size: 0.39 MB (limit: 23 MB)
+2026-05-06 20:05:14,128 - INFO - services.runtime.transcription - Transcription started. Duration: 4.09s
+2026-05-06 20:05:14,128 - INFO - transcriber.local_backend - Processing audio with faster-whisper (VAD=True)...
+2026-05-06 20:05:14,845 - INFO - faster_whisper - Processing audio with duration 00:04.587
+2026-05-06 20:05:15,651 - INFO - faster_whisper - VAD filter removed 00:04.587 of audio
+2026-05-06 20:05:17,178 - INFO - faster_whisper - Detected language 'en' with probability 0.51
+2026-05-06 20:05:17,261 - INFO - transcriber.local_backend - Detected language: en (probability: 0.51)
+2026-05-06 20:05:17,264 - INFO - transcriber.local_backend - Transcription complete. Length: 0 characters
+2026-05-06 20:05:17,292 - INFO - services.history_manager - HistoryManager initialized (recordings: recordings)
+2026-05-06 20:05:17,293 - INFO - services.history_manager - Saved recording: recording_20260506_200517.wav
+2026-05-06 20:05:17,301 - INFO - services.history_manager - Removed old recording: recording_20260503_124544.wav
+2026-05-06 20:05:17,314 - INFO - services.database - Database schema initialized
+2026-05-06 20:05:17,314 - INFO - services.database - DatabaseManager initialized: openwhisper.db
+2026-05-06 20:05:17,485 - INFO - services.history_manager - Added history entry: 98f89500...
+2026-05-06 20:05:17,485 - INFO - services.runtime.transcription - Transcription saved to history
+2026-05-06 20:05:17,506 - INFO - services.runtime.transcription - Transcription copied to clipboard
+2026-05-06 20:05:17,508 - INFO - services.runtime.transcription - Transcription auto-pasted
+2026-05-06 20:05:18,269 - INFO - services.settings - All settings saved successfully
+2026-05-06 20:05:39,801 - INFO - ui_qt.main_window - Main window closing
+2026-05-06 20:05:39,807 - INFO - ui_qt.main_window - Window hidden to system tray

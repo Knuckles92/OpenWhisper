@@ -27,6 +27,8 @@ from ui_qt.overlay_state import OverlayState
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
 
+logger = logging.getLogger(__name__)
+
 
 class TranscriptionRuntime:
     """Owns recording flow and transcription job orchestration."""
@@ -37,7 +39,7 @@ class TranscriptionRuntime:
     def start_recording(self) -> None:
         """Start audio recording."""
         if self.controller.recorder.start_recording():
-            logging.info("Recording started")
+            logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
@@ -68,30 +70,30 @@ class TranscriptionRuntime:
         self.controller.status_update.emit("Processing...")
 
         if not self.controller.recorder.wait_for_stop_completion():
-            logging.warning(
+            logger.warning(
                 "Proceeding without confirmed post-roll completion; "
                 "tail of recording may be short"
             )
 
         if not self.controller.recorder.has_recording_data():
-            logging.error("No recording data available")
+            logger.error("No recording data available")
             self.on_transcription_error("No audio data recorded")
             return
 
         if not self.controller.recorder.save_recording():
-            logging.error("Failed to save recording")
+            logger.error("Failed to save recording")
             self.on_transcription_error("Failed to save audio file")
             return
 
         if not os.path.exists(config.RECORDED_AUDIO_FILE):
-            logging.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
+            logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
             self.on_transcription_error("Audio file not created")
             return
 
         file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
-        logging.info(f"Audio file size: {file_size} bytes")
+        logger.info(f"Audio file size: {file_size} bytes")
         if file_size < 100:
-            logging.error(f"Audio file too small: {file_size} bytes")
+            logger.error(f"Audio file too small: {file_size} bytes")
             self.on_transcription_error("Audio file is empty or corrupted")
             return
 
@@ -103,17 +105,17 @@ class TranscriptionRuntime:
 
         try:
             self._submit_transcription_job(config.RECORDED_AUDIO_FILE)
-            logging.info(
+            logger.info(
                 "Transcription started. Duration: "
                 f"{self.controller.recorder.get_recording_duration():.2f}s"
             )
         except Exception as exc:
-            logging.error(f"Failed to start transcription: {exc}")
+            logger.error(f"Failed to start transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def toggle_recording(self) -> None:
         """Toggle between starting and stopping recording."""
-        logging.info(
+        logger.info(
             f"Toggle recording. Current state: {self.controller.recorder.is_recording}"
         )
         if not self.controller.recorder.is_recording:
@@ -123,7 +125,7 @@ class TranscriptionRuntime:
 
     def cancel(self) -> None:
         """Cancel an active recording or transcription, depending on state."""
-        logging.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
+        logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
 
         if self.controller.recorder.is_recording:
             self._cancel_recording()
@@ -141,26 +143,26 @@ class TranscriptionRuntime:
         self.controller.recorder.clear_recording_data()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Recording canceled")
-        logging.info("Recording canceled")
+        logger.info("Recording canceled")
 
     def _cancel_transcription(self) -> None:
         """Cancel an in-progress transcription job."""
         self.controller.current_backend.cancel_transcription()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Transcription canceled")
-        logging.info("Transcription canceled")
+        logger.info("Transcription canceled")
 
     def retranscribe_audio(self, audio_path: str) -> None:
         """Re-transcribe an existing audio file."""
         if not os.path.exists(audio_path):
-            logging.error(
+            logger.error(
                 f"Audio file not found for re-transcription: {audio_path}"
             )
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
-        logging.info(f"Re-transcribing audio file: {audio_path}")
+        logger.info(f"Re-transcribing audio file: {audio_path}")
         self.controller._pending_audio_path = None
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
@@ -170,18 +172,18 @@ class TranscriptionRuntime:
             self.controller._pending_audio_duration = None
             self._submit_transcription_job(audio_path)
         except Exception as exc:
-            logging.error(f"Failed to start re-transcription: {exc}")
+            logger.error(f"Failed to start re-transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def upload_audio_file(self, audio_path: str) -> None:
         """Transcribe an uploaded audio file."""
         if not os.path.exists(audio_path):
-            logging.error(f"Uploaded audio file not found: {audio_path}")
+            logger.error(f"Uploaded audio file not found: {audio_path}")
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
-        logging.info(f"Processing uploaded audio file: {audio_path}")
+        logger.info(f"Processing uploaded audio file: {audio_path}")
         self.controller._pending_audio_path = None
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing uploaded file...")
@@ -191,7 +193,7 @@ class TranscriptionRuntime:
             self.controller._pending_audio_duration = None
             self._submit_transcription_job(audio_path)
         except Exception as exc:
-            logging.error(f"Failed to process uploaded audio: {exc}")
+            logger.error(f"Failed to process uploaded audio: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def transcribe_audio_file(self, audio_path: str) -> None:
@@ -205,7 +207,7 @@ class TranscriptionRuntime:
             transcript = self.controller.current_backend.transcribe(audio_path)
             self.controller.transcription_completed.emit(transcript)
         except Exception as exc:
-            logging.error(f"Transcription failed: {exc}")
+            logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
 
     def transcribe_large_audio_file(self, audio_path: str) -> None:
@@ -246,13 +248,13 @@ class TranscriptionRuntime:
 
             self.controller.transcription_completed.emit(transcript)
         except Exception as exc:
-            logging.error(f"Large audio transcription failed: {exc}")
+            logger.error(f"Large audio transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
         finally:
             try:
                 audio_processor.cleanup_temp_files()
             except Exception as cleanup_error:
-                logging.warning(
+                logger.warning(
                     f"Failed to cleanup temp files: {cleanup_error}"
                 )
 
@@ -290,9 +292,9 @@ class TranscriptionRuntime:
                 file_size=self.controller._pending_file_size,
             )
             self.controller.ui_controller.refresh_history()
-            logging.info("Transcription saved to history")
+            logger.info("Transcription saved to history")
         except Exception as exc:
-            logging.error(f"Failed to save transcription to history: {exc}")
+            logger.error(f"Failed to save transcription to history: {exc}")
         finally:
             self.controller._pending_audio_path = None
             self.controller._pending_audio_duration = None
@@ -305,17 +307,17 @@ class TranscriptionRuntime:
         if copy_clipboard:
             try:
                 pyperclip.copy(transcript)
-                logging.info("Transcription copied to clipboard")
+                logger.info("Transcription copied to clipboard")
             except Exception as exc:
-                logging.error(f"Failed to copy to clipboard: {exc}")
+                logger.error(f"Failed to copy to clipboard: {exc}")
 
         if auto_paste:
             try:
                 keyboard.send("ctrl+v")
-                logging.info("Transcription auto-pasted")
+                logger.info("Transcription auto-pasted")
                 self.controller.ui_controller.set_status("Ready (Pasted)")
             except Exception as exc:
-                logging.error(f"Failed to auto-paste: {exc}")
+                logger.error(f"Failed to auto-paste: {exc}")
                 self.controller.ui_controller.set_status(
                     "Transcription complete (paste failed)"
                 )
@@ -342,7 +344,7 @@ class TranscriptionRuntime:
             ]
             self.controller._current_model_name = model_value
             settings_manager.save_model_selection(model_value)
-            logging.info(f"Switched to model: {model_value}")
+            logger.info(f"Switched to model: {model_value}")
 
             if model_value == "local_whisper":
                 local_backend = self.controller.transcription_backends.get("local_whisper")
@@ -370,7 +372,7 @@ class TranscriptionRuntime:
         )
 
         if should_split:
-            logging.info(
+            logger.info(
                 f"Large file ({file_size_mb:.2f} MB), backend requires splitting"
             )
             self.show_large_file_overlay(file_size_mb, is_splitting=True)
@@ -381,7 +383,7 @@ class TranscriptionRuntime:
                 self.transcribe_large_audio_file, audio_path
             )
         elif needs_splitting:
-            logging.info(
+            logger.info(
                 f"Large file ({file_size_mb:.2f} MB), processing without splitting"
             )
             self.show_large_file_overlay(file_size_mb, is_splitting=False)

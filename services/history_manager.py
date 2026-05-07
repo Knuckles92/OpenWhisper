@@ -14,6 +14,8 @@ from config import config
 from services.database import db
 from services.models import TranscriptionHistory as HistoryEntry
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class RecordingInfo:
@@ -59,7 +61,7 @@ class HistoryManager:
         # Ensure recordings folder exists
         os.makedirs(self.recordings_folder, exist_ok=True)
 
-        logging.info(f"HistoryManager initialized (recordings: {self.recordings_folder})")
+        logger.info(f"HistoryManager initialized (recordings: {self.recordings_folder})")
 
     def add_entry(
         self,
@@ -111,7 +113,7 @@ class HistoryManager:
             file_size=entry.file_size
         )
 
-        logging.info(f"Added history entry: {entry.id[:8]}...")
+        logger.info(f"Added history entry: {entry.id[:8]}...")
         return entry
 
     def _save_recording(self, source_path: str) -> Optional[str]:
@@ -131,7 +133,7 @@ class HistoryManager:
 
             # Copy the file
             shutil.copy2(source_path, dest_path)
-            logging.info(f"Saved recording: {filename}")
+            logger.info(f"Saved recording: {filename}")
 
             # Rotate old recordings
             self._rotate_recordings()
@@ -139,7 +141,7 @@ class HistoryManager:
             return filename
 
         except Exception as e:
-            logging.error(f"Failed to save recording: {e}")
+            logger.error(f"Failed to save recording: {e}")
             return None
 
     def _rotate_recordings(self) -> None:
@@ -156,16 +158,16 @@ class HistoryManager:
                 for rec in to_remove:
                     try:
                         os.remove(rec.file_path)
-                        logging.info(f"Removed old recording: {rec.filename}")
+                        logger.info(f"Removed old recording: {rec.filename}")
 
                         # Clear audio_file reference in database
                         db.update_history_audio_file(rec.filename)
 
                     except Exception as e:
-                        logging.error(f"Failed to remove recording {rec.filename}: {e}")
+                        logger.error(f"Failed to remove recording {rec.filename}: {e}")
 
         except Exception as e:
-            logging.error(f"Failed to rotate recordings: {e}")
+            logger.error(f"Failed to rotate recordings: {e}")
 
     def get_history(self, limit: Optional[int] = None) -> List[HistoryEntry]:
         """Get transcription history entries.
@@ -217,7 +219,7 @@ class HistoryManager:
             recordings.sort(key=lambda r: r.timestamp, reverse=True)
 
         except Exception as e:
-            logging.error(f"Failed to get recordings: {e}")
+            logger.error(f"Failed to get recordings: {e}")
 
         return recordings
 
@@ -243,13 +245,13 @@ class HistoryManager:
         """
         result = db.delete_history_entry(entry_id)
         if result:
-            logging.info(f"Deleted history entry: {entry_id[:8]}...")
+            logger.info(f"Deleted history entry: {entry_id[:8]}...")
         return result
 
     def clear_history(self) -> None:
         """Clear all history entries (keeps recordings)."""
         db.clear_history()
-        logging.info("History cleared")
+        logger.info("History cleared")
 
     def get_recording_path(self, filename: str) -> Optional[str]:
         """Get full path to a recording by filename.

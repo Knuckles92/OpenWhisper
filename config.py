@@ -1,6 +1,7 @@
 """
 Configuration constants for the OpenWhisper application.
 """
+import os
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Dict, List, Tuple
@@ -20,6 +21,12 @@ class AppConfig:
     RECORDED_AUDIO_FILE: str = "recorded_audio.wav"
     LOG_FILE: str = "openwhisper.log"
     ENV_FILE: str = ".env"
+
+    # Logging configuration
+    LOG_LEVEL: str = os.environ.get("OPENWHISPER_LOG_LEVEL", "INFO").upper()
+    LOG_FORMAT: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    LOG_MAX_BYTES: int = 5 * 1024 * 1024
+    LOG_BACKUP_COUNT: int = 3
 
     # History and recordings
     HISTORY_FILE: str = "transcription_history.json"

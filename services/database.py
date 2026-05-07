@@ -16,6 +16,8 @@ from services.models import (
     Base, SchemaVersion, TranscriptionHistory,
 )
 
+logger = logging.getLogger(__name__)
+
 # Schema version for future migrations
 SCHEMA_VERSION = 7
 
@@ -47,7 +49,7 @@ class DatabaseManager:
         self._init_database()
         self._migrate_from_json()
 
-        logging.info(f"DatabaseManager initialized: {self.db_path}")
+        logger.info(f"DatabaseManager initialized: {self.db_path}")
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -87,7 +89,7 @@ class DatabaseManager:
                 session.query(SchemaVersion).delete()
                 session.add(SchemaVersion(version=SCHEMA_VERSION))
 
-        logging.info("Database schema initialized")
+        logger.info("Database schema initialized")
 
     def _drop_removed_meeting_tables(self) -> None:
         """Drop meeting-mode tables that may exist from older app versions.
@@ -123,16 +125,16 @@ class DatabaseManager:
 
     def _run_migrations(self, conn, from_version: int) -> None:
         """Run progressive migrations using raw SQL (standard for non-Alembic projects)."""
-        logging.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
+        logger.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
 
         if from_version < 6:
             try:
                 conn.execute(text("DROP INDEX IF EXISTS idx_insights_unique"))
                 conn.execute(text("DROP INDEX IF EXISTS idx_insights_meeting_id"))
                 conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
-                logging.info("Migration v5->v6: Removed meeting_insights table")
+                logger.info("Migration v5->v6: Removed meeting_insights table")
             except Exception as e:
-                logging.error(f"Migration v5->v6 failed: {e}")
+                logger.error(f"Migration v5->v6 failed: {e}")
                 raise
 
         if from_version < 7:
@@ -144,13 +146,13 @@ class DatabaseManager:
                 conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
                 conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
                 conn.execute(text("DROP TABLE IF EXISTS meetings"))
-                logging.info("Migration v6->v7: Removed meeting mode tables")
+                logger.info("Migration v6->v7: Removed meeting mode tables")
             except Exception as e:
-                logging.error(f"Migration v6->v7 failed: {e}")
+                logger.error(f"Migration v6->v7 failed: {e}")
                 raise
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
-        logging.info(f"Database migrated to schema version {SCHEMA_VERSION}")
+        logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
     # ------------------------------------------------------------------
     # JSON migration (legacy)
@@ -171,7 +173,7 @@ class DatabaseManager:
                 data = json.load(f)
             entries = data.get('entries', [])
             if not entries:
-                logging.info("No history entries to migrate")
+                logger.info("No history entries to migrate")
                 return
 
             with self.get_session() as session:
@@ -190,9 +192,9 @@ class DatabaseManager:
 
             backup_path = json_path + '.bak'
             os.rename(json_path, backup_path)
-            logging.info(f"Migrated {len(entries)} history entries from JSON. Backup: {backup_path}")
+            logger.info(f"Migrated {len(entries)} history entries from JSON. Backup: {backup_path}")
         except Exception as e:
-            logging.error(f"Failed to migrate history from JSON: {e}")
+            logger.error(f"Failed to migrate history from JSON: {e}")
 
     # =====================================================================
     # Transcription History

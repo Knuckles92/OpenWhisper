@@ -5,6 +5,7 @@ from __future__ import annotations
 import faulthandler
 import logging
 import signal
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from config import config
@@ -16,13 +17,17 @@ _QT_MESSAGE_HANDLER_INSTALLED = False
 
 def setup_logging() -> None:
     """Setup application logging."""
+    level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    file_handler = RotatingFileHandler(
+        config.LOG_FILE,
+        maxBytes=config.LOG_MAX_BYTES,
+        backupCount=config.LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        handlers=[
-            logging.FileHandler(config.LOG_FILE),
-            logging.StreamHandler(),
-        ],
+        level=level,
+        format=config.LOG_FORMAT,
+        handlers=[file_handler, logging.StreamHandler()],
         force=True,
     )
     _enable_crash_logging()

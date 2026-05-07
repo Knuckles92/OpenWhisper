@@ -20,6 +20,8 @@ from services.runtime import (
 from services.settings import settings_manager
 from transcriber import LocalWhisperBackend, OpenAIBackend, TranscriptionBackend
 
+logger = logging.getLogger(__name__)
+
 
 class ApplicationController(QObject):
     """Main application controller integrating UI and logic."""
@@ -75,7 +77,7 @@ class ApplicationController(QObject):
 
     def _setup_transcription_backends(self) -> None:
         """Initialize transcription backends."""
-        logging.info("Setting up transcription backends...")
+        logger.info("Setting up transcription backends...")
 
         self.transcription_backends["local_whisper"] = LocalWhisperBackend()
         self.transcription_backends["api_whisper"] = OpenAIBackend("api_whisper")
@@ -86,7 +88,7 @@ class ApplicationController(QObject):
         self.current_backend = self.transcription_backends.get(
             saved_model, self.transcription_backends["local_whisper"]
         )
-        logging.info(f"Using transcription backend: {saved_model}")
+        logger.info(f"Using transcription backend: {saved_model}")
 
     def _setup_ui_callbacks(self) -> None:
         """Setup UI event callbacks."""
@@ -103,7 +105,7 @@ class ApplicationController(QObject):
 
     def reload_whisper_model(self) -> None:
         """Reload the local whisper model with current settings."""
-        logging.info("Reloading whisper model...")
+        logger.info("Reloading whisper model...")
         self.ui_controller.set_status("Reloading whisper engine...")
 
         local_backend = self.transcription_backends.get("local_whisper")
@@ -112,19 +114,19 @@ class ApplicationController(QObject):
 
             if hasattr(local_backend, "device_info"):
                 self.ui_controller.set_device_info(local_backend.device_info)
-                logging.info(f"Whisper reloaded: {local_backend.device_info}")
+                logger.info(f"Whisper reloaded: {local_backend.device_info}")
 
             self.ui_controller.set_status("Whisper engine reloaded")
         else:
-            logging.warning("Local whisper backend not found")
+            logger.warning("Local whisper backend not found")
             self.ui_controller.set_status("Ready")
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
         """Change the audio input device."""
-        logging.info(f"Changing audio device to: {device_id}")
+        logger.info(f"Changing audio device to: {device_id}")
 
         if self.recorder.is_recording:
-            logging.warning("Cannot change audio device while recording")
+            logger.warning("Cannot change audio device while recording")
             self.ui_controller.set_status("Stop recording before changing device")
             return
 
@@ -133,7 +135,7 @@ class ApplicationController(QObject):
         self.streaming_runtime.setup_audio_level_callback()
 
         device_name = "System Default" if device_id is None else f"Device {device_id}"
-        logging.info(f"Audio device changed to: {device_name}")
+        logger.info(f"Audio device changed to: {device_name}")
         self.ui_controller.set_status("Audio device changed")
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
@@ -211,14 +213,14 @@ class ApplicationController(QObject):
 
     def cleanup(self) -> None:
         """Cleanup resources."""
-        logging.info("Starting application cleanup...")
+        logger.info("Starting application cleanup...")
 
         try:
             if self.current_backend and self.current_backend.is_transcribing:
-                logging.info("Canceling ongoing transcription...")
+                logger.info("Canceling ongoing transcription...")
                 self.current_backend.cancel_transcription()
         except Exception as exc:
-            logging.debug(f"Error canceling transcription: {exc}")
+            logger.debug(f"Error canceling transcription: {exc}")
 
         try:
             if hasattr(self, "_watchdog_timer") and self._watchdog_timer:
@@ -226,52 +228,52 @@ class ApplicationController(QObject):
             if hasattr(self, "_periodic_refresh_timer") and self._periodic_refresh_timer:
                 self._periodic_refresh_timer.stop()
         except Exception as exc:
-            logging.debug(f"Error stopping watchdog timers: {exc}")
+            logger.debug(f"Error stopping watchdog timers: {exc}")
 
         try:
             if self.hotkey_manager:
                 self.hotkey_manager.cleanup()
         except Exception as exc:
-            logging.debug(f"Error during hotkey cleanup: {exc}")
+            logger.debug(f"Error during hotkey cleanup: {exc}")
 
         try:
             if self.recorder:
                 self.recorder.cleanup()
         except Exception as exc:
-            logging.debug(f"Error during recorder cleanup: {exc}")
+            logger.debug(f"Error during recorder cleanup: {exc}")
 
         try:
             self.streaming_runtime.cleanup()
         except Exception as exc:
-            logging.debug(f"Error during streaming cleanup: {exc}")
+            logger.debug(f"Error during streaming cleanup: {exc}")
 
         try:
             self.executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:
             self.executor.shutdown(wait=False)
         except Exception as exc:
-            logging.debug(f"Error during executor shutdown: {exc}")
+            logger.debug(f"Error during executor shutdown: {exc}")
 
         try:
             for backend_name, backend in self.transcription_backends.items():
                 try:
-                    logging.info(f"Cleaning up transcription backend: {backend_name}")
+                    logger.info(f"Cleaning up transcription backend: {backend_name}")
                     backend.cleanup()
                 except Exception as exc:
-                    logging.debug(f"Error cleaning up {backend_name} backend: {exc}")
+                    logger.debug(f"Error cleaning up {backend_name} backend: {exc}")
             self.transcription_backends.clear()
             self.current_backend = None
         except Exception as exc:
-            logging.debug(f"Error during transcription backends cleanup: {exc}")
+            logger.debug(f"Error during transcription backends cleanup: {exc}")
 
         try:
             self.ui_controller.cleanup()
         except Exception as exc:
-            logging.debug(f"Error during UI controller cleanup: {exc}")
+            logger.debug(f"Error during UI controller cleanup: {exc}")
 
         try:
             db.close()
         except Exception as exc:
-            logging.debug(f"Error closing database: {exc}")
+            logger.debug(f"Error closing database: {exc}")
 
-        logging.info("Application controller cleaned up")
+        logger.info("Application controller cleaned up")

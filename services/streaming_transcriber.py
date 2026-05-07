@@ -14,6 +14,8 @@ from scipy import signal
 from typing import Callable, Optional, List
 from config import config
 
+logger = logging.getLogger(__name__)
+
 
 class StreamingTranscriber:
     """Manages real-time streaming transcription using a worker thread."""
@@ -51,7 +53,7 @@ class StreamingTranscriber:
         self._slow_chunks = 0
         self._last_warning_time = 0
 
-        logging.info(f"StreamingTranscriber initialized (chunk_duration={chunk_duration_sec}s)")
+        logger.info(f"StreamingTranscriber initialized (chunk_duration={chunk_duration_sec}s)")
 
     def start_streaming(self, sample_rate: int, callback: Callable[[str, bool], None]):
         """Start the streaming worker thread.
@@ -61,7 +63,7 @@ class StreamingTranscriber:
             callback: Function(text, is_final) called with partial/final results
         """
         if self.is_streaming:
-            logging.warning("Streaming already active")
+            logger.warning("Streaming already active")
             return
 
         self.sample_rate = sample_rate
@@ -77,7 +79,7 @@ class StreamingTranscriber:
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
 
-        logging.info("Streaming transcription started")
+        logger.info("Streaming transcription started")
 
     def feed_audio(self, audio_chunk: np.ndarray):
         """Feed audio chunk to transcription queue (called from recorder callback).
@@ -93,7 +95,7 @@ class StreamingTranscriber:
             self.audio_queue.put_nowait(audio_chunk.copy())
         except queue.Full:
             # Queue backup - we're falling behind
-            logging.debug("Audio queue full, dropping chunk (transcription can't keep up)")
+            logger.debug("Audio queue full, dropping chunk (transcription can't keep up)")
 
     def stop_streaming(self) -> str:
         """Stop streaming and return final combined transcription.
@@ -104,14 +106,14 @@ class StreamingTranscriber:
         if not self.is_streaming:
             return ""
 
-        logging.info("Stopping streaming transcription...")
+        logger.info("Stopping streaming transcription...")
         self._stop_requested = True
 
         # Wait for worker thread to finish (with timeout)
         if self.worker_thread and self.worker_thread.is_alive():
             self.worker_thread.join(timeout=5.0)
             if self.worker_thread.is_alive():
-                logging.warning("Worker thread did not finish in time")
+                logger.warning("Worker thread did not finish in time")
 
         self.is_streaming = False
         self.worker_thread = None
@@ -122,14 +124,14 @@ class StreamingTranscriber:
         # Clear buffers
         self._all_audio_buffer.clear()
 
-        logging.info(f"Streaming stopped. Re-transcription cycles: {self._chunk_count}, "
+        logger.info(f"Streaming stopped. Re-transcription cycles: {self._chunk_count}, "
                     f"Final length: {len(final_text)} chars")
 
         return final_text
 
     def _worker_loop(self):
         """Worker thread that processes audio chunks from queue."""
-        logging.info("Streaming worker thread started")
+        logger.info("Streaming worker thread started")
 
         # Accumulation buffer for audio chunks
         accumulated_audio: List[np.ndarray] = []
@@ -168,9 +170,9 @@ class StreamingTranscriber:
                     continue
 
         except Exception as e:
-            logging.error(f"Error in streaming worker loop: {e}", exc_info=True)
+            logger.error(f"Error in streaming worker loop: {e}", exc_info=True)
         finally:
-            logging.info("Streaming worker thread exiting")
+            logger.info("Streaming worker thread exiting")
 
     def _process_all_audio(self):
         """Re-transcribe ALL accumulated audio (rolling re-transcription).
@@ -206,7 +208,7 @@ class StreamingTranscriber:
                 # Calculate number of samples needed at target rate
                 num_samples = int(len(audio_array) * config.WHISPER_TARGET_SAMPLE_RATE / self.sample_rate)
                 audio_array = signal.resample(audio_array, num_samples)
-                logging.debug(f"Resampled audio from {self.sample_rate}Hz to {config.WHISPER_TARGET_SAMPLE_RATE}Hz")
+                logger.debug(f"Resampled audio from {self.sample_rate}Hz to {config.WHISPER_TARGET_SAMPLE_RATE}Hz")
 
             # Transcribe using faster-whisper model
             segments, info = self.backend.model.transcribe(
@@ -229,7 +231,7 @@ class StreamingTranscriber:
             processing_time = time.time() - start_time
             self._chunk_count += 1
 
-            logging.info(f"Rolling transcription #{self._chunk_count}: "
+            logger.info(f"Rolling transcription #{self._chunk_count}: "
                         f"{total_duration:.1f}s audio -> {processing_time:.2f}s processing "
                         f"({len(full_text)} chars)")
 
@@ -237,7 +239,7 @@ class StreamingTranscriber:
             if processing_time > 5.0:
                 self._slow_chunks += 1
                 if self._slow_chunks >= 3 and time.time() - self._last_warning_time > 30:
-                    logging.warning("Rolling transcription falling behind (3+ slow chunks)")
+                    logger.warning("Rolling transcription falling behind (3+ slow chunks)")
                     self._last_warning_time = time.time()
 
             # Store the complete transcription (replaces previous)
@@ -248,7 +250,7 @@ class StreamingTranscriber:
                 self.callback(full_text, True)
 
         except Exception as e:
-            logging.error(f"Error in rolling transcription: {e}", exc_info=True)
+            logger.error(f"Error in rolling transcription: {e}", exc_info=True)
 
     def cleanup(self):
         """Clean up resources and stop streaming."""
@@ -262,4 +264,4 @@ class StreamingTranscriber:
             except queue.Empty:
                 break
 
-        logging.info("StreamingTranscriber cleaned up")
+        logger.info("StreamingTranscriber cleaned up")
