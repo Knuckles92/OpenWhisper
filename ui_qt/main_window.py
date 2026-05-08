@@ -916,8 +916,9 @@ class MainWindow(QMainWindow):
 
         geo = self.geometry()
         try:
-            settings_manager.save_window_geometry(
-                geo.x(), geo.y(), geo.width(), geo.height()
+            settings_manager.save_setting(
+                SettingsKey.WINDOW_GEOMETRY,
+                {'x': geo.x(), 'y': geo.y(), 'width': geo.width(), 'height': geo.height()},
             )
         except Exception as e:
             logger.warning(f"Failed to save window geometry: {e}")
@@ -925,8 +926,8 @@ class MainWindow(QMainWindow):
     def _restore_window_geometry(self):
         """Restore window geometry from settings."""
         try:
-            geo = settings_manager.load_window_geometry()
-            if geo:
+            geo = settings_manager.get(SettingsKey.WINDOW_GEOMETRY)
+            if isinstance(geo, dict) and {'x', 'y', 'width', 'height'}.issubset(geo.keys()):
                 # Validate geometry is within screen bounds
                 from PyQt6.QtWidgets import QApplication
                 from PyQt6.QtCore import QRect

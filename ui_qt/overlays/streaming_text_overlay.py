@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSigna
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QCursor, QPainterPath
 
 from config import config
-from services.settings import settings_manager
+from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -533,7 +533,10 @@ class StreamingTextOverlay(QWidget):
         """Save current position to settings."""
         try:
             pos = self.pos()
-            settings_manager.save_streaming_overlay_position(pos.x(), pos.y())
+            settings_manager.save_setting(
+                SettingsKey.STREAMING_OVERLAY_POSITION,
+                {'x': pos.x(), 'y': pos.y()},
+            )
             logger.debug(f"Streaming overlay position saved: {pos.x()}, {pos.y()}")
         except Exception as e:
             logger.warning(f"Failed to save streaming overlay position: {e}")
@@ -582,8 +585,8 @@ class StreamingTextOverlay(QWidget):
             True if position was restored, False if using default.
         """
         try:
-            position = settings_manager.load_streaming_overlay_position()
-            if position:
+            position = settings_manager.get(SettingsKey.STREAMING_OVERLAY_POSITION)
+            if isinstance(position, dict) and {'x', 'y'}.issubset(position.keys()):
                 x, y = self._validate_position(position['x'], position['y'])
                 self.move(x, y)
                 logger.debug(f"Restored streaming overlay position: {x}, {y}")

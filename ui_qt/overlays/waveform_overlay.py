@@ -16,8 +16,7 @@ from PyQt6.QtGui import (
 )
 from config import config
 from services.settings import settings_manager
-from ui_qt.waveform_styles import style_factory
-from ui_qt.waveform_styles.base_style import BaseWaveformStyle
+from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
 
 logger = logging.getLogger(__name__)
 
@@ -101,19 +100,11 @@ class WaveformOverlay(QWidget):
         self.large_file_info = LargeFileOverlayInfo()
 
         # Load waveform style
-        current_style, style_configs = settings_manager.load_waveform_style_settings()
-        try:
-            style_config = style_configs.get(current_style, config.WAVEFORM_STYLE_CONFIGS.get('particle', {}))
-            self.style: BaseWaveformStyle = style_factory.create_style(
-                current_style,
-                self.overlay_width,
-                self.overlay_height,
-                style_config
-            )
-        except (ValueError, KeyError):
-            # Fallback to particle style if loading fails
-            logger.warning(f"Failed to load style '{current_style}', using particle")
-            self.style = style_factory.create_style('particle', self.overlay_width, self.overlay_height)
+        _, style_configs = settings_manager.load_waveform_style_settings()
+        style_config = style_configs.get('particle', config.WAVEFORM_STYLE_CONFIGS.get('particle', {}))
+        self.style: BaseWaveformStyle = ParticleStyle(
+            self.overlay_width, self.overlay_height, style_config
+        )
 
         # Animation
         self.timer = QTimer()
@@ -186,107 +177,29 @@ class WaveformOverlay(QWidget):
         painter.setPen(QPen(QColor(64, 64, 96, 150), 1))
         painter.drawRoundedRect(rect, 12, 12)
 
-    def _draw_recording_state(self, painter: QPainter):
-        """Draw recording state visualization."""
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
+    def _draw_particle_swarm(self, painter: QPainter):
+        """Render the active STT particle list with a glow halo for fresh particles."""
+        painter.setPen(Qt.PenStyle.NoPen)
+        for particle in self.stt_particles:
+            color = particle.get_color()
+            painter.setBrush(color)
+            size = particle.size * particle.life
+            painter.drawEllipse(QRectF(
+                particle.x - size, particle.y - size,
+                size * 2, size * 2
+            ))
 
-        # Draw waveform bars
-        bar_count = 20
-        bar_width = (w - 40) / bar_count
-        start_x = 20
-
-        for i in range(bar_count):
-            x = start_x + i * bar_width
-            level = self.audio_levels[i] if i < len(self.audio_levels) else 0.0
-            bar_height = max(10, level * (h - 40))
-
-            # Color gradient based on level
-            if level > 0.7:
-                color = QColor(239, 68, 68)  # Red
-            elif level > 0.4:
-                color = QColor(99, 102, 241)  # Indigo
-            else:
-                color = QColor(139, 92, 246)  # Purple
-
-            painter.fillRect(
-                int(x + bar_width * 0.2),
-                int(h / 2 - bar_height / 2),
-                int(bar_width * 0.6),
-                int(bar_height),
-                color
-            )
-
-        # Draw status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Recording...")
-
-    def _draw_processing_state(self, painter: QPainter):
-        """Draw processing state."""
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        # Draw rotating spinner
-        painter.setPen(QPen(QColor(99, 102, 241), 3))
-        spinner_rect = QRect(w // 2 - 20, h // 2 - 20, 40, 40)
-        angle = int((self.animation_time * 360) % 360)
-        painter.drawArc(spinner_rect, angle * 16, 200 * 16)
-
-        # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Processing...")
-
-    def _draw_transcribing_state(self, painter: QPainter):
-        """Draw transcribing state."""
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        # Draw pulsing circles
-        progress = (self.animation_time * 2) % 1.0
-        for i in range(3):
-            offset = (progress + i * 0.3) % 1.0
-            radius = int(15 + offset * 15)
-            alpha = int(200 * (1 - offset))
-            color = QColor(0, 212, 255, alpha)
-
-            painter.setPen(QPen(color, 2))
-            painter.drawEllipse(w // 2 - radius, h // 2 - radius, radius * 2, radius * 2)
-
-        # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Transcribing...")
-
-    def _draw_canceling_state(self, painter: QPainter):
-        """Draw canceling state with shrinking X."""
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-
-        # Draw shrinking X
-        progress = self.cancel_progress  # 0.0 to 1.0
-        size = int(40 * (1 - progress * 0.8))
-
-        # X lines
-        painter.setPen(QPen(QColor(239, 68, 68), 4))
-        painter.drawLine(
-            w // 2 - size,
-            h // 2 - size,
-            w // 2 + size,
-            h // 2 + size
-        )
-        painter.drawLine(
-            w // 2 + size,
-            h // 2 - size,
-            w // 2 - size,
-            h // 2 + size
-        )
-
-        # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Canceling...")
+            if particle.life > 0.3:
+                glow_color = QColor(color)
+                glow_color.setAlpha(100)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(glow_color, 1))
+                glow_size = size + 3
+                painter.drawEllipse(QRectF(
+                    particle.x - glow_size, particle.y - glow_size,
+                    glow_size * 2, glow_size * 2
+                ))
+                painter.setPen(Qt.PenStyle.NoPen)
 
     def _draw_stt_enable_state(self, painter: QPainter):
         """Draw STT enable state with power up particle effect."""
@@ -301,29 +214,7 @@ class WaveformOverlay(QWidget):
             painter.drawLine(int(w // 2 - 15), int(h // 2), int(w // 2 - 5), int(h // 2 + 10))
             painter.drawLine(int(w // 2 - 5), int(h // 2 + 10), int(w // 2 + 15), int(h // 2 - 10))
 
-        # Draw particles on top
-        painter.setPen(Qt.PenStyle.NoPen)
-        for particle in self.stt_particles:
-            color = particle.get_color()
-            painter.setBrush(color)
-            size = particle.size * particle.life
-            painter.drawEllipse(QRectF(
-                particle.x - size, particle.y - size,
-                size * 2, size * 2
-            ))
-
-            # Glow effect for brighter particles
-            if particle.life > 0.3:
-                glow_color = QColor(color)
-                glow_color.setAlpha(100)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(glow_color, 1))
-                glow_size = size + 3
-                painter.drawEllipse(QRectF(
-                    particle.x - glow_size, particle.y - glow_size,
-                    glow_size * 2, glow_size * 2
-                ))
-                painter.setPen(Qt.PenStyle.NoPen)
+        self._draw_particle_swarm(painter)
 
         # Status text
         painter.setPen(QPen(QColor(224, 224, 255)))
@@ -344,29 +235,7 @@ class WaveformOverlay(QWidget):
             painter.drawLine(w // 2 - x_size, h // 2 - x_size, w // 2 + x_size, h // 2 + x_size)
             painter.drawLine(w // 2 + x_size, h // 2 - x_size, w // 2 - x_size, h // 2 + x_size)
 
-        # Draw particles (exploding outward) on top
-        painter.setPen(Qt.PenStyle.NoPen)
-        for particle in self.stt_particles:
-            color = particle.get_color()
-            painter.setBrush(color)
-            size = particle.size * particle.life
-            painter.drawEllipse(QRectF(
-                particle.x - size, particle.y - size,
-                size * 2, size * 2
-            ))
-
-            # Glow effect for brighter particles
-            if particle.life > 0.3:
-                glow_color = QColor(color)
-                glow_color.setAlpha(100)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(glow_color, 1))
-                glow_size = size + 3
-                painter.drawEllipse(QRectF(
-                    particle.x - glow_size, particle.y - glow_size,
-                    glow_size * 2, glow_size * 2
-                ))
-                painter.setPen(Qt.PenStyle.NoPen)
+        self._draw_particle_swarm(painter)
 
         # Status text
         painter.setPen(QPen(QColor(224, 224, 255)))
@@ -399,29 +268,7 @@ class WaveformOverlay(QWidget):
             painter.drawLine(cx - 7, cy + 2, cx + 7, cy + 2)
             painter.drawLine(cx - 7, cy + 8, cx + 5, cy + 8)
 
-        # Draw particles on top
-        painter.setPen(Qt.PenStyle.NoPen)
-        for particle in self.stt_particles:
-            color = particle.get_color()
-            painter.setBrush(color)
-            size = particle.size * particle.life
-            painter.drawEllipse(QRectF(
-                particle.x - size, particle.y - size,
-                size * 2, size * 2
-            ))
-
-            # Glow effect for brighter particles
-            if particle.life > 0.3:
-                glow_color = QColor(color)
-                glow_color.setAlpha(100)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(glow_color, 1))
-                glow_size = size + 3
-                painter.drawEllipse(QRectF(
-                    particle.x - glow_size, particle.y - glow_size,
-                    glow_size * 2, glow_size * 2
-                ))
-                painter.setPen(Qt.PenStyle.NoPen)
+        self._draw_particle_swarm(painter)
 
         # Status text
         painter.setPen(QPen(QColor(224, 224, 255)))
@@ -557,11 +404,23 @@ class WaveformOverlay(QWidget):
 
             # Initialize particles for STT and copied states
             if state == self.STATE_STT_ENABLE:
-                self._init_power_up_particles()
+                self._init_particles(
+                    count=60, hue_range=(120, 180), mode='converge',
+                    speed_range=(60, 100), size_range=(3.0, 6.0),
+                    edge_radius=(50, 90), velocity_jitter=15.0,
+                )
             elif state == self.STATE_STT_DISABLE:
-                self._init_power_down_particles()
+                self._init_particles(
+                    count=60, hue_range=(0, 40), mode='explode',
+                    speed_range=(100, 200), size_range=(3.0, 6.0),
+                    center_jitter=8.0,
+                )
             elif state == self.STATE_COPIED:
-                self._init_copied_particles()
+                self._init_particles(
+                    count=50, hue_range=(180, 220), mode='converge',
+                    speed_range=(50, 90), size_range=(2.5, 5.0),
+                    edge_radius=(45, 80), velocity_jitter=10.0,
+                )
             else:
                 self.stt_particles = []
 
@@ -577,83 +436,53 @@ class WaveformOverlay(QWidget):
             if state in [self.STATE_STT_ENABLE, self.STATE_STT_DISABLE, self.STATE_COPIED]:
                 self.hidden_timer.start(1500)
 
-    def _init_power_up_particles(self):
-        """Initialize particles for power up animation - converging to center."""
+    def _init_particles(
+        self,
+        count: int,
+        hue_range: tuple,
+        mode: str,
+        speed_range: tuple,
+        size_range: tuple,
+        edge_radius: tuple = (50, 90),
+        velocity_jitter: float = 15.0,
+        center_jitter: float = 8.0,
+    ):
+        """Initialize STT particles in either a converging or exploding pattern.
+
+        Args:
+            count: Number of particles to spawn.
+            hue_range: (min, max) HSV hue for particle color.
+            mode: 'converge' (spawn at edges, fly inward) or 'explode' (spawn near
+                center, fly outward).
+            speed_range: (min, max) particle speed.
+            size_range: (min, max) particle radius.
+            edge_radius: 'converge' only — (min, max) spawn distance from center.
+            velocity_jitter: 'converge' only — random vx/vy noise added per particle.
+            center_jitter: 'explode' only — half-width of the random spawn box around center.
+        """
         self.stt_particles = []
         center_x = self.overlay_width // 2
         center_y = self.overlay_height // 2 - 5
 
-        # Create particles around the edges that will converge to center
-        for i in range(60):
-            # Spawn from random positions around edges
-            angle = (i / 60) * 2 * math.pi + random.uniform(-0.3, 0.3)
-            radius = random.uniform(50, 90)
+        for i in range(count):
+            angle = (i / count) * 2 * math.pi + random.uniform(-0.3, 0.3)
+            speed = random.uniform(*speed_range)
+            hue = random.uniform(*hue_range)
 
-            x = center_x + radius * math.cos(angle)
-            y = center_y + radius * math.sin(angle)
-
-            # Velocity towards center with some swirl
-            speed = random.uniform(60, 100)
-            vx = -math.cos(angle) * speed + random.uniform(-15, 15)
-            vy = -math.sin(angle) * speed + random.uniform(-15, 15)
-
-            # Green/cyan hues for power up
-            hue = random.uniform(120, 180)
-
-            particle = STTParticle(x, y, vx, vy, hue)
-            particle.size = random.uniform(3.0, 6.0)  # Larger particles
-            self.stt_particles.append(particle)
-
-    def _init_power_down_particles(self):
-        """Initialize particles for power down animation - exploding from center."""
-        self.stt_particles = []
-        center_x = self.overlay_width // 2
-        center_y = self.overlay_height // 2 - 5
-
-        # Create particles at center that will explode outward
-        for i in range(60):
-            # Start near center
-            x = center_x + random.uniform(-8, 8)
-            y = center_y + random.uniform(-8, 8)
-
-            # Velocity outward in all directions
-            angle = (i / 60) * 2 * math.pi + random.uniform(-0.3, 0.3)
-            speed = random.uniform(100, 200)
-            vx = math.cos(angle) * speed
-            vy = math.sin(angle) * speed
-
-            # Red/orange hues for power down
-            hue = random.uniform(0, 40)
+            if mode == 'converge':
+                radius = random.uniform(*edge_radius)
+                x = center_x + radius * math.cos(angle)
+                y = center_y + radius * math.sin(angle)
+                vx = -math.cos(angle) * speed + random.uniform(-velocity_jitter, velocity_jitter)
+                vy = -math.sin(angle) * speed + random.uniform(-velocity_jitter, velocity_jitter)
+            else:  # 'explode'
+                x = center_x + random.uniform(-center_jitter, center_jitter)
+                y = center_y + random.uniform(-center_jitter, center_jitter)
+                vx = math.cos(angle) * speed
+                vy = math.sin(angle) * speed
 
             particle = STTParticle(x, y, vx, vy, hue)
-            particle.size = random.uniform(3.0, 6.0)  # Larger particles
-            self.stt_particles.append(particle)
-
-    def _init_copied_particles(self):
-        """Initialize particles for copied animation - sparkle converging effect."""
-        self.stt_particles = []
-        center_x = self.overlay_width // 2
-        center_y = self.overlay_height // 2 - 5
-
-        # Create particles around the edges that will converge to center with sparkle effect
-        for i in range(50):
-            # Spawn from random positions around edges
-            angle = (i / 50) * 2 * math.pi + random.uniform(-0.3, 0.3)
-            radius = random.uniform(45, 80)
-
-            x = center_x + radius * math.cos(angle)
-            y = center_y + radius * math.sin(angle)
-
-            # Velocity towards center with slight swirl
-            speed = random.uniform(50, 90)
-            vx = -math.cos(angle) * speed + random.uniform(-10, 10)
-            vy = -math.sin(angle) * speed + random.uniform(-10, 10)
-
-            # Cyan/blue hues for copy action
-            hue = random.uniform(180, 220)
-
-            particle = STTParticle(x, y, vx, vy, hue)
-            particle.size = random.uniform(2.5, 5.0)
+            particle.size = random.uniform(*size_range)
             self.stt_particles.append(particle)
 
     def _update_stt_particles(self, dt: float):
