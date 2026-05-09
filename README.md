@@ -23,8 +23,8 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 
 ## Features
 
-- **Local Whisper** – Runs offline using OpenAI's Whisper model (~150MB download on first use)
-- **API Options** – Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
+- **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
+- **API Options** – OpenAI Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
 - **Auto-paste** – Transcription automatically pastes to your active window
 - **System Tray** – Minimize to tray, always accessible
@@ -172,5 +172,4 @@ python app_qt.py
 ## License
 
 MIT License. Free to use, clone, and modify.
-
 
