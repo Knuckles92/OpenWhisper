@@ -1,4 +1,4 @@
-"""Thin compatibility entrypoint for the Qt application."""
+"""Thin compatibility entrypoint for the Qt application"""
 
 import platform
 import subprocess
