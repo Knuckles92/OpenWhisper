@@ -10,6 +10,7 @@ temp_audio.wav
 *__pycache__*
 .pytest_cache/
 venv/*
+**/venv/
 CLAUDE.md
 AGENTS.md
 specs/ANIMATION_STATE_TRANSITION_FIX.md

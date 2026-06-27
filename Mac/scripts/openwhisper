@@ -1,0 +1,19 @@
+#!/bin/bash
+# Launch OpenWhisper (macOS) using the project's virtualenv.
+# Lives in the repo so `git pull` updates launcher logic without reinstalling.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="$REPO/venv/bin/python"
+ENTRY="$REPO/app_qt.py"
+
+if [ ! -x "$PYTHON" ]; then
+    echo "[error] Virtual environment not found." >&2
+    echo "        Expected: $PYTHON" >&2
+    echo "        Create it with:" >&2
+    echo "          cd \"$REPO\" && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt" >&2
+    exit 1
+fi
+
+cd "$REPO"
+exec "$PYTHON" "$ENTRY" "$@"

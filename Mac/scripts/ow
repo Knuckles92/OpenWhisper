@@ -1,0 +1,4 @@
+#!/bin/bash
+# Short alias for `openwhisper`. Delegates to the main launcher in the same
+# folder so all logic stays in one place.
+exec "$(dirname "${BASH_SOURCE[0]}")/openwhisper" "$@"
