@@ -400,10 +400,7 @@ class MainWindow(QMainWindow):
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
         self._on_tab_changed(self.tabbed_content.current_index())
 
-        # macOS convention: a persistent, visible Quit button in a footer bar.
-        # Other platforms rely on the window close button and File > Exit.
-        if sys.platform == "darwin":
-            self._build_footer(outer_layout)
+        self._build_footer(outer_layout)
 
     _FOOTER_BAR_STYLE = """
         QWidget#footerBar {
