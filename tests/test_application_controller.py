@@ -403,6 +403,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     hotkey_module = types.ModuleType("services.hotkey_manager")
     hotkey_module.HotkeyManager = FakeHotkeyManager
+    hotkey_module.send_paste = lambda: keyboard.send("ctrl+v")
+    # Keep the Qt focus-window hotkey fallback out of the headless test path.
+    hotkey_module.USE_PYNPUT_BACKEND = False
 
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager

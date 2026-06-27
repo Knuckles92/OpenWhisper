@@ -1,6 +1,6 @@
 # OpenWhisper
 
-A desktop app for recording audio and transcribing it to text using local Whisper models or OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste.
+A cross-platform desktop app (Windows, macOS, Linux) for recording audio and transcribing it to text using local Whisper models or OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste. The app detects your OS at runtime and adapts hotkey handling, auto-paste, and platform conventions automatically — see [Platform differences](#platform-differences).
 
 
 <p align="center">
@@ -37,7 +37,23 @@ A desktop app for recording audio and transcribing it to text using local Whispe
 - **Caret Indicator** *(experimental)* – Visual marker at cursor location when pasting
 - **Window Memory** – Remembers window position and size between sessions
 
-## GPU Acceleration
+## Platform differences
+
+The same codebase runs on all three platforms; a few behaviors adapt to the OS:
+
+| Area | Windows | macOS | Linux |
+|------|---------|-------|-------|
+| Global hotkeys | `keyboard` library (per-key suppression) | [`pynput`](https://pypi.org/project/pynput/) (observe-only) | `pynput` (observe-only) |
+| Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
+| Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
+| Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
+| Visible Quit button | — | Footer Quit button (macOS convention) | — |
+| GPU | CUDA (NVIDIA) | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) |
+| Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
+
+> On macOS/Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
+
+## GPU Acceleration (Windows / Linux)
 
 For significantly faster transcription speeds with an NVIDIA GPU, install CUDA support:
 
@@ -45,7 +61,7 @@ For significantly faster transcription speeds with an NVIDIA GPU, install CUDA s
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU.
+With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU. macOS has no CUDA support, so transcription runs on CPU there.
 
 ## Installation
 
@@ -67,9 +83,21 @@ OPTIONAL: For cloud transcription, set your API key:
 # Windows
 set OPENAI_API_KEY=your-key
 
+# macOS / Linux
+export OPENAI_API_KEY=your-key
+
 # Or create a .env file
 OPENAI_API_KEY=your-key
 ```
+
+## Required macOS permissions
+
+macOS gates the features this app relies on behind privacy permissions. Grant these to the app you launch OpenWhisper from (Terminal, iTerm, or a bundled app):
+
+- **Microphone** — needed to record audio (System Settings > Privacy & Security > Microphone). You'll be prompted on first recording.
+- **Accessibility** and/or **Input Monitoring** — needed for global hotkeys and the synthetic `Cmd+V` auto-paste (System Settings > Privacy & Security). Without these, hotkeys won't fire and auto-paste won't work.
+
+If hotkeys or auto-paste silently do nothing, it's almost always a missing Accessibility/Input Monitoring grant. After granting, fully quit and relaunch the app.
 
 ## Quick Launch (Windows)
 
@@ -120,9 +148,26 @@ if ($current -split ";" -notcontains $dir) {
 
 If you'd rather not modify your PATH at all, drop a copy of [scripts/openwhisper.cmd](scripts/openwhisper.cmd) into `%LOCALAPPDATA%\Microsoft\WindowsApps\` (which is already on Windows PATH for every user). Caveat: this is a *copy*, so you'd need to refresh it whenever the launcher logic changes — which is rare, but worth knowing.
 
+## Quick Launch (macOS / Linux)
+
+Register `ow` and `openwhisper` as global commands so the app launches from any terminal. From the repo root:
+
+```bash
+./install.sh
+```
+
+This adds the `scripts/` folder to your `PATH` via `~/.zprofile` (idempotent). Open a new terminal afterward, then run:
+
+```bash
+ow              # short alias
+openwhisper     # full name
+```
+
+The launcher invokes `venv/bin/python` directly, so the app always uses the project's venv. Code changes are picked up live — no reinstall needed after `git pull`. To remove the PATH entry, run `./uninstall.sh` (your venv, code, and `scripts/` folder are left untouched).
+
 ## Usage
 
-If you ran `install.cmd`, just type `ow` or `openwhisper` from any terminal. Otherwise:
+If you registered the launcher, just type `ow` or `openwhisper` from any terminal. Otherwise:
 
 ```bash
 python app_qt.py
@@ -130,13 +175,15 @@ python app_qt.py
 
 ### Hotkeys
 
-| Key | Action |
-|-----|--------|
-| `*` | Start/stop recording |
-| `-` | Cancel |
-| `Ctrl+Alt+*` | Enable/disable program |
+Default hotkeys depend on your platform (all remappable in **Settings > Hotkeys**):
 
-All hotkeys can be remapped in the settings.
+| Action | Windows / Linux | macOS |
+|--------|-----------------|-------|
+| Start/stop recording | `*` (numpad) | `⌃⌥R` |
+| Cancel | `-` (numpad) | `⌃⌥⎋` |
+| Enable/disable program | `Ctrl+Alt+*` | `⌃⌥⇧R` |
+
+On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Option), `⇧` (Shift).
 
 ## Settings
 
@@ -164,10 +211,10 @@ python app_qt.py
 
 ## Requirements
 
-- Python 3.8+(3.12 recommended)
-- Windows
+- Python 3.8+ (3.12 recommended)
+- Windows, macOS, or Linux
 
-**Note:** Caret paste indicator is Windows-only (uses Windows API).
+**Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
 
 ## License
 

@@ -9,6 +9,7 @@ from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox
 
 from config import config
+from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, StreamingTextOverlay, WaveformOverlay
@@ -486,9 +487,15 @@ class UIController(QObject):
         Args:
             hotkeys: Dictionary with hotkey mappings
         """
-        record_key = hotkeys.get('record_toggle', '*')
-        cancel_key = hotkeys.get('cancel', '-')
-        enable_disable_key = hotkeys.get('enable_disable', 'Ctrl+Alt+*')
+        record_key = format_hotkey_display(
+            hotkeys.get('record_toggle', config.DEFAULT_HOTKEYS['record_toggle'])
+        )
+        cancel_key = format_hotkey_display(
+            hotkeys.get('cancel', config.DEFAULT_HOTKEYS['cancel'])
+        )
+        enable_disable_key = format_hotkey_display(
+            hotkeys.get('enable_disable', config.DEFAULT_HOTKEYS['enable_disable'])
+        )
         self.main_window.update_hotkeys(record_key, cancel_key, enable_disable_key)
 
     def show_about_dialog(self):

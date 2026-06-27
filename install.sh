@@ -1,6 +1,6 @@
 #!/bin/bash
-# One-time installer: registers `ow` and `openwhisper` as global commands by
-# adding the Mac/scripts folder to your PATH via ~/.zprofile.
+# One-time installer (macOS): registers `ow` and `openwhisper` as global
+# commands by adding the scripts/ folder to your PATH via ~/.zprofile.
 #
 # Idempotent: re-running removes any previous OpenWhisper PATH block and writes
 # a fresh one, so moving the repo self-corrects. Only edits ~/.zprofile -- your

@@ -5,6 +5,9 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QFont, QColor
 
+from config import config
+from services.hotkey_manager import format_hotkey_display
+
 
 class HotkeyKey(QLabel):
     """A single hotkey key styled like a keyboard key with state-aware glow."""
@@ -117,8 +120,8 @@ class HotkeyDisplay(QWidget):
         """)
         layout.addWidget(icon_label)
 
-        # Record hotkey
-        record_key = HotkeyKey("*")
+        # Record hotkey (placeholder until update_hotkeys runs with live values)
+        record_key = HotkeyKey(format_hotkey_display(config.DEFAULT_HOTKEYS['record_toggle']))
         self._hotkey_widgets.append(record_key)
         layout.addWidget(record_key)
 
@@ -131,7 +134,7 @@ class HotkeyDisplay(QWidget):
         layout.addWidget(spacer1)
 
         # Cancel hotkey
-        cancel_key = HotkeyKey("-")
+        cancel_key = HotkeyKey(format_hotkey_display(config.DEFAULT_HOTKEYS['cancel']))
         self._hotkey_widgets.append(cancel_key)
         layout.addWidget(cancel_key)
 
@@ -144,7 +147,7 @@ class HotkeyDisplay(QWidget):
         layout.addWidget(spacer2)
 
         # Enable/Disable hotkey
-        enable_key = HotkeyKey("Ctrl+Alt+*")
+        enable_key = HotkeyKey(format_hotkey_display(config.DEFAULT_HOTKEYS['enable_disable']))
         self._hotkey_widgets.append(enable_key)
         layout.addWidget(enable_key)
 
@@ -166,7 +169,7 @@ class HotkeyDisplay(QWidget):
             if isinstance(widget, HotkeyKey):
                 widget.set_state(state)
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "Ctrl+Alt+*"):
+    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
         """
         Update the hotkey display with new keys with fade animation.
 
@@ -183,10 +186,11 @@ class HotkeyDisplay(QWidget):
             enable_widget = layout.itemAt(7).widget()
 
             # Apply fade animation before updating text
+            # Values arrive already display-formatted via format_hotkey_display.
             widgets_to_update = [
                 (record_widget, record_key),
                 (cancel_widget, cancel_key),
-                (enable_widget, enable_disable_key.replace('ctrl', 'Ctrl').replace('alt', 'Alt').replace('shift', 'Shift'))
+                (enable_widget, enable_disable_key)
             ]
 
             for widget, new_text in widgets_to_update:
