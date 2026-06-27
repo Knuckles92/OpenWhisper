@@ -43,7 +43,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 | Area | Windows | macOS | Linux |
 |------|---------|-------|-------|
-| Global hotkeys | `keyboard` library (per-key suppression) | [`pynput`](https://pypi.org/project/pynput/) (observe-only) | `pynput` (observe-only) |
+| Global hotkeys | `keyboard` library (per-key suppression) | Carbon `RegisterEventHotKey` (no Accessibility permission; falls back to [`pynput`](https://pypi.org/project/pynput/) if registration fails) | `pynput` (observe-only) |
 | Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
@@ -51,7 +51,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | GPU | CUDA (NVIDIA) | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
 
-> On macOS/Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
+> On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
 
 ## GPU Acceleration (Windows / Linux)
 
@@ -92,12 +92,13 @@ OPENAI_API_KEY=your-key
 
 ## Required macOS permissions
 
-macOS gates the features this app relies on behind privacy permissions. Grant these to the app you launch OpenWhisper from (Terminal, iTerm, or a bundled app):
+macOS gates some features behind privacy permissions. Grant these to the app you launch OpenWhisper from (Terminal, iTerm, or a bundled app):
 
 - **Microphone** — needed to record audio (System Settings > Privacy & Security > Microphone). You'll be prompted on first recording.
-- **Accessibility** and/or **Input Monitoring** — needed for global hotkeys and the synthetic `Cmd+V` auto-paste (System Settings > Privacy & Security). Without these, hotkeys won't fire and auto-paste won't work.
+- **Accessibility** — needed only for **auto-paste** (the synthetic `Cmd+V` that inserts transcription into the focused app). Without it, transcriptions are still copied to the clipboard and you can paste manually. Global hotkeys work without Accessibility (Carbon `RegisterEventHotKey`).
+- **Input Monitoring** *(optional)* — may be required when **remapping hotkeys** in Settings > Hotkeys (the capture dialog uses a `pynput` listener). Normal hotkey use does not need this.
 
-If hotkeys or auto-paste silently do nothing, it's almost always a missing Accessibility/Input Monitoring grant. After granting, fully quit and relaunch the app.
+If auto-paste silently does nothing, enable Accessibility for your Python binary, then fully quit and relaunch the app. If hotkey capture in Settings fails, add Input Monitoring as well.
 
 ## Quick Launch (Windows)
 
