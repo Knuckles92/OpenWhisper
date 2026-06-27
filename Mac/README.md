@@ -9,7 +9,7 @@ This is a full, standalone copy of the app adapted for macOS. The original Windo
 | Area | Windows | macOS (this build) |
 |------|---------|--------------------|
 | Global hotkeys | `keyboard` library (per-key suppression) | [`pynput`](https://pypi.org/project/pynput/) (observe-only, no suppression) |
-| Default hotkeys | Numpad keys (`kp *`, `kp -`) | Command combos (see below) |
+| Default hotkeys | Numpad keys (`kp *`, `kp -`) | Control+Option combos (see below) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` (via pynput) |
 | Caret paste indicator | Tracks real text caret (win32) | Follows the mouse cursor (no public caret API on macOS) |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | Shell scripts + `venv/bin/python` |
@@ -59,13 +59,13 @@ python app_qt.py
 
 | Key | Action |
 |-----|--------|
-| `Cmd+Shift+Space` | Start/stop recording |
-| `Cmd+Shift+Escape` | Cancel |
-| `Cmd+Alt+Shift+Space` | Enable/disable program |
+| `Ctrl+Option+R` | Start/stop recording |
+| `Ctrl+Option+Escape` | Cancel |
+| `Ctrl+Option+Shift+R` | Enable/disable program |
 
 All hotkeys can be remapped in **Settings > Hotkeys**. Supported modifiers: `Cmd`, `Ctrl`, `Alt` (Option), `Shift`.
 
-> Note: Unlike the Windows build, macOS does not allow selectively swallowing individual key events, so hotkey combinations also reach the focused app. The Command-based defaults are chosen to avoid clashing with normal typing.
+> Note: Unlike the Windows build, macOS does not allow selectively swallowing individual key events, so hotkey combinations also reach the focused app. The Control+Option defaults avoid clashing with 1Password, Spotlight, and other common macOS shortcuts.
 
 ## Quick Launch (optional)
 

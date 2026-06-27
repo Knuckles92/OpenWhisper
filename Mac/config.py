@@ -138,12 +138,14 @@ class AppConfig:
     def __post_init__(self):
         """Initialize computed fields after dataclass creation."""
         if self.DEFAULT_HOTKEYS is None:
-            # macOS-friendly Command-based combos (numpad keys are uncommon on
-            # Mac laptops). Modifiers: cmd, ctrl, alt (option), shift.
+            # Control+Option combos avoid macOS system shortcuts (Spotlight,
+            # input sources, emoji picker) and common app defaults such as
+            # 1Password Quick Access (Cmd+Shift+Space). Modifiers: cmd, ctrl,
+            # alt (option), shift.
             self.DEFAULT_HOTKEYS = {
-                'record_toggle': 'cmd+shift+space',
-                'cancel': 'cmd+shift+escape',
-                'enable_disable': 'cmd+alt+shift+space'
+                'record_toggle': 'ctrl+alt+r',
+                'cancel': 'ctrl+alt+escape',
+                'enable_disable': 'ctrl+alt+shift+r'
             }
 
         if self.MODEL_VALUE_MAP is None:

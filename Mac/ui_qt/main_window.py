@@ -336,6 +336,9 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(0)
         outer_layout.addWidget(content_wrapper, stretch=1)
 
+        # Footer bar with a visible Quit button (always available across tabs)
+        self._build_footer(outer_layout)
+
         # Main content area (left side)
         main_area = QWidget()
         main_area_layout = QVBoxLayout(main_area)
@@ -392,6 +395,57 @@ class MainWindow(QMainWindow):
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
         self._on_tab_changed(self.tabbed_content.current_index())
 
+    _FOOTER_BAR_STYLE = """
+        QWidget#footerBar {
+            background-color: #1c1c1e;
+            border-top: 1px solid #2c2c2e;
+        }
+    """
+
+    _QUIT_BUTTON_STYLE = """
+        QPushButton#quitButton {
+            background-color: #2c2c2e;
+            color: #ff453a;
+            border: 1px solid #3a3a3c;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#quitButton:hover {
+            background-color: #ff453a;
+            color: #ffffff;
+            border: 1px solid #ff453a;
+        }
+        QPushButton#quitButton:pressed {
+            background-color: #d70015;
+            color: #ffffff;
+        }
+    """
+
+    def _build_footer(self, outer_layout: QVBoxLayout) -> None:
+        """Create the bottom footer bar containing the visible Quit button."""
+        footer = QWidget()
+        footer.setObjectName("footerBar")
+        footer.setFixedHeight(48)
+        footer.setStyleSheet(self._FOOTER_BAR_STYLE)
+
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 7, 16, 7)
+        footer_layout.setSpacing(0)
+        footer_layout.addStretch()
+
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.setObjectName("quitButton")
+        self.quit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quit_button.setFixedHeight(34)
+        self.quit_button.setMinimumWidth(100)
+        self.quit_button.setStyleSheet(self._QUIT_BUTTON_STYLE)
+        self.quit_button.clicked.connect(self.quit_application)
+        footer_layout.addWidget(self.quit_button)
+
+        outer_layout.addWidget(footer)
+
     def _setup_menu(self):
         """Setup the menu bar in the custom title bar."""
         # Hide the QMainWindow's built-in menu bar
@@ -408,7 +462,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
-        file_menu.addAction("Exit", self.quit_application)
+        file_menu.addAction("Quit", self.quit_application)
 
         # View menu
         view_menu = menubar.addMenu("View")

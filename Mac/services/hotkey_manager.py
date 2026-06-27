@@ -123,7 +123,7 @@ def key_to_name(key) -> Optional[str]:
 def parse_hotkey(hotkey_string: str) -> Tuple[frozenset, Optional[str]]:
     """Parse a hotkey string into ``(modifier_set, main_key_name)``.
 
-    Example: ``"cmd+shift+space"`` -> ``(frozenset({"cmd", "shift"}), "space")``.
+    Example: ``"ctrl+alt+r"`` -> ``(frozenset({"ctrl", "alt"}), "r")``.
     Unknown modifier tokens are ignored; the last token is always the main key.
     """
     if not hotkey_string:
@@ -316,7 +316,7 @@ class HotkeyManager:
         Args:
             active_modifiers: Set of currently-pressed canonical modifier names.
             main_key: Canonical name of the just-pressed non-modifier key.
-            hotkey_string: Hotkey string (e.g. "cmd+shift+space", "cmd+alt+shift+space").
+            hotkey_string: Hotkey string (e.g. "ctrl+alt+r", "ctrl+alt+shift+r").
 
         Returns:
             True if the modifier set and main key both match exactly (no extra modifiers).
