@@ -192,6 +192,52 @@ def format_hotkey_display(hotkey_string: str) -> str:
     return "".join(parts)
 
 
+# --- macOS Accessibility (Input Monitoring) trust ------------------------------
+
+
+def is_accessibility_trusted() -> bool:
+    """Return whether this process may observe global key events on macOS.
+
+    The pynput global event tap only receives keystrokes when the host process
+    is granted Accessibility permission (System Settings > Privacy & Security >
+    Accessibility). Without it the tap is silently inert, so hotkeys only work
+    while the OpenWhisper window itself is focused (via the Qt fallback).
+
+    Returns True on non-macOS platforms, which have no equivalent gate, and also
+    fails open (True) if the trust state cannot be queried, so the user is never
+    nagged on a false negative.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        import HIServices
+
+        return bool(HIServices.AXIsProcessTrusted())
+    except Exception as exc:
+        logger.warning(f"Could not query macOS Accessibility trust state: {exc}")
+        return True
+
+
+def request_accessibility_trust() -> bool:
+    """Register this process with macOS Accessibility and show the system prompt.
+
+    Calling the options API is what makes the host binary appear in the
+    Accessibility list so the user can toggle it on; passing the prompt option
+    also surfaces the native permission dialog. Returns the current trust state
+    (granting takes effect on the next launch). No-op on non-macOS platforms.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        import HIServices
+
+        options = {HIServices.kAXTrustedCheckOptionPrompt: True}
+        return bool(HIServices.AXIsProcessTrustedWithOptions(options))
+    except Exception as exc:
+        logger.warning(f"Could not request macOS Accessibility trust: {exc}")
+        return False
+
+
 # --- Synthetic paste -----------------------------------------------------------
 
 _paste_controller: Optional[pynput_keyboard.Controller] = None
@@ -238,16 +284,24 @@ class HotkeyManager:
         self._pressed_modifiers: set = set()
         self._pressed_main_keys: set = set()
         self._listener: Optional[pynput_keyboard.Listener] = None
+        # macOS detection runs through Carbon RegisterEventHotKey (no
+        # Accessibility permission); Linux keeps the pynput global listener.
+        self._carbon_registrar = None
+        self._use_carbon = sys.platform == "darwin"
 
         # Setup keyboard hook
         self._setup_keyboard_hook()
 
     def _setup_keyboard_hook(self):
-        """Start the global keyboard listener."""
+        """Start global hotkey detection (Carbon on macOS, pynput on Linux)."""
         self._pressed_modifiers.clear()
         self._pressed_main_keys.clear()
-        # suppress=False: pynput cannot selectively suppress keys on macOS, so
-        # hotkeys are observed but still pass through to the focused app.
+
+        if self._use_carbon and self._setup_carbon_hotkeys():
+            return
+
+        # suppress=False: pynput cannot selectively suppress keys, so hotkeys are
+        # observed but still pass through to the focused app.
         listener_class = _get_listener_class()
         self._listener = listener_class(
             on_press=self._on_press,
@@ -257,6 +311,26 @@ class HotkeyManager:
         self._listener.daemon = True
         self._listener.start()
         logger.info("Keyboard hook started")
+
+    def _setup_carbon_hotkeys(self) -> bool:
+        """Register hotkeys via Carbon. Returns False to fall back to pynput."""
+        try:
+            from services import _hotkey_carbon
+        except Exception as exc:
+            logger.warning(f"Carbon hotkey backend unavailable, using pynput: {exc}")
+            return False
+
+        if not _hotkey_carbon.is_available():
+            logger.warning("Carbon hotkey backend not available, using pynput")
+            return False
+
+        if self._carbon_registrar is None:
+            self._carbon_registrar = _hotkey_carbon.CarbonHotkeyRegistrar(
+                on_action=self.trigger_action
+            )
+        self._carbon_registrar.register_hotkeys(self.hotkeys)
+        logger.info("Carbon global hotkeys registered (no Accessibility required)")
+        return True
 
     def _on_press(self, key) -> None:
         """Handle a global key-press event."""
@@ -285,36 +359,57 @@ class HotkeyManager:
     ) -> bool:
         """Handle a normalized hotkey press from either pynput or Qt.
 
-        Returns True when the key state matched a configured hotkey, even if the
-        action was suppressed by debounce or disabled state.
+        Matches the key state against the configured hotkeys and dispatches the
+        action. Returns True when the key state matched a configured hotkey, even
+        if the action was suppressed by debounce or disabled state.
         """
         # Enable/disable toggle works even while the program is disabled.
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("enable_disable")):
-            if self._should_accept_action("enable_disable"):
-                logger.debug(f"Enable/disable hotkey matched from {source}")
-                self._toggle_program_enabled()
+            logger.debug(f"Enable/disable hotkey matched from {source}")
+            self.trigger_action("enable_disable")
             return True
 
         if not self.program_enabled:
             return False
 
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("record_toggle")):
+            logger.debug(f"Record toggle hotkey matched from {source}")
+            self.trigger_action("record_toggle")
+            return True
+
+        if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("cancel")):
+            logger.debug(f"Cancel hotkey matched from {source}")
+            self.trigger_action("cancel")
+            return True
+
+        return False
+
+    def trigger_action(self, action: str) -> None:
+        """Apply enable/debounce gating and invoke the callback for an action.
+
+        Shared dispatch for every input source: the Carbon registrar (macOS),
+        the pynput global listener (Linux), and the Qt focused-window fallback.
+        ``_should_accept_action`` dedupes a press seen by more than one source.
+        """
+        if action == "enable_disable":
+            # Works even while the program is disabled.
+            if self._should_accept_action("enable_disable"):
+                self._toggle_program_enabled()
+            return
+
+        if not self.program_enabled:
+            return
+
+        if action == "record_toggle":
             if (
                 self._should_trigger_record_toggle()
                 and self._should_accept_action("record_toggle")
                 and self.on_record_toggle
             ):
-                logger.debug(f"Record toggle hotkey matched from {source}")
                 threading.Thread(target=self.on_record_toggle, daemon=True).start()
-            return True
-
-        if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("cancel")):
+        elif action == "cancel":
             if self._should_accept_action("cancel") and self.on_cancel:
-                logger.debug(f"Cancel hotkey matched from {source}")
                 threading.Thread(target=self.on_cancel, daemon=True).start()
-            return True
-
-        return False
 
     def _on_release(self, key) -> None:
         """Handle a global key-release event."""
@@ -416,11 +511,20 @@ class HotkeyManager:
             new_hotkeys: Dictionary of new hotkey mappings.
         """
         self.hotkeys.update(new_hotkeys)
-        # Matching reads self.hotkeys live, so no listener restart is required.
+        if self._carbon_registrar is not None:
+            # Carbon hotkeys are registered with the OS, not matched live, so the
+            # new combos must be re-registered. (pynput matches self.hotkeys live.)
+            self._carbon_registrar.register_hotkeys(self.hotkeys)
         logger.info("Hotkeys updated successfully")
 
     def cleanup(self):
-        """Stop the keyboard listener."""
+        """Stop global hotkey detection (Carbon unregister and/or pynput stop)."""
+        if self._carbon_registrar is not None:
+            try:
+                self._carbon_registrar.unregister_all()
+            except Exception as e:
+                logger.error(f"Error unregistering Carbon hotkeys: {e}")
+
         listener = self._listener
         self._listener = None
         self._pressed_modifiers.clear()

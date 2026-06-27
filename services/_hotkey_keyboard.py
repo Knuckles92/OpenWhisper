@@ -98,6 +98,16 @@ def send_paste() -> None:
     keyboard.send("ctrl+v")
 
 
+def is_accessibility_trusted() -> bool:
+    """No-op on Windows: the keyboard backend needs no Accessibility grant."""
+    return True
+
+
+def request_accessibility_trust() -> bool:
+    """No-op on Windows; present so the dispatcher's API is uniform."""
+    return True
+
+
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
 

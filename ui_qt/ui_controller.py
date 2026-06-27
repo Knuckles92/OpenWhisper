@@ -117,7 +117,7 @@ class UIController(QObject):
 
     def _on_tray_show(self):
         """Handle show from tray."""
-        self.main_window.showNormal()
+        self.main_window.restore_from_tray()
         logger.debug("Window shown from tray")
 
     def _on_tray_hide(self):
@@ -402,9 +402,7 @@ class UIController(QObject):
 
     def show_main_window(self):
         """Show the main window."""
-        self.main_window.showNormal()
-        self.main_window.raise_()
-        self.main_window.activateWindow()
+        self.main_window.restore_from_tray()
 
     def hide_main_window(self):
         """Hide the main window."""

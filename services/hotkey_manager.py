@@ -27,6 +27,8 @@ if USE_PYNPUT_BACKEND:
         send_paste,
         modifier_of,
         key_to_name,
+        is_accessibility_trusted,
+        request_accessibility_trust,
     )
 else:
     from services._hotkey_keyboard import (
@@ -35,6 +37,8 @@ else:
         format_hotkey,
         format_hotkey_display,
         send_paste,
+        is_accessibility_trusted,
+        request_accessibility_trust,
     )
 
 __all__ = [
@@ -43,5 +47,7 @@ __all__ = [
     "format_hotkey",
     "format_hotkey_display",
     "send_paste",
+    "is_accessibility_trusted",
+    "request_accessibility_trust",
     "USE_PYNPUT_BACKEND",
 ]
