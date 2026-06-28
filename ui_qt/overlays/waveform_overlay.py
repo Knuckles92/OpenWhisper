@@ -5,6 +5,7 @@ Real-time audio visualization overlay with blur effects and animations.
 import logging
 import math
 import random
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional, List
@@ -83,6 +84,12 @@ class WaveformOverlay(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        if sys.platform == "darwin":
+            # On macOS, Qt Tool windows are hidden whenever the app is not the
+            # frontmost application (or when its main window is minimized). During
+            # dictation the user is typically working in another app, so without
+            # this the overlay disappears. Force it to stay visible regardless.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
         # Set fixed size from config
         self.overlay_width = config.WAVEFORM_OVERLAY_WIDTH

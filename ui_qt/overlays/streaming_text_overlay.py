@@ -4,6 +4,7 @@ Displays streaming transcription text in real-time during recording.
 Replaces the fragile keyboard simulation approach with a clean popup.
 """
 import logging
+import sys
 import time
 from typing import Optional, List, Tuple
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QGraphicsOpacityEffect, QApplication
@@ -40,6 +41,12 @@ class StreamingTextOverlay(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        if sys.platform == "darwin":
+            # On macOS, Qt Tool windows are hidden whenever the app is not the
+            # frontmost application (or when its main window is minimized). During
+            # dictation the user is typically working in another app, so without
+            # this the overlay disappears. Force it to stay visible regardless.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
         # Size configuration
         self.overlay_width = getattr(config, 'STREAMING_OVERLAY_WIDTH', 450)
