@@ -182,6 +182,7 @@ Default hotkeys depend on your platform (all remappable in **Settings > Hotkeys*
 | Start/stop recording | `*` (numpad) | `⌃⌥R` |
 | Cancel | `-` (numpad) | `⌃⌥⎋` |
 | Enable/disable program | `Ctrl+Alt+*` | `⌃⌥⇧R` |
+| Minimize to tray | `Ctrl+Alt+M` | `⌃⌥M` |
 
 On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Option), `⇧` (Shift).
 

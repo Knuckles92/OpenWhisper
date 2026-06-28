@@ -163,7 +163,7 @@ class HotkeyDialog(QDialog):
         """Initialize hotkey dialog."""
         super().__init__(parent)
         self.setWindowTitle("Hotkey Configuration")
-        self.setMinimumSize(500, 400)
+        self.setMinimumSize(500, 500)
 
         # State
         self.current_hotkeys: Dict[str, str] = {}
@@ -244,6 +244,18 @@ class HotkeyDialog(QDialog):
         self.enable_input = self._create_hotkey_input()
         self.enable_input.clicked.connect(lambda: self._start_capture("enable_disable", self.enable_input))
         layout.addWidget(self.enable_input)
+
+        layout.addSpacing(12)
+
+        # Minimize-to-tray hotkey
+        minimize_label = QLabel("Minimize to Tray:")
+        minimize_label.setStyleSheet("color: #e0e0ff;")
+        minimize_label.setFont(QFont("Segoe UI", 11))
+        layout.addWidget(minimize_label)
+
+        self.minimize_input = self._create_hotkey_input()
+        self.minimize_input.clicked.connect(lambda: self._start_capture("minimize_tray", self.minimize_input))
+        layout.addWidget(self.minimize_input)
 
         layout.addSpacing(16)
 
@@ -385,6 +397,7 @@ class HotkeyDialog(QDialog):
         self.record_input.setStyleSheet(style)
         self.cancel_input.setStyleSheet(style)
         self.enable_input.setStyleSheet(style)
+        self.minimize_input.setStyleSheet(style)
 
     def _reset_to_defaults(self):
         """Reset hotkeys to default values."""
@@ -416,6 +429,9 @@ class HotkeyDialog(QDialog):
         )
         self.enable_input.setText(
             format_hotkey_display(self.current_hotkeys.get("enable_disable", defaults["enable_disable"]))
+        )
+        self.minimize_input.setText(
+            format_hotkey_display(self.current_hotkeys.get("minimize_tray", defaults["minimize_tray"]))
         )
 
     def _save_hotkeys(self):

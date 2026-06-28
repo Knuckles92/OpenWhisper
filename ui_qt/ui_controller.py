@@ -494,7 +494,12 @@ class UIController(QObject):
         enable_disable_key = format_hotkey_display(
             hotkeys.get('enable_disable', config.DEFAULT_HOTKEYS['enable_disable'])
         )
-        self.main_window.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        minimize_key = format_hotkey_display(
+            hotkeys.get('minimize_tray', config.DEFAULT_HOTKEYS['minimize_tray'])
+        )
+        self.main_window.update_hotkeys(
+            record_key, cancel_key, enable_disable_key, minimize_key
+        )
 
     def show_about_dialog(self):
         """Show the about dialog."""
