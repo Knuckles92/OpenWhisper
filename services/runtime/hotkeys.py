@@ -29,6 +29,8 @@ if USE_PYNPUT_BACKEND:
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
     from services.hotkey_manager import (
+        accessibility_permission_diagnostics,
+        accessibility_permission_instructions,
         is_accessibility_trusted,
         request_accessibility_trust,
     )
@@ -229,15 +231,19 @@ class HotkeyRuntime:
             "OpenWhisper can paste transcriptions straight into the app you're "
             "using, but that needs macOS Accessibility permission."
         )
+        permission_instructions = accessibility_permission_instructions()
         box.setInformativeText(
             "Your hotkeys already work everywhere without it. Until Accessibility "
             "is granted, transcriptions are copied to the clipboard and you can "
             "paste them with Cmd+V.\n\n"
             "To enable automatic pasting, open System Settings › Privacy & "
-            "Security › Accessibility and enable:\n\n"
-            f"{sys.executable}\n\n"
+            "Security › Accessibility.\n\n"
+            f"{permission_instructions}\n\n"
             "Then quit and relaunch OpenWhisper."
         )
+        permission_diagnostics = accessibility_permission_diagnostics()
+        if permission_diagnostics:
+            box.setDetailedText(permission_diagnostics)
         open_button = box.addButton(
             "Open Accessibility Settings", QMessageBox.ButtonRole.AcceptRole
         )
@@ -246,7 +252,7 @@ class HotkeyRuntime:
         box.exec()
 
         if box.clickedButton() is open_button:
-            # Registers the binary in the Accessibility list and fires the native
+            # Registers the current macOS launch identity and fires the native
             # prompt; opening the pane directly guarantees the user lands there.
             request_accessibility_trust()
             QDesktopServices.openUrl(

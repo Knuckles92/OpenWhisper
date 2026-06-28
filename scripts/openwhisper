@@ -3,9 +3,26 @@
 # Lives in the repo so `git pull` updates launcher logic without reinstalling.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+resolve_script_dir() {
+    local source="${BASH_SOURCE[0]}"
+    local dir
+
+    while [ -L "$source" ]; do
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        if [[ "$source" != /* ]]; then
+            source="$dir/$source"
+        fi
+    done
+
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir)"
+REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON="$REPO/venv/bin/python"
 ENTRY="$REPO/app_qt.py"
+VIRTUAL_ENV="$REPO/venv"
 
 if [ ! -x "$PYTHON" ]; then
     echo "[error] Virtual environment not found." >&2
@@ -16,4 +33,41 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 cd "$REPO"
-exec "$PYTHON" "$ENTRY" "$@"
+export VIRTUAL_ENV
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+unset PYTHONHOME
+
+run_openwhisper() {
+    if [ "${OPENWHISPER_ATTACHED:-0}" = "1" ]; then
+        exec "$@"
+    fi
+
+    nohup "$@" >> "$REPO/openwhisper.launch.log" 2>&1 &
+    echo "OpenWhisper started in the background (pid $!)."
+    echo "Logs: $REPO/openwhisper.log"
+}
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    PYTHON_APP="$("$PYTHON" - <<'PY'
+import os
+import sys
+
+base_prefix = os.path.realpath(getattr(sys, "base_prefix", sys.prefix))
+candidates = [
+    os.path.join(base_prefix, "Resources", "Python.app", "Contents", "MacOS", "Python"),
+]
+for path in candidates:
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        print(path)
+        break
+PY
+    )"
+    if [ -n "$PYTHON_APP" ]; then
+        export OPENWHISPER_MACOS_LAUNCH_APP="$PYTHON_APP"
+        export __PYVENV_LAUNCHER__="$PYTHON"
+        run_openwhisper "$PYTHON_APP" "$ENTRY" "$@"
+        exit 0
+    fi
+fi
+
+run_openwhisper "$PYTHON" "$ENTRY" "$@"
