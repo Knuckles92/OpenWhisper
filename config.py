@@ -63,7 +63,10 @@ class AppConfig:
     # collapsed; the layout's own minimum still governs the expanded state.
     MAIN_WINDOW_MIN_HEIGHT: int = 460
     MAIN_WINDOW_DEFAULT_WIDTH: int = 605
-    MAIN_WINDOW_DEFAULT_HEIGHT: int = 840
+    # Compact height for the collapsed transcription + local-engine layout.
+    MAIN_WINDOW_DEFAULT_HEIGHT: int = 580
+    # Target height when the user expands the transcription panel.
+    MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24
     MAIN_WINDOW_MAX_WIDTH: int = 1280

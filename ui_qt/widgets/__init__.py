@@ -25,6 +25,7 @@ from ui_qt.widgets.history_sidebar import (
 )
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
+from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
@@ -47,6 +48,7 @@ __all__ = [
     "HistoryItemWidget",
     "RecordingItemWidget",
     "TranscriptionStatsWidget",
+    "CollapsibleSectionToggle",
     "LocalEngineControls",
     "TabbedContentWidget",
     "QuickRecordTab",

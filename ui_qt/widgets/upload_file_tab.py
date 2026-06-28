@@ -9,12 +9,12 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QTextEdit, QFileDialog, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QMimeData
 from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QMouseEvent
 
 from config import config
+from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
 from services.audio_processor import AudioFilePreview, audio_processor
-from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.cards import Card, HeaderCard
 from ui_qt.widgets.buttons import PrimaryButton, DangerButton, Button
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
@@ -235,6 +235,7 @@ class UploadFileTab(QWidget):
     upload_requested = pyqtSignal(str)
     model_changed = pyqtSignal(str)
     engine_settings_changed = pyqtSignal()  # Local engine combo changed
+    engine_settings_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
     def __init__(self, parent=None):
@@ -338,9 +339,8 @@ class UploadFileTab(QWidget):
         content_layout.addStretch()
         self._bottom_stretch_index = content_layout.count() - 1
 
-        # Restore persisted collapsed state without emitting a resize.
-        collapsed = bool(settings_manager.get(SettingsKey.TRANSCRIPTION_COLLAPSED, False))
-        self.set_transcription_collapsed(collapsed)
+        # Always start collapsed to keep the main window compact on launch.
+        self.set_transcription_collapsed(True)
 
     def _connect_signals(self):
         self.drop_zone.file_selected.connect(self._on_file_selected)
@@ -348,6 +348,7 @@ class UploadFileTab(QWidget):
         self.file_info_card.remove_clicked.connect(self.clear_file)
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
+        self.local_engine.toggled.connect(self._on_engine_settings_toggled)
 
     # ── Internal handlers ──────────────────────────────────────────
 
@@ -406,6 +407,16 @@ class UploadFileTab(QWidget):
         """Show/hide the local-engine sub-panel (only for Local Whisper)."""
         self.local_engine.setVisible(visible)
 
+    # ── Engine settings collapse ───────────────────────────────────
+
+    def _on_engine_settings_toggled(self, collapsed: bool, delta: int):
+        """User toggled engine settings: request a window resize."""
+        self.engine_settings_collapsed.emit(collapsed, delta)
+
+    def set_engine_settings_collapsed(self, collapsed: bool):
+        """Apply collapsed state without emitting (sync/restore)."""
+        self.local_engine.set_collapsed(collapsed, emit=False)
+
     # ── Transcription collapse ─────────────────────────────────────
 
     def _apply_transcription_stretch(self, collapsed: bool):
@@ -418,10 +429,12 @@ class UploadFileTab(QWidget):
             self.content_layout.setStretch(self._bottom_stretch_index, 0)
 
     def _on_transcription_toggled(self, collapsed: bool):
-        """User toggled the card: rebalance, persist, and request a resize."""
-        self._apply_transcription_stretch(collapsed)
-        settings_manager.save_setting(SettingsKey.TRANSCRIPTION_COLLAPSED, collapsed)
+        """User toggled the card: rebalance and request a resize."""
         self.transcription_collapsed.emit(collapsed, self.transcription_card.content_height)
+        QTimer.singleShot(
+            SECTION_COLLAPSE_DURATION_MS,
+            lambda c=collapsed: self._apply_transcription_stretch(c),
+        )
 
     def set_transcription_collapsed(self, collapsed: bool):
         """Apply collapsed state without persisting or emitting (sync/restore)."""
