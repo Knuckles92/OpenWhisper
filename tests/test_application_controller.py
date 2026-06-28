@@ -310,6 +310,7 @@ class DummyMainWindow:
         self.is_recording = False
         self.partial_updates = []
         self.tabbed_content = DummyTabbedContent()
+        self.tray_visibility_toggles = 0
 
     def _update_recording_state(self):
         pass
@@ -319,6 +320,12 @@ class DummyMainWindow:
 
     def clear_partial_transcription(self):
         pass
+
+    def minimize_to_tray(self):
+        self.minimized_to_tray = True
+
+    def toggle_tray_visibility(self):
+        self.tray_visibility_toggles += 1
 
 
 class DummyUIController:
@@ -404,11 +411,17 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hotkey_module = types.ModuleType("services.hotkey_manager")
     hotkey_module.HotkeyManager = FakeHotkeyManager
     hotkey_module.send_paste = lambda: keyboard.send("ctrl+v")
+    hotkey_module.is_accessibility_trusted = lambda: True
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
 
+    # SettingsKey is a constants holder with no behavior, so the real one is
+    # safe (and more faithful) to expose on the stub than a hand-rolled copy.
+    from services.settings import SettingsKey as _RealSettingsKey
+
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager
+    settings_module.SettingsKey = _RealSettingsKey
 
     history_module = types.ModuleType("services.history_manager")
     history_module.history_manager = history_manager
@@ -511,6 +524,41 @@ class TestApplicationController(unittest.TestCase):
         controller.on_model_changed("Local Whisper")
         self.assertEqual(controller._current_model_name, "local_whisper")
         self.assertEqual(controller.ui_controller.device_infos[-1], "cpu")
+
+    def test_hotkeys_backfill_minimize_tray_and_refresh_display_on_update(self):
+        controller = self._create_controller()
+
+        self.assertEqual(
+            controller.hotkey_manager.hotkeys["minimize_tray"],
+            config.DEFAULT_HOTKEYS["minimize_tray"],
+        )
+        self.assertEqual(
+            controller.ui_controller.hotkeys["minimize_tray"],
+            config.DEFAULT_HOTKEYS["minimize_tray"],
+        )
+
+        updated_hotkeys = {
+            "record_toggle": "f4",
+            "cancel": "f5",
+            "enable_disable": "f6",
+            "minimize_tray": "ctrl+alt+h",
+        }
+        controller.update_hotkeys(updated_hotkeys)
+
+        self.assertEqual(controller.hotkey_manager.hotkeys, updated_hotkeys)
+        self.assertEqual(self.settings.saved_hotkeys, updated_hotkeys)
+        self.assertEqual(controller.ui_controller.hotkeys, updated_hotkeys)
+        self.assertIn("Hotkeys updated", controller.ui_controller.statuses)
+
+    def test_minimize_hotkey_toggles_tray_visibility_on_main_thread(self):
+        controller = self._create_controller()
+
+        controller.minimize_to_tray()
+
+        self.assertEqual(
+            controller.ui_controller.main_window.tray_visibility_toggles,
+            1,
+        )
 
     def test_streaming_reconfigure_can_disable_runtime(self):
         controller = self._create_controller()

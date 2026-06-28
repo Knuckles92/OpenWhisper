@@ -170,11 +170,16 @@ class HotkeyRuntime:
     def setup_hotkeys(self) -> None:
         """Setup hotkey management."""
         logger.info("Setting up hotkeys...")
-        hotkeys = settings_manager.load_hotkey_settings()
+        # Backfill any newly-introduced default actions (e.g. minimize_tray) over
+        # saved settings, so existing users get new hotkeys without reconfiguring.
+        # load_hotkey_settings deliberately returns saved data unmerged, so the
+        # merge happens here at the point of use.
+        hotkeys = {**config.DEFAULT_HOTKEYS, **settings_manager.load_hotkey_settings()}
         self.controller.hotkey_manager = HotkeyManager(hotkeys)
         self.controller.hotkey_manager.set_callbacks(
             on_record_toggle=self.controller.toggle_recording,
             on_cancel=self.controller.cancel,
+            on_minimize_tray=self.controller.minimize_to_tray,
             on_status_update=self.controller.update_status_with_auto_hide,
             on_status_update_auto_hide=self.controller.update_status_with_auto_hide,
         )
@@ -257,6 +262,7 @@ class HotkeyRuntime:
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.update_hotkeys(hotkeys)
             settings_manager.save_hotkey_settings(hotkeys)
+            self.controller.ui_controller.update_hotkey_display(hotkeys)
             self.controller.ui_controller.set_status("Hotkeys updated")
 
     def setup_hook_watchdog(self) -> None:

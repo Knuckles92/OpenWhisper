@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
+from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
@@ -409,6 +410,27 @@ class MainWindow(QMainWindow):
         }
     """
 
+    _TRAY_BUTTON_STYLE = """
+        QPushButton#trayButton {
+            background-color: #2c2c2e;
+            color: #e5e5e7;
+            border: 1px solid #3a3a3c;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#trayButton:hover {
+            background-color: #0a84ff;
+            color: #ffffff;
+            border: 1px solid #0a84ff;
+        }
+        QPushButton#trayButton:pressed {
+            background-color: #0060df;
+            color: #ffffff;
+        }
+    """
+
     _QUIT_BUTTON_STYLE = """
         QPushButton#quitButton {
             background-color: #2c2c2e;
@@ -441,6 +463,25 @@ class MainWindow(QMainWindow):
         footer_layout.setContentsMargins(16, 7, 16, 7)
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
+
+        self.tray_button = Button("Minimize to Tray")
+        self.tray_button.setObjectName("trayButton")
+        self.tray_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tray_button.setFixedHeight(34)
+        self.tray_button.setMinimumWidth(140)
+        self.tray_button.setStyleSheet(self._TRAY_BUTTON_STYLE)
+        self.tray_button.set_hotkey(
+            format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
+        )
+        self.tray_button.setToolTip(
+            self._minimize_tooltip(
+                format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
+            )
+        )
+        self.tray_button.clicked.connect(self.minimize_to_tray)
+        footer_layout.addWidget(self.tray_button)
+
+        footer_layout.addSpacing(10)
 
         self.quit_button = QPushButton("Quit")
         self.quit_button.setObjectName("quitButton")
@@ -685,6 +726,14 @@ class MainWindow(QMainWindow):
         logger.info("Minimizing to tray")
         self.hide()
 
+    def toggle_tray_visibility(self):
+        """Toggle between hidden-to-tray and visible foreground states."""
+        if self.isVisible() and not self.isMinimized():
+            self.minimize_to_tray()
+            return
+
+        self.restore_from_tray()
+
     def restore_from_tray(self):
         """Reliably bring the window back from the tray / hidden state.
 
@@ -852,7 +901,13 @@ class MainWindow(QMainWindow):
             # Close normally
             event.accept()
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
+    def update_hotkeys(
+        self,
+        record_key: str,
+        cancel_key: str,
+        enable_disable_key: str = "",
+        minimize_key: str = "",
+    ):
         """
         Update the hotkey display on buttons.
 
@@ -860,8 +915,18 @@ class MainWindow(QMainWindow):
             record_key: The key for recording
             cancel_key: The key for canceling
             enable_disable_key: The key for enabling/disabling STT
+            minimize_key: The key for minimizing to the system tray
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        self.tray_button.set_hotkey(minimize_key)
+        self.tray_button.setToolTip(self._minimize_tooltip(minimize_key))
+
+    @staticmethod
+    def _minimize_tooltip(minimize_key: str) -> str:
+        """Build the Minimize-to-Tray button tooltip, including the hotkey hint."""
+        if minimize_key:
+            return f"Minimize or restore from tray  ·  {minimize_key}"
+        return "Minimize to tray"
 
     # ==================== Edge Resize Support ====================
 

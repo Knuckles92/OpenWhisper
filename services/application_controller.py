@@ -38,6 +38,7 @@ class ApplicationController(QObject):
     caret_indicator_show = pyqtSignal()
     caret_indicator_hide = pyqtSignal()
     overlay_state_update = pyqtSignal(object)
+    minimize_to_tray_requested = pyqtSignal()
 
     def __init__(self, ui_controller):
         super().__init__()
@@ -160,6 +161,15 @@ class ApplicationController(QObject):
         """Cancel an active recording or transcription (UI/hotkey callback target)."""
         self.transcription_runtime.cancel()
 
+    def minimize_to_tray(self) -> None:
+        """Toggle the main window between tray-hidden and foreground states.
+
+        Hotkey callbacks run on a background thread, so this only emits a signal;
+        the actual window change happens on the Qt main thread via the connection
+        in ``_connect_signals``.
+        """
+        self.minimize_to_tray_requested.emit()
+
     def retranscribe_audio(self, audio_path: str) -> None:
         """Re-transcribe an existing audio file (UI callback target)."""
         self.transcription_runtime.retranscribe_audio(audio_path)
@@ -185,6 +195,9 @@ class ApplicationController(QObject):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
+        self.minimize_to_tray_requested.connect(
+            self.ui_controller.main_window.toggle_tray_visibility
+        )
         self.partial_transcription.connect(
             self.ui_controller.main_window.set_partial_transcription
         )
