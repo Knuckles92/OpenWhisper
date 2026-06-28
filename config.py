@@ -59,7 +59,9 @@ class AppConfig:
 
     # Main window sizing
     MAIN_WINDOW_MIN_WIDTH: int = 500
-    MAIN_WINDOW_MIN_HEIGHT: int = 600
+    # Lowered so the window can shrink smoothly once the transcription box is
+    # collapsed; the layout's own minimum still governs the expanded state.
+    MAIN_WINDOW_MIN_HEIGHT: int = 460
     MAIN_WINDOW_DEFAULT_WIDTH: int = 605
     MAIN_WINDOW_DEFAULT_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
@@ -100,6 +102,9 @@ class AppConfig:
     POST_ROLL_FINALIZE_GRACE_MS: int = 800
     # Extra silence appended to the end of saved audio so ASR models don't drop the last word
     END_PADDING_MS: int = 500
+    # Debounce for whisper-engine reloads triggered by the inline main-GUI
+    # controls; coalesces rapid model/device/quant changes into one reload.
+    WHISPER_RELOAD_DEBOUNCE_MS: int = 400
     # Hotkey watchdog: detects sleep/resume gaps; periodic refresh re-registers the hook
     HOTKEY_WATCHDOG_INTERVAL_MS: int = 10_000
     HOTKEY_SLEEP_GAP_THRESHOLD_SEC: float = 30.0

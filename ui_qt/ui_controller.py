@@ -76,6 +76,7 @@ class UIController(QObject):
         self.main_window.record_toggled.connect(self._on_record_toggled)
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
+        self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
         self.main_window.about_requested.connect(self.show_about_dialog)
@@ -114,6 +115,16 @@ class UIController(QObject):
         if self.on_model_changed:
             self.on_model_changed(model_name)
         self.model_changed.emit(model_name)
+
+    def _on_whisper_engine_changed(self):
+        """Handle a local-engine (model/device/quant) change from the main GUI.
+
+        Reuses the same reload hook the Settings dialog fires; the controller's
+        handler runs the reload on a background thread.
+        """
+        logger.info("Local engine settings changed via main GUI")
+        if self.on_whisper_settings_changed:
+            self.on_whisper_settings_changed()
 
     def _on_tray_show(self):
         """Handle show from tray."""
@@ -236,6 +247,15 @@ class UIController(QObject):
             device_info: Device information string to display.
         """
         self.main_window.set_device_info(device_info)
+
+    def set_engine_busy(self, busy: bool):
+        """Disable/enable the inline local-engine combos during a reload.
+
+        Args:
+            busy: True to disable combos while the engine reloads, else False.
+        """
+        self.main_window.quick_record_tab.local_engine.set_busy(busy)
+        self.main_window.upload_file_tab.local_engine.set_busy(busy)
 
     def set_transcription_stats(
         self,
@@ -419,6 +439,10 @@ class UIController(QObject):
             if settings.get('_whisper_settings_changed', False):
                 if self.on_whisper_settings_changed:
                     self.on_whisper_settings_changed()
+                # Keep the inline main-GUI controls in sync with the dialog's
+                # new values so the two views never diverge.
+                self.main_window.quick_record_tab.local_engine.load_from_settings()
+                self.main_window.upload_file_tab.local_engine.load_from_settings()
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)

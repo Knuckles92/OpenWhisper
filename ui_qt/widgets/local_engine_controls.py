@@ -1,0 +1,216 @@
+"""Compact inline controls for the local Whisper engine (model / device / quant).
+
+Surfaces the three most useful local-backend knobs — Whisper model, device
+(GPU/CPU), and compute type (quantization) — directly on the main window so they
+no longer require opening Settings → Advanced.
+
+The widget is intentionally "dumb": on any user change it persists the three
+settings keys and emits ``engine_settings_changed``. It does NOT reload the
+backend itself — that stays a controller responsibility so all of the (slow,
+threaded) reload logic lives in one place.
+"""
+import logging
+import sys
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QToolButton
+)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
+
+from config import config
+from services.settings import SettingsKey, settings_manager
+
+logger = logging.getLogger(__name__)
+
+
+class LocalEngineControls(QWidget):
+    """Inline model/device/quant controls for the local Whisper backend.
+
+    Persists changes to settings and emits ``engine_settings_changed`` so the
+    controller can reload the backend. Instantiate one per tab and keep them in
+    sync via :meth:`set_values` (which blocks signals during the update).
+    """
+
+    #: Emitted after a *user-initiated* change has been persisted to settings.
+    engine_settings_changed = pyqtSignal()
+
+    COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
+
+    _TOGGLE_STYLE = (
+        "QToolButton { color: #a0a0c0; border: none; font-size: 11px; "
+        "font-weight: 600; }"
+        "QToolButton:hover { color: #c0c0ff; }"
+    )
+    _FIELD_LABEL_STYLE = "color: #a0a0c0; font-size: 10px;"
+    _RESOLVED_STYLE = "color: #8888aa; margin-top: 2px;"
+    _COMBO_STYLE = (
+        "QComboBox { background-color: #2d2d44; color: #e0e0ff; "
+        "border: 1px solid #404060; border-radius: 6px; padding: 2px 8px; }"
+        "QComboBox:hover { border-color: #6366f1; }"
+        "QComboBox::drop-down { border: none; }"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._expanded = True
+        self._setup_ui()
+        self.load_from_settings()
+        self._connect_signals()
+
+    # ── Construction ───────────────────────────────────────────────
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(6)
+
+        # Disclosure header (centered)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self.toggle_btn = QToolButton()
+        self.toggle_btn.setCheckable(True)
+        self.toggle_btn.setChecked(True)
+        self.toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.toggle_btn.setStyleSheet(self._TOGGLE_STYLE)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_toggle_text()
+        header.addStretch()
+        header.addWidget(self.toggle_btn)
+        header.addStretch()
+        layout.addLayout(header)
+
+        # Collapsible body: Model / Device / Quant combos in a centered row
+        self.body = QWidget()
+        body_layout = QHBoxLayout(self.body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        self.model_combo = self._make_combo(config.WHISPER_MODEL_CHOICES)
+        # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
+        device_choices = (
+            ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
+        )
+        self.device_combo = self._make_combo(device_choices)
+        self.compute_combo = self._make_combo(self.COMPUTE_CHOICES)
+
+        body_layout.addWidget(self._labeled("Model", self.model_combo), stretch=2)
+        body_layout.addWidget(self._labeled("Device", self.device_combo), stretch=1)
+        body_layout.addWidget(self._labeled("Quant", self.compute_combo), stretch=1)
+        self.body.setMaximumWidth(480)
+
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.addStretch()
+        body_row.addWidget(self.body)
+        body_row.addStretch()
+        layout.addLayout(body_row)
+
+        # Resolved-engine readout (what "auto" actually resolved to after load)
+        self.resolved_label = QLabel("")
+        self.resolved_label.setFont(QFont("Segoe UI", 9))
+        self.resolved_label.setStyleSheet(self._RESOLVED_STYLE)
+        self.resolved_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.resolved_label)
+
+    def _make_combo(self, items) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setMinimumHeight(28)
+        combo.setFont(QFont("Segoe UI", 10))
+        combo.setStyleSheet(self._COMBO_STYLE)
+        return combo
+
+    def _labeled(self, text: str, combo: QComboBox) -> QWidget:
+        wrapper = QWidget()
+        col = QVBoxLayout(wrapper)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        label = QLabel(text)
+        label.setStyleSheet(self._FIELD_LABEL_STYLE)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(label)
+        col.addWidget(combo)
+        return wrapper
+
+    def _connect_signals(self):
+        self.model_combo.currentTextChanged.connect(self._on_changed)
+        self.device_combo.currentTextChanged.connect(self._on_changed)
+        self.compute_combo.currentTextChanged.connect(self._on_changed)
+        self.toggle_btn.toggled.connect(self._on_toggle)
+
+    # ── Internal handlers ──────────────────────────────────────────
+
+    def _update_toggle_text(self):
+        arrow = "▾" if self._expanded else "▸"  # ▾ / ▸
+        self.toggle_btn.setText(f"⚙ Local engine  {arrow}")
+
+    def _on_toggle(self, checked: bool):
+        self._expanded = checked
+        self.body.setVisible(checked)
+        self.resolved_label.setVisible(checked)
+        self._update_toggle_text()
+
+    def _on_changed(self, _text: str):
+        """Persist the three keys and notify listeners of a user change."""
+        settings = settings_manager.load_all_settings()
+        settings[SettingsKey.WHISPER_MODEL] = self.model_combo.currentText()
+        settings[SettingsKey.WHISPER_DEVICE] = self.device_combo.currentText()
+        settings[SettingsKey.WHISPER_COMPUTE_TYPE] = self.compute_combo.currentText()
+        settings_manager.save_all_settings(settings)
+        logger.debug(
+            "Local engine changed: model=%s device=%s compute=%s",
+            settings[SettingsKey.WHISPER_MODEL],
+            settings[SettingsKey.WHISPER_DEVICE],
+            settings[SettingsKey.WHISPER_COMPUTE_TYPE],
+        )
+        self.engine_settings_changed.emit()
+
+    # ── Public API ─────────────────────────────────────────────────
+
+    def load_from_settings(self):
+        """Populate combos from the persisted settings (no signal emitted)."""
+        settings = settings_manager.load_all_settings()
+        self.set_values(
+            settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL),
+            settings.get(SettingsKey.WHISPER_DEVICE, "auto"),
+            settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto"),
+        )
+
+    def set_values(self, model: str, device: str, compute: str):
+        """Reflect values without emitting (used to mirror the other tab)."""
+        for combo, value, fallback in (
+            (self.model_combo, model, config.DEFAULT_WHISPER_MODEL),
+            (self.device_combo, device, "auto"),
+            (self.compute_combo, compute, "auto"),
+        ):
+            combo.blockSignals(True)
+            self._select(combo, value, fallback)
+            combo.blockSignals(False)
+
+    def current_values(self) -> tuple:
+        """Return the (model, device, compute) currently shown."""
+        return (
+            self.model_combo.currentText(),
+            self.device_combo.currentText(),
+            self.compute_combo.currentText(),
+        )
+
+    def set_resolved_info(self, info: str):
+        """Update the small 'what auto resolved to' readout."""
+        self.resolved_label.setText(info)
+
+    def set_busy(self, busy: bool):
+        """Disable combos while a reload is in flight or during recording."""
+        for combo in (self.model_combo, self.device_combo, self.compute_combo):
+            combo.setEnabled(not busy)
+
+    # ── Helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _select(combo: QComboBox, value: str, fallback: str = None):
+        index = combo.findText(value)
+        if index < 0 and fallback is not None:
+            index = combo.findText(fallback)
+        if index >= 0:
+            combo.setCurrentIndex(index)
