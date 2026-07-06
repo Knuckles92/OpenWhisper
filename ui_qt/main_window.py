@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QFrame, QPushButton
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPropertyAnimation
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from config import config
@@ -414,6 +414,7 @@ class MainWindow(QMainWindow):
         self.history_sidebar.entry_copied.connect(self._on_history_entry_copied)
         self.history_sidebar.entry_deleted.connect(self._on_history_entry_deleted)
         self.history_sidebar.retranscribe_requested.connect(self._on_retranscribe_requested)
+        self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         root_layout.addWidget(self.history_sidebar)
 
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
@@ -887,39 +888,38 @@ class MainWindow(QMainWindow):
         will_be_expanded = not self.history_sidebar.is_expanded
         self.history_edge_tab.set_expanded(will_be_expanded)
 
-        # Start sidebar animation immediately
-        self.history_sidebar.toggle()
+        # A running height animation would fight the per-frame lockstep resize.
+        if (
+            hasattr(self, '_resize_animation')
+            and self._resize_animation.state() == QPropertyAnimation.State.Running
+        ):
+            self._resize_animation.stop()
 
-        # Resize window immediately to match sidebar animation
-        self._resize_for_sidebar(will_be_expanded)
+        # Capture the width of everything except the sidebar so each animation
+        # frame can hold the main content area at a constant width. Works
+        # mid-animation too: the sidebar's current width is subtracted out.
+        self._sidebar_base_width = self.width() - self.history_sidebar.width()
+        self._collapsed_width = max(self.minimumWidth(), self._sidebar_base_width)
+
+        # The sidebar's single animation drives the window width via
+        # width_animated -> _on_sidebar_width_animated.
+        self.history_sidebar.toggle()
 
         self.history_toggle_requested.emit()
 
-    def _resize_for_sidebar(self, expanded: bool):
-        """Resize window when sidebar is toggled.
+    def _on_sidebar_width_animated(self, sidebar_width: int):
+        """Resize the window in lockstep with the sidebar width animation.
 
         Args:
-            expanded: True if sidebar is being expanded, False if collapsed.
+            sidebar_width: Current animated width of the history sidebar.
         """
-        current_height = self.height()
+        base = getattr(self, '_sidebar_base_width', None)
+        if base is None:
+            return
 
-        if expanded:
-            self._collapsed_width = max(self.minimumWidth(), self.width())
-            # Expand window to fit sidebar
-            new_width = min(
-                self.maximumWidth(),
-                self._collapsed_width + self._sidebar_width,
-            )
-        else:
-            self._collapsed_width = max(
-                self.minimumWidth(),
-                self.width() - self._sidebar_width,
-            )
-            # Collapse window back to base size
-            new_width = self._collapsed_width
-
-        # Animate the resize for smooth transition
-        self._animate_resize(new_width, current_height)
+        target_width = min(self.maximumWidth(), base + sidebar_width)
+        geo = self.geometry()
+        self.setGeometry(geo.x(), geo.y(), target_width, geo.height())
 
     def _animate_resize(self, target_width: int, target_height: int):
         """Animate window resize.
@@ -928,7 +928,7 @@ class MainWindow(QMainWindow):
             target_width: Target window width.
             target_height: Target window height.
         """
-        from PyQt6.QtCore import QPropertyAnimation, QRect
+        from PyQt6.QtCore import QRect
 
         if not hasattr(self, '_resize_animation'):
             self._resize_animation = QPropertyAnimation(self, b"geometry")

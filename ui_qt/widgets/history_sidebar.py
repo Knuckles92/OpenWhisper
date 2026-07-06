@@ -1,20 +1,50 @@
 """
 History sidebar widget for displaying transcription history and saved recordings.
 Collapsible sidebar panel that slides in/out from the right side of the main window.
+
+Animation design: the sidebar animates a single ``sidebarWidth`` property and
+emits ``width_animated`` every frame so the main window can resize in lockstep
+(one animation clock for both). The inner content is a fixed-width child pinned
+in ``resizeEvent`` rather than managed by a layout, so animating the sidebar
+width clips/reveals pre-laid-out content instead of re-running layout and text
+wrapping on every frame.
 """
 import logging
-from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QMenu, QApplication,
+    QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, pyqtProperty
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer
 from PyQt6.QtGui import QFont
 
 from config import config
 from services.history_manager import HistoryEntry, RecordingInfo, history_manager
+from ui_qt.utils.collapse_animation import (
+    SECTION_COLLAPSE_DURATION_MS,
+    SECTION_COLLAPSE_EASING,
+)
 
 logger = logging.getLogger(__name__)
+
+_MODEL_DISPLAY_NAMES = {
+    'local_whisper': 'Local',
+    'api_whisper': 'API',
+    'api_gpt4o': 'GPT-4o',
+    'api_gpt4o_mini': 'GPT-4o Mini',
+}
+
+
+def _format_model_name(model: str) -> str:
+    """Format a backend model identifier for compact display.
+
+    Stored values may carry device detail, e.g.
+    ``local_whisper (turbo | cuda (float16))`` — reduce to ``Local · turbo``.
+    """
+    base, _, detail = model.partition('(')
+    base = base.strip()
+    name = _MODEL_DISPLAY_NAMES.get(base, base)
+    detail = detail.rstrip(')').split('|')[0].strip()
+    return f"{name} · {detail}" if detail else name
 
 
 class HistoryItemWidget(QFrame):
@@ -42,23 +72,36 @@ class HistoryItemWidget(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
-        # Top row: timestamp and audio indicator
+        # Top row: timestamp, audio indicator, model badge
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
-        # Timestamp
         self.timestamp_label = QLabel(self.entry.formatted_timestamp)
         self.timestamp_label.setObjectName("historyTimestamp")
         self.timestamp_label.setFont(QFont("Segoe UI", 10))
         top_row.addWidget(self.timestamp_label)
 
-        # Audio indicator if recording exists
         if self.entry.audio_file:
             audio_indicator = QLabel("🎤")
             audio_indicator.setToolTip("Audio recording available")
             top_row.addWidget(audio_indicator)
 
         top_row.addStretch()
+
+        model_badge = QLabel()
+        model_badge.setObjectName("historyModelBadge")
+        model_badge.setToolTip(self.entry.model)
+        # Elide so an unexpected model string can never widen the card beyond
+        # the sidebar's fixed-width viewport.
+        badge_text = _format_model_name(self.entry.model)
+        model_badge.setText(
+            model_badge.fontMetrics().elidedText(
+                badge_text, Qt.TextElideMode.ElideRight, 120
+            )
+        )
+        model_badge.setMaximumWidth(140)
+        top_row.addWidget(model_badge)
+
         layout.addLayout(top_row)
 
         # Preview text
@@ -68,16 +111,6 @@ class HistoryItemWidget(QFrame):
         self.preview_label.setFont(QFont("Segoe UI", 11))
         self.preview_label.setMaximumHeight(60)
         layout.addWidget(self.preview_label)
-
-    def _format_model_name(self, model: str) -> str:
-        """Format model name for display."""
-        model_display = {
-            'local_whisper': 'Local',
-            'api_whisper': 'API',
-            'api_gpt4o': 'GPT-4o',
-            'api_gpt4o_mini': 'GPT-4o Mini'
-        }
-        return model_display.get(model, model)
 
     def _apply_style(self):
         """Apply custom styling."""
@@ -89,11 +122,20 @@ class HistoryItemWidget(QFrame):
             }
             QFrame#historyItem:hover {
                 background-color: rgba(58, 58, 60, 0.6);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(10, 132, 255, 0.35);
             }
             QLabel#historyTimestamp {
                 color: #98989d;
                 background-color: transparent;
+            }
+            QLabel#historyModelBadge {
+                background-color: rgba(10, 132, 255, 0.14);
+                color: #6fb1ff;
+                border: 1px solid rgba(10, 132, 255, 0.25);
+                border-radius: 4px;
+                padding: 1px 7px;
+                font-size: 10px;
+                font-weight: 600;
             }
             QLabel#historyPreview {
                 color: #e5e5e7;
@@ -132,9 +174,8 @@ class HistoryItemWidget(QFrame):
             }
         """)
 
-        # Model info (non-clickable)
-        model_name = self._format_model_name(self.entry.model)
-        model_action = menu.addAction(f"Model: {model_name}")
+        # Model info (non-clickable, full detail including device)
+        model_action = menu.addAction(f"Model: {self.entry.model}")
         model_action.setEnabled(False)
 
         menu.addSeparator()
@@ -223,6 +264,10 @@ class RecordingItemWidget(QFrame):
                 border-radius: 12px;
                 border: 1px solid rgba(255, 255, 255, 0.05);
             }
+            QFrame#recordingItem:hover {
+                background-color: rgba(58, 58, 60, 0.6);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
             QLabel#recordingTimestamp {
                 color: #e5e5e7;
                 background-color: transparent;
@@ -258,39 +303,44 @@ class HistorySidebar(QWidget):
     entry_copied = pyqtSignal(str)  # Emits entry_id when copy requested
     entry_deleted = pyqtSignal(str)  # Emits entry_id when delete requested
     retranscribe_requested = pyqtSignal(str)  # Emits audio file path
+    # Emits the sidebar width every animation frame so the owning window can
+    # resize in lockstep (keeps the main content area a constant width).
+    width_animated = pyqtSignal(int)
 
     COLLAPSED_WIDTH = 0
     EXPANDED_WIDTH = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
+    # Cap rendered history widgets; search still filters the full history.
+    MAX_HISTORY_ITEMS = 100
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._is_expanded = False
         self._current_width = self.COLLAPSED_WIDTH
-        self._quick_record_lock_width: Optional[int] = None
-        self._quick_record_locked = False
         self._refresh_pending = True
 
         self._setup_ui()
         self._apply_style()
 
-        # Start collapsed - use minimumWidth and maximumWidth instead of fixedWidth for smooth animation
+        # Start collapsed - animate min/max width together via sidebarWidth
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
 
     def _setup_ui(self):
         """Setup the sidebar UI."""
         self.setObjectName("historySidebar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        # Content container (will be animated)
-        self.content_widget = QWidget()
+        # Fixed-width content pinned manually in resizeEvent (no layout on
+        # self). Children are clipped to the parent rect, so animating the
+        # sidebar width reveals the content without re-laying it out.
+        self.content_widget = QWidget(self)
         self.content_widget.setObjectName("sidebarContent")
+        self.content_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.content_widget.setFixedWidth(self.EXPANDED_WIDTH)
+
         content_layout = QVBoxLayout(self.content_widget)
         content_layout.setContentsMargins(16, 16, 16, 16)
-        content_layout.setSpacing(16)
+        content_layout.setSpacing(12)
 
         # Header with close button
         header_layout = QHBoxLayout()
@@ -303,7 +353,7 @@ class HistorySidebar(QWidget):
 
         header_layout.addStretch()
 
-        self.close_btn = QPushButton("\u00d7")  # X symbol
+        self.close_btn = QPushButton("×")  # X symbol
         self.close_btn.setObjectName("sidebarCloseBtn")
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -312,58 +362,83 @@ class HistorySidebar(QWidget):
 
         content_layout.addLayout(header_layout)
 
-        self.quick_record_content = QWidget()
-        quick_record_layout = QVBoxLayout(self.quick_record_content)
-        quick_record_layout.setContentsMargins(0, 0, 0, 0)
-        quick_record_layout.setSpacing(12)
+        # Search bar for filtering history entries (always visible, above the
+        # scrolling sections)
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("historySearchInput")
+        self.search_input.setPlaceholderText("Search history...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setFixedHeight(32)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        content_layout.addWidget(self.search_input)
 
-        # Recordings section header
-        recordings_header = QLabel("RECENT RECORDINGS")
-        recordings_header.setObjectName("sectionHeader")
-        recordings_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-        quick_record_layout.addWidget(recordings_header)
+        # Debounce timer so the list isn't rebuilt on every keystroke
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._load_history)
 
-        # Recordings container
-        self.recordings_container = QVBoxLayout()
-        self.recordings_container.setSpacing(12)
-        quick_record_layout.addLayout(self.recordings_container)
-
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); max-height: 1px; margin: 8px 0px;")
-        quick_record_layout.addWidget(divider)
-
-        # History section header
-        history_header = QLabel("TRANSCRIPTION HISTORY")
-        history_header.setObjectName("sectionHeader")
-        history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-        quick_record_layout.addWidget(history_header)
-
-        # Scrollable history list
+        # Single scroll area holding both sections so long recording lists
+        # can't push the history section off-screen.
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setObjectName("historyScrollArea")
 
-        self.history_list_widget = QWidget()
-        self.history_list_layout = QVBoxLayout(self.history_list_widget)
-        self.history_list_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_content = QWidget()
+        # Ignored horizontal policy makes the scroll area size the content to
+        # the viewport width even if a child's minimum hint is wider (e.g. an
+        # unbreakable URL in a preview) — overflow clips inside its own card
+        # instead of pushing the whole panel past the sidebar edge.
+        scroll_content.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 6, 0)
+        scroll_layout.setSpacing(12)
+        scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Recordings section
+        self.recordings_header = QLabel("RECENT RECORDINGS")
+        self.recordings_header.setObjectName("sectionHeader")
+        self.recordings_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        scroll_layout.addWidget(self.recordings_header)
+
+        self.recordings_container = QVBoxLayout()
+        self.recordings_container.setSpacing(12)
+        scroll_layout.addLayout(self.recordings_container)
+
+        # Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); max-height: 1px; margin: 8px 0px;")
+        scroll_layout.addWidget(divider)
+
+        # History section
+        self.history_header = QLabel("TRANSCRIPTION HISTORY")
+        self.history_header.setObjectName("sectionHeader")
+        self.history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        scroll_layout.addWidget(self.history_header)
+
+        self.history_list_layout = QVBoxLayout()
         self.history_list_layout.setSpacing(12)
-        self.history_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll_layout.addLayout(self.history_list_layout)
 
-        self.scroll_area.setWidget(self.history_list_widget)
-        quick_record_layout.addWidget(self.scroll_area, stretch=1)
+        self.scroll_area.setWidget(scroll_content)
+        content_layout.addWidget(self.scroll_area, stretch=1)
 
-        content_layout.addWidget(self.quick_record_content)
-
-        main_layout.addWidget(self.content_widget)
-
-        # Animation for expand/collapse - animate both min and max width together
+        # Single animation drives both the sidebar width and (via
+        # width_animated) the window width — shared timing with the other
+        # collapsible sections in the app.
         self.animation = QPropertyAnimation(self, b"sidebarWidth")
-        self.animation.setDuration(250)
-        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.setDuration(SECTION_COLLAPSE_DURATION_MS)
+        self.animation.setEasingCurve(SECTION_COLLAPSE_EASING)
         self.animation.finished.connect(self._on_animation_finished)
+
+    def resizeEvent(self, event):
+        """Pin the fixed-width content to the left edge at full height."""
+        super().resizeEvent(event)
+        self.content_widget.setGeometry(0, 0, self.EXPANDED_WIDTH, self.height())
 
     def _get_sidebar_width(self):
         """Get the current sidebar width."""
@@ -374,68 +449,25 @@ class HistorySidebar(QWidget):
         self._current_width = int(width)
         self.setMinimumWidth(self._current_width)
         self.setMaximumWidth(self._current_width)
+        self.width_animated.emit(self._current_width)
 
     sidebarWidth = pyqtProperty(int, _get_sidebar_width, _set_sidebar_width)
 
     def _on_animation_finished(self):
-        """Called when animation finishes."""
-        # Ensure final state is correct
-        if self._is_expanded:
-            self.setMinimumWidth(self.EXPANDED_WIDTH)
-            self.setMaximumWidth(self.EXPANDED_WIDTH)
-            # Refresh content after expansion is complete to avoid glitches during animation
-            self._cache_quick_record_lock_width()
-            self._unlock_quick_record_layout()
-            if self._refresh_pending:
-                self.refresh()
-        else:
-            self.setMinimumWidth(self.COLLAPSED_WIDTH)
-            self.setMaximumWidth(self.COLLAPSED_WIDTH)
-            self._unlock_quick_record_layout()
-
-    def _cache_quick_record_lock_width(self):
-        """Cache the quick record viewport width for smoother animations."""
-        viewport_width = self.scroll_area.viewport().width()
-        if viewport_width > 0:
-            self._quick_record_lock_width = viewport_width
-            return
-
-        margins = self.content_widget.contentsMargins()
-        frame_width = self.scroll_area.frameWidth()
-        fallback_width = self.EXPANDED_WIDTH - margins.left() - margins.right() - (frame_width * 2)
-        self._quick_record_lock_width = max(0, fallback_width)
-
-    def _lock_quick_record_layout(self):
-        """Lock history list width during animation to avoid heavy relayout."""
-        if self._quick_record_lock_width is None:
-            self._cache_quick_record_lock_width()
-
-        if self._quick_record_lock_width is None:
-            return
-
-        self.scroll_area.setWidgetResizable(False)
-        self.history_list_widget.setFixedWidth(self._quick_record_lock_width)
-        self._quick_record_locked = True
-
-    def _unlock_quick_record_layout(self):
-        """Restore default list sizing after the animation completes."""
-        if not self._quick_record_locked:
-            return
-
-        self.scroll_area.setWidgetResizable(True)
-        self.history_list_widget.setMinimumWidth(0)
-        self.history_list_widget.setMaximumWidth(16777215)
-        self._quick_record_locked = False
+        """Snap to the exact final width when the animation completes."""
+        target = self.EXPANDED_WIDTH if self._is_expanded else self.COLLAPSED_WIDTH
+        self.setMinimumWidth(target)
+        self.setMaximumWidth(target)
 
     def _apply_style(self):
         """Apply custom styling."""
         self.setStyleSheet("""
             QWidget#historySidebar {
                 background-color: #1c1c1e;
-                border-left: 1px solid rgba(255, 255, 255, 0.08);
             }
             QWidget#sidebarContent {
                 background-color: #1c1c1e;
+                border-left: 1px solid rgba(255, 255, 255, 0.08);
             }
             QLabel#sidebarHeader {
                 color: #ffffff;
@@ -461,12 +493,48 @@ class HistorySidebar(QWidget):
                 background-color: rgba(255, 255, 255, 0.1);
                 color: #ffffff;
             }
+            QLineEdit#historySearchInput {
+                background-color: rgba(44, 44, 46, 0.8);
+                color: #f5f5f7;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 4px 10px;
+                font-size: 12px;
+            }
+            QLineEdit#historySearchInput:focus {
+                border: 1px solid #0a84ff;
+                background-color: rgba(44, 44, 46, 1.0);
+            }
+            QLineEdit#historySearchInput::placeholder {
+                color: #636366;
+            }
             QScrollArea#historyScrollArea {
                 background-color: transparent;
                 border: none;
             }
             QScrollArea#historyScrollArea > QWidget > QWidget {
                 background-color: transparent;
+            }
+            QScrollArea#historyScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+                margin: 0px;
+            }
+            QScrollArea#historyScrollArea QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.15);
+                border-radius: 4px;
+                min-height: 30px;
+            }
+            QScrollArea#historyScrollArea QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 0.3);
+            }
+            QScrollArea#historyScrollArea QScrollBar::add-line:vertical,
+            QScrollArea#historyScrollArea QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollArea#historyScrollArea QScrollBar::add-page:vertical,
+            QScrollArea#historyScrollArea QScrollBar::sub-page:vertical {
+                background: transparent;
             }
         """)
 
@@ -476,18 +544,22 @@ class HistorySidebar(QWidget):
             return
 
         self._is_expanded = True
-        self._lock_quick_record_layout()
 
-        # Start animation immediately - no delay
+        # Populate BEFORE animating so the first open reveals fully rendered
+        # content instead of popping it in after the animation.
+        if self._refresh_pending:
+            self.refresh()
+            self.content_widget.ensurePolished()
+            layout = self.content_widget.layout()
+            if layout is not None:
+                layout.activate()
+
         self.animation.stop()
-        current_width = self.width() if self.width() > 0 else self.COLLAPSED_WIDTH
-        self.animation.setStartValue(current_width)
+        self.animation.setStartValue(self._current_width)
         self.animation.setEndValue(self.EXPANDED_WIDTH)
         self.animation.start()
 
-        # Refresh will happen automatically when animation finishes (in _on_animation_finished)
-
-        logger.debug("Sidebar expanded")
+        logger.debug("Sidebar expanding")
 
     def collapse(self):
         """Collapse the sidebar."""
@@ -495,16 +567,13 @@ class HistorySidebar(QWidget):
             return
 
         self._is_expanded = False
-        self._lock_quick_record_layout()
 
-        # Start animation immediately - smooth collapse
         self.animation.stop()
-        current_width = self.width() if self.width() > 0 else self.EXPANDED_WIDTH
-        self.animation.setStartValue(current_width)
+        self.animation.setStartValue(self._current_width)
         self.animation.setEndValue(self.COLLAPSED_WIDTH)
         self.animation.start()
 
-        logger.debug("Sidebar collapsed")
+        logger.debug("Sidebar collapsing")
 
     def toggle(self):
         """Toggle sidebar visibility."""
@@ -519,7 +588,7 @@ class HistorySidebar(QWidget):
         return self._is_expanded
 
     def refresh(self):
-        """Refresh sidebar content."""
+        """Refresh sidebar content (deferred while collapsed)."""
         if not self._is_expanded:
             self._refresh_pending = True
             return
@@ -528,21 +597,34 @@ class HistorySidebar(QWidget):
         self._load_recordings()
         self._load_history()
 
-    def _load_recordings(self):
-        """Load and display saved recordings."""
-        # Clear existing items
-        while self.recordings_container.count():
-            item = self.recordings_container.takeAt(0)
+    @staticmethod
+    def _clear_layout(layout: QVBoxLayout):
+        """Remove and delete all widgets from a layout."""
+        while layout.count():
+            item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
+    def _make_empty_label(self, message: str) -> QLabel:
+        """Create a styled placeholder label for an empty section."""
+        label = QLabel(message)
+        label.setStyleSheet("color: #636366; font-size: 12px; padding: 8px 0px;")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
+
+    def _load_recordings(self):
+        """Load and display saved recordings."""
+        self._clear_layout(self.recordings_container)
+
         recordings = history_manager.get_recordings()
+        self.recordings_header.setText(
+            f"RECENT RECORDINGS ({len(recordings)})" if recordings else "RECENT RECORDINGS"
+        )
 
         if not recordings:
-            no_recordings_label = QLabel("No saved recordings")
-            no_recordings_label.setStyleSheet("color: #636366; font-size: 12px;")
-            no_recordings_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.recordings_container.addWidget(no_recordings_label)
+            self.recordings_container.addWidget(
+                self._make_empty_label("No saved recordings")
+            )
             return
 
         for recording in recordings:
@@ -550,30 +632,48 @@ class HistorySidebar(QWidget):
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
             self.recordings_container.addWidget(item)
 
+    def _on_search_text_changed(self, text: str):
+        """Restart the debounce timer on each keystroke."""
+        self._search_timer.start()
+
     def _load_history(self):
-        """Load and display transcription history."""
-        # Clear existing items
-        while self.history_list_layout.count():
-            item = self.history_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        """Load and display transcription history, filtered by the search query."""
+        self._clear_layout(self.history_list_layout)
 
         entries = history_manager.get_history()
 
+        query = self.search_input.text().strip().lower()
+        if query:
+            entries = [
+                entry for entry in entries
+                if query in entry.text.lower()
+                or query in entry.formatted_timestamp.lower()
+            ]
+
+        self.history_header.setText(
+            f"TRANSCRIPTION HISTORY ({len(entries)})" if entries else "TRANSCRIPTION HISTORY"
+        )
+
         if not entries:
-            no_history_label = QLabel("No transcription history")
-            no_history_label.setStyleSheet("color: #636366; font-size: 12px;")
-            no_history_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.history_list_layout.addWidget(no_history_label)
+            message = "No matching entries" if query else "No transcription history"
+            self.history_list_layout.addWidget(self._make_empty_label(message))
             return
 
-        for entry in entries:
+        shown = entries[:self.MAX_HISTORY_ITEMS]
+        for entry in shown:
             item = HistoryItemWidget(entry)
             item.clicked.connect(self._on_entry_clicked)
             item.copy_requested.connect(self._on_copy_requested)
             item.delete_requested.connect(self._on_delete_requested)
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
             self.history_list_layout.addWidget(item)
+
+        if len(entries) > len(shown):
+            self.history_list_layout.addWidget(
+                self._make_empty_label(
+                    f"Showing {len(shown)} of {len(entries)} — search to find older entries"
+                )
+            )
 
     def _on_entry_clicked(self, entry_id: str):
         """Handle history entry click."""
