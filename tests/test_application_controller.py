@@ -310,6 +310,7 @@ class DummyMainWindow:
         self.is_recording = False
         self.partial_updates = []
         self.tabbed_content = DummyTabbedContent()
+        self.tray_visibility_toggles = 0
 
     def _update_recording_state(self):
         pass
@@ -322,6 +323,9 @@ class DummyMainWindow:
 
     def minimize_to_tray(self):
         self.minimized_to_tray = True
+
+    def toggle_tray_visibility(self):
+        self.tray_visibility_toggles += 1
 
 
 class DummyUIController:
@@ -520,6 +524,41 @@ class TestApplicationController(unittest.TestCase):
         controller.on_model_changed("Local Whisper")
         self.assertEqual(controller._current_model_name, "local_whisper")
         self.assertEqual(controller.ui_controller.device_infos[-1], "cpu")
+
+    def test_hotkeys_backfill_minimize_tray_and_refresh_display_on_update(self):
+        controller = self._create_controller()
+
+        self.assertEqual(
+            controller.hotkey_manager.hotkeys["minimize_tray"],
+            config.DEFAULT_HOTKEYS["minimize_tray"],
+        )
+        self.assertEqual(
+            controller.ui_controller.hotkeys["minimize_tray"],
+            config.DEFAULT_HOTKEYS["minimize_tray"],
+        )
+
+        updated_hotkeys = {
+            "record_toggle": "f4",
+            "cancel": "f5",
+            "enable_disable": "f6",
+            "minimize_tray": "ctrl+alt+h",
+        }
+        controller.update_hotkeys(updated_hotkeys)
+
+        self.assertEqual(controller.hotkey_manager.hotkeys, updated_hotkeys)
+        self.assertEqual(self.settings.saved_hotkeys, updated_hotkeys)
+        self.assertEqual(controller.ui_controller.hotkeys, updated_hotkeys)
+        self.assertIn("Hotkeys updated", controller.ui_controller.statuses)
+
+    def test_minimize_hotkey_toggles_tray_visibility_on_main_thread(self):
+        controller = self._create_controller()
+
+        controller.minimize_to_tray()
+
+        self.assertEqual(
+            controller.ui_controller.main_window.tray_visibility_toggles,
+            1,
+        )
 
     def test_streaming_reconfigure_can_disable_runtime(self):
         controller = self._create_controller()

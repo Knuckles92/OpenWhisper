@@ -262,6 +262,7 @@ class HotkeyRuntime:
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.update_hotkeys(hotkeys)
             settings_manager.save_hotkey_settings(hotkeys)
+            self.controller.ui_controller.update_hotkey_display(hotkeys)
             self.controller.ui_controller.set_status("Hotkeys updated")
 
     def setup_hook_watchdog(self) -> None:

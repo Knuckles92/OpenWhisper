@@ -464,12 +464,15 @@ class MainWindow(QMainWindow):
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
 
-        self.tray_button = QPushButton("Minimize to Tray")
+        self.tray_button = Button("Minimize to Tray")
         self.tray_button.setObjectName("trayButton")
         self.tray_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tray_button.setFixedHeight(34)
         self.tray_button.setMinimumWidth(140)
         self.tray_button.setStyleSheet(self._TRAY_BUTTON_STYLE)
+        self.tray_button.set_hotkey(
+            format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
+        )
         self.tray_button.setToolTip(
             self._minimize_tooltip(
                 format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
@@ -723,6 +726,14 @@ class MainWindow(QMainWindow):
         logger.info("Minimizing to tray")
         self.hide()
 
+    def toggle_tray_visibility(self):
+        """Toggle between hidden-to-tray and visible foreground states."""
+        if self.isVisible() and not self.isMinimized():
+            self.minimize_to_tray()
+            return
+
+        self.restore_from_tray()
+
     def restore_from_tray(self):
         """Reliably bring the window back from the tray / hidden state.
 
@@ -907,13 +918,14 @@ class MainWindow(QMainWindow):
             minimize_key: The key for minimizing to the system tray
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        self.tray_button.set_hotkey(minimize_key)
         self.tray_button.setToolTip(self._minimize_tooltip(minimize_key))
 
     @staticmethod
     def _minimize_tooltip(minimize_key: str) -> str:
         """Build the Minimize-to-Tray button tooltip, including the hotkey hint."""
         if minimize_key:
-            return f"Minimize to tray  ·  {minimize_key}"
+            return f"Minimize or restore from tray  ·  {minimize_key}"
         return "Minimize to tray"
 
     # ==================== Edge Resize Support ====================

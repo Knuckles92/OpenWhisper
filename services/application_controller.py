@@ -162,10 +162,10 @@ class ApplicationController(QObject):
         self.transcription_runtime.cancel()
 
     def minimize_to_tray(self) -> None:
-        """Hide the main window to the system tray (hotkey callback target).
+        """Toggle the main window between tray-hidden and foreground states.
 
         Hotkey callbacks run on a background thread, so this only emits a signal;
-        the actual window hide happens on the Qt main thread via the connection
+        the actual window change happens on the Qt main thread via the connection
         in ``_connect_signals``.
         """
         self.minimize_to_tray_requested.emit()
@@ -196,7 +196,7 @@ class ApplicationController(QObject):
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.minimize_to_tray_requested.connect(
-            self.ui_controller.main_window.minimize_to_tray
+            self.ui_controller.main_window.toggle_tray_visibility
         )
         self.partial_transcription.connect(
             self.ui_controller.main_window.set_partial_transcription
