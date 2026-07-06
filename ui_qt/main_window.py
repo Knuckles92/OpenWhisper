@@ -15,6 +15,10 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap
 from config import config
 from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, settings_manager
+from ui_qt.utils.collapse_animation import (
+    SECTION_COLLAPSE_DURATION_MS,
+    SECTION_COLLAPSE_EASING,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +289,13 @@ class MainWindow(QMainWindow):
         self._sidebar_width = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
         self._geometry_format = "collapsed_content_v1"
 
+        # Height actually reclaimed by the last transcription collapse, so the
+        # matching expand restores exactly that much (see _on_transcription_collapsed).
+        self._collapse_freed_height = 0
+
+        # Same tracking for the Engine Settings panel (independent of transcription).
+        self._engine_collapse_freed_height = 0
+
         # Edge resize support for frameless window
         self._resize_margin = 8  # Pixels from edge to trigger resize
         self._resizing = False
@@ -373,12 +384,14 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
         self.quick_record_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+        self.quick_record_tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
         self.quick_record_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
 
         # Connect Upload File tab signals
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
         self.upload_file_tab.model_changed.connect(self._on_model_changed)
         self.upload_file_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+        self.upload_file_tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
         self.upload_file_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
         self.upload_file_tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
@@ -720,15 +733,64 @@ class MainWindow(QMainWindow):
         )
         other.set_transcription_collapsed(collapsed)
 
-        if delta <= 0:
-            return
+        current_height = self.height()
+        if collapsed:
+            if delta <= 0:
+                return
+            # Shrink by the body height the card gave up, clamped to the floor.
+            # Record how much we ACTUALLY freed (the clamp may free less than
+            # `delta`) so the matching expand restores precisely that amount.
+            # Adding back the raw, elastic body height instead would overshoot
+            # the original height and compound on every toggle — the runaway
+            # "window keeps getting taller" bug.
+            new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
+            self._collapse_freed_height = current_height - new_height
+            self._animate_resize(self.width(), new_height)
+        else:
+            # Give back exactly what the matching collapse reclaimed. If we have
+            # no tracked collapse this session (e.g. the app launched already
+            # collapsed), grow once toward the default height instead.
+            restore = self._collapse_freed_height
+            self._collapse_freed_height = 0
+            if restore > 0:
+                self._animate_resize(self.width(), current_height + restore)
+            elif current_height < config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT:
+                self._animate_resize(
+                    self.width(), config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
+                )
+
+    def _on_engine_settings_collapsed(self, collapsed: bool, delta: int):
+        """Reclaim/restore window height when the Engine Settings panel toggles.
+
+        Keeps both tabs in the same collapsed state, then animates the window
+        height by the freed (or restored) body height so the change feels smooth.
+
+        Args:
+            collapsed: True if the panel was just collapsed, False if expanded.
+            delta: The body height that was hidden/shown, in pixels.
+        """
+        source = self.sender()
+        other = (
+            self.upload_file_tab
+            if source is self.quick_record_tab
+            else self.quick_record_tab
+        )
+        other.set_engine_settings_collapsed(collapsed)
 
         current_height = self.height()
         if collapsed:
+            if delta <= 0:
+                return
             new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
+            self._engine_collapse_freed_height = current_height - new_height
+            self._animate_resize(self.width(), new_height)
         else:
-            new_height = current_height + delta
-        self._animate_resize(self.width(), new_height)
+            restore = self._engine_collapse_freed_height
+            self._engine_collapse_freed_height = 0
+            if restore > 0:
+                self._animate_resize(self.width(), current_height + restore)
+            elif delta > 0:
+                self._animate_resize(self.width(), current_height + delta)
 
     def _on_stats_visibility_changed(self, visible: bool):
         """Handle stats widget visibility change and adjust window height.
@@ -871,18 +933,23 @@ class MainWindow(QMainWindow):
             target_width: Target window width.
             target_height: Target window height.
         """
-        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QRect
+        from PyQt6.QtCore import QPropertyAnimation, QRect
 
-        # Create animation for geometry
         if not hasattr(self, '_resize_animation'):
             self._resize_animation = QPropertyAnimation(self, b"geometry")
-            self._resize_animation.setDuration(250)
-            self._resize_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._resize_animation.setDuration(SECTION_COLLAPSE_DURATION_MS)
+            self._resize_animation.setEasingCurve(SECTION_COLLAPSE_EASING)
 
         current_geo = self.geometry()
         target_geo = QRect(current_geo.x(), current_geo.y(), target_width, target_height)
 
+        # Continue smoothly from the current frame when interrupting a resize.
+        if self._resize_animation.state() == QPropertyAnimation.State.Running:
+            current_geo = self._resize_animation.currentValue()
+
         self._resize_animation.stop()
+        self._resize_animation.setDuration(SECTION_COLLAPSE_DURATION_MS)
+        self._resize_animation.setEasingCurve(SECTION_COLLAPSE_EASING)
         self._resize_animation.setStartValue(current_geo)
         self._resize_animation.setEndValue(target_geo)
         self._resize_animation.start()
