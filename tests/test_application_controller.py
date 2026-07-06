@@ -48,9 +48,13 @@ class _QObject:
 class _QTimer:
     def __init__(self):
         self.timeout = _BoundSignal()
+        self.single_shot = False
 
     def setTimerType(self, _timer_type):
         pass
+
+    def setSingleShot(self, single_shot):
+        self.single_shot = single_shot
 
     def start(self, _interval):
         pass
@@ -335,6 +339,7 @@ class DummyUIController:
         self.is_recording = False
         self.statuses = []
         self.device_infos = []
+        self.engine_busy_states = []
         self.hotkeys = None
         self.refreshed_history = False
         self.transcription_text = None
@@ -353,6 +358,9 @@ class DummyUIController:
 
     def set_device_info(self, device_info):
         self.device_infos.append(device_info)
+
+    def set_engine_busy(self, busy):
+        self.engine_busy_states.append(busy)
 
     def update_audio_levels(self, _levels):
         pass
@@ -524,6 +532,40 @@ class TestApplicationController(unittest.TestCase):
         controller.on_model_changed("Local Whisper")
         self.assertEqual(controller._current_model_name, "local_whisper")
         self.assertEqual(controller.ui_controller.device_infos[-1], "cpu")
+
+    def test_reload_whisper_model_runs_in_background_and_reports(self):
+        controller = self._create_controller()
+
+        # Scheduling only arms the debounce timer; nothing runs yet.
+        controller.reload_whisper_model()
+        self.assertEqual(len(controller.executor.submissions), 0)
+
+        # Debounce fires -> work is submitted to the executor, combos go busy.
+        controller._reload_timer.timeout.emit()
+        self.assertTrue(controller._reload_in_flight)
+        self.assertEqual(controller.ui_controller.engine_busy_states[-1], True)
+        self.assertEqual(len(controller.executor.submissions), 1)
+
+        # Run the worker exactly as the real executor would.
+        fn, args = controller.executor.submissions[0]
+        fn(*args)
+
+        self.assertFalse(controller._reload_in_flight)
+        self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
+        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
+        self.assertEqual(controller.ui_controller.engine_busy_states[-1], False)
+
+    def test_reload_whisper_model_refused_while_recording(self):
+        controller = self._create_controller()
+        controller.recorder.is_recording = True
+
+        controller.reload_whisper_model()
+
+        self.assertEqual(len(controller.executor.submissions), 0)
+        self.assertIn(
+            "Finish recording before changing the engine",
+            controller.ui_controller.statuses,
+        )
 
     def test_hotkeys_backfill_minimize_tray_and_refresh_display_on_update(self):
         controller = self._create_controller()

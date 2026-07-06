@@ -11,9 +11,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from config import config
+from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.cards import Card, HeaderCard, ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
+from ui_qt.widgets.local_engine_controls import LocalEngineControls
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,8 @@ class QuickRecordTab(QWidget):
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)  # Model display name
     retranscribe_requested = pyqtSignal(str)  # Audio file path
+    engine_settings_changed = pyqtSignal()  # Local engine combo changed
+    transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,9 +55,12 @@ class QuickRecordTab(QWidget):
         content_container = QWidget()
         content_container.setObjectName("quickRecordContent")
         content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(24, 16, 24, 24)
-        content_layout.setSpacing(16)
-        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        content_layout.setContentsMargins(24, 14, 24, 16)
+        content_layout.setSpacing(12)
+        # No vertical alignment: the transcription card is the elastic element
+        # (stretch=1) so it grows/shrinks with the window. Horizontal centering
+        # is handled by the center_wrapper below.
+        self.content_layout = content_layout
 
         # Wrapper to center the content container horizontally
         center_wrapper = QHBoxLayout()
@@ -78,19 +85,22 @@ class QuickRecordTab(QWidget):
         self.model_combo = QComboBox()
         self.model_combo.addItems(config.MODEL_CHOICES)
         self.model_combo.setMinimumHeight(40)
+        self.model_combo.setMaximumWidth(420)
         self.model_combo.setFont(QFont("Segoe UI", 12))
 
-        # Device info label (shows CUDA/CPU status)
-        self.device_info_label = QLabel("")
-        self.device_info_label.setObjectName("deviceInfoLabel")
-        self.device_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.device_info_label.setFont(QFont("Segoe UI", 10))
-        self.device_info_label.setStyleSheet("color: #8888aa; margin-top: 4px;")
-        self.device_info_label.hide()
+        # Local engine controls (model / device / quant). Only meaningful for
+        # the Local Whisper backend; visibility is toggled by the main window
+        # via set_local_engine_visible(). The panel's resolved-info label shows
+        # the actual device/compute that "auto" resolved to after a model load.
+        self.local_engine = LocalEngineControls()
 
         model_card.layout.addWidget(model_label)
-        model_card.layout.addWidget(self.model_combo)
-        model_card.layout.addWidget(self.device_info_label)
+        combo_row = QHBoxLayout()
+        combo_row.addStretch()
+        combo_row.addWidget(self.model_combo)
+        combo_row.addStretch()
+        model_card.layout.addLayout(combo_row)
+        model_card.layout.addWidget(self.local_engine)
 
         content_layout.addWidget(model_card)
 
@@ -127,34 +137,45 @@ class QuickRecordTab(QWidget):
 
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
+        buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()
-        control_panel.layout.addWidget(buttons_widget, stretch=1)
+        control_panel.layout.addWidget(buttons_widget)
         control_panel.layout.addStretch()
 
         content_layout.addWidget(control_panel)
 
-        # Transcription display card
-        transcription_card = HeaderCard("Transcription")
+        # Transcription display card (collapsible to reclaim vertical space)
+        self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
         self.transcription_text = QTextEdit()
         self.transcription_text.setReadOnly(True)
-        self.transcription_text.setMinimumHeight(250)
+        self.transcription_text.setMinimumHeight(130)
         self.transcription_text.setFont(QFont("Segoe UI", 13))
         self.transcription_text.setPlaceholderText(
             "Transcription will appear here...\n"
             "Start recording to begin."
         )
 
-        transcription_card.layout.addWidget(self.transcription_text)
+        self.transcription_card.add_content_widget(self.transcription_text)
+        self.transcription_card.toggled.connect(self._on_transcription_toggled)
 
-        content_layout.addWidget(transcription_card)
+        # The transcription card is the elastic element: it expands to fill spare
+        # height and shrinks first when the window gets smaller.
+        content_layout.addWidget(self.transcription_card, stretch=1)
 
         # Transcription statistics display (hidden by default)
         self.stats_widget = TranscriptionStatsWidget()
         content_layout.addWidget(self.stats_widget)
 
-        content_layout.addStretch()  # Push everything up
+        # Managed bottom stretch: 0 while expanded (card fills), 1 while collapsed
+        # (pushes the compact content to the top).
+        content_layout.addStretch()
+        self._bottom_stretch_index = content_layout.count() - 1
+
+        # Restore persisted collapsed state without emitting a resize.
+        collapsed = bool(settings_manager.get(SettingsKey.TRANSCRIPTION_COLLAPSED, False))
+        self.set_transcription_collapsed(collapsed)
 
     def _connect_signals(self):
         """Connect button signals to slots."""
@@ -162,6 +183,7 @@ class QuickRecordTab(QWidget):
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
 
     def _on_record_clicked(self):
         """Handle record button click."""
@@ -197,6 +219,7 @@ class QuickRecordTab(QWidget):
             self.stop_button.set_active(True)
             self.cancel_button.set_active(True)
             self.model_combo.setEnabled(False)
+            self.local_engine.set_busy(True)
             self.status_label.setText("Recording in progress...")
         else:
             self.record_button.set_active(True)
@@ -204,6 +227,7 @@ class QuickRecordTab(QWidget):
             self.stop_button.set_active(False)
             self.cancel_button.set_active(False)
             self.model_combo.setEnabled(True)
+            self.local_engine.set_busy(False)
             self.status_label.setText("Ready to record")
 
     # Public API methods
@@ -213,16 +237,45 @@ class QuickRecordTab(QWidget):
         self.status_label.setText(status_text)
 
     def set_device_info(self, device_info: str):
-        """Set the device info label (e.g., 'cuda (float16)').
+        """Set the resolved-engine readout (e.g., 'base | cuda (float16)').
+
+        The text is shown inside the Local engine panel; the panel as a whole is
+        shown/hidden by set_local_engine_visible() based on the active backend.
 
         Args:
             device_info: Device information string to display.
         """
-        if device_info:
-            self.device_info_label.setText(device_info)
-            self.device_info_label.show()
+        self.local_engine.set_resolved_info(device_info)
+
+    def set_local_engine_visible(self, visible: bool):
+        """Show/hide the local-engine sub-panel (only for Local Whisper)."""
+        self.local_engine.setVisible(visible)
+
+    # ── Transcription collapse ─────────────────────────────────────
+
+    def _apply_transcription_stretch(self, collapsed: bool):
+        """Hand the spare vertical space to the card or the bottom spacer."""
+        if collapsed:
+            self.content_layout.setStretchFactor(self.transcription_card, 0)
+            self.content_layout.setStretch(self._bottom_stretch_index, 1)
         else:
-            self.device_info_label.hide()
+            self.content_layout.setStretchFactor(self.transcription_card, 1)
+            self.content_layout.setStretch(self._bottom_stretch_index, 0)
+
+    def _on_transcription_toggled(self, collapsed: bool):
+        """User toggled the card: rebalance, persist, and request a resize."""
+        self._apply_transcription_stretch(collapsed)
+        settings_manager.save_setting(SettingsKey.TRANSCRIPTION_COLLAPSED, collapsed)
+        self.transcription_collapsed.emit(collapsed, self.transcription_card.content_height)
+
+    def set_transcription_collapsed(self, collapsed: bool):
+        """Apply collapsed state without persisting or emitting (sync/restore)."""
+        self.transcription_card.set_collapsed(collapsed, emit=False)
+        self._apply_transcription_stretch(collapsed)
+
+    def is_transcription_collapsed(self) -> bool:
+        """Whether the transcription card is currently collapsed."""
+        return self.transcription_card.is_collapsed
 
     def set_transcript(self, text: str):
         """Set the transcript text."""

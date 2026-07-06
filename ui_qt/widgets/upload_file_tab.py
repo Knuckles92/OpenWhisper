@@ -14,9 +14,11 @@ from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QMouseEvent
 
 from config import config
 from services.audio_processor import AudioFilePreview, audio_processor
+from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.cards import Card, HeaderCard
 from ui_qt.widgets.buttons import PrimaryButton, DangerButton, Button
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
+from ui_qt.widgets.local_engine_controls import LocalEngineControls
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +234,8 @@ class UploadFileTab(QWidget):
 
     upload_requested = pyqtSignal(str)
     model_changed = pyqtSignal(str)
+    engine_settings_changed = pyqtSignal()  # Local engine combo changed
+    transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -251,11 +255,11 @@ class UploadFileTab(QWidget):
         content_container = QWidget()
         content_container.setObjectName("uploadFileContent")
         content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(24, 16, 24, 24)
-        content_layout.setSpacing(16)
-        content_layout.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
+        content_layout.setContentsMargins(24, 14, 24, 16)
+        content_layout.setSpacing(12)
+        # No vertical alignment: the transcription card is the elastic element
+        # (stretch=1). Horizontal centering is handled by the center_wrapper.
+        self.content_layout = content_layout
 
         center_wrapper = QHBoxLayout()
         center_wrapper.addStretch()
@@ -278,10 +282,20 @@ class UploadFileTab(QWidget):
         self.model_combo = QComboBox()
         self.model_combo.addItems(config.MODEL_CHOICES)
         self.model_combo.setMinimumHeight(40)
+        self.model_combo.setMaximumWidth(420)
         self.model_combo.setFont(QFont("Segoe UI", 12))
 
+        # Local engine controls (model / device / quant), mirrored with the
+        # Quick Record tab. Visibility is toggled by the main window.
+        self.local_engine = LocalEngineControls()
+
         model_card.layout.addWidget(model_label)
-        model_card.layout.addWidget(self.model_combo)
+        combo_row = QHBoxLayout()
+        combo_row.addStretch()
+        combo_row.addWidget(self.model_combo)
+        combo_row.addStretch()
+        model_card.layout.addLayout(combo_row)
+        model_card.layout.addWidget(self.local_engine)
         content_layout.addWidget(model_card)
 
         # Drop zone
@@ -300,32 +314,40 @@ class UploadFileTab(QWidget):
         self.status_label.setFont(QFont("Segoe UI", 13))
         content_layout.addWidget(self.status_label)
 
-        # Transcription display card
-        transcription_card = HeaderCard("Transcription")
+        # Transcription display card (collapsible to reclaim vertical space)
+        self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
         self.transcription_text = QTextEdit()
         self.transcription_text.setReadOnly(True)
-        self.transcription_text.setMinimumHeight(250)
+        self.transcription_text.setMinimumHeight(130)
         self.transcription_text.setFont(QFont("Segoe UI", 13))
         self.transcription_text.setPlaceholderText(
             "Transcription will appear here...\n"
             "Upload an audio file to begin."
         )
 
-        transcription_card.layout.addWidget(self.transcription_text)
-        content_layout.addWidget(transcription_card)
+        self.transcription_card.add_content_widget(self.transcription_text)
+        self.transcription_card.toggled.connect(self._on_transcription_toggled)
+        content_layout.addWidget(self.transcription_card, stretch=1)
 
         # Stats widget (hidden by default)
         self.stats_widget = TranscriptionStatsWidget()
         content_layout.addWidget(self.stats_widget)
 
+        # Managed bottom stretch: 0 while expanded, 1 while collapsed.
         content_layout.addStretch()
+        self._bottom_stretch_index = content_layout.count() - 1
+
+        # Restore persisted collapsed state without emitting a resize.
+        collapsed = bool(settings_manager.get(SettingsKey.TRANSCRIPTION_COLLAPSED, False))
+        self.set_transcription_collapsed(collapsed)
 
     def _connect_signals(self):
         self.drop_zone.file_selected.connect(self._on_file_selected)
         self.file_info_card.transcribe_clicked.connect(self._on_transcribe)
         self.file_info_card.remove_clicked.connect(self.clear_file)
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
 
     # ── Internal handlers ──────────────────────────────────────────
 
@@ -362,6 +384,7 @@ class UploadFileTab(QWidget):
             return
         self.file_info_card.set_transcribing(True)
         self.model_combo.setEnabled(False)
+        self.local_engine.set_busy(True)
         self.set_status("Transcribing...")
         self.upload_requested.emit(self._audio_path)
 
@@ -375,11 +398,46 @@ class UploadFileTab(QWidget):
         """Update the status label."""
         self.status_label.setText(text)
 
+    def set_device_info(self, device_info: str):
+        """Set the resolved-engine readout inside the Local engine panel."""
+        self.local_engine.set_resolved_info(device_info)
+
+    def set_local_engine_visible(self, visible: bool):
+        """Show/hide the local-engine sub-panel (only for Local Whisper)."""
+        self.local_engine.setVisible(visible)
+
+    # ── Transcription collapse ─────────────────────────────────────
+
+    def _apply_transcription_stretch(self, collapsed: bool):
+        """Hand the spare vertical space to the card or the bottom spacer."""
+        if collapsed:
+            self.content_layout.setStretchFactor(self.transcription_card, 0)
+            self.content_layout.setStretch(self._bottom_stretch_index, 1)
+        else:
+            self.content_layout.setStretchFactor(self.transcription_card, 1)
+            self.content_layout.setStretch(self._bottom_stretch_index, 0)
+
+    def _on_transcription_toggled(self, collapsed: bool):
+        """User toggled the card: rebalance, persist, and request a resize."""
+        self._apply_transcription_stretch(collapsed)
+        settings_manager.save_setting(SettingsKey.TRANSCRIPTION_COLLAPSED, collapsed)
+        self.transcription_collapsed.emit(collapsed, self.transcription_card.content_height)
+
+    def set_transcription_collapsed(self, collapsed: bool):
+        """Apply collapsed state without persisting or emitting (sync/restore)."""
+        self.transcription_card.set_collapsed(collapsed, emit=False)
+        self._apply_transcription_stretch(collapsed)
+
+    def is_transcription_collapsed(self) -> bool:
+        """Whether the transcription card is currently collapsed."""
+        return self.transcription_card.is_collapsed
+
     def set_transcript(self, text: str):
         """Set the transcript text and reset transcribing state."""
         self.transcription_text.setText(text)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
+        self.local_engine.set_busy(False)
 
     def clear_transcription(self):
         """Clear the transcript text."""
@@ -406,6 +464,7 @@ class UploadFileTab(QWidget):
         self.file_info_card.set_transcribing(False)
         self.drop_zone.show()
         self.model_combo.setEnabled(True)
+        self.local_engine.set_busy(False)
         self.set_status("Select an audio file to transcribe")
 
     def set_file(self, audio_path: str):

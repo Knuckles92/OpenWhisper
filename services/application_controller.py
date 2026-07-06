@@ -7,7 +7,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
 from services.database import db
@@ -39,6 +39,9 @@ class ApplicationController(QObject):
     caret_indicator_hide = pyqtSignal()
     overlay_state_update = pyqtSignal(object)
     minimize_to_tray_requested = pyqtSignal()
+    # Emitted from the background reload worker (thread-safe UI updates).
+    device_info_update = pyqtSignal(str)
+    engine_busy_changed = pyqtSignal(bool)
 
     def __init__(self, ui_controller):
         super().__init__()
@@ -63,6 +66,14 @@ class ApplicationController(QObject):
         self._pending_audio_duration: Optional[float] = None
         self._pending_file_size: Optional[int] = None
         self._transcription_start_time: Optional[float] = None
+
+        # Debounced, background whisper reload. The ~1s model swap (cleanup +
+        # load) must not run on the UI thread, and rapid combo changes are
+        # coalesced into a single reload via this single-shot timer.
+        self._reload_in_flight = False
+        self._reload_timer = QTimer()
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.timeout.connect(self._do_reload_whisper_model)
 
         self.hotkey_runtime = HotkeyRuntime(self)
         self.streaming_runtime = StreamingRuntime(self)
@@ -105,22 +116,58 @@ class ApplicationController(QObject):
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
 
     def reload_whisper_model(self) -> None:
-        """Reload the local whisper model with current settings."""
-        logger.info("Reloading whisper model...")
-        self.ui_controller.set_status("Reloading whisper engine...")
+        """Schedule a debounced, background reload of the local whisper model.
 
-        local_backend = self.transcription_backends.get("local_whisper")
-        if local_backend:
-            local_backend.reload_model()
+        Called by both the Settings dialog and the inline main-GUI engine
+        controls. Rapid changes (e.g. flipping device then quant) are coalesced
+        into a single reload, and the request is refused while a recording or
+        transcription is in progress.
+        """
+        backend = self.current_backend
+        if self.recorder.is_recording or getattr(backend, "is_transcribing", False):
+            logger.info("Ignoring whisper reload: recording/transcribing in progress")
+            self.status_update.emit("Finish recording before changing the engine")
+            self.engine_busy_changed.emit(False)
+            return
 
-            if hasattr(local_backend, "device_info"):
-                self.ui_controller.set_device_info(local_backend.device_info)
-                logger.info(f"Whisper reloaded: {local_backend.device_info}")
+        self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
 
-            self.ui_controller.set_status("Whisper engine reloaded")
-        else:
-            logger.warning("Local whisper backend not found")
-            self.ui_controller.set_status("Ready")
+    def _do_reload_whisper_model(self) -> None:
+        """Debounce fired: kick off the reload on a worker thread (UI thread)."""
+        if self._reload_in_flight:
+            # A reload is already running; retry shortly so the newest settings win.
+            self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
+            return
+
+        self._reload_in_flight = True
+        self.engine_busy_changed.emit(True)
+        self.status_update.emit("Reloading whisper engine...")
+        self.executor.submit(self._reload_worker)
+
+    def _reload_worker(self) -> None:
+        """Reload the local backend off the UI thread; report results via signals.
+
+        Runs on a ThreadPoolExecutor worker, so it must NOT touch the UI
+        directly — all updates go through Qt signals, which are delivered on the
+        main thread.
+        """
+        try:
+            local_backend = self.transcription_backends.get("local_whisper")
+            if local_backend:
+                local_backend.reload_model()
+                info = getattr(local_backend, "device_info", "")
+                self.device_info_update.emit(info)
+                self.status_update.emit("Whisper engine ready")
+                logger.info(f"Whisper reloaded: {info}")
+            else:
+                logger.warning("Local whisper backend not found")
+                self.status_update.emit("Ready")
+        except Exception as exc:
+            logger.error(f"Whisper reload failed: {exc}")
+            self.status_update.emit("Engine reload failed")
+        finally:
+            self._reload_in_flight = False
+            self.engine_busy_changed.emit(False)
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
         """Change the audio input device."""
@@ -191,6 +238,8 @@ class ApplicationController(QObject):
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.status_update.connect(self.ui_controller.set_status)
+        self.device_info_update.connect(self.ui_controller.set_device_info)
+        self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)

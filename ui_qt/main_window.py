@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
+    whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
@@ -371,10 +372,14 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.quick_record_tab.model_changed.connect(self._on_model_changed)
+        self.quick_record_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+        self.quick_record_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
 
         # Connect Upload File tab signals
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
         self.upload_file_tab.model_changed.connect(self._on_model_changed)
+        self.upload_file_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+        self.upload_file_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
         self.upload_file_tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
         # Connect stats visibility change
@@ -492,6 +497,8 @@ class MainWindow(QMainWindow):
         self.quit_button.clicked.connect(self.quit_application)
         footer_layout.addWidget(self.quit_button)
 
+        footer_layout.addStretch()
+
         outer_layout.addWidget(footer)
 
     def _setup_menu(self):
@@ -533,6 +540,7 @@ class MainWindow(QMainWindow):
             self.quick_record_tab.set_model_selection(saved_model)
             self.upload_file_tab.set_model_selection(saved_model)
             self.current_model = self.quick_record_tab.current_model
+            self._apply_local_engine_visibility(self.current_model)
             logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
             logger.error(f"Failed to load saved settings: {e}")
@@ -591,7 +599,32 @@ class MainWindow(QMainWindow):
                 tab.current_model = model_name
                 combo.blockSignals(False)
 
+        self._apply_local_engine_visibility(model_name)
+
         self.model_changed.emit(model_name)
+
+    def _apply_local_engine_visibility(self, model_name: str):
+        """Show the local-engine panel only when Local Whisper is the backend.
+
+        Args:
+            model_name: The backend display name (e.g. "Local Whisper").
+        """
+        is_local = config.MODEL_VALUE_MAP.get(model_name) == "local_whisper"
+        self.quick_record_tab.set_local_engine_visible(is_local)
+        self.upload_file_tab.set_local_engine_visible(is_local)
+
+    def _on_engine_settings_changed(self):
+        """Keep both tabs' engine panels in sync, then notify listeners.
+
+        The emitting widget has already persisted the three keys to settings, so
+        both panels reload from that canonical source (signals blocked inside
+        ``load_from_settings``). This avoids depending on ``sender()`` identity
+        and guarantees the two tabs always agree. ``whisper_engine_changed`` then
+        triggers the controller's background reload.
+        """
+        self.quick_record_tab.local_engine.load_from_settings()
+        self.upload_file_tab.local_engine.load_from_settings()
+        self.whisper_engine_changed.emit()
 
     def _on_upload_file_transcribe(self, audio_path: str):
         """Handle Transcribe click from the Upload File tab."""
@@ -615,12 +648,13 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.set_status(status_text)
 
     def set_device_info(self, device_info: str):
-        """Set the device info label (e.g., 'cuda (float16)').
+        """Set the resolved-engine readout on both tabs' Local engine panels.
 
         Args:
             device_info: Device information string to display.
         """
         self.quick_record_tab.set_device_info(device_info)
+        self.upload_file_tab.set_device_info(device_info)
 
     def set_transcript(self, text: str):
         """Set the transcription text."""
@@ -667,6 +701,34 @@ class MainWindow(QMainWindow):
     def clear_transcription_stats(self):
         """Clear and hide the transcription statistics display."""
         self.quick_record_tab.clear_transcription_stats()
+
+    def _on_transcription_collapsed(self, collapsed: bool, delta: int):
+        """Reclaim/restore window height when the transcription card toggles.
+
+        Keeps both tabs in the same collapsed state, then animates the window
+        height by the freed (or restored) body height so the change feels smooth.
+
+        Args:
+            collapsed: True if the card was just collapsed, False if expanded.
+            delta: The body height that was hidden/shown, in pixels.
+        """
+        source = self.sender()
+        other = (
+            self.upload_file_tab
+            if source is self.quick_record_tab
+            else self.quick_record_tab
+        )
+        other.set_transcription_collapsed(collapsed)
+
+        if delta <= 0:
+            return
+
+        current_height = self.height()
+        if collapsed:
+            new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
+        else:
+            new_height = current_height + delta
+        self._animate_resize(self.width(), new_height)
 
     def _on_stats_visibility_changed(self, visible: bool):
         """Handle stats widget visibility change and adjust window height.

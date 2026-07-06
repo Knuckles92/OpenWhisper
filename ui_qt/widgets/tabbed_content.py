@@ -58,12 +58,15 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.addTab("Quick Record")
         self.tab_bar.addTab("Upload File")
 
-        # Center the tab bar
+        # Center the tab bar horizontally
         tab_container = QWidget()
         tab_container_layout = QVBoxLayout(tab_container)
         tab_container_layout.setContentsMargins(24, 16, 24, 8)
-        tab_container_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        tab_container_layout.addWidget(self.tab_bar)
+        tab_container_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        tab_container_layout.addWidget(
+            self.tab_bar,
+            alignment=Qt.AlignmentFlag.AlignHCenter,
+        )
 
         layout.addWidget(tab_container)
 

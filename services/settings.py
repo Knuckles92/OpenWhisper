@@ -32,6 +32,7 @@ class SettingsKey:
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
+    TRANSCRIPTION_COLLAPSED: Final[str] = "transcription_collapsed"
 
 
 class SettingsManager:
