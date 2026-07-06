@@ -1,40 +1,47 @@
-recorded_audio.wav
+# Logs and diagnostics
 *.log
 *.log.*
-*.env
-*.spec
-temp_audio.wav
+
+# Audio artifacts
 *.wav
-.claude/settings.local.json
-**/__pycache__/
-*__pycache__*
-.pytest_cache/
-venv/*
-**/venv/
-.venv/
-CLAUDE.md
-AGENTS.md
-specs/ANIMATION_STATE_TRANSITION_FIX.md
-wsl_venv/*
-transcription_history.json
-venv312/*
-openwhisper_settings.json
-node_modules/*
-.cursor/worktrees.json
-.vscode/settings.json
-test_sample.mp3
 *.mp3
-meetings.json
-meetings.json.bak
-openwhisper.db
-transcription_history.json.bak
-meetings.json
-.pi/*
-.codex
-.codex/
-.claude/settings.local.json.bak
 recordings/
 meeting_audio/
 meeting_recordings/
-specs/
-specs/*
+
+# Local data and settings (auto-generated at runtime)
+openwhisper_settings.json
+openwhisper.db
+transcription_history.json
+transcription_history.json.bak
+meetings.json
+meetings.json.bak
+
+# Environment files
+*.env
+
+# Virtual environments
+venv/
+**/venv/
+.venv/
+venv312/
+wsl_venv/
+node_modules/
+
+# Python build/test caches
+**/__pycache__/
+*__pycache__*
+.pytest_cache/
+*.spec
+
+# Editor / tool state
+.claude/settings.local.json
+.claude/settings.local.json.bak
+.vscode/settings.json
+.cursor/worktrees.json
+.pi/
+.codex/
+
+# Agent instruction files (kept local by preference)
+CLAUDE.md
+AGENTS.md

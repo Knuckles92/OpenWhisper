@@ -5,37 +5,19 @@ from PyQt6.QtWidgets import QPushButton, QSizePolicy, QWidget, QHBoxLayout, QLab
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt6.QtGui import QFont
 
-_MODIFIER_CHARS = frozenset("⌘⌃⌥⇧")
-
-
-def _split_hotkey_display(text: str) -> list[str]:
-    """Split a display hotkey like ``⌃⌥R`` into individual key tokens."""
-    tokens = []
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char in _MODIFIER_CHARS:
-            tokens.append(char)
-            index += 1
-        else:
-            tokens.append(text[index:])
-            break
-    return tokens
-
 
 class HotkeyHoverHint(QWidget):
-    """Floating key-cap hint shown above a button on hover."""
+    """Floating shortcut hint shown above a button on hover."""
 
-    _KEY_STYLE = """
+    _TEXT_STYLE = """
         QLabel {
-            background-color: rgba(255, 255, 255, 0.10);
             color: #f5f5f7;
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            border-radius: 5px;
-            padding: 1px 7px;
             font-size: 11px;
             font-weight: 600;
-            font-family: "SF Pro Display", "Helvetica Neue", sans-serif;
+            font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+            background: transparent;
+            border: none;
+            padding: 0;
         }
     """
 
@@ -48,12 +30,12 @@ class HotkeyHoverHint(QWidget):
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(8, 5, 8, 5)
-        outer.setSpacing(4)
+        outer.setSpacing(0)
 
-        self._keys_layout = QHBoxLayout()
-        self._keys_layout.setContentsMargins(0, 0, 0, 0)
-        self._keys_layout.setSpacing(4)
-        outer.addLayout(self._keys_layout)
+        self._text_label = QLabel()
+        self._text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._text_label.setStyleSheet(self._TEXT_STYLE)
+        outer.addWidget(self._text_label)
 
         self.setStyleSheet("""
             HotkeyHoverHint {
@@ -64,19 +46,8 @@ class HotkeyHoverHint(QWidget):
         """)
 
     def set_hotkey(self, hotkey: str) -> None:
-        """Rebuild key-cap labels for the given display hotkey."""
-        while self._keys_layout.count():
-            item = self._keys_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        for token in _split_hotkey_display(hotkey):
-            key_label = QLabel(token)
-            key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            key_label.setStyleSheet(self._KEY_STYLE)
-            self._keys_layout.addWidget(key_label)
-
+        """Update the shortcut text shown in the hover hint."""
+        self._text_label.setText(hotkey)
         self.adjustSize()
 
 

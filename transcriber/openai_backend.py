@@ -91,10 +91,10 @@ class OpenAIBackend(TranscriptionBackend):
             logger.info(f"Using OpenAI API model: {api_model}")
             logger.info("Sending audio file to OpenAI API...")
 
-            with open(audio_path, "rb") as audio_file:
+            with open(audio_path, "rb") as f:
                 response = self.client.audio.transcriptions.create(
                     model=api_model,
-                    file=audio_file,
+                    file=f,
                     response_format="text"
                 )
 
@@ -162,10 +162,10 @@ class OpenAIBackend(TranscriptionBackend):
                 logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with OpenAI API: {chunk_file}")
 
                 # Transcribe individual chunk
-                with open(chunk_file, "rb") as audio_file:
+                with open(chunk_file, "rb") as f:
                     response = self.client.audio.transcriptions.create(
                         model=api_model,
-                        file=audio_file,
+                        file=f,
                         response_format="text"
                     )
 

@@ -243,10 +243,11 @@ class DatabaseManager:
         with self.get_session() as session:
             session.query(TranscriptionHistory).delete()
 
-    def update_history_audio_file(self, audio_filename: str) -> None:
+    def clear_history_audio_file(self, audio_file: str) -> None:
+        """Clear the audio_file reference on history entries matching a filename."""
         with self.get_session() as session:
             session.query(TranscriptionHistory).filter(
-                TranscriptionHistory.audio_file == audio_filename
+                TranscriptionHistory.audio_file == audio_file
             ).update({TranscriptionHistory.audio_file: None})
 
     # ------------------------------------------------------------------

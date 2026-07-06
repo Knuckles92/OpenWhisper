@@ -13,6 +13,8 @@ from sqlalchemy.orm import (
     DeclarativeBase, Mapped, mapped_column,
 )
 
+from services.format_utils import format_timestamp
+
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base for all models."""
@@ -78,11 +80,7 @@ class TranscriptionHistory(Base):
 
     @property
     def formatted_timestamp(self) -> str:
-        try:
-            dt = datetime.fromisoformat(self.timestamp)
-            return dt.strftime("%b %d, %Y %I:%M %p")
-        except Exception:
-            return self.timestamp
+        return format_timestamp(self.timestamp)
 
     @property
     def preview_text(self) -> str:

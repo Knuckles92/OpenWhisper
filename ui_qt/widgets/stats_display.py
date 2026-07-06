@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
+from services.format_utils import format_file_size
+
 
 class TranscriptionStatsWidget(QWidget):
     """Displays transcription statistics in a compact horizontal layout."""
@@ -135,27 +137,10 @@ class TranscriptionStatsWidget(QWidget):
         self.audio_duration_widget.value_label.setText(duration_str)
 
         # Format file size
-        file_size_str = self._format_file_size(file_size)
-        self.file_size_widget.value_label.setText(file_size_str)
+        self.file_size_widget.value_label.setText(format_file_size(file_size))
 
         self.show()
         self.visibility_changed.emit(True)
-
-    def _format_file_size(self, size_bytes: int) -> str:
-        """Format file size in human-readable format.
-
-        Args:
-            size_bytes: Size in bytes.
-
-        Returns:
-            Human-readable file size string.
-        """
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
 
     def clear(self):
         """Clear statistics display and hide the widget."""

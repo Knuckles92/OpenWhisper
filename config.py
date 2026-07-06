@@ -75,17 +75,8 @@ class AppConfig:
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
     WAVEFORM_OVERLAY_HEIGHT: int = 80
-    WAVEFORM_BAR_COUNT: int = 20
-    WAVEFORM_BAR_WIDTH: int = 8
-    WAVEFORM_BAR_SPACING: int = 2
     WAVEFORM_FRAME_RATE: int = 30
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
-
-    # Waveform colors (hex format)
-    WAVEFORM_BG_COLOR: str = "#1a1a1a"
-    WAVEFORM_ACCENT_COLOR: str = "#00d4ff"
-    WAVEFORM_SECONDARY_COLOR: str = "#0099cc"
-    WAVEFORM_TEXT_COLOR: str = "#ffffff"
 
     # Streaming text overlay settings
     STREAMING_OVERLAY_WIDTH: int = 450

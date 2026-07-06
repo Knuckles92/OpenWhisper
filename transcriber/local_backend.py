@@ -43,6 +43,24 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._override_compute_type = compute_type
         self._load_model()
 
+    def _cuda_is_available(self) -> bool:
+        """Check whether a usable CUDA device is present.
+
+        Uses CTranslate2's own device probe rather than torch: CTranslate2 is a
+        hard dependency of this backend, whereas torch is not installed at all,
+        so the previous ``import torch`` check always reported no GPU and forced
+        CPU even on CUDA-capable machines.
+
+        Returns:
+            True if at least one CUDA device is available, False otherwise.
+        """
+        try:
+            import ctranslate2
+            return ctranslate2.get_cuda_device_count() > 0
+        except Exception as e:
+            logger.debug(f"CUDA availability probe failed, assuming CPU: {e}")
+            return False
+
     def _get_supported_compute_types(self, device: str) -> set:
         """Get compute types supported by the current hardware.
 
@@ -127,11 +145,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         # Auto-detect based on CUDA availability
         has_cuda = False
         if device == "auto" or compute_type == "auto" or model == "auto":
-            try:
-                import torch
-                has_cuda = torch.cuda.is_available()
-            except ImportError:
-                has_cuda = False
+            has_cuda = self._cuda_is_available()
 
             if has_cuda:
                 detected_device = "cuda"

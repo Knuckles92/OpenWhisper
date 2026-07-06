@@ -318,16 +318,16 @@ class UploadFileTab(QWidget):
         # Transcription display card (collapsible to reclaim vertical space)
         self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
-        self.transcription_text = QTextEdit()
-        self.transcription_text.setReadOnly(True)
-        self.transcription_text.setMinimumHeight(130)
-        self.transcription_text.setFont(QFont("Segoe UI", 13))
-        self.transcription_text.setPlaceholderText(
+        self.transcript_text = QTextEdit()
+        self.transcript_text.setReadOnly(True)
+        self.transcript_text.setMinimumHeight(130)
+        self.transcript_text.setFont(QFont("Segoe UI", 13))
+        self.transcript_text.setPlaceholderText(
             "Transcription will appear here...\n"
             "Upload an audio file to begin."
         )
 
-        self.transcription_card.add_content_widget(self.transcription_text)
+        self.transcription_card.add_content_widget(self.transcript_text)
         self.transcription_card.toggled.connect(self._on_transcription_toggled)
         content_layout.addWidget(self.transcription_card, stretch=1)
 
@@ -447,14 +447,14 @@ class UploadFileTab(QWidget):
 
     def set_transcript(self, text: str):
         """Set the transcript text and reset transcribing state."""
-        self.transcription_text.setText(text)
+        self.transcript_text.setText(text)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)
 
     def clear_transcription(self):
         """Clear the transcript text."""
-        self.transcription_text.clear()
+        self.transcript_text.clear()
 
     def set_transcription_stats(
         self,

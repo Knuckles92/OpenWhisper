@@ -64,11 +64,11 @@ if USE_PYNPUT_BACKEND:
         def __init__(self, parent=None):
             super().__init__(parent)
             self._listener: Optional[pynput_keyboard.Listener] = None
-            self._cancelled = False
+            self._canceled = False
 
         def run(self):
             """Run the capture."""
-            self._cancelled = False
+            self._canceled = False
             pressed_modifiers = set()
             result = {"hotkey": None}
 
@@ -101,17 +101,17 @@ if USE_PYNPUT_BACKEND:
                 self._listener.join()
                 if result["hotkey"]:
                     self.captured.emit(result["hotkey"])
-                elif not self._cancelled:
+                elif not self._canceled:
                     logger.error("Hotkey capture listener stopped without capturing a key")
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
             except Exception as e:
-                if not self._cancelled:
+                if not self._canceled:
                     logger.error(f"Error capturing hotkey: {e}")
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
         def stop(self):
             """Stop the underlying listener (cancels an in-progress capture)."""
-            self._cancelled = True
+            self._canceled = True
             listener = self._listener
             if listener is not None:
                 try:

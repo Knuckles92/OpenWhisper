@@ -5,6 +5,34 @@ All notable changes to OpenWhisper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Cross-Platform Support** - macOS fork merged into a single codebase: Carbon global hotkeys, Accessibility trust handling for auto-paste, persistent overlay visibility, platform-specific default hotkeys
+- **Minimize-to-Tray Hotkey** - `Ctrl+Alt+M` global shortcut
+- **CLI Launchers** - `ow`/`openwhisper` commands with PATH installer scripts
+- **Database-Backed History** - SQLite (SQLAlchemy) persistence replaces flat JSON history files, with one-time automatic migration
+- **Faster Startup** - Startup profiling and lazy imports
+- **Streaming Tiny-Model Option** - Dedicated tiny model for real-time streaming transcription
+- **Collapsible UI Sections** - Collapsible transcription panel and section headers with smooth window resizing
+- **Inline Local-Engine Controls** - Model/device/quantization controls in the main window with debounced engine reloads
+- **Hotkey Watchdog** - Detects sleep/resume gaps and re-registers keyboard hooks automatically
+
+### Fixed
+- **GPU transcription "cublas64_12.dll is not found" on Windows** - CTranslate2 loads CUDA libraries via `LoadLibrary`, which consults `PATH`, but the DLL directories were only registered with `os.add_dll_directory` (ignored by that loader). Startup now also prepends the NVIDIA wheel `bin` directories to `PATH`.
+- **GPU never auto-detected** - Hardware detection used `import torch`, which is not a dependency, so `device: auto` always fell back to CPU on GPU machines. Detection now uses CTranslate2's `get_cuda_device_count()`.
+
+### Added
+- **`requirements-gpu.txt`** - Opt-in NVIDIA CUDA wheels (cuDNN 9, cuBLAS, CUDA 12 runtime) so GPU acceleration works without installing the CUDA Toolkit.
+
+### Changed
+- Explicit overlay state routing via `OverlayState` enum and naming standardization
+- Centralized module-level logging across services and UI
+- Default hotkeys are numpad-aware on Windows/Linux (`kp *`, `kp -`)
+
+### Removed
+- Experimental Meeting Mode and meeting insights (added and removed during this cycle; never in a tagged release)
+
 ## [1.0.0] - 2026-01-10
 
 ### Added

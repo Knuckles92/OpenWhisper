@@ -116,7 +116,7 @@ class WaveformOverlay(QWidget):
         # Animation
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_animation)
-        self.frame_rate = 30
+        self.frame_rate = config.WAVEFORM_FRAME_RATE
         self.animation_duration = 0
         self.last_frame_time = time.time()
 
@@ -441,7 +441,7 @@ class WaveformOverlay(QWidget):
 
             # Auto-hide after delay for certain states
             if state in [self.STATE_STT_ENABLE, self.STATE_STT_DISABLE, self.STATE_COPIED]:
-                self.hidden_timer.start(1500)
+                self.hidden_timer.start(config.OVERLAY_HIDE_DELAY_MS)
 
     def _init_particles(
         self,

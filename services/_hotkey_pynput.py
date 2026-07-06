@@ -25,6 +25,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 from pynput import keyboard as pynput_keyboard
 
 from config import config
+from services._hotkey_common import (
+    Debouncer,
+    format_hotkey_string,
+    notify_stt_toggle,
+    parse_hotkey_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,31 +138,12 @@ def parse_hotkey(hotkey_string: str) -> Tuple[frozenset, Optional[str]]:
     Example: ``"ctrl+alt+r"`` -> ``(frozenset({"ctrl", "alt"}), "r")``.
     Unknown modifier tokens are ignored; the last token is always the main key.
     """
-    if not hotkey_string:
-        return frozenset(), None
-
-    parts = [p.strip().lower() for p in hotkey_string.split("+") if p.strip()]
-    if not parts:
-        return frozenset(), None
-
-    main_raw = parts[-1]
-    main_key = _MAIN_KEY_ALIASES.get(main_raw, main_raw)
-
-    modifiers = set()
-    for token in parts[:-1]:
-        canonical = _MODIFIER_ALIASES.get(token)
-        if canonical:
-            modifiers.add(canonical)
-
-    return frozenset(modifiers), main_key
+    return parse_hotkey_string(hotkey_string, _MODIFIER_ALIASES, _MAIN_KEY_ALIASES)
 
 
 def format_hotkey(modifiers, main_key: Optional[str]) -> str:
     """Build a canonical hotkey string from a modifier set and a main key name."""
-    ordered = [m for m in _ALL_MODIFIERS if m in modifiers]
-    if main_key:
-        ordered.append(main_key)
-    return "+".join(ordered)
+    return format_hotkey_string(modifiers, main_key, _ALL_MODIFIERS)
 
 
 _DISPLAY_MODIFIERS: Dict[str, str] = {
@@ -408,7 +395,7 @@ class HotkeyManager:
         """
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
-        self._last_trigger_time: Optional[float] = None
+        self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
         self._last_action_times: Dict[str, float] = {}
 
         # Callback functions
@@ -575,33 +562,15 @@ class HotkeyManager:
         self.program_enabled = not self.program_enabled
 
         # Reset debounce timing when toggling to avoid stale state.
-        self._last_trigger_time = None
+        self._debouncer.reset()
 
-        if self.on_status_update_auto_hide:
-            if not self.program_enabled:
-                self.on_status_update_auto_hide("STT Disabled")
-            else:
-                self.on_status_update_auto_hide("STT Enabled")
-        elif self.on_status_update:
-            # Fallback to regular status update if auto-hide not available
-            if not self.program_enabled:
-                self.on_status_update("STT Disabled")
-                logger.info("STT has been disabled")
-            else:
-                self.on_status_update("STT Enabled")
-                logger.info("STT has been enabled")
+        notify_stt_toggle(
+            self.program_enabled, self.on_status_update_auto_hide, self.on_status_update
+        )
 
     def _should_trigger_record_toggle(self) -> bool:
         """Check if record toggle should trigger (with debounce)."""
-        current_time = time.monotonic()
-        if self._last_trigger_time is None:
-            self._last_trigger_time = current_time
-            return True
-
-        if current_time - self._last_trigger_time > (config.HOTKEY_DEBOUNCE_MS / 1000.0):
-            self._last_trigger_time = current_time
-            return True
-        return False
+        return self._debouncer.should_trigger()
 
     def _should_accept_action(self, action: str) -> bool:
         """Suppress duplicate delivery when Qt and pynput both see a hotkey."""

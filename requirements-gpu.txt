@@ -1,0 +1,23 @@
+# GPU (NVIDIA CUDA) support for local Whisper transcription on Windows.
+#
+# faster-whisper's engine (CTranslate2) needs the CUDA 12 runtime libraries at
+# inference time but does NOT declare them as dependencies. Installing these
+# wheels provides cublas64_12.dll, cuDNN 9, and the CUDA runtime WITHOUT
+# requiring the full NVIDIA CUDA Toolkit installer.
+#
+# Install (after the base requirements) only if you have an NVIDIA GPU:
+#     pip install -r requirements.txt
+#     pip install -r requirements-gpu.txt
+#
+# CPU-only, macOS, and Linux users should NOT install this file (the wheels are
+# ~750 MB and Windows-only). Local transcription runs fine on CPU without them.
+#
+# app_qt.py registers these DLL directories at startup (see
+# _register_cuda_dll_directories) so no PATH editing or CUDA Toolkit is needed.
+
+# cuDNN 9 for CUDA 12 — transitively pulls in nvidia-cublas-cu12 and
+# nvidia-cuda-nvrtc-cu12, which supply cublas64_12.dll.
+nvidia-cudnn-cu12>=9.0,<10 ; sys_platform == "win32"
+
+# CUDA 12 runtime (cudart64_12.dll) — a load-time dependency of cuBLAS.
+nvidia-cuda-runtime-cu12>=12.3 ; sys_platform == "win32"

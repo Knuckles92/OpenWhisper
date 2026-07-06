@@ -26,7 +26,6 @@ class SettingsKey:
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
-    STREAMING_TYPING_DELAY: Final[str] = "streaming_typing_delay"
     STREAMING_TINY_MODEL_ENABLED: Final[str] = "streaming_tiny_model_enabled"
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"

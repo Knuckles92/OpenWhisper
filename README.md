@@ -54,13 +54,17 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 ## GPU Acceleration (Windows / Linux)
 
-For significantly faster transcription speeds with an NVIDIA GPU, install CUDA support:
+For significantly faster transcription speeds with an NVIDIA GPU, install the CUDA runtime libraries used by faster-whisper (CTranslate2). These ship as pip wheels — **you do not need the CUDA Toolkit installer**:
 
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements-gpu.txt
 ```
 
-With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. The app auto-detects GPU availability and selects optimal settings (turbo model on GPU, base on CPU). Streaming transcription uses ~15-20% GPU vs 40-60% CPU. macOS has no CUDA support, so transcription runs on CPU there.
+This installs cuDNN 9, cuBLAS, and the CUDA 12 runtime (~750 MB, Windows only). OpenWhisper registers these DLL directories at startup — both via `os.add_dll_directory` and by prepending them to `PATH`, which is required because CTranslate2's loader ignores the former. No PATH editing or CUDA Toolkit needed. (CPU-only users should skip this file; transcription works fine without it.)
+
+GPU auto-detection uses CTranslate2 directly, so **torch is not required**. With `device: auto`, the app detects the GPU and selects optimal settings (turbo model + float16 on GPU, base + int8 on CPU).
+
+With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming transcription uses ~15-20% GPU vs 40-60% CPU. macOS has no CUDA support, so transcription runs on CPU there.
 
 ## Installation
 

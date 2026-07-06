@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from config import config
 from services.database import db
+from services.format_utils import format_file_size, format_timestamp
 from services.models import TranscriptionHistory as HistoryEntry
 
 logger = logging.getLogger(__name__)
@@ -28,21 +29,12 @@ class RecordingInfo:
     @property
     def formatted_timestamp(self) -> str:
         """Get human-readable timestamp."""
-        try:
-            dt = datetime.fromisoformat(self.timestamp)
-            return dt.strftime("%b %d, %Y %I:%M %p")
-        except Exception:
-            return self.timestamp
+        return format_timestamp(self.timestamp)
 
     @property
     def formatted_size(self) -> str:
         """Get human-readable file size."""
-        size = self.size_bytes
-        for unit in ['B', 'KB', 'MB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} GB"
+        return format_file_size(self.size_bytes)
 
 
 class HistoryManager:
@@ -161,7 +153,7 @@ class HistoryManager:
                         logger.info(f"Removed old recording: {rec.filename}")
 
                         # Clear audio_file reference in database
-                        db.update_history_audio_file(rec.filename)
+                        db.clear_history_audio_file(rec.filename)
 
                     except Exception as e:
                         logger.error(f"Failed to remove recording {rec.filename}: {e}")

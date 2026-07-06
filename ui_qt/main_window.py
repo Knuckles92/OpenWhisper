@@ -491,11 +491,6 @@ class MainWindow(QMainWindow):
         self.tray_button.set_hotkey(
             format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
         )
-        self.tray_button.setToolTip(
-            self._minimize_tooltip(
-                format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
-            )
-        )
         self.tray_button.clicked.connect(self.minimize_to_tray)
         footer_layout.addWidget(self.tray_button)
 
@@ -1048,14 +1043,6 @@ class MainWindow(QMainWindow):
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
         self.tray_button.set_hotkey(minimize_key)
-        self.tray_button.setToolTip(self._minimize_tooltip(minimize_key))
-
-    @staticmethod
-    def _minimize_tooltip(minimize_key: str) -> str:
-        """Build the Minimize-to-Tray button tooltip, including the hotkey hint."""
-        if minimize_key:
-            return f"Minimize or restore from tray  ·  {minimize_key}"
-        return "Minimize to tray"
 
     # ==================== Edge Resize Support ====================
 

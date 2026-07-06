@@ -149,16 +149,16 @@ class QuickRecordTab(QWidget):
         # Transcription display card (collapsible to reclaim vertical space)
         self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
-        self.transcription_text = QTextEdit()
-        self.transcription_text.setReadOnly(True)
-        self.transcription_text.setMinimumHeight(130)
-        self.transcription_text.setFont(QFont("Segoe UI", 13))
-        self.transcription_text.setPlaceholderText(
+        self.transcript_text = QTextEdit()
+        self.transcript_text.setReadOnly(True)
+        self.transcript_text.setMinimumHeight(130)
+        self.transcript_text.setFont(QFont("Segoe UI", 13))
+        self.transcript_text.setPlaceholderText(
             "Transcription will appear here...\n"
             "Start recording to begin."
         )
 
-        self.transcription_card.add_content_widget(self.transcription_text)
+        self.transcription_card.add_content_widget(self.transcript_text)
         self.transcription_card.toggled.connect(self._on_transcription_toggled)
 
         # The transcription card is the elastic element: it expands to fill spare
@@ -292,18 +292,18 @@ class QuickRecordTab(QWidget):
 
     def set_transcript(self, text: str):
         """Set the transcript text."""
-        self.transcription_text.setText(text)
+        self.transcript_text.setText(text)
 
     def append_transcription(self, text: str):
         """Append text to the transcription."""
-        cursor = self.transcription_text.textCursor()
+        cursor = self.transcript_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
-        self.transcription_text.setTextCursor(cursor)
-        self.transcription_text.insertPlainText(text)
+        self.transcript_text.setTextCursor(cursor)
+        self.transcript_text.insertPlainText(text)
 
     def clear_transcription(self):
         """Clear the transcription text."""
-        self.transcription_text.clear()
+        self.transcript_text.clear()
 
     def set_partial_transcription(self, text: str, is_final: bool):
         """Display partial transcription with visual indicator.
@@ -326,12 +326,12 @@ class QuickRecordTab(QWidget):
             combined += text + " ..."
 
         # Update display
-        self.transcription_text.setPlainText(combined)
+        self.transcript_text.setPlainText(combined)
 
         # Auto-scroll to bottom
-        cursor = self.transcription_text.textCursor()
+        cursor = self.transcript_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
-        self.transcription_text.setTextCursor(cursor)
+        self.transcript_text.setTextCursor(cursor)
 
     def clear_partial_transcription(self):
         """Clear partial transcription buffer."""

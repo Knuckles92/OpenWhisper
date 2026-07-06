@@ -61,7 +61,7 @@ class TestHotkeyManager(unittest.TestCase):
             self.assertTrue(manager._should_trigger_record_toggle())
 
         manager._toggle_program_enabled()
-        self.assertIsNone(manager._last_trigger_time)
+        self.assertIsNone(manager._debouncer._last_trigger_time)
 
         with patch.object(time, "monotonic", return_value=100.01):
             self.assertTrue(manager._should_trigger_record_toggle())

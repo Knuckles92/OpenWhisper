@@ -8,6 +8,10 @@ pynput>=1.7.6 ; sys_platform != "win32"
 openai>=1.3.0
 pyperclip>=1.8.2
 faster-whisper>=1.0.0
+# GPU users (NVIDIA): after installing these, also run
+#   pip install -r requirements-gpu.txt
+# to get the CUDA runtime DLLs (cuBLAS/cuDNN) without the CUDA Toolkit.
+# CPU-only works out of the box; do not install requirements-gpu.txt.
 python-dotenv>=1.0.0
 PyQt6>=6.0.0
 scipy>=1.10.0
