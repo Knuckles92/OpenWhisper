@@ -231,6 +231,11 @@ class ApplicationController(QObject):
             logger.debug(f"Error stopping watchdog timers: {exc}")
 
         try:
+            self.hotkey_runtime.cleanup()
+        except Exception as exc:
+            logger.debug(f"Error during hotkey runtime cleanup: {exc}")
+
+        try:
             if self.hotkey_manager:
                 self.hotkey_manager.cleanup()
         except Exception as exc:

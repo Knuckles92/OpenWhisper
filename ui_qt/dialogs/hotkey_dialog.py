@@ -1,20 +1,41 @@
 """
 Modern Hotkey Configuration Dialog for PyQt6 UI.
+
+Hotkey capture is platform-specific: the pynput backend (macOS/Linux) tracks
+held modifiers and finalizes on the first non-modifier press, while the Windows
+``keyboard`` backend reads the event stream until key-up. Both capture threads
+expose the same ``captured``/``failed`` signals and ``stop()`` method so the
+dialog body is platform-agnostic.
 """
 import logging
-import keyboard
 from typing import Optional, Callable, Dict
+
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QFrame
+    QLineEdit, QPushButton, QFrame, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QFont, QKeySequence, QMouseEvent
 
 from config import config
+from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from ui_qt.widgets import PrimaryButton, Button, HeaderCard
 
+if USE_PYNPUT_BACKEND:
+    from pynput import keyboard as pynput_keyboard
+    from services.hotkey_manager import modifier_of, key_to_name, format_hotkey
+else:
+    import keyboard
+
 logger = logging.getLogger(__name__)
+
+if USE_PYNPUT_BACKEND:
+    HOTKEY_CAPTURE_FAILURE_MESSAGE = (
+        "Could not capture hotkey. Enable Accessibility and Input Monitoring "
+        "permissions for OpenWhisper in macOS System Settings, then try again."
+    )
+else:
+    HOTKEY_CAPTURE_FAILURE_MESSAGE = "Could not capture hotkey. Please try again."
 
 
 class ClickableLineEdit(QLineEdit):
@@ -27,32 +48,110 @@ class ClickableLineEdit(QLineEdit):
         super().mousePressEvent(event)
 
 
-class HotkeyCaptureThread(QThread):
-    """Thread to capture a single hotkey without blocking UI."""
-    captured = pyqtSignal(str)
+if USE_PYNPUT_BACKEND:
 
-    def run(self):
-        """Run the capture."""
-        try:
-            # read_hotkey blocks until a hotkey is pressed
-            # suppress=False to let the key event pass through if needed,
-            # but here we probably want to consume it or just read it.
-            # Using suppress=True might block other apps, but for configuration it's okay.
-            events = []
-            queue = keyboard._queue.Queue()
-            fn = lambda e: queue.put(e) or e.event_type == keyboard.KEY_DOWN
-            hooked = keyboard.hook(fn, suppress=False)
-            while True:
-                event = queue.get()
-                events.append(event)
-                if event.event_type == keyboard.KEY_UP:
-                    keyboard.unhook(hooked)
-                    names = [(e.name if not e.is_keypad else f"kp_{e.name}") for e in events]
-                    self.captured.emit(keyboard.get_hotkey_name(names))
-                    break
+    class HotkeyCaptureThread(QThread):
+        """Capture a single hotkey via a pynput listener (macOS/Linux).
 
-        except Exception as e:
-            logging.error(f"Error capturing hotkey: {e}")
+        Modifiers (cmd/ctrl/alt/shift) are tracked as they are held, and the
+        first non-modifier key press finalizes the combo. The emitted string
+        uses the same canonical format the matcher parses, so any captured
+        hotkey round-trips exactly.
+        """
+        captured = pyqtSignal(str)
+        failed = pyqtSignal(str)
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._listener: Optional[pynput_keyboard.Listener] = None
+            self._cancelled = False
+
+        def run(self):
+            """Run the capture."""
+            self._cancelled = False
+            pressed_modifiers = set()
+            result = {"hotkey": None}
+
+            def on_press(key):
+                modifier = modifier_of(key)
+                if modifier is not None:
+                    pressed_modifiers.add(modifier)
+                    return True
+
+                name = key_to_name(key)
+                if name is None:
+                    return True
+
+                result["hotkey"] = format_hotkey(frozenset(pressed_modifiers), name)
+                return False  # Stop the listener once a main key is captured.
+
+            def on_release(key):
+                modifier = modifier_of(key)
+                if modifier is not None:
+                    pressed_modifiers.discard(modifier)
+                return True
+
+            try:
+                self._listener = pynput_keyboard.Listener(
+                    on_press=on_press,
+                    on_release=on_release,
+                    suppress=False,
+                )
+                self._listener.start()
+                self._listener.join()
+                if result["hotkey"]:
+                    self.captured.emit(result["hotkey"])
+                elif not self._cancelled:
+                    logger.error("Hotkey capture listener stopped without capturing a key")
+                    self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
+            except Exception as e:
+                if not self._cancelled:
+                    logger.error(f"Error capturing hotkey: {e}")
+                    self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
+
+        def stop(self):
+            """Stop the underlying listener (cancels an in-progress capture)."""
+            self._cancelled = True
+            listener = self._listener
+            if listener is not None:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
+
+else:
+
+    class HotkeyCaptureThread(QThread):
+        """Capture a single hotkey via the Windows ``keyboard`` library."""
+        captured = pyqtSignal(str)
+        failed = pyqtSignal(str)
+
+        def run(self):
+            """Run the capture."""
+            try:
+                events = []
+                queue = keyboard._queue.Queue()
+                fn = lambda e: queue.put(e) or e.event_type == keyboard.KEY_DOWN
+                hooked = keyboard.hook(fn, suppress=False)
+                while True:
+                    event = queue.get()
+                    events.append(event)
+                    if event.event_type == keyboard.KEY_UP:
+                        keyboard.unhook(hooked)
+                        names = [(e.name if not e.is_keypad else f"kp_{e.name}") for e in events]
+                        self.captured.emit(keyboard.get_hotkey_name(names))
+                        break
+            except Exception as e:
+                logging.error(f"Error capturing hotkey: {e}")
+                self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
+
+        def stop(self):
+            """Stop the capture by unhooking and terminating the thread."""
+            try:
+                keyboard.unhook_all()
+            except Exception:
+                pass
+            self.terminate()
 
 
 class HotkeyDialog(QDialog):
@@ -70,6 +169,7 @@ class HotkeyDialog(QDialog):
         self.current_hotkeys: Dict[str, str] = {}
         self.capturing = None
         self.capture_thread: Optional[HotkeyCaptureThread] = None
+        self.current_input_field: Optional[ClickableLineEdit] = None
 
         # Callbacks
         self.on_hotkeys_save: Optional[Callable] = None
@@ -92,11 +192,19 @@ class HotkeyDialog(QDialog):
         layout.addWidget(title)
 
         # Instructions
-        instructions = QLabel(
-            "Click on a field to record a new hotkey.\n"
-            "Press the desired key combination.\n"
-            "Note: Numpad keys (kp 1, kp *, etc.) are distinct from regular keys."
-        )
+        if USE_PYNPUT_BACKEND:
+            instructions_text = (
+                "Click on a field to record a new hotkey.\n"
+                "Hold your modifiers (⌘ ⌃ ⌥ ⇧) and press a key.\n"
+                "Tip: Control+Option combos avoid clashing with system shortcuts."
+            )
+        else:
+            instructions_text = (
+                "Click on a field to record a new hotkey.\n"
+                "Press the desired key combination.\n"
+                "Note: Numpad keys (kp 1, kp *, etc.) are distinct from regular keys."
+            )
+        instructions = QLabel(instructions_text)
         instructions.setStyleSheet("color: #a0a0c0;")
         instructions.setFont(QFont("Segoe UI", 10))
         layout.addWidget(instructions)
@@ -200,7 +308,7 @@ class HotkeyDialog(QDialog):
         try:
             # If already capturing, stop previous capture
             if self.capture_thread and self.capture_thread.isRunning():
-                self.capture_thread.terminate()
+                self.capture_thread.stop()
                 self.capture_thread.wait(1000)  # Wait with timeout
                 self._reset_input_styles()
 
@@ -224,11 +332,15 @@ class HotkeyDialog(QDialog):
             # Start capture thread
             self.capture_thread = HotkeyCaptureThread()
             self.capture_thread.captured.connect(self._on_hotkey_captured)
+            self.capture_thread.failed.connect(self._on_hotkey_capture_failed)
             self.capture_thread.start()
         except Exception as e:
             logger.error(f"Failed to start hotkey capture: {e}")
             self._reset_input_styles()
+            self._update_displays()
             self.capturing = None
+            self.current_input_field = None
+            QMessageBox.warning(self, "Hotkey Capture Failed", HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
     def _on_hotkey_captured(self, hotkey: str):
         """Handle captured hotkey."""
@@ -239,12 +351,21 @@ class HotkeyDialog(QDialog):
 
         # Update state
         self.current_hotkeys[self.capturing] = hotkey
-        self.current_input_field.setText(hotkey)
+        self.current_input_field.setText(format_hotkey_display(hotkey))
 
         # Reset UI
         self._reset_input_styles()
         self.capturing = None
         self.current_input_field = None
+
+    def _on_hotkey_capture_failed(self, message: str):
+        """Handle hotkey capture failures."""
+        logger.warning(message)
+        self._reset_input_styles()
+        self._update_displays()
+        self.capturing = None
+        self.current_input_field = None
+        QMessageBox.warning(self, "Hotkey Capture Failed", message)
 
     def _reset_input_styles(self):
         """Reset all input fields to default style."""
@@ -274,14 +395,7 @@ class HotkeyDialog(QDialog):
     def _load_hotkeys(self):
         """Load current hotkey settings."""
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
-        # Load from settings if available (passed via parent or config)
-        # For now we use defaults as base, but in real app we should load from settings_manager
-        # However, the dialog is initialized with defaults.
-        # Ideally we should pass current hotkeys to __init__ or load them here.
-        # Let's try to load from settings_manager if possible, or rely on what's passed.
-        # Since we don't have direct access to settings_manager here (to avoid circular imports if any),
-        # we'll rely on the fact that we are setting them.
-        # Actually, let's import settings_manager to be safe.
+        # Load saved overrides on top of the platform defaults.
         try:
             from services.settings import settings_manager
             saved_hotkeys = settings_manager.load_hotkey_settings()
@@ -293,9 +407,16 @@ class HotkeyDialog(QDialog):
 
     def _update_displays(self):
         """Update the input field displays."""
-        self.record_input.setText(self.current_hotkeys.get("record_toggle", "kp *"))
-        self.cancel_input.setText(self.current_hotkeys.get("cancel", "kp -"))
-        self.enable_input.setText(self.current_hotkeys.get("enable_disable", "ctrl+alt+kp *"))
+        defaults = config.DEFAULT_HOTKEYS
+        self.record_input.setText(
+            format_hotkey_display(self.current_hotkeys.get("record_toggle", defaults["record_toggle"]))
+        )
+        self.cancel_input.setText(
+            format_hotkey_display(self.current_hotkeys.get("cancel", defaults["cancel"]))
+        )
+        self.enable_input.setText(
+            format_hotkey_display(self.current_hotkeys.get("enable_disable", defaults["enable_disable"]))
+        )
 
     def _save_hotkeys(self):
         """Save hotkey settings."""
@@ -310,7 +431,7 @@ class HotkeyDialog(QDialog):
         """Handle close event."""
         try:
             if self.capture_thread and self.capture_thread.isRunning():
-                self.capture_thread.terminate()
+                self.capture_thread.stop()
                 self.capture_thread.wait(1000)  # Wait with timeout
         except Exception as e:
             logger.debug(f"Error stopping capture thread: {e}")

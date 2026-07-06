@@ -4,6 +4,7 @@ Unit tests for the hotkey manager debounce behavior.
 import importlib.util
 from pathlib import Path
 import sys
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -32,6 +33,10 @@ with patch.dict(sys.modules, {"keyboard": keyboard_stub, "config": config_stub})
     MODULE_SPEC.loader.exec_module(hotkey_manager_module)
 
 HotkeyManager = hotkey_manager_module.HotkeyManager
+# hotkey_manager.py is a platform dispatcher; the real implementation lives in
+# the selected backend (_hotkey_pynput on macOS/Linux, _hotkey_keyboard on
+# Windows). Both call time.monotonic(), so patching the time module covers
+# whichever backend is active.
 
 
 class TestHotkeyManager(unittest.TestCase):
@@ -42,7 +47,7 @@ class TestHotkeyManager(unittest.TestCase):
         """Record toggle debounce should not depend on wall-clock jumps."""
         manager = HotkeyManager()
 
-        with patch.object(hotkey_manager_module.time, "monotonic", side_effect=[100.0, 100.05, 100.4]):
+        with patch.object(time, "monotonic", side_effect=[100.0, 100.05, 100.4]):
             self.assertTrue(manager._should_trigger_record_toggle())
             self.assertFalse(manager._should_trigger_record_toggle())
             self.assertTrue(manager._should_trigger_record_toggle())
@@ -52,13 +57,13 @@ class TestHotkeyManager(unittest.TestCase):
         """Enable/disable should allow the next record toggle immediately."""
         manager = HotkeyManager()
 
-        with patch.object(hotkey_manager_module.time, "monotonic", return_value=100.0):
+        with patch.object(time, "monotonic", return_value=100.0):
             self.assertTrue(manager._should_trigger_record_toggle())
 
         manager._toggle_program_enabled()
         self.assertIsNone(manager._last_trigger_time)
 
-        with patch.object(hotkey_manager_module.time, "monotonic", return_value=100.01):
+        with patch.object(time, "monotonic", return_value=100.01):
             self.assertTrue(manager._should_trigger_record_toggle())
 
 

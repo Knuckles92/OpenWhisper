@@ -3,6 +3,7 @@ Settings dialog for PyQt6 UI.
 Tabbed interface for managing application settings.
 """
 import logging
+import sys
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
@@ -354,7 +355,11 @@ class SettingsDialog(QDialog):
         layout.addWidget(device_label)
 
         self.whisper_device_combo = QComboBox()
-        self.whisper_device_combo.addItems(["auto", "cuda", "cpu"])
+        # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
+        if sys.platform == "darwin":
+            self.whisper_device_combo.addItems(["auto", "cpu"])
+        else:
+            self.whisper_device_combo.addItems(["auto", "cuda", "cpu"])
         self.whisper_device_combo.setMinimumHeight(36)
         layout.addWidget(self.whisper_device_combo)
 
@@ -502,6 +507,9 @@ class SettingsDialog(QDialog):
                 self.whisper_model_combo.setCurrentIndex(model_index)
 
             device_index = self.whisper_device_combo.findText(whisper_device)
+            if device_index < 0:
+                logger.warning("Unsupported whisper device '%s'; falling back to auto", whisper_device)
+                device_index = self.whisper_device_combo.findText('auto')
             if device_index >= 0:
                 self.whisper_device_combo.setCurrentIndex(device_index)
 

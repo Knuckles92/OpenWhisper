@@ -1,7 +1,10 @@
 # Core dependencies
 sounddevice>=0.4.6
 numpy>=1.24.0
-keyboard>=0.13.5
+# Global hotkeys: the `keyboard` library (per-key suppression) on Windows;
+# `pynput` on macOS/Linux (also drives synthetic Cmd+V / Ctrl+V auto-paste).
+keyboard>=0.13.5 ; sys_platform == "win32"
+pynput>=1.7.6 ; sys_platform != "win32"
 openai>=1.3.0
 pyperclip>=1.8.2
 faster-whisper>=1.0.0

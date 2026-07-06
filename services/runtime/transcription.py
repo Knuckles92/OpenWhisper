@@ -7,10 +7,10 @@ import os
 import time
 from typing import TYPE_CHECKING
 
-import keyboard
 import pyperclip
 
 from config import config
+from services.hotkey_manager import send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
 try:
@@ -313,7 +313,7 @@ class TranscriptionRuntime:
 
         if auto_paste:
             try:
-                keyboard.send("ctrl+v")
+                send_paste()
                 logger.info("Transcription auto-pasted")
                 self.controller.ui_controller.set_status("Ready (Pasted)")
             except Exception as exc:

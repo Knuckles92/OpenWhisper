@@ -3,6 +3,7 @@ PyQt6 main window.
 Main application window with recording controls and transcription display.
 """
 import logging
+import sys
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -392,6 +393,62 @@ class MainWindow(QMainWindow):
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
         self._on_tab_changed(self.tabbed_content.current_index())
 
+        # macOS convention: a persistent, visible Quit button in a footer bar.
+        # Other platforms rely on the window close button and File > Exit.
+        if sys.platform == "darwin":
+            self._build_footer(outer_layout)
+
+    _FOOTER_BAR_STYLE = """
+        QWidget#footerBar {
+            background-color: #1c1c1e;
+            border-top: 1px solid #2c2c2e;
+        }
+    """
+
+    _QUIT_BUTTON_STYLE = """
+        QPushButton#quitButton {
+            background-color: #2c2c2e;
+            color: #ff453a;
+            border: 1px solid #3a3a3c;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#quitButton:hover {
+            background-color: #ff453a;
+            color: #ffffff;
+            border: 1px solid #ff453a;
+        }
+        QPushButton#quitButton:pressed {
+            background-color: #d70015;
+            color: #ffffff;
+        }
+    """
+
+    def _build_footer(self, outer_layout: QVBoxLayout) -> None:
+        """Create the bottom footer bar containing the visible Quit button."""
+        footer = QWidget()
+        footer.setObjectName("footerBar")
+        footer.setFixedHeight(48)
+        footer.setStyleSheet(self._FOOTER_BAR_STYLE)
+
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 7, 16, 7)
+        footer_layout.setSpacing(0)
+        footer_layout.addStretch()
+
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.setObjectName("quitButton")
+        self.quit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quit_button.setFixedHeight(34)
+        self.quit_button.setMinimumWidth(100)
+        self.quit_button.setStyleSheet(self._QUIT_BUTTON_STYLE)
+        self.quit_button.clicked.connect(self.quit_application)
+        footer_layout.addWidget(self.quit_button)
+
+        outer_layout.addWidget(footer)
+
     def _setup_menu(self):
         """Setup the menu bar in the custom title bar."""
         # Hide the QMainWindow's built-in menu bar
@@ -408,7 +465,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
-        file_menu.addAction("Exit", self.quit_application)
+        file_menu.addAction("Quit" if sys.platform == "darwin" else "Exit", self.quit_application)
 
         # View menu
         view_menu = menubar.addMenu("View")
@@ -772,7 +829,7 @@ class MainWindow(QMainWindow):
             # Close normally
             event.accept()
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "Ctrl+Alt+*"):
+    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
         """
         Update the hotkey display on buttons.
 

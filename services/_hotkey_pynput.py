@@ -1,14 +1,17 @@
 """
-Hotkey management for the OpenWhisper application (macOS).
+pynput-based hotkey backend (macOS and Linux).
 
-Uses ``pynput`` for global keyboard hooks. Unlike the Windows build (which used
-the ``keyboard`` library with per-key suppression), pynput cannot selectively
-suppress individual key events on macOS, so hotkeys are observed but not
-swallowed. macOS default hotkeys therefore use Command-based combinations that
-do not collide with normal typing.
+Used on platforms where the Windows ``keyboard`` library is unavailable or
+requires root. Unlike the ``keyboard`` backend (which uses per-key suppression),
+pynput cannot selectively suppress individual key events on macOS, so hotkeys
+are observed but not swallowed. macOS default hotkeys therefore use modifier
+combinations that do not collide with normal typing.
 
 Global hooks on macOS require the app to be granted Accessibility (Input
 Monitoring) permission in System Settings > Privacy & Security.
+
+This module is imported only by ``services.hotkey_manager`` when the active
+platform selects the pynput backend; nothing else should import it directly.
 """
 import logging
 import sys
@@ -151,6 +154,62 @@ def format_hotkey(modifiers, main_key: Optional[str]) -> str:
     if main_key:
         ordered.append(main_key)
     return "+".join(ordered)
+
+
+_DISPLAY_MODIFIERS: Dict[str, str] = {
+    "cmd": "⌘",
+    "ctrl": "⌃",
+    "alt": "⌥",
+    "shift": "⇧",
+}
+
+_DISPLAY_MAIN_KEYS: Dict[str, str] = {
+    "escape": "⎋",
+    "esc": "⎋",
+    "enter": "↩",
+    "space": "Space",
+    "tab": "⇥",
+    "delete": "⌫",
+    "backspace": "⌫",
+}
+
+
+def format_hotkey_display(hotkey_string: str) -> str:
+    """Format a canonical hotkey string for on-screen display (macOS symbols)."""
+    if not hotkey_string:
+        return ""
+
+    modifiers, main_key = parse_hotkey(hotkey_string)
+    if main_key is None:
+        return hotkey_string
+
+    parts = [_DISPLAY_MODIFIERS[m] for m in _ALL_MODIFIERS if m in modifiers]
+    if len(main_key) == 1:
+        main_display = main_key.upper()
+    else:
+        main_display = _DISPLAY_MAIN_KEYS.get(main_key, main_key.title())
+    parts.append(main_display)
+    return "".join(parts)
+
+
+# --- Synthetic paste -----------------------------------------------------------
+
+_paste_controller: Optional[pynput_keyboard.Controller] = None
+
+
+def send_paste() -> None:
+    """Simulate a paste keystroke via pynput.
+
+    Uses Cmd+V on macOS and Ctrl+V on Linux. Requires Accessibility permission
+    for the host process to post synthetic key events on macOS.
+    """
+    global _paste_controller
+    if _paste_controller is None:
+        _paste_controller = pynput_keyboard.Controller()
+    modifier = pynput_keyboard.Key.cmd if sys.platform == "darwin" else pynput_keyboard.Key.ctrl
+    with _paste_controller.pressed(modifier):
+        _paste_controller.press("v")
+        _paste_controller.release("v")
 
 
 class HotkeyManager:

@@ -2,6 +2,7 @@
 Configuration constants for the OpenWhisper application.
 """
 import os
+import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Dict, List, Tuple
@@ -113,12 +114,14 @@ class AppConfig:
     SILENCE_DURATION_SEC: float = 0.5  # Duration of silence needed for split point
     OVERLAP_DURATION_SEC: float = 2.0  # Overlap between chunks to avoid word cutoffs
 
-    # Whisper model - "auto" selects based on hardware (turbo for GPU, base for CPU)
+    # Whisper model - "auto" selects based on hardware (turbo for GPU, base for
+    # CPU). On macOS there is no CUDA, so "auto" resolves to CPU (base model).
     DEFAULT_WHISPER_MODEL: str = "auto"
 
-    # Faster-whisper settings
-    FASTER_WHISPER_DEVICE: str = "auto"  # "auto", "cuda", "cpu"
-    FASTER_WHISPER_COMPUTE_TYPE: str = "auto"  # "auto", "float16", "int8", "float32"
+    # Faster-whisper settings. CUDA is unavailable on macOS (faster-whisper has
+    # no MPS/Metal backend), so "auto" runs on CPU there.
+    FASTER_WHISPER_DEVICE: str = "auto"  # "auto", "cuda", "cpu" (cuda N/A on macOS)
+    FASTER_WHISPER_COMPUTE_TYPE: str = "auto"  # "auto", "float16", "int8", "float32" (float16 needs GPU)
     FASTER_WHISPER_VAD_ENABLED: bool = True
     FASTER_WHISPER_VAD_MIN_SILENCE_MS: int = 500
     FASTER_WHISPER_BEAM_SIZE: int = 5
@@ -136,11 +139,22 @@ class AppConfig:
     def __post_init__(self):
         """Initialize computed fields after dataclass creation."""
         if self.DEFAULT_HOTKEYS is None:
-            self.DEFAULT_HOTKEYS = {
-                'record_toggle': 'kp *',
-                'cancel': 'kp -',
-                'enable_disable': 'ctrl+alt+kp *'
-            }
+            if sys.platform == "darwin":
+                # Control+Option combos avoid macOS system shortcuts (Spotlight,
+                # input sources, emoji picker) and common app defaults such as
+                # 1Password Quick Access (Cmd+Shift+Space). Modifiers: cmd, ctrl,
+                # alt (option), shift. Numpad keys are unreliable on Mac laptops.
+                self.DEFAULT_HOTKEYS = {
+                    'record_toggle': 'ctrl+alt+r',
+                    'cancel': 'ctrl+alt+escape',
+                    'enable_disable': 'ctrl+alt+shift+r'
+                }
+            else:
+                self.DEFAULT_HOTKEYS = {
+                    'record_toggle': 'kp *',
+                    'cancel': 'kp -',
+                    'enable_disable': 'ctrl+alt+kp *'
+                }
 
         if self.MODEL_VALUE_MAP is None:
             self.MODEL_VALUE_MAP = {

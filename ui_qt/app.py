@@ -16,6 +16,12 @@ class QtApplication:
 
     def __init__(self):
         """Initialize the Qt application."""
+        # Set before the QApplication is created so macOS shows the right name
+        # in the menu bar and About panel.
+        QApplication.setApplicationName("OpenWhisper")
+        QApplication.setApplicationDisplayName("OpenWhisper")
+        QApplication.setOrganizationName("OpenWhisper")
+
         self.app = QApplication.instance()
         if self.app is None:
             self.app = QApplication([])

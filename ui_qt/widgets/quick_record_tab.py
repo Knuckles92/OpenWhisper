@@ -107,14 +107,29 @@ class QuickRecordTab(QWidget):
 
         self.record_button = SuccessButton("Start Recording")
         self.cancel_button = WarningButton("Cancel")
-        self.cancel_button.setEnabled(False)
+        self.cancel_button.set_active(False)
         self.stop_button = DangerButton("Stop")
-        self.stop_button.setEnabled(False)
+        self.stop_button.set_active(False)
+
+        buttons_widget = QWidget()
+        buttons_layout = QVBoxLayout(buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(12)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+        top_row.addWidget(self.record_button, stretch=1)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+        bottom_row.addWidget(self.stop_button, stretch=1)
+        bottom_row.addWidget(self.cancel_button, stretch=1)
+
+        buttons_layout.addLayout(top_row)
+        buttons_layout.addLayout(bottom_row)
 
         control_panel.layout.addStretch()
-        control_panel.layout.addWidget(self.record_button)
-        control_panel.layout.addWidget(self.stop_button)
-        control_panel.layout.addWidget(self.cancel_button)
+        control_panel.layout.addWidget(buttons_widget, stretch=1)
         control_panel.layout.addStretch()
 
         content_layout.addWidget(control_panel)
@@ -177,17 +192,17 @@ class QuickRecordTab(QWidget):
     def _update_recording_state(self):
         """Update button states based on recording status."""
         if self.is_recording:
-            self.record_button.setEnabled(False)
+            self.record_button.set_active(False)
             self.record_button.setText("Recording...")
-            self.stop_button.setEnabled(True)
-            self.cancel_button.setEnabled(True)
+            self.stop_button.set_active(True)
+            self.cancel_button.set_active(True)
             self.model_combo.setEnabled(False)
             self.status_label.setText("Recording in progress...")
         else:
-            self.record_button.setEnabled(True)
+            self.record_button.set_active(True)
             self.record_button.setText("Start Recording")
-            self.stop_button.setEnabled(False)
-            self.cancel_button.setEnabled(False)
+            self.stop_button.set_active(False)
+            self.cancel_button.set_active(False)
             self.model_combo.setEnabled(True)
             self.status_label.setText("Ready to record")
 
@@ -295,7 +310,7 @@ class QuickRecordTab(QWidget):
                     self.model_combo.blockSignals(False)
                 break
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "Ctrl+Alt+*"):
+    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
         """Update the hotkey display on buttons.
 
         Args:
