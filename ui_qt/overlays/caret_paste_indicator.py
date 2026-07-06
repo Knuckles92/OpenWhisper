@@ -61,6 +61,12 @@ class CaretPasteIndicator(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        if sys.platform == "darwin":
+            # On macOS, Qt Tool windows are hidden whenever the app is not the
+            # frontmost application (or when its main window is minimized). The
+            # caret indicator is shown over whatever app the user is pasting into,
+            # so it must stay visible while OpenWhisper is in the background.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
         self._size = 72
         self.setFixedSize(self._size, self._size)
