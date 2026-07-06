@@ -147,13 +147,15 @@ class AppConfig:
                 self.DEFAULT_HOTKEYS = {
                     'record_toggle': 'ctrl+alt+r',
                     'cancel': 'ctrl+alt+escape',
-                    'enable_disable': 'ctrl+alt+shift+r'
+                    'enable_disable': 'ctrl+alt+shift+r',
+                    'minimize_tray': 'ctrl+alt+m'
                 }
             else:
                 self.DEFAULT_HOTKEYS = {
                     'record_toggle': 'kp *',
                     'cancel': 'kp -',
-                    'enable_disable': 'ctrl+alt+kp *'
+                    'enable_disable': 'ctrl+alt+kp *',
+                    'minimize_tray': 'ctrl+alt+m'
                 }
 
         if self.MODEL_VALUE_MAP is None:

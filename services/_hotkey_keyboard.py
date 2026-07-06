@@ -125,6 +125,7 @@ class HotkeyManager:
         self.on_record_toggle: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
+        self.on_minimize_tray: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -167,6 +168,14 @@ class HotkeyManager:
                     import threading
                     threading.Thread(target=self.on_cancel, daemon=True).start()
                 return False  # Suppress cancel key when handling
+
+            # Check minimize-to-tray hotkey
+            elif self._matches_hotkey(event, self.hotkeys.get('minimize_tray')):
+                if self.on_minimize_tray:
+                    # Run callback in a separate thread to avoid blocking
+                    import threading
+                    threading.Thread(target=self.on_minimize_tray, daemon=True).start()
+                return False  # Suppress minimize key when handling
 
         # Let all other keys pass through
         return True
@@ -308,6 +317,7 @@ class HotkeyManager:
                      on_record_toggle: Callable = None,
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
+                     on_minimize_tray: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
                      is_transcribing_fn: Callable[[], bool] = None):
@@ -317,6 +327,7 @@ class HotkeyManager:
             on_record_toggle: Called when record toggle hotkey is pressed.
             on_cancel: Called when cancel hotkey is pressed.
             on_enable_toggle: Called when enable/disable hotkey is pressed.
+            on_minimize_tray: Called when minimize-to-tray hotkey is pressed.
             on_status_update: Called to update status display.
             on_status_update_auto_hide: Called to update status with auto-hide.
             is_transcribing_fn: Function to check if transcription is in progress.
@@ -324,6 +335,7 @@ class HotkeyManager:
         self.on_record_toggle = on_record_toggle
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
+        self.on_minimize_tray = on_minimize_tray
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn
