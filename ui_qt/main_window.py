@@ -253,8 +253,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("OpenWhisper")
 
-        # Frameless window with custom title bar
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        # Frameless window with custom title bar.
+        # Keep the explicit Window type flag: setWindowFlags() replaces *all*
+        # flags, and a bare FramelessWindowHint drops the top-level Window type.
+        # On macOS that produces an NSWindow that fails to order back to the
+        # front after hide() (i.e. can't be restored from the tray); on Windows
+        # it happens to work either way. Including Window is safe on both.
+        self.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        )
         self.setMinimumSize(
             config.MAIN_WINDOW_MIN_WIDTH,
             config.MAIN_WINDOW_MIN_HEIGHT,
@@ -680,6 +687,25 @@ class MainWindow(QMainWindow):
         """Minimize the window to the system tray."""
         logger.info("Minimizing to tray")
         self.hide()
+
+    def restore_from_tray(self):
+        """Reliably bring the window back from the tray / hidden state.
+
+        macOS needs the full clear-minimized + show + raise + activate
+        sequence: once an app has no visible windows it is deactivated, so a
+        bare showNormal() can leave the window hidden behind other apps (or not
+        appear at all). The sequence is harmless on Windows, which restores fine
+        from showNormal() alone.
+        """
+        logger.info("Restoring window from tray")
+        # Drop any minimized bit and mark the window active before showing.
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive
+        )
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def quit_application(self):
         """Quit the application completely (bypasses minimize to tray)."""

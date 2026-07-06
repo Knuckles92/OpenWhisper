@@ -119,9 +119,7 @@ class SystemTrayManager(QSystemTrayIcon):
     def _on_show(self):
         """Handle show action."""
         if self.main_window:
-            self.main_window.showNormal()
-            self.main_window.raise_()
-            self.main_window.activateWindow()
+            self.main_window.restore_from_tray()
 
         if self.on_show:
             self.on_show()

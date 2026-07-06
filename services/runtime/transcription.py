@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pyperclip
 
 from config import config
-from services.hotkey_manager import send_paste
+from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
 try:
@@ -304,14 +304,19 @@ class TranscriptionRuntime:
         copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
         auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
 
-        if copy_clipboard:
+        # Synthetic paste posts a key event, which needs macOS Accessibility
+        # permission. Without it, degrade to clipboard so the text isn't lost and
+        # the user can paste manually with Cmd+V.
+        paste_blocked = auto_paste and not is_accessibility_trusted()
+
+        if copy_clipboard or paste_blocked:
             try:
                 pyperclip.copy(transcript)
                 logger.info("Transcription copied to clipboard")
             except Exception as exc:
                 logger.error(f"Failed to copy to clipboard: {exc}")
 
-        if auto_paste:
+        if auto_paste and not paste_blocked:
             try:
                 send_paste()
                 logger.info("Transcription auto-pasted")
@@ -321,6 +326,13 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.set_status(
                     "Transcription complete (paste failed)"
                 )
+        elif paste_blocked:
+            logger.warning(
+                "Auto-paste skipped: macOS Accessibility permission not granted."
+            )
+            self.controller.ui_controller.set_status(
+                "Copied to clipboard — press Cmd+V (enable Accessibility to auto-paste)"
+            )
         else:
             self.controller.ui_controller.set_status("Ready")
 
