@@ -56,12 +56,13 @@ open. Root causes:
 
 - Search input moves up under the main "History" header (always visible, does
   not scroll away); still debounced 250ms and filters history entries.
-- Recordings + history sections both live inside one scroll area so long
-  recording lists can no longer push the history section off-screen.
-- Section headers show live counts (e.g. `RECENT RECORDINGS (3)`).
+- Single unified **HISTORY** list (no separate recordings section — saved
+  audio is surfaced on history cards that have `audio_file` set).
+- Section header shows live count (e.g. `HISTORY (12)`).
 - History cards get a model badge chip (Local / API / GPT-4o…) in the top row;
-  context menu (Copy / Re-transcribe / Delete), click-to-select, and audio
-  indicator all preserved.
+  file size when available; inline **Re-transcribe & Copy** button when audio
+  exists; context menu (Copy / Re-transcribe & Copy / Delete); click-to-select
+  loads existing transcript and copies it to clipboard.
 - Slim styled scrollbar, refined empty states, `WA_StyledBackground` set so
   the sidebar QSS background/border actually paint.
 
@@ -98,5 +99,6 @@ minimum hint and the right side of the panel was clipped. Fixes:
    smoothly with content already visible (no pop-in).
 3. Toggle rapidly mid-animation — reversal continues from the current width.
 4. Expand, resize window wider, collapse — window returns to (new width − 380).
-5. Search filtering, copy/delete/re-transcribe context actions, recording
-   Transcribe buttons, and geometry save/restore all behave as before.
+5. Search filtering, copy/delete/re-transcribe context actions, inline
+   **Re-transcribe & Copy** buttons on audio-backed cards, and geometry
+   save/restore all behave as before.

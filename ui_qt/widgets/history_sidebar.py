@@ -1,5 +1,5 @@
 """
-History sidebar widget for displaying transcription history and saved recordings.
+History sidebar widget for displaying transcription history.
 Collapsible sidebar panel that slides in/out from the right side of the main window.
 
 Animation design: the sidebar animates a single ``sidebarWidth`` property and
@@ -18,7 +18,8 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTime
 from PyQt6.QtGui import QFont
 
 from config import config
-from services.history_manager import HistoryEntry, RecordingInfo, history_manager
+from services.format_utils import format_file_size
+from services.history_manager import HistoryEntry, history_manager
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
@@ -58,6 +59,9 @@ class HistoryItemWidget(QFrame):
     def __init__(self, entry: HistoryEntry, parent=None):
         super().__init__(parent)
         self.entry = entry
+        self._audio_path = None
+        if self.entry.audio_file:
+            self._audio_path = history_manager.get_recording_path(self.entry.audio_file)
         self.setObjectName("historyItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -72,7 +76,7 @@ class HistoryItemWidget(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
-        # Top row: timestamp, audio indicator, model badge
+        # Top row: timestamp, audio indicator, file size, model badge
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
@@ -81,10 +85,16 @@ class HistoryItemWidget(QFrame):
         self.timestamp_label.setFont(QFont("Segoe UI", 10))
         top_row.addWidget(self.timestamp_label)
 
-        if self.entry.audio_file:
+        if self._audio_path:
             audio_indicator = QLabel("🎤")
             audio_indicator.setToolTip("Audio recording available")
             top_row.addWidget(audio_indicator)
+
+            if self.entry.file_size:
+                size_label = QLabel(format_file_size(self.entry.file_size))
+                size_label.setObjectName("historyFileSize")
+                size_label.setFont(QFont("Segoe UI", 9))
+                top_row.addWidget(size_label)
 
         top_row.addStretch()
 
@@ -111,6 +121,23 @@ class HistoryItemWidget(QFrame):
         self.preview_label.setFont(QFont("Segoe UI", 11))
         self.preview_label.setMaximumHeight(60)
         layout.addWidget(self.preview_label)
+
+        if self._audio_path:
+            action_row = QHBoxLayout()
+            action_row.addStretch()
+            self.retranscribe_btn = QPushButton("Re-transcribe & Copy")
+            self.retranscribe_btn.setObjectName("retranscribeBtn")
+            self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.retranscribe_btn.setFixedHeight(32)
+            self.retranscribe_btn.setToolTip(
+                "Re-run this recording with the current model, "
+                "then copy the result to clipboard"
+            )
+            self.retranscribe_btn.clicked.connect(
+                lambda: self.retranscribe_requested.emit(self._audio_path)
+            )
+            action_row.addWidget(self.retranscribe_btn)
+            layout.addLayout(action_row)
 
     def _apply_style(self):
         """Apply custom styling."""
@@ -141,6 +168,26 @@ class HistoryItemWidget(QFrame):
                 color: #e5e5e7;
                 background-color: transparent;
                 line-height: 1.4;
+            }
+            QLabel#historyFileSize {
+                color: #98989d;
+                background-color: transparent;
+            }
+            QPushButton#retranscribeBtn {
+                background-color: rgba(48, 209, 88, 0.15);
+                color: #32d74b;
+                border: 1px solid rgba(48, 209, 88, 0.3);
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton#retranscribeBtn:hover {
+                background-color: rgba(48, 209, 88, 0.25);
+                border: 1px solid rgba(48, 209, 88, 0.5);
+            }
+            QPushButton#retranscribeBtn:pressed {
+                background-color: rgba(48, 209, 88, 0.35);
             }
         """)
 
@@ -185,13 +232,11 @@ class HistoryItemWidget(QFrame):
         copy_action.triggered.connect(lambda: self.copy_requested.emit(self.entry.id))
 
         # Re-transcribe action (only if audio exists)
-        if self.entry.audio_file:
-            audio_path = history_manager.get_recording_path(self.entry.audio_file)
-            if audio_path:
-                retranscribe_action = menu.addAction("Re-transcribe")
-                retranscribe_action.triggered.connect(
-                    lambda: self.retranscribe_requested.emit(audio_path)
-                )
+        if self._audio_path:
+            retranscribe_action = menu.addAction("Re-transcribe & Copy")
+            retranscribe_action.triggered.connect(
+                lambda: self.retranscribe_requested.emit(self._audio_path)
+            )
 
         menu.addSeparator()
 
@@ -204,99 +249,16 @@ class HistoryItemWidget(QFrame):
     def mousePressEvent(self, event):
         """Handle click to view full transcription."""
         if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.pos())
+            if child is not None and isinstance(child, QPushButton):
+                super().mousePressEvent(event)
+                return
             self.clicked.emit(self.entry.id)
         super().mousePressEvent(event)
 
 
-class RecordingItemWidget(QFrame):
-    """Widget displaying a saved recording."""
-
-    retranscribe_requested = pyqtSignal(str)  # Emits file path
-
-    def __init__(self, recording: RecordingInfo, parent=None):
-        super().__init__(parent)
-        self.recording = recording
-        self.setObjectName("recordingItem")
-
-        self._setup_ui()
-        self._apply_style()
-
-    def _setup_ui(self):
-        """Setup the widget UI."""
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(10)
-
-        # Left side: info
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
-
-        # Timestamp
-        self.timestamp_label = QLabel(self.recording.formatted_timestamp)
-        self.timestamp_label.setObjectName("recordingTimestamp")
-        self.timestamp_label.setFont(QFont("Segoe UI", 11))
-        info_layout.addWidget(self.timestamp_label)
-
-        # File size
-        self.size_label = QLabel(self.recording.formatted_size)
-        self.size_label.setObjectName("recordingSize")
-        self.size_label.setFont(QFont("Segoe UI", 9))
-        info_layout.addWidget(self.size_label)
-
-        layout.addLayout(info_layout)
-        layout.addStretch()
-
-        # Re-transcribe button
-        self.retranscribe_btn = QPushButton("Transcribe")
-        self.retranscribe_btn.setObjectName("retranscribeBtn")
-        self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retranscribe_btn.setFixedHeight(32)
-        self.retranscribe_btn.clicked.connect(
-            lambda: self.retranscribe_requested.emit(self.recording.file_path)
-        )
-        layout.addWidget(self.retranscribe_btn)
-
-    def _apply_style(self):
-        """Apply custom styling."""
-        self.setStyleSheet("""
-            QFrame#recordingItem {
-                background-color: rgba(44, 44, 46, 0.5);
-                border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
-            }
-            QFrame#recordingItem:hover {
-                background-color: rgba(58, 58, 60, 0.6);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-            QLabel#recordingTimestamp {
-                color: #e5e5e7;
-                background-color: transparent;
-            }
-            QLabel#recordingSize {
-                color: #98989d;
-                background-color: transparent;
-            }
-            QPushButton#retranscribeBtn {
-                background-color: rgba(48, 209, 88, 0.15);
-                color: #32d74b;
-                border: 1px solid rgba(48, 209, 88, 0.3);
-                border-radius: 8px;
-                padding: 6px 16px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton#retranscribeBtn:hover {
-                background-color: rgba(48, 209, 88, 0.25);
-                border: 1px solid rgba(48, 209, 88, 0.5);
-            }
-            QPushButton#retranscribeBtn:pressed {
-                background-color: rgba(48, 209, 88, 0.35);
-            }
-        """)
-
-
 class HistorySidebar(QWidget):
-    """Collapsible sidebar showing transcription history and saved recordings."""
+    """Collapsible sidebar showing transcription history."""
 
     # Signals for Quick Record mode
     entry_selected = pyqtSignal(str)  # Emits entry_id when clicked
@@ -378,8 +340,6 @@ class HistorySidebar(QWidget):
         self._search_timer.setInterval(250)
         self._search_timer.timeout.connect(self._load_history)
 
-        # Single scroll area holding both sections so long recording lists
-        # can't push the history section off-screen.
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -398,24 +358,7 @@ class HistorySidebar(QWidget):
         scroll_layout.setSpacing(12)
         scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Recordings section
-        self.recordings_header = QLabel("RECENT RECORDINGS")
-        self.recordings_header.setObjectName("sectionHeader")
-        self.recordings_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-        scroll_layout.addWidget(self.recordings_header)
-
-        self.recordings_container = QVBoxLayout()
-        self.recordings_container.setSpacing(12)
-        scroll_layout.addLayout(self.recordings_container)
-
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); max-height: 1px; margin: 8px 0px;")
-        scroll_layout.addWidget(divider)
-
-        # History section
-        self.history_header = QLabel("TRANSCRIPTION HISTORY")
+        self.history_header = QLabel("HISTORY")
         self.history_header.setObjectName("sectionHeader")
         self.history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         scroll_layout.addWidget(self.history_header)
@@ -594,7 +537,6 @@ class HistorySidebar(QWidget):
             return
 
         self._refresh_pending = False
-        self._load_recordings()
         self._load_history()
 
     @staticmethod
@@ -611,26 +553,6 @@ class HistorySidebar(QWidget):
         label.setStyleSheet("color: #636366; font-size: 12px; padding: 8px 0px;")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return label
-
-    def _load_recordings(self):
-        """Load and display saved recordings."""
-        self._clear_layout(self.recordings_container)
-
-        recordings = history_manager.get_recordings()
-        self.recordings_header.setText(
-            f"RECENT RECORDINGS ({len(recordings)})" if recordings else "RECENT RECORDINGS"
-        )
-
-        if not recordings:
-            self.recordings_container.addWidget(
-                self._make_empty_label("No saved recordings")
-            )
-            return
-
-        for recording in recordings:
-            item = RecordingItemWidget(recording)
-            item.retranscribe_requested.connect(self.retranscribe_requested.emit)
-            self.recordings_container.addWidget(item)
 
     def _on_search_text_changed(self, text: str):
         """Restart the debounce timer on each keystroke."""
@@ -651,11 +573,11 @@ class HistorySidebar(QWidget):
             ]
 
         self.history_header.setText(
-            f"TRANSCRIPTION HISTORY ({len(entries)})" if entries else "TRANSCRIPTION HISTORY"
+            f"HISTORY ({len(entries)})" if entries else "HISTORY"
         )
 
         if not entries:
-            message = "No matching entries" if query else "No transcription history"
+            message = "No matching entries" if query else "No history yet"
             self.history_list_layout.addWidget(self._make_empty_label(message))
             return
 

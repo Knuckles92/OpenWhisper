@@ -21,7 +21,6 @@ from ui_qt.widgets.history_sidebar import (
     HistoryToggleButton,
     HistoryEdgeTab,
     HistoryItemWidget,
-    RecordingItemWidget,
 )
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
@@ -46,7 +45,6 @@ __all__ = [
     "HistoryToggleButton",
     "HistoryEdgeTab",
     "HistoryItemWidget",
-    "RecordingItemWidget",
     "TranscriptionStatsWidget",
     "CollapsibleSectionToggle",
     "LocalEngineControls",
