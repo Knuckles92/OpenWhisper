@@ -47,7 +47,6 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
-| Visible Quit button | — | Footer Quit button (macOS convention) | — |
 | GPU | CUDA (NVIDIA) | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
 
