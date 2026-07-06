@@ -91,13 +91,17 @@ OPENAI_API_KEY=your-key
 
 ## Required macOS permissions
 
-macOS gates some features behind privacy permissions. Grant these to the app you launch OpenWhisper from (Terminal, iTerm, or a bundled app):
+macOS gates some features behind privacy permissions. Grant these to the app identity that is actually running OpenWhisper:
 
 - **Microphone** — needed to record audio (System Settings > Privacy & Security > Microphone). You'll be prompted on first recording.
 - **Accessibility** — needed only for **auto-paste** (the synthetic `Cmd+V` that inserts transcription into the focused app). Without it, transcriptions are still copied to the clipboard and you can paste manually. Global hotkeys work without Accessibility (Carbon `RegisterEventHotKey`).
 - **Input Monitoring** *(optional)* — may be required when **remapping hotkeys** in Settings > Hotkeys (the capture dialog uses a `pynput` listener). Normal hotkey use does not need this.
 
-If auto-paste silently does nothing, enable Accessibility for your Python binary, then fully quit and relaunch the app. If hotkey capture in Settings fails, add Input Monitoring as well.
+For packaged builds, this should appear as the OpenWhisper app. For development launches from a virtualenv, use `scripts/openwhisper` or `ow`; on macOS the launcher runs through the framework `Python.app` so Accessibility has an app bundle it can select. If the list does not populate automatically, use the `+` button in Accessibility and add the app bundle shown in OpenWhisper's startup prompt, then fully quit and relaunch the app.
+
+Do not add `venv/bin/python` manually if macOS greys it out in the picker. That path is usually a virtualenv symlink, and newer macOS pickers often only allow selecting app bundles from this dialog.
+
+If auto-paste silently does nothing, Accessibility is still missing for the current launch identity. If hotkey capture in Settings fails, add Input Monitoring as well.
 
 ## Quick Launch (Windows)
 
@@ -220,4 +224,3 @@ python app_qt.py
 ## License
 
 MIT License. Free to use, clone, and modify.
-

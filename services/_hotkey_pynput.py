@@ -7,16 +7,19 @@ pynput cannot selectively suppress individual key events on macOS, so hotkeys
 are observed but not swallowed. macOS default hotkeys therefore use modifier
 combinations that do not collide with normal typing.
 
-Global hooks on macOS require the app to be granted Accessibility (Input
-Monitoring) permission in System Settings > Privacy & Security.
+On macOS the primary hotkey path uses Carbon and does not need Accessibility.
+Accessibility is still needed for synthetic auto-paste and for the pynput
+fallback/capture paths that observe or post keyboard events.
 
 This module is imported only by ``services.hotkey_manager`` when the active
 platform selects the pynput backend; nothing else should import it directly.
 """
 import logging
+import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from pynput import keyboard as pynput_keyboard
@@ -196,12 +199,11 @@ def format_hotkey_display(hotkey_string: str) -> str:
 
 
 def is_accessibility_trusted() -> bool:
-    """Return whether this process may observe global key events on macOS.
+    """Return whether this process has macOS Accessibility trust.
 
-    The pynput global event tap only receives keystrokes when the host process
-    is granted Accessibility permission (System Settings > Privacy & Security >
-    Accessibility). Without it the tap is silently inert, so hotkeys only work
-    while the OpenWhisper window itself is focused (via the Qt fallback).
+    Synthetic Cmd+V auto-paste and pynput event taps only work when the host
+    process is granted Accessibility permission (System Settings > Privacy &
+    Security > Accessibility). Carbon global hotkeys do not need this grant.
 
     Returns True on non-macOS platforms, which have no equivalent gate, and also
     fails open (True) if the trust state cannot be queried, so the user is never
@@ -221,21 +223,158 @@ def is_accessibility_trusted() -> bool:
 def request_accessibility_trust() -> bool:
     """Register this process with macOS Accessibility and show the system prompt.
 
-    Calling the options API is what makes the host binary appear in the
-    Accessibility list so the user can toggle it on; passing the prompt option
-    also surfaces the native permission dialog. Returns the current trust state
-    (granting takes effect on the next launch). No-op on non-macOS platforms.
+    Calling the options API is what makes the current launch identity eligible
+    for the Accessibility list; passing the prompt option also surfaces the
+    native permission dialog. Returns the current trust state (granting takes
+    effect on the next launch). No-op on non-macOS platforms.
     """
     if sys.platform != "darwin":
         return True
     try:
         import HIServices
 
+        logger.info("Requesting macOS Accessibility trust for %s", sys.executable)
         options = {HIServices.kAXTrustedCheckOptionPrompt: True}
-        return bool(HIServices.AXIsProcessTrustedWithOptions(options))
+        trusted = bool(HIServices.AXIsProcessTrustedWithOptions(options))
+        logger.info("macOS Accessibility trust request returned %s", trusted)
+        return trusted
     except Exception as exc:
         logger.warning(f"Could not request macOS Accessibility trust: {exc}")
         return False
+
+
+def _find_containing_app_bundle(path: str) -> Optional[Path]:
+    """Return the nearest .app bundle containing path, if this is a bundled app."""
+    if not path:
+        return None
+
+    candidates = [Path(path)]
+    try:
+        real_path = Path(os.path.realpath(path))
+        if real_path != candidates[0]:
+            candidates.append(real_path)
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        for parent in (candidate, *candidate.parents):
+            if parent.name.endswith(".app"):
+                return parent
+    return None
+
+
+def _find_python_framework_app_bundle() -> Optional[Path]:
+    """Return the framework Python.app for virtualenv/dev launches, if present."""
+    prefixes = {
+        getattr(sys, "base_prefix", ""),
+        getattr(sys, "exec_prefix", ""),
+        getattr(sys, "prefix", ""),
+    }
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        app_bundle = Path(os.path.realpath(prefix)) / "Resources" / "Python.app"
+        executable = app_bundle / "Contents" / "MacOS" / "Python"
+        if executable.is_file() and os.access(executable, os.X_OK):
+            return app_bundle
+    return None
+
+
+def accessibility_permission_instructions() -> str:
+    """Return user-facing macOS Accessibility instructions for this launch."""
+    if sys.platform != "darwin":
+        return ""
+
+    launch_app = os.environ.get("OPENWHISPER_MACOS_LAUNCH_APP", "")
+    launch_app_bundle = Path(launch_app) if launch_app else None
+    if (
+        launch_app_bundle is not None
+        and launch_app_bundle.name.endswith(".app")
+        and launch_app_bundle.is_dir()
+    ):
+        launch_app_name = (
+            launch_app_bundle.name
+            if launch_app_bundle.stem.lower().startswith("python")
+            else launch_app_bundle.stem
+        )
+        return (
+            "Development launch note: OpenWhisper is running through "
+            f"{launch_app_name}, so OpenWhisper may not appear by name.\n"
+            f"Enable {launch_app_name} in the Accessibility list. If it "
+            "is not already listed, use the + button and add:\n"
+            f"{launch_app_bundle}"
+        )
+
+    app_bundle = (
+        _find_containing_app_bundle(sys.executable)
+        or _find_containing_app_bundle(getattr(sys, "_base_executable", ""))
+    )
+    if app_bundle is not None:
+        return (
+            f"Enable {app_bundle.stem} in the Accessibility list. If it is not "
+            "already listed, add the app bundle manually."
+        )
+
+    python_app_bundle = _find_python_framework_app_bundle()
+    if python_app_bundle is not None:
+        return (
+            "Development launch note: virtualenv Python files can be greyed out "
+            "in this macOS picker.\n"
+            "Quit OpenWhisper and relaunch it with scripts/openwhisper or ow, "
+            "then enable Python.app in Accessibility. If it is not already "
+            "listed, use the + button and add:\n"
+            f"{python_app_bundle}"
+        )
+
+    executable = sys.executable
+    real_executable = os.path.realpath(executable)
+    real_name = os.path.basename(real_executable) or "python"
+    lines = [
+        "Development launch note: OpenWhisper may not appear by name.",
+        (
+            "Enable the launcher or interpreter instead. Look for your terminal "
+            f"or IDE, Python, or {real_name}."
+        ),
+        "If nothing appears, use the + button and add:",
+        executable,
+    ]
+    if real_executable != executable:
+        lines.extend(
+            ["", "If macOS resolves the virtualenv symlink, add:", real_executable]
+        )
+    lines.extend(
+        [
+            "",
+            "If the picker greys out those Python files, launch OpenWhisper with "
+            "scripts/openwhisper so macOS can select Python.app.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def accessibility_permission_diagnostics() -> str:
+    """Return detailed macOS permission identity data for troubleshooting."""
+    if sys.platform != "darwin":
+        return ""
+
+    executable = sys.executable
+    real_executable = os.path.realpath(executable)
+    app_bundle = (
+        _find_containing_app_bundle(executable)
+        or _find_containing_app_bundle(getattr(sys, "_base_executable", ""))
+        or (Path(os.environ["OPENWHISPER_MACOS_LAUNCH_APP"])
+            if os.environ.get("OPENWHISPER_MACOS_LAUNCH_APP")
+            else None)
+        or _find_python_framework_app_bundle()
+    )
+    lines = [
+        f"sys.executable: {executable}",
+        f"resolved executable: {real_executable}",
+        "launcher app: "
+        f"{os.environ.get('OPENWHISPER_MACOS_LAUNCH_APP', 'not set')}",
+        f"app bundle: {app_bundle if app_bundle else 'not detected'}",
+    ]
+    return "\n".join(lines)
 
 
 # --- Synthetic paste -----------------------------------------------------------

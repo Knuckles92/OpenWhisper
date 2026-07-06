@@ -108,6 +108,16 @@ def request_accessibility_trust() -> bool:
     return True
 
 
+def accessibility_permission_instructions() -> str:
+    """No-op on Windows; present so the dispatcher's API is uniform."""
+    return ""
+
+
+def accessibility_permission_diagnostics() -> str:
+    """No-op on Windows; present so the dispatcher's API is uniform."""
+    return ""
+
+
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
 
