@@ -372,6 +372,10 @@ class MainWindow(QMainWindow):
         self.upload_file_tab = UploadFileTab()
         self.tabbed_content.add_tab(self.upload_file_tab, "Upload File")
 
+        # All transcription tabs; used to fan out shared state (model
+        # selection, engine settings, collapse mirroring, device info).
+        self.transcription_tabs = (self.quick_record_tab, self.upload_file_tab)
+
         # Sync the stack with the tab bar after all tabs are added
         # (fixes timing issue where tab bar index is restored before stack has widgets)
         self.tabbed_content.sync_stack_with_tab_bar()
@@ -379,24 +383,18 @@ class MainWindow(QMainWindow):
         # Connect tab changed signal to update sidebar and emit signal
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
 
-        # Connect Quick Record tab signals
+        # Connect signals shared by all transcription tabs
+        for tab in self.transcription_tabs:
+            tab.model_changed.connect(self._on_model_changed)
+            tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+            tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
+            tab.transcription_collapsed.connect(self._on_transcription_collapsed)
+            tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
+
+        # Connect tab-specific signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
-        self.quick_record_tab.model_changed.connect(self._on_model_changed)
-        self.quick_record_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
-        self.quick_record_tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
-        self.quick_record_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
-
-        # Connect Upload File tab signals
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
-        self.upload_file_tab.model_changed.connect(self._on_model_changed)
-        self.upload_file_tab.engine_settings_changed.connect(self._on_engine_settings_changed)
-        self.upload_file_tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
-        self.upload_file_tab.transcription_collapsed.connect(self._on_transcription_collapsed)
-        self.upload_file_tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
-
-        # Connect stats visibility change
-        self.quick_record_tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
         main_area_layout.addWidget(self.tabbed_content)
 
@@ -546,8 +544,8 @@ class MainWindow(QMainWindow):
         """Load saved settings and apply to UI."""
         try:
             saved_model = settings_manager.load_model_selection()
-            self.quick_record_tab.set_model_selection(saved_model)
-            self.upload_file_tab.set_model_selection(saved_model)
+            for tab in self.transcription_tabs:
+                tab.set_model_selection(saved_model)
             self.current_model = self.quick_record_tab.current_model
             self._apply_local_engine_visibility(self.current_model)
             logger.info(f"Loaded saved model selection: {saved_model}")
@@ -599,8 +597,8 @@ class MainWindow(QMainWindow):
         """Handle model selection change from either tab and keep both in sync."""
         self.current_model = model_name
 
-        # Sync the other tab's combo without re-emitting the signal
-        for tab in (self.quick_record_tab, self.upload_file_tab):
+        # Sync the other tabs' combos without re-emitting the signal
+        for tab in self.transcription_tabs:
             combo = tab.model_combo
             if combo.currentText() != model_name:
                 combo.blockSignals(True)
@@ -619,8 +617,8 @@ class MainWindow(QMainWindow):
             model_name: The backend display name (e.g. "Local Whisper").
         """
         is_local = config.MODEL_VALUE_MAP.get(model_name) == "local_whisper"
-        self.quick_record_tab.set_local_engine_visible(is_local)
-        self.upload_file_tab.set_local_engine_visible(is_local)
+        for tab in self.transcription_tabs:
+            tab.set_local_engine_visible(is_local)
 
     def _on_engine_settings_changed(self):
         """Keep both tabs' engine panels in sync, then notify listeners.
@@ -631,8 +629,8 @@ class MainWindow(QMainWindow):
         and guarantees the two tabs always agree. ``whisper_engine_changed`` then
         triggers the controller's background reload.
         """
-        self.quick_record_tab.local_engine.load_from_settings()
-        self.upload_file_tab.local_engine.load_from_settings()
+        for tab in self.transcription_tabs:
+            tab.local_engine.load_from_settings()
         self.whisper_engine_changed.emit()
 
     def _on_upload_file_transcribe(self, audio_path: str):
@@ -662,8 +660,8 @@ class MainWindow(QMainWindow):
         Args:
             device_info: Device information string to display.
         """
-        self.quick_record_tab.set_device_info(device_info)
-        self.upload_file_tab.set_device_info(device_info)
+        for tab in self.transcription_tabs:
+            tab.set_device_info(device_info)
 
     def set_transcript(self, text: str):
         """Set the transcription text."""
@@ -722,12 +720,9 @@ class MainWindow(QMainWindow):
             delta: The body height that was hidden/shown, in pixels.
         """
         source = self.sender()
-        other = (
-            self.upload_file_tab
-            if source is self.quick_record_tab
-            else self.quick_record_tab
-        )
-        other.set_transcription_collapsed(collapsed)
+        for tab in self.transcription_tabs:
+            if tab is not source:
+                tab.set_transcription_collapsed(collapsed)
 
         current_height = self.height()
         if collapsed:
@@ -766,12 +761,9 @@ class MainWindow(QMainWindow):
             delta: The body height that was hidden/shown, in pixels.
         """
         source = self.sender()
-        other = (
-            self.upload_file_tab
-            if source is self.quick_record_tab
-            else self.quick_record_tab
-        )
-        other.set_engine_settings_collapsed(collapsed)
+        for tab in self.transcription_tabs:
+            if tab is not source:
+                tab.set_engine_settings_collapsed(collapsed)
 
         current_height = self.height()
         if collapsed:
