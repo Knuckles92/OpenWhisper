@@ -75,6 +75,7 @@ class AppConfig:
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
     WAVEFORM_OVERLAY_HEIGHT: int = 80
+    WAVEFORM_STREAMING_MAX_HEIGHT: int = 200  # Grows with live preview text near cursor
     WAVEFORM_FRAME_RATE: int = 30
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
 
@@ -127,9 +128,10 @@ class AppConfig:
 
     # Streaming transcription settings
     STREAMING_ENABLED: bool = False  # Opt-in feature for real-time transcription
-    STREAMING_CHUNK_DURATION_SEC: float = 3.0  # Process every N seconds
+    STREAMING_CHUNK_DURATION_SEC: float = 3.0  # Process every N seconds of new audio
+    STREAMING_OVERLAP_SEC: float = 0.75  # Overlap with previous chunk for word boundaries
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
-    STREAMING_BEAM_SIZE: int = 3  # Smaller beam size for faster processing
+    STREAMING_BEAM_SIZE: int = 1  # Preview-only; keep beam tiny for speed
 
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"

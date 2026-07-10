@@ -384,6 +384,22 @@ def send_paste() -> None:
         _paste_controller.release("v")
 
 
+def type_text(text: str) -> None:
+    """Type text into the focused window via pynput.
+
+    Requires Accessibility permission on macOS to post synthetic key events.
+
+    Args:
+        text: Characters to type. Empty strings are ignored.
+    """
+    if not text:
+        return
+    global _paste_controller
+    if _paste_controller is None:
+        _paste_controller = pynput_keyboard.Controller()
+    _paste_controller.type(text)
+
+
 class HotkeyManager:
     """Manages global hotkeys and keyboard event handling via pynput."""
 

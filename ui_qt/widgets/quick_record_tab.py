@@ -136,8 +136,8 @@ class QuickRecordTab(TranscriptionTabBase):
             is_final: Whether this chunk is finalized
         """
         if is_final:
-            # Rolling re-transcription: each final result contains the COMPLETE
-            # transcription of all audio so far, so we REPLACE (not append)
+            # Incremental preview emits the full accumulated preview each cycle,
+            # so we REPLACE (not append) the buffer contents.
             self._partial_buffer = [text] if text else []
 
         # Combine finalized chunks + current partial

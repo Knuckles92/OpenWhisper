@@ -25,8 +25,10 @@ class SettingsKey:
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
+    STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
+    # Legacy key kept for reading older settings files
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
-    STREAMING_TINY_MODEL_ENABLED: Final[str] = "streaming_tiny_model_enabled"
+    LIVE_TYPING_ENABLED: Final[str] = "live_typing_enabled"
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
@@ -228,6 +230,23 @@ class SettingsManager:
         except Exception as e:
             logger.warning(f"Failed to load audio input device: {e}")
         return None
+
+
+def is_streaming_overlay_enabled(settings: Dict[str, Any]) -> bool:
+    """Return whether the streaming preview overlay is enabled.
+
+    Prefers ``streaming_overlay_enabled``; falls back to legacy
+    ``streaming_paste_enabled`` for older settings files.
+
+    Args:
+        settings: Loaded settings dictionary.
+
+    Returns:
+        True when the overlay should be shown during streaming preview.
+    """
+    if SettingsKey.STREAMING_OVERLAY_ENABLED in settings:
+        return bool(settings[SettingsKey.STREAMING_OVERLAY_ENABLED])
+    return bool(settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False))
 
 
 # Global settings manager instance

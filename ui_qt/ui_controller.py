@@ -12,7 +12,7 @@ from config import config
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
-from ui_qt.overlays import CaretPasteIndicator, StreamingTextOverlay, WaveformOverlay
+from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
@@ -41,7 +41,6 @@ class UIController(QObject):
         # Create UI components
         self.main_window = MainWindow()
         self.overlay = WaveformOverlay()
-        self.streaming_overlay = StreamingTextOverlay()
         self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
 
@@ -301,29 +300,37 @@ class UIController(QObject):
             self.streaming_flow_active = False
             return
 
-        streaming_overlay_visible = self.streaming_overlay.isVisible()
-        streaming_active = streaming_overlay_visible or self.streaming_flow_active
-
         if state is OverlayState.RECORDING:
             self.tray_manager.set_recording(True)
-            if not streaming_active:
+            if self.streaming_flow_active:
+                # Live preview uses the same cursor-anchored waveform chrome.
+                if not self.overlay.isVisible():
+                    self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
+                elif self.overlay.current_state != self.overlay.STATE_STREAMING:
+                    self.overlay.set_state(self.overlay.STATE_STREAMING)
+            else:
                 self._show_or_set_overlay(self.overlay.STATE_RECORDING)
         elif state is OverlayState.PROCESSING:
             self.tray_manager.set_recording(False)
-            if streaming_overlay_visible:
-                self.set_streaming_overlay_finalizing()
-            elif not streaming_active:
-                self._show_or_set_overlay(self.overlay.STATE_PROCESSING)
+            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_PROCESSING)
         elif state is OverlayState.TRANSCRIBING:
             self.tray_manager.set_recording(False)
-            if streaming_overlay_visible:
-                self.set_streaming_overlay_finalizing()
-            elif not streaming_active:
-                self._show_or_set_overlay(self.overlay.STATE_TRANSCRIBING)
+            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_TRANSCRIBING)
         elif state is OverlayState.STT_ENABLED:
             self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
         elif state is OverlayState.STT_DISABLED:
             self._show_or_set_overlay(self.overlay.STATE_STT_DISABLE)
+
+    def _dismiss_streaming_preview_for_waveform(self, waveform_state: str) -> None:
+        """Clear live preview text and show the classic waveform state.
+
+        Args:
+            waveform_state: Waveform overlay state to show (processing/transcribing).
+        """
+        self.streaming_flow_active = False
+        self.hide_caret_paste_indicator()
+        self.overlay.clear_streaming_text()
+        self._show_or_set_overlay(waveform_state)
 
     def _show_or_set_overlay(self, overlay_state: str) -> None:
         """Show overlay at cursor if hidden, otherwise just transition its state."""
@@ -349,14 +356,13 @@ class UIController(QObject):
         """Show the copied to clipboard animation overlay."""
         self.overlay.show_at_cursor(self.overlay.STATE_COPIED)
 
-    # Streaming text overlay methods
+    # Streaming preview methods (reuse the cursor-anchored waveform overlay)
     def show_streaming_overlay(self):
-        """Show the streaming text overlay at saved position or screen center."""
+        """Show live preview on the waveform overlay near the cursor."""
         self.streaming_flow_active = True
-        self.streaming_overlay.clear_text()
-        self.streaming_overlay.show_overlay()
-        self.hide_overlay()
-        logger.debug("Streaming overlay shown")
+        self.overlay.clear_streaming_text()
+        self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
+        logger.debug("Streaming preview shown on waveform overlay")
 
     def update_streaming_text(self, text: str, is_final: bool):
         """Update the streaming text display.
@@ -365,17 +371,17 @@ class UIController(QObject):
             text: The transcription text chunk
             is_final: Whether this chunk is finalized
         """
-        self.streaming_overlay.update_streaming_text(text, is_final)
+        self.overlay.update_streaming_text(text, is_final)
 
     def hide_streaming_overlay(self):
-        """Hide the streaming text overlay with animation."""
-        if self.streaming_overlay.isVisible():
-            self.streaming_overlay.hide_with_animation()
-            logger.debug("Streaming overlay hiding")
+        """Clear streaming preview mode on the waveform overlay."""
+        self.streaming_flow_active = False
+        self.overlay.clear_streaming_text()
+        logger.debug("Streaming preview cleared")
 
     def set_streaming_overlay_finalizing(self):
-        """Set the streaming overlay to finalizing state."""
-        self.streaming_overlay.set_state(self.streaming_overlay.STATE_FINALIZING)
+        """No-op kept for compatibility; processing uses the waveform states."""
+        return
 
     def show_caret_paste_indicator(self):
         """Show the caret paste indicator."""
@@ -391,17 +397,10 @@ class UIController(QObject):
         """Show the cancel animation and schedule hide."""
         self.cancel_animation_timer.stop()
         self.hide_caret_paste_indicator()
-
-        # Use streaming overlay's cancel animation if it's visible
-        if self.streaming_overlay.isVisible():
-            self.streaming_overlay.show_cancel_animation()
-            self.streaming_flow_active = False
-            # Streaming overlay handles its own hide after animation
-            return
-
         self.streaming_flow_active = False
+        self.overlay.clear_streaming_text()
 
-        # Use waveform overlay cancel animation for non-streaming case
+        # Use waveform overlay cancel animation
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
         else:
@@ -577,13 +576,6 @@ class UIController(QObject):
             self.overlay.close()
         except Exception as e:
             logger.debug(f"Error closing overlay: {e}")
-
-        # Cleanup streaming overlay
-        try:
-            if hasattr(self, 'streaming_overlay'):
-                self.streaming_overlay.cleanup()
-        except Exception as e:
-            logger.debug(f"Error closing streaming overlay: {e}")
 
         try:
             if hasattr(self, 'caret_paste_indicator'):

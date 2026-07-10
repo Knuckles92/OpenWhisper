@@ -73,8 +73,8 @@ class FakeSettingsManager:
     def __init__(self):
         self.all_settings = {
             "streaming_enabled": True,
-            "streaming_paste_enabled": True,
-            "streaming_tiny_model_enabled": False,
+            "streaming_overlay_enabled": True,
+            "live_typing_enabled": False,
             "streaming_chunk_duration": 4.0,
             "copy_clipboard": True,
             "auto_paste": False,
@@ -211,9 +211,10 @@ class FakeOpenAIBackend:
 
 
 class FakeStreamingTranscriber:
-    def __init__(self, backend, chunk_duration_sec):
+    def __init__(self, backend, chunk_duration_sec, overlap_sec=0.75):
         self.backend = backend
         self.chunk_duration_sec = chunk_duration_sec
+        self.overlap_sec = overlap_sec
         self.cleaned_up = False
         self.started = False
 
@@ -274,9 +275,13 @@ class FakeAudioProcessor:
 class FakeKeyboard:
     def __init__(self):
         self.sent = []
+        self.written = []
 
     def send(self, keys):
         self.sent.append(keys)
+
+    def write(self, text):
+        self.written.append(text)
 
 
 class FakePyperclip:
@@ -419,6 +424,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hotkey_module = types.ModuleType("services.hotkey_manager")
     hotkey_module.HotkeyManager = FakeHotkeyManager
     hotkey_module.send_paste = lambda: keyboard.send("ctrl+v")
+    hotkey_module.type_text = lambda text: keyboard.write(text)
     hotkey_module.is_accessibility_trusted = lambda: True
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
@@ -426,10 +432,12 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     # SettingsKey is a constants holder with no behavior, so the real one is
     # safe (and more faithful) to expose on the stub than a hand-rolled copy.
     from services.settings import SettingsKey as _RealSettingsKey
+    from services.settings import is_streaming_overlay_enabled as _is_streaming_overlay_enabled
 
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager
     settings_module.SettingsKey = _RealSettingsKey
+    settings_module.is_streaming_overlay_enabled = _is_streaming_overlay_enabled
 
     history_module = types.ModuleType("services.history_manager")
     history_module.history_manager = history_manager
@@ -439,6 +447,12 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     streaming_module = types.ModuleType("services.streaming_transcriber")
     streaming_module.StreamingTranscriber = FakeStreamingTranscriber
+    from services.streaming_transcriber import (
+        append_preview_text as _append_preview_text,
+        typing_delta as _typing_delta,
+    )
+    streaming_module.append_preview_text = _append_preview_text
+    streaming_module.typing_delta = _typing_delta
 
     database_module = types.ModuleType("services.database")
     database_module.db = types.SimpleNamespace(
@@ -447,6 +461,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     keyboard_module = types.ModuleType("keyboard")
     keyboard_module.send = keyboard.send
+    keyboard_module.write = keyboard.write
 
     pyperclip_module = types.ModuleType("pyperclip")
     pyperclip_module.copy = pyperclip.copy
@@ -606,6 +621,9 @@ class TestApplicationController(unittest.TestCase):
         controller = self._create_controller()
         self.assertIsNotNone(controller.streaming_transcriber)
         self.assertTrue(controller._streaming_enabled)
+        self.assertIsNotNone(controller._streaming_backend)
+        self.assertEqual(controller._streaming_backend.model_name, "tiny.en")
+        self.assertTrue(controller._streaming_overlay_enabled)
 
         self.settings.all_settings["streaming_enabled"] = False
         controller.reconfigure_streaming()
@@ -613,6 +631,19 @@ class TestApplicationController(unittest.TestCase):
         self.assertIsNone(controller.streaming_transcriber)
         self.assertFalse(controller._streaming_enabled)
         self.assertIn("Streaming mode disabled", controller.ui_controller.statuses)
+
+    def test_transcription_complete_skips_paste_after_live_typing(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        controller._live_typing_injected = True
+        controller._pending_audio_path = None
+
+        controller._on_transcription_complete("final transcript")
+
+        self.assertEqual(self.pyperclip.copied[-1], "final transcript")
+        self.assertEqual(self.keyboard.sent, [])
+        self.assertFalse(controller._live_typing_injected)
+        self.assertIn("Ready (Live typed)", controller.ui_controller.statuses)
 
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
         controller = self._create_controller()

@@ -52,11 +52,10 @@ class TranscriptionRuntime:
 
     def stop_recording(self) -> None:
         """Stop audio recording and start transcription."""
-        if self.controller._streaming_paste_enabled:
+        if self.controller._streaming_overlay_enabled:
+            # Dismiss preview overlay immediately so the classic waveform
+            # processing/transcribing states are the only post-stop UI.
             self.controller.streaming_overlay_hide.emit()
-            settings = settings_manager.load_all_settings()
-            if settings.get(SettingsKey.AUTO_PASTE, True):
-                self.controller.caret_indicator_show.emit()
 
         self.controller.streaming_runtime.stop_streaming_session()
 
@@ -303,6 +302,7 @@ class TranscriptionRuntime:
         settings = settings_manager.load_all_settings()
         copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
         auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
+        skip_paste = bool(self.controller._live_typing_injected)
 
         # Synthetic paste posts a key event, which needs macOS Accessibility
         # permission. Without it, degrade to clipboard so the text isn't lost and
@@ -316,7 +316,7 @@ class TranscriptionRuntime:
             except Exception as exc:
                 logger.error(f"Failed to copy to clipboard: {exc}")
 
-        if auto_paste and not paste_blocked:
+        if auto_paste and not paste_blocked and not skip_paste:
             try:
                 send_paste()
                 logger.info("Transcription auto-pasted")
@@ -326,6 +326,9 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.set_status(
                     "Transcription complete (paste failed)"
                 )
+        elif skip_paste:
+            logger.info("Auto-paste skipped: live typing already injected text")
+            self.controller.ui_controller.set_status("Ready (Live typed)")
         elif paste_blocked:
             logger.warning(
                 "Auto-paste skipped: macOS Accessibility permission not granted."
@@ -336,16 +339,16 @@ class TranscriptionRuntime:
         else:
             self.controller.ui_controller.set_status("Ready")
 
-        if self.controller._streaming_paste_enabled:
-            self.controller.caret_indicator_hide.emit()
+        self.controller._live_typing_injected = False
+        self.controller._last_typed_text = ""
 
     def on_transcription_error(self, error_message: str) -> None:
         """Handle transcription error."""
         self.controller.ui_controller.set_status(f"Error: {error_message}")
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
-        if self.controller._streaming_paste_enabled:
-            self.controller.caret_indicator_hide.emit()
+        self.controller._live_typing_injected = False
+        self.controller._last_typed_text = ""
 
     def on_model_changed(self, model_name: str) -> None:
         """Handle model selection change."""
@@ -366,6 +369,9 @@ class TranscriptionRuntime:
                     )
             else:
                 self.controller.ui_controller.set_device_info("")
+
+            # Streaming preview requires Local Whisper; rebuild when backend changes.
+            self.controller.streaming_runtime.reconfigure_streaming()
 
     def show_large_file_overlay(self, file_size_mb: float, is_splitting: bool) -> None:
         """Show the large-file overlay state."""

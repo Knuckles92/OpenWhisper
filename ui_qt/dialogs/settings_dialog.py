@@ -14,7 +14,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from config import config
-from services.settings import SettingsKey, settings_manager
+from services.settings import SettingsKey, is_streaming_overlay_enabled, settings_manager
 from services.recorder import AudioRecorder
 from ui_qt.widgets import PrimaryButton, Button
 
@@ -158,23 +158,42 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.streaming_enabled_check)
 
         # Info label for streaming
-        streaming_info = QLabel("Shows transcribed text as you speak. Requires Local Whisper backend.\nMay impact performance on slower systems (CPU: ~40-60%, GPU: ~15-20%).")
+        streaming_info = QLabel(
+            "Shows transcribed text as you speak using a dedicated tiny.en preview model.\n"
+            "Requires Local Whisper backend. Final transcription still uses your selected model."
+        )
         streaming_info.setStyleSheet("color: #808090; font-size: 10px;")
         streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
 
-        # Streaming overlay with auto-paste checkbox
+        # Streaming overlay checkbox
         layout.addSpacing(8)
-        self.streaming_paste_check = QCheckBox("Show streaming overlay and auto-paste result")
-        self.streaming_paste_check.setStyleSheet("color: #e0e0ff;")
-        self.streaming_paste_check.stateChanged.connect(self._on_streaming_paste_changed)
-        layout.addWidget(self.streaming_paste_check)
+        self.streaming_overlay_check = QCheckBox("Show live preview near cursor")
+        self.streaming_overlay_check.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(self.streaming_overlay_check)
 
         # Info label for streaming overlay
-        streaming_paste_info = QLabel("Displays streaming text in a popup overlay near cursor.\nFinal transcription is pasted when recording stops.")
-        streaming_paste_info.setStyleSheet("color: #808090; font-size: 10px;")
-        streaming_paste_info.setWordWrap(True)
-        layout.addWidget(streaming_paste_info)
+        streaming_overlay_info = QLabel(
+            "Shows live preview text on the same near-cursor overlay as recording.\n"
+            "Final transcription still uses your normal auto-paste / clipboard settings."
+        )
+        streaming_overlay_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_overlay_info.setWordWrap(True)
+        layout.addWidget(streaming_overlay_info)
+
+        # Live typing checkbox
+        layout.addSpacing(8)
+        self.live_typing_check = QCheckBox("Live type into focused window (experimental)")
+        self.live_typing_check.setStyleSheet("color: #e0e0ff;")
+        layout.addWidget(self.live_typing_check)
+
+        live_typing_info = QLabel(
+            "Types preview text into the focused app as you speak (append-only).\n"
+            "When used, final auto-paste is skipped to avoid duplicating text."
+        )
+        live_typing_info.setStyleSheet("color: #808090; font-size: 10px;")
+        live_typing_info.setWordWrap(True)
+        layout.addWidget(live_typing_info)
 
         layout.addStretch()
         self.tabs.addTab(tab, "General")
@@ -379,30 +398,6 @@ class SettingsDialog(QDialog):
         compute_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
         layout.addWidget(compute_info)
 
-        # Streaming Preview Model section
-        layout.addSpacing(16)
-        separator_streaming = QFrame()
-        separator_streaming.setFrameShape(QFrame.Shape.HLine)
-        separator_streaming.setStyleSheet("background-color: #404060;")
-        layout.addWidget(separator_streaming)
-
-        layout.addSpacing(12)
-        streaming_model_title = QLabel("Streaming Preview Model")
-        streaming_model_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
-        layout.addWidget(streaming_model_title)
-
-        self.streaming_tiny_model_check = QCheckBox("Use tiny.en model for streaming preview")
-        self.streaming_tiny_model_check.setStyleSheet("color: #e0e0ff;")
-        layout.addWidget(self.streaming_tiny_model_check)
-
-        streaming_model_info = QLabel(
-            "Uses the fast tiny.en model for real-time preview while keeping\n"
-            "your main model for final transcription. Uses additional memory."
-        )
-        streaming_model_info.setStyleSheet("color: #808090; font-size: 10px;")
-        streaming_model_info.setWordWrap(True)
-        layout.addWidget(streaming_model_info)
-
         # Max file size
         layout.addSpacing(12)
         max_size_label = QLabel("Maximum File Size (MB):")
@@ -436,17 +431,12 @@ class SettingsDialog(QDialog):
 
     def _on_streaming_enabled_changed(self, state):
         """Handle streaming enabled checkbox state change."""
-        # Enable/disable streaming-related checkboxes based on streaming enabled state
         streaming_enabled = state == Qt.CheckState.Checked.value
-        self.streaming_paste_check.setEnabled(streaming_enabled)
-        self.streaming_tiny_model_check.setEnabled(streaming_enabled)
+        self.streaming_overlay_check.setEnabled(streaming_enabled)
+        self.live_typing_check.setEnabled(streaming_enabled)
         if not streaming_enabled:
-            self.streaming_paste_check.setChecked(False)
-
-    def _on_streaming_paste_changed(self, state):
-        """Handle streaming paste checkbox state change."""
-        pass  # No additional action needed
-
+            self.streaming_overlay_check.setChecked(False)
+            self.live_typing_check.setChecked(False)
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -489,13 +479,12 @@ class SettingsDialog(QDialog):
             # Load streaming settings
             streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
             self.streaming_enabled_check.setChecked(streaming_enabled)
-            self.streaming_paste_check.setChecked(settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False))
-            self.streaming_paste_check.setEnabled(streaming_enabled)
-
-            # Load streaming tiny model setting
-            streaming_tiny_enabled = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
-            self.streaming_tiny_model_check.setChecked(streaming_tiny_enabled)
-            self.streaming_tiny_model_check.setEnabled(streaming_enabled)
+            self.streaming_overlay_check.setChecked(is_streaming_overlay_enabled(settings))
+            self.streaming_overlay_check.setEnabled(streaming_enabled)
+            self.live_typing_check.setChecked(
+                bool(settings.get(SettingsKey.LIVE_TYPING_ENABLED, False)) and streaming_enabled
+            )
+            self.live_typing_check.setEnabled(streaming_enabled)
 
             # Load whisper engine settings
             whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
@@ -534,10 +523,10 @@ class SettingsDialog(QDialog):
             self.copy_clipboard_check.setChecked(True)
             self.minimize_tray_check.setChecked(True)
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
-            self.streaming_paste_check.setChecked(False)
-            self.streaming_paste_check.setEnabled(config.STREAMING_ENABLED)
-            self.streaming_tiny_model_check.setChecked(False)
-            self.streaming_tiny_model_check.setEnabled(config.STREAMING_ENABLED)
+            self.streaming_overlay_check.setChecked(False)
+            self.streaming_overlay_check.setEnabled(config.STREAMING_ENABLED)
+            self.live_typing_check.setChecked(False)
+            self.live_typing_check.setEnabled(config.STREAMING_ENABLED)
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -569,12 +558,12 @@ class SettingsDialog(QDialog):
 
             # Check if streaming settings changed
             old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
-            old_streaming_paste = settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False)
-            old_streaming_tiny = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
+            old_streaming_overlay = is_streaming_overlay_enabled(settings)
+            old_live_typing = bool(settings.get(SettingsKey.LIVE_TYPING_ENABLED, False))
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
-                old_streaming_paste != self.streaming_paste_check.isChecked() or
-                old_streaming_tiny != self.streaming_tiny_model_check.isChecked()
+                old_streaming_overlay != self.streaming_overlay_check.isChecked() or
+                old_live_typing != self.live_typing_check.isChecked()
             )
 
             # Update with new values
@@ -583,8 +572,11 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
-            settings[SettingsKey.STREAMING_PASTE_ENABLED] = self.streaming_paste_check.isChecked()
-            settings[SettingsKey.STREAMING_TINY_MODEL_ENABLED] = self.streaming_tiny_model_check.isChecked()
+            settings[SettingsKey.STREAMING_OVERLAY_ENABLED] = self.streaming_overlay_check.isChecked()
+            settings[SettingsKey.LIVE_TYPING_ENABLED] = self.live_typing_check.isChecked()
+            # Drop legacy keys so new settings are the source of truth
+            settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)
+            settings.pop("streaming_tiny_model_enabled", None)
             settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
             settings[SettingsKey.WHISPER_DEVICE] = new_device
             settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute

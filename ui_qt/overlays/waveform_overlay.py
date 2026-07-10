@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QBrush, QPen,
-    QLinearGradient, QFont, QCursor
+    QLinearGradient, QFont, QFontMetrics, QCursor
 )
 from config import config
 from services.settings import settings_manager
@@ -64,6 +64,7 @@ class WaveformOverlay(QWidget):
     # States
     STATE_IDLE = "idle"
     STATE_RECORDING = "recording"
+    STATE_STREAMING = "streaming"
     STATE_PROCESSING = "processing"
     STATE_TRANSCRIBING = "transcribing"
     STATE_CANCELING = "canceling"
@@ -94,6 +95,10 @@ class WaveformOverlay(QWidget):
         # Set fixed size from config
         self.overlay_width = config.WAVEFORM_OVERLAY_WIDTH
         self.overlay_height = config.WAVEFORM_OVERLAY_HEIGHT
+        self._base_height = self.overlay_height
+        self._streaming_max_height = getattr(
+            config, "WAVEFORM_STREAMING_MAX_HEIGHT", 200
+        )
         self.setFixedSize(self.overlay_width, self.overlay_height)
 
         # State
@@ -102,6 +107,7 @@ class WaveformOverlay(QWidget):
         self.animation_time = 0.0
         self.cancel_progress = 0.0
         self.stt_particles: List[STTParticle] = []
+        self._streaming_preview_text: str = ""
 
         # Large file information for warning states
         self.large_file_info = LargeFileOverlayInfo()
@@ -141,6 +147,8 @@ class WaveformOverlay(QWidget):
             if self.current_state == self.STATE_RECORDING:
                 if self.style:
                     self.style.draw_recording_state(painter, rect, "Recording...")
+            elif self.current_state == self.STATE_STREAMING:
+                self._draw_streaming_state(painter, rect)
             elif self.current_state == self.STATE_PROCESSING:
                 if self.style:
                     self.style.draw_processing_state(painter, rect, "Processing...")
@@ -172,6 +180,91 @@ class WaveformOverlay(QWidget):
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
                 pass  # If even fallback fails, just skip
+
+    def _draw_streaming_state(self, painter: QPainter, rect: QRect):
+        """Draw recording particles plus live preview text near the cursor.
+
+        Args:
+            painter: Active painter for this frame.
+            rect: Full overlay bounds.
+        """
+        particle_height = min(self._base_height, rect.height())
+        particle_rect = QRect(0, 0, rect.width(), particle_height)
+        status = "Listening..." if not self._streaming_preview_text else ""
+        if self.style:
+            # Keep particle physics in the compact recording band even when the
+            # overlay grows to fit preview text.
+            previous_height = self.style.height
+            self.style.height = self._base_height
+            try:
+                self.style.draw_recording_state(painter, particle_rect, status)
+            finally:
+                self.style.height = previous_height
+
+        if self._streaming_preview_text:
+            self._draw_streaming_preview_text(painter, rect)
+
+    def _draw_streaming_preview_text(self, painter: QPainter, rect: QRect):
+        """Draw wrapped streaming preview text under the particle band."""
+        top = self._base_height - 8
+        text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
+        painter.setPen(QPen(QColor(224, 224, 255)))
+        font = QFont("Segoe UI", 10)
+        painter.setFont(font)
+        painter.drawText(
+            text_rect,
+            int(
+                Qt.AlignmentFlag.AlignLeft
+                | Qt.AlignmentFlag.AlignTop
+                | Qt.TextFlag.TextWordWrap
+            ),
+            self._streaming_preview_text,
+        )
+
+    def clear_streaming_text(self):
+        """Clear live preview text and restore the compact overlay size."""
+        self._streaming_preview_text = ""
+        self._apply_streaming_height()
+
+    def update_streaming_text(self, text: str, is_final: bool = True):
+        """Update live preview text shown during streaming recording.
+
+        Args:
+            text: Full preview transcript so far.
+            is_final: Unused; kept for API compatibility with prior overlay.
+        """
+        self._streaming_preview_text = (text or "").strip()
+        self._apply_streaming_height()
+        self.update()
+
+    def _apply_streaming_height(self):
+        """Grow or shrink the overlay to fit preview text while streaming."""
+        if self.current_state != self.STATE_STREAMING and not self._streaming_preview_text:
+            if self.height() != self._base_height:
+                self.overlay_height = self._base_height
+                self.setFixedSize(self.overlay_width, self.overlay_height)
+            return
+
+        if not self._streaming_preview_text:
+            target_height = self._base_height
+        else:
+            font = QFont("Segoe UI", 10)
+            metrics_rect = QRect(0, 0, self.overlay_width - 20, self._streaming_max_height)
+            fm = QFontMetrics(font)
+            bounded = fm.boundingRect(
+                metrics_rect,
+                int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap),
+                self._streaming_preview_text,
+            )
+            text_height = bounded.height() + 16
+            target_height = min(
+                self._streaming_max_height,
+                max(self._base_height, self._base_height - 8 + text_height),
+            )
+
+        if target_height != self.overlay_height:
+            self.overlay_height = target_height
+            self.setFixedSize(self.overlay_width, self.overlay_height)
 
     def _draw_background(self, painter: QPainter):
         """Draw the background with frosted glass effect."""
@@ -436,6 +529,12 @@ class WaveformOverlay(QWidget):
             else:
                 self.timer.start(1000 // self.frame_rate)
 
+            if state != self.STATE_STREAMING:
+                self._streaming_preview_text = ""
+                if self.overlay_height != self._base_height:
+                    self.overlay_height = self._base_height
+                    self.setFixedSize(self.overlay_width, self.overlay_height)
+
             self.state_changed.emit(state)
             logger.debug(f"Overlay state changed to: {state}")
 
@@ -545,6 +644,10 @@ class WaveformOverlay(QWidget):
         self.current_state = self.STATE_IDLE
         self.animation_time = 0.0
         self.cancel_progress = 0.0
+        self._streaming_preview_text = ""
+        if self.overlay_height != self._base_height:
+            self.overlay_height = self._base_height
+            self.setFixedSize(self.overlay_width, self.overlay_height)
 
         super().hide()
 

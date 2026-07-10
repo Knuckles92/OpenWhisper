@@ -7,21 +7,31 @@ from typing import TYPE_CHECKING, Callable
 
 from config import config
 try:
-    from services.settings import SettingsKey, settings_manager
+    from services.settings import (
+        SettingsKey,
+        is_streaming_overlay_enabled,
+        settings_manager,
+    )
 except ImportError:  # pragma: no cover - supports lightweight test stubs
     from services.settings import settings_manager
+
+    def is_streaming_overlay_enabled(settings):
+        if "streaming_overlay_enabled" in settings:
+            return bool(settings["streaming_overlay_enabled"])
+        return bool(settings.get("streaming_paste_enabled", False))
 
     class SettingsKey:
         STREAMING_ENABLED = "streaming_enabled"
         STREAMING_CHUNK_DURATION = "streaming_chunk_duration"
-        STREAMING_PASTE_ENABLED = "streaming_paste_enabled"
-        STREAMING_TINY_MODEL_ENABLED = "streaming_tiny_model_enabled"
+        STREAMING_OVERLAY_ENABLED = "streaming_overlay_enabled"
+        LIVE_TYPING_ENABLED = "live_typing_enabled"
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
 else:
     AudioLevelCallback = Callable[[float], None]
-from services.streaming_transcriber import StreamingTranscriber
+from services.hotkey_manager import is_accessibility_trusted, type_text
+from services.streaming_transcriber import StreamingTranscriber, typing_delta
 from transcriber import LocalWhisperBackend
 
 if TYPE_CHECKING:
@@ -67,13 +77,17 @@ class StreamingRuntime:
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
         """Handle partial transcription from the streaming worker."""
         self.controller.partial_transcription.emit(text, is_final)
-        if self.controller._streaming_paste_enabled and text:
+        if self.controller._streaming_overlay_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
+        self._maybe_live_type(text)
 
     def start_streaming_session(self) -> None:
         """Start real-time streaming transcription for an active recording."""
         if not self.controller.streaming_transcriber:
             return
+
+        self.controller._last_typed_text = ""
+        self.controller._live_typing_injected = False
 
         self.controller.recorder.set_streaming_callback(
             self.controller.streaming_transcriber.feed_audio
@@ -84,7 +98,10 @@ class StreamingRuntime:
         )
         logger.info("Streaming transcription started")
 
-        if self.controller._streaming_paste_enabled:
+        if self.controller._streaming_overlay_enabled:
+            # Set synchronously so a queued RECORDING overlay update does not
+            # flash the waveform before the streaming overlay show is delivered.
+            self.controller.ui_controller.streaming_flow_active = True
             self.controller.streaming_overlay_show.emit()
 
     def stop_streaming_session(self) -> str:
@@ -106,13 +123,37 @@ class StreamingRuntime:
             self.controller.recorder.set_streaming_callback(None)
             logger.info("Streaming transcription canceled")
 
-        if self.controller._streaming_paste_enabled:
+        self.controller._last_typed_text = ""
+        self.controller._live_typing_injected = False
+
+        if self.controller._streaming_overlay_enabled:
             self.controller.streaming_overlay_hide.emit()
-            self.controller.caret_indicator_hide.emit()
 
     def cleanup(self) -> None:
         """Release streaming resources."""
         self._cleanup_streaming_resources()
+
+    def _maybe_live_type(self, text: str) -> None:
+        """Append-only type new preview text into the focused window when enabled."""
+        if not self.controller._live_typing_enabled or not text:
+            return
+        if not is_accessibility_trusted():
+            logger.warning("Live typing skipped: Accessibility permission not granted")
+            return
+
+        delta = typing_delta(self.controller._last_typed_text, text)
+        if delta is None:
+            # Preview rewrote earlier text; do not attempt mid-string correction.
+            return
+        if not delta:
+            return
+
+        try:
+            type_text(delta)
+            self.controller._last_typed_text = text
+            self.controller._live_typing_injected = True
+        except Exception as exc:
+            logger.error(f"Live typing failed: {exc}")
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
@@ -120,10 +161,15 @@ class StreamingRuntime:
             self.controller._streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
             )
-            self.controller._streaming_paste_enabled = settings.get(
-                SettingsKey.STREAMING_PASTE_ENABLED, False
+            self.controller._streaming_overlay_enabled = is_streaming_overlay_enabled(
+                settings
             )
-            streaming_tiny_enabled = settings.get(SettingsKey.STREAMING_TINY_MODEL_ENABLED, False)
+            self.controller._live_typing_enabled = bool(
+                settings.get(SettingsKey.LIVE_TYPING_ENABLED, False)
+            )
+            # Live typing needs the streaming preview text source
+            if self.controller._live_typing_enabled and not self.controller._streaming_enabled:
+                self.controller._live_typing_enabled = False
 
             if (
                 self.controller._streaming_enabled
@@ -133,31 +179,23 @@ class StreamingRuntime:
                     SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
                 )
 
-                if streaming_tiny_enabled:
-                    logger.info("Creating dedicated tiny.en backend for streaming...")
-                    self.controller._streaming_backend = LocalWhisperBackend(
-                        model_name="tiny.en"
-                    )
-                    streaming_backend = self.controller._streaming_backend
-                    logger.info(
-                        "Streaming %s dedicated tiny.en model",
-                        "will use" if initial_setup else "reconfigured with",
-                    )
-                else:
-                    streaming_backend = self.controller.current_backend
-                    logger.info(
-                        "Streaming %s main transcription model",
-                        "will share" if initial_setup else "reconfigured to share",
-                    )
+                logger.info("Creating dedicated tiny.en backend for streaming preview...")
+                self.controller._streaming_backend = LocalWhisperBackend(
+                    model_name="tiny.en"
+                )
+                streaming_backend = self.controller._streaming_backend
 
                 self.controller.streaming_transcriber = StreamingTranscriber(
                     backend=streaming_backend,
                     chunk_duration_sec=chunk_duration,
+                    overlap_sec=config.STREAMING_OVERLAP_SEC,
                 )
+                self._warmup_streaming_backend(streaming_backend)
                 logger.info(
                     "Streaming transcription enabled "
                     f"(chunk_duration={chunk_duration}s, "
-                    f"paste_overlay={self.controller._streaming_paste_enabled})"
+                    f"overlay={self.controller._streaming_overlay_enabled}, "
+                    f"live_typing={self.controller._live_typing_enabled})"
                 )
                 if not initial_setup:
                     self.controller.ui_controller.set_status("Streaming mode enabled")
@@ -177,13 +215,40 @@ class StreamingRuntime:
                         self.controller.ui_controller.set_status("Streaming mode disabled")
 
                 self.controller._streaming_enabled = False
-                self.controller._streaming_paste_enabled = False
+                self.controller._streaming_overlay_enabled = False
+                self.controller._live_typing_enabled = False
         except Exception as exc:
             logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
-            self.controller._streaming_paste_enabled = False
+            self.controller._streaming_overlay_enabled = False
+            self.controller._live_typing_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
+
+    def _warmup_streaming_backend(self, backend) -> None:
+        """Run a short silent inference so the first live preview is not a cold start.
+
+        Args:
+            backend: Dedicated streaming LocalWhisperBackend instance.
+        """
+        try:
+            import numpy as np
+
+            # 0.5s of silence at Whisper's expected sample rate
+            silence = np.zeros(
+                max(1, config.WHISPER_TARGET_SAMPLE_RATE // 2),
+                dtype=np.float32,
+            )
+            segments, _info = backend.model.transcribe(
+                silence,
+                beam_size=1,
+                vad_filter=False,
+            )
+            # Consume the generator so CTranslate2 finishes the first pass now.
+            list(segments)
+            logger.info("Streaming preview model warmed up")
+        except Exception as exc:
+            logger.warning(f"Streaming warmup failed (non-fatal): {exc}")
 
     def _cleanup_streaming_resources(self) -> None:
         if self.controller.streaming_transcriber:

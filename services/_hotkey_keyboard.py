@@ -86,6 +86,17 @@ def send_paste() -> None:
     keyboard.send("ctrl+v")
 
 
+def type_text(text: str) -> None:
+    """Type text into the focused window via the keyboard library.
+
+    Args:
+        text: Characters to type. Empty strings are ignored.
+    """
+    if not text:
+        return
+    keyboard.write(text)
+
+
 def is_accessibility_trusted() -> bool:
     """No-op on Windows: the keyboard backend needs no Accessibility grant."""
     return True
