@@ -374,3 +374,15 @@ QTabBar#contentTabBar::tab:selected[recording="true"] {
     color: #ff453a;
     border-bottom-color: #ff453a;
 }
+
+/* Tooltips — elevated surface so they read against the dark window.
+   The window is made translucent by RoundedTooltipFilter so the
+   border-radius renders with transparent corners. */
+QToolTip {
+    background-color: #3a3a3c;
+    color: #f5f5f7;
+    border: 1px solid #545456;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+}

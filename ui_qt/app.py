@@ -4,11 +4,12 @@ Handles application initialization and event loop management.
 """
 import logging
 from typing import Optional
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
 from ui_qt.utils.theme_manager import ThemeManager
+from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
 
 
 class QtApplication:
@@ -27,8 +28,20 @@ class QtApplication:
             self.app = QApplication([])
 
         self.theme_manager = ThemeManager()
+        self._tooltip_filter = RoundedTooltipFilter(self.app)
+        self.app.installEventFilter(self._tooltip_filter)
+        self._setup_tooltip_style()
         self._setup_fonts()
         self._apply_theme()
+
+    def _setup_tooltip_style(self):
+        """Wrap the platform style so native tooltips show without the long delay."""
+        base_style = QStyleFactory.create(self.app.style().objectName())
+        if base_style is not None:
+            # Keep a Python reference: without it the proxy can be garbage
+            # collected while QApplication still points at it, crashing at exit.
+            self._tooltip_style = SnappyTooltipStyle(base_style)
+            self.app.setStyle(self._tooltip_style)
 
     def _setup_fonts(self):
         """Setup default fonts for the application."""

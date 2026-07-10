@@ -3,6 +3,7 @@ PyQt6 custom widgets package.
 """
 from ui_qt.widgets.buttons import (
     Button,
+    HotkeyHintFilter,
     PrimaryButton,
     DangerButton,
     SuccessButton,
@@ -18,7 +19,6 @@ from ui_qt.widgets.cards import (
 from ui_qt.widgets.hotkey_display import HotkeyDisplay
 from ui_qt.widgets.history_sidebar import (
     HistorySidebar,
-    HistoryToggleButton,
     HistoryEdgeTab,
     HistoryItemWidget,
 )
@@ -29,9 +29,11 @@ from ui_qt.widgets.tabbed_content import TabbedContentWidget
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
+from ui_qt.widgets.compact_record_controller import CompactRecordController
 
 __all__ = [
     "Button",
+    "HotkeyHintFilter",
     "PrimaryButton",
     "DangerButton",
     "SuccessButton",
@@ -43,7 +45,6 @@ __all__ = [
     "StatCard",
     "HotkeyDisplay",
     "HistorySidebar",
-    "HistoryToggleButton",
     "HistoryEdgeTab",
     "HistoryItemWidget",
     "TranscriptionStatsWidget",
@@ -53,4 +54,5 @@ __all__ = [
     "TranscriptionTabBase",
     "QuickRecordTab",
     "UploadFileTab",
+    "CompactRecordController",
 ]

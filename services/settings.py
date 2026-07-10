@@ -19,6 +19,8 @@ class SettingsKey:
     CURRENT_WAVEFORM_STYLE: Final[str] = "current_waveform_style"
     WAVEFORM_STYLE_CONFIGS: Final[str] = "waveform_style_configs"
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
+    COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
+    COMPACT_MODE: Final[str] = "compact_mode"
     STREAMING_OVERLAY_POSITION: Final[str] = "streaming_overlay_position"
     AUTO_PASTE: Final[str] = "auto_paste"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"

@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QFrame, QPushButton
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPropertyAnimation
-from PyQt6.QtGui import QFont, QIcon, QPixmap
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QRect
+from PyQt6.QtGui import QFont, QIcon, QKeySequence, QPixmap
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -18,6 +18,7 @@ from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
+    UNLIMITED_HEIGHT,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,16 +149,19 @@ class CustomTitleBar(QFrame):
         self.minimize_btn = QPushButton("─")
         self.minimize_btn.setFixedSize(46, 32)
         self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
+        self.minimize_btn.setToolTip("Minimize")
         self.minimize_btn.clicked.connect(self._minimize)
 
         self.maximize_btn = QPushButton("□")
         self.maximize_btn.setFixedSize(46, 32)
         self.maximize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
+        self.maximize_btn.setToolTip("Maximize")
         self.maximize_btn.clicked.connect(self._toggle_maximize)
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(46, 32)
         self.close_btn.setStyleSheet(self._CLOSE_BUTTON_STYLE)
+        self.close_btn.setToolTip("Close")
         self.close_btn.clicked.connect(self._close)
 
         layout.addWidget(self.minimize_btn)
@@ -170,16 +174,20 @@ class CustomTitleBar(QFrame):
 
     def _toggle_maximize(self):
         if self.parent_window:
+            if getattr(self.parent_window, "_compact_mode", False):
+                return
             if self._is_maximized:
                 # Restore to saved geometry
                 if self._normal_geometry:
                     self.parent_window.setGeometry(self._normal_geometry)
                 self.maximize_btn.setText("□")
+                self.maximize_btn.setToolTip("Maximize")
             else:
                 # Save current geometry before maximizing
                 self._normal_geometry = self.parent_window.geometry()
                 self.parent_window.showMaximized()
                 self.maximize_btn.setText("❐")
+                self.maximize_btn.setToolTip("Restore")
             self._is_maximized = not self._is_maximized
 
     def _close(self):
@@ -231,14 +239,23 @@ class CustomTitleBar(QFrame):
 from ui_qt.widgets import (
     HeaderCard, Card, PrimaryButton, DangerButton,
     SuccessButton, WarningButton, ControlPanel, Button,
-    HistorySidebar, HistoryEdgeTab, TranscriptionStatsWidget,
-    TabbedContentWidget, QuickRecordTab, UploadFileTab
+    HistorySidebar, HistoryEdgeTab, HotkeyHintFilter,
+    TranscriptionStatsWidget,
+    TabbedContentWidget, QuickRecordTab, UploadFileTab,
+    CompactRecordController,
 )
 from services.history_manager import history_manager
 
 
 class MainWindow(QMainWindow):
     """PyQt6 main window with clean, professional design."""
+
+    # Window-local keyboard shortcuts. Distinct from the global hotkeys in
+    # config.DEFAULT_HOTKEYS, which work even when the app is unfocused.
+    UPLOAD_SHORTCUT = "Ctrl+O"
+    HISTORY_SHORTCUT = "Ctrl+H"
+    COMPACT_SHORTCUT = "Ctrl+Shift+C"
+    QUIT_SHORTCUT = "Ctrl+Q"
 
     # Signals for application events
     record_toggled = pyqtSignal(bool)
@@ -283,6 +300,8 @@ class MainWindow(QMainWindow):
         self.current_model = config.MODEL_CHOICES[0]
         self._force_quit = False  # Flag to bypass minimize to tray on close
         self._initial_show_complete = False  # Track if initial show has completed
+        self._compact_mode = False
+        self._full_geometry = None
 
         # Window sizing for sidebar toggle
         self._collapsed_width = config.MAIN_WINDOW_DEFAULT_WIDTH
@@ -320,6 +339,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._load_saved_settings()
         self._restore_window_geometry()
+        self._restore_compact_mode()
 
         # Enable mouse tracking for resize cursor updates
         self.setMouseTracking(True)
@@ -380,6 +400,18 @@ class MainWindow(QMainWindow):
         # (fixes timing issue where tab bar index is restored before stack has widgets)
         self.tabbed_content.sync_stack_with_tab_bar()
 
+        self.compact_controller = CompactRecordController()
+        self.compact_controller.hide()
+        self.compact_controller.record_requested.connect(
+            self.quick_record_tab.record_button.click
+        )
+        self.compact_controller.stop_requested.connect(
+            self.quick_record_tab.stop_button.click
+        )
+        self.compact_controller.cancel_requested.connect(
+            self.quick_record_tab.cancel_button.click
+        )
+
         # Connect tab changed signal to update sidebar and emit signal
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
 
@@ -397,12 +429,14 @@ class MainWindow(QMainWindow):
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
 
         main_area_layout.addWidget(self.tabbed_content)
+        main_area_layout.addWidget(self.compact_controller)
 
         # Add main area to root layout
         root_layout.addWidget(main_area, stretch=1)
 
         # History edge tab (always visible toggle button)
         self.history_edge_tab = HistoryEdgeTab()
+        self.history_edge_tab.set_shortcut_hint(self.HISTORY_SHORTCUT)
         self.history_edge_tab.clicked.connect(self.toggle_history)
         root_layout.addWidget(self.history_edge_tab)
 
@@ -448,6 +482,27 @@ class MainWindow(QMainWindow):
         }
     """
 
+    _COMPACT_BUTTON_STYLE = """
+        QPushButton#compactButton {
+            background-color: #2c2c2e;
+            color: #64d2ff;
+            border: 1px solid #3a3a3c;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#compactButton:hover {
+            background-color: #0a84ff;
+            color: #ffffff;
+            border: 1px solid #0a84ff;
+        }
+        QPushButton#compactButton:pressed {
+            background-color: #0060df;
+            color: #ffffff;
+        }
+    """
+
     _QUIT_BUTTON_STYLE = """
         QPushButton#quitButton {
             background-color: #2c2c2e;
@@ -470,13 +525,13 @@ class MainWindow(QMainWindow):
     """
 
     def _build_footer(self, outer_layout: QVBoxLayout) -> None:
-        """Create the bottom footer bar containing the visible Quit button."""
-        footer = QWidget()
-        footer.setObjectName("footerBar")
-        footer.setFixedHeight(48)
-        footer.setStyleSheet(self._FOOTER_BAR_STYLE)
+        """Create the bottom footer bar containing window actions."""
+        self.footer = QWidget()
+        self.footer.setObjectName("footerBar")
+        self.footer.setFixedHeight(48)
+        self.footer.setStyleSheet(self._FOOTER_BAR_STYLE)
 
-        footer_layout = QHBoxLayout(footer)
+        footer_layout = QHBoxLayout(self.footer)
         footer_layout.setContentsMargins(16, 7, 16, 7)
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
@@ -495,18 +550,31 @@ class MainWindow(QMainWindow):
 
         footer_layout.addSpacing(10)
 
+        self.compact_button = QPushButton("Compact")
+        self.compact_button.setObjectName("compactButton")
+        self.compact_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.compact_button.setFixedHeight(34)
+        self.compact_button.setMinimumWidth(100)
+        self.compact_button.setStyleSheet(self._COMPACT_BUTTON_STYLE)
+        HotkeyHintFilter(self.compact_button, self.COMPACT_SHORTCUT)
+        self.compact_button.clicked.connect(self.toggle_compact_mode)
+        footer_layout.addWidget(self.compact_button)
+
+        footer_layout.addSpacing(10)
+
         self.quit_button = QPushButton("Quit")
         self.quit_button.setObjectName("quitButton")
         self.quit_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.quit_button.setFixedHeight(34)
         self.quit_button.setMinimumWidth(100)
         self.quit_button.setStyleSheet(self._QUIT_BUTTON_STYLE)
+        HotkeyHintFilter(self.quit_button, self.QUIT_SHORTCUT)
         self.quit_button.clicked.connect(self.quit_application)
         footer_layout.addWidget(self.quit_button)
 
         footer_layout.addStretch()
 
-        outer_layout.addWidget(footer)
+        outer_layout.addWidget(self.footer)
 
     def _setup_menu(self):
         """Setup the menu bar in the custom title bar."""
@@ -518,17 +586,24 @@ class MainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("File")
-        file_menu.addAction("Upload Audio File...", self.upload_audio_file)
+        upload_action = file_menu.addAction("Upload Audio File...", self.upload_audio_file)
+        upload_action.setShortcut(QKeySequence(self.UPLOAD_SHORTCUT))
         file_menu.addSeparator()
         file_menu.addAction("Settings", self.open_settings)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
-        file_menu.addAction("Quit" if sys.platform == "darwin" else "Exit", self.quit_application)
+        quit_action = file_menu.addAction(
+            "Quit" if sys.platform == "darwin" else "Exit", self.quit_application
+        )
+        quit_action.setShortcut(QKeySequence(self.QUIT_SHORTCUT))
 
         # View menu
         view_menu = menubar.addMenu("View")
-        view_menu.addAction("History", self.toggle_history)
+        history_action = view_menu.addAction("History", self.toggle_history)
+        history_action.setShortcut(QKeySequence(self.HISTORY_SHORTCUT))
+        compact_action = view_menu.addAction("Compact Mode", self.toggle_compact_mode)
+        compact_action.setShortcut(QKeySequence(self.COMPACT_SHORTCUT))
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -557,6 +632,9 @@ class MainWindow(QMainWindow):
         """Handle tab selection change."""
         logger.debug(f"Tab changed to index {index}")
 
+        if self._compact_mode and index != TabbedContentWidget.TAB_QUICK_RECORD:
+            self.set_compact_mode(False)
+
         self._schedule_history_sidebar_refresh()
 
         # Emit signal for external listeners
@@ -577,6 +655,10 @@ class MainWindow(QMainWindow):
     def _on_quick_record_toggled(self, is_recording: bool):
         """Handle record toggle from Quick Record tab."""
         self.is_recording = is_recording
+        self.compact_controller.set_recording_state(is_recording)
+        self.compact_controller.set_status(
+            "Recording in progress..." if is_recording else "Ready to record"
+        )
 
         # Lock/unlock tabs during recording
         if is_recording:
@@ -589,6 +671,8 @@ class MainWindow(QMainWindow):
     def _on_quick_record_canceled(self):
         """Handle cancel from Quick Record tab."""
         self.is_recording = False
+        self.compact_controller.set_recording_state(False)
+        self.compact_controller.set_status("Ready to record")
         self.tabbed_content.set_recording_state(False, -1)
 
         self.record_canceled.emit()
@@ -642,6 +726,10 @@ class MainWindow(QMainWindow):
         # Delegate to quick record tab
         self.quick_record_tab.is_recording = self.is_recording
         self.quick_record_tab._update_recording_state()
+        self.compact_controller.set_recording_state(self.is_recording)
+        self.compact_controller.set_status(
+            "Recording in progress..." if self.is_recording else "Ready to record"
+        )
 
         # Lock/unlock tabs during recording
         if self.is_recording:
@@ -653,6 +741,7 @@ class MainWindow(QMainWindow):
         """Update the status label on the active tab."""
         # Update the Quick Record tab status
         self.quick_record_tab.set_status(status_text)
+        self.compact_controller.set_status(status_text)
 
     def set_device_info(self, device_info: str):
         """Set the resolved-engine readout on both tabs' Local engine panels.
@@ -820,6 +909,8 @@ class MainWindow(QMainWindow):
     def upload_audio_file(self):
         """Switch to the Upload File tab and open file browser."""
         logger.info("Upload audio file requested via menu")
+        if self._compact_mode:
+            self.set_compact_mode(False)
         self.tabbed_content.set_current_index(TabbedContentWidget.TAB_UPLOAD_FILE)
         self.upload_file_tab.open_file_browser()
 
@@ -837,6 +928,119 @@ class MainWindow(QMainWindow):
         """Minimize the window to the system tray."""
         logger.info("Minimizing to tray")
         self.hide()
+
+    def toggle_compact_mode(self) -> None:
+        """Toggle between the full workspace and compact recording controller."""
+        self.set_compact_mode(not self._compact_mode)
+
+    def set_compact_mode(self, compact: bool, persist: bool = True) -> None:
+        """Apply compact or full main-window mode.
+
+        Args:
+            compact: Whether to show the compact recording controller.
+            persist: Whether to save the selected mode to settings.
+        """
+        if compact == self._compact_mode:
+            return
+
+        if (
+            hasattr(self, "_resize_animation")
+            and self._resize_animation.state() == QPropertyAnimation.State.Running
+        ):
+            self._resize_animation.stop()
+
+        if compact:
+            if self.title_bar._is_maximized:
+                self.title_bar._toggle_maximize()
+            elif self.isMaximized():
+                self.showNormal()
+
+            self._full_geometry = QRect(self.geometry())
+            self._save_geometry()
+            self._compact_mode = True
+
+            self.tabbed_content.hide()
+            self.compact_controller.show()
+            self.history_edge_tab.hide()
+            self.history_sidebar.hide()
+            self.title_bar.title_label.hide()
+            self.title_bar.maximize_btn.hide()
+            self.compact_button.setText("Full Size")
+
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
+            self.setFixedSize(
+                config.MAIN_WINDOW_COMPACT_WIDTH,
+                config.MAIN_WINDOW_COMPACT_HEIGHT,
+            )
+            self._restore_compact_geometry()
+        else:
+            self._save_compact_geometry()
+            self._compact_mode = False
+
+            self.setMinimumSize(
+                config.MAIN_WINDOW_MIN_WIDTH,
+                config.MAIN_WINDOW_MIN_HEIGHT,
+            )
+            self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
+            self.compact_controller.hide()
+            self.tabbed_content.show()
+            self.history_edge_tab.show()
+            self.history_sidebar.show()
+            self.title_bar.title_label.show()
+            self.title_bar.maximize_btn.show()
+            self.compact_button.setText("Compact")
+
+            if self._full_geometry is not None:
+                self.setGeometry(self._full_geometry)
+            else:
+                self._restore_window_geometry()
+
+        if persist:
+            try:
+                settings_manager.save_setting(SettingsKey.COMPACT_MODE, compact)
+            except Exception as e:
+                logger.warning(f"Failed to save compact mode: {e}")
+
+    def _restore_compact_mode(self) -> None:
+        """Restore the persisted compact/full mode selection."""
+        try:
+            if settings_manager.get(SettingsKey.COMPACT_MODE, False) is True:
+                self.set_compact_mode(True, persist=False)
+        except Exception as e:
+            logger.warning(f"Failed to restore compact mode: {e}")
+
+    def _save_compact_geometry(self) -> None:
+        """Persist the compact controller position separately from full geometry."""
+        geo = self.geometry()
+        try:
+            settings_manager.save_setting(
+                SettingsKey.COMPACT_WINDOW_GEOMETRY,
+                {"x": geo.x(), "y": geo.y()},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save compact window geometry: {e}")
+
+    def _restore_compact_geometry(self) -> None:
+        """Restore and clamp the compact controller position to the screen."""
+        x = self.x()
+        y = self.y()
+        try:
+            geo = settings_manager.get(SettingsKey.COMPACT_WINDOW_GEOMETRY)
+            if isinstance(geo, dict) and {"x", "y"}.issubset(geo):
+                x = int(geo["x"])
+                y = int(geo["y"])
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Invalid compact window geometry: {e}")
+
+        from PyQt6.QtWidgets import QApplication
+
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            x = min(max(x, available.left()), available.right() - self.width() + 1)
+            y = min(max(y, available.top()), available.bottom() - self.height() + 1)
+        self.move(x, y)
 
     def toggle_tray_visibility(self):
         """Toggle between hidden-to-tray and visible foreground states."""
@@ -868,6 +1072,7 @@ class MainWindow(QMainWindow):
     def quit_application(self):
         """Quit the application completely (bypasses minimize to tray)."""
         logger.info("Quitting application")
+        self._save_geometry()
         self._force_quit = True
         from PyQt6.QtWidgets import QApplication
         QApplication.instance().quit()
@@ -875,6 +1080,11 @@ class MainWindow(QMainWindow):
     def toggle_history(self):
         """Toggle the history sidebar visibility."""
         logger.info("Toggling history sidebar")
+
+        if self._compact_mode:
+            self.set_compact_mode(False)
+            if self.history_sidebar.is_expanded:
+                return
 
         # Update the edge tab arrow direction immediately for instant visual feedback
         will_be_expanded = not self.history_sidebar.is_expanded
@@ -1034,6 +1244,7 @@ class MainWindow(QMainWindow):
             minimize_key: The key for minimizing to the system tray
         """
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        self.compact_controller.update_hotkeys(record_key, cancel_key)
         self.tray_button.set_hotkey(minimize_key)
 
     # ==================== Edge Resize Support ====================
@@ -1048,6 +1259,9 @@ class MainWindow(QMainWindow):
             Tuple of (horizontal_edge, vertical_edge) where each is:
             -1 for left/top, 0 for none, 1 for right/bottom.
         """
+        if self._compact_mode:
+            return (0, 0)
+
         rect = self.rect()
         margin = self._resize_margin
 
@@ -1184,6 +1398,10 @@ class MainWindow(QMainWindow):
         if self.isMaximized() or self.isMinimized():
             return  # Don't save maximized/minimized state
 
+        if self._compact_mode:
+            self._save_compact_geometry()
+            return
+
         geo = self.geometry()
         width = geo.width()
         history_expanded = (
@@ -1290,7 +1508,10 @@ class MainWindow(QMainWindow):
 
         # Re-apply saved geometry when restoring from tray (subsequent shows)
         if not self.isMaximized():
-            self._restore_window_geometry()
+            if self._compact_mode:
+                self._restore_compact_geometry()
+            else:
+                self._restore_window_geometry()
 
     def eventFilter(self, obj, event):
         """Filter events to update resize cursor when hovering near edges."""

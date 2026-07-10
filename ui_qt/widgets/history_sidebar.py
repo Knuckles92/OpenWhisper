@@ -648,39 +648,6 @@ class HistorySidebar(QWidget):
             self.refresh()  # Refresh the list
             logger.info(f"Deleted entry: {entry_id[:8]}...")
 
-class HistoryToggleButton(QPushButton):
-    """Toggle button to show/hide the history sidebar."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setText("History")
-        self.setObjectName("historyToggleBtn")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(36)
-
-        self._apply_style()
-
-    def _apply_style(self):
-        """Apply custom styling."""
-        self.setStyleSheet("""
-            QPushButton#historyToggleBtn {
-                background-color: #2c2c2e;
-                color: #f5f5f7;
-                border: 1px solid #3a3a3c;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: 500;
-            }
-            QPushButton#historyToggleBtn:hover {
-                background-color: #3a3a3c;
-                border-color: #48484a;
-            }
-            QPushButton#historyToggleBtn:pressed {
-                background-color: #1c1c1e;
-            }
-        """)
-
 
 class HistoryEdgeTab(QPushButton):
     """Vertical edge tab button to toggle history sidebar - always visible."""
@@ -692,6 +659,7 @@ class HistoryEdgeTab(QPushButton):
         self.setFixedWidth(config.MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH)
         self.setMinimumHeight(80)
         self._is_expanded = False
+        self._shortcut_hint = ""
         self._update_icon()
         self._apply_style()
 
@@ -700,15 +668,24 @@ class HistoryEdgeTab(QPushButton):
         self._is_expanded = expanded
         self._update_icon()
 
+    def set_shortcut_hint(self, shortcut: str):
+        """Show a keyboard shortcut alongside the toggle tooltips.
+
+        Args:
+            shortcut: Display string such as "Ctrl+H"; empty hides the hint.
+        """
+        self._shortcut_hint = f" ({shortcut})" if shortcut else ""
+        self._update_icon()
+
     def _update_icon(self):
         """Update the icon based on expanded state."""
         # Use arrow characters to indicate direction
         if self._is_expanded:
             self.setText("›")  # Arrow pointing right (to collapse)
-            self.setToolTip("Close History")
+            self.setToolTip(f"Close History{self._shortcut_hint}")
         else:
             self.setText("‹")  # Arrow pointing left (to expand)
-            self.setToolTip("Open History")
+            self.setToolTip(f"Open History{self._shortcut_hint}")
 
     def _apply_style(self):
         """Apply custom styling."""

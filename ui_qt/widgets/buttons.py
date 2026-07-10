@@ -2,18 +2,32 @@
 Modern button components for PyQt6 UI.
 """
 from PyQt6.QtWidgets import QPushButton, QSizePolicy, QWidget, QHBoxLayout, QLabel
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import (
+    Qt,
+    pyqtSignal,
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPoint,
+    QPropertyAnimation,
+    QRectF,
+    QTimer,
+)
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 
 
 class HotkeyHoverHint(QWidget):
-    """Floating shortcut hint shown above a button on hover."""
+    """Floating pill-shaped shortcut hint shown above a button on hover."""
+
+    _BACKGROUND = QColor(58, 58, 60, 248)
+    _BORDER = QColor(255, 255, 255, 38)
 
     _TEXT_STYLE = """
         QLabel {
             color: #f5f5f7;
             font-size: 11px;
             font-weight: 600;
+            letter-spacing: 0.5px;
             font-family: "Segoe UI", "Helvetica Neue", sans-serif;
             background: transparent;
             border: none;
@@ -24,12 +38,21 @@ class HotkeyHoverHint(QWidget):
     def __init__(self, parent=None):
         super().__init__(
             parent,
-            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint,
+            Qt.WindowType.ToolTip
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint,
         )
         self.setObjectName("hotkeyHoverHint")
+        # The pill is painted in paintEvent against a translucent window,
+        # so the rectangular window corners stay invisible. QSS rounding on
+        # an opaque ToolTip window leaves square backing blocks, and the
+        # native drop shadow re-outlines the rectangle.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(8, 5, 8, 5)
+        outer.setContentsMargins(12, 6, 12, 6)
         outer.setSpacing(0)
 
         self._text_label = QLabel()
@@ -37,18 +60,104 @@ class HotkeyHoverHint(QWidget):
         self._text_label.setStyleSheet(self._TEXT_STYLE)
         outer.addWidget(self._text_label)
 
-        self.setStyleSheet("""
-            HotkeyHoverHint {
-                background-color: rgba(28, 28, 30, 0.94);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-            }
-        """)
+        self._fade_in = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_in.setDuration(140)
+        self._fade_in.setStartValue(0.0)
+        self._fade_in.setEndValue(1.0)
+        self._fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def set_hotkey(self, hotkey: str) -> None:
         """Update the shortcut text shown in the hover hint."""
         self._text_label.setText(hotkey)
         self.adjustSize()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Half-pixel inset keeps the 1px border crisp instead of smeared
+        # across two device pixels.
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = rect.height() / 2.0
+        painter.setPen(QPen(self._BORDER, 1.0))
+        painter.setBrush(self._BACKGROUND)
+        painter.drawRoundedRect(rect, radius, radius)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fade_in.stop()
+        self.setWindowOpacity(0.0)
+        self._fade_in.start()
+
+
+class HotkeyHintFilter(QObject):
+    """Shows a ``HotkeyHoverHint`` pill above a button while it is hovered.
+
+    Attachable to any ``QPushButton`` — including plain styled buttons —
+    without changing the button's font or sizing the way subclassing
+    ``Button`` would. The filter parents itself to the button, so its
+    lifetime is managed automatically.
+    """
+
+    _HIDE_DELAY_MS = 80
+
+    def __init__(self, button: QPushButton, hotkey: str = ""):
+        """Attach the hover hint to a button.
+
+        Args:
+            button: The button to watch; also becomes this filter's parent.
+            hotkey: Initial shortcut display text (empty disables the hint).
+        """
+        super().__init__(button)
+        self._button = button
+        self._hotkey = hotkey
+        self._hint: HotkeyHoverHint | None = None
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(self._HIDE_DELAY_MS)
+        self._hide_timer.timeout.connect(self.hide_hint)
+        button.installEventFilter(self)
+
+    def set_hotkey(self, hotkey: str) -> None:
+        """Update the shortcut text shown in the hover hint."""
+        self._hotkey = hotkey
+        if self._hint is not None:
+            self._hint.set_hotkey(hotkey)
+
+    def eventFilter(self, obj, event):
+        if obj is self._button:
+            event_type = event.type()
+            if event_type == QEvent.Type.Enter:
+                self.show_hint()
+            elif event_type == QEvent.Type.Leave:
+                self._hide_timer.start()
+            elif event_type == QEvent.Type.Hide:
+                self.hide_hint()
+        return False
+
+    def show_hint(self) -> None:
+        """Show the pill centered above the button."""
+        if not self._hotkey or not self._button.isEnabled():
+            return
+
+        self._hide_timer.stop()
+        if self._hint is None:
+            self._hint = HotkeyHoverHint(self._button.window())
+        self._hint.set_hotkey(self._hotkey)
+
+        top_center = self._button.mapToGlobal(QPoint(self._button.width() // 2, 0))
+        hint_width = self._hint.sizeHint().width()
+        hint_height = self._hint.sizeHint().height()
+        self._hint.move(
+            top_center.x() - hint_width // 2,
+            top_center.y() - hint_height - 8,
+        )
+        self._hint.show()
+        self._hint.raise_()
+
+    def hide_hint(self) -> None:
+        """Hide the pill immediately."""
+        if self._hint is not None:
+            self._hint.hide()
 
 
 class Button(QPushButton):
@@ -69,15 +178,10 @@ class Button(QPushButton):
         self.setSizePolicy(size_policy)
 
         self._base_text = text
-        self._hotkey_text = ""
         self._active = True
         self._base_min_height = 44
         self._base_min_width = 140
-        self._hotkey_hint: HotkeyHoverHint | None = None
-        self._hide_hint_timer = QTimer(self)
-        self._hide_hint_timer.setSingleShot(True)
-        self._hide_hint_timer.setInterval(80)
-        self._hide_hint_timer.timeout.connect(self._hide_hotkey_hint)
+        self._hotkey_hint_filter = HotkeyHintFilter(self)
 
     def setText(self, text: str):
         """Override setText to update base text."""
@@ -87,9 +191,18 @@ class Button(QPushButton):
 
     def set_hotkey(self, hotkey: str):
         """Set the hotkey shown in a hover hint above the button."""
-        self._hotkey_text = hotkey
-        if self._hotkey_hint is not None:
-            self._hotkey_hint.set_hotkey(hotkey)
+        self._hotkey_hint_filter.set_hotkey(hotkey)
+
+    def set_base_minimum_size(self, width: int, height: int) -> None:
+        """Set the minimum dimensions used when the button text changes.
+
+        Args:
+            width: Minimum button width in pixels.
+            height: Minimum button height in pixels.
+        """
+        self._base_min_width = width
+        self._base_min_height = height
+        self._refresh_size()
 
     def set_active(self, active: bool):
         """Toggle interactivity while keeping the button hover-responsive.
@@ -107,7 +220,7 @@ class Button(QPushButton):
             Qt.CursorShape.PointingHandCursor if active else Qt.CursorShape.ArrowCursor
         )
         if not active:
-            self._hide_hotkey_hint()
+            self._hotkey_hint_filter.hide_hint()
 
     def _refresh_size(self):
         """Size the button to fit its label without horizontal clipping."""
@@ -116,35 +229,6 @@ class Button(QPushButton):
         horizontal_padding = 40
         self.setMinimumWidth(max(self._base_min_width, text_width + horizontal_padding))
         self.setMinimumHeight(self._base_min_height)
-
-    def _ensure_hotkey_hint(self) -> HotkeyHoverHint:
-        if self._hotkey_hint is None:
-            self._hotkey_hint = HotkeyHoverHint(self.window())
-            if self._hotkey_text:
-                self._hotkey_hint.set_hotkey(self._hotkey_text)
-        return self._hotkey_hint
-
-    def _show_hotkey_hint(self) -> None:
-        if not self._hotkey_text or not self.isEnabled():
-            return
-
-        self._hide_hint_timer.stop()
-        hint = self._ensure_hotkey_hint()
-        hint.set_hotkey(self._hotkey_text)
-
-        top_center = self.mapToGlobal(QPoint(self.width() // 2, 0))
-        hint_width = hint.sizeHint().width()
-        hint_height = hint.sizeHint().height()
-        hint.move(
-            top_center.x() - hint_width // 2,
-            top_center.y() - hint_height - 8,
-        )
-        hint.show()
-        hint.raise_()
-
-    def _hide_hotkey_hint(self) -> None:
-        if self._hotkey_hint is not None:
-            self._hotkey_hint.hide()
 
     def mousePressEvent(self, event):
         if not self._active:
@@ -167,19 +251,6 @@ class Button(QPushButton):
             event.ignore()
             return
         super().keyPressEvent(event)
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self._show_hotkey_hint()
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self._hide_hint_timer.start()
-
-    def hideEvent(self, event):
-        self._hide_hotkey_hint()
-        super().hideEvent(event)
-
 
 class PrimaryButton(Button):
     """Primary action button with gradient."""
