@@ -8,7 +8,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush
 from PyQt6.QtCore import QRect, QRectF, Qt
-from .base_style import BaseWaveformStyle
+from .base_style import BaseWaveformStyle, round_pen
 
 
 class Particle:
@@ -204,7 +204,7 @@ class ParticleStyle(BaseWaveformStyle):
         size = int(26 * (1.0 - 0.6 * progress))
         alpha = max(0, int(255 * (1.0 - progress)))
 
-        painter.setPen(QPen(QColor(239, 68, 68, alpha), 3))
+        painter.setPen(round_pen(QColor(255, 69, 58, alpha), 3))
         painter.drawLine(center_x - size, center_y - size, center_x + size, center_y + size)
         painter.drawLine(center_x + size, center_y - size, center_x - size, center_y + size)
 

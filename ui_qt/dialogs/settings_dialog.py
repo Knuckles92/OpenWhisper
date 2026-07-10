@@ -49,8 +49,11 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Tab widget (styled by the app-wide theme)
+        # Tab widget: segmented-button tab styling lives in theme.qss
+        # under the #settingsTabs rules.
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("settingsTabs")
+        self.tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Create tabs
         self._create_general_tab()

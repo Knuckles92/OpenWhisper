@@ -26,6 +26,14 @@ from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
 logger = logging.getLogger(__name__)
 
 
+def _round_pen(color: QColor, width: float) -> QPen:
+    """Pen with round caps/joins so drawn glyph strokes look polished."""
+    return QPen(
+        color, width, Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin,
+    )
+
+
 @dataclass
 class LargeFileOverlayInfo:
     """Display info for the large-file overlay states."""
@@ -180,8 +188,8 @@ class WaveformOverlay(QWidget):
             # Draw a simple fallback
             try:
                 painter = QPainter(self)
-                painter.fillRect(self.rect(), QColor(45, 45, 68, 200))
-                painter.setPen(QPen(QColor(224, 224, 255)))
+                painter.fillRect(self.rect(), QColor(28, 28, 30, 238))
+                painter.setPen(QPen(QColor(245, 245, 247)))
                 painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
@@ -218,7 +226,7 @@ class WaveformOverlay(QWidget):
         """
         top = self._base_height - 8
         text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
-        painter.setPen(QPen(QColor(224, 224, 255)))
+        painter.setPen(QPen(QColor(245, 245, 247)))
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
         painter.drawText(
@@ -317,15 +325,15 @@ class WaveformOverlay(QWidget):
             self._reposition_near_anchor()
 
     def _draw_background(self, painter: QPainter):
-        """Draw the background with frosted glass effect."""
-        rect = self.rect()
+        """Draw the frosted rounded background matching the app theme."""
+        # Inset by half the pen width so the 1px border isn't clipped.
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 12, 12)
 
-        # Draw semi-transparent background
-        painter.fillRect(rect, QColor(45, 45, 68, 200))
-
-        # Draw border
-        painter.setPen(QPen(QColor(64, 64, 96, 150), 1))
-        painter.drawRoundedRect(rect, 12, 12)
+        painter.fillPath(path, QColor(28, 28, 30, 238))
+        painter.setPen(QPen(QColor(84, 84, 86, 170), 1))
+        painter.drawPath(path)
 
     def _draw_particle_swarm(self, painter: QPainter):
         """Render the active STT particle list with a glow halo for fresh particles."""
@@ -360,14 +368,14 @@ class WaveformOverlay(QWidget):
         if self.animation_time > 0.4:
             progress = min(1.0, (self.animation_time - 0.4) / 0.3)
             alpha = int(200 * progress)
-            painter.setPen(QPen(QColor(16, 185, 129, alpha), 3))
+            painter.setPen(_round_pen(QColor(48, 209, 88, alpha), 3))
             painter.drawLine(int(w // 2 - 15), int(h // 2), int(w // 2 - 5), int(h // 2 + 10))
             painter.drawLine(int(w // 2 - 5), int(h // 2 + 10), int(w // 2 + 15), int(h // 2 - 10))
 
         self._draw_particle_swarm(painter)
 
         # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
+        painter.setPen(QPen(QColor(245, 245, 247)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Enabled")
 
@@ -381,14 +389,14 @@ class WaveformOverlay(QWidget):
             progress = min(1.0, (self.animation_time - 0.1) / 0.2)
             alpha = int(200 * progress)
             x_size = 15
-            painter.setPen(QPen(QColor(239, 68, 68, alpha), 3))
+            painter.setPen(_round_pen(QColor(255, 69, 58, alpha), 3))
             painter.drawLine(w // 2 - x_size, h // 2 - x_size, w // 2 + x_size, h // 2 + x_size)
             painter.drawLine(w // 2 + x_size, h // 2 - x_size, w // 2 - x_size, h // 2 + x_size)
 
         self._draw_particle_swarm(painter)
 
         # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
+        painter.setPen(QPen(QColor(245, 245, 247)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Disabled")
 
@@ -403,8 +411,8 @@ class WaveformOverlay(QWidget):
             alpha = int(220 * progress)
 
             # Draw a stylized clipboard/document icon
-            icon_color = QColor(0, 180, 255, alpha)
-            painter.setPen(QPen(icon_color, 2))
+            icon_color = QColor(100, 210, 255, alpha)
+            painter.setPen(_round_pen(icon_color, 2))
 
             # Clipboard body
             cx, cy = w // 2, h // 2 - 5
@@ -414,14 +422,14 @@ class WaveformOverlay(QWidget):
             painter.drawRect(cx - 6, cy - 14, 12, 6)
 
             # Lines representing text
-            painter.setPen(QPen(icon_color, 1.5))
+            painter.setPen(_round_pen(icon_color, 1.5))
             painter.drawLine(cx - 7, cy + 2, cx + 7, cy + 2)
             painter.drawLine(cx - 7, cy + 8, cx + 5, cy + 8)
 
         self._draw_particle_swarm(painter)
 
         # Status text
-        painter.setPen(QPen(QColor(224, 224, 255)))
+        painter.setPen(QPen(QColor(245, 245, 247)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Copied!")
 
@@ -449,8 +457,8 @@ class WaveformOverlay(QWidget):
         # Scissors blades animation (opening/closing)
         blade_angle = 12 + 8 * math.sin(progress * math.pi * 2)
 
-        amber = QColor(251, 191, 36)
-        painter.setPen(QPen(amber, 3))
+        amber = QColor(255, 159, 10)
+        painter.setPen(_round_pen(amber, 3))
 
         # Draw scissors (two crossing blades)
         # Top blade
@@ -484,8 +492,8 @@ class WaveformOverlay(QWidget):
         center_x, center_y = w // 2, h // 2 - 10
         radius = 18
 
-        cyan = QColor(0, 212, 255)
-        painter.setPen(QPen(cyan, 2))
+        cyan = QColor(100, 210, 255)
+        painter.setPen(_round_pen(cyan, 2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
         # Clock circle
@@ -503,7 +511,7 @@ class WaveformOverlay(QWidget):
         hour_length = radius - 10
         hour_x = center_x + int(hour_length * math.cos(hour_angle))
         hour_y = center_y + int(hour_length * math.sin(hour_angle))
-        painter.setPen(QPen(cyan, 3))
+        painter.setPen(_round_pen(cyan, 3))
         painter.drawLine(center_x, center_y, hour_x, hour_y)
 
         # Center dot

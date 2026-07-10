@@ -5,9 +5,17 @@ Defines the interface that all styles must implement.
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, Qt
 import time
 import math
+
+
+def round_pen(color: QColor, width: float) -> QPen:
+    """Pen with round caps/joins so drawn glyph strokes look polished."""
+    return QPen(
+        color, width, Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin,
+    )
 
 
 class BaseWaveformStyle(ABC):
@@ -151,9 +159,8 @@ class BaseWaveformStyle(ABC):
         size = int(40 * scale)
 
         # Draw X lines
-        color = QColor(255, 68, 68, opacity)
-        pen = QPen(color, 4)
-        painter.setPen(pen)
+        color = QColor(255, 69, 58, opacity)  # Apple system red
+        painter.setPen(round_pen(color, 4))
 
         painter.drawLine(
             center_x - size, center_y - size,
@@ -186,9 +193,8 @@ class BaseWaveformStyle(ABC):
         center_y = rect.height() // 2
 
         # Draw green checkmark
-        color = QColor(16, 185, 129)  # Emerald green
-        pen = QPen(color, 4)
-        painter.setPen(pen)
+        color = QColor(48, 209, 88)  # Apple system green
+        painter.setPen(round_pen(color, 4))
 
         # Checkmark path
         painter.drawLine(center_x - 15, center_y, center_x - 5, center_y + 10)
@@ -215,9 +221,8 @@ class BaseWaveformStyle(ABC):
         size = 20
 
         # Draw red X
-        color = QColor(239, 68, 68)  # Red
-        pen = QPen(color, 4)
-        painter.setPen(pen)
+        color = QColor(255, 69, 58)  # Apple system red
+        painter.setPen(round_pen(color, 4))
 
         painter.drawLine(
             center_x - size, center_y - size,
