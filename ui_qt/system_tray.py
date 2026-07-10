@@ -69,18 +69,7 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _setup_menu(self):
         """Setup the tray context menu."""
-        self.menu = QMenu()
-        self.menu.setStyleSheet("""
-            QMenu {
-                background-color: #2d2d44;
-                color: #e0e0ff;
-                border: 1px solid #404060;
-                border-radius: 6px;
-            }
-            QMenu::item:selected {
-                background-color: #6366f1;
-            }
-        """)
+        self.menu = QMenu()  # Styled by the app-wide theme's QMenu rules
 
         # Show action
         show_action = self.menu.addAction("Show")

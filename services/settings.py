@@ -34,7 +34,12 @@ class SettingsKey:
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
+    HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
+
+
+_HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
+_HF_HUB_OFFLINE_TRUTHY: Final[Tuple[str, ...]] = ("1", "on", "true", "yes")
 
 
 class SettingsManager:
@@ -251,5 +256,61 @@ def is_streaming_overlay_enabled(settings: Dict[str, Any]) -> bool:
     return bool(settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False))
 
 
+def is_hf_hub_offline_env_set() -> bool:
+    """Return whether ``HF_HUB_OFFLINE`` is already set in the process env."""
+    return os.environ.get(_HF_HUB_OFFLINE_ENV, "").strip().lower() in _HF_HUB_OFFLINE_TRUTHY
+
+
+def apply_hf_hub_offline(enabled: bool) -> None:
+    """Apply or clear the ``HF_HUB_OFFLINE`` environment variable for this process.
+
+    Args:
+        enabled: When True, set ``HF_HUB_OFFLINE=1``. When False, remove it so
+            HuggingFace Hub checks are allowed again in this process.
+    """
+    if enabled:
+        os.environ[_HF_HUB_OFFLINE_ENV] = "1"
+        logger.info("HuggingFace Hub offline mode enabled (HF_HUB_OFFLINE=1)")
+    else:
+        removed = os.environ.pop(_HF_HUB_OFFLINE_ENV, None)
+        if removed is not None:
+            logger.info("HuggingFace Hub offline mode disabled")
+
+
 # Global settings manager instance
 settings_manager = SettingsManager()
+
+
+def is_hf_hub_offline_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Return whether HuggingFace Hub network checks should be skipped.
+
+    True when the Settings toggle is on, or when ``HF_HUB_OFFLINE`` is already
+    set in the environment (CLI / shell override).
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        True when model loads should use local files only.
+    """
+    if is_hf_hub_offline_env_set():
+        return True
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
+
+
+def apply_hf_hub_offline_from_settings() -> bool:
+    """Enable offline Hub mode from saved settings if the toggle is on.
+
+    Does not clear a pre-existing ``HF_HUB_OFFLINE`` env var when the setting is
+    off, so shell/CLI overrides still work at startup.
+
+    Returns:
+        True when offline mode is active after applying settings.
+    """
+    settings = settings_manager.load_all_settings()
+    enabled = bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
+    if enabled:
+        apply_hf_hub_offline(True)
+    return is_hf_hub_offline_enabled(settings)

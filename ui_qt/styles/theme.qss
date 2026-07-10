@@ -173,6 +173,19 @@ QLabel#accentLabel {
     font-weight: 600;
 }
 
+/* Section headings inside dialogs and panels */
+QLabel#sectionLabel {
+    color: #8e8e93;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+/* Small hint/help text under controls */
+QLabel#infoLabel {
+    color: #8e8e93;
+    font-size: 12px;
+}
+
 /* Text input fields */
 QLineEdit {
     background-color: #2c2c2e;
@@ -186,6 +199,84 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #0a84ff;
+}
+
+/* Hotkey capture fields (HotkeyDialog) — the capturing state is toggled
+   via a dynamic "capturing" property from Python */
+QLineEdit#hotkeyInput {
+    background-color: #2c2c2e;
+    color: #0a84ff;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-weight: 600;
+}
+
+QLineEdit#hotkeyInput:focus {
+    border: 1px solid #0a84ff;
+}
+
+QLineEdit#hotkeyInput[capturing="true"] {
+    background-color: #0a84ff;
+    color: #ffffff;
+    border: 1px solid #0a84ff;
+}
+
+/* Spin boxes */
+QSpinBox {
+    background-color: #2c2c2e;
+    color: #f5f5f7;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 14px;
+    selection-background-color: #0a84ff;
+}
+
+QSpinBox:focus {
+    border: 1px solid #0a84ff;
+}
+
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: transparent;
+    border: none;
+    width: 20px;
+}
+
+QSpinBox::up-arrow {
+    border-left: 2px solid #8e8e93;
+    border-top: 2px solid #8e8e93;
+    width: 6px;
+    height: 6px;
+    margin-top: 4px;
+}
+
+QSpinBox::down-arrow {
+    border-left: 2px solid #8e8e93;
+    border-bottom: 2px solid #8e8e93;
+    width: 6px;
+    height: 6px;
+    margin-bottom: 4px;
+}
+
+/* Sliders */
+QSlider::groove:horizontal {
+    background-color: #3a3a3c;
+    height: 4px;
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #0a84ff;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #f5f5f7;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
 }
 
 /* Text edit (multi-line) */
@@ -224,6 +315,27 @@ QScrollBar::handle:vertical:hover {
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: transparent;
+    height: 12px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #48484a;
+    border-radius: 6px;
+    min-width: 30px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #636366;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
 }
 
 /* Tab widget */

@@ -35,25 +35,25 @@ class DropZoneWidget(QFrame):
 
     _IDLE_STYLE = """
         QFrame#dropZone {
-            background-color: #222236;
-            border: 2px dashed #4a4a6a;
+            background-color: #2c2c2e;
+            border: 2px dashed #48484a;
             border-radius: 16px;
         }
         QFrame#dropZone:hover {
-            border-color: #6366f1;
-            background-color: #28284a;
+            border-color: #0a84ff;
+            background-color: #3a3a3c;
         }
     """
     _HOVER_STYLE = """
         QFrame#dropZone {
-            background-color: #2a2a50;
+            background-color: rgba(10, 132, 255, 0.15);
             border: 2px solid #0a84ff;
             border-radius: 16px;
         }
     """
     _REJECT_STYLE = """
         QFrame#dropZone {
-            background-color: #2e2232;
+            background-color: rgba(255, 69, 58, 0.12);
             border: 2px dashed #ff453a;
             border-radius: 16px;
         }
@@ -82,13 +82,13 @@ class DropZoneWidget(QFrame):
 
         title = QLabel("Drag and drop audio file here")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
-        title.setStyleSheet(f"color: #e0e0ff; {self._LABEL_RESET}")
+        title.setStyleSheet(f"color: #f5f5f7; {self._LABEL_RESET}")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("or click to browse")
         subtitle.setFont(QFont("Segoe UI", 11))
-        subtitle.setStyleSheet(f"color: #7d7d9a; {self._LABEL_RESET}")
+        subtitle.setStyleSheet(f"color: #8e8e93; {self._LABEL_RESET}")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -96,7 +96,7 @@ class DropZoneWidget(QFrame):
 
         formats = QLabel("WAV  ·  MP3  ·  M4A  ·  OGG  ·  FLAC  ·  WMA")
         formats.setFont(QFont("Segoe UI", 10))
-        formats.setStyleSheet(f"color: #55556e; {self._LABEL_RESET}")
+        formats.setStyleSheet(f"color: #636366; {self._LABEL_RESET}")
         formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(formats)
 
@@ -152,18 +152,18 @@ class FileInfoCard(Card):
     def _setup_ui(self):
         self.filename_label = QLabel()
         self.filename_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        self.filename_label.setStyleSheet("color: #00d4ff;")
+        self.filename_label.setStyleSheet("color: #0a84ff;")
         self.filename_label.setWordWrap(True)
         self.layout.addWidget(self.filename_label)
 
         self.details_label = QLabel()
         self.details_label.setFont(QFont("Segoe UI", 11))
-        self.details_label.setStyleSheet("color: #e0e0ff;")
+        self.details_label.setStyleSheet("color: #f5f5f7;")
         self.layout.addWidget(self.details_label)
 
         self.audio_info_label = QLabel()
         self.audio_info_label.setFont(QFont("Segoe UI", 10))
-        self.audio_info_label.setStyleSheet("color: #a0a0c0;")
+        self.audio_info_label.setStyleSheet("color: #8e8e93;")
         self.layout.addWidget(self.audio_info_label)
 
         self.chunk_label = QLabel()
@@ -206,13 +206,13 @@ class FileInfoCard(Card):
                 f"⚠ Will be split into {preview.estimated_chunks} chunks"
             )
             self.chunk_label.setStyleSheet(
-                "color: #fbbf24; font-size: 11px; font-weight: bold;"
+                "color: #ff9f0a; font-size: 11px; font-weight: bold;"
             )
             self.chunk_label.show()
         else:
             self.chunk_label.setText("Will be transcribed in one pass")
             self.chunk_label.setStyleSheet(
-                "color: #34d399; font-size: 11px; font-weight: bold;"
+                "color: #30d158; font-size: 11px; font-weight: bold;"
             )
             self.chunk_label.show()
 

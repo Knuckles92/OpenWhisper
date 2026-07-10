@@ -30,7 +30,7 @@ class CustomTitleBar(QFrame):
     _MENU_BAR_STYLE = """
         QMenuBar {
             background-color: transparent;
-            color: #c0c0d0;
+            color: #8e8e93;
             font-size: 12px;
             border: none;
             spacing: 0px;
@@ -40,26 +40,15 @@ class CustomTitleBar(QFrame):
             padding: 8px 10px 4px 10px;
         }
         QMenuBar::item:selected {
-            background-color: #5a5a5c;
+            background-color: #3a3a3c;
             color: #ffffff;
         }
         QMenuBar::item:pressed {
-            background-color: #6a6a6c;
-        }
-        QMenu {
-            background-color: #3a3a3c;
-            color: #e0e0ff;
-            border: 1px solid #5a5a5c;
-        }
-        QMenu::item {
-            padding: 6px 24px;
-        }
-        QMenu::item:selected {
-            background-color: #6366f1;
+            background-color: #48484a;
         }
         QMenu::separator {
             height: 1px;
-            background-color: #5a5a5c;
+            background-color: #3a3a3c;
             margin: 4px 8px;
         }
     """
@@ -67,7 +56,7 @@ class CustomTitleBar(QFrame):
     _TITLE_LABEL_STYLE = """
         QLabel {
             background-color: transparent;
-            color: #e0e0ff;
+            color: #f5f5f7;
             font-size: 13px;
             font-weight: 600;
             font-family: 'Segoe UI', sans-serif;
@@ -78,12 +67,12 @@ class CustomTitleBar(QFrame):
         QPushButton {
             background-color: transparent;
             border: none;
-            color: #808098;
+            color: #8e8e93;
             font-size: 14px;
             font-family: 'Segoe UI', sans-serif;
         }
         QPushButton:hover {
-            background-color: #3d3d5c;
+            background-color: #3a3a3c;
             color: #ffffff;
         }
     """
@@ -92,12 +81,12 @@ class CustomTitleBar(QFrame):
         QPushButton {
             background-color: transparent;
             border: none;
-            color: #808098;
+            color: #8e8e93;
             font-size: 14px;
             font-family: 'Segoe UI', sans-serif;
         }
         QPushButton:hover {
-            background-color: #e81123;
+            background-color: #ff453a;
             color: #ffffff;
         }
     """

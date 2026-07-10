@@ -49,10 +49,10 @@ class LoadingScreen(QWidget):
         self.progress_text = "Please wait..."
 
         # Colors
-        self.bg_color = QColor("#0f172a")  # Slate 900
-        self.accent_color = QColor("#6366f1")  # Indigo 500
-        self.text_color = QColor("#e2e8f0")  # Slate 200
-        self.subtext_color = QColor("#94a3b8")  # Slate 400
+        self.bg_color = QColor("#1c1c1e")  # Apple dark background
+        self.accent_color = QColor("#0a84ff")  # Apple system blue
+        self.text_color = QColor("#f5f5f7")  # Apple text white
+        self.subtext_color = QColor("#8e8e93")  # Apple secondary label
 
     def paintEvent(self, event):
         """Paint the custom loading screen."""

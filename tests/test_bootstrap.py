@@ -87,10 +87,11 @@ class TestBootstrap(unittest.TestCase):
         _FakeApplicationController.instances = []
         _FakeApplicationController.should_raise = False
 
+    @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")
     def test_main_runs_startup_flow_and_cleans_up_controller(
-        self, _mock_setup_logging, _mock_process_events
+        self, _mock_setup_logging, _mock_process_events, _mock_hf_offline
     ):
         qt_app = _FakeQtApplication()
         ui_controller = _FakeUIController()
@@ -127,10 +128,11 @@ class TestBootstrap(unittest.TestCase):
         self.assertLess(order.index("loading_screen_shown"), order.index("late_imports"))
         self.assertLess(order.index("process_events"), order.index("late_imports"))
 
+    @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")
     def test_main_cleans_up_loading_screen_and_controller_on_run_error(
-        self, _mock_setup_logging, _mock_process_events
+        self, _mock_setup_logging, _mock_process_events, _mock_hf_offline
     ):
         qt_app = _FakeQtApplication()
         qt_app.raise_on_run = True

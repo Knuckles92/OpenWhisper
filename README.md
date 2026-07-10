@@ -204,13 +204,16 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 **Hotkeys:** Customize all keyboard shortcuts
 
-**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging
+**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging, fully offline mode
 
 ## Offline Usage
 
-Local Whisper transcription works fully offline after the initial model download. However, on startup, the `faster-whisper` library makes a brief metadata check to HuggingFace to see if a newer model version is available. This is not a model download—just a lightweight API call. If you're offline, the check will fail silently and the cached local model loads normally.
+Local Whisper transcription works fully offline after the initial model download. However, by default `faster-whisper` makes a brief metadata check to HuggingFace on startup to see if a newer model version is available. This is not a model download—just a lightweight API call. If you're offline, the check will fail silently and the cached local model loads normally.
 
-To force fully offline operation (skip the metadata check), set this environment variable before running:
+To skip the check entirely:
+
+1. **Settings (recommended):** Open **Settings → Advanced** and enable **Skip HuggingFace network checks (fully offline)**.
+2. **Environment variable:** Set `HF_HUB_OFFLINE=1` before launching (still supported for scripts and CI):
 
 ```bash
 export HF_HUB_OFFLINE=1  # Linux/Mac
@@ -218,6 +221,7 @@ set HF_HUB_OFFLINE=1     # Windows
 python app_qt.py
 ```
 
+The Settings toggle persists across launches and applies the same `HF_HUB_OFFLINE` behavior (plus `local_files_only` when loading models). The model must already be cached from a previous download.
 ## Requirements
 
 - Python 3.8+ (3.12 recommended)

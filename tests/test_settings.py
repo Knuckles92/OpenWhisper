@@ -103,6 +103,46 @@ class TestSettingsManager(unittest.TestCase):
 
         self.assertEqual(saved_data, test_settings)
 
+    def test_apply_hf_hub_offline_sets_and_clears_env(self):
+        """Offline helper should set and clear HF_HUB_OFFLINE for this process."""
+        from services.settings import apply_hf_hub_offline, is_hf_hub_offline_env_set
+
+        previous = os.environ.pop("HF_HUB_OFFLINE", None)
+        try:
+            apply_hf_hub_offline(True)
+            self.assertTrue(is_hf_hub_offline_env_set())
+            self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
+
+            apply_hf_hub_offline(False)
+            self.assertFalse(is_hf_hub_offline_env_set())
+            self.assertNotIn("HF_HUB_OFFLINE", os.environ)
+        finally:
+            if previous is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = previous
+
+    def test_is_hf_hub_offline_enabled_from_settings(self):
+        """Settings toggle should enable offline mode even without the env var."""
+        from services.settings import (
+            SettingsKey,
+            apply_hf_hub_offline_from_settings,
+            is_hf_hub_offline_enabled,
+        )
+
+        previous = os.environ.pop("HF_HUB_OFFLINE", None)
+        try:
+            self.settings_manager.save_all_settings({SettingsKey.HF_HUB_OFFLINE: True})
+            with patch("services.settings.settings_manager", self.settings_manager):
+                self.assertTrue(is_hf_hub_offline_enabled())
+                self.assertTrue(apply_hf_hub_offline_from_settings())
+                self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
+        finally:
+            if previous is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = previous
+
 
 if __name__ == '__main__':
     unittest.main()

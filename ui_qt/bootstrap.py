@@ -131,6 +131,12 @@ def main() -> int:
     logging.info("Starting OpenWhisper")
     logging.info("=" * 60)
 
+    # Apply before any WhisperModel load so HuggingFace Hub checks are skipped.
+    from services.settings import apply_hf_hub_offline_from_settings
+
+    if apply_hf_hub_offline_from_settings():
+        logging.info("Fully offline mode active (skipping HuggingFace Hub checks)")
+
     profiler.mark("early_imports_started")
     QtApplication, LoadingScreen = get_early_runtime_components()
     profiler.mark("early_imports_finished")

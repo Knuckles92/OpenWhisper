@@ -11,10 +11,14 @@ from PyQt6.QtWidgets import (
     QSlider, QFrame, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 
 from config import config
-from services.settings import SettingsKey, is_streaming_overlay_enabled, settings_manager
+from services.settings import (
+    SettingsKey,
+    apply_hf_hub_offline,
+    is_streaming_overlay_enabled,
+    settings_manager,
+)
 from services.recorder import AudioRecorder
 from ui_qt.widgets import PrimaryButton, Button
 
@@ -45,26 +49,8 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Tab widget
+        # Tab widget (styled by the app-wide theme)
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #404060;
-                background-color: #1e1e2e;
-            }
-            QTabBar::tab {
-                background-color: #2d2d44;
-                color: #a0a0c0;
-                border: none;
-                padding: 10px 20px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                                            stop:0 #6366f1, stop:1 #8b5cf6);
-                color: #ffffff;
-            }
-        """)
 
         # Create tabs
         self._create_general_tab()
@@ -91,14 +77,6 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-        # Apply background
-        self.setStyleSheet("""
-            SettingsDialog {
-                background-color: #1e1e2e;
-                border-radius: 8px;
-            }
-        """)
-
     def _create_general_tab(self):
         """Create general settings tab."""
         tab = QWidget()
@@ -108,16 +86,12 @@ class SettingsDialog(QDialog):
 
         # Title
         title = QLabel("General Settings")
-        title_font = QFont("Segoe UI", 12)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #e0e0ff;")
+        title.setObjectName("headerLabel")
         layout.addWidget(title)
 
         # Model selection
         layout.addSpacing(12)
         model_label = QLabel("Default Model:")
-        model_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(model_label)
 
         self.model_combo = QComboBox()
@@ -128,32 +102,25 @@ class SettingsDialog(QDialog):
         # Auto-paste checkbox
         layout.addSpacing(12)
         self.auto_paste_check = QCheckBox("Auto-paste transcription to active window")
-        self.auto_paste_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.auto_paste_check)
 
         # Copy to clipboard checkbox
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
-        self.copy_clipboard_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.copy_clipboard_check)
 
         # Minimize to tray checkbox
         layout.addSpacing(12)
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
-        self.minimize_tray_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.minimize_tray_check)
 
         # Streaming transcription checkbox
         layout.addSpacing(24)
         streaming_label = QLabel("Real-Time Transcription (Experimental)")
-        streaming_label_font = QFont("Segoe UI", 10)
-        streaming_label_font.setBold(True)
-        streaming_label.setFont(streaming_label_font)
-        streaming_label.setStyleSheet("color: #c0c0ff;")
+        streaming_label.setObjectName("sectionLabel")
         layout.addWidget(streaming_label)
 
         layout.addSpacing(8)
         self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
-        self.streaming_enabled_check.setStyleSheet("color: #e0e0ff;")
         self.streaming_enabled_check.stateChanged.connect(self._on_streaming_enabled_changed)
         layout.addWidget(self.streaming_enabled_check)
 
@@ -162,14 +129,13 @@ class SettingsDialog(QDialog):
             "Shows transcribed text as you speak using a dedicated tiny.en preview model.\n"
             "Requires Local Whisper backend. Final transcription still uses your selected model."
         )
-        streaming_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_info.setObjectName("infoLabel")
         streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
 
         # Streaming overlay checkbox
         layout.addSpacing(8)
         self.streaming_overlay_check = QCheckBox("Show live preview near cursor")
-        self.streaming_overlay_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.streaming_overlay_check)
 
         # Info label for streaming overlay
@@ -177,21 +143,20 @@ class SettingsDialog(QDialog):
             "Shows live preview text on the same near-cursor overlay as recording.\n"
             "Final transcription still uses your normal auto-paste / clipboard settings."
         )
-        streaming_overlay_info.setStyleSheet("color: #808090; font-size: 10px;")
+        streaming_overlay_info.setObjectName("infoLabel")
         streaming_overlay_info.setWordWrap(True)
         layout.addWidget(streaming_overlay_info)
 
         # Live typing checkbox
         layout.addSpacing(8)
         self.live_typing_check = QCheckBox("Live type into focused window (experimental)")
-        self.live_typing_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.live_typing_check)
 
         live_typing_info = QLabel(
             "Types preview text into the focused app as you speak (append-only).\n"
             "When used, final auto-paste is skipped to avoid duplicating text."
         )
-        live_typing_info.setStyleSheet("color: #808090; font-size: 10px;")
+        live_typing_info.setObjectName("infoLabel")
         live_typing_info.setWordWrap(True)
         layout.addWidget(live_typing_info)
 
@@ -207,16 +172,12 @@ class SettingsDialog(QDialog):
 
         # Title
         title = QLabel("Audio Settings")
-        title_font = QFont("Segoe UI", 12)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #e0e0ff;")
+        title.setObjectName("headerLabel")
         layout.addWidget(title)
 
         # Sample rate
         layout.addSpacing(12)
         sample_rate_label = QLabel("Sample Rate (Hz):")
-        sample_rate_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(sample_rate_label)
 
         self.sample_rate_combo = QComboBox()
@@ -227,7 +188,6 @@ class SettingsDialog(QDialog):
         # Channels
         layout.addSpacing(12)
         channels_label = QLabel("Channels:")
-        channels_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(channels_label)
 
         self.channels_combo = QComboBox()
@@ -238,7 +198,6 @@ class SettingsDialog(QDialog):
         # Silence threshold
         layout.addSpacing(12)
         threshold_label = QLabel("Silence Threshold:")
-        threshold_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(threshold_label)
 
         threshold_layout = QHBoxLayout()
@@ -248,7 +207,7 @@ class SettingsDialog(QDialog):
         self.threshold_slider.setValue(10)
 
         self.threshold_value_label = QLabel("0.01")
-        self.threshold_value_label.setStyleSheet("color: #00d4ff; font-weight: bold;")
+        self.threshold_value_label.setObjectName("accentLabel")
         self.threshold_value_label.setMaximumWidth(50)
 
         self.threshold_slider.valueChanged.connect(self._update_threshold_display)
@@ -260,7 +219,6 @@ class SettingsDialog(QDialog):
         # Input device selection
         layout.addSpacing(16)
         device_label = QLabel("Input Device:")
-        device_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(device_label)
 
         self.audio_device_combo = QComboBox()
@@ -269,7 +227,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.audio_device_combo)
 
         device_info = QLabel("Select microphone for recording")
-        device_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        device_info.setObjectName("infoLabel")
         layout.addWidget(device_info)
 
         layout.addStretch()
@@ -284,15 +242,12 @@ class SettingsDialog(QDialog):
 
         # Title
         title = QLabel("Hotkeys")
-        title_font = QFont("Segoe UI", 12)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #e0e0ff;")
+        title.setObjectName("headerLabel")
         layout.addWidget(title)
 
         layout.addSpacing(12)
         info_label = QLabel("Configure global hotkeys for quick access")
-        info_label.setStyleSheet("color: #a0a0c0; font-style: italic;")
+        info_label.setObjectName("infoLabel")
         layout.addWidget(info_label)
 
         layout.addSpacing(16)
@@ -315,51 +270,26 @@ class SettingsDialog(QDialog):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background-color: #2d2d44;
-                width: 10px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #6366f1;
-                border-radius: 5px;
-                min-height: 30px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-        """)
 
         # Content widget for scrollable area
         content = QWidget()
-        content.setObjectName("advancedScrollContent")
-        content.setStyleSheet("#advancedScrollContent { background-color: transparent; }")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
         # Title
         title = QLabel("Advanced Settings")
-        title_font = QFont("Segoe UI", 12)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #e0e0ff;")
+        title.setObjectName("headerLabel")
         layout.addWidget(title)
 
         # Whisper Engine Settings section
         layout.addSpacing(12)
         whisper_title = QLabel("Whisper Engine")
-        whisper_title.setStyleSheet("color: #a0a0c0; font-weight: bold;")
+        whisper_title.setObjectName("sectionLabel")
         layout.addWidget(whisper_title)
 
         # Whisper Model selection
         model_label = QLabel("Model:")
-        model_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(model_label)
 
         self.whisper_model_combo = QComboBox()
@@ -370,7 +300,6 @@ class SettingsDialog(QDialog):
         # Device selection
         layout.addSpacing(8)
         device_label = QLabel("Device:")
-        device_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(device_label)
 
         self.whisper_device_combo = QComboBox()
@@ -385,7 +314,6 @@ class SettingsDialog(QDialog):
         # Compute type selection
         layout.addSpacing(8)
         compute_label = QLabel("Compute Type:")
-        compute_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(compute_label)
 
         self.whisper_compute_combo = QComboBox()
@@ -395,13 +323,12 @@ class SettingsDialog(QDialog):
 
         # Info label
         compute_info = QLabel("Changes require restarting the whisper engine")
-        compute_info.setStyleSheet("color: #808090; font-size: 10px; font-style: italic;")
+        compute_info.setObjectName("infoLabel")
         layout.addWidget(compute_info)
 
         # Max file size
         layout.addSpacing(12)
         max_size_label = QLabel("Maximum File Size (MB):")
-        max_size_label.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(max_size_label)
 
         self.max_size_spinbox = QSpinBox()
@@ -414,8 +341,27 @@ class SettingsDialog(QDialog):
         # Enable logging checkbox
         layout.addSpacing(12)
         self.logging_check = QCheckBox("Enable detailed logging")
-        self.logging_check.setStyleSheet("color: #e0e0ff;")
         layout.addWidget(self.logging_check)
+
+        # Fully offline / skip HuggingFace Hub checks
+        layout.addSpacing(16)
+        offline_title = QLabel("Network")
+        offline_title.setObjectName("sectionLabel")
+        layout.addWidget(offline_title)
+
+        self.hf_hub_offline_check = QCheckBox(
+            "Skip HuggingFace network checks (fully offline)"
+        )
+        layout.addWidget(self.hf_hub_offline_check)
+
+        offline_info = QLabel(
+            "Stops faster-whisper from contacting HuggingFace on startup to check "
+            "for model updates. The model must already be downloaded. Same effect "
+            "as setting HF_HUB_OFFLINE=1."
+        )
+        offline_info.setObjectName("infoLabel")
+        offline_info.setWordWrap(True)
+        layout.addWidget(offline_info)
 
         layout.addStretch()
 
@@ -506,6 +452,10 @@ class SettingsDialog(QDialog):
             if compute_index >= 0:
                 self.whisper_compute_combo.setCurrentIndex(compute_index)
 
+            self.hf_hub_offline_check.setChecked(
+                bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
+            )
+
             # Load audio input device
             saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if saved_device_id is not None:
@@ -527,6 +477,7 @@ class SettingsDialog(QDialog):
             self.streaming_overlay_check.setEnabled(config.STREAMING_ENABLED)
             self.live_typing_check.setChecked(False)
             self.live_typing_check.setEnabled(config.STREAMING_ENABLED)
+            self.hf_hub_offline_check.setChecked(False)
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -542,13 +493,16 @@ class SettingsDialog(QDialog):
             old_whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
             old_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
             old_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
+            old_hf_hub_offline = bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
             new_whisper_model = self.whisper_model_combo.currentText()
             new_device = self.whisper_device_combo.currentText()
             new_compute = self.whisper_compute_combo.currentText()
+            new_hf_hub_offline = self.hf_hub_offline_check.isChecked()
             whisper_settings_changed = (
                 old_whisper_model != new_whisper_model or
                 old_device != new_device or
-                old_compute != new_compute
+                old_compute != new_compute or
+                old_hf_hub_offline != new_hf_hub_offline
             )
 
             # Check if audio input device changed
@@ -563,7 +517,8 @@ class SettingsDialog(QDialog):
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
                 old_streaming_overlay != self.streaming_overlay_check.isChecked() or
-                old_live_typing != self.live_typing_check.isChecked()
+                old_live_typing != self.live_typing_check.isChecked() or
+                old_hf_hub_offline != new_hf_hub_offline
             )
 
             # Update with new values
@@ -580,6 +535,7 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
             settings[SettingsKey.WHISPER_DEVICE] = new_device
             settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute
+            settings[SettingsKey.HF_HUB_OFFLINE] = new_hf_hub_offline
 
             # Save audio input device (None for system default)
             if new_audio_device is None:
@@ -589,6 +545,9 @@ class SettingsDialog(QDialog):
 
             # Save to file
             settings_manager.save_all_settings(settings)
+
+            # Apply immediately so the next model load (and any Hub calls) respect it
+            apply_hf_hub_offline(new_hf_hub_offline)
 
             logger.info("Settings saved successfully")
 

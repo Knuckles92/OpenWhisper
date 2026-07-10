@@ -181,13 +181,20 @@ class LocalWhisperBackend(TranscriptionBackend):
             if self.model_name == "auto":
                 self.model_name = detected_model
 
-            logger.info(f"Loading faster-whisper model: {self.model_name} "
-                        f"(device={self._device}, compute_type={self._compute_type})")
+            from services.settings import is_hf_hub_offline_enabled
+
+            local_files_only = is_hf_hub_offline_enabled()
+            logger.info(
+                f"Loading faster-whisper model: {self.model_name} "
+                f"(device={self._device}, compute_type={self._compute_type}, "
+                f"local_files_only={local_files_only})"
+            )
 
             self.model = WhisperModel(
                 self.model_name,
                 device=self._device,
-                compute_type=self._compute_type
+                compute_type=self._compute_type,
+                local_files_only=local_files_only,
             )
 
             logger.info("Faster-whisper model loaded successfully")

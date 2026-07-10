@@ -12,14 +12,14 @@ from typing import Optional, Callable, Dict
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QFrame, QMessageBox
+    QLineEdit, QMessageBox, QWidget
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
-from PyQt6.QtGui import QFont, QKeySequence, QMouseEvent
+from PyQt6.QtCore import pyqtSignal, QThread
+from PyQt6.QtGui import QMouseEvent
 
 from config import config
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
-from ui_qt.widgets import PrimaryButton, Button, HeaderCard
+from ui_qt.widgets import PrimaryButton, Button
 
 if USE_PYNPUT_BACKEND:
     from pynput import keyboard as pynput_keyboard
@@ -185,10 +185,7 @@ class HotkeyDialog(QDialog):
 
         # Header
         title = QLabel("Hotkey Configuration")
-        title_font = QFont("Segoe UI", 14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #e0e0ff;")
+        title.setObjectName("headerLabel")
         layout.addWidget(title)
 
         # Instructions
@@ -205,16 +202,13 @@ class HotkeyDialog(QDialog):
                 "Note: Numpad keys (kp 1, kp *, etc.) are distinct from regular keys."
             )
         instructions = QLabel(instructions_text)
-        instructions.setStyleSheet("color: #a0a0c0;")
-        instructions.setFont(QFont("Segoe UI", 10))
+        instructions.setObjectName("infoLabel")
         layout.addWidget(instructions)
 
         layout.addSpacing(12)
 
         # Record toggle hotkey
         record_label = QLabel("Record Toggle:")
-        record_label.setStyleSheet("color: #e0e0ff;")
-        record_label.setFont(QFont("Segoe UI", 11))
         layout.addWidget(record_label)
 
         self.record_input = self._create_hotkey_input()
@@ -225,8 +219,6 @@ class HotkeyDialog(QDialog):
 
         # Cancel hotkey
         cancel_label = QLabel("Cancel Recording:")
-        cancel_label.setStyleSheet("color: #e0e0ff;")
-        cancel_label.setFont(QFont("Segoe UI", 11))
         layout.addWidget(cancel_label)
 
         self.cancel_input = self._create_hotkey_input()
@@ -237,8 +229,6 @@ class HotkeyDialog(QDialog):
 
         # Enable/Disable hotkey
         enable_label = QLabel("Enable/Disable:")
-        enable_label.setStyleSheet("color: #e0e0ff;")
-        enable_label.setFont(QFont("Segoe UI", 11))
         layout.addWidget(enable_label)
 
         self.enable_input = self._create_hotkey_input()
@@ -249,8 +239,6 @@ class HotkeyDialog(QDialog):
 
         # Minimize-to-tray hotkey
         minimize_label = QLabel("Minimize to Tray:")
-        minimize_label.setStyleSheet("color: #e0e0ff;")
-        minimize_label.setFont(QFont("Segoe UI", 11))
         layout.addWidget(minimize_label)
 
         self.minimize_input = self._create_hotkey_input()
@@ -283,37 +271,21 @@ class HotkeyDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-        # Apply styling
-        self.setStyleSheet("""
-            HotkeyDialog {
-                background-color: #1e1e2e;
-                border-radius: 8px;
-            }
-        """)
-
     def _create_hotkey_input(self) -> ClickableLineEdit:
-        """Create a hotkey input field."""
+        """Create a hotkey input field styled by the app-wide theme."""
         input_field = ClickableLineEdit()
+        input_field.setObjectName("hotkeyInput")
         input_field.setReadOnly(True)
         input_field.setMinimumHeight(36)
-        input_field.setFont(QFont("Segoe UI", 10))
         input_field.setPlaceholderText("Click to set hotkey")
-        input_field.setStyleSheet("""
-            QLineEdit {
-                background-color: #2d2d44;
-                color: #00d4ff;
-                border: 1px solid #404060;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QLineEdit:focus {
-                border: 2px solid #00d4ff;
-            }
-        """)
-        # Store original style for reset
-        input_field.setProperty("original_style", input_field.styleSheet())
         return input_field
+
+    @staticmethod
+    def _set_capturing_state(input_field: QWidget, capturing: bool):
+        """Toggle the QSS ``capturing`` property and re-polish the widget."""
+        input_field.setProperty("capturing", capturing)
+        input_field.style().unpolish(input_field)
+        input_field.style().polish(input_field)
 
     def _start_capture(self, hotkey_type: str, input_field: ClickableLineEdit):
         """Start capturing a hotkey."""
@@ -328,16 +300,7 @@ class HotkeyDialog(QDialog):
             self.current_input_field = input_field
 
             input_field.setText("Press keys...")
-            input_field.setStyleSheet("""
-                QLineEdit {
-                    background-color: #6366f1;
-                    color: #ffffff;
-                    border: 2px solid #00d4ff;
-                    border-radius: 6px;
-                    padding: 6px 12px;
-                    font-weight: bold;
-                }
-            """)
+            self._set_capturing_state(input_field, True)
 
             logger.info(f"Capturing hotkey for: {hotkey_type}")
 
@@ -380,24 +343,10 @@ class HotkeyDialog(QDialog):
         QMessageBox.warning(self, "Hotkey Capture Failed", message)
 
     def _reset_input_styles(self):
-        """Reset all input fields to default style."""
-        style = """
-            QLineEdit {
-                background-color: #2d2d44;
-                color: #00d4ff;
-                border: 1px solid #404060;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QLineEdit:focus {
-                border: 2px solid #00d4ff;
-            }
-        """
-        self.record_input.setStyleSheet(style)
-        self.cancel_input.setStyleSheet(style)
-        self.enable_input.setStyleSheet(style)
-        self.minimize_input.setStyleSheet(style)
+        """Reset all input fields to the default (non-capturing) style."""
+        for input_field in (self.record_input, self.cancel_input,
+                            self.enable_input, self.minimize_input):
+            self._set_capturing_state(input_field, False)
 
     def _reset_to_defaults(self):
         """Reset hotkeys to default values."""
