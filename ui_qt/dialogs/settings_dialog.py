@@ -150,19 +150,6 @@ class SettingsDialog(QDialog):
         streaming_overlay_info.setWordWrap(True)
         layout.addWidget(streaming_overlay_info)
 
-        # Live typing checkbox
-        layout.addSpacing(8)
-        self.live_typing_check = QCheckBox("Live type into focused window (experimental)")
-        layout.addWidget(self.live_typing_check)
-
-        live_typing_info = QLabel(
-            "Types preview text into the focused app as you speak (append-only).\n"
-            "When used, final auto-paste is skipped to avoid duplicating text."
-        )
-        live_typing_info.setObjectName("infoLabel")
-        live_typing_info.setWordWrap(True)
-        layout.addWidget(live_typing_info)
-
         layout.addStretch()
         self.tabs.addTab(tab, "General")
 
@@ -382,10 +369,8 @@ class SettingsDialog(QDialog):
         """Handle streaming enabled checkbox state change."""
         streaming_enabled = state == Qt.CheckState.Checked.value
         self.streaming_overlay_check.setEnabled(streaming_enabled)
-        self.live_typing_check.setEnabled(streaming_enabled)
         if not streaming_enabled:
             self.streaming_overlay_check.setChecked(False)
-            self.live_typing_check.setChecked(False)
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -430,10 +415,6 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_overlay_check.setChecked(is_streaming_overlay_enabled(settings))
             self.streaming_overlay_check.setEnabled(streaming_enabled)
-            self.live_typing_check.setChecked(
-                bool(settings.get(SettingsKey.LIVE_TYPING_ENABLED, False)) and streaming_enabled
-            )
-            self.live_typing_check.setEnabled(streaming_enabled)
 
             # Load whisper engine settings
             whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
@@ -478,8 +459,6 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_overlay_check.setChecked(False)
             self.streaming_overlay_check.setEnabled(config.STREAMING_ENABLED)
-            self.live_typing_check.setChecked(False)
-            self.live_typing_check.setEnabled(config.STREAMING_ENABLED)
             self.hf_hub_offline_check.setChecked(False)
 
     def _save_settings(self):
@@ -516,11 +495,9 @@ class SettingsDialog(QDialog):
             # Check if streaming settings changed
             old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
             old_streaming_overlay = is_streaming_overlay_enabled(settings)
-            old_live_typing = bool(settings.get(SettingsKey.LIVE_TYPING_ENABLED, False))
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
                 old_streaming_overlay != self.streaming_overlay_check.isChecked() or
-                old_live_typing != self.live_typing_check.isChecked() or
                 old_hf_hub_offline != new_hf_hub_offline
             )
 
@@ -531,10 +508,10 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
             settings[SettingsKey.STREAMING_OVERLAY_ENABLED] = self.streaming_overlay_check.isChecked()
-            settings[SettingsKey.LIVE_TYPING_ENABLED] = self.live_typing_check.isChecked()
             # Drop legacy keys so new settings are the source of truth
             settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)
             settings.pop("streaming_tiny_model_enabled", None)
+            settings.pop("live_typing_enabled", None)
             settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
             settings[SettingsKey.WHISPER_DEVICE] = new_device
             settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute

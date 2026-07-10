@@ -302,7 +302,6 @@ class TranscriptionRuntime:
         settings = settings_manager.load_all_settings()
         copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
         auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
-        skip_paste = bool(self.controller._live_typing_injected)
 
         # Synthetic paste posts a key event, which needs macOS Accessibility
         # permission. Without it, degrade to clipboard so the text isn't lost and
@@ -316,7 +315,7 @@ class TranscriptionRuntime:
             except Exception as exc:
                 logger.error(f"Failed to copy to clipboard: {exc}")
 
-        if auto_paste and not paste_blocked and not skip_paste:
+        if auto_paste and not paste_blocked:
             try:
                 send_paste()
                 logger.info("Transcription auto-pasted")
@@ -326,9 +325,6 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.set_status(
                     "Transcription complete (paste failed)"
                 )
-        elif skip_paste:
-            logger.info("Auto-paste skipped: live typing already injected text")
-            self.controller.ui_controller.set_status("Ready (Live typed)")
         elif paste_blocked:
             logger.warning(
                 "Auto-paste skipped: macOS Accessibility permission not granted."
@@ -339,16 +335,11 @@ class TranscriptionRuntime:
         else:
             self.controller.ui_controller.set_status("Ready")
 
-        self.controller._live_typing_injected = False
-        self.controller._last_typed_text = ""
-
     def on_transcription_error(self, error_message: str) -> None:
         """Handle transcription error."""
         self.controller.ui_controller.set_status(f"Error: {error_message}")
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
-        self.controller._live_typing_injected = False
-        self.controller._last_typed_text = ""
 
     def on_model_changed(self, model_name: str) -> None:
         """Handle model selection change."""

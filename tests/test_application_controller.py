@@ -74,7 +74,6 @@ class FakeSettingsManager:
         self.all_settings = {
             "streaming_enabled": True,
             "streaming_overlay_enabled": True,
-            "live_typing_enabled": False,
             "streaming_chunk_duration": 4.0,
             "copy_clipboard": True,
             "auto_paste": False,
@@ -424,7 +423,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hotkey_module = types.ModuleType("services.hotkey_manager")
     hotkey_module.HotkeyManager = FakeHotkeyManager
     hotkey_module.send_paste = lambda: keyboard.send("ctrl+v")
-    hotkey_module.type_text = lambda text: keyboard.write(text)
     hotkey_module.is_accessibility_trusted = lambda: True
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
@@ -449,10 +447,8 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     streaming_module.StreamingTranscriber = FakeStreamingTranscriber
     from services.streaming_transcriber import (
         append_preview_text as _append_preview_text,
-        typing_delta as _typing_delta,
     )
     streaming_module.append_preview_text = _append_preview_text
-    streaming_module.typing_delta = _typing_delta
 
     database_module = types.ModuleType("services.database")
     database_module.db = types.SimpleNamespace(
@@ -631,19 +627,6 @@ class TestApplicationController(unittest.TestCase):
         self.assertIsNone(controller.streaming_transcriber)
         self.assertFalse(controller._streaming_enabled)
         self.assertIn("Streaming mode disabled", controller.ui_controller.statuses)
-
-    def test_transcription_complete_skips_paste_after_live_typing(self):
-        controller = self._create_controller()
-        self.settings.all_settings["auto_paste"] = True
-        controller._live_typing_injected = True
-        controller._pending_audio_path = None
-
-        controller._on_transcription_complete("final transcript")
-
-        self.assertEqual(self.pyperclip.copied[-1], "final transcript")
-        self.assertEqual(self.keyboard.sent, [])
-        self.assertFalse(controller._live_typing_injected)
-        self.assertIn("Ready (Live typed)", controller.ui_controller.statuses)
 
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
         controller = self._create_controller()

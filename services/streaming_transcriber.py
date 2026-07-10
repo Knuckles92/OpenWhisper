@@ -35,23 +35,6 @@ def append_preview_text(existing: str, chunk_text: str) -> str:
     return f"{existing} {chunk_text}".strip()
 
 
-def typing_delta(last_typed: str, new_text: str) -> Optional[str]:
-    """Return the append-only suffix to type, or None if text was rewritten.
-
-    Args:
-        last_typed: Text already injected into the focused window.
-        new_text: Latest full preview text.
-
-    Returns:
-        Suffix to type, empty string if unchanged, or None if not a prefix growth.
-    """
-    last_typed = last_typed or ""
-    new_text = new_text or ""
-    if new_text.startswith(last_typed):
-        return new_text[len(last_typed):]
-    return None
-
-
 class StreamingTranscriber:
     """Manages real-time streaming transcription using a worker thread."""
 

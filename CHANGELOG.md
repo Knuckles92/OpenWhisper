@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Experimental Meeting Mode and meeting insights (added and removed during this cycle; never in a tagged release)
+- Experimental live typing into the focused window (settings toggle and keystroke injection)
 
 ## [1.0.0] - 2026-01-10
 

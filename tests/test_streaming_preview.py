@@ -3,7 +3,7 @@
 import unittest
 
 from services.settings import SettingsKey, is_streaming_overlay_enabled
-from services.streaming_transcriber import append_preview_text, typing_delta
+from services.streaming_transcriber import append_preview_text
 
 
 class TestAppendPreviewText(unittest.TestCase):
@@ -17,20 +17,6 @@ class TestAppendPreviewText(unittest.TestCase):
     def test_starts_from_empty(self):
         self.assertEqual(append_preview_text("", "hello"), "hello")
         self.assertEqual(append_preview_text(None, "hello"), "hello")
-
-
-class TestTypingDelta(unittest.TestCase):
-    def test_returns_suffix_for_prefix_growth(self):
-        self.assertEqual(typing_delta("hello", "hello world"), " world")
-
-    def test_returns_empty_when_unchanged(self):
-        self.assertEqual(typing_delta("hello", "hello"), "")
-
-    def test_returns_none_when_rewritten(self):
-        self.assertIsNone(typing_delta("hello world", "hello there"))
-
-    def test_types_full_text_from_empty(self):
-        self.assertEqual(typing_delta("", "hello"), "hello")
 
 
 class TestStreamingOverlaySettingMigration(unittest.TestCase):

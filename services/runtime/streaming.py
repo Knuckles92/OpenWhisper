@@ -24,14 +24,12 @@ except ImportError:  # pragma: no cover - supports lightweight test stubs
         STREAMING_ENABLED = "streaming_enabled"
         STREAMING_CHUNK_DURATION = "streaming_chunk_duration"
         STREAMING_OVERLAY_ENABLED = "streaming_overlay_enabled"
-        LIVE_TYPING_ENABLED = "live_typing_enabled"
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
 else:
     AudioLevelCallback = Callable[[float], None]
-from services.hotkey_manager import is_accessibility_trusted, type_text
-from services.streaming_transcriber import StreamingTranscriber, typing_delta
+from services.streaming_transcriber import StreamingTranscriber
 from transcriber import LocalWhisperBackend
 
 if TYPE_CHECKING:
@@ -79,15 +77,11 @@ class StreamingRuntime:
         self.controller.partial_transcription.emit(text, is_final)
         if self.controller._streaming_overlay_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
-        self._maybe_live_type(text)
 
     def start_streaming_session(self) -> None:
         """Start real-time streaming transcription for an active recording."""
         if not self.controller.streaming_transcriber:
             return
-
-        self.controller._last_typed_text = ""
-        self.controller._live_typing_injected = False
 
         self.controller.recorder.set_streaming_callback(
             self.controller.streaming_transcriber.feed_audio
@@ -123,37 +117,12 @@ class StreamingRuntime:
             self.controller.recorder.set_streaming_callback(None)
             logger.info("Streaming transcription canceled")
 
-        self.controller._last_typed_text = ""
-        self.controller._live_typing_injected = False
-
         if self.controller._streaming_overlay_enabled:
             self.controller.streaming_overlay_hide.emit()
 
     def cleanup(self) -> None:
         """Release streaming resources."""
         self._cleanup_streaming_resources()
-
-    def _maybe_live_type(self, text: str) -> None:
-        """Append-only type new preview text into the focused window when enabled."""
-        if not self.controller._live_typing_enabled or not text:
-            return
-        if not is_accessibility_trusted():
-            logger.warning("Live typing skipped: Accessibility permission not granted")
-            return
-
-        delta = typing_delta(self.controller._last_typed_text, text)
-        if delta is None:
-            # Preview rewrote earlier text; do not attempt mid-string correction.
-            return
-        if not delta:
-            return
-
-        try:
-            type_text(delta)
-            self.controller._last_typed_text = text
-            self.controller._live_typing_injected = True
-        except Exception as exc:
-            logger.error(f"Live typing failed: {exc}")
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
@@ -164,12 +133,6 @@ class StreamingRuntime:
             self.controller._streaming_overlay_enabled = is_streaming_overlay_enabled(
                 settings
             )
-            self.controller._live_typing_enabled = bool(
-                settings.get(SettingsKey.LIVE_TYPING_ENABLED, False)
-            )
-            # Live typing needs the streaming preview text source
-            if self.controller._live_typing_enabled and not self.controller._streaming_enabled:
-                self.controller._live_typing_enabled = False
 
             if (
                 self.controller._streaming_enabled
@@ -194,8 +157,7 @@ class StreamingRuntime:
                 logger.info(
                     "Streaming transcription enabled "
                     f"(chunk_duration={chunk_duration}s, "
-                    f"overlay={self.controller._streaming_overlay_enabled}, "
-                    f"live_typing={self.controller._live_typing_enabled})"
+                    f"overlay={self.controller._streaming_overlay_enabled})"
                 )
                 if not initial_setup:
                     self.controller.ui_controller.set_status("Streaming mode enabled")
@@ -216,12 +178,10 @@ class StreamingRuntime:
 
                 self.controller._streaming_enabled = False
                 self.controller._streaming_overlay_enabled = False
-                self.controller._live_typing_enabled = False
         except Exception as exc:
             logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
             self.controller._streaming_overlay_enabled = False
-            self.controller._live_typing_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
 

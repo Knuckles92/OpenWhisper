@@ -30,7 +30,6 @@ class SettingsKey:
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     # Legacy key kept for reading older settings files
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
-    LIVE_TYPING_ENABLED: Final[str] = "live_typing_enabled"
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
