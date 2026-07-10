@@ -27,8 +27,8 @@ class SettingsKey:
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
+    # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
-    # Legacy key kept for reading older settings files
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
@@ -236,23 +236,6 @@ class SettingsManager:
         except Exception as e:
             logger.warning(f"Failed to load audio input device: {e}")
         return None
-
-
-def is_streaming_overlay_enabled(settings: Dict[str, Any]) -> bool:
-    """Return whether the streaming preview overlay is enabled.
-
-    Prefers ``streaming_overlay_enabled``; falls back to legacy
-    ``streaming_paste_enabled`` for older settings files.
-
-    Args:
-        settings: Loaded settings dictionary.
-
-    Returns:
-        True when the overlay should be shown during streaming preview.
-    """
-    if SettingsKey.STREAMING_OVERLAY_ENABLED in settings:
-        return bool(settings[SettingsKey.STREAMING_OVERLAY_ENABLED])
-    return bool(settings.get(SettingsKey.STREAMING_PASTE_ENABLED, False))
 
 
 def is_hf_hub_offline_env_set() -> bool:

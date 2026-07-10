@@ -52,7 +52,7 @@ class TranscriptionRuntime:
 
     def stop_recording(self) -> None:
         """Stop audio recording and start transcription."""
-        if self.controller._streaming_overlay_enabled:
+        if self.controller._streaming_enabled:
             # Dismiss preview overlay immediately so the classic waveform
             # processing/transcribing states are the only post-stop UI.
             self.controller.streaming_overlay_hide.emit()

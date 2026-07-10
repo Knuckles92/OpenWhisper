@@ -73,7 +73,6 @@ class FakeSettingsManager:
     def __init__(self):
         self.all_settings = {
             "streaming_enabled": True,
-            "streaming_overlay_enabled": True,
             "streaming_chunk_duration": 4.0,
             "copy_clipboard": True,
             "auto_paste": False,
@@ -430,12 +429,10 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     # SettingsKey is a constants holder with no behavior, so the real one is
     # safe (and more faithful) to expose on the stub than a hand-rolled copy.
     from services.settings import SettingsKey as _RealSettingsKey
-    from services.settings import is_streaming_overlay_enabled as _is_streaming_overlay_enabled
 
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager
     settings_module.SettingsKey = _RealSettingsKey
-    settings_module.is_streaming_overlay_enabled = _is_streaming_overlay_enabled
 
     history_module = types.ModuleType("services.history_manager")
     history_module.history_manager = history_manager
@@ -619,7 +616,6 @@ class TestApplicationController(unittest.TestCase):
         self.assertTrue(controller._streaming_enabled)
         self.assertIsNotNone(controller._streaming_backend)
         self.assertEqual(controller._streaming_backend.model_name, "tiny.en")
-        self.assertTrue(controller._streaming_overlay_enabled)
 
         self.settings.all_settings["streaming_enabled"] = False
         controller.reconfigure_streaming()

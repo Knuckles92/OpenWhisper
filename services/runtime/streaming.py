@@ -7,23 +7,13 @@ from typing import TYPE_CHECKING, Callable
 
 from config import config
 try:
-    from services.settings import (
-        SettingsKey,
-        is_streaming_overlay_enabled,
-        settings_manager,
-    )
+    from services.settings import SettingsKey, settings_manager
 except ImportError:  # pragma: no cover - supports lightweight test stubs
     from services.settings import settings_manager
-
-    def is_streaming_overlay_enabled(settings):
-        if "streaming_overlay_enabled" in settings:
-            return bool(settings["streaming_overlay_enabled"])
-        return bool(settings.get("streaming_paste_enabled", False))
 
     class SettingsKey:
         STREAMING_ENABLED = "streaming_enabled"
         STREAMING_CHUNK_DURATION = "streaming_chunk_duration"
-        STREAMING_OVERLAY_ENABLED = "streaming_overlay_enabled"
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
@@ -75,7 +65,7 @@ class StreamingRuntime:
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
         """Handle partial transcription from the streaming worker."""
         self.controller.partial_transcription.emit(text, is_final)
-        if self.controller._streaming_overlay_enabled and text:
+        if self.controller._streaming_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
 
     def start_streaming_session(self) -> None:
@@ -92,7 +82,7 @@ class StreamingRuntime:
         )
         logger.info("Streaming transcription started")
 
-        if self.controller._streaming_overlay_enabled:
+        if self.controller._streaming_enabled:
             # Set synchronously so a queued RECORDING overlay update does not
             # flash the waveform before the streaming overlay show is delivered.
             self.controller.ui_controller.streaming_flow_active = True
@@ -117,7 +107,7 @@ class StreamingRuntime:
             self.controller.recorder.set_streaming_callback(None)
             logger.info("Streaming transcription canceled")
 
-        if self.controller._streaming_overlay_enabled:
+        if self.controller._streaming_enabled:
             self.controller.streaming_overlay_hide.emit()
 
     def cleanup(self) -> None:
@@ -129,9 +119,6 @@ class StreamingRuntime:
             settings = settings_manager.load_all_settings()
             self.controller._streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
-            )
-            self.controller._streaming_overlay_enabled = is_streaming_overlay_enabled(
-                settings
             )
 
             if (
@@ -155,9 +142,7 @@ class StreamingRuntime:
                 )
                 self._warmup_streaming_backend(streaming_backend)
                 logger.info(
-                    "Streaming transcription enabled "
-                    f"(chunk_duration={chunk_duration}s, "
-                    f"overlay={self.controller._streaming_overlay_enabled})"
+                    f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
                 )
                 if not initial_setup:
                     self.controller.ui_controller.set_status("Streaming mode enabled")
@@ -177,11 +162,9 @@ class StreamingRuntime:
                         self.controller.ui_controller.set_status("Streaming mode disabled")
 
                 self.controller._streaming_enabled = False
-                self.controller._streaming_overlay_enabled = False
         except Exception as exc:
             logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
-            self.controller._streaming_overlay_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
 

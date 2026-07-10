@@ -16,7 +16,6 @@ from config import config
 from services.settings import (
     SettingsKey,
     apply_hf_hub_offline,
-    is_streaming_overlay_enabled,
     settings_manager,
 )
 from services.recorder import AudioRecorder
@@ -124,31 +123,17 @@ class SettingsDialog(QDialog):
 
         layout.addSpacing(8)
         self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
-        self.streaming_enabled_check.stateChanged.connect(self._on_streaming_enabled_changed)
         layout.addWidget(self.streaming_enabled_check)
 
         # Info label for streaming
         streaming_info = QLabel(
-            "Shows transcribed text as you speak using a dedicated tiny.en preview model.\n"
-            "Requires Local Whisper backend. Final transcription still uses your selected model."
+            "Shows transcribed text as you speak on the near-cursor overlay using a dedicated "
+            "tiny.en preview model. Requires Local Whisper backend. Final transcription still "
+            "uses your selected model and normal auto-paste / clipboard settings."
         )
         streaming_info.setObjectName("infoLabel")
         streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
-
-        # Streaming overlay checkbox
-        layout.addSpacing(8)
-        self.streaming_overlay_check = QCheckBox("Show live preview near cursor")
-        layout.addWidget(self.streaming_overlay_check)
-
-        # Info label for streaming overlay
-        streaming_overlay_info = QLabel(
-            "Shows live preview text on the same near-cursor overlay as recording.\n"
-            "Final transcription still uses your normal auto-paste / clipboard settings."
-        )
-        streaming_overlay_info.setObjectName("infoLabel")
-        streaming_overlay_info.setWordWrap(True)
-        layout.addWidget(streaming_overlay_info)
 
         layout.addStretch()
         self.tabs.addTab(tab, "General")
@@ -365,12 +350,6 @@ class SettingsDialog(QDialog):
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
-    def _on_streaming_enabled_changed(self, state):
-        """Handle streaming enabled checkbox state change."""
-        streaming_enabled = state == Qt.CheckState.Checked.value
-        self.streaming_overlay_check.setEnabled(streaming_enabled)
-        if not streaming_enabled:
-            self.streaming_overlay_check.setChecked(False)
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -413,8 +392,6 @@ class SettingsDialog(QDialog):
             # Load streaming settings
             streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
             self.streaming_enabled_check.setChecked(streaming_enabled)
-            self.streaming_overlay_check.setChecked(is_streaming_overlay_enabled(settings))
-            self.streaming_overlay_check.setEnabled(streaming_enabled)
 
             # Load whisper engine settings
             whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
@@ -457,8 +434,6 @@ class SettingsDialog(QDialog):
             self.copy_clipboard_check.setChecked(True)
             self.minimize_tray_check.setChecked(True)
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
-            self.streaming_overlay_check.setChecked(False)
-            self.streaming_overlay_check.setEnabled(config.STREAMING_ENABLED)
             self.hf_hub_offline_check.setChecked(False)
 
     def _save_settings(self):
@@ -494,10 +469,8 @@ class SettingsDialog(QDialog):
 
             # Check if streaming settings changed
             old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
-            old_streaming_overlay = is_streaming_overlay_enabled(settings)
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked() or
-                old_streaming_overlay != self.streaming_overlay_check.isChecked() or
                 old_hf_hub_offline != new_hf_hub_offline
             )
 
@@ -507,8 +480,8 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
-            settings[SettingsKey.STREAMING_OVERLAY_ENABLED] = self.streaming_overlay_check.isChecked()
-            # Drop legacy keys so new settings are the source of truth
+            # Drop legacy keys so streaming_enabled is the single source of truth
+            settings.pop(SettingsKey.STREAMING_OVERLAY_ENABLED, None)
             settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)
             settings.pop("streaming_tiny_model_enabled", None)
             settings.pop("live_typing_enabled", None)

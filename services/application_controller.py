@@ -60,7 +60,6 @@ class ApplicationController(QObject):
         self._current_model_name = "local_whisper"
 
         self._streaming_enabled = False
-        self._streaming_overlay_enabled = False
 
         self._pending_audio_path: Optional[str] = None
         self._pending_audio_duration: Optional[float] = None
