@@ -75,7 +75,7 @@ class AppConfig:
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
     WAVEFORM_OVERLAY_HEIGHT: int = 80
-    WAVEFORM_STREAMING_MAX_HEIGHT: int = 200  # Grows with live preview text near cursor
+    WAVEFORM_STREAMING_MAX_HEIGHT: int = 400  # Soft cap; also limited by screen space near cursor
     WAVEFORM_FRAME_RATE: int = 30
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
 

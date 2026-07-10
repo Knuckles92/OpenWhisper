@@ -10,9 +10,11 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional, Tuple
 
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, QTimer, QPointF, QPoint
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import Qt, QTimer, QPoint, QPointF
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QCursor
+
+from ui_qt.utils.overlay_position import clamp_rect_to_available
 
 
 if sys.platform == "win32":
@@ -102,14 +104,29 @@ class CaretPasteIndicator(QWidget):
         self.update()
 
     def _update_position(self):
-        """Update widget position to track caret."""
+        """Update widget position to track caret, clamped on-screen."""
         caret_center = self._get_caret_center()
         if caret_center is None:
             cursor_pos = QCursor.pos()
             caret_center = QPoint(cursor_pos.x(), cursor_pos.y())
 
-        x = caret_center.x() - self._size // 2
-        y = caret_center.y() - self._size // 2
+        preferred_x = caret_center.x() - self._size // 2
+        preferred_y = caret_center.y() - self._size // 2
+
+        screen = QApplication.screenAt(caret_center)
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            self.move(preferred_x, preferred_y)
+            return
+
+        x, y = clamp_rect_to_available(
+            preferred_x,
+            preferred_y,
+            self._size,
+            self._size,
+            screen.availableGeometry(),
+        )
         self.move(x, y)
 
     def _get_caret_center(self) -> Optional[QPoint]:

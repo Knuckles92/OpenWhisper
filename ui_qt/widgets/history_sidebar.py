@@ -74,33 +74,44 @@ class HistoryItemWidget(QFrame):
         """Setup the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
-        # Top row: timestamp, audio indicator, file size, model badge
+        # Top row: timestamp, optional audio chip, model badge
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
+        top_row.setContentsMargins(0, 0, 0, 0)
 
         self.timestamp_label = QLabel(self.entry.formatted_timestamp)
         self.timestamp_label.setObjectName("historyTimestamp")
         self.timestamp_label.setFont(QFont("Segoe UI", 10))
-        top_row.addWidget(self.timestamp_label)
+        self.timestamp_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        top_row.addWidget(
+            self.timestamp_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
 
         if self._audio_path:
-            audio_indicator = QLabel("🎤")
-            audio_indicator.setToolTip("Audio recording available")
-            top_row.addWidget(audio_indicator)
-
-            if self.entry.file_size:
-                size_label = QLabel(format_file_size(self.entry.file_size))
-                size_label.setObjectName("historyFileSize")
-                size_label.setFont(QFont("Segoe UI", 9))
-                top_row.addWidget(size_label)
+            chip_text = (
+                format_file_size(self.entry.file_size)
+                if self.entry.file_size
+                else "Audio"
+            )
+            audio_chip = QLabel(chip_text)
+            audio_chip.setObjectName("historyAudioChip")
+            audio_chip.setFont(QFont("Segoe UI", 9))
+            audio_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            audio_chip.setToolTip("Recording available — can be transcribed again")
+            audio_chip.setFixedHeight(20)
+            top_row.addWidget(audio_chip, 0, Qt.AlignmentFlag.AlignVCenter)
 
         top_row.addStretch()
 
         model_badge = QLabel()
         model_badge.setObjectName("historyModelBadge")
         model_badge.setToolTip(self.entry.model)
+        model_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        model_badge.setFixedHeight(20)
         # Elide so an unexpected model string can never widen the card beyond
         # the sidebar's fixed-width viewport.
         badge_text = _format_model_name(self.entry.model)
@@ -110,34 +121,44 @@ class HistoryItemWidget(QFrame):
             )
         )
         model_badge.setMaximumWidth(140)
-        top_row.addWidget(model_badge)
+        top_row.addWidget(model_badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
         layout.addLayout(top_row)
 
-        # Preview text
+        # Preview text is already truncated by HistoryEntry.preview_text, so
+        # let it size naturally — a hard maxHeight was clipping glyphs mid-line
+        # and making the footer button look like it was cutting the text off.
         self.preview_label = QLabel(self.entry.preview_text)
         self.preview_label.setObjectName("historyPreview")
         self.preview_label.setWordWrap(True)
         self.preview_label.setFont(QFont("Segoe UI", 11))
-        self.preview_label.setMaximumHeight(60)
+        self.preview_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        self.preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         layout.addWidget(self.preview_label)
 
         if self._audio_path:
-            action_row = QHBoxLayout()
-            action_row.addStretch()
-            self.retranscribe_btn = QPushButton("Re-transcribe & Copy")
+            footer = QHBoxLayout()
+            footer.setContentsMargins(0, 2, 0, 0)
+            footer.setSpacing(8)
+            footer.addStretch()
+
+            self.retranscribe_btn = QPushButton("Transcribe again")
             self.retranscribe_btn.setObjectName("retranscribeBtn")
             self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.retranscribe_btn.setFixedHeight(32)
+            self.retranscribe_btn.setFixedHeight(28)
             self.retranscribe_btn.setToolTip(
-                "Re-run this recording with the current model, "
-                "then copy the result to clipboard"
+                "Run this recording through the current model "
+                "and copy the new transcript"
             )
             self.retranscribe_btn.clicked.connect(
                 lambda: self.retranscribe_requested.emit(self._audio_path)
             )
-            action_row.addWidget(self.retranscribe_btn)
-            layout.addLayout(action_row)
+            footer.addWidget(self.retranscribe_btn)
+            layout.addLayout(footer)
 
     def _apply_style(self):
         """Apply custom styling."""
@@ -155,39 +176,43 @@ class HistoryItemWidget(QFrame):
                 color: #98989d;
                 background-color: transparent;
             }
+            QLabel#historyAudioChip {
+                background-color: rgba(255, 255, 255, 0.06);
+                color: #aeaeb2;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 500;
+            }
             QLabel#historyModelBadge {
                 background-color: rgba(10, 132, 255, 0.14);
                 color: #6fb1ff;
                 border: 1px solid rgba(10, 132, 255, 0.25);
-                border-radius: 4px;
-                padding: 1px 7px;
+                border-radius: 6px;
+                padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
             }
             QLabel#historyPreview {
                 color: #e5e5e7;
                 background-color: transparent;
-                line-height: 1.4;
-            }
-            QLabel#historyFileSize {
-                color: #98989d;
-                background-color: transparent;
             }
             QPushButton#retranscribeBtn {
-                background-color: rgba(48, 209, 88, 0.15);
+                background-color: rgba(48, 209, 88, 0.12);
                 color: #32d74b;
-                border: 1px solid rgba(48, 209, 88, 0.3);
-                border-radius: 8px;
-                padding: 6px 12px;
+                border: 1px solid rgba(48, 209, 88, 0.28);
+                border-radius: 7px;
+                padding: 4px 12px;
                 font-size: 11px;
                 font-weight: 600;
             }
             QPushButton#retranscribeBtn:hover {
-                background-color: rgba(48, 209, 88, 0.25);
-                border: 1px solid rgba(48, 209, 88, 0.5);
+                background-color: rgba(48, 209, 88, 0.22);
+                border: 1px solid rgba(48, 209, 88, 0.45);
             }
             QPushButton#retranscribeBtn:pressed {
-                background-color: rgba(48, 209, 88, 0.35);
+                background-color: rgba(48, 209, 88, 0.32);
             }
         """)
 
@@ -233,7 +258,7 @@ class HistoryItemWidget(QFrame):
 
         # Re-transcribe action (only if audio exists)
         if self._audio_path:
-            retranscribe_action = menu.addAction("Re-transcribe & Copy")
+            retranscribe_action = menu.addAction("Transcribe again")
             retranscribe_action.triggered.connect(
                 lambda: self.retranscribe_requested.emit(self._audio_path)
             )

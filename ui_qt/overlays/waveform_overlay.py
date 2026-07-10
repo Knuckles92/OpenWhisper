@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Optional, List
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QBrush, QPen,
@@ -17,6 +17,10 @@ from PyQt6.QtGui import (
 )
 from config import config
 from services.settings import settings_manager
+from ui_qt.utils.overlay_position import (
+    max_height_for_anchor,
+    preferred_overlay_position,
+)
 from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
 
 logger = logging.getLogger(__name__)
@@ -108,6 +112,8 @@ class WaveformOverlay(QWidget):
         self.cancel_progress = 0.0
         self.stt_particles: List[STTParticle] = []
         self._streaming_preview_text: str = ""
+        # Cursor/caret anchor used to keep the overlay on-screen as it grows.
+        self._anchor_pos: Optional[QPoint] = None
 
         # Large file information for warning states
         self.large_file_info = LargeFileOverlayInfo()
@@ -205,7 +211,11 @@ class WaveformOverlay(QWidget):
             self._draw_streaming_preview_text(painter, rect)
 
     def _draw_streaming_preview_text(self, painter: QPainter, rect: QRect):
-        """Draw wrapped streaming preview text under the particle band."""
+        """Draw wrapped streaming preview text under the particle band.
+
+        Aligns to the bottom so the newest words stay visible when the text is
+        taller than the overlay's height cap.
+        """
         top = self._base_height - 8
         text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
         painter.setPen(QPen(QColor(224, 224, 255)))
@@ -215,7 +225,7 @@ class WaveformOverlay(QWidget):
             text_rect,
             int(
                 Qt.AlignmentFlag.AlignLeft
-                | Qt.AlignmentFlag.AlignTop
+                | Qt.AlignmentFlag.AlignBottom
                 | Qt.TextFlag.TextWordWrap
             ),
             self._streaming_preview_text,
@@ -237,19 +247,58 @@ class WaveformOverlay(QWidget):
         self._apply_streaming_height()
         self.update()
 
+    def _available_geometry_for_anchor(self) -> Optional[QRect]:
+        """Return available screen geometry for the current overlay anchor."""
+        point = self._anchor_pos if self._anchor_pos is not None else QCursor.pos()
+        screen = QApplication.screenAt(point)
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return None
+        return screen.availableGeometry()
+
+    def _reposition_near_anchor(self):
+        """Move the overlay near its anchor while keeping it fully on-screen."""
+        if self._anchor_pos is None:
+            return
+        available = self._available_geometry_for_anchor()
+        if available is None:
+            self.move(self._anchor_pos.x() + 10, self._anchor_pos.y() + 10)
+            return
+        x, y = preferred_overlay_position(
+            self._anchor_pos,
+            self.overlay_width,
+            self.overlay_height,
+            available,
+        )
+        self.move(x, y)
+
+    def _effective_streaming_max_height(self) -> int:
+        """Soft config max, further limited by free space near the anchor."""
+        available = self._available_geometry_for_anchor()
+        if available is None or self._anchor_pos is None:
+            return self._streaming_max_height
+        return max_height_for_anchor(
+            self._anchor_pos,
+            available,
+            self._streaming_max_height,
+        )
+
     def _apply_streaming_height(self):
         """Grow or shrink the overlay to fit preview text while streaming."""
         if self.current_state != self.STATE_STREAMING and not self._streaming_preview_text:
             if self.height() != self._base_height:
                 self.overlay_height = self._base_height
                 self.setFixedSize(self.overlay_width, self.overlay_height)
+                self._reposition_near_anchor()
             return
 
         if not self._streaming_preview_text:
             target_height = self._base_height
         else:
+            effective_max = self._effective_streaming_max_height()
             font = QFont("Segoe UI", 10)
-            metrics_rect = QRect(0, 0, self.overlay_width - 20, self._streaming_max_height)
+            metrics_rect = QRect(0, 0, self.overlay_width - 20, effective_max)
             fm = QFontMetrics(font)
             bounded = fm.boundingRect(
                 metrics_rect,
@@ -258,13 +307,14 @@ class WaveformOverlay(QWidget):
             )
             text_height = bounded.height() + 16
             target_height = min(
-                self._streaming_max_height,
+                effective_max,
                 max(self._base_height, self._base_height - 8 + text_height),
             )
 
         if target_height != self.overlay_height:
             self.overlay_height = target_height
             self.setFixedSize(self.overlay_width, self.overlay_height)
+            self._reposition_near_anchor()
 
     def _draw_background(self, painter: QPainter):
         """Draw the background with frosted glass effect."""
@@ -645,6 +695,7 @@ class WaveformOverlay(QWidget):
         self.animation_time = 0.0
         self.cancel_progress = 0.0
         self._streaming_preview_text = ""
+        self._anchor_pos = None
         if self.overlay_height != self._base_height:
             self.overlay_height = self._base_height
             self.setFixedSize(self.overlay_width, self.overlay_height)
@@ -654,17 +705,14 @@ class WaveformOverlay(QWidget):
     def show_at_cursor(self, state: Optional[str] = None):
         """Show overlay near the cursor with optional state.
 
+        Positions below-right of the cursor when possible, flipping and clamping
+        so the overlay stays fully inside the monitor's available geometry.
+
         Args:
             state: Optional state to set. If None, uses current state or RECORDING as default.
         """
-        # Get global cursor position
-        cursor_pos = QCursor.pos()
-
-        # Position overlay near cursor (offset slightly)
-        x = cursor_pos.x() + 10
-        y = cursor_pos.y() + 10
-
-        self.move(x, y)
+        self._anchor_pos = QCursor.pos()
+        self._reposition_near_anchor()
         self.show()
 
         # Set state if provided, otherwise default to RECORDING
@@ -672,6 +720,9 @@ class WaveformOverlay(QWidget):
             self.set_state(state)
         elif self.current_state == self.STATE_IDLE:
             self.set_state(self.STATE_RECORDING)
+
+        # Height may change when entering streaming; re-clamp after state apply.
+        self._reposition_near_anchor()
 
     def closeEvent(self, event):
         """Handle closing."""
