@@ -3,6 +3,7 @@ PyQt6 Application base class.
 Handles application initialization and event loop management.
 """
 import logging
+import sys
 from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
 from PyQt6.QtCore import Qt, QTimer
@@ -10,6 +11,55 @@ from PyQt6.QtGui import QFont
 
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
+
+APP_NAME = "OpenWhisper"
+
+
+def _override_macos_bundle_name(name: str) -> None:
+    """Make the macOS menu bar show our name when launched via Python.app.
+
+    Dev launches go through the framework ``Python.app`` (see
+    ``scripts/openwhisper``) so Accessibility can target a real bundle.
+    macOS then labels the Apple menu from that bundle's ``CFBundleName``
+    ("Python") unless we rewrite the in-memory Info.plist before
+    ``QApplication`` starts.
+    """
+    if sys.platform != "darwin":
+        return
+
+    try:
+        from ctypes import c_char_p, c_uint32, c_void_p, cdll, util
+
+        cf_path = util.find_library("CoreFoundation")
+        if not cf_path:
+            return
+
+        cf = cdll.LoadLibrary(cf_path)
+        kCFStringEncodingUTF8 = 0x08000100
+
+        cf.CFBundleGetMainBundle.restype = c_void_p
+        cf.CFBundleGetInfoDictionary.argtypes = [c_void_p]
+        cf.CFBundleGetInfoDictionary.restype = c_void_p
+        cf.CFStringCreateWithCString.argtypes = [c_void_p, c_char_p, c_uint32]
+        cf.CFStringCreateWithCString.restype = c_void_p
+        cf.CFDictionarySetValue.argtypes = [c_void_p, c_void_p, c_void_p]
+
+        bundle = cf.CFBundleGetMainBundle()
+        if not bundle:
+            return
+        info = cf.CFBundleGetInfoDictionary(bundle)
+        if not info:
+            return
+
+        value = cf.CFStringCreateWithCString(None, name.encode("utf-8"), kCFStringEncodingUTF8)
+        if not value:
+            return
+        for key in (b"CFBundleName", b"CFBundleDisplayName"):
+            cf_key = cf.CFStringCreateWithCString(None, key, kCFStringEncodingUTF8)
+            if cf_key:
+                cf.CFDictionarySetValue(info, cf_key, value)
+    except Exception:
+        logging.debug("Could not override macOS bundle name", exc_info=True)
 
 
 class QtApplication:
@@ -19,9 +69,10 @@ class QtApplication:
         """Initialize the Qt application."""
         # Set before the QApplication is created so macOS shows the right name
         # in the menu bar and About panel.
-        QApplication.setApplicationName("OpenWhisper")
-        QApplication.setApplicationDisplayName("OpenWhisper")
-        QApplication.setOrganizationName("OpenWhisper")
+        QApplication.setApplicationName(APP_NAME)
+        QApplication.setApplicationDisplayName(APP_NAME)
+        QApplication.setOrganizationName(APP_NAME)
+        _override_macos_bundle_name(APP_NAME)
 
         self.app = QApplication.instance()
         if self.app is None:

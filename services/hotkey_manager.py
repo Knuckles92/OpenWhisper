@@ -27,6 +27,7 @@ if USE_PYNPUT_BACKEND:
         send_paste,
         modifier_of,
         key_to_name,
+        get_listener_class,
         is_accessibility_trusted,
         request_accessibility_trust,
         accessibility_permission_instructions,
@@ -57,3 +58,10 @@ __all__ = [
     "accessibility_permission_diagnostics",
     "USE_PYNPUT_BACKEND",
 ]
+
+if USE_PYNPUT_BACKEND:
+    __all__ += [
+        "modifier_of",
+        "key_to_name",
+        "get_listener_class",
+    ]

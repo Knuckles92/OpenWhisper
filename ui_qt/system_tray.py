@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter
+from PyQt6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter
 from PyQt6.QtCore import Qt, pyqtSignal
 
 logger = logging.getLogger(__name__)
@@ -87,11 +87,13 @@ class SystemTrayManager(QSystemTrayIcon):
         # Settings action
         self.menu.addSeparator()
         settings_action = self.menu.addAction("Settings")
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
         settings_action.triggered.connect(self._on_settings)
 
         # Exit action
         self.menu.addSeparator()
         exit_action = self.menu.addAction("Exit")
+        exit_action.setMenuRole(QAction.MenuRole.NoRole)
         exit_action.triggered.connect(self._on_exit)
 
         self.setContextMenu(self.menu)

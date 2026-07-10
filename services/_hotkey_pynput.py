@@ -35,8 +35,16 @@ from services._hotkey_common import (
 logger = logging.getLogger(__name__)
 
 
-def _get_listener_class():
-    """Return a pynput listener class that avoids unsafe macOS layout lookup."""
+def get_listener_class():
+    """Return a pynput listener class that avoids unsafe macOS layout lookup.
+
+    Used by both the global hotkey manager and the hotkey capture dialog.
+    pynput's default macOS Listener enters ``keycode_context()`` on its
+    background thread, which calls HIToolbox input-source APIs and triggers a
+    SIGTRAP (``trace trap``) on macOS 26+. Hotkey matching and capture use
+    event keycodes/unicode strings directly, so the layout context is not
+    needed.
+    """
     if sys.platform != "darwin":
         return pynput_keyboard.Listener
 
@@ -48,11 +56,6 @@ def _get_listener_class():
 
     class MacOSHotkeyListener(pynput_keyboard.Listener):
         def _run(self):
-            # pynput's default macOS Listener enters keycode_context() here,
-            # which calls HIToolbox input-source APIs from this background
-            # thread. macOS 26 traps that dispatch queue violation. Hotkey
-            # matching below uses event keycodes/unicode strings directly, so
-            # the layout context is not needed for observing shortcuts.
             self._context = None
             ListenerMixin._run(self)
 
@@ -429,7 +432,7 @@ class HotkeyManager:
 
         # suppress=False: pynput cannot selectively suppress keys, so hotkeys are
         # observed but still pass through to the focused app.
-        listener_class = _get_listener_class()
+        listener_class = get_listener_class()
         self._listener = listener_class(
             on_press=self._on_press,
             on_release=self._on_release,

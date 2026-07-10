@@ -22,8 +22,12 @@ from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from ui_qt.widgets import PrimaryButton, Button
 
 if USE_PYNPUT_BACKEND:
-    from pynput import keyboard as pynput_keyboard
-    from services.hotkey_manager import modifier_of, key_to_name, format_hotkey
+    from services.hotkey_manager import (
+        modifier_of,
+        key_to_name,
+        format_hotkey,
+        get_listener_class,
+    )
 else:
     import keyboard
 
@@ -63,7 +67,7 @@ if USE_PYNPUT_BACKEND:
 
         def __init__(self, parent=None):
             super().__init__(parent)
-            self._listener: Optional[pynput_keyboard.Listener] = None
+            self._listener = None
             self._canceled = False
 
         def run(self):
@@ -92,7 +96,10 @@ if USE_PYNPUT_BACKEND:
                 return True
 
             try:
-                self._listener = pynput_keyboard.Listener(
+                # Use the macOS-safe listener (skips keycode_context / HIToolbox
+                # on a background thread — stock pynput SIGTRAPs on macOS 26+).
+                listener_class = get_listener_class()
+                self._listener = listener_class(
                     on_press=on_press,
                     on_release=on_release,
                     suppress=False,

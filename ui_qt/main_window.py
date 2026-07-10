@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel, QComboBox, QTextEdit, QFrame, QPushButton
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QRect
-from PyQt6.QtGui import QFont, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import QAction, QFont, QIcon, QKeySequence, QPixmap
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -578,13 +578,17 @@ class MainWindow(QMainWindow):
         upload_action = file_menu.addAction("Upload Audio File...", self.upload_audio_file)
         upload_action.setShortcut(QKeySequence(self.UPLOAD_SHORTCUT))
         file_menu.addSeparator()
-        file_menu.addAction("Settings", self.open_settings)
+        # Qt auto-assigns PreferencesRole to actions named "Settings", which
+        # rewrites the label to "Preferences" on Windows. Keep our wording.
+        settings_action = file_menu.addAction("Settings", self.open_settings)
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
         quit_action = file_menu.addAction(
             "Quit" if sys.platform == "darwin" else "Exit", self.quit_application
         )
+        quit_action.setMenuRole(QAction.MenuRole.NoRole)
         quit_action.setShortcut(QKeySequence(self.QUIT_SHORTCUT))
 
         # View menu
@@ -596,7 +600,8 @@ class MainWindow(QMainWindow):
 
         # Help menu
         help_menu = menubar.addMenu("Help")
-        help_menu.addAction("About", self.show_about)
+        about_action = help_menu.addAction("About", self.show_about)
+        about_action.setMenuRole(QAction.MenuRole.NoRole)
 
     def _connect_signals(self):
         """Connect signals to slots."""
