@@ -70,10 +70,11 @@ class _FakeApplicationController:
     should_raise = False
     instances = []
 
-    def __init__(self, ui_controller):
+    def __init__(self, ui_controller, local_backend=None):
         if self.should_raise:
             raise RuntimeError("controller init failed")
         self.ui_controller = ui_controller
+        self.local_backend = local_backend
         self.cleaned_up = False
         self.transcription_backends = {"local_whisper": _FakeBackend("cuda")}
         self.__class__.instances.append(self)
@@ -88,10 +89,17 @@ class TestBootstrap(unittest.TestCase):
         _FakeApplicationController.should_raise = False
 
     @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
+    @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")
     def test_main_runs_startup_flow_and_cleans_up_controller(
-        self, _mock_setup_logging, _mock_process_events, _mock_hf_offline
+        self,
+        _mock_setup_logging,
+        _mock_process_events,
+        _mock_pulse,
+        _mock_load_backend,
+        _mock_hf_offline,
     ):
         qt_app = _FakeQtApplication()
         ui_controller = _FakeUIController()
@@ -129,10 +137,17 @@ class TestBootstrap(unittest.TestCase):
         self.assertLess(order.index("process_events"), order.index("late_imports"))
 
     @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
+    @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")
     def test_main_cleans_up_loading_screen_and_controller_on_run_error(
-        self, _mock_setup_logging, _mock_process_events, _mock_hf_offline
+        self,
+        _mock_setup_logging,
+        _mock_process_events,
+        _mock_pulse,
+        _mock_load_backend,
+        _mock_hf_offline,
     ):
         qt_app = _FakeQtApplication()
         qt_app.raise_on_run = True

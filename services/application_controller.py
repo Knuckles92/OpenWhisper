@@ -43,7 +43,7 @@ class ApplicationController(QObject):
     device_info_update = pyqtSignal(str)
     engine_busy_changed = pyqtSignal(bool)
 
-    def __init__(self, ui_controller):
+    def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
         self.ui_controller = ui_controller
 
@@ -78,7 +78,7 @@ class ApplicationController(QObject):
         self.streaming_runtime = StreamingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
 
-        self._setup_transcription_backends()
+        self._setup_transcription_backends(local_backend=local_backend)
         self._setup_ui_callbacks()
         self.hotkey_runtime.setup_hotkeys()
         self.streaming_runtime.setup_audio_level_callback()
@@ -86,11 +86,20 @@ class ApplicationController(QObject):
         self._connect_signals()
         self.hotkey_runtime.setup_hook_watchdog()
 
-    def _setup_transcription_backends(self) -> None:
-        """Initialize transcription backends."""
+    def _setup_transcription_backends(
+        self, local_backend: Optional[LocalWhisperBackend] = None
+    ) -> None:
+        """Initialize transcription backends.
+
+        Args:
+            local_backend: Optional preloaded LocalWhisperBackend (e.g. loaded
+                off the UI thread during the splash screen animation).
+        """
         logger.info("Setting up transcription backends...")
 
-        self.transcription_backends["local_whisper"] = LocalWhisperBackend()
+        self.transcription_backends["local_whisper"] = (
+            local_backend if local_backend is not None else LocalWhisperBackend()
+        )
         self.transcription_backends["api_whisper"] = OpenAIBackend("api_whisper")
         self.transcription_backends["api_gpt4o"] = OpenAIBackend("api_gpt4o")
         self.transcription_backends["api_gpt4o_mini"] = OpenAIBackend("api_gpt4o_mini")

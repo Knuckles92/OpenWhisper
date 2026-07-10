@@ -119,6 +119,62 @@ def process_qt_events() -> None:
     QCoreApplication.processEvents()
 
 
+def load_local_whisper_backend():
+    """Load the local Whisper backend (safe to call off the UI thread)."""
+    from transcriber import LocalWhisperBackend
+
+    return LocalWhisperBackend()
+
+
+def run_with_ui_pulse(fn):
+    """Run ``fn`` on a worker thread while keeping the splash animation alive.
+
+    Startup previously blocked the UI thread on model load, so QTimer-driven
+    painting never ran. This spins a nested event loop on the main thread until
+    the worker finishes, which lets the loading-screen glow timer fire.
+
+    Args:
+        fn: Zero-arg callable. Must not touch Qt widgets/objects.
+
+    Returns:
+        The return value of ``fn``.
+
+    Raises:
+        Exception: Re-raises whatever ``fn`` raised on the worker thread.
+    """
+    import threading
+
+    from PyQt6.QtCore import QEventLoop, QTimer
+    from PyQt6.QtWidgets import QApplication
+
+    if QApplication.instance() is None:
+        return fn()
+
+    box = {"done": False, "result": None, "error": None}
+
+    def worker() -> None:
+        try:
+            box["result"] = fn()
+        except Exception as exc:  # noqa: BLE001 - re-raised on main thread
+            box["error"] = exc
+        finally:
+            box["done"] = True
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    while not box["done"]:
+        loop = QEventLoop()
+        QTimer.singleShot(33, loop.quit)
+        loop.exec()
+
+    thread.join(timeout=1.0)
+
+    if box["error"] is not None:
+        raise box["error"]
+    return box["result"]
+
+
 def main() -> int:
     """Main application entry point."""
     profiler = StartupProfiler()
@@ -164,7 +220,9 @@ def main() -> int:
         process_qt_events()
 
         profiler.mark("late_imports_started")
-        UIController, ApplicationController = get_late_runtime_components()
+        UIController, ApplicationController = run_with_ui_pulse(
+            get_late_runtime_components
+        )
         profiler.mark("late_imports_finished")
 
         loading_screen.update_status("Creating interface...")
@@ -178,7 +236,10 @@ def main() -> int:
         loading_screen.update_progress("Loading transcription models...")
         process_qt_events()
 
-        app_controller = ApplicationController(ui_controller)
+        local_backend = run_with_ui_pulse(load_local_whisper_backend)
+        app_controller = ApplicationController(
+            ui_controller, local_backend=local_backend
+        )
         profiler.mark("application_controller_created")
 
         local_backend = app_controller.transcription_backends.get("local_whisper")
