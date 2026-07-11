@@ -1,22 +1,21 @@
 # OpenWhisper
 
+**Website:** [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/)
+
 A cross-platform desktop app (Windows, macOS, Linux) for recording audio and transcribing it to text using local Whisper models or OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste. The app detects your OS at runtime and adapts hotkey handling, auto-paste, and platform conventions automatically — see [Platform differences](#platform-differences).
 
 
 <p align="center">
-  <img width="450" height="300" alt="h3eFEqIiLQ" src="https://github.com/user-attachments/assets/d9dcc898-9532-4489-b6ec-88bec4172e91" />
+  <img width="480" alt="OpenWhisper main window" src="docs/screenshots/main-window.png" />
 </p>
 
 <p align="center">
-  <img alt="Cursor_wTPeidZjsL" src="https://github.com/user-attachments/assets/ef87747a-4e41-47e4-b93a-20c9e833a570" />
+  <img width="300" alt="Waveform overlay cycling through recording, transcribing, copied, and live streaming preview" src="docs/screenshots/overlay-states.gif" />
 </p>
 
 <p align="center">
-  <img alt="Cursor_eyykcjebiU" src="https://github.com/user-attachments/assets/c57070d4-69be-45f6-a73d-dcaa08294dac" />
-</p>
-
-<p align="center">
-  <img width="984" height="841" alt="image" src="https://github.com/user-attachments/assets/840510c3-9f24-40c3-b846-38a5a5664a6b" />
+  <img width="410" alt="Settings dialog, General tab" src="docs/screenshots/settings-general.png" />
+  <img width="410" alt="Settings dialog, Advanced tab" src="docs/screenshots/settings-advanced.png" />
 </p>
 
 
