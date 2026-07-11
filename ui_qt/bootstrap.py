@@ -187,11 +187,14 @@ def main() -> int:
     logging.info("Starting OpenWhisper")
     logging.info("=" * 60)
 
-    # Apply before any WhisperModel load so HuggingFace Hub checks are skipped.
-    from services.settings import apply_hf_hub_offline_from_settings
+    # Model loads are cache-first (local_files_only) regardless of settings;
+    # an external HF_HUB_OFFLINE=1 additionally hard-disables downloads.
+    from services.settings import is_hf_hub_offline_env_set
 
-    if apply_hf_hub_offline_from_settings():
-        logging.info("Fully offline mode active (skipping HuggingFace Hub checks)")
+    if is_hf_hub_offline_env_set():
+        logging.info(
+            "HF_HUB_OFFLINE set in environment — Hugging Face downloads disabled"
+        )
 
     profiler.mark("early_imports_started")
     QtApplication, LoadingScreen = get_early_runtime_components()
@@ -257,6 +260,10 @@ def main() -> int:
 
         if local_backend and hasattr(local_backend, "device_info"):
             ui_controller.set_device_info(local_backend.device_info)
+
+        # Now that the main UI is available, a missing local model may request
+        # download consent (never during startup, never for API-only users).
+        app_controller.notify_main_ui_ready()
 
         profiler.log_summary()
         summary_logged = True

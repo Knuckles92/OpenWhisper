@@ -41,6 +41,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._compute_type: Optional[str] = None
         self._override_device = device  # Store override values
         self._override_compute_type = compute_type
+        self._model_missing = False
+        self._last_loaded_model: Optional[str] = None
         self._load_model()
 
     def _cuda_is_available(self) -> bool:
@@ -173,7 +175,15 @@ class LocalWhisperBackend(TranscriptionBackend):
         return device, compute_type, model
 
     def _load_model(self):
-        """Load the faster-whisper model with auto hardware detection."""
+        """Load the faster-whisper model from the local cache only.
+
+        Cache-first policy: cached models always load with
+        ``local_files_only=True`` and never trigger Hugging Face revision or
+        metadata checks. A model missing from the cache is NOT downloaded
+        here — the backend stays unavailable with ``is_model_missing`` set,
+        and the download must be approved through the consent flow (see
+        ``download_and_load``).
+        """
         try:
             self._device, self._compute_type, detected_model = self._detect_hardware()
 
@@ -181,27 +191,56 @@ class LocalWhisperBackend(TranscriptionBackend):
             if self.model_name == "auto":
                 self.model_name = detected_model
 
-            from services.settings import is_hf_hub_offline_enabled
+            from services.hf_access import is_model_cached
 
-            local_files_only = is_hf_hub_offline_enabled()
+            if not is_model_cached(self.model_name):
+                logger.info(
+                    f"Model '{self.model_name}' is not in the local cache; "
+                    "waiting for download consent"
+                )
+                self._model_missing = True
+                self.model = None
+                return
+
+            self._model_missing = False
             logger.info(
-                f"Loading faster-whisper model: {self.model_name} "
-                f"(device={self._device}, compute_type={self._compute_type}, "
-                f"local_files_only={local_files_only})"
+                f"Loading faster-whisper model from local cache: {self.model_name} "
+                f"(device={self._device}, compute_type={self._compute_type})"
             )
 
             self.model = WhisperModel(
                 self.model_name,
                 device=self._device,
                 compute_type=self._compute_type,
-                local_files_only=local_files_only,
+                local_files_only=True,
             )
 
+            self._last_loaded_model = self.model_name
             logger.info("Faster-whisper model loaded successfully")
 
         except Exception as e:
             logger.error(f"Failed to load faster-whisper model: {e}")
             self.model = None
+
+    def download_and_load(self) -> None:
+        """Download the model from Hugging Face, then load it from the cache.
+
+        Only call this after the access policy or an explicit user consent
+        permitted the download. Runs synchronously — keep it off the Qt
+        thread. A failed download leaves the backend unavailable; it is never
+        treated as cached and never falls back to another model.
+
+        Raises:
+            Exception: If the download or the subsequent local load fails.
+        """
+        from services.hf_access import download_model_files
+
+        download_model_files(self.model_name)
+        self._load_model()
+        if not self.is_available():
+            raise Exception(
+                f"Model '{self.model_name}' failed to load after download"
+            )
 
     def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file using faster-whisper model.
@@ -431,6 +470,26 @@ class LocalWhisperBackend(TranscriptionBackend):
             logger.debug(f"[cleanup] Exception: {e}")
 
     @property
+    def last_loaded_model(self) -> Optional[str]:
+        """Resolved name of the most recently loaded model, or None.
+
+        Survives a failed reload to a missing model, so callers can revert the
+        selection to a model that is actually present in the cache (e.g. after
+        the user cancels a download).
+        """
+        return self._last_loaded_model
+
+    @property
+    def is_model_missing(self) -> bool:
+        """True when the requested model is absent from the local cache.
+
+        Distinguishes "needs a consented download" from other load failures
+        (e.g. unsupported hardware), so callers know whether the consent flow
+        can make the backend available.
+        """
+        return self._model_missing
+
+    @property
     def name(self) -> str:
         """Get the backend name with model info."""
         device_info = f"{self._device}/{self._compute_type}" if self._device else "not loaded"
@@ -440,6 +499,8 @@ class LocalWhisperBackend(TranscriptionBackend):
     @property
     def device_info(self) -> str:
         """Get current device, compute type, and model info."""
+        if self._model_missing:
+            return f"{self.model_name} | not downloaded"
         if self._device and self._compute_type:
             return f"{self.model_name} | {self._device} ({self._compute_type})"
         return "Not initialized"

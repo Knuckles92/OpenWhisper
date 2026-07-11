@@ -103,45 +103,93 @@ class TestSettingsManager(unittest.TestCase):
 
         self.assertEqual(saved_data, test_settings)
 
-    def test_apply_hf_hub_offline_sets_and_clears_env(self):
-        """Offline helper should set and clear HF_HUB_OFFLINE for this process."""
-        from services.settings import apply_hf_hub_offline, is_hf_hub_offline_env_set
+    def test_is_hf_hub_offline_env_set(self):
+        """Env helper should reflect the externally supplied HF_HUB_OFFLINE."""
+        from services.settings import is_hf_hub_offline_env_set
 
         previous = os.environ.pop("HF_HUB_OFFLINE", None)
         try:
-            apply_hf_hub_offline(True)
-            self.assertTrue(is_hf_hub_offline_env_set())
-            self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
-
-            apply_hf_hub_offline(False)
             self.assertFalse(is_hf_hub_offline_env_set())
-            self.assertNotIn("HF_HUB_OFFLINE", os.environ)
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            self.assertTrue(is_hf_hub_offline_env_set())
+            os.environ["HF_HUB_OFFLINE"] = "0"
+            self.assertFalse(is_hf_hub_offline_env_set())
         finally:
             if previous is None:
                 os.environ.pop("HF_HUB_OFFLINE", None)
             else:
                 os.environ["HF_HUB_OFFLINE"] = previous
 
-    def test_is_hf_hub_offline_enabled_from_settings(self):
-        """Settings toggle should enable offline mode even without the env var."""
-        from services.settings import (
-            SettingsKey,
-            apply_hf_hub_offline_from_settings,
-            is_hf_hub_offline_enabled,
+    def test_hf_access_policy_defaults_to_ask(self):
+        """A new installation (no settings file) should default to 'ask'."""
+        from services.settings import HuggingFaceAccessPolicy
+
+        policy = self.settings_manager.load_hf_access_policy()
+        self.assertEqual(policy, HuggingFaceAccessPolicy.ASK)
+        # No settings file should be created just by reading the default
+        self.assertFalse(os.path.exists(self.test_settings_file))
+
+    def test_hf_access_policy_migrates_legacy_offline_true_to_never(self):
+        """Legacy hf_hub_offline=true should migrate to the 'never' policy."""
+        from services.settings import HuggingFaceAccessPolicy, SettingsKey
+
+        self.settings_manager.save_all_settings({SettingsKey.HF_HUB_OFFLINE: True})
+        policy = self.settings_manager.load_hf_access_policy()
+        self.assertEqual(policy, HuggingFaceAccessPolicy.NEVER)
+
+        # Migration should be persisted and the legacy key removed
+        stored = self.settings_manager.load_all_settings()
+        self.assertEqual(
+            stored.get(SettingsKey.HF_ACCESS_POLICY), HuggingFaceAccessPolicy.NEVER
+        )
+        self.assertNotIn(SettingsKey.HF_HUB_OFFLINE, stored)
+
+    def test_hf_access_policy_migrates_legacy_offline_false_to_ask(self):
+        """Legacy hf_hub_offline=false should migrate to 'ask' for existing installs."""
+        from services.settings import HuggingFaceAccessPolicy, SettingsKey
+
+        self.settings_manager.save_all_settings({SettingsKey.HF_HUB_OFFLINE: False})
+        policy = self.settings_manager.load_hf_access_policy()
+        self.assertEqual(policy, HuggingFaceAccessPolicy.ASK)
+
+        stored = self.settings_manager.load_all_settings()
+        self.assertEqual(
+            stored.get(SettingsKey.HF_ACCESS_POLICY), HuggingFaceAccessPolicy.ASK
+        )
+        self.assertNotIn(SettingsKey.HF_HUB_OFFLINE, stored)
+
+    def test_hf_access_policy_invalid_value_falls_back_to_ask(self):
+        """A corrupted policy value should fall back to 'ask' and be repaired."""
+        from services.settings import HuggingFaceAccessPolicy, SettingsKey
+
+        self.settings_manager.save_all_settings(
+            {SettingsKey.HF_ACCESS_POLICY: "yolo"}
+        )
+        policy = self.settings_manager.load_hf_access_policy()
+        self.assertEqual(policy, HuggingFaceAccessPolicy.ASK)
+        stored = self.settings_manager.load_all_settings()
+        self.assertEqual(
+            stored.get(SettingsKey.HF_ACCESS_POLICY), HuggingFaceAccessPolicy.ASK
         )
 
-        previous = os.environ.pop("HF_HUB_OFFLINE", None)
-        try:
-            self.settings_manager.save_all_settings({SettingsKey.HF_HUB_OFFLINE: True})
-            with patch("services.settings.settings_manager", self.settings_manager):
-                self.assertTrue(is_hf_hub_offline_enabled())
-                self.assertTrue(apply_hf_hub_offline_from_settings())
-                self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
-        finally:
-            if previous is None:
-                os.environ.pop("HF_HUB_OFFLINE", None)
-            else:
-                os.environ["HF_HUB_OFFLINE"] = previous
+    def test_save_hf_access_policy_roundtrip_and_legacy_cleanup(self):
+        """Saving a policy should persist it and drop the legacy key."""
+        from services.settings import HuggingFaceAccessPolicy, SettingsKey
+
+        self.settings_manager.save_all_settings({SettingsKey.HF_HUB_OFFLINE: True})
+        self.settings_manager.save_hf_access_policy(HuggingFaceAccessPolicy.ALWAYS)
+
+        self.assertEqual(
+            self.settings_manager.load_hf_access_policy(),
+            HuggingFaceAccessPolicy.ALWAYS,
+        )
+        stored = self.settings_manager.load_all_settings()
+        self.assertNotIn(SettingsKey.HF_HUB_OFFLINE, stored)
+
+    def test_save_hf_access_policy_rejects_invalid_value(self):
+        """Saving an unrecognized policy value should raise ValueError."""
+        with self.assertRaises(ValueError):
+            self.settings_manager.save_hf_access_policy("sometimes")
 
 
 if __name__ == '__main__':

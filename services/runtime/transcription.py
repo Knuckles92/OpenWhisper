@@ -358,6 +358,9 @@ class TranscriptionRuntime:
                     self.controller.ui_controller.set_device_info(
                         local_backend.device_info
                     )
+                # A missing local model needs the download-consent flow the
+                # moment the user selects this backend.
+                self.controller.ensure_local_model_available()
             else:
                 self.controller.ui_controller.set_device_info("")
 
@@ -375,6 +378,16 @@ class TranscriptionRuntime:
             overlay.show_at_cursor(overlay.STATE_LARGE_FILE_PROCESSING)
 
     def _submit_transcription_job(self, audio_path: str) -> None:
+        backend = self.controller.current_backend
+        if not backend.is_available() and getattr(backend, "is_model_missing", False):
+            # Trigger the consent/download flow, but never transcribe with a
+            # model the user has not approved downloading.
+            self.controller.ensure_local_model_available()
+            raise Exception(
+                "Whisper model is not downloaded yet — approve the download "
+                "and try again"
+            )
+
         needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
         should_split = (
             needs_splitting and self.controller.current_backend.requires_file_splitting

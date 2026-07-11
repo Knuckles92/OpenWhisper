@@ -76,8 +76,12 @@ class _FakeApplicationController:
         self.ui_controller = ui_controller
         self.local_backend = local_backend
         self.cleaned_up = False
+        self.main_ui_ready_notified = False
         self.transcription_backends = {"local_whisper": _FakeBackend("cuda")}
         self.__class__.instances.append(self)
+
+    def notify_main_ui_ready(self):
+        self.main_ui_ready_notified = True
 
     def cleanup(self):
         self.cleaned_up = True
@@ -88,7 +92,7 @@ class TestBootstrap(unittest.TestCase):
         _FakeApplicationController.instances = []
         _FakeApplicationController.should_raise = False
 
-    @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
+    @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
     @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
     @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
@@ -99,7 +103,7 @@ class TestBootstrap(unittest.TestCase):
         _mock_process_events,
         _mock_pulse,
         _mock_load_backend,
-        _mock_hf_offline,
+        _mock_hf_env,
     ):
         qt_app = _FakeQtApplication()
         ui_controller = _FakeUIController()
@@ -133,10 +137,11 @@ class TestBootstrap(unittest.TestCase):
         self.assertEqual(ui_controller.device_info, "cuda")
         self.assertEqual(len(_FakeApplicationController.instances), 1)
         self.assertTrue(_FakeApplicationController.instances[0].cleaned_up)
+        self.assertTrue(_FakeApplicationController.instances[0].main_ui_ready_notified)
         self.assertLess(order.index("loading_screen_shown"), order.index("late_imports"))
         self.assertLess(order.index("process_events"), order.index("late_imports"))
 
-    @patch("services.settings.apply_hf_hub_offline_from_settings", return_value=False)
+    @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
     @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
     @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
@@ -147,7 +152,7 @@ class TestBootstrap(unittest.TestCase):
         _mock_process_events,
         _mock_pulse,
         _mock_load_backend,
-        _mock_hf_offline,
+        _mock_hf_env,
     ):
         qt_app = _FakeQtApplication()
         qt_app.raise_on_run = True

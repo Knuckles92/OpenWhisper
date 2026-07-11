@@ -11,13 +11,18 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
 from services.database import db
+from services.hf_access import (
+    AccessDecision,
+    ConsentAction,
+    hf_access_coordinator,
+)
 from services.recorder import AudioRecorder
 from services.runtime import (
     HotkeyRuntime,
     StreamingRuntime,
     TranscriptionRuntime,
 )
-from services.settings import settings_manager
+from services.settings import HuggingFaceAccessPolicy, SettingsKey, settings_manager
 from transcriber import LocalWhisperBackend, OpenAIBackend, TranscriptionBackend
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,10 @@ class ApplicationController(QObject):
     # Emitted from the background reload worker (thread-safe UI updates).
     device_info_update = pyqtSignal(str)
     engine_busy_changed = pyqtSignal(bool)
+    # Consent for Hugging Face model downloads: emitted (possibly from worker
+    # threads) with (model_name, env_blocked); the connected slot shows the
+    # consent dialog on the Qt main thread.
+    hf_consent_requested = pyqtSignal(str, bool)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -122,6 +131,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
+        self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -165,8 +175,19 @@ class ApplicationController(QObject):
                 local_backend.reload_model()
                 info = getattr(local_backend, "device_info", "")
                 self.device_info_update.emit(info)
-                self.status_update.emit("Whisper engine ready")
-                logger.info(f"Whisper reloaded: {info}")
+                if (
+                    not local_backend.is_available()
+                    and getattr(local_backend, "is_model_missing", False)
+                ):
+                    # Cache-first load found no local copy; route through the
+                    # consent flow instead of downloading silently.
+                    self.status_update.emit(
+                        f"Model '{local_backend.model_name}' is not downloaded"
+                    )
+                    self.ensure_local_model_available()
+                else:
+                    self.status_update.emit("Whisper engine ready")
+                    logger.info(f"Whisper reloaded: {info}")
             else:
                 logger.warning("Local whisper backend not found")
                 self.status_update.emit("Ready")
@@ -175,6 +196,177 @@ class ApplicationController(QObject):
             self.status_update.emit("Engine reload failed")
         finally:
             self._reload_in_flight = False
+            self.engine_busy_changed.emit(False)
+
+    def notify_main_ui_ready(self) -> None:
+        """Called by bootstrap once the main window is shown.
+
+        For a new installation whose selected backend is Local Whisper with an
+        uncached model, this is the moment the consent dialog may first appear
+        — after the main UI is available, never during startup, and never for
+        API-only users.
+        """
+        if isinstance(self.current_backend, LocalWhisperBackend):
+            QTimer.singleShot(0, self.ensure_local_model_available)
+
+    def on_hf_policy_changed(self, policy: str) -> None:
+        """React to a Hugging Face access-policy change from Settings.
+
+        Switching to ``always`` authorizes downloads without prompting, so a
+        missing selected model can be fetched right away. Other policies take
+        effect on the next model request without further action.
+        """
+        if policy == HuggingFaceAccessPolicy.ALWAYS and isinstance(
+            self.current_backend, LocalWhisperBackend
+        ):
+            self.ensure_local_model_available()
+
+    def ensure_local_model_available(self) -> None:
+        """Make sure the local Whisper model is loaded, requesting consent if needed.
+
+        Safe to call from any thread: consent dialogs are raised on the Qt
+        main thread via ``hf_consent_requested``, and downloads run on the
+        executor. Concurrent calls for the same model are deduplicated by the
+        access coordinator so at most one dialog and one download exist.
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is None or backend.is_available():
+            return
+        if not getattr(backend, "is_model_missing", False):
+            # Load failed for another reason (hardware, corrupt install);
+            # downloading would not help.
+            return
+
+        model_name = backend.model_name
+        if not hf_access_coordinator.begin_request(model_name):
+            return  # consent dialog or download already in flight
+
+        try:
+            # Advisory check only — the download worker performs the
+            # authoritative (grant-consuming) evaluation before any network.
+            decision = hf_access_coordinator.evaluate_access(
+                model_name, consume_grant=False
+            )
+        except Exception:
+            hf_access_coordinator.end_request(model_name)
+            raise
+
+        if decision in (AccessDecision.LOAD_CACHED, AccessDecision.DOWNLOAD_ALLOWED):
+            self._start_hf_model_task(model_name)
+        elif decision == AccessDecision.BLOCKED_BY_ENV:
+            self.hf_consent_requested.emit(model_name, True)
+        else:  # NEEDS_CONSENT
+            self.hf_consent_requested.emit(model_name, False)
+
+    def _on_hf_consent_requested(self, model_name: str, env_blocked: bool) -> None:
+        """Show the consent dialog and act on the result (Qt main thread).
+
+        The request slot claimed in ``ensure_local_model_available`` is either
+        handed to the download worker or released here.
+        """
+        policy = hf_access_coordinator.get_policy()
+        try:
+            action = self.ui_controller.show_hf_consent_dialog(
+                model_name, policy, env_blocked
+            )
+        except Exception:
+            hf_access_coordinator.end_request(model_name)
+            raise
+
+        if env_blocked:
+            hf_access_coordinator.end_request(model_name)
+            self.status_update.emit(
+                f"Model '{model_name}' unavailable — downloads disabled by HF_HUB_OFFLINE"
+            )
+            return
+
+        if action == ConsentAction.DOWNLOAD_ONCE:
+            hf_access_coordinator.grant_once(model_name)
+            self._start_hf_model_task(model_name)
+        elif action == ConsentAction.ALWAYS_ALLOW:
+            hf_access_coordinator.set_policy(HuggingFaceAccessPolicy.ALWAYS)
+            self._start_hf_model_task(model_name)
+        elif action == ConsentAction.OPEN_SETTINGS:
+            hf_access_coordinator.end_request(model_name)
+            self.ui_controller.open_settings_dialog(focus_hf_policy=True)
+        else:  # canceled: no network activity
+            hf_access_coordinator.end_request(model_name)
+            self.status_update.emit(
+                f"Model '{model_name}' is unavailable — download declined"
+            )
+            self._revert_declined_model_selection(model_name)
+
+    def _revert_declined_model_selection(self, declined_model: str) -> None:
+        """Roll the whisper-model selection back to the last loaded model.
+
+        Declining a download would otherwise leave the settings (and the
+        engine combos) pointing at a model that was never downloaded, with no
+        usable engine. Reverting to the previously loaded model — still in the
+        local cache — keeps the selection aligned with what can actually run.
+        Runs on the Qt main thread (called from the consent slot).
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is None or backend.is_available():
+            return
+
+        last_loaded = getattr(backend, "last_loaded_model", None)
+        if not last_loaded or last_loaded == declined_model:
+            # Nothing ever loaded (e.g. fresh install) — leave the selection
+            # alone; the status message already reports it as unavailable.
+            return
+
+        logger.info(
+            f"Reverting whisper model selection from '{declined_model}' "
+            f"to '{last_loaded}' after declined download"
+        )
+        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, last_loaded)
+        self.ui_controller.refresh_local_engine_controls()
+        # Background reload picks the reverted model up from settings; it is
+        # cached, so this never re-enters the consent flow.
+        self.reload_whisper_model()
+
+    def _start_hf_model_task(self, model_name: str) -> None:
+        """Run the approved download/load on a worker thread with busy states."""
+        self.engine_busy_changed.emit(True)
+        self.executor.submit(self._hf_model_worker, model_name)
+
+    def _hf_model_worker(self, model_name: str) -> None:
+        """Download (if permitted) and load the model off the Qt thread.
+
+        Re-evaluates access just before downloading so the one-time grant /
+        policy check stays centralized in the coordinator. A failed download
+        leaves the model unavailable — it is never treated as cached and never
+        falls back to another model.
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        try:
+            decision = hf_access_coordinator.evaluate_access(model_name)
+            if decision == AccessDecision.LOAD_CACHED:
+                self.status_update.emit(f"Loading model '{model_name}'...")
+                backend.reload_model(model_name)
+            elif decision == AccessDecision.DOWNLOAD_ALLOWED:
+                self.status_update.emit(
+                    f"Downloading model '{model_name}' from Hugging Face..."
+                )
+                backend.download_and_load()
+            else:
+                logger.warning(
+                    f"Model task for '{model_name}' aborted: access decision {decision}"
+                )
+                self.status_update.emit(f"Model '{model_name}' is unavailable")
+                return
+
+            if backend.is_available():
+                self.device_info_update.emit(backend.device_info)
+                self.status_update.emit("Whisper engine ready")
+                logger.info(f"Model '{model_name}' ready: {backend.device_info}")
+            else:
+                self.status_update.emit(f"Model '{model_name}' failed to load")
+        except Exception as exc:
+            logger.error(f"Model download/load failed for '{model_name}': {exc}")
+            self.status_update.emit(f"Model download failed: {exc}")
+        finally:
+            hf_access_coordinator.end_request(model_name)
             self.engine_busy_changed.emit(False)
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
@@ -245,6 +437,7 @@ class ApplicationController(QObject):
         """Connect Qt signals to UI controller methods."""
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
+        self.hf_consent_requested.connect(self._on_hf_consent_requested)
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)

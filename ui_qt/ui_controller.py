@@ -61,6 +61,7 @@ class UIController(QObject):
         self.on_whisper_settings_changed: Optional[Callable] = None  # Callback for whisper engine reload
         self.on_audio_device_changed: Optional[Callable] = None  # Callback for audio input device change
         self.on_streaming_settings_changed: Optional[Callable] = None  # Callback for streaming mode change
+        self.on_hf_policy_changed: Optional[Callable] = None  # Callback for HuggingFace access policy change
 
         # Timer to hide overlay after cancel animation completes
         self.cancel_animation_timer = QTimer()
@@ -427,11 +428,19 @@ class UIController(QObject):
         """Hide the main window."""
         self.main_window.hide()
 
-    def open_settings_dialog(self):
-        """Open the settings dialog."""
+    def open_settings_dialog(self, focus_hf_policy: bool = False):
+        """Open the settings dialog.
+
+        Args:
+            focus_hf_policy: When True, open directly to the Advanced tab with
+                the Hugging Face download-policy control focused (used by the
+                consent dialog's "Open Settings" action).
+        """
         dialog = SettingsDialog(self.main_window)
-        # Connect hotkey button in settings to hotkey dialog
-        dialog.tabs.setCurrentIndex(0)  # Default to general
+        if focus_hf_policy:
+            dialog.focus_hf_policy()
+        else:
+            dialog.tabs.setCurrentIndex(0)  # Default to general
 
         # Connect settings changed signal
         def on_settings_changed(settings: dict):
@@ -440,8 +449,7 @@ class UIController(QObject):
                     self.on_whisper_settings_changed()
                 # Keep the inline main-GUI controls in sync with the dialog's
                 # new values so the two views never diverge.
-                self.main_window.quick_record_tab.local_engine.load_from_settings()
-                self.main_window.upload_file_tab.local_engine.load_from_settings()
+                self.refresh_local_engine_controls()
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
@@ -449,9 +457,44 @@ class UIController(QObject):
             if settings.get('_streaming_settings_changed', False):
                 if self.on_streaming_settings_changed:
                     self.on_streaming_settings_changed()
+            if settings.get('_hf_policy_changed', False):
+                if self.on_hf_policy_changed:
+                    self.on_hf_policy_changed(
+                        settings.get(SettingsKey.HF_ACCESS_POLICY)
+                    )
 
         dialog.settings_changed.connect(on_settings_changed)
         dialog.exec()
+
+    def refresh_local_engine_controls(self):
+        """Re-sync the inline local-engine combos with the persisted settings.
+
+        Signal-safe: the combos are updated with signals blocked, so this never
+        triggers another engine reload.
+        """
+        self.main_window.quick_record_tab.local_engine.load_from_settings()
+        self.main_window.upload_file_tab.local_engine.load_from_settings()
+
+    def show_hf_consent_dialog(
+        self, model_name: str, policy: str, env_blocked: bool = False
+    ) -> str:
+        """Show the Hugging Face download consent dialog (main thread only).
+
+        Args:
+            model_name: Resolved model name that needs downloading.
+            policy: Current HuggingFaceAccessPolicy value.
+            env_blocked: True when HF_HUB_OFFLINE disables downloads entirely.
+
+        Returns:
+            One of the ``ConsentAction`` values chosen by the user.
+        """
+        from ui_qt.dialogs.hf_consent_dialog import HuggingFaceConsentDialog
+
+        dialog = HuggingFaceConsentDialog(
+            model_name, policy, env_blocked=env_blocked, parent=self.main_window
+        )
+        dialog.exec()
+        return dialog.result_action
 
     def open_hotkey_dialog(self):
         """Open the hotkey configuration dialog."""

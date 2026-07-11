@@ -204,16 +204,19 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 **Hotkeys:** Customize all keyboard shortcuts
 
-**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging, fully offline mode
+**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging, Hugging Face download policy
 
-## Offline Usage
+## Offline Usage and Model Downloads
 
-Local Whisper transcription works fully offline after the initial model download. However, by default `faster-whisper` makes a brief metadata check to HuggingFace on startup to see if a newer model version is available. This is not a model download—just a lightweight API call. If you're offline, the check will fail silently and the cached local model loads normally.
+Model loading is **cache-first**: models already on your computer always load locally, with no Hugging Face network checks — not even a metadata call. Hugging Face is contacted only when a model you request is missing from the local cache, and only with your consent.
 
-To skip the check entirely:
+The download policy lives in **Settings → Advanced → Hugging Face Downloads**:
 
-1. **Settings (recommended):** Open **Settings → Advanced** and enable **Skip HuggingFace network checks (fully offline)**.
-2. **Environment variable:** Set `HF_HUB_OFFLINE=1` before launching (still supported for scripts and CI):
+- **Ask before downloading** (default): a consent dialog appears when a missing model is needed, showing the model, its Hugging Face repository, and an approximate download size. You can approve just that download ("Download once") or switch to always allowing downloads.
+- **Always allow downloads**: missing models download without prompting. Cached models are still never re-checked for updates.
+- **Never connect (fully offline)**: no downloads unless you explicitly approve a one-time override in the dialog.
+
+Setting `HF_HUB_OFFLINE=1` in the environment before launching is a hard override that disables downloads entirely (still supported for scripts and CI):
 
 ```bash
 export HF_HUB_OFFLINE=1  # Linux/Mac
@@ -221,7 +224,7 @@ set HF_HUB_OFFLINE=1     # Windows
 python app_qt.py
 ```
 
-The Settings toggle persists across launches and applies the same `HF_HUB_OFFLINE` behavior (plus `local_files_only` when loading models). The model must already be cached from a previous download.
+Upgrading from an older version: the previous **Skip HuggingFace network checks** toggle migrates automatically — enabled becomes **Never connect**, disabled becomes **Ask before downloading**.
 ## Requirements
 
 - Python 3.8+ (3.12 recommended)

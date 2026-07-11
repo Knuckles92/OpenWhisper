@@ -62,6 +62,10 @@ class _QTimer:
     def stop(self):
         pass
 
+    @staticmethod
+    def singleShot(_interval, callback):
+        callback()
+
 
 class _Qt:
     class TimerType:
@@ -95,6 +99,9 @@ class FakeSettingsManager:
 
     def save_hotkey_settings(self, hotkeys):
         self.saved_hotkeys = hotkeys
+
+    def save_setting(self, key, value):
+        self.all_settings[key] = value
 
     def load_all_settings(self):
         return dict(self.all_settings)
@@ -170,6 +177,11 @@ class FakeLocalBackend:
         self.device_info = "cpu"
         self.is_transcribing = False
         self.cleaned_up = False
+        self.is_model_missing = False
+        self.last_loaded_model = self.model_name
+
+    def is_available(self):
+        return not self.is_model_missing
 
     def transcribe(self, audio_path):
         return f"local:{audio_path}"
@@ -180,8 +192,13 @@ class FakeLocalBackend:
     def cancel_transcription(self):
         self.is_transcribing = False
 
-    def reload_model(self):
+    def reload_model(self, model_name=None):
+        if model_name:
+            self.model_name = model_name
         self.device_info = "cpu-reloaded"
+        # Mirrors a successful cache-only load
+        self.is_model_missing = False
+        self.last_loaded_model = self.model_name
 
     def cleanup(self):
         self.cleaned_up = True
@@ -194,6 +211,9 @@ class FakeOpenAIBackend:
         self.model_type = model_type
         self.is_transcribing = False
         self.cleaned_up = False
+
+    def is_available(self):
+        return True
 
     def transcribe(self, audio_path):
         return f"api:{audio_path}"
@@ -352,6 +372,20 @@ class DummyUIController:
         self.streaming_overlay_hidden = 0
         self.caret_shown = 0
         self.caret_hidden = 0
+        self.consent_requests = []
+        self.consent_result = "cancel"
+        self.engine_controls_refreshes = 0
+        self.settings_dialog_opened_with = None
+
+    def show_hf_consent_dialog(self, model_name, policy, env_blocked=False):
+        self.consent_requests.append((model_name, policy, env_blocked))
+        return self.consent_result
+
+    def refresh_local_engine_controls(self):
+        self.engine_controls_refreshes += 1
+
+    def open_settings_dialog(self, focus_hf_policy=False):
+        self.settings_dialog_opened_with = focus_hf_policy
 
     def update_hotkey_display(self, hotkeys):
         self.hotkeys = hotkeys
@@ -426,13 +460,38 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
 
-    # SettingsKey is a constants holder with no behavior, so the real one is
-    # safe (and more faithful) to expose on the stub than a hand-rolled copy.
-    from services.settings import SettingsKey as _RealSettingsKey
+    # SettingsKey / HuggingFaceAccessPolicy are constants holders with no
+    # behavior, so the real ones are safe (and more faithful) to expose on the
+    # stub than hand-rolled copies.
+    from services.settings import (
+        HuggingFaceAccessPolicy as _RealHFPolicy,
+        SettingsKey as _RealSettingsKey,
+    )
 
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager
     settings_module.SettingsKey = _RealSettingsKey
+    settings_module.HuggingFaceAccessPolicy = _RealHFPolicy
+
+    from services.hf_access import (
+        AccessDecision as _RealAccessDecision,
+        ConsentAction as _RealConsentAction,
+    )
+
+    hf_access_module = types.ModuleType("services.hf_access")
+    hf_access_module.AccessDecision = _RealAccessDecision
+    hf_access_module.ConsentAction = _RealConsentAction
+    # Inert coordinator: never grants downloads, never touches disk/network.
+    hf_access_module.hf_access_coordinator = types.SimpleNamespace(
+        begin_request=lambda model: True,
+        end_request=lambda model: None,
+        evaluate_access=lambda model, consume_grant=True: (
+            _RealAccessDecision.NEEDS_CONSENT
+        ),
+        grant_once=lambda model: None,
+        get_policy=lambda: _RealHFPolicy.ASK,
+        set_policy=lambda policy: None,
+    )
 
     history_module = types.ModuleType("services.history_manager")
     history_module.history_manager = history_manager
@@ -466,6 +525,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         "services.recorder": recorder_module,
         "services.hotkey_manager": hotkey_module,
         "services.settings": settings_module,
+        "services.hf_access": hf_access_module,
         "services.history_manager": history_module,
         "services.audio_processor": audio_processor_module,
         "services.streaming_transcriber": streaming_module,
@@ -562,6 +622,46 @@ class TestApplicationController(unittest.TestCase):
         self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
         self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
         self.assertEqual(controller.ui_controller.engine_busy_states[-1], False)
+
+    def test_declined_download_reverts_model_selection(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model_name = "small"
+        backend.is_model_missing = True
+        backend.last_loaded_model = "turbo"
+        self.settings.all_settings["whisper_model"] = "small"
+        controller.ui_controller.consent_result = "cancel"
+
+        controller._on_hf_consent_requested("small", False)
+
+        # Selection and inline combos roll back to the model that is cached
+        self.assertEqual(self.settings.all_settings["whisper_model"], "turbo")
+        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
+        self.assertIn(
+            "Model 'small' is unavailable — download declined",
+            controller.ui_controller.statuses,
+        )
+
+        # The scheduled background reload brings the reverted model back
+        controller._reload_timer.timeout.emit()
+        fn, args = controller.executor.submissions[-1]
+        fn(*args)
+        self.assertTrue(backend.is_available())
+        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
+
+    def test_declined_download_without_prior_model_keeps_selection(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model_name = "small"
+        backend.is_model_missing = True
+        backend.last_loaded_model = None  # fresh install: nothing ever loaded
+        self.settings.all_settings["whisper_model"] = "small"
+        controller.ui_controller.consent_result = "cancel"
+
+        controller._on_hf_consent_requested("small", False)
+
+        self.assertEqual(self.settings.all_settings["whisper_model"], "small")
+        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 0)
 
     def test_reload_whisper_model_refused_while_recording(self):
         controller = self._create_controller()

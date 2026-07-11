@@ -33,6 +33,8 @@ class SettingsKey:
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
+    HF_ACCESS_POLICY: Final[str] = "hf_access_policy"
+    # Legacy boolean replaced by HF_ACCESS_POLICY; kept for migration only.
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
     # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
@@ -44,6 +46,19 @@ class RecordingRetentionMode:
     """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
     KEEP_ALL: Final[str] = "keep_all"
     CUSTOM: Final[str] = "custom"
+
+
+class HuggingFaceAccessPolicy:
+    """Values for ``SettingsKey.HF_ACCESS_POLICY``.
+
+    Cached models always load locally regardless of policy; the policy only
+    governs whether Hugging Face may be contacted to download a missing model.
+    """
+    ASK: Final[str] = "ask"          # Prompt before downloading a missing model
+    ALWAYS: Final[str] = "always"    # Download missing models without prompting
+    NEVER: Final[str] = "never"      # Stay offline unless explicitly overridden once
+
+    ALL: Final[Tuple[str, ...]] = (ASK, ALWAYS, NEVER)
 
 
 _HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
@@ -232,6 +247,58 @@ class SettingsManager:
             logger.error(f"Failed to save model selection: {e}")
             raise
 
+    def load_hf_access_policy(self) -> str:
+        """Load the Hugging Face access policy, migrating the legacy setting.
+
+        Legacy migration: ``hf_hub_offline: true`` becomes ``never``; ``false``
+        or absent becomes ``ask`` (including existing installations). When a
+        legacy key or an invalid policy value is found, the migrated policy is
+        persisted and the legacy key removed.
+
+        Returns:
+            One of ``HuggingFaceAccessPolicy.ALL`` (defaults to ``ask``).
+        """
+        settings = self.load_all_settings()
+        policy = settings.get(SettingsKey.HF_ACCESS_POLICY)
+        if policy in HuggingFaceAccessPolicy.ALL:
+            return policy
+
+        legacy = settings.get(SettingsKey.HF_HUB_OFFLINE)
+        migrated = (
+            HuggingFaceAccessPolicy.NEVER if legacy
+            else HuggingFaceAccessPolicy.ASK
+        )
+        if SettingsKey.HF_HUB_OFFLINE in settings or policy is not None:
+            try:
+                settings[SettingsKey.HF_ACCESS_POLICY] = migrated
+                settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
+                self.save_all_settings(settings)
+                logger.info(f"Migrated HuggingFace access policy to '{migrated}'")
+            except Exception as e:
+                logger.warning(f"Failed to persist HF policy migration: {e}")
+        return migrated
+
+    def save_hf_access_policy(self, policy: str) -> None:
+        """Persist the Hugging Face access policy.
+
+        Args:
+            policy: One of ``HuggingFaceAccessPolicy.ALL``.
+
+        Raises:
+            ValueError: If ``policy`` is not a recognized value.
+            Exception: If saving fails.
+        """
+        if policy not in HuggingFaceAccessPolicy.ALL:
+            raise ValueError(
+                f"Invalid HF access policy '{policy}'. "
+                f"Valid values: {list(HuggingFaceAccessPolicy.ALL)}"
+            )
+        settings = self.load_all_settings()
+        settings[SettingsKey.HF_ACCESS_POLICY] = policy
+        settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
+        self.save_all_settings(settings)
+        logger.info(f"HuggingFace access policy saved: {policy}")
+
     def load_audio_input_device(self) -> Optional[int]:
         """Load the saved audio input device ID.
 
@@ -248,24 +315,12 @@ class SettingsManager:
 
 
 def is_hf_hub_offline_env_set() -> bool:
-    """Return whether ``HF_HUB_OFFLINE`` is already set in the process env."""
-    return os.environ.get(_HF_HUB_OFFLINE_ENV, "").strip().lower() in _HF_HUB_OFFLINE_TRUTHY
+    """Return whether ``HF_HUB_OFFLINE`` is set in the process env.
 
-
-def apply_hf_hub_offline(enabled: bool) -> None:
-    """Apply or clear the ``HF_HUB_OFFLINE`` environment variable for this process.
-
-    Args:
-        enabled: When True, set ``HF_HUB_OFFLINE=1``. When False, remove it so
-            HuggingFace Hub checks are allowed again in this process.
+    An externally supplied ``HF_HUB_OFFLINE=1`` is a hard override: model
+    downloads are disabled regardless of the persisted access policy.
     """
-    if enabled:
-        os.environ[_HF_HUB_OFFLINE_ENV] = "1"
-        logger.info("HuggingFace Hub offline mode enabled (HF_HUB_OFFLINE=1)")
-    else:
-        removed = os.environ.pop(_HF_HUB_OFFLINE_ENV, None)
-        if removed is not None:
-            logger.info("HuggingFace Hub offline mode disabled")
+    return os.environ.get(_HF_HUB_OFFLINE_ENV, "").strip().lower() in _HF_HUB_OFFLINE_TRUTHY
 
 
 # Global settings manager instance
@@ -299,38 +354,3 @@ def resolve_max_saved_recordings(
     except (TypeError, ValueError):
         count = config.MAX_SAVED_RECORDINGS
     return max(1, count)
-
-
-def is_hf_hub_offline_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
-    """Return whether HuggingFace Hub network checks should be skipped.
-
-    True when the Settings toggle is on, or when ``HF_HUB_OFFLINE`` is already
-    set in the environment (CLI / shell override).
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        True when model loads should use local files only.
-    """
-    if is_hf_hub_offline_env_set():
-        return True
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-    return bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
-
-
-def apply_hf_hub_offline_from_settings() -> bool:
-    """Enable offline Hub mode from saved settings if the toggle is on.
-
-    Does not clear a pre-existing ``HF_HUB_OFFLINE`` env var when the setting is
-    off, so shell/CLI overrides still work at startup.
-
-    Returns:
-        True when offline mode is active after applying settings.
-    """
-    settings = settings_manager.load_all_settings()
-    enabled = bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
-    if enabled:
-        apply_hf_hub_offline(True)
-    return is_hf_hub_offline_enabled(settings)

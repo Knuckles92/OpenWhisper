@@ -14,9 +14,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from config import config
 from services.settings import (
+    HuggingFaceAccessPolicy,
     RecordingRetentionMode,
     SettingsKey,
-    apply_hf_hub_offline,
     resolve_max_saved_recordings,
     settings_manager,
 )
@@ -362,32 +362,55 @@ class SettingsDialog(QDialog):
         self.logging_check = QCheckBox("Enable detailed logging")
         layout.addWidget(self.logging_check)
 
-        # Fully offline / skip HuggingFace Hub checks
+        # Hugging Face model download policy
         layout.addSpacing(16)
-        offline_title = QLabel("Network")
-        offline_title.setObjectName("sectionLabel")
-        layout.addWidget(offline_title)
+        hf_title = QLabel("Hugging Face Downloads")
+        hf_title.setObjectName("sectionLabel")
+        layout.addWidget(hf_title)
 
-        self.hf_hub_offline_check = QCheckBox(
-            "Skip HuggingFace network checks (fully offline)"
-        )
-        layout.addWidget(self.hf_hub_offline_check)
+        hf_policy_label = QLabel("When a model is missing from this computer:")
+        layout.addWidget(hf_policy_label)
 
-        offline_info = QLabel(
-            "Stops faster-whisper from contacting HuggingFace on startup to check "
-            "for model updates. The model must already be downloaded. Same effect "
-            "as setting HF_HUB_OFFLINE=1."
+        self.hf_policy_combo = QComboBox()
+        self.hf_policy_combo.setObjectName("hfPolicyCombo")
+        self.hf_policy_combo.addItem(
+            "Ask before downloading", HuggingFaceAccessPolicy.ASK
         )
-        offline_info.setObjectName("infoLabel")
-        offline_info.setWordWrap(True)
-        layout.addWidget(offline_info)
+        self.hf_policy_combo.addItem(
+            "Always allow downloads", HuggingFaceAccessPolicy.ALWAYS
+        )
+        self.hf_policy_combo.addItem(
+            "Never connect (fully offline)", HuggingFaceAccessPolicy.NEVER
+        )
+        self.hf_policy_combo.setMinimumHeight(36)
+        layout.addWidget(self.hf_policy_combo)
+
+        hf_info = QLabel(
+            "Models already on this computer always load locally without any "
+            "network checks. Hugging Face is only contacted to download a "
+            "missing model, and only when this policy (or a one-time approval) "
+            "allows it. An external HF_HUB_OFFLINE=1 environment variable "
+            "disables downloads entirely."
+        )
+        hf_info.setObjectName("infoLabel")
+        hf_info.setWordWrap(True)
+        layout.addWidget(hf_info)
 
         layout.addStretch()
 
         # Wire up scroll area
         scroll_area.setWidget(content)
         tab_layout.addWidget(scroll_area)
-        self.tabs.addTab(tab, "Advanced")
+        self._advanced_tab_index = self.tabs.addTab(tab, "Advanced")
+
+    def focus_hf_policy(self):
+        """Open the Advanced tab with the Hugging Face policy control focused.
+
+        Used by the consent dialog's "Open Settings" action so the user lands
+        directly on the download-policy control.
+        """
+        self.tabs.setCurrentIndex(self._advanced_tab_index)
+        self.hf_policy_combo.setFocus()
 
     def _update_threshold_display(self, value):
         """Update threshold value display."""
@@ -487,9 +510,10 @@ class SettingsDialog(QDialog):
             if compute_index >= 0:
                 self.whisper_compute_combo.setCurrentIndex(compute_index)
 
-            self.hf_hub_offline_check.setChecked(
-                bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
-            )
+            # Typed load performs legacy hf_hub_offline migration
+            policy = settings_manager.load_hf_access_policy()
+            policy_index = self.hf_policy_combo.findData(policy)
+            self.hf_policy_combo.setCurrentIndex(max(0, policy_index))
 
             # Load audio input device
             saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
@@ -514,7 +538,9 @@ class SettingsDialog(QDialog):
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
             self._update_recording_retention_ui()
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
-            self.hf_hub_offline_check.setChecked(False)
+            self.hf_policy_combo.setCurrentIndex(
+                max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
+            )
 
     def _save_settings(self):
         """Save settings and close dialog."""
@@ -530,17 +556,19 @@ class SettingsDialog(QDialog):
             old_whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
             old_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
             old_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
-            old_hf_hub_offline = bool(settings.get(SettingsKey.HF_HUB_OFFLINE, False))
             new_whisper_model = self.whisper_model_combo.currentText()
             new_device = self.whisper_device_combo.currentText()
             new_compute = self.whisper_compute_combo.currentText()
-            new_hf_hub_offline = self.hf_hub_offline_check.isChecked()
             whisper_settings_changed = (
                 old_whisper_model != new_whisper_model or
                 old_device != new_device or
-                old_compute != new_compute or
-                old_hf_hub_offline != new_hf_hub_offline
+                old_compute != new_compute
             )
+
+            # Check if the Hugging Face access policy changed
+            old_hf_policy = settings_manager.load_hf_access_policy()
+            new_hf_policy = self.hf_policy_combo.currentData()
+            hf_policy_changed = old_hf_policy != new_hf_policy
 
             # Check if audio input device changed
             old_audio_device = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
@@ -550,8 +578,7 @@ class SettingsDialog(QDialog):
             # Check if streaming settings changed
             old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
             streaming_settings_changed = (
-                old_streaming_enabled != self.streaming_enabled_check.isChecked() or
-                old_hf_hub_offline != new_hf_hub_offline
+                old_streaming_enabled != self.streaming_enabled_check.isChecked()
             )
 
             # Update with new values
@@ -568,7 +595,9 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
             settings[SettingsKey.WHISPER_DEVICE] = new_device
             settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute
-            settings[SettingsKey.HF_HUB_OFFLINE] = new_hf_hub_offline
+            settings[SettingsKey.HF_ACCESS_POLICY] = new_hf_policy
+            # Legacy key superseded by hf_access_policy
+            settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
             settings[SettingsKey.RECORDING_RETENTION_MODE] = (
                 self.recording_retention_combo.currentData()
             )
@@ -580,11 +609,9 @@ class SettingsDialog(QDialog):
             else:
                 settings[SettingsKey.AUDIO_INPUT_DEVICE] = new_audio_device
 
-            # Save to file
+            # Save to file (policy is read live at each model request, so the
+            # new hf_access_policy takes effect immediately)
             settings_manager.save_all_settings(settings)
-
-            # Apply immediately so the next model load (and any Hub calls) respect it
-            apply_hf_hub_offline(new_hf_hub_offline)
 
             # Apply retention limit immediately (may delete oldest files if lowered)
             history_manager.set_max_recordings(resolve_max_saved_recordings(settings))
@@ -599,6 +626,7 @@ class SettingsDialog(QDialog):
             settings['_whisper_settings_changed'] = whisper_settings_changed
             settings['_audio_device_changed'] = audio_device_changed
             settings['_streaming_settings_changed'] = streaming_settings_changed
+            settings['_hf_policy_changed'] = hf_policy_changed
             self.settings_changed.emit(settings)
 
             self.accept()
