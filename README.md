@@ -1,5 +1,7 @@
 # OpenWhisper
 
+**Website:** [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/)
+
 A cross-platform desktop app (Windows, macOS, Linux) for recording audio and transcribing it to text using local Whisper models or OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste. The app detects your OS at runtime and adapts hotkey handling, auto-paste, and platform conventions automatically — see [Platform differences](#platform-differences).
 
 

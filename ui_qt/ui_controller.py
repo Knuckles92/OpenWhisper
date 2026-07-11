@@ -537,6 +537,7 @@ class UIController(QObject):
             "• Cool waveform visualizations\n"
             "• Auto-pastes text for you\n"
             "• Runs in the background\n\n"
+            "Website: https://openwhisper.fiorilabs.tech/\n"
             "Open source and free to use."
         )
 
