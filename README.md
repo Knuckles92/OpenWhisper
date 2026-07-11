@@ -8,13 +8,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 </p>
 
 <p align="center">
-  <img width="270" alt="Waveform overlay while recording" src="docs/screenshots/overlay-recording.gif" />
-  <img width="270" alt="Waveform overlay while transcribing" src="docs/screenshots/overlay-transcribing.gif" />
-  <img width="270" alt="Waveform overlay after copying to clipboard" src="docs/screenshots/overlay-copied.gif" />
-</p>
-
-<p align="center">
-  <img width="300" alt="Live streaming transcription preview" src="docs/screenshots/overlay-streaming.gif" />
+  <img width="300" alt="Waveform overlay cycling through recording, transcribing, copied, and live streaming preview" src="docs/screenshots/overlay-states.gif" />
 </p>
 
 <p align="center">
