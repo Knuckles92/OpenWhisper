@@ -10,12 +10,14 @@ width clips/reveals pre-laid-out content instead of re-running layout and text
 wrapping on every frame.
 """
 import logging
+import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
+    QMessageBox, QFileDialog,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
+from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
 from services.format_utils import format_file_size
@@ -26,6 +28,34 @@ from ui_qt.utils.collapse_animation import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Shared dropdown styling for the per-item context menu and the header menu.
+_MENU_STYLESHEET = """
+    QMenu {
+        background-color: rgba(44, 44, 46, 0.95);
+        color: #f5f5f7;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 6px;
+    }
+    QMenu::item {
+        padding: 8px 28px 8px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+    }
+    QMenu::item:selected {
+        background-color: #0a84ff;
+        color: #ffffff;
+    }
+    QMenu::separator {
+        background-color: rgba(255, 255, 255, 0.08);
+        height: 1px;
+        margin: 4px 8px;
+    }
+    QMenu::item:disabled {
+        color: #8e8e93;
+    }
+"""
 
 _MODEL_DISPLAY_NAMES = {
     'local_whisper': 'Local',
@@ -219,32 +249,7 @@ class HistoryItemWidget(QFrame):
     def _show_context_menu(self, pos):
         """Show context menu."""
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: rgba(44, 44, 46, 0.95);
-                color: #f5f5f7;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                padding: 6px;
-            }
-            QMenu::item {
-                padding: 8px 28px 8px 14px;
-                border-radius: 6px;
-                font-size: 13px;
-            }
-            QMenu::item:selected {
-                background-color: #0a84ff;
-                color: #ffffff;
-            }
-            QMenu::separator {
-                background-color: rgba(255, 255, 255, 0.08);
-                height: 1px;
-                margin: 4px 8px;
-            }
-            QMenu::item:disabled {
-                color: #8e8e93;
-            }
-        """)
+        menu.setStyleSheet(_MENU_STYLESHEET)
 
         # Model info (non-clickable, full detail including device)
         model_action = menu.addAction(f"Model: {self.entry.model}")
@@ -333,19 +338,19 @@ class HistorySidebar(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
 
+        self.menu_btn = QPushButton("☰")
+        self.menu_btn.setObjectName("sidebarMenuBtn")
+        self.menu_btn.setFixedSize(28, 28)
+        self.menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menu_btn.clicked.connect(self._show_header_menu)
+        header_layout.addWidget(self.menu_btn)
+
         self.header_label = QLabel("History")
         self.header_label.setObjectName("sidebarHeader")
         self.header_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         header_layout.addWidget(self.header_label)
 
         header_layout.addStretch()
-
-        self.close_btn = QPushButton("×")  # X symbol
-        self.close_btn.setObjectName("sidebarCloseBtn")
-        self.close_btn.setFixedSize(28, 28)
-        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_btn.clicked.connect(self.collapse)
-        header_layout.addWidget(self.close_btn)
 
         content_layout.addLayout(header_layout)
 
@@ -449,15 +454,15 @@ class HistorySidebar(QWidget):
                 font-size: 10px;
                 font-weight: 600;
             }
-            QPushButton#sidebarCloseBtn {
+            QPushButton#sidebarMenuBtn {
                 background-color: transparent;
                 color: #8e8e93;
                 border: none;
                 border-radius: 14px;
-                font-size: 20px;
-                font-weight: bold;
+                padding: 0px;
+                font-size: 15px;
             }
-            QPushButton#sidebarCloseBtn:hover {
+            QPushButton#sidebarMenuBtn:hover {
                 background-color: rgba(255, 255, 255, 0.1);
                 color: #ffffff;
             }
@@ -647,6 +652,93 @@ class HistorySidebar(QWidget):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
             logger.info(f"Deleted entry: {entry_id[:8]}...")
+
+    def _show_header_menu(self):
+        """Show the header menu with bulk history actions."""
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLESHEET)
+
+        export_action = menu.addAction("Export history…")
+        export_action.triggered.connect(self._on_export_history)
+
+        open_folder_action = menu.addAction("Open recordings folder")
+        open_folder_action.triggered.connect(self._on_open_recordings_folder)
+
+        menu.addSeparator()
+
+        clear_action = menu.addAction("Clear history")
+        clear_action.triggered.connect(self._on_clear_history)
+
+        clear_all_action = menu.addAction("Clear history + recordings")
+        clear_all_action.triggered.connect(self._on_clear_history_and_recordings)
+
+        menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
+
+    def _on_clear_history(self):
+        """Clear all history entries after confirmation (keeps recordings)."""
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            "Delete all history entries?\n\nSaved recordings will be kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        history_manager.clear_history()
+        self.refresh()
+
+    def _on_clear_history_and_recordings(self):
+        """Clear all history entries and saved recordings after confirmation."""
+        reply = QMessageBox.question(
+            self,
+            "Clear History and Recordings",
+            "Delete all history entries AND permanently delete all saved "
+            "recordings from disk?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        history_manager.clear_history_and_recordings()
+        self.refresh()
+
+    def _on_export_history(self):
+        """Export all history entries to a text file."""
+        entries = history_manager.get_history()
+        if not entries:
+            QMessageBox.information(self, "Export History", "No history to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export History",
+            "openwhisper_history.txt",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                for entry in entries:
+                    f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
+                    f.write(f"{entry.text}\n")
+                    f.write("-" * 60 + "\n\n")
+            logger.info(f"Exported {len(entries)} history entries to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to export history: {e}")
+            QMessageBox.warning(
+                self, "Export Failed", f"Could not export history:\n{e}"
+            )
+
+    def _on_open_recordings_folder(self):
+        """Open the saved-recordings folder in the system file browser."""
+        folder = os.path.abspath(history_manager.recordings_folder)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
 
 class HistoryEdgeTab(QPushButton):

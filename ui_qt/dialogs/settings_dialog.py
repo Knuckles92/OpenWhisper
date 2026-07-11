@@ -14,10 +14,13 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from config import config
 from services.settings import (
+    RecordingRetentionMode,
     SettingsKey,
     apply_hf_hub_offline,
+    resolve_max_saved_recordings,
     settings_manager,
 )
+from services.history_manager import history_manager
 from services.recorder import AudioRecorder
 from ui_qt.widgets import PrimaryButton, Button
 
@@ -114,6 +117,47 @@ class SettingsDialog(QDialog):
         layout.addSpacing(12)
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
         layout.addWidget(self.minimize_tray_check)
+
+        # Saved recordings retention
+        layout.addSpacing(24)
+        recordings_label = QLabel("Saved Recordings")
+        recordings_label.setObjectName("sectionLabel")
+        layout.addWidget(recordings_label)
+
+        layout.addSpacing(8)
+        retention_label = QLabel("Keep recordings:")
+        layout.addWidget(retention_label)
+
+        self.recording_retention_combo = QComboBox()
+        self.recording_retention_combo.addItem("Keep all", RecordingRetentionMode.KEEP_ALL)
+        self.recording_retention_combo.addItem("Custom", RecordingRetentionMode.CUSTOM)
+        self.recording_retention_combo.setMinimumHeight(36)
+        self.recording_retention_combo.currentIndexChanged.connect(
+            self._update_recording_retention_ui
+        )
+        layout.addWidget(self.recording_retention_combo)
+
+        custom_count_layout = QHBoxLayout()
+        custom_count_layout.setSpacing(8)
+        self.max_recordings_label = QLabel("Number to keep:")
+        custom_count_layout.addWidget(self.max_recordings_label)
+
+        self.max_recordings_spinbox = QSpinBox()
+        self.max_recordings_spinbox.setMinimum(1)
+        self.max_recordings_spinbox.setMaximum(1000)
+        self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
+        self.max_recordings_spinbox.setMinimumHeight(36)
+        custom_count_layout.addWidget(self.max_recordings_spinbox)
+        custom_count_layout.addStretch()
+        layout.addLayout(custom_count_layout)
+
+        retention_info = QLabel(
+            "Older audio files are deleted automatically when the limit is exceeded. "
+            "Transcription history text is kept separately."
+        )
+        retention_info.setObjectName("infoLabel")
+        retention_info.setWordWrap(True)
+        layout.addWidget(retention_info)
 
         # Streaming transcription checkbox
         layout.addSpacing(24)
@@ -350,6 +394,15 @@ class SettingsDialog(QDialog):
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
+    def _update_recording_retention_ui(self):
+        """Enable the custom count spinbox only when Custom is selected."""
+        is_custom = (
+            self.recording_retention_combo.currentData()
+            == RecordingRetentionMode.CUSTOM
+        )
+        self.max_recordings_label.setEnabled(is_custom)
+        self.max_recordings_spinbox.setEnabled(is_custom)
+
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -388,6 +441,27 @@ class SettingsDialog(QDialog):
             self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
             self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
             self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
+
+            # Load recording retention
+            retention_mode = settings.get(
+                SettingsKey.RECORDING_RETENTION_MODE,
+                RecordingRetentionMode.CUSTOM,
+            )
+            retention_index = self.recording_retention_combo.findData(retention_mode)
+            if retention_index < 0:
+                retention_index = self.recording_retention_combo.findData(
+                    RecordingRetentionMode.CUSTOM
+                )
+            self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
+            max_recordings = settings.get(
+                SettingsKey.MAX_SAVED_RECORDINGS,
+                config.MAX_SAVED_RECORDINGS,
+            )
+            try:
+                self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
+            except (TypeError, ValueError):
+                self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
+            self._update_recording_retention_ui()
 
             # Load streaming settings
             streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
@@ -433,6 +507,12 @@ class SettingsDialog(QDialog):
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
             self.minimize_tray_check.setChecked(True)
+            retention_index = self.recording_retention_combo.findData(
+                RecordingRetentionMode.CUSTOM
+            )
+            self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
+            self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
+            self._update_recording_retention_ui()
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.hf_hub_offline_check.setChecked(False)
 
@@ -489,6 +569,10 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.WHISPER_DEVICE] = new_device
             settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute
             settings[SettingsKey.HF_HUB_OFFLINE] = new_hf_hub_offline
+            settings[SettingsKey.RECORDING_RETENTION_MODE] = (
+                self.recording_retention_combo.currentData()
+            )
+            settings[SettingsKey.MAX_SAVED_RECORDINGS] = self.max_recordings_spinbox.value()
 
             # Save audio input device (None for system default)
             if new_audio_device is None:
@@ -501,6 +585,9 @@ class SettingsDialog(QDialog):
 
             # Apply immediately so the next model load (and any Hub calls) respect it
             apply_hf_hub_offline(new_hf_hub_offline)
+
+            # Apply retention limit immediately (may delete oldest files if lowered)
+            history_manager.set_max_recordings(resolve_max_saved_recordings(settings))
 
             logger.info("Settings saved successfully")
 

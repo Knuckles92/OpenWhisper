@@ -32,7 +32,8 @@ class AppConfig:
     # History and recordings
     HISTORY_FILE: str = "transcription_history.json"
     RECORDINGS_FOLDER: str = "recordings"
-    MAX_SAVED_RECORDINGS: int = 3
+    # Default when retention mode is "custom" (None / keep_all means unlimited).
+    MAX_SAVED_RECORDINGS: int = 20
     DATABASE_FILE: str = "openwhisper.db"
 
     # Audio settings

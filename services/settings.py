@@ -35,6 +35,15 @@ class SettingsKey:
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
+    # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
+    RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
+    MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
+
+
+class RecordingRetentionMode:
+    """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
+    KEEP_ALL: Final[str] = "keep_all"
+    CUSTOM: Final[str] = "custom"
 
 
 _HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
@@ -261,6 +270,35 @@ def apply_hf_hub_offline(enabled: bool) -> None:
 
 # Global settings manager instance
 settings_manager = SettingsManager()
+
+
+def resolve_max_saved_recordings(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Return how many saved recordings to keep, or ``None`` for unlimited.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Positive int when retention mode is custom, or ``None`` to keep all.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    mode = settings.get(
+        SettingsKey.RECORDING_RETENTION_MODE,
+        RecordingRetentionMode.CUSTOM,
+    )
+    if mode == RecordingRetentionMode.KEEP_ALL:
+        return None
+
+    raw = settings.get(SettingsKey.MAX_SAVED_RECORDINGS, config.MAX_SAVED_RECORDINGS)
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        count = config.MAX_SAVED_RECORDINGS
+    return max(1, count)
 
 
 def is_hf_hub_offline_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:

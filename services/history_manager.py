@@ -6,16 +6,19 @@ import logging
 import os
 import shutil
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import List, Optional
 from dataclasses import dataclass
 
 from config import config
 from services.database import db
 from services.format_utils import format_file_size, format_timestamp
 from services.models import TranscriptionHistory as HistoryEntry
+from services.settings import resolve_max_saved_recordings
 
 logger = logging.getLogger(__name__)
+
+# Sentinel so callers can pass ``max_recordings=None`` for keep-all.
+_UNSET = object()
 
 
 @dataclass
@@ -40,20 +43,46 @@ class RecordingInfo:
 class HistoryManager:
     """Manages transcription history and saved recordings."""
 
-    def __init__(self, recordings_folder: str = None, max_recordings: int = None):
+    def __init__(
+        self,
+        recordings_folder: str = None,
+        max_recordings: Optional[int] = _UNSET,
+    ):
         """Initialize the history manager.
 
         Args:
             recordings_folder: Path to folder for saved recordings.
-            max_recordings: Maximum number of recordings to keep.
+            max_recordings: Maximum number of recordings to keep, or ``None``
+                to keep all. When omitted, loads from settings (default custom
+                limit from config).
         """
         self.recordings_folder = recordings_folder or config.RECORDINGS_FOLDER
-        self.max_recordings = max_recordings or config.MAX_SAVED_RECORDINGS
+        if max_recordings is _UNSET:
+            self.max_recordings = resolve_max_saved_recordings()
+        else:
+            self.max_recordings = max_recordings
 
         # Ensure recordings folder exists
         os.makedirs(self.recordings_folder, exist_ok=True)
 
-        logger.info(f"HistoryManager initialized (recordings: {self.recordings_folder})")
+        logger.info(
+            "HistoryManager initialized (recordings: %s, max: %s)",
+            self.recordings_folder,
+            self.max_recordings if self.max_recordings is not None else "all",
+        )
+
+    def set_max_recordings(self, max_recordings: Optional[int]) -> None:
+        """Update the retention limit and rotate immediately if needed.
+
+        Args:
+            max_recordings: Maximum recordings to keep, or ``None`` to keep all.
+        """
+        self.max_recordings = max_recordings
+        logger.info(
+            "Recording retention updated (max: %s)",
+            max_recordings if max_recordings is not None else "all",
+        )
+        self._rotate_recordings()
 
     def add_entry(
         self,
@@ -138,6 +167,9 @@ class HistoryManager:
 
     def _rotate_recordings(self) -> None:
         """Remove oldest recordings if we exceed max_recordings."""
+        if self.max_recordings is None:
+            return
+
         try:
             recordings = self.get_recordings()
 
@@ -244,6 +276,16 @@ class HistoryManager:
         """Clear all history entries (keeps recordings)."""
         db.clear_history()
         logger.info("History cleared")
+
+    def clear_history_and_recordings(self) -> None:
+        """Clear all history entries and delete saved recordings from disk."""
+        for rec in self.get_recordings():
+            try:
+                os.remove(rec.file_path)
+            except Exception as e:
+                logger.error(f"Failed to remove recording {rec.filename}: {e}")
+        db.clear_history()
+        logger.info("History and recordings cleared")
 
     def get_recording_path(self, filename: str) -> Optional[str]:
         """Get full path to a recording by filename.
