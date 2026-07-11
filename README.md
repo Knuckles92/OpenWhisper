@@ -14,6 +14,10 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 </p>
 
 <p align="center">
+  <img width="300" alt="Live streaming transcription preview" src="docs/screenshots/overlay-streaming.gif" />
+</p>
+
+<p align="center">
   <img width="410" alt="Settings dialog, General tab" src="docs/screenshots/settings-general.png" />
   <img width="410" alt="Settings dialog, Advanced tab" src="docs/screenshots/settings-advanced.png" />
 </p>
