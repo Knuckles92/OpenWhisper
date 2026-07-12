@@ -51,8 +51,12 @@ class LocalEngineControls(QWidget):
 
     COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
 
-    _FIELD_LABEL_STYLE = "color: #8e8e93; font-size: 10px;"
-    _RESOLVED_STYLE = "color: #8e8e93; margin-top: 2px;"
+    _FIELD_LABEL_STYLE = (
+        "color: #8e8e93; font-size: 10px; background: transparent; border: none;"
+    )
+    _RESOLVED_STYLE = (
+        "color: #8e8e93; margin-top: 2px; background: transparent; border: none;"
+    )
     _MANAGE_BUTTON_STYLE = (
         "QPushButton { color: #0a84ff; background: transparent; border: none; "
         "font-size: 10px; padding: 2px; }"
@@ -62,7 +66,9 @@ class LocalEngineControls(QWidget):
         "QComboBox { background-color: #2c2c2e; color: #f5f5f7; "
         "border: 1px solid #3a3a3c; border-radius: 6px; padding: 2px 8px; }"
         "QComboBox:hover { border-color: #0a84ff; }"
-        "QComboBox::drop-down { border: none; }"
+        "QComboBox::drop-down { border: none; background: transparent; }"
+        "QComboBox QAbstractItemView { background-color: #2c2c2e; color: #f5f5f7; "
+        "border: 1px solid #3a3a3c; selection-background-color: #0a84ff; outline: none; }"
     )
 
     def __init__(self, parent=None):

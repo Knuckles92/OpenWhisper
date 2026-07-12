@@ -414,6 +414,8 @@ class DummyUIController:
 
     def set_engine_busy(self, busy):
         self.engine_busy_states.append(busy)
+        if not busy:
+            self.refresh_model_manager()
 
     def update_audio_levels(self, _levels):
         pass
@@ -641,6 +643,8 @@ class TestApplicationController(unittest.TestCase):
         self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
         self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
         self.assertEqual(controller.ui_controller.engine_busy_states[-1], False)
+        # Idle after reload refreshes the manager so Delete tracks the new model.
+        self.assertGreaterEqual(controller.ui_controller.model_manager_refreshes, 1)
 
     def test_declined_download_reverts_model_selection(self):
         controller = self._create_controller()

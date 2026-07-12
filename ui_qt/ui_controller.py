@@ -258,11 +258,17 @@ class UIController(QObject):
     def set_engine_busy(self, busy: bool):
         """Disable/enable the inline local-engine combos during a reload.
 
+        When the engine becomes idle again, refresh the Model Manager so its
+        Delete lock tracks the newly loaded model — not the previous one left
+        from the pre-reload refresh after Set Active.
+
         Args:
             busy: True to disable combos while the engine reloads, else False.
         """
         self.main_window.quick_record_tab.local_engine.set_busy(busy)
         self.main_window.upload_file_tab.local_engine.set_busy(busy)
+        if not busy:
+            self.refresh_model_manager()
 
     def set_transcription_stats(
         self,

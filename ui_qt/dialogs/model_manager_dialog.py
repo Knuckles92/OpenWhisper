@@ -16,6 +16,7 @@ from typing import Callable, Dict, Optional
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -39,10 +40,31 @@ from services.settings import (
     is_hf_hub_offline_env_set,
     settings_manager,
 )
-from ui_qt.widgets import Button, StatCard
+from ui_qt.widgets import Button
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 logger = logging.getLogger(__name__)
+
+
+class _CompactStat(QWidget):
+    """Small inline statistic used in the Model Manager summary."""
+
+    def __init__(self, label: str, value: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("modelManagerStat")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        self.value = QLabel(value)
+        self.value.setObjectName("modelManagerStatValue")
+        caption = QLabel(label)
+        caption.setObjectName("modelManagerStatLabel")
+        layout.addWidget(self.value)
+        layout.addWidget(caption)
+
+    def set_value(self, value: str) -> None:
+        """Update the displayed statistic value."""
+        self.value.setText(value)
 
 
 class ModelManagerDialog(QDialog):
@@ -66,7 +88,8 @@ class ModelManagerDialog(QDialog):
 
         self.setWindowTitle("Model Manager")
         self.setModal(False)
-        self.setMinimumSize(640, 520)
+        self.setMinimumSize(720, 500)
+        self.resize(720, 560)
 
         self._setup_ui()
         self.refresh()
@@ -75,58 +98,97 @@ class ModelManagerDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
-        title = QLabel("Model Manager")
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        title = QLabel("Local models")
         title.setObjectName("headerLabel")
-        header_row.addWidget(title)
+        subtitle = QLabel("Download and choose a Whisper model")
+        subtitle.setObjectName("infoLabel")
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
+        header_row.addLayout(title_block)
         header_row.addStretch()
         open_folder_btn = Button("Open Folder")
+        self._compact_button(open_folder_btn, 110)
+        open_folder_btn.setToolTip(
+            "Open the folder where downloaded models are stored"
+        )
         open_folder_btn.clicked.connect(self._on_open_cache_folder)
         header_row.addWidget(open_folder_btn)
         layout.addLayout(header_row)
 
-        cache_path_label = QLabel(f"Cache location: {get_hf_cache_dir()}")
-        cache_path_label.setObjectName("infoLabel")
-        cache_path_label.setWordWrap(True)
+        cache_path = get_hf_cache_dir()
+        cache_path_label = QLabel(f"Cache: {cache_path}")
+        cache_path_label.setObjectName("modelManagerCachePath")
+        cache_path_label.setToolTip(cache_path)
         layout.addWidget(cache_path_label)
 
         self.env_banner = QLabel(
             "Downloads are disabled by the HF_HUB_OFFLINE environment "
             "variable set outside this application."
         )
-        self.env_banner.setObjectName("infoLabel")
+        self.env_banner.setObjectName("modelManagerEnvBanner")
         self.env_banner.setWordWrap(True)
-        self.env_banner.setStyleSheet(
-            "color: #ff9f0a; border: 1px solid #ff9f0a; "
-            "border-radius: 6px; padding: 6px 10px;"
-        )
         self.env_banner.setVisible(False)
         layout.addWidget(self.env_banner)
 
         stats_row = QHBoxLayout()
-        stats_row.setSpacing(12)
-        self.downloaded_stat = StatCard("Downloaded", "0")
-        self.disk_stat = StatCard("Disk used", "0 B")
+        stats_row.setSpacing(8)
+        self.downloaded_stat = _CompactStat("downloaded", "0")
+        self.disk_stat = _CompactStat("used", "0 B")
         stats_row.addWidget(self.downloaded_stat)
+        divider = QLabel("•")
+        divider.setObjectName("modelManagerStatLabel")
+        stats_row.addWidget(divider)
         stats_row.addWidget(self.disk_stat)
+        stats_row.addStretch()
         layout.addLayout(stats_row)
 
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter models…")
+        self.filter_edit.setObjectName("modelManagerSearch")
+        self.filter_edit.setPlaceholderText("Search models")
+        self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._apply_filter)
-        layout.addWidget(self.filter_edit)
+        toolbar.addWidget(self.filter_edit, stretch=1)
+
+        self.status_filter_combo = QComboBox()
+        self.status_filter_combo.setObjectName("modelManagerStatusFilter")
+        self.status_filter_combo.addItem("All", "all")
+        self.status_filter_combo.addItem("Downloaded", "downloaded")
+        self.status_filter_combo.addItem("Not downloaded", "not_downloaded")
+        self.status_filter_combo.setToolTip("Filter by download status")
+        self.status_filter_combo.currentIndexChanged.connect(self._apply_filter)
+        toolbar.addWidget(self.status_filter_combo)
+
+        self.sort_combo = QComboBox()
+        self.sort_combo.setObjectName("modelManagerSort")
+        self.sort_combo.addItem("Recommended", "recommended")
+        self.sort_combo.addItem("Downloaded first", "downloaded")
+        self.sort_combo.addItem("Smallest first", "size")
+        self.sort_combo.addItem("Name A-Z", "name")
+        self.sort_combo.setToolTip("Sort model list")
+        self.sort_combo.currentIndexChanged.connect(self._apply_filter)
+        toolbar.addWidget(self.sort_combo)
+        layout.addLayout(toolbar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         list_container = QWidget()
         self.list_layout = QVBoxLayout(list_container)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(8)
+        self.list_layout.setSpacing(6)
 
         self.rows: Dict[str, ModelRowWidget] = {}
         for model_name in config.WHISPER_MODEL_CHOICES:
@@ -155,9 +217,23 @@ class ModelManagerDialog(QDialog):
         self.message_label.setObjectName("infoLabel")
         footer.addWidget(self.message_label, stretch=1)
         close_btn = Button("Close")
+        self._compact_button(close_btn, 82)
         close_btn.clicked.connect(self.close)
         footer.addWidget(close_btn)
         layout.addLayout(footer)
+
+    @staticmethod
+    def _compact_button(button: Button, width: int) -> None:
+        """Size a shared button for the dialog's compact toolbar/footer.
+
+        Uses ``width`` as a preferred size floor, but never caps maxWidth below
+        the label's natural width so text like "Open Folder" is not clipped.
+        """
+        button.set_base_minimum_size(width, 34)
+        button.setMinimumHeight(34)
+        button.setMaximumHeight(34)
+        fitted = button.minimumWidth()
+        button.setMaximumWidth(max(width, fitted))
 
     # ── Callback plumbing (dialog signals) ─────────────────────────
 
@@ -249,11 +325,34 @@ class ModelManagerDialog(QDialog):
 
     # ── Filter ─────────────────────────────────────────────────────
 
-    def _apply_filter(self, text: str):
+    def _apply_filter(self, _value=None):
+        """Filter and sort rows using the current toolbar selections."""
+        text = self.filter_edit.text()
         needle = text.strip().lower()
+        status = self.status_filter_combo.currentData()
         any_visible = False
-        for row in self.rows.values():
+        rows = sorted(self.rows.values(), key=self._sort_key)
+        for index, row in enumerate(rows):
+            self.list_layout.insertWidget(index, row)
             visible = row.matches_filter(needle) if needle else True
+            if status == "downloaded":
+                visible = visible and row.is_cached
+            elif status == "not_downloaded":
+                visible = visible and not row.is_cached
             row.setVisible(visible)
             any_visible = any_visible or visible
         self.empty_label.setVisible(not any_visible)
+
+    def _sort_key(self, row: ModelRowWidget):
+        """Return a stable sort key for the selected built-in ordering."""
+        mode = self.sort_combo.currentData()
+        name = row.model_name.casefold()
+        if mode == "downloaded":
+            return (not row.is_cached, name)
+        if mode == "size":
+            return (row.sort_size_bytes, name)
+        if mode == "name":
+            return (name,)
+        # Recommended: downloaded first, then smallest — keep order stable when
+        # the active model changes so Set Active does not jump the row.
+        return (not row.is_cached, row.sort_size_bytes, name)
