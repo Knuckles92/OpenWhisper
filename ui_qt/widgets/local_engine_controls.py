@@ -13,7 +13,7 @@ import logging
 import sys
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -41,6 +41,9 @@ class LocalEngineControls(QWidget):
     #: Emitted after a *user-initiated* change has been persisted to settings.
     engine_settings_changed = pyqtSignal()
 
+    #: Emitted when the user clicks "Manage models…" (opens the Model Manager).
+    manage_models_requested = pyqtSignal()
+
     #: Emitted when the collapsed state changes (True == collapsed, delta in px).
     toggled = pyqtSignal(bool, int)
 
@@ -50,6 +53,11 @@ class LocalEngineControls(QWidget):
 
     _FIELD_LABEL_STYLE = "color: #8e8e93; font-size: 10px;"
     _RESOLVED_STYLE = "color: #8e8e93; margin-top: 2px;"
+    _MANAGE_BUTTON_STYLE = (
+        "QPushButton { color: #0a84ff; background: transparent; border: none; "
+        "font-size: 10px; padding: 2px; }"
+        "QPushButton:hover { text-decoration: underline; }"
+    )
     _COMBO_STYLE = (
         "QComboBox { background-color: #2c2c2e; color: #f5f5f7; "
         "border: 1px solid #3a3a3c; border-radius: 6px; padding: 2px 8px; }"
@@ -125,6 +133,17 @@ class LocalEngineControls(QWidget):
         self.resolved_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.resolved_label)
 
+        self.manage_models_button = QPushButton("Manage models…")
+        self.manage_models_button.setStyleSheet(self._MANAGE_BUTTON_STYLE)
+        self.manage_models_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.manage_models_button.setFlat(True)
+        manage_row = QHBoxLayout()
+        manage_row.setContentsMargins(0, 0, 0, 0)
+        manage_row.addStretch()
+        manage_row.addWidget(self.manage_models_button)
+        manage_row.addStretch()
+        content_layout.addLayout(manage_row)
+
         layout.addWidget(self._content_widget)
 
     def _make_combo(self, items) -> QComboBox:
@@ -151,6 +170,7 @@ class LocalEngineControls(QWidget):
         self.model_combo.currentTextChanged.connect(self._on_changed)
         self.device_combo.currentTextChanged.connect(self._on_changed)
         self.compute_combo.currentTextChanged.connect(self._on_changed)
+        self.manage_models_button.clicked.connect(self.manage_models_requested)
         self.section_toggle.toggled_expanded.connect(self._on_section_toggled)
 
     # ── Collapse support ───────────────────────────────────────────

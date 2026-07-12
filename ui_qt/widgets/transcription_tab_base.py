@@ -29,6 +29,7 @@ class TranscriptionTabBase(QWidget):
 
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine combo changed
+    manage_models_requested = pyqtSignal()  # "Manage models…" clicked
     engine_settings_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
@@ -148,6 +149,7 @@ class TranscriptionTabBase(QWidget):
         """Connect shared widget signals; subclasses extend via super()."""
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
+        self.local_engine.manage_models_requested.connect(self.manage_models_requested)
         self.local_engine.toggled.connect(self._on_engine_settings_toggled)
 
     # ── Model selection ────────────────────────────────────────────

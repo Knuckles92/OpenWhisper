@@ -9,7 +9,8 @@ requested model is missing from the local cache AND the persisted
 import logging
 import os
 import threading
-from typing import Dict, Final, Optional, Set
+from dataclasses import dataclass
+from typing import Dict, Final, Optional, Set, Tuple
 
 from services.settings import (
     HuggingFaceAccessPolicy,
@@ -148,6 +149,111 @@ def download_model_files(model_name: str) -> str:
     path = download_model(model_name, local_files_only=False)
     logger.info(f"Model '{model_name}' downloaded to {path}")
     return path
+
+
+@dataclass(frozen=True)
+class CachedModelInfo:
+    """Snapshot of one model repository present in the local HF cache."""
+    repo_id: str
+    size_bytes: int
+    path: str
+    revision_hashes: Tuple[str, ...]
+
+
+def get_hf_cache_dir() -> str:
+    """Return the Hugging Face hub cache directory the app reads models from.
+
+    Honors ``HF_HOME`` / ``HF_HUB_CACHE`` overrides via huggingface_hub's own
+    constants, falling back to the documented default location.
+
+    Returns:
+        Absolute path to the hub cache directory (may not exist yet).
+    """
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        return os.path.abspath(HF_HUB_CACHE)
+    except Exception:
+        return os.path.abspath(
+            os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+        )
+
+
+def scan_cached_models() -> Dict[str, CachedModelInfo]:
+    """Enumerate model repositories in the local HF cache. No network.
+
+    Returns:
+        Mapping of repo ID (e.g. ``"Systran/faster-whisper-base"``) to
+        :class:`CachedModelInfo`. Empty when the cache directory does not
+        exist or cannot be scanned. Callers resolve short model names to repo
+        IDs with :func:`resolve_model_repo` before looking up entries; the
+        reverse mapping is ambiguous (``turbo``/``large-v3-turbo`` share one
+        repository).
+    """
+    try:
+        from huggingface_hub import scan_cache_dir
+        cache_info = scan_cache_dir()
+    except Exception as e:
+        logger.debug(f"HF cache scan unavailable: {e}")
+        return {}
+
+    cached: Dict[str, CachedModelInfo] = {}
+    for repo in cache_info.repos:
+        if getattr(repo, "repo_type", "model") != "model":
+            continue
+        cached[repo.repo_id] = CachedModelInfo(
+            repo_id=repo.repo_id,
+            size_bytes=repo.size_on_disk,
+            path=str(repo.repo_path),
+            revision_hashes=tuple(rev.commit_hash for rev in repo.revisions),
+        )
+    return cached
+
+
+def delete_model_from_cache(model_name: str) -> None:
+    """Remove all cached revisions of a model from the local HF cache.
+
+    Uses huggingface_hub's delete strategy so snapshots, refs, and orphaned
+    blobs are all cleaned up (never a manual directory removal).
+
+    Args:
+        model_name: faster-whisper model name or repo ID.
+
+    Raises:
+        ValueError: If the model is not present in the cache.
+        OSError: If files cannot be removed (e.g. locked by a loaded model).
+    """
+    from huggingface_hub import scan_cache_dir
+
+    repo_id = resolve_model_repo(model_name)
+    info = scan_cached_models().get(repo_id)
+    if info is None:
+        raise ValueError(f"Model '{model_name}' ({repo_id}) is not in the local cache")
+
+    strategy = scan_cache_dir().delete_revisions(*info.revision_hashes)
+    logger.info(
+        f"Deleting '{repo_id}' from HF cache "
+        f"({format_size_bytes(strategy.expected_freed_size)} to free)"
+    )
+    strategy.execute()
+    logger.info(f"Deleted '{repo_id}' from HF cache")
+
+
+def format_size_bytes(size_bytes: int) -> str:
+    """Return a human-readable size for an actual on-disk byte count.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        A string like ``"1.53 GB"`` / ``"145 MB"`` / ``"12 KB"``.
+    """
+    if size_bytes >= 1_000_000_000:
+        return f"{size_bytes / 1_000_000_000:.2f} GB"
+    if size_bytes >= 1_000_000:
+        return f"{size_bytes / 1_000_000:.0f} MB"
+    if size_bytes >= 1_000:
+        return f"{size_bytes / 1_000:.0f} KB"
+    return f"{size_bytes} B"
 
 
 class HuggingFaceAccessCoordinator:

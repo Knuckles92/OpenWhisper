@@ -62,6 +62,12 @@ class UIController(QObject):
         self.on_audio_device_changed: Optional[Callable] = None  # Callback for audio input device change
         self.on_streaming_settings_changed: Optional[Callable] = None  # Callback for streaming mode change
         self.on_hf_policy_changed: Optional[Callable] = None  # Callback for HuggingFace access policy change
+        self.on_model_download_requested: Optional[Callable] = None  # Model Manager: fetch a model
+        self.on_model_delete_requested: Optional[Callable] = None  # Model Manager: delete cached files
+        self.get_loaded_local_model: Optional[Callable] = None  # Provider: currently loaded model name
+
+        # Non-modal Model Manager dialog (single instance, created lazily)
+        self._model_manager_dialog = None
 
         # Timer to hide overlay after cancel animation completes
         self.cancel_animation_timer = QTimer()
@@ -78,6 +84,7 @@ class UIController(QObject):
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
+        self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
@@ -495,6 +502,59 @@ class UIController(QObject):
         )
         dialog.exec()
         return dialog.result_action
+
+    def open_model_manager_dialog(self):
+        """Show the non-modal Model Manager (single instance, re-raised)."""
+        from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
+
+        if self._model_manager_dialog is None:
+            dialog = ModelManagerDialog(
+                get_loaded_model=self.get_loaded_local_model,
+                parent=self.main_window,
+            )
+            dialog.on_download_requested = self.on_model_download_requested
+            dialog.on_delete_requested = self.on_model_delete_requested
+            dialog.on_set_active_requested = self._on_manager_set_active
+            self._model_manager_dialog = dialog
+
+        self._model_manager_dialog.refresh()
+        self._model_manager_dialog.show()
+        self._model_manager_dialog.raise_()
+        self._model_manager_dialog.activateWindow()
+
+    def _on_manager_set_active(self, model_name: str):
+        """Persist a Model Manager 'Set Active' choice and reload the engine.
+
+        Identical contract to ``LocalEngineControls._on_changed``: write the
+        setting, re-sync the inline combos (signal-safe), then fire the same
+        debounced background reload the combos use.
+        """
+        from services.settings import settings_manager
+
+        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model_name)
+        self.refresh_local_engine_controls()
+        if self.on_whisper_settings_changed:
+            self.on_whisper_settings_changed()
+
+    def refresh_model_manager(self):
+        """Refresh the Model Manager if it is open (cache-changed target)."""
+        if self._model_manager_dialog is not None and self._model_manager_dialog.isVisible():
+            self._model_manager_dialog.refresh()
+
+    def on_model_download_started(self, model_name: str):
+        """Reflect a started model download in the Model Manager."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.set_downloading(model_name)
+
+    def on_model_download_finished(self, model_name: str, success: bool):
+        """Reflect a finished model download in the Model Manager."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.finish_download(model_name, success)
+
+    def on_model_deleted(self, model_name: str, success: bool, error: str):
+        """Reflect a model delete outcome in the Model Manager."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.show_delete_result(model_name, success, error)
 
     def open_hotkey_dialog(self):
         """Open the hotkey configuration dialog."""

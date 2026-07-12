@@ -253,6 +253,7 @@ class MainWindow(QMainWindow):
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
+    model_manager_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
@@ -408,6 +409,7 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+            tab.manage_models_requested.connect(self.model_manager_requested)
             tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
@@ -582,6 +584,8 @@ class MainWindow(QMainWindow):
         # rewrites the label to "Preferences" on Windows. Keep our wording.
         settings_action = file_menu.addAction("Settings", self.open_settings)
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        models_action = file_menu.addAction("Model Manager...", self.open_model_manager)
+        models_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
@@ -894,6 +898,11 @@ class MainWindow(QMainWindow):
         """Open settings dialog."""
         logger.info("Opening settings dialog")
         self.settings_requested.emit()
+
+    def open_model_manager(self):
+        """Open the Model Manager dialog."""
+        logger.info("Opening model manager")
+        self.model_manager_requested.emit()
 
     def open_hotkey_settings(self):
         """Open hotkey settings dialog."""

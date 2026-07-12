@@ -376,6 +376,10 @@ class DummyUIController:
         self.consent_result = "cancel"
         self.engine_controls_refreshes = 0
         self.settings_dialog_opened_with = None
+        self.model_manager_refreshes = 0
+        self.download_started = []
+        self.download_finished = []
+        self.deleted_models = []
 
     def show_hf_consent_dialog(self, model_name, policy, env_blocked=False):
         self.consent_requests.append((model_name, policy, env_blocked))
@@ -383,6 +387,18 @@ class DummyUIController:
 
     def refresh_local_engine_controls(self):
         self.engine_controls_refreshes += 1
+
+    def refresh_model_manager(self):
+        self.model_manager_refreshes += 1
+
+    def on_model_download_started(self, model_name):
+        self.download_started.append(model_name)
+
+    def on_model_download_finished(self, model_name, success):
+        self.download_finished.append((model_name, success))
+
+    def on_model_deleted(self, model_name, success, error):
+        self.deleted_models.append((model_name, success, error))
 
     def open_settings_dialog(self, focus_hf_policy=False):
         self.settings_dialog_opened_with = focus_hf_policy
@@ -481,6 +497,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hf_access_module = types.ModuleType("services.hf_access")
     hf_access_module.AccessDecision = _RealAccessDecision
     hf_access_module.ConsentAction = _RealConsentAction
+    hf_access_module.resolve_model_repo = lambda name: name
+    hf_access_module.download_model_files = lambda name: f"/cache/{name}"
+    hf_access_module.delete_model_from_cache = lambda name: None
     # Inert coordinator: never grants downloads, never touches disk/network.
     hf_access_module.hf_access_coordinator = types.SimpleNamespace(
         begin_request=lambda model: True,
@@ -632,7 +651,7 @@ class TestApplicationController(unittest.TestCase):
         self.settings.all_settings["whisper_model"] = "small"
         controller.ui_controller.consent_result = "cancel"
 
-        controller._on_hf_consent_requested("small", False)
+        controller._on_hf_consent_requested("small", False, True)
 
         # Selection and inline combos roll back to the model that is cached
         self.assertEqual(self.settings.all_settings["whisper_model"], "turbo")
@@ -658,7 +677,7 @@ class TestApplicationController(unittest.TestCase):
         self.settings.all_settings["whisper_model"] = "small"
         controller.ui_controller.consent_result = "cancel"
 
-        controller._on_hf_consent_requested("small", False)
+        controller._on_hf_consent_requested("small", False, True)
 
         self.assertEqual(self.settings.all_settings["whisper_model"], "small")
         self.assertEqual(controller.ui_controller.engine_controls_refreshes, 0)
@@ -786,6 +805,140 @@ class TestApplicationController(unittest.TestCase):
         self.assertTrue(controller.executor.shutdown_called)
         self.assertTrue(controller.ui_controller.cleaned_up)
         self.assertTrue(self.db_state["closed"])
+
+    # ── Model Manager download/delete orchestration ────────────────
+
+    def _coordinator(self):
+        return self.app_controller_module.hf_access_coordinator
+
+    def test_manager_download_consent_cancel_keeps_selection(self):
+        """A declined fetch-only download must not revert the model selection."""
+        controller = self._create_controller()
+        self.settings.all_settings["whisper_model"] = "base"
+        controller.ui_controller.consent_result = "cancel"
+
+        controller.request_model_download("tiny")
+
+        self.assertEqual(
+            controller.ui_controller.consent_requests[-1][0], "tiny"
+        )
+        self.assertEqual(self.settings.all_settings["whisper_model"], "base")
+        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 0)
+        self.assertEqual(len(controller.executor.submissions), 0)
+
+    def test_manager_download_already_cached_short_circuits(self):
+        controller = self._create_controller()
+        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+        ended = []
+        self._coordinator().end_request = ended.append
+
+        controller.request_model_download("tiny")
+
+        self.assertEqual(ended, ["tiny"])
+        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
+        self.assertEqual(len(controller.executor.submissions), 0)
+
+    def test_manager_fetch_only_download_leaves_engine_alone(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        decision = self.app_controller_module.AccessDecision.DOWNLOAD_ALLOWED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+        fetched = []
+        with patch.object(
+            self.app_controller_module,
+            "download_model_files",
+            side_effect=lambda name: fetched.append(name) or f"/cache/{name}",
+        ):
+            busy_before = list(controller.ui_controller.engine_busy_states)
+
+            controller.request_model_download("tiny")
+            self.assertEqual(controller.ui_controller.download_started, ["tiny"])
+            fn, args = controller.executor.submissions[-1]
+            fn(*args)
+
+        self.assertEqual(fetched, ["tiny"])
+        self.assertEqual(backend.model_name, "base")  # engine untouched
+        self.assertEqual(
+            controller.ui_controller.download_finished, [("tiny", True)]
+        )
+        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
+        # Fetch-only downloads never toggle the engine-busy state.
+        self.assertEqual(
+            controller.ui_controller.engine_busy_states, busy_before
+        )
+
+    def test_manager_fetch_bridges_missing_selected_model(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model_name = "tiny"
+        backend.is_model_missing = True
+        decision = self.app_controller_module.AccessDecision.DOWNLOAD_ALLOWED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+
+        controller.request_model_download("tiny")
+        fn, args = controller.executor.submissions[-1]
+        fn(*args)
+
+        self.assertTrue(backend.is_available())
+        self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
+        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
+
+    def test_manager_delete_refuses_loaded_model(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.last_loaded_model = "base"
+
+        controller.request_model_delete("base")
+
+        self.assertEqual(
+            controller.ui_controller.deleted_models,
+            [("base", False, "Model is in use — switch models first")],
+        )
+        self.assertEqual(len(controller.executor.submissions), 0)
+
+    def test_manager_delete_runs_worker_and_reports(self):
+        controller = self._create_controller()
+        ended = []
+        self._coordinator().end_request = ended.append
+        deleted = []
+        with patch.object(
+            self.app_controller_module,
+            "delete_model_from_cache",
+            side_effect=deleted.append,
+        ):
+            controller.request_model_delete("tiny")
+            fn, args = controller.executor.submissions[-1]
+            fn(*args)
+
+        self.assertEqual(deleted, ["tiny"])
+        self.assertEqual(
+            controller.ui_controller.deleted_models, [("tiny", True, "")]
+        )
+        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
+        self.assertEqual(ended, ["tiny"])
+
+    def test_manager_delete_reports_locked_files(self):
+        controller = self._create_controller()
+        with patch.object(
+            self.app_controller_module,
+            "delete_model_from_cache",
+            side_effect=PermissionError("locked"),
+        ):
+            controller.request_model_delete("tiny")
+            fn, args = controller.executor.submissions[-1]
+            fn(*args)
+
+        self.assertEqual(
+            controller.ui_controller.deleted_models,
+            [("tiny", False, "Files are in use by another process")],
+        )
 
 
 if __name__ == "__main__":

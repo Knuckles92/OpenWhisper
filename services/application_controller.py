@@ -14,7 +14,10 @@ from services.database import db
 from services.hf_access import (
     AccessDecision,
     ConsentAction,
+    delete_model_from_cache,
+    download_model_files,
     hf_access_coordinator,
+    resolve_model_repo,
 )
 from services.recorder import AudioRecorder
 from services.runtime import (
@@ -48,9 +51,16 @@ class ApplicationController(QObject):
     device_info_update = pyqtSignal(str)
     engine_busy_changed = pyqtSignal(bool)
     # Consent for Hugging Face model downloads: emitted (possibly from worker
-    # threads) with (model_name, env_blocked); the connected slot shows the
-    # consent dialog on the Qt main thread.
-    hf_consent_requested = pyqtSignal(str, bool)
+    # threads) with (model_name, env_blocked, load_into_engine); the connected
+    # slot shows the consent dialog on the Qt main thread. load_into_engine is
+    # True for the selected-model flow (download + load) and False for
+    # Model Manager fetch-only downloads.
+    hf_consent_requested = pyqtSignal(str, bool, bool)
+    # Model Manager lifecycle (emitted possibly from worker threads).
+    model_download_started = pyqtSignal(str)
+    model_download_finished = pyqtSignal(str, bool)
+    model_deleted = pyqtSignal(str, bool, str)
+    model_cache_changed = pyqtSignal()
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -132,6 +142,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
         self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
+        self.ui_controller.on_model_download_requested = self.request_model_download
+        self.ui_controller.on_model_delete_requested = self.request_model_delete
+        self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -254,15 +267,109 @@ class ApplicationController(QObject):
         if decision in (AccessDecision.LOAD_CACHED, AccessDecision.DOWNLOAD_ALLOWED):
             self._start_hf_model_task(model_name)
         elif decision == AccessDecision.BLOCKED_BY_ENV:
-            self.hf_consent_requested.emit(model_name, True)
+            self.hf_consent_requested.emit(model_name, True, True)
         else:  # NEEDS_CONSENT
-            self.hf_consent_requested.emit(model_name, False)
+            self.hf_consent_requested.emit(model_name, False, True)
 
-    def _on_hf_consent_requested(self, model_name: str, env_blocked: bool) -> None:
+    def get_loaded_local_model(self) -> Optional[str]:
+        """Return the model name the local engine currently has loaded, if any.
+
+        Used by the Model Manager to disable deletion of the in-use model
+        (its files are memory-mapped by ctranslate2).
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is not None and backend.is_available():
+            return getattr(backend, "last_loaded_model", None)
+        return None
+
+    def request_model_download(self, model_name: str) -> None:
+        """Fetch a model into the local cache via the consent flow (Model Manager).
+
+        Fetch-only: the download never changes the active model selection or
+        touches the loaded engine (unless the model happens to be the missing
+        selected one, in which case the worker also loads it). Routes through
+        the same coordinator policy/grant/dedup machinery as
+        ``ensure_local_model_available``.
+
+        Args:
+            model_name: Concrete faster-whisper model name (not ``"auto"``).
+        """
+        if not hf_access_coordinator.begin_request(model_name):
+            return  # consent dialog or download already in flight
+
+        try:
+            decision = hf_access_coordinator.evaluate_access(
+                model_name, consume_grant=False
+            )
+        except Exception:
+            hf_access_coordinator.end_request(model_name)
+            raise
+
+        if decision == AccessDecision.LOAD_CACHED:
+            # The manager's row was stale — files are already present.
+            hf_access_coordinator.end_request(model_name)
+            self.model_cache_changed.emit()
+        elif decision == AccessDecision.DOWNLOAD_ALLOWED:
+            self._start_hf_model_task(model_name, load_into_engine=False)
+        elif decision == AccessDecision.BLOCKED_BY_ENV:
+            self.hf_consent_requested.emit(model_name, True, False)
+        else:  # NEEDS_CONSENT
+            self.hf_consent_requested.emit(model_name, False, False)
+
+    def request_model_delete(self, model_name: str) -> None:
+        """Delete a model's files from the local HF cache (Model Manager).
+
+        Refuses to delete the currently loaded model: ctranslate2 memory-maps
+        the files, so removal would fail (Windows) or yank data out from under
+        the engine. The coordinator's request slot also guards against a
+        concurrent download of the same model.
+
+        Args:
+            model_name: Concrete faster-whisper model name (not ``"auto"``).
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is not None and backend.is_available():
+            loaded = getattr(backend, "last_loaded_model", None)
+            if loaded and resolve_model_repo(loaded) == resolve_model_repo(model_name):
+                self.model_deleted.emit(
+                    model_name, False, "Model is in use — switch models first"
+                )
+                return
+
+        if not hf_access_coordinator.begin_request(model_name):
+            self.model_deleted.emit(
+                model_name, False, "A download for this model is in progress"
+            )
+            return
+
+        self.executor.submit(self._model_delete_worker, model_name)
+
+    def _model_delete_worker(self, model_name: str) -> None:
+        """Delete cached model files off the Qt thread; report via signals."""
+        try:
+            delete_model_from_cache(model_name)
+        except (PermissionError, OSError) as exc:
+            logger.error(f"Model delete failed for '{model_name}': {exc}")
+            self.model_deleted.emit(
+                model_name, False, "Files are in use by another process"
+            )
+        except Exception as exc:
+            logger.error(f"Model delete failed for '{model_name}': {exc}")
+            self.model_deleted.emit(model_name, False, str(exc))
+        else:
+            self.status_update.emit(f"Model '{model_name}' deleted")
+            self.model_deleted.emit(model_name, True, "")
+            self.model_cache_changed.emit()
+        finally:
+            hf_access_coordinator.end_request(model_name)
+
+    def _on_hf_consent_requested(
+        self, model_name: str, env_blocked: bool, load_into_engine: bool
+    ) -> None:
         """Show the consent dialog and act on the result (Qt main thread).
 
-        The request slot claimed in ``ensure_local_model_available`` is either
-        handed to the download worker or released here.
+        The request slot claimed by the requester is either handed to the
+        download worker or released here.
         """
         policy = hf_access_coordinator.get_policy()
         try:
@@ -282,10 +389,10 @@ class ApplicationController(QObject):
 
         if action == ConsentAction.DOWNLOAD_ONCE:
             hf_access_coordinator.grant_once(model_name)
-            self._start_hf_model_task(model_name)
+            self._start_hf_model_task(model_name, load_into_engine)
         elif action == ConsentAction.ALWAYS_ALLOW:
             hf_access_coordinator.set_policy(HuggingFaceAccessPolicy.ALWAYS)
-            self._start_hf_model_task(model_name)
+            self._start_hf_model_task(model_name, load_into_engine)
         elif action == ConsentAction.OPEN_SETTINGS:
             hf_access_coordinator.end_request(model_name)
             self.ui_controller.open_settings_dialog(focus_hf_policy=True)
@@ -294,7 +401,10 @@ class ApplicationController(QObject):
             self.status_update.emit(
                 f"Model '{model_name}' is unavailable — download declined"
             )
-            self._revert_declined_model_selection(model_name)
+            if load_into_engine:
+                # A declined Model Manager download must not touch the
+                # selected model.
+                self._revert_declined_model_selection(model_name)
 
     def _revert_declined_model_selection(self, declined_model: str) -> None:
         """Roll the whisper-model selection back to the last loaded model.
@@ -325,22 +435,66 @@ class ApplicationController(QObject):
         # cached, so this never re-enters the consent flow.
         self.reload_whisper_model()
 
-    def _start_hf_model_task(self, model_name: str) -> None:
-        """Run the approved download/load on a worker thread with busy states."""
-        self.engine_busy_changed.emit(True)
-        self.executor.submit(self._hf_model_worker, model_name)
+    def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
+        """Run the approved download/load on a worker thread with busy states.
 
-    def _hf_model_worker(self, model_name: str) -> None:
+        Args:
+            model_name: Concrete model to download and/or load.
+            load_into_engine: True for the selected-model flow (download +
+                load, engine busy); False for fetch-only Model Manager
+                downloads that leave the engine alone.
+        """
+        if load_into_engine:
+            self.engine_busy_changed.emit(True)
+        self.model_download_started.emit(model_name)
+        self.executor.submit(self._hf_model_worker, model_name, load_into_engine)
+
+    def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
         """Download (if permitted) and load the model off the Qt thread.
 
         Re-evaluates access just before downloading so the one-time grant /
         policy check stays centralized in the coordinator. A failed download
         leaves the model unavailable — it is never treated as cached and never
         falls back to another model.
+
+        Download progress is indeterminate today (coarse status strings only);
+        a determinate bar would require hooking huggingface_hub's tqdm_class
+        into a Qt signal relay.
         """
         backend = self.transcription_backends.get("local_whisper")
+        success = False
         try:
             decision = hf_access_coordinator.evaluate_access(model_name)
+            if not load_into_engine:
+                if decision not in (
+                    AccessDecision.LOAD_CACHED,
+                    AccessDecision.DOWNLOAD_ALLOWED,
+                ):
+                    logger.warning(
+                        f"Fetch of '{model_name}' aborted: access decision {decision}"
+                    )
+                    self.status_update.emit(f"Model '{model_name}' is unavailable")
+                    return
+                if decision == AccessDecision.DOWNLOAD_ALLOWED:
+                    self.status_update.emit(
+                        f"Downloading model '{model_name}' from Hugging Face..."
+                    )
+                    download_model_files(model_name)
+                    self.status_update.emit(f"Model '{model_name}' downloaded")
+                success = True
+                # Bridge: fetching the currently-missing selected model also
+                # revives the engine (now a pure cache hit, no consent re-entry).
+                if (
+                    backend is not None
+                    and getattr(backend, "is_model_missing", False)
+                    and backend.model_name == model_name
+                ):
+                    backend.reload_model(model_name)
+                    if backend.is_available():
+                        self.device_info_update.emit(backend.device_info)
+                        self.status_update.emit("Whisper engine ready")
+                return
+
             if decision == AccessDecision.LOAD_CACHED:
                 self.status_update.emit(f"Loading model '{model_name}'...")
                 backend.reload_model(model_name)
@@ -357,6 +511,7 @@ class ApplicationController(QObject):
                 return
 
             if backend.is_available():
+                success = True
                 self.device_info_update.emit(backend.device_info)
                 self.status_update.emit("Whisper engine ready")
                 logger.info(f"Model '{model_name}' ready: {backend.device_info}")
@@ -367,7 +522,11 @@ class ApplicationController(QObject):
             self.status_update.emit(f"Model download failed: {exc}")
         finally:
             hf_access_coordinator.end_request(model_name)
-            self.engine_busy_changed.emit(False)
+            self.model_download_finished.emit(model_name, success)
+            if success:
+                self.model_cache_changed.emit()
+            if load_into_engine:
+                self.engine_busy_changed.emit(False)
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
         """Change the audio input device."""
@@ -441,6 +600,17 @@ class ApplicationController(QObject):
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
+        self.model_download_started.connect(
+            self.ui_controller.on_model_download_started
+        )
+        self.model_download_finished.connect(
+            self.ui_controller.on_model_download_finished
+        )
+        self.model_deleted.connect(self.ui_controller.on_model_deleted)
+        self.model_cache_changed.connect(self.ui_controller.refresh_model_manager)
+        self.model_cache_changed.connect(
+            self.ui_controller.refresh_local_engine_controls
+        )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)

@@ -1,17 +1,32 @@
 """Unit tests for the Hugging Face cache/access coordinator."""
 import os
 import tempfile
+import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from services.hf_access import (
     AccessDecision,
+    CachedModelInfo,
     HuggingFaceAccessCoordinator,
+    delete_model_from_cache,
     format_download_size,
+    format_size_bytes,
     is_model_cached,
     resolve_model_repo,
+    scan_cached_models,
 )
 from services.settings import HuggingFaceAccessPolicy
+
+
+def _fake_repo(repo_id, size_on_disk, revisions, repo_type="model"):
+    return types.SimpleNamespace(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        size_on_disk=size_on_disk,
+        repo_path=f"/hub/models--{repo_id.replace('/', '--')}",
+        revisions=[types.SimpleNamespace(commit_hash=h) for h in revisions],
+    )
 
 
 class TestHelpers(unittest.TestCase):
@@ -121,6 +136,99 @@ class TestEvaluateAccess(unittest.TestCase):
             self.coordinator.evaluate_access("small"),
             AccessDecision.NEEDS_CONSENT,
         )
+
+
+class TestFormatSizeBytes(unittest.TestCase):
+    """Human-readable formatting of actual on-disk sizes."""
+
+    def test_boundaries(self):
+        self.assertEqual(format_size_bytes(512), "512 B")
+        self.assertEqual(format_size_bytes(145_000_000), "145 MB")
+        self.assertEqual(format_size_bytes(1_530_000_000), "1.53 GB")
+        self.assertEqual(format_size_bytes(12_000), "12 KB")
+
+
+class TestScanCachedModels(unittest.TestCase):
+    """Cache enumeration via huggingface_hub.scan_cache_dir."""
+
+    def test_maps_repos_by_repo_id(self):
+        cache_info = types.SimpleNamespace(
+            repos=[
+                _fake_repo("Systran/faster-whisper-base", 145_000_000, ["abc"]),
+                _fake_repo(
+                    "Systran/faster-whisper-large-v3", 3_090_000_000, ["d1", "d2"]
+                ),
+                _fake_repo("some/dataset", 10, ["x"], repo_type="dataset"),
+            ]
+        )
+        with patch("huggingface_hub.scan_cache_dir", return_value=cache_info):
+            cached = scan_cached_models()
+
+        self.assertEqual(set(cached), {
+            "Systran/faster-whisper-base",
+            "Systran/faster-whisper-large-v3",
+        })
+        base = cached["Systran/faster-whisper-base"]
+        self.assertIsInstance(base, CachedModelInfo)
+        self.assertEqual(base.size_bytes, 145_000_000)
+        self.assertEqual(
+            cached["Systran/faster-whisper-large-v3"].revision_hashes, ("d1", "d2")
+        )
+
+    def test_missing_cache_dir_returns_empty(self):
+        with patch(
+            "huggingface_hub.scan_cache_dir",
+            side_effect=Exception("cache not found"),
+        ):
+            self.assertEqual(scan_cached_models(), {})
+
+
+class TestDeleteModelFromCache(unittest.TestCase):
+    """Deletion routes through huggingface_hub's delete strategy."""
+
+    def _cached_base(self):
+        return {
+            "Systran/faster-whisper-base": CachedModelInfo(
+                repo_id="Systran/faster-whisper-base",
+                size_bytes=145_000_000,
+                path="/hub/models--Systran--faster-whisper-base",
+                revision_hashes=("abc", "def"),
+            )
+        }
+
+    def test_deletes_all_revisions_of_resolved_repo(self):
+        strategy = MagicMock()
+        strategy.expected_freed_size = 145_000_000
+        cache_info = MagicMock()
+        cache_info.delete_revisions.return_value = strategy
+
+        with patch(
+            "services.hf_access.scan_cached_models",
+            return_value=self._cached_base(),
+        ), patch("huggingface_hub.scan_cache_dir", return_value=cache_info):
+            delete_model_from_cache("base")
+
+        cache_info.delete_revisions.assert_called_once_with("abc", "def")
+        strategy.execute.assert_called_once_with()
+
+    def test_uncached_model_raises_value_error(self):
+        with patch("services.hf_access.scan_cached_models", return_value={}):
+            with self.assertRaises(ValueError):
+                delete_model_from_cache("base")
+
+    def test_permission_error_propagates(self):
+        strategy = MagicMock()
+        strategy.expected_freed_size = 145_000_000
+        strategy.execute.side_effect = PermissionError("file locked")
+        cache_info = MagicMock()
+        cache_info.delete_revisions.return_value = strategy
+
+        with patch(
+            "services.hf_access.scan_cached_models",
+            return_value=self._cached_base(),
+        ), patch("huggingface_hub.scan_cache_dir", return_value=cache_info):
+            with self.assertRaises(PermissionError):
+                delete_model_from_cache("base")
 
 
 class TestRequestDeduplication(unittest.TestCase):

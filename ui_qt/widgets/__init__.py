@@ -24,6 +24,7 @@ from ui_qt.widgets.history_sidebar import (
 )
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
+from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
@@ -50,6 +51,7 @@ __all__ = [
     "TranscriptionStatsWidget",
     "CollapsibleSectionToggle",
     "LocalEngineControls",
+    "ModelRowWidget",
     "TabbedContentWidget",
     "TranscriptionTabBase",
     "QuickRecordTab",
