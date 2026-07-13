@@ -18,6 +18,7 @@ from services.settings import (
     RecordingRetentionMode,
     SettingsKey,
     resolve_max_saved_recordings,
+    resolve_streaming_overlay_font_size,
     settings_manager,
 )
 from services.history_manager import history_manager
@@ -167,7 +168,23 @@ class SettingsDialog(QDialog):
 
         layout.addSpacing(8)
         self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
+        self.streaming_enabled_check.toggled.connect(self._update_streaming_font_ui)
         layout.addWidget(self.streaming_enabled_check)
+
+        font_size_layout = QHBoxLayout()
+        font_size_layout.setSpacing(8)
+        self.streaming_font_size_label = QLabel("Preview font size:")
+        font_size_layout.addWidget(self.streaming_font_size_label)
+
+        self.streaming_font_size_spinbox = QSpinBox()
+        self.streaming_font_size_spinbox.setMinimum(10)
+        self.streaming_font_size_spinbox.setMaximum(48)
+        self.streaming_font_size_spinbox.setSuffix(" pt")
+        self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
+        self.streaming_font_size_spinbox.setMinimumHeight(36)
+        font_size_layout.addWidget(self.streaming_font_size_spinbox)
+        font_size_layout.addStretch()
+        layout.addLayout(font_size_layout)
 
         # Info label for streaming
         streaming_info = QLabel(
@@ -178,6 +195,8 @@ class SettingsDialog(QDialog):
         streaming_info.setObjectName("infoLabel")
         streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
+
+        self._update_streaming_font_ui()
 
         layout.addStretch()
         self.tabs.addTab(tab, "General")
@@ -426,6 +445,12 @@ class SettingsDialog(QDialog):
         self.max_recordings_label.setEnabled(is_custom)
         self.max_recordings_spinbox.setEnabled(is_custom)
 
+    def _update_streaming_font_ui(self):
+        """Enable the preview font size control only when streaming is on."""
+        enabled = self.streaming_enabled_check.isChecked()
+        self.streaming_font_size_label.setEnabled(enabled)
+        self.streaming_font_size_spinbox.setEnabled(enabled)
+
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -489,6 +514,10 @@ class SettingsDialog(QDialog):
             # Load streaming settings
             streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
             self.streaming_enabled_check.setChecked(streaming_enabled)
+            self.streaming_font_size_spinbox.setValue(
+                resolve_streaming_overlay_font_size(settings)
+            )
+            self._update_streaming_font_ui()
 
             # Load whisper engine settings
             whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
@@ -538,6 +567,8 @@ class SettingsDialog(QDialog):
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
             self._update_recording_retention_ui()
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
+            self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
+            self._update_streaming_font_ui()
             self.hf_policy_combo.setCurrentIndex(
                 max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
             )
@@ -587,6 +618,9 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
+            settings[SettingsKey.STREAMING_OVERLAY_FONT_SIZE] = (
+                self.streaming_font_size_spinbox.value()
+            )
             # Drop legacy keys so streaming_enabled is the single source of truth
             settings.pop(SettingsKey.STREAMING_OVERLAY_ENABLED, None)
             settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)

@@ -16,7 +16,7 @@ from PyQt6.QtGui import (
     QLinearGradient, QFont, QFontMetrics, QCursor
 )
 from config import config
-from services.settings import settings_manager
+from services.settings import settings_manager, resolve_streaming_overlay_font_size
 from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
@@ -120,6 +120,7 @@ class WaveformOverlay(QWidget):
         self.cancel_progress = 0.0
         self.stt_particles: List[STTParticle] = []
         self._streaming_preview_text: str = ""
+        self._streaming_font_size = resolve_streaming_overlay_font_size()
         # Cursor/caret anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
 
@@ -218,6 +219,20 @@ class WaveformOverlay(QWidget):
         if self._streaming_preview_text:
             self._draw_streaming_preview_text(painter, rect)
 
+    def _streaming_preview_font(self) -> QFont:
+        """Font used for live preview text (user-configurable size)."""
+        return QFont("Segoe UI", self._streaming_font_size)
+
+    def refresh_streaming_font_size(self):
+        """Reload preview font size from settings and reflow if needed."""
+        new_size = resolve_streaming_overlay_font_size()
+        if new_size == self._streaming_font_size:
+            return
+        self._streaming_font_size = new_size
+        if self._streaming_preview_text:
+            self._apply_streaming_height()
+            self.update()
+
     def _draw_streaming_preview_text(self, painter: QPainter, rect: QRect):
         """Draw wrapped streaming preview text under the particle band.
 
@@ -227,8 +242,7 @@ class WaveformOverlay(QWidget):
         top = self._base_height - 8
         text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
         painter.setPen(QPen(QColor(245, 245, 247)))
-        font = QFont("Segoe UI", 10)
-        painter.setFont(font)
+        painter.setFont(self._streaming_preview_font())
         painter.drawText(
             text_rect,
             int(
@@ -305,7 +319,7 @@ class WaveformOverlay(QWidget):
             target_height = self._base_height
         else:
             effective_max = self._effective_streaming_max_height()
-            font = QFont("Segoe UI", 10)
+            font = self._streaming_preview_font()
             metrics_rect = QRect(0, 0, self.overlay_width - 20, effective_max)
             fm = QFontMetrics(font)
             bounded = fm.boundingRect(

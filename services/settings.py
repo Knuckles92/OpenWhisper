@@ -27,6 +27,7 @@ class SettingsKey:
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
+    STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
@@ -354,3 +355,28 @@ def resolve_max_saved_recordings(
     except (TypeError, ValueError):
         count = config.MAX_SAVED_RECORDINGS
     return max(1, count)
+
+
+def resolve_streaming_overlay_font_size(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return the live streaming preview font size in points.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Font size clamped to a sensible range for the near-cursor overlay.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(
+        SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
+        config.STREAMING_OVERLAY_FONT_SIZE,
+    )
+    try:
+        size = int(raw)
+    except (TypeError, ValueError):
+        size = config.STREAMING_OVERLAY_FONT_SIZE
+    return max(10, min(48, size))

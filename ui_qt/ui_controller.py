@@ -457,6 +457,7 @@ class UIController(QObject):
 
         # Connect settings changed signal
         def on_settings_changed(settings: dict):
+            self.overlay.refresh_streaming_font_size()
             if settings.get('_whisper_settings_changed', False):
                 if self.on_whisper_settings_changed:
                     self.on_whisper_settings_changed()
