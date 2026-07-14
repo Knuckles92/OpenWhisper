@@ -235,6 +235,15 @@ Upgrading from an older version: the previous **Skip HuggingFace network checks*
 
 **Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
 
+## Credits
+
+OpenWhisper builds on these projects:
+
+- [OpenAI Whisper](https://github.com/openai/whisper) – the original speech recognition models
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) – a CTranslate2-based reimplementation used for local transcription
+- [Systran models on Hugging Face](https://huggingface.co/Systran) – converted Whisper and Distil-Whisper weights for most local models
+- [Mobius Labs models on Hugging Face](https://huggingface.co/mobiuslabsgmbh) – turbo model weights (`faster-whisper-large-v3-turbo`)
+
 ## License
 
 MIT License. Free to use, clone, and modify.

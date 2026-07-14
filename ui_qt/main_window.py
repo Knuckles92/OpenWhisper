@@ -241,7 +241,6 @@ class MainWindow(QMainWindow):
 
     # Window-local keyboard shortcuts. Distinct from the global hotkeys in
     # config.DEFAULT_HOTKEYS, which work even when the app is unfocused.
-    UPLOAD_SHORTCUT = "Ctrl+O"
     HISTORY_SHORTCUT = "Ctrl+H"
     COMPACT_SHORTCUT = "Ctrl+Shift+C"
     QUIT_SHORTCUT = "Ctrl+Q"
@@ -577,9 +576,6 @@ class MainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("File")
-        upload_action = file_menu.addAction("Upload Audio File...", self.upload_audio_file)
-        upload_action.setShortcut(QKeySequence(self.UPLOAD_SHORTCUT))
-        file_menu.addSeparator()
         # Qt auto-assigns PreferencesRole to actions named "Settings", which
         # rewrites the label to "Preferences" on Windows. Keep our wording.
         settings_action = file_menu.addAction("Settings", self.open_settings)
@@ -908,14 +904,6 @@ class MainWindow(QMainWindow):
         """Open hotkey settings dialog."""
         logger.info("Opening hotkey settings")
         self.hotkeys_requested.emit()
-
-    def upload_audio_file(self):
-        """Switch to the Upload File tab and open file browser."""
-        logger.info("Upload audio file requested via menu")
-        if self._compact_mode:
-            self.set_compact_mode(False)
-        self.tabbed_content.set_current_index(TabbedContentWidget.TAB_UPLOAD_FILE)
-        self.upload_file_tab.open_file_browser()
 
     def switch_to_quick_record(self):
         """Switch to the Quick Record tab."""

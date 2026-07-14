@@ -9,6 +9,7 @@ in ``resizeEvent`` rather than managed by a layout, so animating the sidebar
 width clips/reveals pre-laid-out content instead of re-running layout and text
 wrapping on every frame.
 """
+import json
 import logging
 import os
 from PyQt6.QtWidgets import (
@@ -706,27 +707,52 @@ class HistorySidebar(QWidget):
         self.refresh()
 
     def _on_export_history(self):
-        """Export all history entries to a text file."""
+        """Export all history entries to a text or JSON file."""
         entries = history_manager.get_history()
         if not entries:
             QMessageBox.information(self, "Export History", "No history to export.")
             return
 
-        file_path, _ = QFileDialog.getSaveFileName(
+        file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export History",
             "openwhisper_history.txt",
-            "Text Files (*.txt);;All Files (*)",
+            "Text Files (*.txt);;JSON Files (*.json);;All Files (*)",
         )
         if not file_path:
             return
 
+        # Prefer an explicit extension; fall back to the selected dialog filter.
+        _, ext = os.path.splitext(file_path)
+        as_json = ext.lower() == ".json" or (
+            not ext and "JSON" in selected_filter
+        )
+        if not ext:
+            file_path += ".json" if as_json else ".txt"
+
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                for entry in entries:
-                    f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
-                    f.write(f"{entry.text}\n")
-                    f.write("-" * 60 + "\n\n")
+            if as_json:
+                payload = [
+                    {
+                        "id": entry.id,
+                        "timestamp": entry.timestamp,
+                        "model": entry.model,
+                        "text": entry.text,
+                        "audio_file": entry.audio_file,
+                        "transcription_time": entry.transcription_time,
+                        "audio_duration": entry.audio_duration,
+                        "file_size": entry.file_size,
+                    }
+                    for entry in entries
+                ]
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+            else:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    for entry in entries:
+                        f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
+                        f.write(f"{entry.text}\n")
+                        f.write("-" * 60 + "\n\n")
             logger.info(f"Exported {len(entries)} history entries to {file_path}")
         except Exception as e:
             logger.error(f"Failed to export history: {e}")

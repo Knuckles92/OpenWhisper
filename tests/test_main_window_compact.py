@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import QApplication
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
-from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
 class TestMainWindowCompactMode(unittest.TestCase):
@@ -99,20 +98,6 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.window.compact_controller.cancel_button.click()
         self.assertEqual(canceled, [True])
         self.assertFalse(self.window.is_recording)
-
-    def test_upload_request_restores_full_mode(self):
-        """Opening Upload File leaves compact mode before switching tabs."""
-        self.window.set_compact_mode(True)
-
-        with patch.object(self.window.upload_file_tab, "open_file_browser") as open_dialog:
-            self.window.upload_audio_file()
-
-        self.assertFalse(self.window._compact_mode)
-        self.assertEqual(
-            self.window.tabbed_content.current_index(),
-            TabbedContentWidget.TAB_UPLOAD_FILE,
-        )
-        open_dialog.assert_called_once_with()
 
     def test_compact_mode_selection_is_persisted(self):
         """Mode transitions write the compact preference setting."""

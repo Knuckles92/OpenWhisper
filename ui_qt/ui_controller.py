@@ -638,16 +638,18 @@ class UIController(QObject):
         QMessageBox.about(
             self.main_window,
             "About OpenWhisper",
-            "OpenWhisper - Speech-to-Text Application\n\n"
-            "Record audio and turn it into text. Works offline with local Whisper or online with OpenAI.\n\n"
-            "Features:\n"
-            "• Local or cloud transcription\n"
-            "• Global hotkeys (press * to record)\n"
-            "• Cool waveform visualizations\n"
-            "• Auto-pastes text for you\n"
-            "• Runs in the background\n\n"
-            "Website: https://openwhisper.fiorilabs.tech/\n"
-            "Open source and free to use."
+            "<p><b>OpenWhisper - Speech-to-Text Application</b></p>"
+            "<p>Record audio and turn it into text. Works offline with local "
+            "Whisper or online with OpenAI.</p>"
+            "<p>Features:<br>"
+            "&bull; Local or cloud transcription<br>"
+            "&bull; Global hotkeys (press * to record)<br>"
+            "&bull; Cool waveform visualizations<br>"
+            "&bull; Auto-pastes text for you<br>"
+            "&bull; Runs in the background</p>"
+            '<p>Website: <a href="https://openwhisper.fiorilabs.tech/">'
+            "openwhisper.fiorilabs.tech</a><br>"
+            "Open source and free to use.</p>"
         )
 
     def get_model_value(self) -> str:
