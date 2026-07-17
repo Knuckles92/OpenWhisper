@@ -80,6 +80,7 @@ class FakeSettingsManager:
             "streaming_chunk_duration": 4.0,
             "copy_clipboard": True,
             "auto_paste": False,
+            "transcript_cleanup_enabled": False,
         }
         self.saved_model_selection = None
         self.saved_hotkeys = None
@@ -99,6 +100,9 @@ class FakeSettingsManager:
 
     def save_hotkey_settings(self, hotkeys):
         self.saved_hotkeys = hotkeys
+
+    def get(self, key, default=None):
+        return self.all_settings.get(key, default)
 
     def save_setting(self, key, value):
         self.all_settings[key] = value
@@ -438,8 +442,9 @@ class DummyUIController:
     def clear_transcription_stats(self):
         self.stats = None
 
-    def set_transcript(self, text):
+    def set_transcript(self, text, raw=None):
         self.transcription_text = text
+        self.transcription_raw = raw
 
     def set_transcription_stats(self, transcription_time, audio_duration, file_size):
         self.stats = (transcription_time, audio_duration, file_size)
@@ -484,12 +489,40 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     from services.settings import (
         HuggingFaceAccessPolicy as _RealHFPolicy,
         SettingsKey as _RealSettingsKey,
+        TranscriptCleanupProvider as _RealCleanupProvider,
+        TranscriptCleanupReasoning as _RealCleanupReasoning,
+        default_transcript_cleanup_model as _default_cleanup_model,
+        resolve_transcript_cleanup_model as _resolve_cleanup_model,
+        resolve_transcript_cleanup_prompt as _resolve_cleanup_prompt,
+        resolve_transcript_cleanup_provider as _resolve_cleanup_provider,
+        resolve_transcript_cleanup_reasoning as _resolve_cleanup_reasoning,
     )
 
     settings_module = types.ModuleType("services.settings")
     settings_module.settings_manager = settings_manager
     settings_module.SettingsKey = _RealSettingsKey
     settings_module.HuggingFaceAccessPolicy = _RealHFPolicy
+    settings_module.TranscriptCleanupProvider = _RealCleanupProvider
+    settings_module.TranscriptCleanupReasoning = _RealCleanupReasoning
+    settings_module.default_transcript_cleanup_model = _default_cleanup_model
+
+    def _with_fake_settings(resolver):
+        return lambda settings=None: resolver(
+            settings if settings is not None else settings_manager.load_all_settings()
+        )
+
+    settings_module.resolve_transcript_cleanup_prompt = _with_fake_settings(
+        _resolve_cleanup_prompt
+    )
+    settings_module.resolve_transcript_cleanup_provider = _with_fake_settings(
+        _resolve_cleanup_provider
+    )
+    settings_module.resolve_transcript_cleanup_model = _with_fake_settings(
+        _resolve_cleanup_model
+    )
+    settings_module.resolve_transcript_cleanup_reasoning = _with_fake_settings(
+        _resolve_cleanup_reasoning
+    )
 
     from services.hf_access import (
         AccessDecision as _RealAccessDecision,
@@ -781,11 +814,12 @@ class TestApplicationController(unittest.TestCase):
         controller._pending_file_size = 2048
         controller._transcription_start_time = time.time() - 1.0
 
-        controller._on_transcription_complete("hello world")
+        controller._on_transcription_complete("hello world", None)
 
         self.assertEqual(len(self.history_manager.entries), 1)
         entry = self.history_manager.entries[0]
         self.assertEqual(entry["text"], "hello world")
+        self.assertIsNone(entry.get("raw_text"))
         self.assertEqual(entry["source_audio_path"], "source.wav")
         self.assertEqual(entry["audio_duration"], 9.5)
         self.assertEqual(entry["file_size"], 2048)
@@ -794,6 +828,59 @@ class TestApplicationController(unittest.TestCase):
         self.assertIsNone(controller._pending_audio_path)
         self.assertIsNone(controller._pending_audio_duration)
         self.assertIsNone(controller._pending_file_size)
+
+    def test_transcription_complete_stores_raw_and_fixed_text(self):
+        controller = self._create_controller()
+        controller._pending_audio_path = "source.wav"
+
+        controller._on_transcription_complete("Fixed sentence.", "um fixed sentence")
+
+        entry = self.history_manager.entries[0]
+        self.assertEqual(entry["text"], "Fixed sentence.")
+        self.assertEqual(entry["raw_text"], "um fixed sentence")
+        self.assertEqual(controller.ui_controller.transcription_text, "Fixed sentence.")
+        self.assertEqual(controller.ui_controller.transcription_raw, "um fixed sentence")
+        self.assertEqual(self.pyperclip.copied[-1], "Fixed sentence.")
+
+    def test_transcribe_audio_file_applies_cleanup_when_enabled(self):
+        controller = self._create_controller()
+        self.settings.all_settings["transcript_cleanup_enabled"] = True
+        cleanup = controller.transcription_runtime._transcript_cleanup
+        cleanup.is_available = lambda: True
+        cleanup.cleanup = lambda text, system_prompt=None: "Cleaned text."
+        clip_path = str(Path(self.temp_dir.name) / "clip.wav")
+        Path(clip_path).write_bytes(b"RIFF")
+
+        class _Backend:
+            def transcribe(self, _path):
+                return "um cleaned text"
+
+        controller.current_backend = _Backend()
+        controller.transcription_runtime.transcribe_audio_file(clip_path)
+
+        entry = self.history_manager.entries[0]
+        self.assertEqual(entry["text"], "Cleaned text.")
+        self.assertEqual(entry["raw_text"], "um cleaned text")
+
+    def test_transcribe_audio_file_skips_cleanup_when_disabled(self):
+        controller = self._create_controller()
+        self.settings.all_settings["transcript_cleanup_enabled"] = False
+        cleanup = controller.transcription_runtime._transcript_cleanup
+        cleanup.is_available = lambda: True
+        cleanup.cleanup = lambda text, system_prompt=None: "should not run"
+        clip_path = str(Path(self.temp_dir.name) / "clip.wav")
+        Path(clip_path).write_bytes(b"RIFF")
+
+        class _Backend:
+            def transcribe(self, _path):
+                return "raw only"
+
+        controller.current_backend = _Backend()
+        controller.transcription_runtime.transcribe_audio_file(clip_path)
+
+        entry = self.history_manager.entries[0]
+        self.assertEqual(entry["text"], "raw only")
+        self.assertIsNone(entry.get("raw_text"))
 
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()

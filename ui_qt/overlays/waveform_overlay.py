@@ -79,6 +79,7 @@ class WaveformOverlay(QWidget):
     STATE_STREAMING = "streaming"
     STATE_PROCESSING = "processing"
     STATE_TRANSCRIBING = "transcribing"
+    STATE_CLEANING = "cleaning"
     STATE_CANCELING = "canceling"
     STATE_STT_ENABLE = "stt_enable"
     STATE_STT_DISABLE = "stt_disable"
@@ -170,6 +171,8 @@ class WaveformOverlay(QWidget):
             elif self.current_state == self.STATE_TRANSCRIBING:
                 if self.style:
                     self.style.draw_transcribing_state(painter, rect, "Transcribing...")
+            elif self.current_state == self.STATE_CLEANING:
+                self._draw_cleaning_state(painter)
             elif self.current_state == self.STATE_CANCELING:
                 if self.style:
                     self.style.draw_canceling_state(painter, rect, "Canceled")
@@ -446,6 +449,56 @@ class WaveformOverlay(QWidget):
         painter.setPen(QPen(QColor(245, 245, 247)))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Copied!")
+
+    def _draw_cleaning_state(self, painter: QPainter):
+        """Draw AI cleanup state with twinkling purple sparkles."""
+        rect = self.rect()
+        w, h = rect.width(), rect.height()
+        purple = QColor(191, 90, 242)  # Apple system purple
+
+        # Sparkle layout: (x_frac, y_frac, base_size, twinkle_phase). Phases are
+        # staggered so the sparkles shimmer in sequence rather than in unison.
+        sparkles = (
+            (0.50, 0.42, 11.0, 0.0),
+            (0.37, 0.28, 6.0, 1.3),
+            (0.64, 0.30, 7.5, 2.6),
+            (0.41, 0.58, 5.0, 3.9),
+            (0.61, 0.55, 6.5, 5.2),
+        )
+        for x_frac, y_frac, base_size, phase in sparkles:
+            twinkle = 0.5 + 0.5 * math.sin(self.animation_time * 3.0 + phase)
+            color = QColor(purple)
+            color.setAlpha(int(80 + 175 * twinkle))
+            self._draw_sparkle(
+                painter,
+                x_frac * w,
+                y_frac * h - 4,
+                base_size * (0.55 + 0.45 * twinkle),
+                color,
+            )
+
+        # Status text
+        painter.setPen(QPen(purple))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(
+            rect.adjusted(0, h - 25, 0, 0),
+            Qt.AlignmentFlag.AlignCenter,
+            "Cleaning up...",
+        )
+
+    @staticmethod
+    def _draw_sparkle(painter: QPainter, cx: float, cy: float, size: float, color: QColor):
+        """Draw a four-pointed sparkle with short diagonal accent rays."""
+        painter.setPen(_round_pen(color, 2))
+        painter.drawLine(int(cx), int(cy - size), int(cx), int(cy + size))
+        painter.drawLine(int(cx - size), int(cy), int(cx + size), int(cy))
+
+        accent = QColor(color)
+        accent.setAlpha(int(color.alpha() * 0.55))
+        diag = size * 0.45
+        painter.setPen(_round_pen(accent, 1.5))
+        painter.drawLine(int(cx - diag), int(cy - diag), int(cx + diag), int(cy + diag))
+        painter.drawLine(int(cx - diag), int(cy + diag), int(cx + diag), int(cy - diag))
 
     def set_large_file_info(self, file_size_mb: float, chunk_count: int = 0):
         """Set information about the large file being processed.

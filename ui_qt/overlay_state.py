@@ -9,6 +9,7 @@ class OverlayState(Enum):
     RECORDING = "recording"
     PROCESSING = "processing"
     TRANSCRIBING = "transcribing"
+    CLEANING = "cleaning"
     CANCELING = "canceling"
     STT_ENABLED = "stt_enabled"
     STT_DISABLED = "stt_disabled"

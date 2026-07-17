@@ -304,9 +304,9 @@ class UploadFileTab(TranscriptionTabBase):
 
     # ── Public API ─────────────────────────────────────────────────
 
-    def set_transcript(self, text: str):
+    def set_transcript(self, text: str, raw=None):
         """Set the transcript text and reset transcribing state."""
-        super().set_transcript(text)
+        super().set_transcript(text, raw=raw)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)

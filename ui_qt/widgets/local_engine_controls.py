@@ -13,7 +13,7 @@ import logging
 import sys
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -132,6 +132,22 @@ class LocalEngineControls(QWidget):
         body_row.addWidget(self.body)
         body_row.addStretch()
         content_layout.addLayout(body_row)
+
+        # AI cleanup toggle lives inside this panel; persistence and settings
+        # sync stay with TranscriptionTabBase, which exposes it as its own
+        # cleanup_check attribute.
+        self.cleanup_check = QCheckBox("AI cleanup")
+        self.cleanup_check.setFont(QFont("Segoe UI", 10))
+        self.cleanup_check.setToolTip(
+            "Clean up the transcript with an AI model after transcription "
+            "(punctuation, fillers, light ASR fixes)"
+        )
+        cleanup_row = QHBoxLayout()
+        cleanup_row.setContentsMargins(0, 0, 0, 0)
+        cleanup_row.addStretch()
+        cleanup_row.addWidget(self.cleanup_check)
+        cleanup_row.addStretch()
+        content_layout.addLayout(cleanup_row)
 
         self.resolved_label = QLabel("")
         self.resolved_label.setFont(QFont("Segoe UI", 9))

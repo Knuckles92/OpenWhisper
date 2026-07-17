@@ -4,25 +4,34 @@ Tabbed interface for managing application settings.
 """
 import logging
 import sys
+import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QComboBox, QCheckBox, QSpinBox,
-    QSlider, QFrame, QScrollArea
+    QSlider, QFrame, QScrollArea, QTextEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import (
     HuggingFaceAccessPolicy,
     RecordingRetentionMode,
     SettingsKey,
+    TranscriptCleanupProvider,
+    TranscriptCleanupReasoning,
     resolve_max_saved_recordings,
     resolve_streaming_overlay_font_size,
+    resolve_transcript_cleanup_model,
+    resolve_transcript_cleanup_prompt,
+    resolve_transcript_cleanup_provider,
+    resolve_transcript_cleanup_reasoning,
     settings_manager,
 )
 from services.history_manager import history_manager
 from services.recorder import AudioRecorder
+from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.widgets import PrimaryButton, Button
 
 logger = logging.getLogger(__name__)
@@ -32,6 +41,9 @@ class SettingsDialog(QDialog):
     """Settings dialog with tabbed interface."""
 
     settings_changed = pyqtSignal(dict)
+
+    #: Internal: emitted from the model-list worker thread (provider, models, error).
+    _cleanup_models_loaded = pyqtSignal(str, list, str)
 
     def __init__(self, parent=None):
         """Initialize settings dialog."""
@@ -43,8 +55,15 @@ class SettingsDialog(QDialog):
         # Callbacks
         self.on_settings_save: Optional[Callable] = None
 
+        # Live-loaded cleanup model lists, keyed by provider.
+        self._cleanup_models_cache: dict = {}
+        self._cleanup_models_loading = False
+
         self._setup_ui()
         self._load_settings()
+
+        self._cleanup_models_loaded.connect(self._on_cleanup_models_loaded)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _setup_ui(self):
         """Setup the user interface."""
@@ -62,6 +81,7 @@ class SettingsDialog(QDialog):
         self._create_general_tab()
         self._create_audio_tab()
         self._create_hotkeys_tab()
+        self._create_cleanup_tab()
         self._create_advanced_tab()
 
         layout.addWidget(self.tabs)
@@ -297,6 +317,142 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         self.tabs.addTab(tab, "Hotkeys")
 
+    def _create_cleanup_tab(self):
+        """Create AI transcript cleanup (post-processing) settings tab."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Title
+        title = QLabel("AI Transcript Cleanup")
+        title.setObjectName("headerLabel")
+        layout.addWidget(title)
+
+        layout.addSpacing(12)
+        self.transcript_cleanup_check = QCheckBox(
+            "Clean up transcript with AI after transcription"
+        )
+        self.transcript_cleanup_check.toggled.connect(self._update_cleanup_prompt_ui)
+        layout.addWidget(self.transcript_cleanup_check)
+
+        # Provider selection
+        layout.addSpacing(8)
+        self.cleanup_provider_label = QLabel("Provider:")
+        layout.addWidget(self.cleanup_provider_label)
+
+        self.cleanup_provider_combo = QComboBox()
+        self.cleanup_provider_combo.addItem("OpenAI", TranscriptCleanupProvider.OPENAI)
+        self.cleanup_provider_combo.addItem(
+            "OpenRouter", TranscriptCleanupProvider.OPENROUTER
+        )
+        self.cleanup_provider_combo.setMinimumHeight(36)
+        self.cleanup_provider_combo.currentIndexChanged.connect(
+            self._on_cleanup_provider_changed
+        )
+        layout.addWidget(self.cleanup_provider_combo)
+
+        # Model selection (live-loaded from the provider's API)
+        self.cleanup_model_label = QLabel("Model:")
+        layout.addWidget(self.cleanup_model_label)
+
+        model_row = QHBoxLayout()
+        model_row.setSpacing(8)
+        self.cleanup_model_combo = QComboBox()
+        self.cleanup_model_combo.setEditable(True)
+        self.cleanup_model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cleanup_model_combo.setMinimumHeight(36)
+        model_row.addWidget(self.cleanup_model_combo, stretch=1)
+
+        self.cleanup_model_refresh_btn = Button("Refresh")
+        self.cleanup_model_refresh_btn.setToolTip(
+            "Reload the model list from the provider's API"
+        )
+        self.cleanup_model_refresh_btn.clicked.connect(
+            lambda: self._fetch_cleanup_models(force=True)
+        )
+        model_row.addWidget(self.cleanup_model_refresh_btn)
+        layout.addLayout(model_row)
+
+        self.cleanup_models_status = QLabel("")
+        self.cleanup_models_status.setObjectName("infoLabel")
+        self.cleanup_models_status.setWordWrap(True)
+        layout.addWidget(self.cleanup_models_status)
+
+        # Thinking / reasoning effort
+        self.cleanup_reasoning_label = QLabel("Thinking level:")
+        layout.addWidget(self.cleanup_reasoning_label)
+
+        self.cleanup_reasoning_combo = QComboBox()
+        self.cleanup_reasoning_combo.addItem("Off", TranscriptCleanupReasoning.OFF)
+        self.cleanup_reasoning_combo.addItem("Low", TranscriptCleanupReasoning.LOW)
+        self.cleanup_reasoning_combo.addItem(
+            "Medium", TranscriptCleanupReasoning.MEDIUM
+        )
+        self.cleanup_reasoning_combo.addItem("High", TranscriptCleanupReasoning.HIGH)
+        self.cleanup_reasoning_combo.setMinimumHeight(36)
+        layout.addWidget(self.cleanup_reasoning_combo)
+
+        reasoning_info = QLabel(
+            "Requests extra thinking effort from reasoning models (e.g. o4-mini). "
+            "Leave Off for regular chat models."
+        )
+        reasoning_info.setObjectName("infoLabel")
+        reasoning_info.setWordWrap(True)
+        self.cleanup_reasoning_info = reasoning_info
+        layout.addWidget(reasoning_info)
+
+        layout.addSpacing(8)
+        self.cleanup_prompt_label = QLabel("Cleanup prompt:")
+        layout.addWidget(self.cleanup_prompt_label)
+
+        self.cleanup_prompt_edit = QTextEdit()
+        self.cleanup_prompt_edit.setAcceptRichText(False)
+        self.cleanup_prompt_edit.setFont(QFont("Segoe UI", 11))
+        self.cleanup_prompt_edit.setMinimumHeight(140)
+        self.cleanup_prompt_edit.setPlaceholderText(
+            "Instructions for how the AI should clean up transcripts…"
+        )
+        layout.addWidget(self.cleanup_prompt_edit)
+
+        cleanup_btn_row = QHBoxLayout()
+        cleanup_btn_row.setSpacing(8)
+        self.cleanup_prompt_edit_btn = Button("Open editor…")
+        self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
+        cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
+
+        self.cleanup_prompt_reset_btn = Button("Reset to default")
+        self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
+        cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
+        cleanup_btn_row.addStretch()
+        layout.addLayout(cleanup_btn_row)
+
+        cleanup_info = QLabel(
+            "Runs the selected chat model on each transcript after transcription. "
+            "OpenAI needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
+            "(environment or .env). Edit the prompt to change cleanup style "
+            "(e.g. bullets, email tone)."
+        )
+        cleanup_info.setObjectName("infoLabel")
+        cleanup_info.setWordWrap(True)
+        self.cleanup_prompt_info = cleanup_info
+        layout.addWidget(cleanup_info)
+
+        layout.addStretch()
+
+        scroll_area.setWidget(content)
+        tab_layout.addWidget(scroll_area)
+        self._cleanup_tab_index = self.tabs.addTab(tab, "Cleanup")
+
     def _create_advanced_tab(self):
         """Create advanced settings tab with scrollable content."""
         tab = QWidget()
@@ -451,6 +607,140 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_label.setEnabled(enabled)
         self.streaming_font_size_spinbox.setEnabled(enabled)
 
+    def _update_cleanup_prompt_ui(self):
+        """Enable cleanup controls when AI cleanup is on."""
+        enabled = self.transcript_cleanup_check.isChecked()
+        for widget in (
+            self.cleanup_provider_label,
+            self.cleanup_provider_combo,
+            self.cleanup_model_label,
+            self.cleanup_model_combo,
+            self.cleanup_model_refresh_btn,
+            self.cleanup_models_status,
+            self.cleanup_reasoning_label,
+            self.cleanup_reasoning_combo,
+            self.cleanup_reasoning_info,
+            self.cleanup_prompt_label,
+            self.cleanup_prompt_edit,
+            self.cleanup_prompt_edit_btn,
+            self.cleanup_prompt_reset_btn,
+            self.cleanup_prompt_info,
+        ):
+            widget.setEnabled(enabled)
+        if self._cleanup_models_loading:
+            self.cleanup_model_refresh_btn.setEnabled(False)
+
+    # ── Cleanup model live loading ─────────────────────────────────
+
+    def _current_cleanup_provider(self) -> str:
+        """Return the provider currently selected in the Cleanup tab."""
+        return (
+            self.cleanup_provider_combo.currentData()
+            or TranscriptCleanupProvider.OPENAI
+        )
+
+    def _on_tab_changed(self, index: int):
+        """Lazily fetch the model list the first time the Cleanup tab opens."""
+        if index != self._cleanup_tab_index:
+            return
+        provider = self._current_cleanup_provider()
+        if provider not in self._cleanup_models_cache:
+            self._fetch_cleanup_models()
+
+    def _on_cleanup_provider_changed(self):
+        """Swap the default model and reload the list for the new provider."""
+        provider = self._current_cleanup_provider()
+        current = self.cleanup_model_combo.currentText().strip()
+        # Only replace the model text if the user hasn't customized it
+        # (i.e. it is empty or the other provider's default).
+        defaults = {
+            config.TRANSCRIPT_CLEANUP_MODEL,
+            config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
+        }
+        if not current or current in defaults:
+            self.cleanup_model_combo.setCurrentText(
+                resolve_transcript_cleanup_model(
+                    {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider}
+                )
+            )
+        self._fetch_cleanup_models()
+
+    def _fetch_cleanup_models(self, force: bool = False):
+        """Load the provider's model list in a background thread.
+
+        Args:
+            force: Bypass the in-dialog cache and hit the API again.
+        """
+        provider = self._current_cleanup_provider()
+        if not force and provider in self._cleanup_models_cache:
+            self._populate_cleanup_models(provider)
+            return
+        if self._cleanup_models_loading:
+            return
+
+        self._cleanup_models_loading = True
+        self.cleanup_model_refresh_btn.setEnabled(False)
+        self.cleanup_models_status.setText("Loading models…")
+
+        def worker():
+            try:
+                from services.transcript_cleanup import list_cleanup_models
+
+                models = list_cleanup_models(provider)
+                error = ""
+            except Exception as exc:
+                models = []
+                error = str(exc)
+            try:
+                self._cleanup_models_loaded.emit(provider, models, error)
+            except RuntimeError:
+                pass  # Dialog was closed before the fetch finished.
+
+        threading.Thread(
+            target=worker, name="cleanup-models-fetch", daemon=True
+        ).start()
+
+    def _on_cleanup_models_loaded(self, provider: str, models: list, error: str):
+        """Apply a finished model-list fetch on the main thread."""
+        self._cleanup_models_loading = False
+        self.cleanup_model_refresh_btn.setEnabled(
+            self.transcript_cleanup_check.isChecked()
+        )
+        if not error:
+            self._cleanup_models_cache[provider] = models
+        if provider != self._current_cleanup_provider():
+            return  # Provider changed mid-fetch; ignore the stale result.
+        if error:
+            self.cleanup_models_status.setText(f"Couldn't load models: {error}")
+            return
+        self.cleanup_models_status.setText(f"{len(models)} models available")
+        self._populate_cleanup_models(provider)
+
+    def _populate_cleanup_models(self, provider: str):
+        """Fill the model combo from the cache, preserving the current text."""
+        models = self._cleanup_models_cache.get(provider, [])
+        current = self.cleanup_model_combo.currentText().strip()
+        self.cleanup_model_combo.blockSignals(True)
+        self.cleanup_model_combo.clear()
+        self.cleanup_model_combo.addItems(models)
+        self.cleanup_model_combo.setCurrentText(
+            current
+            or resolve_transcript_cleanup_model(
+                {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider}
+            )
+        )
+        self.cleanup_model_combo.blockSignals(False)
+
+    def _open_cleanup_prompt_editor(self):
+        """Open a larger popup editor for the cleanup prompt."""
+        dialog = CleanupPromptDialog(self.cleanup_prompt_edit.toPlainText(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.cleanup_prompt_edit.setPlainText(dialog.prompt_text())
+
+    def _reset_cleanup_prompt(self):
+        """Restore the built-in default cleanup prompt."""
+        self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
+
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -488,6 +778,34 @@ class SettingsDialog(QDialog):
             # Load checkboxes
             self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
             self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
+            self.transcript_cleanup_check.setChecked(
+                settings.get(
+                    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
+                    config.TRANSCRIPT_CLEANUP_ENABLED,
+                )
+            )
+            self.cleanup_prompt_edit.setPlainText(
+                resolve_transcript_cleanup_prompt(settings)
+            )
+
+            # Cleanup provider / model / thinking level. Signals stay blocked
+            # so loading never triggers a network fetch; that happens lazily
+            # when the Cleanup tab is opened.
+            provider_index = self.cleanup_provider_combo.findData(
+                resolve_transcript_cleanup_provider(settings)
+            )
+            self.cleanup_provider_combo.blockSignals(True)
+            self.cleanup_provider_combo.setCurrentIndex(max(0, provider_index))
+            self.cleanup_provider_combo.blockSignals(False)
+            self.cleanup_model_combo.setCurrentText(
+                resolve_transcript_cleanup_model(settings)
+            )
+            reasoning_index = self.cleanup_reasoning_combo.findData(
+                resolve_transcript_cleanup_reasoning(settings)
+            )
+            self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
+
+            self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
 
             # Load recording retention
@@ -559,6 +877,14 @@ class SettingsDialog(QDialog):
             # Use defaults on error
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
+            self.transcript_cleanup_check.setChecked(config.TRANSCRIPT_CLEANUP_ENABLED)
+            self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
+            self.cleanup_provider_combo.blockSignals(True)
+            self.cleanup_provider_combo.setCurrentIndex(0)
+            self.cleanup_provider_combo.blockSignals(False)
+            self.cleanup_model_combo.setCurrentText(config.TRANSCRIPT_CLEANUP_MODEL)
+            self.cleanup_reasoning_combo.setCurrentIndex(0)
+            self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(True)
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM
@@ -616,6 +942,28 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.SELECTED_MODEL] = model_internal
             settings[SettingsKey.AUTO_PASTE] = self.auto_paste_check.isChecked()
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
+            settings[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED] = (
+                self.transcript_cleanup_check.isChecked()
+            )
+            prompt_text = self.cleanup_prompt_edit.toPlainText().strip()
+            if prompt_text and prompt_text != config.TRANSCRIPT_CLEANUP_PROMPT:
+                settings[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT] = prompt_text
+            else:
+                # Store default (or clear custom) so resolve falls back cleanly
+                settings[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT] = (
+                    prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
+                )
+            cleanup_provider = self._current_cleanup_provider()
+            settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = cleanup_provider
+            settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] = (
+                self.cleanup_model_combo.currentText().strip()
+                or resolve_transcript_cleanup_model(
+                    {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: cleanup_provider}
+                )
+            )
+            settings[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] = (
+                self.cleanup_reasoning_combo.currentData()
+            )
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
             settings[SettingsKey.STREAMING_OVERLAY_FONT_SIZE] = (

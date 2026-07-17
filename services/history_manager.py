@@ -91,17 +91,19 @@ class HistoryManager:
         source_audio_path: Optional[str] = None,
         transcription_time: Optional[float] = None,
         audio_duration: Optional[float] = None,
-        file_size: Optional[int] = None
+        file_size: Optional[int] = None,
+        raw_text: Optional[str] = None,
     ) -> HistoryEntry:
         """Add a new transcription to history.
 
         Args:
-            text: The transcribed text.
+            text: The transcribed text (fixed/cleaned when cleanup ran).
             model: The model used for transcription (display name or internal value).
             source_audio_path: Optional path to source audio file to save.
             transcription_time: Time taken to transcribe in seconds.
             audio_duration: Duration of the audio in seconds.
             file_size: Size of the audio file in bytes.
+            raw_text: Unprocessed ASR text when distinct from ``text``.
 
         Returns:
             The created HistoryEntry.
@@ -119,7 +121,8 @@ class HistoryManager:
             audio_file=saved_audio_path,
             transcription_time=transcription_time,
             audio_duration=audio_duration,
-            file_size=file_size
+            file_size=file_size,
+            raw_text=raw_text,
         )
 
         # Save to database
@@ -131,7 +134,8 @@ class HistoryManager:
             audio_file=entry.audio_file,
             transcription_time=entry.transcription_time,
             audio_duration=entry.audio_duration,
-            file_size=entry.file_size
+            file_size=entry.file_size,
+            raw_text=entry.raw_text,
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")

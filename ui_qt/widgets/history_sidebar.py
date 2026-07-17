@@ -83,7 +83,8 @@ class HistoryItemWidget(QFrame):
     """Widget displaying a single history entry."""
 
     clicked = pyqtSignal(str)  # Emits entry_id
-    copy_requested = pyqtSignal(str)  # Emits entry_id
+    copy_requested = pyqtSignal(str)  # Emits entry_id (fixed text)
+    copy_raw_requested = pyqtSignal(str)  # Emits entry_id (raw ASR text)
     delete_requested = pyqtSignal(str)  # Emits entry_id
     retranscribe_requested = pyqtSignal(str)  # Emits audio file path
 
@@ -258,9 +259,21 @@ class HistoryItemWidget(QFrame):
 
         menu.addSeparator()
 
-        # Copy action
-        copy_action = menu.addAction("Copy Text")
-        copy_action.triggered.connect(lambda: self.copy_requested.emit(self.entry.id))
+        # Copy actions (Fixed is the cleaned transcript when cleanup ran)
+        if self.entry.raw_text:
+            copy_fixed = menu.addAction("Copy Fixed")
+            copy_fixed.triggered.connect(
+                lambda: self.copy_requested.emit(self.entry.id)
+            )
+            copy_raw = menu.addAction("Copy Raw")
+            copy_raw.triggered.connect(
+                lambda: self.copy_raw_requested.emit(self.entry.id)
+            )
+        else:
+            copy_action = menu.addAction("Copy Text")
+            copy_action.triggered.connect(
+                lambda: self.copy_requested.emit(self.entry.id)
+            )
 
         # Re-transcribe action (only if audio exists)
         if self._audio_path:
@@ -600,6 +613,7 @@ class HistorySidebar(QWidget):
             entries = [
                 entry for entry in entries
                 if query in entry.text.lower()
+                or (entry.raw_text and query in entry.raw_text.lower())
                 or query in entry.formatted_timestamp.lower()
             ]
 
@@ -617,6 +631,7 @@ class HistorySidebar(QWidget):
             item = HistoryItemWidget(entry)
             item.clicked.connect(self._on_entry_clicked)
             item.copy_requested.connect(self._on_copy_requested)
+            item.copy_raw_requested.connect(self._on_copy_raw_requested)
             item.delete_requested.connect(self._on_delete_requested)
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
             self.history_list_layout.addWidget(item)
@@ -636,7 +651,7 @@ class HistorySidebar(QWidget):
             logger.debug(f"Entry selected: {entry_id[:8]}...")
 
     def _on_copy_requested(self, entry_id: str):
-        """Handle copy request."""
+        """Handle copy request for fixed (display) text."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
             try:
@@ -646,6 +661,18 @@ class HistorySidebar(QWidget):
                 logger.info(f"Copied entry to clipboard: {entry_id[:8]}...")
             except Exception as e:
                 logger.error(f"Failed to copy to clipboard: {e}")
+
+    def _on_copy_raw_requested(self, entry_id: str):
+        """Handle copy request for raw ASR text."""
+        entry = history_manager.get_entry_by_id(entry_id)
+        if entry and entry.raw_text:
+            try:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(entry.raw_text)
+                self.entry_copied.emit(entry_id)
+                logger.info(f"Copied raw entry to clipboard: {entry_id[:8]}...")
+            except Exception as e:
+                logger.error(f"Failed to copy raw text to clipboard: {e}")
 
     def _on_delete_requested(self, entry_id: str):
         """Handle delete request."""
@@ -738,6 +765,7 @@ class HistorySidebar(QWidget):
                         "timestamp": entry.timestamp,
                         "model": entry.model,
                         "text": entry.text,
+                        "raw_text": entry.raw_text,
                         "audio_file": entry.audio_file,
                         "transcription_time": entry.transcription_time,
                         "audio_duration": entry.audio_duration,
@@ -752,6 +780,8 @@ class HistorySidebar(QWidget):
                     for entry in entries:
                         f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
                         f.write(f"{entry.text}\n")
+                        if entry.raw_text:
+                            f.write(f"\nRaw:\n{entry.raw_text}\n")
                         f.write("-" * 60 + "\n\n")
             logger.info(f"Exported {len(entries)} history entries to {file_path}")
         except Exception as e:

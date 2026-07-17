@@ -9,13 +9,17 @@ the ``_build_content_before_status`` / ``_build_content_after_status`` hooks
 and extend ``_connect_signals`` via ``super()``.
 """
 import logging
+from typing import Optional
+
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit,
+    QButtonGroup, QPushButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
 from config import config
+from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
 from ui_qt.widgets.cards import Card, HeaderCard
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
@@ -41,8 +45,12 @@ class TranscriptionTabBase(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_model = config.MODEL_CHOICES[0]
+        self._fixed_text = ""
+        self._raw_text: Optional[str] = None
+        self._showing_raw = False
         self._setup_ui()
         self._connect_signals()
+        self.load_cleanup_setting()
 
     def _setup_ui(self):
         """Build the shared tab scaffolding, calling the content hooks."""
@@ -89,12 +97,17 @@ class TranscriptionTabBase(QWidget):
         # the actual device/compute that "auto" resolved to after a model load.
         self.local_engine = LocalEngineControls()
 
+        # The AI cleanup checkbox is built inside the engine settings panel;
+        # alias it here so persistence/sync methods keep a stable home.
+        self.cleanup_check = self.local_engine.cleanup_check
+
         model_card.layout.addWidget(model_label)
         combo_row = QHBoxLayout()
         combo_row.addStretch()
         combo_row.addWidget(self.model_combo)
         combo_row.addStretch()
         model_card.layout.addLayout(combo_row)
+
         model_card.layout.addWidget(self.local_engine)
         content_layout.addWidget(model_card)
 
@@ -112,12 +125,33 @@ class TranscriptionTabBase(QWidget):
         # Transcription display card (collapsible to reclaim vertical space)
         self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
+        self.version_toggle = QWidget()
+        version_row = QHBoxLayout(self.version_toggle)
+        version_row.setContentsMargins(0, 0, 0, 8)
+        version_row.setSpacing(6)
+        version_row.addStretch()
+
+        self._version_group = QButtonGroup(self)
+        self.fixed_btn = QPushButton("Fixed")
+        self.raw_btn = QPushButton("Raw")
+        for btn in (self.fixed_btn, self.raw_btn):
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setObjectName("transcriptVersionBtn")
+            btn.setMinimumHeight(28)
+            self._version_group.addButton(btn)
+            version_row.addWidget(btn)
+        version_row.addStretch()
+        self.fixed_btn.setChecked(True)
+        self.version_toggle.hide()
+
         self.transcript_text = QTextEdit()
         self.transcript_text.setReadOnly(True)
         self.transcript_text.setMinimumHeight(130)
         self.transcript_text.setFont(QFont("Segoe UI", 13))
         self.transcript_text.setPlaceholderText(self.TRANSCRIPT_PLACEHOLDER)
 
+        self.transcription_card.add_content_widget(self.version_toggle)
         self.transcription_card.add_content_widget(self.transcript_text)
         self.transcription_card.toggled.connect(self._on_transcription_toggled)
 
@@ -151,6 +185,36 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.local_engine.manage_models_requested.connect(self.manage_models_requested)
         self.local_engine.toggled.connect(self._on_engine_settings_toggled)
+        self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
+        self.fixed_btn.toggled.connect(self._on_version_toggled)
+        self.raw_btn.toggled.connect(self._on_version_toggled)
+
+    def _on_cleanup_toggled(self, checked: bool):
+        """Persist AI cleanup preference immediately."""
+        settings_manager.save_setting(
+            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, checked
+        )
+
+    def load_cleanup_setting(self):
+        """Sync the AI cleanup checkbox from persisted settings."""
+        enabled = settings_manager.get(
+            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
+            config.TRANSCRIPT_CLEANUP_ENABLED,
+        )
+        self.cleanup_check.blockSignals(True)
+        self.cleanup_check.setChecked(bool(enabled))
+        self.cleanup_check.blockSignals(False)
+
+    def _on_version_toggled(self, checked: bool):
+        """Swap Fixed/Raw transcript content when the segmented control changes."""
+        if not checked:
+            return
+        show_raw = self.raw_btn.isChecked()
+        self._showing_raw = show_raw
+        if show_raw and self._raw_text is not None:
+            self.transcript_text.setText(self._raw_text)
+        else:
+            self.transcript_text.setText(self._fixed_text)
 
     # ── Model selection ────────────────────────────────────────────
 
@@ -241,12 +305,34 @@ class TranscriptionTabBase(QWidget):
 
     # ── Transcript / stats ─────────────────────────────────────────
 
-    def set_transcript(self, text: str):
-        """Set the transcript text."""
-        self.transcript_text.setText(text)
+    def set_transcript(self, text: str, raw: Optional[str] = None):
+        """Set the transcript text, optionally with a distinct raw ASR version.
+
+        Args:
+            text: Fixed/display transcript (cleaned when cleanup ran).
+            raw: Unprocessed ASR text when different from ``text``.
+        """
+        self._fixed_text = text or ""
+        self._raw_text = raw if raw and raw != text else None
+        self._showing_raw = False
+
+        has_raw = self._raw_text is not None
+        self.version_toggle.setVisible(has_raw)
+        self.fixed_btn.blockSignals(True)
+        self.raw_btn.blockSignals(True)
+        self.fixed_btn.setChecked(True)
+        self.raw_btn.setChecked(False)
+        self.fixed_btn.blockSignals(False)
+        self.raw_btn.blockSignals(False)
+
+        self.transcript_text.setText(self._fixed_text)
 
     def clear_transcription(self):
         """Clear the transcript text."""
+        self._fixed_text = ""
+        self._raw_text = None
+        self._showing_raw = False
+        self.version_toggle.hide()
         self.transcript_text.clear()
 
     def set_transcription_stats(

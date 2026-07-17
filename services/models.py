@@ -41,6 +41,7 @@ class TranscriptionHistory(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     timestamp: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
     audio_file: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -63,11 +64,13 @@ class TranscriptionHistory(Base):
         transcription_time: Optional[float] = None,
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None,
+        raw_text: Optional[str] = None,
     ) -> 'TranscriptionHistory':
         """Create a new entry with auto-generated id and timestamp."""
         return cls(
             id=str(uuid.uuid4()),
             text=text,
+            raw_text=raw_text,
             timestamp=datetime.now().isoformat(),
             model=model,
             audio_file=audio_file,

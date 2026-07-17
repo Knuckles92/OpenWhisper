@@ -30,7 +30,7 @@ class UIController(QObject):
     record_stopped = pyqtSignal()
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
-    transcription_received = pyqtSignal(str)
+    transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
 
@@ -174,12 +174,12 @@ class UIController(QObject):
         else:
             self.overlay.set_state(self.overlay.STATE_PROCESSING)
 
-    def _display_transcript(self, text: str):
+    def _display_transcript(self, text: str, raw=None):
         """Display the completed transcript in the tab that started transcription."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
-            self.main_window.upload_file_tab.set_transcript(text)
+            self.main_window.upload_file_tab.set_transcript(text, raw=raw)
         else:
-            self.main_window.set_transcript(text)
+            self.main_window.set_transcript(text, raw=raw)
         self.hide_overlay()
 
     def _apply_status_to_main_window(self, status: str):
@@ -243,9 +243,14 @@ class UIController(QObject):
         self.record_canceled.emit()
         self.main_window.clear_transcription()
 
-    def set_transcript(self, text: str):
-        """Set transcript text."""
-        self.transcription_received.emit(text)
+    def set_transcript(self, text: str, raw=None):
+        """Set transcript text.
+
+        Args:
+            text: Fixed/display transcript.
+            raw: Optional unprocessed ASR text when distinct from ``text``.
+        """
+        self.transcription_received.emit(text, raw)
 
     def set_device_info(self, device_info: str):
         """Set the persistent device info display (e.g., 'cuda (float16)').
@@ -330,6 +335,9 @@ class UIController(QObject):
         elif state is OverlayState.TRANSCRIBING:
             self.tray_manager.set_recording(False)
             self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_TRANSCRIBING)
+        elif state is OverlayState.CLEANING:
+            self.tray_manager.set_recording(False)
+            self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_CLEANING)
         elif state is OverlayState.STT_ENABLED:
             self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
         elif state is OverlayState.STT_DISABLED:
@@ -458,6 +466,8 @@ class UIController(QObject):
         # Connect settings changed signal
         def on_settings_changed(settings: dict):
             self.overlay.refresh_streaming_font_size()
+            # Keep main-UI AI cleanup checkboxes in sync with Settings.
+            self.refresh_cleanup_controls()
             if settings.get('_whisper_settings_changed', False):
                 if self.on_whisper_settings_changed:
                     self.on_whisper_settings_changed()
@@ -488,6 +498,11 @@ class UIController(QObject):
         """
         self.main_window.quick_record_tab.local_engine.load_from_settings()
         self.main_window.upload_file_tab.local_engine.load_from_settings()
+
+    def refresh_cleanup_controls(self):
+        """Re-sync the main-UI AI cleanup checkboxes with persisted settings."""
+        self.main_window.quick_record_tab.load_cleanup_setting()
+        self.main_window.upload_file_tab.load_cleanup_setting()
 
     def show_hf_consent_dialog(
         self, model_name: str, policy: str, env_blocked: bool = False

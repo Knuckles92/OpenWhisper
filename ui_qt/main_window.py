@@ -746,9 +746,14 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.set_device_info(device_info)
 
-    def set_transcript(self, text: str):
-        """Set the transcription text."""
-        self.quick_record_tab.set_transcript(text)
+    def set_transcript(self, text: str, raw=None):
+        """Set the transcription text.
+
+        Args:
+            text: Fixed/display transcript.
+            raw: Optional unprocessed ASR text when distinct from ``text``.
+        """
+        self.quick_record_tab.set_transcript(text, raw=raw)
 
     def append_transcription(self, text: str):
         """Append text to the transcription."""
@@ -1150,7 +1155,7 @@ class MainWindow(QMainWindow):
         """Handle history entry selection - show full transcription and copy to clipboard."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
-            self.quick_record_tab.set_transcript(entry.text)
+            self.quick_record_tab.set_transcript(entry.text, raw=entry.raw_text)
 
             # Copy to clipboard
             try:

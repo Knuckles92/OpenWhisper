@@ -24,6 +24,11 @@ class SettingsKey:
     STREAMING_OVERLAY_POSITION: Final[str] = "streaming_overlay_position"
     AUTO_PASTE: Final[str] = "auto_paste"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
+    TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
+    TRANSCRIPT_CLEANUP_PROMPT: Final[str] = "transcript_cleanup_prompt"
+    TRANSCRIPT_CLEANUP_PROVIDER: Final[str] = "transcript_cleanup_provider"
+    TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
+    TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
@@ -47,6 +52,28 @@ class RecordingRetentionMode:
     """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
     KEEP_ALL: Final[str] = "keep_all"
     CUSTOM: Final[str] = "custom"
+
+
+class TranscriptCleanupProvider:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``."""
+    OPENAI: Final[str] = "openai"
+    OPENROUTER: Final[str] = "openrouter"
+
+    ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER)
+
+
+class TranscriptCleanupReasoning:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_REASONING``.
+
+    "off" sends a plain temperature-0 request; the other levels request the
+    provider's reasoning/thinking effort (only meaningful on reasoning models).
+    """
+    OFF: Final[str] = "off"
+    LOW: Final[str] = "low"
+    MEDIUM: Final[str] = "medium"
+    HIGH: Final[str] = "high"
+
+    ALL: Final[Tuple[str, ...]] = (OFF, LOW, MEDIUM, HIGH)
 
 
 class HuggingFaceAccessPolicy:
@@ -380,3 +407,105 @@ def resolve_streaming_overlay_font_size(
     except (TypeError, ValueError):
         size = config.STREAMING_OVERLAY_FONT_SIZE
     return max(10, min(48, size))
+
+
+def resolve_transcript_cleanup_prompt(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the system prompt used for post-ASR transcript cleanup.
+
+    Empty or missing values fall back to the built-in default prompt.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Non-empty cleanup system prompt string.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    prompt = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT)
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt.strip()
+    return config.TRANSCRIPT_CLEANUP_PROMPT
+
+
+def default_transcript_cleanup_model(provider: str) -> str:
+    """Return the built-in default cleanup model for a provider.
+
+    Args:
+        provider: A ``TranscriptCleanupProvider`` value.
+
+    Returns:
+        Default chat model id for that provider.
+    """
+    if provider == TranscriptCleanupProvider.OPENROUTER:
+        return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
+    return config.TRANSCRIPT_CLEANUP_MODEL
+
+
+def resolve_transcript_cleanup_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated provider used for post-ASR transcript cleanup.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``TranscriptCleanupProvider`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
+    if provider in TranscriptCleanupProvider.ALL:
+        return provider
+    return config.TRANSCRIPT_CLEANUP_PROVIDER
+
+
+def resolve_transcript_cleanup_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the chat model id used for post-ASR transcript cleanup.
+
+    Empty or missing values fall back to the provider's default model.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Non-empty model id string.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    return default_transcript_cleanup_model(
+        resolve_transcript_cleanup_provider(settings)
+    )
+
+
+def resolve_transcript_cleanup_reasoning(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated reasoning level for post-ASR transcript cleanup.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``TranscriptCleanupReasoning`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    reasoning = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_REASONING)
+    if reasoning in TranscriptCleanupReasoning.ALL:
+        return reasoning
+    return config.TRANSCRIPT_CLEANUP_REASONING

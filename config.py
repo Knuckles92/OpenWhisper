@@ -136,6 +136,23 @@ class AppConfig:
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
     STREAMING_BEAM_SIZE: int = 1  # Preview-only; keep beam tiny for speed
 
+    # Post-ASR transcript cleanup (OpenAI or OpenRouter chat models)
+    TRANSCRIPT_CLEANUP_ENABLED: bool = False
+    TRANSCRIPT_CLEANUP_TIMEOUT_S: float = 8.0
+    TRANSCRIPT_CLEANUP_PROVIDER: str = "openai"
+    TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"  # default for OpenAI
+    TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    TRANSCRIPT_CLEANUP_REASONING: str = "off"  # off | low | medium | high
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    TRANSCRIPT_CLEANUP_PROMPT: str = (
+        "You clean up speech-to-text transcripts. "
+        "Fix punctuation and capitalization, remove filler words "
+        "(um, uh, like as filler, you know), and fix obvious ASR errors. "
+        "Do not invent content, do not add information that was not spoken, "
+        "and preserve meaning, tone, and proper nouns. "
+        "Return only the cleaned transcript text with no preamble or quotes."
+    )
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None

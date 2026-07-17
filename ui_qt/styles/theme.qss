@@ -446,6 +446,29 @@ QTabBar::tab:hover {
     border: 1px solid #48484a;
 }
 
+/* Fixed / Raw transcript version toggle */
+QPushButton#transcriptVersionBtn {
+    background-color: #2c2c2e;
+    color: #8e8e93;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#transcriptVersionBtn:checked {
+    background-color: #0a84ff;
+    color: #ffffff;
+    border: 1px solid #0a84ff;
+}
+
+QPushButton#transcriptVersionBtn:hover:!checked {
+    background-color: #3a3a3c;
+    color: #f5f5f7;
+    border: 1px solid #48484a;
+}
+
 /* Menu bar */
 QMenuBar {
     background-color: #1c1c1e;

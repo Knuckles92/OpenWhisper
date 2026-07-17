@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import pyperclip
 
@@ -13,14 +13,35 @@ from config import config
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
+from services.transcript_cleanup import TranscriptCleanup
 try:
-    from services.settings import SettingsKey, settings_manager
+    from services.settings import (
+        SettingsKey,
+        resolve_transcript_cleanup_model,
+        resolve_transcript_cleanup_prompt,
+        resolve_transcript_cleanup_provider,
+        resolve_transcript_cleanup_reasoning,
+        settings_manager,
+    )
 except ImportError:  # pragma: no cover - supports lightweight test stubs
     from services.settings import settings_manager
 
     class SettingsKey:
         AUTO_PASTE = "auto_paste"
         COPY_CLIPBOARD = "copy_clipboard"
+        TRANSCRIPT_CLEANUP_ENABLED = "transcript_cleanup_enabled"
+
+    def resolve_transcript_cleanup_prompt(settings=None):
+        return config.TRANSCRIPT_CLEANUP_PROMPT
+
+    def resolve_transcript_cleanup_provider(settings=None):
+        return config.TRANSCRIPT_CLEANUP_PROVIDER
+
+    def resolve_transcript_cleanup_model(settings=None):
+        return config.TRANSCRIPT_CLEANUP_MODEL
+
+    def resolve_transcript_cleanup_reasoning(settings=None):
+        return config.TRANSCRIPT_CLEANUP_REASONING
 
 from ui_qt.overlay_state import OverlayState
 
@@ -35,6 +56,7 @@ class TranscriptionRuntime:
 
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
+        self._transcript_cleanup = TranscriptCleanup()
 
     def start_recording(self) -> None:
         """Start audio recording."""
@@ -195,6 +217,37 @@ class TranscriptionRuntime:
             logger.error(f"Failed to process uploaded audio: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
+    def _maybe_cleanup_transcript(self, raw: str) -> tuple[str, Optional[str]]:
+        """Optionally clean up ASR text; return (fixed, raw_or_none)."""
+        settings = settings_manager.load_all_settings()
+        enabled = settings.get(
+            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
+            config.TRANSCRIPT_CLEANUP_ENABLED,
+        )
+        if not enabled or not raw or not raw.strip():
+            return raw, None
+
+        # Re-apply provider/model each run so Settings changes take effect
+        # without restarting (a provider switch rebuilds the client).
+        self._transcript_cleanup.configure(
+            resolve_transcript_cleanup_provider(settings),
+            resolve_transcript_cleanup_model(settings),
+            resolve_transcript_cleanup_reasoning(settings),
+        )
+        if not self._transcript_cleanup.is_available():
+            logger.warning(
+                "Transcript cleanup enabled but unavailable; using raw text"
+            )
+            return raw, None
+
+        self.controller.overlay_state_update.emit(OverlayState.CLEANING)
+        self.controller.status_update.emit("Cleaning up...")
+        prompt = resolve_transcript_cleanup_prompt(settings)
+        fixed = self._transcript_cleanup.cleanup(raw, system_prompt=prompt)
+        if fixed != raw:
+            return fixed, raw
+        return fixed, None
+
     def transcribe_audio_file(self, audio_path: str) -> None:
         """Transcribe a single audio file in a background thread."""
         try:
@@ -203,8 +256,9 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
-            transcript = self.controller.current_backend.transcribe(audio_path)
-            self.controller.transcription_completed.emit(transcript)
+            raw = self.controller.current_backend.transcribe(audio_path)
+            fixed, raw_text = self._maybe_cleanup_transcript(raw)
+            self.controller.transcription_completed.emit(fixed, raw_text)
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -230,7 +284,7 @@ class TranscriptionRuntime:
                 self.controller.status_update.emit(
                     f"Transcribing {len(chunk_files)} chunks..."
                 )
-                transcript = self.controller.current_backend.transcribe_chunks(
+                raw = self.controller.current_backend.transcribe_chunks(
                     chunk_files
                 )
             else:
@@ -243,9 +297,10 @@ class TranscriptionRuntime:
                     transcripts.append(
                         self.controller.current_backend.transcribe(chunk_file)
                     )
-                transcript = audio_processor.combine_transcriptions(transcripts)
+                raw = audio_processor.combine_transcriptions(transcripts)
 
-            self.controller.transcription_completed.emit(transcript)
+            fixed, raw_text = self._maybe_cleanup_transcript(raw)
+            self.controller.transcription_completed.emit(fixed, raw_text)
         except Exception as exc:
             logger.error(f"Large audio transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -257,9 +312,11 @@ class TranscriptionRuntime:
                     f"Failed to cleanup temp files: {cleanup_error}"
                 )
 
-    def on_transcription_complete(self, transcript: str) -> None:
+    def on_transcription_complete(
+        self, transcript: str, raw_text: Optional[str] = None
+    ) -> None:
         """Handle transcription completion."""
-        self.controller.ui_controller.set_transcript(transcript)
+        self.controller.ui_controller.set_transcript(transcript, raw=raw_text)
         self.controller.ui_controller.set_status("Transcription complete!")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
 
@@ -289,6 +346,7 @@ class TranscriptionRuntime:
                 transcription_time=transcription_time,
                 audio_duration=self.controller._pending_audio_duration,
                 file_size=self.controller._pending_file_size,
+                raw_text=raw_text,
             )
             self.controller.ui_controller.refresh_history()
             logger.info("Transcription saved to history")

@@ -19,7 +19,7 @@ from services.models import (
 logger = logging.getLogger(__name__)
 
 # Schema version for future migrations
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 class DatabaseManager:
@@ -94,7 +94,7 @@ class DatabaseManager:
     def _drop_removed_meeting_tables(self) -> None:
         """Drop meeting-mode tables that may exist from older app versions.
 
-        Safe to remove once schema v8 ships and all users have migrated past v7.
+        Safe to remove once schema v9 ships and all users have migrated past v8.
         Track removal target: 2026-12-01.
         """
         with self.engine.begin() as conn:
@@ -149,6 +149,33 @@ class DatabaseManager:
                 logger.info("Migration v6->v7: Removed meeting mode tables")
             except Exception as e:
                 logger.error(f"Migration v6->v7 failed: {e}")
+                raise
+
+        if from_version < 8:
+            try:
+                table_exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='transcription_history'"
+                    )
+                ).fetchone()
+                if table_exists:
+                    columns = {
+                        row[1]
+                        for row in conn.execute(
+                            text("PRAGMA table_info(transcription_history)")
+                        ).fetchall()
+                    }
+                    if "raw_text" not in columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE transcription_history "
+                                "ADD COLUMN raw_text TEXT"
+                            )
+                        )
+                logger.info("Migration v7->v8: Added raw_text to transcription_history")
+            except Exception as e:
+                logger.error(f"Migration v7->v8 failed: {e}")
                 raise
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
@@ -210,10 +237,12 @@ class DatabaseManager:
         transcription_time: Optional[float] = None,
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None,
+        raw_text: Optional[str] = None,
     ) -> None:
         with self.get_session() as session:
             session.add(TranscriptionHistory(
-                id=entry_id, text=text, timestamp=timestamp, model=model,
+                id=entry_id, text=text, raw_text=raw_text,
+                timestamp=timestamp, model=model,
                 audio_file=audio_file, transcription_time=transcription_time,
                 audio_duration=audio_duration, file_size=file_size,
             ))
