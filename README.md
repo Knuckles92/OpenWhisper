@@ -27,6 +27,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 ## Features
 
 - **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
+- **Model Manager** – Browse, download, and activate local models; click any model tile for an offline technical profile with origin, specifications, guidance, limitations, and source links
 - **API Options** – OpenAI Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
 - **Auto-paste** – Transcription automatically pastes to your active window

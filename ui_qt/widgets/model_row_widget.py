@@ -10,7 +10,13 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+)
 
 from services.hf_access import (
     CachedModelInfo,
@@ -35,6 +41,10 @@ _ROW_STYLE = """
     QFrame#modelRow:hover {
         background-color: rgba(58, 58, 60, 0.65);
         border: 1px solid rgba(10, 132, 255, 0.28);
+    }
+    QFrame#modelRow:focus {
+        border: 1px solid rgba(10, 132, 255, 0.65);
+        outline: none;
     }
     QFrame#modelRow[active="true"] {
         background-color: rgba(10, 132, 255, 0.12);
@@ -143,6 +153,7 @@ class ModelRowWidget(QFrame):
     download_clicked = pyqtSignal(str)
     delete_clicked = pyqtSignal(str)
     set_active_clicked = pyqtSignal(str)
+    details_requested = pyqtSignal(str)
 
     def __init__(self, model_name: str, parent=None):
         """Initialize the row for one catalog model.
@@ -159,6 +170,13 @@ class ModelRowWidget(QFrame):
 
         self.setObjectName("modelRow")
         self.setStyleSheet(_ROW_STYLE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Click to view technical details")
+        self.setAccessibleName(f"{model_name} model")
+        self.setAccessibleDescription(
+            "Open technical details. Model management actions are separate."
+        )
         self._setup_ui()
 
     def _setup_ui(self):
@@ -337,3 +355,34 @@ class ModelRowWidget(QFrame):
             text: Lowercased substring to match against name and repo ID.
         """
         return text in self.model_name.lower() or text in self.repo_id.lower()
+
+    @staticmethod
+    def _is_action_child(widget) -> bool:
+        """Return whether a clicked descendant is one of the row buttons."""
+        while widget is not None:
+            if isinstance(widget, QAbstractButton):
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Request details when the tile body is clicked."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if not self._is_action_child(child):
+                self.details_requested.emit(self.model_name)
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        """Open details from the keyboard when the tile has focus."""
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Space,
+        ):
+            self.details_requested.emit(self.model_name)
+            event.accept()
+            return
+        super().keyPressEvent(event)

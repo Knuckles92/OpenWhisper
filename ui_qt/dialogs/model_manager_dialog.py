@@ -35,12 +35,14 @@ from services.hf_access import (
     resolve_model_repo,
     scan_cached_models,
 )
+from services.model_catalog import get_model_details
 from services.settings import (
     SettingsKey,
     is_hf_hub_offline_env_set,
     settings_manager,
 )
 from ui_qt.widgets import Button
+from ui_qt.dialogs.model_details_dialog import ModelDetailsDialog
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 logger = logging.getLogger(__name__)
@@ -198,6 +200,7 @@ class ModelManagerDialog(QDialog):
             row.download_clicked.connect(self._on_download_clicked)
             row.delete_clicked.connect(self._on_delete_clicked)
             row.set_active_clicked.connect(self._on_set_active_clicked)
+            row.details_requested.connect(self._on_details_requested)
             self.rows[model_name] = row
             self.list_layout.addWidget(row)
 
@@ -262,6 +265,12 @@ class ModelManagerDialog(QDialog):
         if self.on_set_active_requested:
             self.on_set_active_requested(model_name)
         self.refresh()
+
+    def _on_details_requested(self, model_name: str) -> None:
+        """Open the bundled technical profile for a selected model."""
+        details = get_model_details(model_name)
+        dialog = ModelDetailsDialog(details, parent=self)
+        dialog.exec()
 
     def _on_open_cache_folder(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(get_hf_cache_dir()))
