@@ -3,6 +3,7 @@ Post-ASR transcript cleanup via OpenAI or OpenRouter chat models.
 """
 import logging
 import os
+from dataclasses import dataclass
 from typing import List, Optional
 
 from openai import OpenAI
@@ -10,6 +11,7 @@ from openai import OpenAI
 from config import config
 try:
     from services.settings import (
+        TranscriptCleanupModelSort,
         TranscriptCleanupProvider,
         TranscriptCleanupReasoning,
         default_transcript_cleanup_model,
@@ -19,6 +21,10 @@ except ImportError:  # pragma: no cover - supports lightweight test stubs
         OPENAI = "openai"
         OPENROUTER = "openrouter"
         ALL = (OPENAI, OPENROUTER)
+
+    class TranscriptCleanupModelSort:
+        ALPHABETICAL = "alphabetical"
+        ALL = (ALPHABETICAL,)
 
     class TranscriptCleanupReasoning:
         OFF = "off"
@@ -53,6 +59,14 @@ _OPENAI_NON_CHAT_MARKERS = (
     "audio", "realtime", "tts", "whisper", "embedding", "moderation",
     "dall-e", "transcribe", "image", "search", "instruct",
 )
+
+
+@dataclass(frozen=True)
+class CleanupInfo:
+    """Provider/model that produced a cleaned transcript."""
+
+    provider: str
+    model: str
 
 
 def provider_env_key(provider: str) -> str:
@@ -120,16 +134,24 @@ def _filter_openai_chat_models(model_ids: List[str]) -> List[str]:
     return filtered
 
 
-def list_cleanup_models(provider: str, api_key: Optional[str] = None) -> List[str]:
+def list_cleanup_models(
+    provider: str,
+    api_key: Optional[str] = None,
+    sort: Optional[str] = None,
+) -> List[str]:
     """Fetch the provider's available chat model ids live from its API.
 
     Args:
         provider: A ``TranscriptCleanupProvider`` value.
         api_key: Optional explicit API key. Looked up from the environment /
             .env file when omitted.
+        sort: Optional ``TranscriptCleanupModelSort`` value. OpenRouter
+            supports server-side ranking via its ``sort`` query parameter;
+            OpenAI does not, so anything but alphabetical is ignored there.
 
     Returns:
-        Sorted list of model id strings.
+        List of model id strings — server ranking order when an OpenRouter
+        sort is requested, alphabetical otherwise.
 
     Raises:
         RuntimeError: When no API key is available for the provider.
@@ -146,6 +168,17 @@ def list_cleanup_models(provider: str, api_key: Optional[str] = None) -> List[st
         default_headers=_provider_headers(provider),
         timeout=15.0,
     )
+    server_sort = (
+        provider == TranscriptCleanupProvider.OPENROUTER
+        and sort
+        and sort != TranscriptCleanupModelSort.ALPHABETICAL
+    )
+    if server_sort:
+        # Preserve OpenRouter's ranking; sorting here would discard it.
+        return [
+            model.id
+            for model in client.models.list(extra_query={"sort": sort})
+        ]
     model_ids = [model.id for model in client.models.list()]
     if provider == TranscriptCleanupProvider.OPENAI:
         model_ids = _filter_openai_chat_models(model_ids)
@@ -181,6 +214,9 @@ class TranscriptCleanup:
         )
         self.api_key = api_key or find_api_key(self.provider)
         self.client: Optional[OpenAI] = None
+        # None after a successful cleanup() run; reason string otherwise.
+        # Lets callers distinguish "cleanup ran, no changes" from "failed".
+        self.last_error: Optional[str] = "not run"
         self._initialize_client()
 
     def _initialize_client(self) -> None:
@@ -256,11 +292,14 @@ class TranscriptCleanup:
 
         Returns:
             Cleaned text, or the original text if cleanup is skipped or fails.
+            ``last_error`` is None afterwards only when cleanup succeeded.
         """
         if not text or not text.strip():
+            self.last_error = "empty input"
             return text
 
         if not self.is_available():
+            self.last_error = "cleanup unavailable"
             logger.warning("Transcript cleanup unavailable; returning raw text")
             return text
 
@@ -277,9 +316,12 @@ class TranscriptCleanup:
             )
             cleaned = (response.choices[0].message.content or "").strip()
             if not cleaned:
+                self.last_error = "empty response"
                 logger.warning("Transcript cleanup returned empty; using raw text")
                 return text
+            self.last_error = None
             return cleaned
         except Exception as exc:
+            self.last_error = str(exc)
             logger.warning("Transcript cleanup failed; using raw text: %s", exc)
             return text

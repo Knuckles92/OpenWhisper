@@ -143,7 +143,7 @@ class TestDatabaseManager:
             assert "meeting_insights" not in tables
             assert "meeting_chunks" not in tables
             assert "meetings" not in tables
-            assert version == 8
+            assert version == 9
         finally:
             manager.close()
 
@@ -209,7 +209,79 @@ class TestDatabaseManager:
                 ).scalar_one()
 
             assert "raw_text" in columns
-            assert version == SCHEMA_VERSION == 8
+            assert "cleanup_provider" in columns
+            assert "cleanup_model" in columns
+            assert version == SCHEMA_VERSION == 9
+        finally:
+            manager.close()
+
+    def test_history_cleanup_metadata_crud(self, temp_db):
+        """History entries can store the cleanup provider/model used."""
+        entry_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+
+        temp_db.add_history_entry(
+            entry_id=entry_id,
+            text="Fixed transcription.",
+            timestamp=timestamp,
+            model="local_whisper",
+            raw_text="um fixed transcription",
+            cleanup_provider="openai",
+            cleanup_model="gpt-4.1-mini",
+        )
+
+        entry = temp_db.get_history_entry_by_id(entry_id)
+        assert entry is not None
+        assert entry.cleanup_provider == "openai"
+        assert entry.cleanup_model == "gpt-4.1-mini"
+
+    def test_migration_adds_cleanup_columns(self, tmp_path):
+        """Verify schema v9 adds cleanup_provider/cleanup_model to a v8 DB."""
+        db_path = str(tmp_path / "legacy_v8.db")
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version(version) VALUES (8)")
+            conn.execute(
+                """
+                CREATE TABLE transcription_history (
+                    id TEXT PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    raw_text TEXT,
+                    timestamp TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    audio_file TEXT,
+                    transcription_time REAL,
+                    audio_duration REAL,
+                    file_size INTEGER
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        from services.database import DatabaseManager, SCHEMA_VERSION
+
+        manager = DatabaseManager(db_path=db_path)
+        try:
+            with manager.engine.connect() as connection:
+                columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        "PRAGMA table_info(transcription_history)"
+                    )
+                }
+                version = connection.exec_driver_sql(
+                    "SELECT version FROM schema_version"
+                ).scalar_one()
+
+            assert "cleanup_provider" in columns
+            assert "cleanup_model" in columns
+            assert version == SCHEMA_VERSION == 9
         finally:
             manager.close()
 

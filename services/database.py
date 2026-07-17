@@ -19,7 +19,7 @@ from services.models import (
 logger = logging.getLogger(__name__)
 
 # Schema version for future migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class DatabaseManager:
@@ -178,6 +178,37 @@ class DatabaseManager:
                 logger.error(f"Migration v7->v8 failed: {e}")
                 raise
 
+        if from_version < 9:
+            try:
+                table_exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='transcription_history'"
+                    )
+                ).fetchone()
+                if table_exists:
+                    columns = {
+                        row[1]
+                        for row in conn.execute(
+                            text("PRAGMA table_info(transcription_history)")
+                        ).fetchall()
+                    }
+                    for column in ("cleanup_provider", "cleanup_model"):
+                        if column not in columns:
+                            conn.execute(
+                                text(
+                                    "ALTER TABLE transcription_history "
+                                    f"ADD COLUMN {column} TEXT"
+                                )
+                            )
+                logger.info(
+                    "Migration v8->v9: Added cleanup_provider/cleanup_model "
+                    "to transcription_history"
+                )
+            except Exception as e:
+                logger.error(f"Migration v8->v9 failed: {e}")
+                raise
+
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
@@ -238,6 +269,8 @@ class DatabaseManager:
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None,
         raw_text: Optional[str] = None,
+        cleanup_provider: Optional[str] = None,
+        cleanup_model: Optional[str] = None,
     ) -> None:
         with self.get_session() as session:
             session.add(TranscriptionHistory(
@@ -245,6 +278,7 @@ class DatabaseManager:
                 timestamp=timestamp, model=model,
                 audio_file=audio_file, transcription_time=transcription_time,
                 audio_duration=audio_duration, file_size=file_size,
+                cleanup_provider=cleanup_provider, cleanup_model=cleanup_model,
             ))
 
     def get_history_entries(self, limit: Optional[int] = None) -> List[TranscriptionHistory]:

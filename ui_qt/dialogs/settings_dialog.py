@@ -8,8 +8,8 @@ import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QComboBox, QCheckBox, QSpinBox,
-    QSlider, QFrame, QScrollArea, QTextEdit,
+    QWidget, QLabel, QComboBox, QCheckBox, QCompleter,
+    QSpinBox, QSlider, QFrame, QScrollArea, QTextEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -19,11 +19,14 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     RecordingRetentionMode,
     SettingsKey,
+    TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
+    default_transcript_cleanup_model,
     resolve_max_saved_recordings,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
+    resolve_transcript_cleanup_model_sort,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -42,8 +45,9 @@ class SettingsDialog(QDialog):
 
     settings_changed = pyqtSignal(dict)
 
-    #: Internal: emitted from the model-list worker thread (provider, models, error).
-    _cleanup_models_loaded = pyqtSignal(str, list, str)
+    #: Internal: emitted from the model-list worker thread
+    #: (provider, sort, models, error).
+    _cleanup_models_loaded = pyqtSignal(str, str, list, str)
 
     def __init__(self, parent=None):
         """Initialize settings dialog."""
@@ -55,9 +59,13 @@ class SettingsDialog(QDialog):
         # Callbacks
         self.on_settings_save: Optional[Callable] = None
 
-        # Live-loaded cleanup model lists, keyed by provider.
+        # Live-loaded cleanup model lists, keyed by (provider, sort).
         self._cleanup_models_cache: dict = {}
         self._cleanup_models_loading = False
+        # Model text remembered per provider so switching providers never
+        # carries one provider's model id over to the other.
+        self._cleanup_model_by_provider: dict = {}
+        self._active_cleanup_provider: str = ""
 
         self._setup_ui()
         self._load_settings()
@@ -361,6 +369,52 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.cleanup_provider_combo)
 
+        # Model-list sort order (OpenRouter supports server-side ranking;
+        # OpenAI's models endpoint does not, so this row hides for OpenAI).
+        sort_row = QHBoxLayout()
+        sort_row.setSpacing(8)
+        self.cleanup_model_sort_label = QLabel("Sort models by:")
+        sort_row.addWidget(self.cleanup_model_sort_label)
+
+        self.cleanup_model_sort_combo = QComboBox()
+        self.cleanup_model_sort_combo.addItem(
+            "A → Z", TranscriptCleanupModelSort.ALPHABETICAL
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Most popular", TranscriptCleanupModelSort.MOST_POPULAR
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Top this week", TranscriptCleanupModelSort.TOP_WEEKLY
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Newest", TranscriptCleanupModelSort.NEWEST
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Cheapest first", TranscriptCleanupModelSort.PRICING_LOW_TO_HIGH
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Priciest first", TranscriptCleanupModelSort.PRICING_HIGH_TO_LOW
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Largest context", TranscriptCleanupModelSort.CONTEXT_HIGH_TO_LOW
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Highest throughput",
+            TranscriptCleanupModelSort.THROUGHPUT_HIGH_TO_LOW,
+        )
+        self.cleanup_model_sort_combo.addItem(
+            "Lowest latency", TranscriptCleanupModelSort.LATENCY_LOW_TO_HIGH
+        )
+        self.cleanup_model_sort_combo.setMinimumHeight(36)
+        self.cleanup_model_sort_combo.setToolTip(
+            "How the model dropdown is ordered (OpenRouter server-side ranking)"
+        )
+        self.cleanup_model_sort_combo.currentIndexChanged.connect(
+            self._on_cleanup_sort_changed
+        )
+        sort_row.addWidget(self.cleanup_model_sort_combo, stretch=1)
+        layout.addLayout(sort_row)
+
         # Model selection (live-loaded from the provider's API)
         self.cleanup_model_label = QLabel("Model:")
         layout.addWidget(self.cleanup_model_label)
@@ -371,6 +425,16 @@ class SettingsDialog(QDialog):
         self.cleanup_model_combo.setEditable(True)
         self.cleanup_model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.cleanup_model_combo.setMinimumHeight(36)
+        # Type-to-search: substring-filter the model list while typing.
+        # Sharing the combo's own model keeps the completer in sync when
+        # the list is repopulated after a fetch or provider switch.
+        completer = QCompleter(
+            self.cleanup_model_combo.model(), self.cleanup_model_combo
+        )
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.cleanup_model_combo.setCompleter(completer)
         model_row.addWidget(self.cleanup_model_combo, stretch=1)
 
         self.cleanup_model_refresh_btn = Button("Refresh")
@@ -613,6 +677,8 @@ class SettingsDialog(QDialog):
         for widget in (
             self.cleanup_provider_label,
             self.cleanup_provider_combo,
+            self.cleanup_model_sort_label,
+            self.cleanup_model_sort_combo,
             self.cleanup_model_label,
             self.cleanup_model_combo,
             self.cleanup_model_refresh_btn,
@@ -639,30 +705,62 @@ class SettingsDialog(QDialog):
             or TranscriptCleanupProvider.OPENAI
         )
 
+    def _current_cleanup_sort(self) -> str:
+        """Return the model-list sort for the current provider selection.
+
+        OpenAI's models endpoint has no server-side sort, so anything but
+        OpenRouter always resolves to alphabetical.
+        """
+        if (
+            self._current_cleanup_provider()
+            != TranscriptCleanupProvider.OPENROUTER
+        ):
+            return TranscriptCleanupModelSort.ALPHABETICAL
+        return (
+            self.cleanup_model_sort_combo.currentData()
+            or TranscriptCleanupModelSort.ALPHABETICAL
+        )
+
+    def _update_cleanup_sort_visibility(self):
+        """Show the sort selector only for OpenRouter."""
+        is_openrouter = (
+            self._current_cleanup_provider()
+            == TranscriptCleanupProvider.OPENROUTER
+        )
+        self.cleanup_model_sort_label.setVisible(is_openrouter)
+        self.cleanup_model_sort_combo.setVisible(is_openrouter)
+
     def _on_tab_changed(self, index: int):
         """Lazily fetch the model list the first time the Cleanup tab opens."""
         if index != self._cleanup_tab_index:
             return
         provider = self._current_cleanup_provider()
-        if provider not in self._cleanup_models_cache:
+        sort = self._current_cleanup_sort()
+        if (provider, sort) not in self._cleanup_models_cache:
             self._fetch_cleanup_models()
 
     def _on_cleanup_provider_changed(self):
-        """Swap the default model and reload the list for the new provider."""
+        """Swap to the new provider's remembered model and reload the list."""
         provider = self._current_cleanup_provider()
+        self._update_cleanup_sort_visibility()
+        # Remember the outgoing provider's model and restore the incoming
+        # provider's last one — model ids are provider-specific, so text
+        # must never carry over between providers.
         current = self.cleanup_model_combo.currentText().strip()
-        # Only replace the model text if the user hasn't customized it
-        # (i.e. it is empty or the other provider's default).
-        defaults = {
-            config.TRANSCRIPT_CLEANUP_MODEL,
-            config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
-        }
-        if not current or current in defaults:
-            self.cleanup_model_combo.setCurrentText(
-                resolve_transcript_cleanup_model(
-                    {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider}
-                )
-            )
+        if self._active_cleanup_provider and current:
+            self._cleanup_model_by_provider[self._active_cleanup_provider] = current
+        self._active_cleanup_provider = provider
+        self.cleanup_model_combo.setCurrentText(
+            self._cleanup_model_by_provider.get(provider)
+            or default_transcript_cleanup_model(provider)
+        )
+        # Drop the previous provider's items immediately so a slow or failed
+        # fetch never leaves the other provider's model list in the combo.
+        self._populate_cleanup_models(provider, self._current_cleanup_sort())
+        self._fetch_cleanup_models()
+
+    def _on_cleanup_sort_changed(self):
+        """Reload the model list in the newly selected order."""
         self._fetch_cleanup_models()
 
     def _fetch_cleanup_models(self, force: bool = False):
@@ -672,8 +770,13 @@ class SettingsDialog(QDialog):
             force: Bypass the in-dialog cache and hit the API again.
         """
         provider = self._current_cleanup_provider()
-        if not force and provider in self._cleanup_models_cache:
-            self._populate_cleanup_models(provider)
+        sort = self._current_cleanup_sort()
+        if not force and (provider, sort) in self._cleanup_models_cache:
+            self.cleanup_models_status.setText(
+                f"{len(self._cleanup_models_cache[(provider, sort)])} "
+                "models available"
+            )
+            self._populate_cleanup_models(provider, sort)
             return
         if self._cleanup_models_loading:
             return
@@ -686,13 +789,13 @@ class SettingsDialog(QDialog):
             try:
                 from services.transcript_cleanup import list_cleanup_models
 
-                models = list_cleanup_models(provider)
+                models = list_cleanup_models(provider, sort=sort)
                 error = ""
             except Exception as exc:
                 models = []
                 error = str(exc)
             try:
-                self._cleanup_models_loaded.emit(provider, models, error)
+                self._cleanup_models_loaded.emit(provider, sort, models, error)
             except RuntimeError:
                 pass  # Dialog was closed before the fetch finished.
 
@@ -700,34 +803,39 @@ class SettingsDialog(QDialog):
             target=worker, name="cleanup-models-fetch", daemon=True
         ).start()
 
-    def _on_cleanup_models_loaded(self, provider: str, models: list, error: str):
+    def _on_cleanup_models_loaded(
+        self, provider: str, sort: str, models: list, error: str
+    ):
         """Apply a finished model-list fetch on the main thread."""
         self._cleanup_models_loading = False
         self.cleanup_model_refresh_btn.setEnabled(
             self.transcript_cleanup_check.isChecked()
         )
         if not error:
-            self._cleanup_models_cache[provider] = models
-        if provider != self._current_cleanup_provider():
-            return  # Provider changed mid-fetch; ignore the stale result.
+            self._cleanup_models_cache[(provider, sort)] = models
+        if (provider, sort) != (
+            self._current_cleanup_provider(),
+            self._current_cleanup_sort(),
+        ):
+            # Selection changed mid-fetch; the switch's own fetch was skipped
+            # by the loading guard, so start it now for the current selection.
+            self._fetch_cleanup_models()
+            return
         if error:
             self.cleanup_models_status.setText(f"Couldn't load models: {error}")
             return
         self.cleanup_models_status.setText(f"{len(models)} models available")
-        self._populate_cleanup_models(provider)
+        self._populate_cleanup_models(provider, sort)
 
-    def _populate_cleanup_models(self, provider: str):
+    def _populate_cleanup_models(self, provider: str, sort: str):
         """Fill the model combo from the cache, preserving the current text."""
-        models = self._cleanup_models_cache.get(provider, [])
+        models = self._cleanup_models_cache.get((provider, sort), [])
         current = self.cleanup_model_combo.currentText().strip()
         self.cleanup_model_combo.blockSignals(True)
         self.cleanup_model_combo.clear()
         self.cleanup_model_combo.addItems(models)
         self.cleanup_model_combo.setCurrentText(
-            current
-            or resolve_transcript_cleanup_model(
-                {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider}
-            )
+            current or default_transcript_cleanup_model(provider)
         )
         self.cleanup_model_combo.blockSignals(False)
 
@@ -791,14 +899,30 @@ class SettingsDialog(QDialog):
             # Cleanup provider / model / thinking level. Signals stay blocked
             # so loading never triggers a network fetch; that happens lazily
             # when the Cleanup tab is opened.
-            provider_index = self.cleanup_provider_combo.findData(
-                resolve_transcript_cleanup_provider(settings)
-            )
+            saved_provider = resolve_transcript_cleanup_provider(settings)
+            provider_index = self.cleanup_provider_combo.findData(saved_provider)
             self.cleanup_provider_combo.blockSignals(True)
             self.cleanup_provider_combo.setCurrentIndex(max(0, provider_index))
             self.cleanup_provider_combo.blockSignals(False)
-            self.cleanup_model_combo.setCurrentText(
+            sort_index = self.cleanup_model_sort_combo.findData(
+                resolve_transcript_cleanup_model_sort(settings)
+            )
+            self.cleanup_model_sort_combo.blockSignals(True)
+            self.cleanup_model_sort_combo.setCurrentIndex(max(0, sort_index))
+            self.cleanup_model_sort_combo.blockSignals(False)
+            self._update_cleanup_sort_visibility()
+            # Only one model is persisted and it belongs to the saved
+            # provider; the other provider starts from its default.
+            self._cleanup_model_by_provider = {
+                provider: default_transcript_cleanup_model(provider)
+                for provider in TranscriptCleanupProvider.ALL
+            }
+            self._cleanup_model_by_provider[saved_provider] = (
                 resolve_transcript_cleanup_model(settings)
+            )
+            self._active_cleanup_provider = saved_provider
+            self.cleanup_model_combo.setCurrentText(
+                self._cleanup_model_by_provider[saved_provider]
             )
             reasoning_index = self.cleanup_reasoning_combo.findData(
                 resolve_transcript_cleanup_reasoning(settings)
@@ -882,6 +1006,15 @@ class SettingsDialog(QDialog):
             self.cleanup_provider_combo.blockSignals(True)
             self.cleanup_provider_combo.setCurrentIndex(0)
             self.cleanup_provider_combo.blockSignals(False)
+            self.cleanup_model_sort_combo.blockSignals(True)
+            self.cleanup_model_sort_combo.setCurrentIndex(0)
+            self.cleanup_model_sort_combo.blockSignals(False)
+            self._update_cleanup_sort_visibility()
+            self._cleanup_model_by_provider = {
+                provider: default_transcript_cleanup_model(provider)
+                for provider in TranscriptCleanupProvider.ALL
+            }
+            self._active_cleanup_provider = self._current_cleanup_provider()
             self.cleanup_model_combo.setCurrentText(config.TRANSCRIPT_CLEANUP_MODEL)
             self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()
@@ -960,6 +1093,10 @@ class SettingsDialog(QDialog):
                 or resolve_transcript_cleanup_model(
                     {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: cleanup_provider}
                 )
+            )
+            settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT] = (
+                self.cleanup_model_sort_combo.currentData()
+                or config.TRANSCRIPT_CLEANUP_MODEL_SORT
             )
             settings[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] = (
                 self.cleanup_reasoning_combo.currentData()

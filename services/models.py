@@ -48,6 +48,9 @@ class TranscriptionHistory(Base):
     transcription_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Set only when post-ASR cleanup ran successfully on this entry.
+    cleanup_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    cleanup_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
@@ -65,6 +68,8 @@ class TranscriptionHistory(Base):
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None,
         raw_text: Optional[str] = None,
+        cleanup_provider: Optional[str] = None,
+        cleanup_model: Optional[str] = None,
     ) -> 'TranscriptionHistory':
         """Create a new entry with auto-generated id and timestamp."""
         return cls(
@@ -77,6 +82,8 @@ class TranscriptionHistory(Base):
             transcription_time=transcription_time,
             audio_duration=audio_duration,
             file_size=file_size,
+            cleanup_provider=cleanup_provider,
+            cleanup_model=cleanup_model,
         )
 
     # -- Display helpers (ported from HistoryEntry dataclass) -------------

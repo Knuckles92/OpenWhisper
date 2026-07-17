@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 class ApplicationController(QObject):
     """Main application controller integrating UI and logic."""
 
-    transcription_completed = pyqtSignal(str, object)  # fixed text, optional raw_text
+    # fixed text, optional raw_text, optional CleanupInfo
+    transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)
@@ -638,8 +639,12 @@ class ApplicationController(QObject):
             self.ui_controller.main_window.is_recording = is_recording
             self.ui_controller.main_window._update_recording_state()
 
-    def _on_transcription_complete(self, transcript: str, raw_text=None) -> None:
-        self.transcription_runtime.on_transcription_complete(transcript, raw_text)
+    def _on_transcription_complete(
+        self, transcript: str, raw_text=None, cleanup_info=None
+    ) -> None:
+        self.transcription_runtime.on_transcription_complete(
+            transcript, raw_text, cleanup_info
+        )
 
     def _on_transcription_error(self, error_message: str) -> None:
         self.transcription_runtime.on_transcription_error(error_message)

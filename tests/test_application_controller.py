@@ -861,6 +861,8 @@ class TestApplicationController(unittest.TestCase):
         entry = self.history_manager.entries[0]
         self.assertEqual(entry["text"], "Cleaned text.")
         self.assertEqual(entry["raw_text"], "um cleaned text")
+        self.assertEqual(entry["cleanup_provider"], "openai")
+        self.assertTrue(entry["cleanup_model"])
 
     def test_transcribe_audio_file_skips_cleanup_when_disabled(self):
         controller = self._create_controller()
@@ -881,6 +883,8 @@ class TestApplicationController(unittest.TestCase):
         entry = self.history_manager.entries[0]
         self.assertEqual(entry["text"], "raw only")
         self.assertIsNone(entry.get("raw_text"))
+        self.assertIsNone(entry.get("cleanup_provider"))
+        self.assertIsNone(entry.get("cleanup_model"))
 
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()

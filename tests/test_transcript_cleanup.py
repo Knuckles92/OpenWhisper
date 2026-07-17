@@ -71,6 +71,32 @@ class TestTranscriptCleanup(unittest.TestCase):
 
         self.assertEqual(cleaner.cleanup("keep me"), "keep me")
 
+    def test_last_error_tracks_run_outcome(self):
+        cleaner = TranscriptCleanup(api_key="test-key")
+        self.assertIsNotNone(cleaner.last_error)  # no run yet
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Cleaned."))]
+        )
+        cleaner.client = mock_client
+        cleaner.cleanup("raw text")
+        self.assertIsNone(cleaner.last_error)
+
+        mock_client.chat.completions.create.side_effect = TimeoutError("timed out")
+        cleaner.cleanup("raw text")
+        self.assertIsNotNone(cleaner.last_error)
+
+    def test_last_error_set_when_unavailable_or_empty(self):
+        cleaner = TranscriptCleanup(api_key="test-key")
+        cleaner.client = None
+        cleaner.api_key = None
+        cleaner.cleanup("hello")
+        self.assertIsNotNone(cleaner.last_error)
+
+        cleaner.cleanup("")
+        self.assertIsNotNone(cleaner.last_error)
+
 
 class TestTranscriptCleanupProviders(unittest.TestCase):
     """Provider, model, and reasoning configuration."""

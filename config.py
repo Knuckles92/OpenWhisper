@@ -142,6 +142,9 @@ class AppConfig:
     TRANSCRIPT_CLEANUP_PROVIDER: str = "openai"
     TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"  # default for OpenAI
     TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    # Model-list ordering in the Cleanup settings tab. "alphabetical" sorts
+    # client-side; other values are OpenRouter /models sort params.
+    TRANSCRIPT_CLEANUP_MODEL_SORT: str = "alphabetical"
     TRANSCRIPT_CLEANUP_REASONING: str = "off"  # off | low | medium | high
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     TRANSCRIPT_CLEANUP_PROMPT: str = (

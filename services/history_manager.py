@@ -93,6 +93,8 @@ class HistoryManager:
         audio_duration: Optional[float] = None,
         file_size: Optional[int] = None,
         raw_text: Optional[str] = None,
+        cleanup_provider: Optional[str] = None,
+        cleanup_model: Optional[str] = None,
     ) -> HistoryEntry:
         """Add a new transcription to history.
 
@@ -104,6 +106,8 @@ class HistoryManager:
             audio_duration: Duration of the audio in seconds.
             file_size: Size of the audio file in bytes.
             raw_text: Unprocessed ASR text when distinct from ``text``.
+            cleanup_provider: Cleanup API provider when cleanup ran.
+            cleanup_model: Cleanup chat model id when cleanup ran.
 
         Returns:
             The created HistoryEntry.
@@ -123,6 +127,8 @@ class HistoryManager:
             audio_duration=audio_duration,
             file_size=file_size,
             raw_text=raw_text,
+            cleanup_provider=cleanup_provider,
+            cleanup_model=cleanup_model,
         )
 
         # Save to database
@@ -136,6 +142,8 @@ class HistoryManager:
             audio_duration=entry.audio_duration,
             file_size=entry.file_size,
             raw_text=entry.raw_text,
+            cleanup_provider=entry.cleanup_provider,
+            cleanup_model=entry.cleanup_model,
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")

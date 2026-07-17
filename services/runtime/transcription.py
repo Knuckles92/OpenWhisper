@@ -13,7 +13,7 @@ from config import config
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
-from services.transcript_cleanup import TranscriptCleanup
+from services.transcript_cleanup import CleanupInfo, TranscriptCleanup
 try:
     from services.settings import (
         SettingsKey,
@@ -217,15 +217,23 @@ class TranscriptionRuntime:
             logger.error(f"Failed to process uploaded audio: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
-    def _maybe_cleanup_transcript(self, raw: str) -> tuple[str, Optional[str]]:
-        """Optionally clean up ASR text; return (fixed, raw_or_none)."""
+    def _maybe_cleanup_transcript(
+        self, raw: str
+    ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
+        """Optionally clean up ASR text.
+
+        Returns:
+            Tuple of (fixed text, raw text when it differs from fixed, and
+            the CleanupInfo of the run when cleanup actually happened —
+            None when cleanup was disabled, unavailable, or failed).
+        """
         settings = settings_manager.load_all_settings()
         enabled = settings.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
             config.TRANSCRIPT_CLEANUP_ENABLED,
         )
         if not enabled or not raw or not raw.strip():
-            return raw, None
+            return raw, None, None
 
         # Re-apply provider/model each run so Settings changes take effect
         # without restarting (a provider switch rebuilds the client).
@@ -238,15 +246,26 @@ class TranscriptionRuntime:
             logger.warning(
                 "Transcript cleanup enabled but unavailable; using raw text"
             )
-            return raw, None
+            return raw, None, None
 
         self.controller.overlay_state_update.emit(OverlayState.CLEANING)
         self.controller.status_update.emit("Cleaning up...")
         prompt = resolve_transcript_cleanup_prompt(settings)
         fixed = self._transcript_cleanup.cleanup(raw, system_prompt=prompt)
+        # A changed transcript also proves cleanup ran, covering stubs that
+        # bypass the real cleanup() and never touch last_error.
+        cleaned = self._transcript_cleanup.last_error is None or fixed != raw
+        info = (
+            CleanupInfo(
+                provider=self._transcript_cleanup.provider,
+                model=self._transcript_cleanup.model,
+            )
+            if cleaned
+            else None
+        )
         if fixed != raw:
-            return fixed, raw
-        return fixed, None
+            return fixed, raw, info
+        return fixed, None, info
 
     def transcribe_audio_file(self, audio_path: str) -> None:
         """Transcribe a single audio file in a background thread."""
@@ -257,8 +276,8 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
             raw = self.controller.current_backend.transcribe(audio_path)
-            fixed, raw_text = self._maybe_cleanup_transcript(raw)
-            self.controller.transcription_completed.emit(fixed, raw_text)
+            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -299,8 +318,8 @@ class TranscriptionRuntime:
                     )
                 raw = audio_processor.combine_transcriptions(transcripts)
 
-            fixed, raw_text = self._maybe_cleanup_transcript(raw)
-            self.controller.transcription_completed.emit(fixed, raw_text)
+            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Large audio transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
@@ -313,7 +332,10 @@ class TranscriptionRuntime:
                 )
 
     def on_transcription_complete(
-        self, transcript: str, raw_text: Optional[str] = None
+        self,
+        transcript: str,
+        raw_text: Optional[str] = None,
+        cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
         """Handle transcription completion."""
         self.controller.ui_controller.set_transcript(transcript, raw=raw_text)
@@ -347,6 +369,8 @@ class TranscriptionRuntime:
                 audio_duration=self.controller._pending_audio_duration,
                 file_size=self.controller._pending_file_size,
                 raw_text=raw_text,
+                cleanup_provider=cleanup_info.provider if cleanup_info else None,
+                cleanup_model=cleanup_info.model if cleanup_info else None,
             )
             self.controller.ui_controller.refresh_history()
             logger.info("Transcription saved to history")

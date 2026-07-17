@@ -65,6 +65,11 @@ _MODEL_DISPLAY_NAMES = {
     'api_gpt4o_mini': 'GPT-4o Mini',
 }
 
+_CLEANUP_PROVIDER_DISPLAY_NAMES = {
+    'openai': 'OpenAI',
+    'openrouter': 'OpenRouter',
+}
+
 
 def _format_model_name(model: str) -> str:
     """Format a backend model identifier for compact display.
@@ -77,6 +82,25 @@ def _format_model_name(model: str) -> str:
     name = _MODEL_DISPLAY_NAMES.get(base, base)
     detail = detail.rstrip(')').split('|')[0].strip()
     return f"{name} · {detail}" if detail else name
+
+
+def _format_cleanup_info(entry: HistoryEntry) -> str:
+    """Format an entry's cleanup provider/model for display.
+
+    Entries written before the cleanup columns existed may carry raw_text
+    without provider/model — report those as plain "Cleaned".
+    """
+    if not entry.cleanup_model:
+        return "Cleaned"
+    provider = _CLEANUP_PROVIDER_DISPLAY_NAMES.get(
+        entry.cleanup_provider, entry.cleanup_provider or ""
+    )
+    return f"{provider} · {entry.cleanup_model}" if provider else entry.cleanup_model
+
+
+def _entry_was_cleaned(entry: HistoryEntry) -> bool:
+    """Whether post-ASR cleanup ran on this entry (incl. legacy entries)."""
+    return bool(entry.cleanup_model or entry.raw_text)
 
 
 class HistoryItemWidget(QFrame):
@@ -157,6 +181,33 @@ class HistoryItemWidget(QFrame):
 
         layout.addLayout(top_row)
 
+        # Cleanup chip on its own row — the top row is already full, and the
+        # provider/model string is too long to share it.
+        if _entry_was_cleaned(self.entry):
+            cleanup_chip = QLabel()
+            cleanup_chip.setObjectName("historyCleanupChip")
+            cleanup_chip.setFont(QFont("Segoe UI", 9))
+            cleanup_chip.setFixedHeight(20)
+            chip_text = f"✦ {_format_cleanup_info(self.entry)}"
+            cleanup_chip.setText(
+                cleanup_chip.fontMetrics().elidedText(
+                    chip_text, Qt.TextElideMode.ElideRight, 280
+                )
+            )
+            if self.entry.cleanup_model:
+                cleanup_chip.setToolTip(
+                    f"Transcript cleaned with {_format_cleanup_info(self.entry)}"
+                )
+            else:
+                cleanup_chip.setToolTip(
+                    "Transcript was cleaned (model not recorded)"
+                )
+            cleanup_row = QHBoxLayout()
+            cleanup_row.setContentsMargins(0, 0, 0, 0)
+            cleanup_row.addWidget(cleanup_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+            cleanup_row.addStretch()
+            layout.addLayout(cleanup_row)
+
         # Preview text is already truncated by HistoryEntry.preview_text, so
         # let it size naturally — a hard maxHeight was clipping glyphs mid-line
         # and making the footer button look like it was cutting the text off.
@@ -226,6 +277,15 @@ class HistoryItemWidget(QFrame):
                 font-size: 10px;
                 font-weight: 600;
             }
+            QLabel#historyCleanupChip {
+                background-color: rgba(191, 90, 242, 0.12);
+                color: #d29bf5;
+                border: 1px solid rgba(191, 90, 242, 0.25);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
             QLabel#historyPreview {
                 color: #e5e5e7;
                 background-color: transparent;
@@ -256,6 +316,12 @@ class HistoryItemWidget(QFrame):
         # Model info (non-clickable, full detail including device)
         model_action = menu.addAction(f"Model: {self.entry.model}")
         model_action.setEnabled(False)
+
+        if _entry_was_cleaned(self.entry):
+            cleanup_action = menu.addAction(
+                f"Cleanup: {_format_cleanup_info(self.entry)}"
+            )
+            cleanup_action.setEnabled(False)
 
         menu.addSeparator()
 
@@ -766,6 +832,8 @@ class HistorySidebar(QWidget):
                         "model": entry.model,
                         "text": entry.text,
                         "raw_text": entry.raw_text,
+                        "cleanup_provider": entry.cleanup_provider,
+                        "cleanup_model": entry.cleanup_model,
                         "audio_file": entry.audio_file,
                         "transcription_time": entry.transcription_time,
                         "audio_duration": entry.audio_duration,
@@ -779,6 +847,8 @@ class HistorySidebar(QWidget):
                 with open(file_path, "w", encoding="utf-8") as f:
                     for entry in entries:
                         f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
+                        if _entry_was_cleaned(entry):
+                            f.write(f"Cleanup: {_format_cleanup_info(entry)}\n")
                         f.write(f"{entry.text}\n")
                         if entry.raw_text:
                             f.write(f"\nRaw:\n{entry.raw_text}\n")

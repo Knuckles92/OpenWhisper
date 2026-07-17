@@ -28,6 +28,7 @@ class SettingsKey:
     TRANSCRIPT_CLEANUP_PROMPT: Final[str] = "transcript_cleanup_prompt"
     TRANSCRIPT_CLEANUP_PROVIDER: Final[str] = "transcript_cleanup_provider"
     TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
+    TRANSCRIPT_CLEANUP_MODEL_SORT: Final[str] = "transcript_cleanup_model_sort"
     TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
@@ -60,6 +61,37 @@ class TranscriptCleanupProvider:
     OPENROUTER: Final[str] = "openrouter"
 
     ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER)
+
+
+class TranscriptCleanupModelSort:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT``.
+
+    "alphabetical" sorts the fetched model list client-side (A-Z). Every
+    other value maps directly to the OpenRouter ``GET /models`` ``sort``
+    query parameter and preserves the server's ranking. OpenAI's models
+    endpoint has no server-side sort, so OpenAI always uses alphabetical.
+    """
+    ALPHABETICAL: Final[str] = "alphabetical"
+    MOST_POPULAR: Final[str] = "most-popular"
+    TOP_WEEKLY: Final[str] = "top-weekly"
+    NEWEST: Final[str] = "newest"
+    PRICING_LOW_TO_HIGH: Final[str] = "pricing-low-to-high"
+    PRICING_HIGH_TO_LOW: Final[str] = "pricing-high-to-low"
+    CONTEXT_HIGH_TO_LOW: Final[str] = "context-high-to-low"
+    THROUGHPUT_HIGH_TO_LOW: Final[str] = "throughput-high-to-low"
+    LATENCY_LOW_TO_HIGH: Final[str] = "latency-low-to-high"
+
+    ALL: Final[Tuple[str, ...]] = (
+        ALPHABETICAL,
+        MOST_POPULAR,
+        TOP_WEEKLY,
+        NEWEST,
+        PRICING_LOW_TO_HIGH,
+        PRICING_HIGH_TO_LOW,
+        CONTEXT_HIGH_TO_LOW,
+        THROUGHPUT_HIGH_TO_LOW,
+        LATENCY_LOW_TO_HIGH,
+    )
 
 
 class TranscriptCleanupReasoning:
@@ -488,6 +520,27 @@ def resolve_transcript_cleanup_model(
     return default_transcript_cleanup_model(
         resolve_transcript_cleanup_provider(settings)
     )
+
+
+def resolve_transcript_cleanup_model_sort(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated model-list sort order for the Cleanup tab.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``TranscriptCleanupModelSort`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    sort = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT)
+    if sort in TranscriptCleanupModelSort.ALL:
+        return sort
+    return config.TRANSCRIPT_CLEANUP_MODEL_SORT
 
 
 def resolve_transcript_cleanup_reasoning(
