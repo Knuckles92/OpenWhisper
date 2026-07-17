@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
-    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
+    retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
 
@@ -1191,21 +1191,10 @@ class MainWindow(QMainWindow):
         # Auto-clear status after delay
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
-    def _on_retranscribe_requested(
-        self, audio_path: str, skip_cleanup: bool = False
-    ):
-        """Handle re-transcription request.
-
-        Args:
-            audio_path: Path to the saved recording.
-            skip_cleanup: When True, skip the AI cleanup pass.
-        """
-        logger.info(
-            "Re-transcribe requested: %s (skip_cleanup=%s)",
-            audio_path,
-            skip_cleanup,
-        )
-        self.retranscribe_requested.emit(audio_path, skip_cleanup)
+    def _on_retranscribe_requested(self, audio_path: str):
+        """Handle re-transcription request for a saved recording."""
+        logger.info("Re-transcribe requested: %s", audio_path)
+        self.retranscribe_requested.emit(audio_path)
 
     def closeEvent(self, event):
         """Handle window close event."""

@@ -5,17 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QLineF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import (
-    QColor,
-    QFont,
-    QIcon,
-    QKeySequence,
-    QPainter,
-    QPen,
-    QPixmap,
-    QShortcut,
-)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -24,20 +15,17 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QMessageBox,
     QPushButton,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from services.format_utils import format_file_size
 from services.history_manager import HistoryEntry, history_manager
-from ui_qt.widgets import Button, DangerButton, PrimaryButton, WarningButton
+from ui_qt.widgets import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.history_sidebar import (
-    _MENU_STYLESHEET,
     _entry_was_cleaned,
     _format_cleanup_info,
     _format_model_name,
@@ -95,56 +83,7 @@ _DIALOG_STYLE = """
         border: none;
         font-size: 11px;
     }
-    QWidget#historyRetranscribeSplit QPushButton#warningButton {
-        border-top-right-radius: 0px;
-        border-bottom-right-radius: 0px;
-        padding-left: 20px;
-        padding-right: 18px;
-    }
-    QWidget#historyRetranscribeSplit QToolButton#historyRetranscribeMenu {
-        background-color: #ff9f0a;
-        border: none;
-        border-top-left-radius: 0px;
-        border-bottom-left-radius: 0px;
-        border-top-right-radius: 8px;
-        border-bottom-right-radius: 8px;
-        border-left: 1px solid rgba(255, 255, 255, 0.22);
-        min-width: 38px;
-        max-width: 38px;
-        min-height: 40px;
-        padding: 0px;
-    }
-    QWidget#historyRetranscribeSplit QToolButton#historyRetranscribeMenu:hover {
-        background-color: #ff9500;
-    }
-    QWidget#historyRetranscribeSplit QToolButton#historyRetranscribeMenu:pressed {
-        background-color: #cc7700;
-    }
-    QWidget#historyRetranscribeSplit QToolButton#historyRetranscribeMenu::menu-indicator {
-        image: none;
-        width: 0px;
-    }
 """
-
-
-def _chevron_down_icon() -> QIcon:
-    """Return a crisp, platform-independent white chevron icon."""
-    pixmap = QPixmap(32, 32)
-    pixmap.setDevicePixelRatio(2.0)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#ffffff"), 1.6)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.drawLines((
-        QLineF(4.5, 6.5, 8.0, 10.0),
-        QLineF(8.0, 10.0, 11.5, 6.5),
-    ))
-    painter.end()
-    return QIcon(pixmap)
 
 
 def _format_seconds(seconds: float) -> str:
@@ -160,8 +99,7 @@ class HistoryEntryDialog(QDialog):
     """Scrollable viewer for a single history transcription."""
 
     copied = pyqtSignal()
-    # audio_path, skip_cleanup (raw ASR only — no AI cleanup pass)
-    retranscribe_requested = pyqtSignal(str, bool)
+    retranscribe_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
 
     def __init__(self, entry: HistoryEntry, parent=None):
@@ -298,46 +236,16 @@ class HistoryEntryDialog(QDialog):
         self.copy_raw_button.setVisible(self._raw_text is not None)
         primary_actions.addWidget(self.copy_raw_button)
 
-        self.retranscribe_split = QWidget()
-        self.retranscribe_split.setObjectName("historyRetranscribeSplit")
-        split_layout = QHBoxLayout(self.retranscribe_split)
-        split_layout.setContentsMargins(0, 0, 0, 0)
-        split_layout.setSpacing(0)
-
-        self.retranscribe_button = WarningButton("Transcribe Again")
+        self.retranscribe_button = Button("Transcribe Again")
+        self.retranscribe_button.setObjectName("warningButton")
         self.retranscribe_button.setToolTip(
-            "Run transcription again on the saved recording"
+            "Run transcription again using the current AI cleanup setting"
         )
         self.retranscribe_button.set_base_minimum_size(96, 40)
-        self.retranscribe_button.clicked.connect(
-            lambda: self._on_retranscribe(skip_cleanup=False)
-        )
-        split_layout.addWidget(self.retranscribe_button)
+        self.retranscribe_button.clicked.connect(self._on_retranscribe)
 
-        self.retranscribe_menu_button = QToolButton()
-        self.retranscribe_menu_button.setObjectName("historyRetranscribeMenu")
-        self.retranscribe_menu_button.setIcon(_chevron_down_icon())
-        self.retranscribe_menu_button.setIconSize(QSize(16, 16))
-        self.retranscribe_menu_button.setAccessibleName("More transcription options")
-        self.retranscribe_menu_button.setToolTip("More retranscribe options")
-        self.retranscribe_menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retranscribe_menu_button.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        retranscribe_menu = QMenu(self.retranscribe_menu_button)
-        retranscribe_menu.setStyleSheet(_MENU_STYLESHEET)
-        raw_action = retranscribe_menu.addAction("Transcribe again (raw)")
-        raw_action.setToolTip(
-            "Re-transcribe without AI cleanup — keep the raw ASR text"
-        )
-        raw_action.triggered.connect(
-            lambda: self._on_retranscribe(skip_cleanup=True)
-        )
-        self.retranscribe_menu_button.setMenu(retranscribe_menu)
-        split_layout.addWidget(self.retranscribe_menu_button)
-
-        self.retranscribe_split.setVisible(self._audio_path is not None)
-        primary_actions.addWidget(self.retranscribe_split)
+        self.retranscribe_button.setVisible(self._audio_path is not None)
+        primary_actions.addWidget(self.retranscribe_button)
         primary_actions.addStretch()
         outer.addLayout(primary_actions)
 
@@ -452,15 +360,11 @@ class HistoryEntryDialog(QDialog):
         except Exception as exc:
             logger.error("Failed to copy raw transcript from dialog: %s", exc)
 
-    def _on_retranscribe(self, skip_cleanup: bool = False) -> None:
-        """Request re-transcription of the saved recording and close.
-
-        Args:
-            skip_cleanup: When True, skip the AI cleanup pass (raw ASR only).
-        """
+    def _on_retranscribe(self) -> None:
+        """Request re-transcription using the current cleanup setting."""
         if not self._audio_path:
             return
-        self.retranscribe_requested.emit(self._audio_path, skip_cleanup)
+        self.retranscribe_requested.emit(self._audio_path)
         self.accept()
 
     def _on_delete(self) -> None:

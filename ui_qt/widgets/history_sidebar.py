@@ -110,7 +110,7 @@ class HistoryItemWidget(QFrame):
     copy_requested = pyqtSignal(str)  # Emits entry_id (fixed text)
     copy_raw_requested = pyqtSignal(str)  # Emits entry_id (raw ASR text)
     delete_requested = pyqtSignal(str)  # Emits entry_id
-    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
+    retranscribe_requested = pyqtSignal(str)  # Emits audio_path
 
     def __init__(self, entry: HistoryEntry, parent=None):
         super().__init__(parent)
@@ -235,10 +235,10 @@ class HistoryItemWidget(QFrame):
             self.retranscribe_btn.setFixedHeight(28)
             self.retranscribe_btn.setToolTip(
                 "Run this recording through the current model "
-                "and copy the new transcript"
+                "using the current AI cleanup setting"
             )
             self.retranscribe_btn.clicked.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path, False)
+                lambda: self.retranscribe_requested.emit(self._audio_path)
             )
             footer.addWidget(self.retranscribe_btn)
             layout.addLayout(footer)
@@ -332,11 +332,7 @@ class HistoryItemWidget(QFrame):
         if self._audio_path:
             retranscribe_action = menu.addAction("Transcribe again")
             retranscribe_action.triggered.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path, False)
-            )
-            retranscribe_raw_action = menu.addAction("Transcribe again (raw)")
-            retranscribe_raw_action.triggered.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path, True)
+                lambda: self.retranscribe_requested.emit(self._audio_path)
             )
 
         menu.addSeparator()
@@ -366,7 +362,7 @@ class HistorySidebar(QWidget):
     entry_selected = pyqtSignal(str)  # Emits entry_id when clicked
     entry_copied = pyqtSignal(str)  # Emits entry_id when copy requested
     entry_deleted = pyqtSignal(str)  # Emits entry_id when delete requested
-    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
+    retranscribe_requested = pyqtSignal(str)  # Emits audio_path
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)

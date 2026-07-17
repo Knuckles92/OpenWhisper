@@ -124,31 +124,12 @@ class TestHistoryEntryDialog(_QtTestCase):
         ):
             dialog = HistoryEntryDialog(entry)
 
-        self.assertFalse(dialog.retranscribe_split.isHidden())
+        self.assertFalse(dialog.retranscribe_button.isHidden())
         requests = []
-        dialog.retranscribe_requested.connect(
-            lambda path, skip: requests.append((path, skip))
-        )
+        dialog.retranscribe_requested.connect(requests.append)
         dialog.retranscribe_button.click()
-        self.assertEqual(requests, [(r"C:\recordings\clip.wav", False)])
-
-    def test_retranscribe_raw_menu_option_skips_cleanup(self):
-        entry = _make_entry(audio_file="clip.wav")
-        with patch(
-            "ui_qt.dialogs.history_entry_dialog.history_manager.get_recording_path",
-            return_value=r"C:\recordings\clip.wav",
-        ):
-            dialog = HistoryEntryDialog(entry)
-
-        requests = []
-        dialog.retranscribe_requested.connect(
-            lambda path, skip: requests.append((path, skip))
-        )
-        menu = dialog.retranscribe_menu_button.menu()
-        actions = {action.text(): action for action in menu.actions()}
-        self.assertIn("Transcribe again (raw)", actions)
-        actions["Transcribe again (raw)"].trigger()
-        self.assertEqual(requests, [(r"C:\recordings\clip.wav", True)])
+        self.assertEqual(requests, [r"C:\recordings\clip.wav"])
+        self.assertIsNone(dialog.retranscribe_button.menu())
 
     def test_metadata_facts_render_when_present(self):
         entry = _make_entry(

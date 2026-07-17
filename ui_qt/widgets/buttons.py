@@ -1,19 +1,28 @@
 """
 Modern button components for PyQt6 UI.
 """
-from PyQt6.QtWidgets import QPushButton, QSizePolicy, QWidget, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QWidget,
+)
 from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
     QEasingCurve,
     QEvent,
+    QLineF,
     QObject,
     QPoint,
     QPropertyAnimation,
+    QRect,
     QRectF,
     QTimer,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 
 
 class HotkeyHoverHint(QWidget):
@@ -302,6 +311,135 @@ class WarningButton(Button):
         self._base_min_width = 140
         self.setMinimumHeight(48)
         self.setMinimumWidth(140)
+
+
+class SplitButton(Button):
+    """Button with an integrated dropdown zone on its right edge.
+
+    Renders as a single seamless rounded button: clicking the label area
+    emits ``clicked`` as usual, while the chevron zone on the right pops
+    the attached menu below the button. Style it like any other button by
+    assigning a themed object name (e.g. ``warningButton``).
+    """
+
+    _ZONE_WIDTH = 34
+    # Matches the QPushButton border-radius in theme.qss so the hover
+    # overlay on the dropdown zone follows the button's rounded corners.
+    _CORNER_RADIUS = 8
+
+    def __init__(self, text: str = "", parent=None):
+        """Initialize split button."""
+        super().__init__(text, parent)
+        self._menu: QMenu | None = None
+        self._zone_hovered = False
+        self.setMouseTracking(True)
+
+    def set_menu(self, menu: QMenu) -> None:
+        """Attach the dropdown menu and reserve the chevron zone.
+
+        Args:
+            menu: Menu shown when the right-edge zone is clicked.
+        """
+        self._menu = menu
+        # Keep the label centered in the area left of the zone: the base
+        # theme uses 20px side padding, so widen only the right side.
+        self.setStyleSheet(f"padding-right: {self._ZONE_WIDTH + 20}px;")
+        self._refresh_size()
+        self.update()
+
+    def menu(self) -> QMenu | None:
+        """Return the attached dropdown menu, if any."""
+        return self._menu
+
+    def _refresh_size(self):
+        super()._refresh_size()
+        if self._menu is not None:
+            self.setMinimumWidth(self.minimumWidth() + self._ZONE_WIDTH)
+
+    def _zone_rect(self) -> QRect:
+        return QRect(
+            self.width() - self._ZONE_WIDTH, 0, self._ZONE_WIDTH, self.height()
+        )
+
+    def _show_menu(self) -> None:
+        if self._menu is None:
+            return
+        menu_width = self._menu.sizeHint().width()
+        anchor = self.mapToGlobal(
+            QPoint(self.width() - menu_width, self.height() + 4)
+        )
+        self._menu.popup(anchor)
+
+    def mousePressEvent(self, event):
+        if (
+            self._menu is not None
+            and self._active
+            and event.button() == Qt.MouseButton.LeftButton
+            and self._zone_rect().contains(event.position().toPoint())
+        ):
+            self._show_menu()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        hovered = self._zone_rect().contains(event.position().toPoint())
+        if hovered != self._zone_hovered:
+            self._zone_hovered = hovered
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._zone_hovered:
+            self._zone_hovered = False
+            self.update()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event):
+        if (
+            self._menu is not None
+            and self._active
+            and event.key() == Qt.Key.Key_Down
+        ):
+            self._show_menu()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._menu is None:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        zone = self._zone_rect()
+
+        if self._zone_hovered and self._active and self.isEnabled():
+            rounded = QPainterPath()
+            rounded.addRoundedRect(
+                QRectF(self.rect()), self._CORNER_RADIUS, self._CORNER_RADIUS
+            )
+            painter.setClipPath(rounded)
+            painter.fillRect(zone, QColor(0, 0, 0, 34))
+            painter.setClipping(False)
+
+        divider_x = zone.left() + 0.5
+        inset = self.height() * 0.28
+        painter.setPen(QPen(QColor(255, 255, 255, 60), 1.0))
+        painter.drawLine(
+            QLineF(divider_x, inset, divider_x, self.height() - inset)
+        )
+
+        chevron = QPen(QColor("#ffffff"), 1.6)
+        chevron.setCapStyle(Qt.PenCapStyle.RoundCap)
+        chevron.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(chevron)
+        cx = zone.left() + zone.width() / 2.0
+        cy = self.height() / 2.0
+        painter.drawLines((
+            QLineF(cx - 3.5, cy - 1.75, cx, cy + 1.75),
+            QLineF(cx, cy + 1.75, cx + 3.5, cy - 1.75),
+        ))
 
 
 class IconButton(Button):
