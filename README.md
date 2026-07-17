@@ -14,12 +14,8 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 </p>
 
 <p align="center">
-  <img width="410" alt="Settings dialog, General tab" src="docs/screenshots/settings-general.png" />
-  <img width="410" alt="Settings dialog, Advanced tab" src="docs/screenshots/settings-advanced.png" />
-</p>
-
-<p align="center">
-  <img width="480" alt="Model Manager: browse, download, and choose local Whisper models" src="docs/screenshots/model-manager.png" />
+  <img width="410" alt="Model Manager: browse, download, and choose local Whisper models" src="docs/screenshots/model-selector.png" />
+  <img width="410" alt="Local Whisper model technical details" src="docs/screenshots/model-details.png" />
 </p>
 
 
