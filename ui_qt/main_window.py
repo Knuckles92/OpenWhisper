@@ -234,6 +234,7 @@ from ui_qt.widgets import (
     CompactRecordController,
 )
 from services.history_manager import history_manager
+from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
 
 class MainWindow(QMainWindow):
@@ -256,7 +257,7 @@ class MainWindow(QMainWindow):
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
-    retranscribe_requested = pyqtSignal(str)  # Emits audio file path
+    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
 
@@ -1152,27 +1153,31 @@ class MainWindow(QMainWindow):
         self.history_sidebar.refresh()
 
     def _on_history_entry_selected(self, entry_id: str):
-        """Handle history entry selection - show full transcription and copy to clipboard."""
+        """Open the history entry viewer dialog for the selected tile."""
         entry = history_manager.get_entry_by_id(entry_id)
-        if entry:
-            self.quick_record_tab.set_transcript(entry.text, raw=entry.raw_text)
+        if not entry:
+            return
 
-            # Copy to clipboard
-            try:
-                from PyQt6.QtWidgets import QApplication
-                clipboard = QApplication.clipboard()
-                clipboard.setText(entry.text)
-                self.set_status("Copied to clipboard")
-                QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
+        dialog = HistoryEntryDialog(entry, parent=self)
+        dialog.copied.connect(self._on_history_entry_copied_from_dialog)
+        dialog.retranscribe_requested.connect(self._on_retranscribe_requested)
+        dialog.delete_requested.connect(self._on_history_entry_delete_requested)
+        dialog.exec()
+        logger.info(f"Opened history entry dialog: {entry_id[:8]}...")
 
-                # Show the copied animation
-                if self.on_show_copied_animation:
-                    self.on_show_copied_animation()
+    def _on_history_entry_copied_from_dialog(self):
+        """Handle copy from the history entry dialog."""
+        self.set_status("Copied to clipboard")
+        QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
+        if self.on_show_copied_animation:
+            self.on_show_copied_animation()
 
-                logger.info(f"Loaded and copied history entry: {entry_id[:8]}...")
-            except Exception as e:
-                logger.error(f"Failed to copy to clipboard: {e}")
-                logger.info(f"Loaded history entry: {entry_id[:8]}...")
+    def _on_history_entry_delete_requested(self, entry_id: str):
+        """Delete a history entry requested from the viewer dialog."""
+        if history_manager.delete_entry(entry_id):
+            self.refresh_history()
+            self._on_history_entry_deleted(entry_id)
+            logger.info(f"Deleted history entry from dialog: {entry_id[:8]}...")
 
     def _on_history_entry_copied(self, entry_id: str):
         """Handle history entry copied notification."""
@@ -1186,10 +1191,21 @@ class MainWindow(QMainWindow):
         # Auto-clear status after delay
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
-    def _on_retranscribe_requested(self, audio_path: str):
-        """Handle re-transcription request."""
-        logger.info(f"Re-transcribe requested: {audio_path}")
-        self.retranscribe_requested.emit(audio_path)
+    def _on_retranscribe_requested(
+        self, audio_path: str, skip_cleanup: bool = False
+    ):
+        """Handle re-transcription request.
+
+        Args:
+            audio_path: Path to the saved recording.
+            skip_cleanup: When True, skip the AI cleanup pass.
+        """
+        logger.info(
+            "Re-transcribe requested: %s (skip_cleanup=%s)",
+            audio_path,
+            skip_cleanup,
+        )
+        self.retranscribe_requested.emit(audio_path, skip_cleanup)
 
     def closeEvent(self, event):
         """Handle window close event."""

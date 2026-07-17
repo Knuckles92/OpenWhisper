@@ -110,7 +110,7 @@ class HistoryItemWidget(QFrame):
     copy_requested = pyqtSignal(str)  # Emits entry_id (fixed text)
     copy_raw_requested = pyqtSignal(str)  # Emits entry_id (raw ASR text)
     delete_requested = pyqtSignal(str)  # Emits entry_id
-    retranscribe_requested = pyqtSignal(str)  # Emits audio file path
+    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
 
     def __init__(self, entry: HistoryEntry, parent=None):
         super().__init__(parent)
@@ -238,7 +238,7 @@ class HistoryItemWidget(QFrame):
                 "and copy the new transcript"
             )
             self.retranscribe_btn.clicked.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path)
+                lambda: self.retranscribe_requested.emit(self._audio_path, False)
             )
             footer.addWidget(self.retranscribe_btn)
             layout.addLayout(footer)
@@ -309,21 +309,9 @@ class HistoryItemWidget(QFrame):
         """)
 
     def _show_context_menu(self, pos):
-        """Show context menu."""
+        """Show context menu with copy, retranscribe, and delete actions."""
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
-
-        # Model info (non-clickable, full detail including device)
-        model_action = menu.addAction(f"Model: {self.entry.model}")
-        model_action.setEnabled(False)
-
-        if _entry_was_cleaned(self.entry):
-            cleanup_action = menu.addAction(
-                f"Cleanup: {_format_cleanup_info(self.entry)}"
-            )
-            cleanup_action.setEnabled(False)
-
-        menu.addSeparator()
 
         # Copy actions (Fixed is the cleaned transcript when cleanup ran)
         if self.entry.raw_text:
@@ -341,18 +329,22 @@ class HistoryItemWidget(QFrame):
                 lambda: self.copy_requested.emit(self.entry.id)
             )
 
-        # Re-transcribe action (only if audio exists)
         if self._audio_path:
             retranscribe_action = menu.addAction("Transcribe again")
             retranscribe_action.triggered.connect(
-                lambda: self.retranscribe_requested.emit(self._audio_path)
+                lambda: self.retranscribe_requested.emit(self._audio_path, False)
+            )
+            retranscribe_raw_action = menu.addAction("Transcribe again (raw)")
+            retranscribe_raw_action.triggered.connect(
+                lambda: self.retranscribe_requested.emit(self._audio_path, True)
             )
 
         menu.addSeparator()
 
-        # Delete action
         delete_action = menu.addAction("Delete")
-        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.entry.id))
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(self.entry.id)
+        )
 
         menu.exec(self.mapToGlobal(pos))
 
@@ -374,7 +366,7 @@ class HistorySidebar(QWidget):
     entry_selected = pyqtSignal(str)  # Emits entry_id when clicked
     entry_copied = pyqtSignal(str)  # Emits entry_id when copy requested
     entry_deleted = pyqtSignal(str)  # Emits entry_id when delete requested
-    retranscribe_requested = pyqtSignal(str)  # Emits audio file path
+    retranscribe_requested = pyqtSignal(str, bool)  # audio_path, skip_cleanup
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)

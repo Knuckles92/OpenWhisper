@@ -173,8 +173,15 @@ class TranscriptionRuntime:
         self.controller.status_update.emit("Transcription canceled")
         logger.info("Transcription canceled")
 
-    def retranscribe_audio(self, audio_path: str) -> None:
-        """Re-transcribe an existing audio file."""
+    def retranscribe_audio(
+        self, audio_path: str, *, skip_cleanup: bool = False
+    ) -> None:
+        """Re-transcribe an existing audio file.
+
+        Args:
+            audio_path: Path to the saved recording.
+            skip_cleanup: When True, skip the AI cleanup pass (raw ASR only).
+        """
         if not os.path.exists(audio_path):
             logger.error(
                 f"Audio file not found for re-transcription: {audio_path}"
@@ -183,7 +190,11 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Error: Audio file not found")
             return
 
-        logger.info(f"Re-transcribing audio file: {audio_path}")
+        logger.info(
+            "Re-transcribing audio file: %s (skip_cleanup=%s)",
+            audio_path,
+            skip_cleanup,
+        )
         self.controller._pending_audio_path = None
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
@@ -191,7 +202,9 @@ class TranscriptionRuntime:
         try:
             self.controller._pending_file_size = os.path.getsize(audio_path)
             self.controller._pending_audio_duration = None
-            self._submit_transcription_job(audio_path)
+            self._submit_transcription_job(
+                audio_path, skip_cleanup=skip_cleanup
+            )
         except Exception as exc:
             logger.error(f"Failed to start re-transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
@@ -218,15 +231,22 @@ class TranscriptionRuntime:
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def _maybe_cleanup_transcript(
-        self, raw: str
+        self, raw: str, *, skip_cleanup: bool = False
     ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
         """Optionally clean up ASR text.
+
+        Args:
+            raw: Unprocessed ASR transcript.
+            skip_cleanup: When True, return raw text without attempting cleanup.
 
         Returns:
             Tuple of (fixed text, raw text when it differs from fixed, and
             the CleanupInfo of the run when cleanup actually happened —
             None when cleanup was disabled, unavailable, or failed).
         """
+        if skip_cleanup:
+            return raw, None, None
+
         settings = settings_manager.load_all_settings()
         enabled = settings.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
@@ -267,7 +287,9 @@ class TranscriptionRuntime:
             return fixed, raw, info
         return fixed, None, info
 
-    def transcribe_audio_file(self, audio_path: str) -> None:
+    def transcribe_audio_file(
+        self, audio_path: str, skip_cleanup: bool = False
+    ) -> None:
         """Transcribe a single audio file in a background thread."""
         try:
             if self.controller._pending_file_size is None:
@@ -276,13 +298,17 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
             raw = self.controller.current_backend.transcribe(audio_path)
-            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(
+                raw, skip_cleanup=skip_cleanup
+            )
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
 
-    def transcribe_large_audio_file(self, audio_path: str) -> None:
+    def transcribe_large_audio_file(
+        self, audio_path: str, skip_cleanup: bool = False
+    ) -> None:
         """Transcribe a large audio file by splitting it into chunks."""
         chunk_files = []
         if self.controller._pending_file_size is None:
@@ -318,7 +344,9 @@ class TranscriptionRuntime:
                     )
                 raw = audio_processor.combine_transcriptions(transcripts)
 
-            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(
+                raw, skip_cleanup=skip_cleanup
+            )
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Large audio transcription failed: {exc}")
@@ -459,7 +487,9 @@ class TranscriptionRuntime:
         else:
             overlay.show_at_cursor(overlay.STATE_LARGE_FILE_PROCESSING)
 
-    def _submit_transcription_job(self, audio_path: str) -> None:
+    def _submit_transcription_job(
+        self, audio_path: str, *, skip_cleanup: bool = False
+    ) -> None:
         backend = self.controller.current_backend
         if not backend.is_available() and getattr(backend, "is_model_missing", False):
             # Trigger the consent/download flow, but never transcribe with a
@@ -484,7 +514,7 @@ class TranscriptionRuntime:
                 f"Splitting large file ({file_size_mb:.1f} MB)..."
             )
             self.controller.executor.submit(
-                self.transcribe_large_audio_file, audio_path
+                self.transcribe_large_audio_file, audio_path, skip_cleanup
             )
         elif needs_splitting:
             logger.info(
@@ -494,6 +524,10 @@ class TranscriptionRuntime:
             self.controller.status_update.emit(
                 f"Processing large file ({file_size_mb:.1f} MB)..."
             )
-            self.controller.executor.submit(self.transcribe_audio_file, audio_path)
+            self.controller.executor.submit(
+                self.transcribe_audio_file, audio_path, skip_cleanup
+            )
         else:
-            self.controller.executor.submit(self.transcribe_audio_file, audio_path)
+            self.controller.executor.submit(
+                self.transcribe_audio_file, audio_path, skip_cleanup
+            )

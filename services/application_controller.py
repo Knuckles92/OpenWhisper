@@ -577,9 +577,18 @@ class ApplicationController(QObject):
         """
         self.minimize_to_tray_requested.emit()
 
-    def retranscribe_audio(self, audio_path: str) -> None:
-        """Re-transcribe an existing audio file (UI callback target)."""
-        self.transcription_runtime.retranscribe_audio(audio_path)
+    def retranscribe_audio(
+        self, audio_path: str, *, skip_cleanup: bool = False
+    ) -> None:
+        """Re-transcribe an existing audio file (UI callback target).
+
+        Args:
+            audio_path: Path to the saved recording.
+            skip_cleanup: When True, skip the AI cleanup pass (raw ASR only).
+        """
+        self.transcription_runtime.retranscribe_audio(
+            audio_path, skip_cleanup=skip_cleanup
+        )
 
     def upload_audio_file(self, audio_path: str) -> None:
         """Transcribe an uploaded audio file (UI callback target)."""

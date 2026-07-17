@@ -676,15 +676,23 @@ class UIController(QObject):
         """Refresh the history sidebar."""
         self.main_window.refresh_history()
 
-    def _on_retranscribe_requested(self, audio_path: str):
+    def _on_retranscribe_requested(
+        self, audio_path: str, skip_cleanup: bool = False
+    ):
         """Handle re-transcription request from main window signal."""
-        self._request_retranscription(audio_path)
+        self._request_retranscription(audio_path, skip_cleanup=skip_cleanup)
 
-    def _request_retranscription(self, audio_path: str):
+    def _request_retranscription(
+        self, audio_path: str, *, skip_cleanup: bool = False
+    ):
         """Request re-transcription for an existing audio file."""
-        logger.info(f"Re-transcribe requested: {audio_path}")
+        logger.info(
+            "Re-transcribe requested: %s (skip_cleanup=%s)",
+            audio_path,
+            skip_cleanup,
+        )
         if self.on_retranscribe:
-            self.on_retranscribe(audio_path)
+            self.on_retranscribe(audio_path, skip_cleanup=skip_cleanup)
 
     def cleanup(self):
         """Cleanup resources."""
