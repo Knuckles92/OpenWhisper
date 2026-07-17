@@ -120,6 +120,31 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.assertTrue(self.window._compact_mode)
         self.assertEqual(self.window.compact_button.text(), "Full Size")
 
+    def test_collapsed_transcript_caps_tall_saved_geometry_on_restore(self):
+        """Collapsed startup does not reserve space for the hidden transcript."""
+        saved_geometry = {
+            "x": 10,
+            "y": 10,
+            "width": 700,
+            "height": 900,
+            "format": self.window._geometry_format,
+            "history_expanded": False,
+        }
+        self.mock_get_setting.side_effect = (
+            lambda key, default=None: saved_geometry
+            if key == SettingsKey.WINDOW_GEOMETRY
+            else default
+        )
+
+        self.window._restore_window_geometry()
+
+        self.assertTrue(self.window.quick_record_tab.is_transcription_collapsed())
+        self.assertEqual(
+            self.window.height(),
+            config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT,
+        )
+        self.assertEqual(self.window.width(), saved_geometry["width"])
+
 
 if __name__ == "__main__":
     unittest.main()

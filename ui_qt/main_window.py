@@ -1453,15 +1453,28 @@ class MainWindow(QMainWindow):
 
                         # Ensure size constraints - both min and max for width and height
                         width = max(self.minimumWidth(), min(raw_width, self.maximumWidth()))
-                        # Cap narrow/collapsed restores to the default height so stale
-                        # geometry cannot make the app reopen as an overly tall strip.
                         max_height = screen_geo.height()
-                        if width <= config.MAIN_WINDOW_DEFAULT_WIDTH or migrated_expanded_width:
-                            width = config.MAIN_WINDOW_DEFAULT_WIDTH
+
+                        # The transcript starts collapsed, so geometry saved while it
+                        # was expanded must not leave its now-hidden body as blank
+                        # vertical space. Apply this independently of window width
+                        # (users can resize the main workspace horizontally).
+                        transcript_collapsed = (
+                            hasattr(self, "transcription_tabs")
+                            and all(
+                                tab.is_transcription_collapsed()
+                                for tab in self.transcription_tabs
+                            )
+                        )
+                        if transcript_collapsed:
                             max_height = min(
                                 max_height,
                                 config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT,
                             )
+
+                        # Normalize narrow and legacy sidebar-width restores.
+                        if width <= config.MAIN_WINDOW_DEFAULT_WIDTH or migrated_expanded_width:
+                            width = config.MAIN_WINDOW_DEFAULT_WIDTH
                         height = max(self.minimumHeight(), min(geo['height'], max_height))
                         self._collapsed_width = width
                         restore_width = width

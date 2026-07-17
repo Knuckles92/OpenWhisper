@@ -71,7 +71,9 @@ class AppConfig:
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24
     MAIN_WINDOW_MAX_WIDTH: int = 1280
-    MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT: int = 840
+    # A collapsed transcript should reopen at the compact full-window height,
+    # even when the last saved geometry came from an expanded transcript.
+    MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT: int = MAIN_WINDOW_DEFAULT_HEIGHT
     MAIN_WINDOW_COMPACT_WIDTH: int = 420
     MAIN_WINDOW_COMPACT_HEIGHT: int = 250
 
