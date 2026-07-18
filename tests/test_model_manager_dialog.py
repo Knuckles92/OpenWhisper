@@ -265,10 +265,11 @@ class TestCompactButtons(_DialogTestCase):
             None,
         )
         self.assertIsNotNone(open_folder)
-        fm = open_folder.fontMetrics()
-        needed = fm.horizontalAdvance("Open Folder") + 40
+        open_folder.ensurePolished()
+        needed = open_folder.sizeHint().width()
         self.assertGreaterEqual(open_folder.maximumWidth(), needed)
         self.assertGreaterEqual(open_folder.minimumWidth(), needed)
+        self.assertEqual(open_folder.minimumWidth(), open_folder.maximumWidth())
 
 
 class TestSorting(_DialogTestCase):

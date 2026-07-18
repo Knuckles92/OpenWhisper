@@ -232,11 +232,20 @@ class Button(QPushButton):
             self._hotkey_hint_filter.hide_hint()
 
     def _refresh_size(self):
-        """Size the button to fit its label without horizontal clipping."""
+        """Size the button to fit its label without horizontal clipping.
+
+        Polish first so fontMetrics match the theme stylesheet (e.g. 14px /
+        weight 600). Measuring against the constructor's setFont() fallback
+        underestimates width on platforms where Segoe UI is missing.
+        """
+        self.ensurePolished()
         fm = self.fontMetrics()
         text_width = fm.horizontalAdvance(self.text()) if self.text() else 0
         horizontal_padding = 40
-        self.setMinimumWidth(max(self._base_min_width, text_width + horizontal_padding))
+        # sizeHint includes stylesheet padding/borders; fontMetrics alone can
+        # still undershoot by a pixel or two on macOS.
+        fitted = max(text_width + horizontal_padding, self.sizeHint().width())
+        self.setMinimumWidth(max(self._base_min_width, fitted))
         self.setMinimumHeight(self._base_min_height)
 
     def mousePressEvent(self, event):

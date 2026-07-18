@@ -230,13 +230,16 @@ class ModelManagerDialog(QDialog):
         """Size a shared button for the dialog's compact toolbar/footer.
 
         Uses ``width`` as a preferred size floor, but never caps maxWidth below
-        the label's natural width so text like "Open Folder" is not clipped.
+        the polished sizeHint so text like "Open Folder" is not clipped on
+        macOS (where theme font metrics differ from the Button constructor font).
         """
         button.set_base_minimum_size(width, 34)
         button.setMinimumHeight(34)
         button.setMaximumHeight(34)
-        fitted = button.minimumWidth()
-        button.setMaximumWidth(max(width, fitted))
+        button.ensurePolished()
+        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
+        button.setMinimumWidth(fitted)
+        button.setMaximumWidth(fitted)
 
     # ── Callback plumbing (dialog signals) ─────────────────────────
 
