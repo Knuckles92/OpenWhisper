@@ -468,12 +468,6 @@ class UIController(QObject):
             self.overlay.refresh_streaming_font_size()
             # Keep main-UI AI cleanup checkboxes in sync with Settings.
             self.refresh_cleanup_controls()
-            if settings.get('_whisper_settings_changed', False):
-                if self.on_whisper_settings_changed:
-                    self.on_whisper_settings_changed()
-                # Keep the inline main-GUI controls in sync with the dialog's
-                # new values so the two views never diverge.
-                self.refresh_local_engine_controls()
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)

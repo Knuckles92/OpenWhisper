@@ -80,7 +80,7 @@ class TranscriptionTabBase(QWidget):
         # Model selection card
         model_card = Card()
 
-        model_label = QLabel("Transcription Model")
+        model_label = QLabel("Transcription Engine")
         model_label.setObjectName("headerLabel")
         model_label.setFont(QFont("Segoe UI", 13))
         model_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

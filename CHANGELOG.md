@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`requirements-gpu.txt`** - Opt-in NVIDIA CUDA wheels (cuDNN 9, cuBLAS, CUDA 12 runtime) so GPU acceleration works without installing the CUDA Toolkit.
 
 ### Changed
+- **"Transcription Engine" naming** - The main-window backend picker is now labeled "Transcription Engine" (was "Transcription Model"), reserving the word "model" for actual models (local Whisper checkpoints, cleanup chat models)
 - **History Sidebar Redesign** - Single animation clock drives both the sidebar and window resize in lockstep (no more main-content wobble), fixed-width content is clipped instead of re-laid-out every frame, content populates before the first expand (no pop-in), section headers show counts, history cards show a model badge, and both sections share one scroll area
 - Explicit overlay state routing via `OverlayState` enum and naming standardization
 - Centralized module-level logging across services and UI
@@ -38,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Experimental Meeting Mode and meeting insights (added and removed during this cycle; never in a tagged release)
+- **Duplicate model controls in Settings** - "Default Model" (General tab) and the Whisper Model/Device/Compute combos (Advanced tab) duplicated the main window's engine dropdown and inline Engine Settings panel while writing the same settings keys; each choice now has a single home (engine dropdown; Engine Settings panel / Model Manager)
 - Experimental live typing into the focused window (settings toggle and keystroke injection)
 
 ## [1.0.0] - 2026-01-10

@@ -3,7 +3,6 @@ Settings dialog for PyQt6 UI.
 Tabbed interface for managing application settings.
 """
 import logging
-import sys
 import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
@@ -122,16 +121,6 @@ class SettingsDialog(QDialog):
         title = QLabel("General Settings")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
-
-        # Model selection
-        layout.addSpacing(12)
-        model_label = QLabel("Default Model:")
-        layout.addWidget(model_label)
-
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(config.MODEL_CHOICES)
-        self.model_combo.setMinimumHeight(36)
-        layout.addWidget(self.model_combo)
 
         # Auto-paste checkbox
         layout.addSpacing(12)
@@ -540,49 +529,8 @@ class SettingsDialog(QDialog):
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
-        # Whisper Engine Settings section
-        layout.addSpacing(12)
-        whisper_title = QLabel("Whisper Engine")
-        whisper_title.setObjectName("sectionLabel")
-        layout.addWidget(whisper_title)
-
-        # Whisper Model selection
-        model_label = QLabel("Model:")
-        layout.addWidget(model_label)
-
-        self.whisper_model_combo = QComboBox()
-        self.whisper_model_combo.addItems(config.WHISPER_MODEL_CHOICES)
-        self.whisper_model_combo.setMinimumHeight(36)
-        layout.addWidget(self.whisper_model_combo)
-
-        # Device selection
-        layout.addSpacing(8)
-        device_label = QLabel("Device:")
-        layout.addWidget(device_label)
-
-        self.whisper_device_combo = QComboBox()
-        # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
-        if sys.platform == "darwin":
-            self.whisper_device_combo.addItems(["auto", "cpu"])
-        else:
-            self.whisper_device_combo.addItems(["auto", "cuda", "cpu"])
-        self.whisper_device_combo.setMinimumHeight(36)
-        layout.addWidget(self.whisper_device_combo)
-
-        # Compute type selection
-        layout.addSpacing(8)
-        compute_label = QLabel("Compute Type:")
-        layout.addWidget(compute_label)
-
-        self.whisper_compute_combo = QComboBox()
-        self.whisper_compute_combo.addItems(["auto", "float16", "float32", "int8"])
-        self.whisper_compute_combo.setMinimumHeight(36)
-        layout.addWidget(self.whisper_compute_combo)
-
-        # Info label
-        compute_info = QLabel("Changes require restarting the whisper engine")
-        compute_info.setObjectName("infoLabel")
-        layout.addWidget(compute_info)
+        # Local engine knobs (model / device / quant) live in the main
+        # window's Engine Settings panel and the Model Manager, not here.
 
         # Max file size
         layout.addSpacing(12)
@@ -873,16 +821,6 @@ class SettingsDialog(QDialog):
         try:
             settings = settings_manager.load_all_settings()
 
-            # Load model selection
-            saved_model = settings.get(SettingsKey.SELECTED_MODEL, 'local_whisper')
-            # Find display name for saved model
-            for display_name, internal_value in config.MODEL_VALUE_MAP.items():
-                if internal_value == saved_model:
-                    index = self.model_combo.findText(display_name)
-                    if index >= 0:
-                        self.model_combo.setCurrentIndex(index)
-                    break
-
             # Load checkboxes
             self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
             self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
@@ -961,26 +899,6 @@ class SettingsDialog(QDialog):
             )
             self._update_streaming_font_ui()
 
-            # Load whisper engine settings
-            whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
-            whisper_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
-            whisper_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
-
-            model_index = self.whisper_model_combo.findText(whisper_model)
-            if model_index >= 0:
-                self.whisper_model_combo.setCurrentIndex(model_index)
-
-            device_index = self.whisper_device_combo.findText(whisper_device)
-            if device_index < 0:
-                logger.warning("Unsupported whisper device '%s'; falling back to auto", whisper_device)
-                device_index = self.whisper_device_combo.findText('auto')
-            if device_index >= 0:
-                self.whisper_device_combo.setCurrentIndex(device_index)
-
-            compute_index = self.whisper_compute_combo.findText(whisper_compute)
-            if compute_index >= 0:
-                self.whisper_compute_combo.setCurrentIndex(compute_index)
-
             # Typed load performs legacy hf_hub_offline migration
             policy = settings_manager.load_hf_access_policy()
             policy_index = self.hf_policy_combo.findData(policy)
@@ -1035,25 +953,10 @@ class SettingsDialog(QDialog):
     def _save_settings(self):
         """Save settings and close dialog."""
         try:
-            # Get current display name and convert to internal value
-            model_display = self.model_combo.currentText()
-            model_internal = config.MODEL_VALUE_MAP.get(model_display, 'local_whisper')
-
-            # Load existing settings
+            # Load existing settings. The transcription engine and local
+            # whisper model/device/compute are owned by the main-window
+            # controls, so their keys pass through untouched.
             settings = settings_manager.load_all_settings()
-
-            # Check if whisper engine settings changed
-            old_whisper_model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
-            old_device = settings.get(SettingsKey.WHISPER_DEVICE, 'auto')
-            old_compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, 'auto')
-            new_whisper_model = self.whisper_model_combo.currentText()
-            new_device = self.whisper_device_combo.currentText()
-            new_compute = self.whisper_compute_combo.currentText()
-            whisper_settings_changed = (
-                old_whisper_model != new_whisper_model or
-                old_device != new_device or
-                old_compute != new_compute
-            )
 
             # Check if the Hugging Face access policy changed
             old_hf_policy = settings_manager.load_hf_access_policy()
@@ -1072,7 +975,6 @@ class SettingsDialog(QDialog):
             )
 
             # Update with new values
-            settings[SettingsKey.SELECTED_MODEL] = model_internal
             settings[SettingsKey.AUTO_PASTE] = self.auto_paste_check.isChecked()
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
             settings[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED] = (
@@ -1111,9 +1013,6 @@ class SettingsDialog(QDialog):
             settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)
             settings.pop("streaming_tiny_model_enabled", None)
             settings.pop("live_typing_enabled", None)
-            settings[SettingsKey.WHISPER_MODEL] = new_whisper_model
-            settings[SettingsKey.WHISPER_DEVICE] = new_device
-            settings[SettingsKey.WHISPER_COMPUTE_TYPE] = new_compute
             settings[SettingsKey.HF_ACCESS_POLICY] = new_hf_policy
             # Legacy key superseded by hf_access_policy
             settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
@@ -1142,7 +1041,6 @@ class SettingsDialog(QDialog):
                 self.on_settings_save(settings)
 
             # Emit signal with change flags
-            settings['_whisper_settings_changed'] = whisper_settings_changed
             settings['_audio_device_changed'] = audio_device_changed
             settings['_streaming_settings_changed'] = streaming_settings_changed
             settings['_hf_policy_changed'] = hf_policy_changed
