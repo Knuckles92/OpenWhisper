@@ -4,6 +4,7 @@ Unit tests for saved-recording retention settings and rotation.
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from config import config
@@ -125,6 +126,62 @@ class TestRecordingRotation(unittest.TestCase):
 
         remaining = os.listdir(self.recordings_dir)
         self.assertEqual(remaining, ["recording_20260103_120000.wav"])
+
+
+class TestHistoryEntryDeletion(unittest.TestCase):
+    """Tests for optionally deleting audio with a history entry."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.recordings_dir = os.path.join(self.temp_dir, "recordings")
+        os.makedirs(self.recordings_dir)
+        self.audio_filename = "recording_20260101_120000.wav"
+        self.audio_path = os.path.join(self.recordings_dir, self.audio_filename)
+        with open(self.audio_path, "wb") as handle:
+            handle.write(b"RIFF")
+
+    def tearDown(self):
+        if os.path.exists(self.audio_path):
+            os.remove(self.audio_path)
+        os.rmdir(self.recordings_dir)
+        os.rmdir(self.temp_dir)
+
+    @patch("services.history_manager.db")
+    def test_delete_entry_keeps_audio_by_default(self, mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        mock_db.delete_history_entry.return_value = True
+
+        self.assertTrue(manager.delete_entry("entry-test-id"))
+
+        self.assertTrue(os.path.exists(self.audio_path))
+        mock_db.get_history_entry_by_id.assert_not_called()
+        mock_db.clear_history_audio_file.assert_not_called()
+
+    @patch("services.history_manager.db")
+    def test_delete_entry_can_delete_attached_audio(self, mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        mock_db.get_history_entry_by_id.return_value = SimpleNamespace(
+            audio_file=self.audio_filename
+        )
+        mock_db.delete_history_entry.return_value = True
+
+        self.assertTrue(
+            manager.delete_entry(
+                "entry-test-id",
+                delete_audio_file=True,
+            )
+        )
+
+        self.assertFalse(os.path.exists(self.audio_path))
+        mock_db.clear_history_audio_file.assert_called_once_with(
+            self.audio_filename
+        )
 
 
 class TestRecordingRetentionPersistence(unittest.TestCase):

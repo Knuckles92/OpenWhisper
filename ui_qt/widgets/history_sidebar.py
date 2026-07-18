@@ -15,7 +15,7 @@ import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
-    QMessageBox, QFileDialog, QCheckBox,
+    QMessageBox, QFileDialog, QCheckBox, QComboBox, QGridLayout,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
 from PyQt6.QtGui import QFont, QDesktopServices
@@ -731,6 +731,7 @@ class HistorySidebar(QWidget):
 
     def _on_delete_requested(self, entry_id: str):
         """Confirm and handle an individual history-entry deletion request."""
+        delete_audio_file = False
         try:
             should_confirm = settings_manager.get(
                 SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
@@ -746,7 +747,6 @@ class HistorySidebar(QWidget):
             confirmation.setWindowTitle("Delete History Entry")
             confirmation.setText("Delete this transcription from history?")
             confirmation.setInformativeText(
-                "The saved recording file (if any) will be kept. "
                 "This cannot be undone."
             )
             confirmation.setStandardButtons(
@@ -754,12 +754,45 @@ class HistorySidebar(QWidget):
             )
             confirmation.setDefaultButton(QMessageBox.StandardButton.No)
 
+            audio_choice = None
+            entry = history_manager.get_entry_by_id(entry_id)
+            audio_path = (
+                history_manager.get_recording_path(entry.audio_file)
+                if entry and entry.audio_file
+                else None
+            )
+            if audio_path:
+                audio_label = QLabel("Delete saved audio file too?", confirmation)
+                audio_choice = QComboBox(confirmation)
+                audio_choice.addItem("No — keep the audio file", False)
+                audio_choice.addItem("Yes — permanently delete it", True)
+                audio_choice.setToolTip(
+                    "Choose whether the recording attached to this transcript "
+                    "should also be deleted"
+                )
+
+                message_layout = confirmation.layout()
+                if isinstance(message_layout, QGridLayout):
+                    row = message_layout.rowCount()
+                    columns = max(1, message_layout.columnCount())
+                    message_layout.addWidget(audio_label, row, 0, 1, columns)
+                    message_layout.addWidget(
+                        audio_choice,
+                        row + 1,
+                        0,
+                        1,
+                        columns,
+                    )
+
             dont_ask_again = QCheckBox("Don't ask me again", confirmation)
             confirmation.setCheckBox(dont_ask_again)
 
             if confirmation.exec() != QMessageBox.StandardButton.Yes:
                 return
 
+            delete_audio_file = bool(
+                audio_choice is not None and audio_choice.currentData()
+            )
             if dont_ask_again.isChecked():
                 try:
                     settings_manager.save_setting(
@@ -772,7 +805,10 @@ class HistorySidebar(QWidget):
                         exc,
                     )
 
-        if history_manager.delete_entry(entry_id):
+        if history_manager.delete_entry(
+            entry_id,
+            delete_audio_file=delete_audio_file,
+        ):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
             logger.info(f"Deleted entry: {entry_id[:8]}...")

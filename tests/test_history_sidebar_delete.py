@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -37,6 +38,10 @@ class TestHistorySidebarDelete(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.No,
             ),
             patch(
+                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
+                return_value=None,
+            ),
+            patch(
                 "ui_qt.widgets.history_sidebar.history_manager.delete_entry"
             ) as delete_entry,
         ):
@@ -58,6 +63,10 @@ class TestHistorySidebarDelete(unittest.TestCase):
                 "exec",
                 return_value=QMessageBox.StandardButton.Yes,
             ),
+            patch(
+                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
+                return_value=None,
+            ),
             patch.object(QCheckBox, "isChecked", return_value=False),
             patch(
                 "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
@@ -66,8 +75,48 @@ class TestHistorySidebarDelete(unittest.TestCase):
         ):
             self.sidebar._on_delete_requested("entry-test-id")
 
-        delete_entry.assert_called_once_with("entry-test-id")
+        delete_entry.assert_called_once_with(
+            "entry-test-id",
+            delete_audio_file=False,
+        )
         self.assertEqual(deleted, ["entry-test-id"])
+
+    def test_audio_file_can_be_deleted_with_entry(self):
+        entry = SimpleNamespace(audio_file="recording.wav")
+        with (
+            patch(
+                "ui_qt.widgets.history_sidebar.settings_manager.get",
+                return_value=True,
+            ),
+            patch.object(
+                QMessageBox,
+                "exec",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
+                return_value=entry,
+            ),
+            patch(
+                "ui_qt.widgets.history_sidebar.history_manager.get_recording_path",
+                return_value=r"C:\recordings\recording.wav",
+            ),
+            patch(
+                "ui_qt.widgets.history_sidebar.QComboBox.currentData",
+                return_value=True,
+            ),
+            patch.object(QCheckBox, "isChecked", return_value=False),
+            patch(
+                "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
+                return_value=True,
+            ) as delete_entry,
+        ):
+            self.sidebar._on_delete_requested("entry-test-id")
+
+        delete_entry.assert_called_once_with(
+            "entry-test-id",
+            delete_audio_file=True,
+        )
 
     def test_dont_ask_again_preference_is_saved(self):
         with (
@@ -79,6 +128,10 @@ class TestHistorySidebarDelete(unittest.TestCase):
                 QMessageBox,
                 "exec",
                 return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
+                return_value=None,
             ),
             patch.object(QCheckBox, "isChecked", return_value=True),
             patch(
@@ -111,7 +164,10 @@ class TestHistorySidebarDelete(unittest.TestCase):
             self.sidebar._on_delete_requested("entry-test-id")
 
         show_confirmation.assert_not_called()
-        delete_entry.assert_called_once_with("entry-test-id")
+        delete_entry.assert_called_once_with(
+            "entry-test-id",
+            delete_audio_file=False,
+        )
 
 
 if __name__ == "__main__":

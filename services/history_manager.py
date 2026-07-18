@@ -270,19 +270,45 @@ class HistoryManager:
         """
         return db.get_history_entry_by_id(entry_id)
 
-    def delete_entry(self, entry_id: str) -> bool:
-        """Delete a history entry.
+    def delete_entry(
+        self,
+        entry_id: str,
+        delete_audio_file: bool = False,
+    ) -> bool:
+        """Delete a history entry and optionally its saved audio file.
 
         Args:
             entry_id: The entry ID to delete.
+            delete_audio_file: Whether to also delete the entry's saved audio.
 
         Returns:
             True if deleted, False if not found.
         """
+        entry = db.get_history_entry_by_id(entry_id) if delete_audio_file else None
         result = db.delete_history_entry(entry_id)
         if result:
             logger.info(f"Deleted history entry: {entry_id[:8]}...")
+            if entry and entry.audio_file:
+                self._delete_recording_file(entry.audio_file)
         return result
+
+    def _delete_recording_file(self, filename: str) -> bool:
+        """Delete a saved recording and clear any remaining database references."""
+        audio_path = self.get_recording_path(filename)
+        if not audio_path:
+            db.clear_history_audio_file(filename)
+            logger.info("Saved recording already absent: %s", filename)
+            return True
+
+        try:
+            os.remove(audio_path)
+        except OSError as exc:
+            logger.error("Failed to delete saved recording %s: %s", filename, exc)
+            return False
+
+        db.clear_history_audio_file(filename)
+        logger.info("Deleted saved recording: %s", filename)
+        return True
 
     def clear_history(self) -> None:
         """Clear all history entries (keeps recordings)."""
