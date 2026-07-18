@@ -15,7 +15,6 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 <p align="center">
   <img width="410" alt="Model Manager: browse, download, and choose local Whisper models" src="docs/screenshots/model-selector.png" />
-  <img width="410" alt="Local Whisper model technical details" src="docs/screenshots/model-details.png" />
 </p>
 
 
