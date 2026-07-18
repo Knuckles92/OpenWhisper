@@ -47,6 +47,7 @@ class SettingsKey:
     # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
+    CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
 
 
 class RecordingRetentionMode:

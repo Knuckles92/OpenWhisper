@@ -15,7 +15,7 @@ import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
-    QMessageBox, QFileDialog,
+    QMessageBox, QFileDialog, QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
 from PyQt6.QtGui import QFont, QDesktopServices
@@ -23,6 +23,7 @@ from PyQt6.QtGui import QFont, QDesktopServices
 from config import config
 from services.format_utils import format_file_size
 from services.history_manager import HistoryEntry, history_manager
+from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
@@ -729,7 +730,48 @@ class HistorySidebar(QWidget):
                 logger.error(f"Failed to copy raw text to clipboard: {e}")
 
     def _on_delete_requested(self, entry_id: str):
-        """Handle delete request."""
+        """Confirm and handle an individual history-entry deletion request."""
+        try:
+            should_confirm = settings_manager.get(
+                SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
+                True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to load history deletion preference: %s", exc)
+            should_confirm = True
+
+        if should_confirm is not False:
+            confirmation = QMessageBox(self)
+            confirmation.setIcon(QMessageBox.Icon.Warning)
+            confirmation.setWindowTitle("Delete History Entry")
+            confirmation.setText("Delete this transcription from history?")
+            confirmation.setInformativeText(
+                "The saved recording file (if any) will be kept. "
+                "This cannot be undone."
+            )
+            confirmation.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+
+            dont_ask_again = QCheckBox("Don't ask me again", confirmation)
+            confirmation.setCheckBox(dont_ask_again)
+
+            if confirmation.exec() != QMessageBox.StandardButton.Yes:
+                return
+
+            if dont_ask_again.isChecked():
+                try:
+                    settings_manager.save_setting(
+                        SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
+                        False,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to save history deletion preference: %s",
+                        exc,
+                    )
+
         if history_manager.delete_entry(entry_id):
             self.entry_deleted.emit(entry_id)
             self.refresh()  # Refresh the list
