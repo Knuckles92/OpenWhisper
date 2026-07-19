@@ -353,23 +353,23 @@ class TestPolishCleanupRule(unittest.TestCase):
         from services.transcript_cleanup import polish_cleanup_rule
 
         with patch("services.transcript_cleanup.find_api_key", return_value=None):
-            rule, error = polish_cleanup_rule("  always spell my name Dylan  ")
-        self.assertEqual(rule, "always spell my name Dylan")
+            rule, error = polish_cleanup_rule("  always spell my name Alex  ")
+        self.assertEqual(rule, "always spell my name Alex")
         self.assertIsNotNone(error)
 
     def test_success_returns_polished_rule_with_polish_prompt(self):
         from config import config
         from services.transcript_cleanup import polish_cleanup_rule
 
-        client = self._mock_openai('Always spell the user\'s name "Dylan Fiori".')
+        client = self._mock_openai('Always spell the user\'s name "Alex Rivera".')
         with patch(
             "services.transcript_cleanup.find_api_key", return_value="test-key"
         ), patch("services.transcript_cleanup.OpenAI", return_value=client):
             rule, error = polish_cleanup_rule(
-                "um so my name should always be spelled Dylan Fiori"
+                "um so my name should always be spelled Alex Rivera"
             )
 
-        self.assertEqual(rule, 'Always spell the user\'s name "Dylan Fiori".')
+        self.assertEqual(rule, 'Always spell the user\'s name "Alex Rivera".')
         self.assertIsNone(error)
         kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(

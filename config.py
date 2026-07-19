@@ -170,8 +170,8 @@ class AppConfig:
         "rule with semicolons. Return only the rule text with no numbering, "
         "quotes, or preamble.\n\n"
         "Example input: so um whenever I say my name it should be spelled "
-        "D Y L A N F I O R I\n"
-        'Example output: Always spell the user\'s name "Dylan Fiori".'
+        "A L E X R I V E R A\n"
+        'Example output: Always spell the user\'s name "Alex Rivera".'
     )
 
     # Waveform style settings

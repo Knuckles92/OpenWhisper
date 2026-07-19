@@ -9,8 +9,8 @@ import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QComboBox, QCheckBox, QCompleter,
-    QSpinBox, QSlider, QFrame, QScrollArea, QTextEdit,
+    QWidget, QLabel, QCheckBox, QCompleter,
+    QSlider, QFrame, QScrollArea, QTextEdit,
     QLineEdit, QListWidget,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -39,7 +39,7 @@ from services.history_manager import history_manager
 from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
-from ui_qt.widgets import PrimaryButton, Button
+from ui_qt.widgets import NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class SettingsDialog(QDialog):
         retention_label = QLabel("Keep recordings:")
         layout.addWidget(retention_label)
 
-        self.recording_retention_combo = QComboBox()
+        self.recording_retention_combo = NoWheelComboBox()
         self.recording_retention_combo.addItem("Keep all", RecordingRetentionMode.KEEP_ALL)
         self.recording_retention_combo.addItem("Custom", RecordingRetentionMode.CUSTOM)
         self.recording_retention_combo.setMinimumHeight(36)
@@ -190,7 +190,7 @@ class SettingsDialog(QDialog):
         self.max_recordings_label = QLabel("Number to keep:")
         custom_count_layout.addWidget(self.max_recordings_label)
 
-        self.max_recordings_spinbox = QSpinBox()
+        self.max_recordings_spinbox = NoWheelSpinBox()
         self.max_recordings_spinbox.setMinimum(1)
         self.max_recordings_spinbox.setMaximum(1000)
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
@@ -223,7 +223,7 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_label = QLabel("Preview font size:")
         font_size_layout.addWidget(self.streaming_font_size_label)
 
-        self.streaming_font_size_spinbox = QSpinBox()
+        self.streaming_font_size_spinbox = NoWheelSpinBox()
         self.streaming_font_size_spinbox.setMinimum(10)
         self.streaming_font_size_spinbox.setMaximum(48)
         self.streaming_font_size_spinbox.setSuffix(" pt")
@@ -265,7 +265,7 @@ class SettingsDialog(QDialog):
         sample_rate_label = QLabel("Sample Rate (Hz):")
         layout.addWidget(sample_rate_label)
 
-        self.sample_rate_combo = QComboBox()
+        self.sample_rate_combo = NoWheelComboBox()
         self.sample_rate_combo.addItems(["16000", "22050", "44100", "48000"])
         self.sample_rate_combo.setMinimumHeight(36)
         layout.addWidget(self.sample_rate_combo)
@@ -275,7 +275,7 @@ class SettingsDialog(QDialog):
         channels_label = QLabel("Channels:")
         layout.addWidget(channels_label)
 
-        self.channels_combo = QComboBox()
+        self.channels_combo = NoWheelComboBox()
         self.channels_combo.addItems(["Mono (1)", "Stereo (2)"])
         self.channels_combo.setMinimumHeight(36)
         layout.addWidget(self.channels_combo)
@@ -306,7 +306,7 @@ class SettingsDialog(QDialog):
         device_label = QLabel("Input Device:")
         layout.addWidget(device_label)
 
-        self.audio_device_combo = QComboBox()
+        self.audio_device_combo = NoWheelComboBox()
         self.audio_device_combo.setMinimumHeight(36)
         self._populate_audio_devices()
         layout.addWidget(self.audio_device_combo)
@@ -345,12 +345,32 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(tab, "Hotkeys")
 
     def _create_cleanup_tab(self):
-        """Create AI transcript cleanup (post-processing) settings tab."""
+        """Create AI transcript cleanup (post-processing) settings tab.
+
+        Split into subtabs so the growing cleanup feature set stays
+        scannable: General holds provider/model/prompt settings, Learned
+        Rules holds the rule-teaching UI.
+        """
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setContentsMargins(0, 0, 0, 0)
         tab_layout.setSpacing(0)
 
+        subtabs = QTabWidget()
+        subtabs.setObjectName("cleanupSubTabs")
+        subtabs.addTab(self._create_cleanup_general_subtab(), "General")
+        subtabs.addTab(self._create_cleanup_rules_subtab(), "Learned Rules")
+        tab_layout.addWidget(subtabs)
+
+        self._cleanup_tab_index = self.tabs.addTab(tab, "Cleanup")
+
+    def _cleanup_subtab_scaffold(self):
+        """Create the scrollable scaffold shared by Cleanup subtabs.
+
+        Returns:
+            Tuple of (scroll_area, content_layout). The scroll area is the
+            widget to hand to addTab; the layout receives the content.
+        """
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -359,6 +379,13 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
+
+        scroll_area.setWidget(content)
+        return scroll_area, layout
+
+    def _create_cleanup_general_subtab(self):
+        """Build the General cleanup subtab (provider, model, prompt)."""
+        scroll_area, layout = self._cleanup_subtab_scaffold()
 
         # Title
         title = QLabel("AI Transcript Cleanup")
@@ -377,7 +404,7 @@ class SettingsDialog(QDialog):
         self.cleanup_provider_label = QLabel("Provider:")
         layout.addWidget(self.cleanup_provider_label)
 
-        self.cleanup_provider_combo = QComboBox()
+        self.cleanup_provider_combo = NoWheelComboBox()
         self.cleanup_provider_combo.addItem("OpenAI", TranscriptCleanupProvider.OPENAI)
         self.cleanup_provider_combo.addItem(
             "OpenRouter", TranscriptCleanupProvider.OPENROUTER
@@ -395,7 +422,7 @@ class SettingsDialog(QDialog):
         self.cleanup_model_sort_label = QLabel("Sort models by:")
         sort_row.addWidget(self.cleanup_model_sort_label)
 
-        self.cleanup_model_sort_combo = QComboBox()
+        self.cleanup_model_sort_combo = NoWheelComboBox()
         self.cleanup_model_sort_combo.addItem(
             "A → Z", TranscriptCleanupModelSort.ALPHABETICAL
         )
@@ -440,9 +467,9 @@ class SettingsDialog(QDialog):
 
         model_row = QHBoxLayout()
         model_row.setSpacing(8)
-        self.cleanup_model_combo = QComboBox()
+        self.cleanup_model_combo = NoWheelComboBox()
         self.cleanup_model_combo.setEditable(True)
-        self.cleanup_model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cleanup_model_combo.setInsertPolicy(NoWheelComboBox.InsertPolicy.NoInsert)
         self.cleanup_model_combo.setMinimumHeight(36)
         # Type-to-search: substring-filter the model list while typing.
         # Sharing the combo's own model keeps the completer in sync when
@@ -475,7 +502,7 @@ class SettingsDialog(QDialog):
         self.cleanup_reasoning_label = QLabel("Thinking level:")
         layout.addWidget(self.cleanup_reasoning_label)
 
-        self.cleanup_reasoning_combo = QComboBox()
+        self.cleanup_reasoning_combo = NoWheelComboBox()
         self.cleanup_reasoning_combo.addItem("Off", TranscriptCleanupReasoning.OFF)
         self.cleanup_reasoning_combo.addItem("Low", TranscriptCleanupReasoning.LOW)
         self.cleanup_reasoning_combo.addItem(
@@ -519,11 +546,30 @@ class SettingsDialog(QDialog):
         cleanup_btn_row.addStretch()
         layout.addLayout(cleanup_btn_row)
 
-        # Learned rules: user-taught behaviors appended to the base prompt
-        layout.addSpacing(12)
-        self.cleanup_rules_label = QLabel("Learned rules:")
-        layout.addWidget(self.cleanup_rules_label)
+        cleanup_info = QLabel(
+            "Runs the selected chat model on each transcript after transcription. "
+            "OpenAI needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
+            "(environment or .env). Edit the prompt to change cleanup style "
+            "(e.g. bullets, email tone)."
+        )
+        cleanup_info.setObjectName("infoLabel")
+        cleanup_info.setWordWrap(True)
+        self.cleanup_prompt_info = cleanup_info
+        layout.addWidget(cleanup_info)
 
+        layout.addStretch()
+        return scroll_area
+
+    def _create_cleanup_rules_subtab(self):
+        """Build the Learned Rules cleanup subtab (rule teaching UI)."""
+        scroll_area, layout = self._cleanup_subtab_scaffold()
+
+        # Title
+        title = QLabel("Learned Rules")
+        title.setObjectName("headerLabel")
+        layout.addWidget(title)
+
+        # Learned rules: user-taught behaviors appended to the base prompt
         self.cleanup_rules_info = QLabel(
             "Teach the cleanup AI new behaviors — how to spell names, expand "
             "acronyms, or format text. Rules are added to the cleanup prompt "
@@ -538,7 +584,7 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_input = QLineEdit()
         self.cleanup_rule_input.setMinimumHeight(36)
         self.cleanup_rule_input.setPlaceholderText(
-            'e.g. Always spell my name "Dylan Fiori"'
+            'e.g. Always spell my name "Alex Rivera"'
         )
         self.cleanup_rule_input.returnPressed.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_input, stretch=1)
@@ -559,6 +605,9 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_status.setObjectName("infoLabel")
         self.cleanup_rule_status.setWordWrap(True)
         layout.addWidget(self.cleanup_rule_status)
+
+        self.cleanup_rules_label = QLabel("Learned rules:")
+        layout.addWidget(self.cleanup_rules_label)
 
         self.cleanup_rules_list = QListWidget()
         self.cleanup_rules_list.setWordWrap(True)
@@ -583,22 +632,8 @@ class SettingsDialog(QDialog):
         rule_btn_row.addStretch()
         layout.addLayout(rule_btn_row)
 
-        cleanup_info = QLabel(
-            "Runs the selected chat model on each transcript after transcription. "
-            "OpenAI needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
-            "(environment or .env). Edit the prompt to change cleanup style "
-            "(e.g. bullets, email tone)."
-        )
-        cleanup_info.setObjectName("infoLabel")
-        cleanup_info.setWordWrap(True)
-        self.cleanup_prompt_info = cleanup_info
-        layout.addWidget(cleanup_info)
-
         layout.addStretch()
-
-        scroll_area.setWidget(content)
-        tab_layout.addWidget(scroll_area)
-        self._cleanup_tab_index = self.tabs.addTab(tab, "Cleanup")
+        return scroll_area
 
     def _create_advanced_tab(self):
         """Create advanced settings tab with scrollable content."""
@@ -631,7 +666,7 @@ class SettingsDialog(QDialog):
         max_size_label = QLabel("Maximum File Size (MB):")
         layout.addWidget(max_size_label)
 
-        self.max_size_spinbox = QSpinBox()
+        self.max_size_spinbox = NoWheelSpinBox()
         self.max_size_spinbox.setMinimum(1)
         self.max_size_spinbox.setMaximum(500)
         self.max_size_spinbox.setValue(23)
@@ -652,7 +687,7 @@ class SettingsDialog(QDialog):
         hf_policy_label = QLabel("When a model is missing from this computer:")
         layout.addWidget(hf_policy_label)
 
-        self.hf_policy_combo = QComboBox()
+        self.hf_policy_combo = NoWheelComboBox()
         self.hf_policy_combo.setObjectName("hfPolicyCombo")
         self.hf_policy_combo.addItem(
             "Ask before downloading", HuggingFaceAccessPolicy.ASK
@@ -924,7 +959,15 @@ class SettingsDialog(QDialog):
 
     def _add_cleanup_rule(self):
         """Polish the typed instruction with AI, then confirm and stage it."""
-        raw = self.cleanup_rule_input.text().strip()
+        self._polish_cleanup_rule(self.cleanup_rule_input.text())
+
+    def _polish_cleanup_rule(self, raw: str):
+        """Polish an instruction with AI, then confirm and stage it.
+
+        Args:
+            raw: Raw instruction text, typed or dictated.
+        """
+        raw = raw.strip()
         if (
             not raw
             or self._rule_polishing
@@ -1096,18 +1139,16 @@ class SettingsDialog(QDialog):
         """Apply a finished dictation on the main thread."""
         self._rule_dictation_state = "idle"
         self.cleanup_rule_mic_btn.setText("Dictate")
+        self._update_cleanup_rule_controls()
         if error:
             self.cleanup_rule_status.setText(error)
-        else:
-            current = self.cleanup_rule_input.text().strip()
-            self.cleanup_rule_input.setText(
-                f"{current} {text}".strip() if current else text
-            )
-            self.cleanup_rule_input.setFocus()
-            self.cleanup_rule_status.setText(
-                "Review the instruction, then click Add Rule."
-            )
-        self._update_cleanup_rule_controls()
+            return
+        # Skip the input box: polish the dictation and open the confirm
+        # popup right away. Any text already typed is folded in, matching
+        # the previous append-then-add behavior.
+        current = self.cleanup_rule_input.text().strip()
+        raw = f"{current} {text}".strip() if current else text
+        self._polish_cleanup_rule(raw)
 
     def _release_rule_recorder(self):
         """Release the dictation recorder when the dialog closes."""

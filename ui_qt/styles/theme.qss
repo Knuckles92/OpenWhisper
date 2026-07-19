@@ -446,6 +446,37 @@ QTabBar::tab:hover {
     border: 1px solid #48484a;
 }
 
+/* Cleanup sub-tabs — quieter underline style nested inside the segmented
+   main settings tabs. Must come after #settingsTabs so these equal-
+   specificity descendant rules win for the nested tab bar. */
+#cleanupSubTabs QTabBar::tab {
+    background-color: transparent;
+    color: #8e8e93;
+    border: none;
+    border-radius: 0px;
+    padding: 8px 18px;
+    margin: 4px 2px 0px 2px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+#cleanupSubTabs QTabBar::tab:first {
+    margin-left: 18px;
+}
+
+#cleanupSubTabs QTabBar::tab:selected {
+    background-color: transparent;
+    color: #0a84ff;
+    border: none;
+    border-bottom: 2px solid #0a84ff;
+}
+
+#cleanupSubTabs QTabBar::tab:hover:!selected {
+    background-color: transparent;
+    color: #f5f5f7;
+    border: none;
+}
+
 /* Fixed / Raw transcript version toggle */
 QPushButton#transcriptVersionBtn {
     background-color: #2c2c2e;

@@ -230,11 +230,11 @@ class TestTranscriptCleanupRules(unittest.TestCase):
 
     def test_compose_appends_numbered_rules(self):
         result = self.compose(
-            "Base prompt.", ['Spell "Dylan Fiori".', "Expand SCWA."]
+            "Base prompt.", ['Spell "Alex Rivera".', "Expand SCWA."]
         )
         self.assertTrue(result.startswith("Base prompt.\n\n"))
         self.assertIn("Additional user-taught rules (always apply):", result)
-        self.assertIn('1. Spell "Dylan Fiori".', result)
+        self.assertIn('1. Spell "Alex Rivera".', result)
         self.assertIn("2. Expand SCWA.", result)
 
     def test_rules_round_trip_through_settings_file(self):
@@ -242,7 +242,7 @@ class TestTranscriptCleanupRules(unittest.TestCase):
         path = os.path.join(temp_dir, "settings.json")
         try:
             manager = SettingsManager(path)
-            rules = ['Always spell my name "Dylan Fiori".', "Use bullet lists."]
+            rules = ['Always spell my name "Alex Rivera".', "Use bullet lists."]
             manager.save_setting(self.key, rules)
             self.assertEqual(self.resolve(manager.load_all_settings()), rules)
         finally:
