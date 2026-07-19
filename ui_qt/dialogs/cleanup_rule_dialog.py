@@ -24,18 +24,28 @@ class CleanupRuleDialog(QDialog):
         """Initialize the rule dialog.
 
         Args:
-            rule: Rule text to confirm or edit.
-            original: The raw instruction the rule was polished from, shown
-                read-only for reference. None when editing an existing rule.
+            rule: Rule text to confirm or edit (polished text when confirming).
+            original: The raw instruction the rule was polished from. None when
+                editing an existing rule. When set and polish succeeded, the
+                user can choose polished (recommended) or exactly as typed.
             notice: Optional warning line (e.g. AI polish unavailable).
             parent: Optional parent widget.
         """
         super().__init__(parent)
+        self._original = (original or "").strip()
+        self._polished = (rule or "").strip()
+        self._offer_choice = (
+            original is not None
+            and not notice
+            and bool(self._original)
+            and self._polished
+            and self._polished.casefold() != self._original.casefold()
+        )
         self.setWindowTitle(
             "Confirm Learned Rule" if original is not None else "Edit Learned Rule"
         )
-        self.setMinimumSize(460, 260)
-        self.resize(500, 300)
+        self.setMinimumSize(460, 280 if self._offer_choice else 260)
+        self.resize(520, 340 if self._offer_choice else 300)
         self._setup_ui(rule, original, notice)
 
     def _setup_ui(
@@ -65,10 +75,17 @@ class CleanupRuleDialog(QDialog):
             warn.setWordWrap(True)
             layout.addWidget(warn)
 
-        info = QLabel(
-            "This rule is added to the cleanup prompt on every transcript. "
-            "Edit it if needed, then save."
-        )
+        if self._offer_choice:
+            info = QLabel(
+                "AI polished your instruction into a clearer rule for the cleanup "
+                "prompt. We recommend the polished version, or you can keep exactly "
+                "what you typed. Edit either choice below before saving."
+            )
+        else:
+            info = QLabel(
+                "This rule is added to the cleanup prompt on every transcript. "
+                "Edit it if needed, then save."
+            )
         info.setObjectName("infoLabel")
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -88,11 +105,36 @@ class CleanupRuleDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
         buttons.addWidget(cancel_btn)
 
-        save_btn = PrimaryButton("Save Rule")
-        save_btn.clicked.connect(self.accept)
-        buttons.addWidget(save_btn)
+        if self._offer_choice:
+            as_typed_btn = Button("Use Exactly as Typed")
+            as_typed_btn.setToolTip("Save your original wording without AI changes")
+            as_typed_btn.clicked.connect(self._accept_as_typed)
+            buttons.addWidget(as_typed_btn)
+
+            polished_btn = PrimaryButton("Use Polished (Recommended)")
+            polished_btn.setToolTip(
+                "Save the AI-polished rule (or your edits to it)"
+            )
+            polished_btn.clicked.connect(self._accept_polished)
+            buttons.addWidget(polished_btn)
+        else:
+            save_btn = PrimaryButton("Save Rule")
+            save_btn.clicked.connect(self.accept)
+            buttons.addWidget(save_btn)
 
         layout.addLayout(buttons)
+
+    def _accept_as_typed(self) -> None:
+        """Accept using the user's original wording."""
+        self.rule_edit.setPlainText(self._original)
+        self.accept()
+
+    def _accept_polished(self) -> None:
+        """Accept the polished text, or the user's edits if they changed it."""
+        text = self.rule_edit.toPlainText().strip()
+        if not text:
+            self.rule_edit.setPlainText(self._polished)
+        self.accept()
 
     def rule_text(self) -> str:
         """Return the edited rule text."""

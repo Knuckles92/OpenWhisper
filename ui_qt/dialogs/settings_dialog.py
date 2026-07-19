@@ -9,7 +9,7 @@ import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QCheckBox, QCompleter,
+    QWidget, QLabel, QCheckBox,
     QSlider, QFrame, QScrollArea, QTextEdit,
     QLineEdit, QListWidget,
 )
@@ -39,7 +39,9 @@ from services.history_manager import history_manager
 from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
-from ui_qt.widgets import NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button
+from ui_qt.widgets import (
+    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button, SearchableComboBox,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -467,20 +469,10 @@ class SettingsDialog(QDialog):
 
         model_row = QHBoxLayout()
         model_row.setSpacing(8)
-        self.cleanup_model_combo = NoWheelComboBox()
-        self.cleanup_model_combo.setEditable(True)
-        self.cleanup_model_combo.setInsertPolicy(NoWheelComboBox.InsertPolicy.NoInsert)
+        # Type-to-search: typing narrows the combo's own dropdown
+        # (case-insensitive substring match on the live-loaded list).
+        self.cleanup_model_combo = SearchableComboBox()
         self.cleanup_model_combo.setMinimumHeight(36)
-        # Type-to-search: substring-filter the model list while typing.
-        # Sharing the combo's own model keeps the completer in sync when
-        # the list is repopulated after a fetch or provider switch.
-        completer = QCompleter(
-            self.cleanup_model_combo.model(), self.cleanup_model_combo
-        )
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.cleanup_model_combo.setCompleter(completer)
         model_row.addWidget(self.cleanup_model_combo, stretch=1)
 
         self.cleanup_model_refresh_btn = Button("Refresh")

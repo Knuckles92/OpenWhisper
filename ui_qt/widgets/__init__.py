@@ -33,6 +33,7 @@ from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
 from ui_qt.widgets.compact_record_controller import CompactRecordController
 from ui_qt.widgets.no_wheel import NoWheelComboBox, NoWheelSpinBox
+from ui_qt.widgets.searchable_combo import SearchableComboBox
 
 __all__ = [
     "Button",
@@ -62,4 +63,5 @@ __all__ = [
     "CompactRecordController",
     "NoWheelComboBox",
     "NoWheelSpinBox",
+    "SearchableComboBox",
 ]
