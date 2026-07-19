@@ -5,7 +5,7 @@ import json
 import os
 import logging
 import threading
-from typing import Dict, Any, Final, Tuple, Optional
+from typing import Dict, Any, Final, List, Tuple, Optional
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,8 @@ class SettingsKey:
     TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
     TRANSCRIPT_CLEANUP_MODEL_SORT: Final[str] = "transcript_cleanup_model_sort"
     TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
+    # JSON list of user-taught rule strings appended to the cleanup prompt
+    TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
@@ -563,3 +565,48 @@ def resolve_transcript_cleanup_reasoning(
     if reasoning in TranscriptCleanupReasoning.ALL:
         return reasoning
     return config.TRANSCRIPT_CLEANUP_REASONING
+
+
+def resolve_transcript_cleanup_rules(
+    settings: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Return the validated list of learned cleanup rules.
+
+    Non-list values yield an empty list; non-string and blank entries are
+    dropped, remaining entries are stripped, and the list is capped at
+    ``config.MAX_TRANSCRIPT_CLEANUP_RULES``.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        List of non-empty rule strings (possibly empty).
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_RULES)
+    if not isinstance(raw, list):
+        return []
+    rules = [r.strip() for r in raw if isinstance(r, str) and r.strip()]
+    return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
+
+
+def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str:
+    """Append numbered learned rules to the base cleanup prompt.
+
+    Args:
+        base_prompt: The base cleanup system prompt.
+        rules: Learned rule strings (already validated).
+
+    Returns:
+        ``base_prompt`` unchanged when ``rules`` is empty; otherwise the base
+        prompt followed by a numbered "user-taught rules" section.
+    """
+    if not rules:
+        return base_prompt
+    numbered = "\n".join(f"{i}. {rule}" for i, rule in enumerate(rules, start=1))
+    return (
+        f"{base_prompt}\n\n"
+        f"Additional user-taught rules (always apply):\n{numbered}"
+    )

@@ -192,5 +192,64 @@ class TestSettingsManager(unittest.TestCase):
             self.settings_manager.save_hf_access_policy("sometimes")
 
 
+class TestTranscriptCleanupRules(unittest.TestCase):
+    """Learned-rules resolution and prompt composition."""
+
+    def setUp(self):
+        from services.settings import (
+            SettingsKey,
+            compose_transcript_cleanup_prompt,
+            resolve_transcript_cleanup_rules,
+        )
+        self.key = SettingsKey.TRANSCRIPT_CLEANUP_RULES
+        self.resolve = resolve_transcript_cleanup_rules
+        self.compose = compose_transcript_cleanup_prompt
+
+    def test_missing_key_returns_empty_list(self):
+        self.assertEqual(self.resolve({}), [])
+
+    def test_non_list_value_returns_empty_list(self):
+        self.assertEqual(self.resolve({self.key: "not a list"}), [])
+        self.assertEqual(self.resolve({self.key: {"a": 1}}), [])
+        self.assertEqual(self.resolve({self.key: None}), [])
+
+    def test_entries_are_filtered_and_stripped(self):
+        rules = self.resolve(
+            {self.key: ["  Rule one  ", "", "   ", 42, None, "Rule two"]}
+        )
+        self.assertEqual(rules, ["Rule one", "Rule two"])
+
+    def test_rules_capped_at_config_limit(self):
+        rules = self.resolve(
+            {self.key: [f"Rule {i}" for i in range(config.MAX_TRANSCRIPT_CLEANUP_RULES + 10)]}
+        )
+        self.assertEqual(len(rules), config.MAX_TRANSCRIPT_CLEANUP_RULES)
+
+    def test_compose_without_rules_returns_base_unchanged(self):
+        self.assertEqual(self.compose("Base prompt.", []), "Base prompt.")
+
+    def test_compose_appends_numbered_rules(self):
+        result = self.compose(
+            "Base prompt.", ['Spell "Dylan Fiori".', "Expand SCWA."]
+        )
+        self.assertTrue(result.startswith("Base prompt.\n\n"))
+        self.assertIn("Additional user-taught rules (always apply):", result)
+        self.assertIn('1. Spell "Dylan Fiori".', result)
+        self.assertIn("2. Expand SCWA.", result)
+
+    def test_rules_round_trip_through_settings_file(self):
+        temp_dir = tempfile.mkdtemp()
+        path = os.path.join(temp_dir, "settings.json")
+        try:
+            manager = SettingsManager(path)
+            rules = ['Always spell my name "Dylan Fiori".', "Use bullet lists."]
+            manager.save_setting(self.key, rules)
+            self.assertEqual(self.resolve(manager.load_all_settings()), rules)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+            os.rmdir(temp_dir)
+
+
 if __name__ == '__main__':
     unittest.main()

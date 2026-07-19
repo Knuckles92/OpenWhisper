@@ -17,10 +17,12 @@ from services.transcript_cleanup import CleanupInfo, TranscriptCleanup
 try:
     from services.settings import (
         SettingsKey,
+        compose_transcript_cleanup_prompt,
         resolve_transcript_cleanup_model,
         resolve_transcript_cleanup_prompt,
         resolve_transcript_cleanup_provider,
         resolve_transcript_cleanup_reasoning,
+        resolve_transcript_cleanup_rules,
         settings_manager,
     )
 except ImportError:  # pragma: no cover - supports lightweight test stubs
@@ -42,6 +44,12 @@ except ImportError:  # pragma: no cover - supports lightweight test stubs
 
     def resolve_transcript_cleanup_reasoning(settings=None):
         return config.TRANSCRIPT_CLEANUP_REASONING
+
+    def resolve_transcript_cleanup_rules(settings=None):
+        return []
+
+    def compose_transcript_cleanup_prompt(base_prompt, rules):
+        return base_prompt
 
 from ui_qt.overlay_state import OverlayState
 
@@ -257,7 +265,10 @@ class TranscriptionRuntime:
 
         self.controller.overlay_state_update.emit(OverlayState.CLEANING)
         self.controller.status_update.emit("Cleaning up...")
-        prompt = resolve_transcript_cleanup_prompt(settings)
+        prompt = compose_transcript_cleanup_prompt(
+            resolve_transcript_cleanup_prompt(settings),
+            resolve_transcript_cleanup_rules(settings),
+        )
         fixed = self._transcript_cleanup.cleanup(raw, system_prompt=prompt)
         # A changed transcript also proves cleanup ran, covering stubs that
         # bypass the real cleanup() and never touch last_error.

@@ -36,13 +36,22 @@ class AudioRecorder:
             logger.error(f"Failed to enumerate audio devices: {e}")
         return devices
 
-    def __init__(self, device_id: Optional[int] = None):
+    def __init__(
+        self,
+        device_id: Optional[int] = None,
+        output_file: Optional[str] = None,
+    ):
         """Initialize the audio recorder.
 
         Args:
             device_id: Optional device ID for input. None uses system default.
+            output_file: Default WAV path for this recorder. Uses
+                ``config.RECORDED_AUDIO_FILE`` when None; pass a private path
+                for secondary recorders so they never clobber the main flow's
+                recording.
         """
         self.device_id = device_id
+        self.output_file = output_file or config.RECORDED_AUDIO_FILE
         self.is_recording = False
         self.frames: List[bytes] = []
         self.stream: Optional[sd.InputStream] = None
@@ -106,10 +115,10 @@ class AudioRecorder:
 
             # Delete old audio file if it exists
             import os
-            if os.path.exists(config.RECORDED_AUDIO_FILE):
+            if os.path.exists(self.output_file):
                 try:
-                    os.remove(config.RECORDED_AUDIO_FILE)
-                    logger.info(f"Deleted old audio file: {config.RECORDED_AUDIO_FILE}")
+                    os.remove(self.output_file)
+                    logger.info(f"Deleted old audio file: {self.output_file}")
                 except Exception as e:
                     logger.warning(f"Could not delete old audio file: {e}")
 
@@ -288,7 +297,8 @@ class AudioRecorder:
         """Save the recorded audio frames to a WAV file.
 
         Args:
-            filename: Output filename. Uses config default if None.
+            filename: Output filename. Uses this recorder's output_file
+                (config default unless overridden) if None.
 
         Returns:
             True if saved successfully, False otherwise.
@@ -297,7 +307,7 @@ class AudioRecorder:
             logger.warning("No audio data to save")
             return False
 
-        filename = filename or config.RECORDED_AUDIO_FILE
+        filename = filename or self.output_file
 
         # Take a snapshot of frames while holding the callback lock to avoid races
         with self._callback_lock:

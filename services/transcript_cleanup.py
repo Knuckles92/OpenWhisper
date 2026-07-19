@@ -4,7 +4,7 @@ Post-ASR transcript cleanup via OpenAI or OpenRouter chat models.
 import logging
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -183,6 +183,39 @@ def list_cleanup_models(
     if provider == TranscriptCleanupProvider.OPENAI:
         model_ids = _filter_openai_chat_models(model_ids)
     return sorted(model_ids)
+
+
+def polish_cleanup_rule(
+    instruction: str,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    reasoning: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Rewrite a raw user instruction into a short imperative cleanup rule.
+
+    Args:
+        instruction: The user's raw typed or dictated instruction.
+        provider: Optional ``TranscriptCleanupProvider`` value. Config
+            default when omitted.
+        model: Optional chat model id. Provider default when omitted.
+        reasoning: Optional ``TranscriptCleanupReasoning`` value.
+
+    Returns:
+        Tuple of (rule_text, error). ``rule_text`` is the polished rule on
+        success, or the stripped original instruction when polish is
+        unavailable or failed; ``error`` is None only on success.
+    """
+    instruction = instruction.strip()
+    if not instruction:
+        return "", "empty instruction"
+    cleaner = TranscriptCleanup(
+        provider=provider, model=model, reasoning=reasoning
+    )
+    result = cleaner.cleanup(
+        instruction,
+        system_prompt=config.TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT,
+    )
+    return result.strip(), cleaner.last_error
 
 
 class TranscriptCleanup:

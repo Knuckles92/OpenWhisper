@@ -331,5 +331,65 @@ class TestTranscriptCleanupSettings(unittest.TestCase):
             )
 
 
+class TestPolishCleanupRule(unittest.TestCase):
+    """Tests for polishing raw instructions into learned rules."""
+
+    @staticmethod
+    def _mock_openai(content):
+        client = MagicMock()
+        client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content=content))]
+        )
+        return client
+
+    def test_empty_instruction_returns_error(self):
+        from services.transcript_cleanup import polish_cleanup_rule
+
+        rule, error = polish_cleanup_rule("   ")
+        self.assertEqual(rule, "")
+        self.assertIsNotNone(error)
+
+    def test_unavailable_falls_back_to_verbatim(self):
+        from services.transcript_cleanup import polish_cleanup_rule
+
+        with patch("services.transcript_cleanup.find_api_key", return_value=None):
+            rule, error = polish_cleanup_rule("  always spell my name Dylan  ")
+        self.assertEqual(rule, "always spell my name Dylan")
+        self.assertIsNotNone(error)
+
+    def test_success_returns_polished_rule_with_polish_prompt(self):
+        from config import config
+        from services.transcript_cleanup import polish_cleanup_rule
+
+        client = self._mock_openai('Always spell the user\'s name "Dylan Fiori".')
+        with patch(
+            "services.transcript_cleanup.find_api_key", return_value="test-key"
+        ), patch("services.transcript_cleanup.OpenAI", return_value=client):
+            rule, error = polish_cleanup_rule(
+                "um so my name should always be spelled Dylan Fiori"
+            )
+
+        self.assertEqual(rule, 'Always spell the user\'s name "Dylan Fiori".')
+        self.assertIsNone(error)
+        kwargs = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(
+            kwargs["messages"][0]["content"],
+            config.TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT,
+        )
+
+    def test_api_error_falls_back_to_verbatim(self):
+        from services.transcript_cleanup import polish_cleanup_rule
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = TimeoutError("timed out")
+        with patch(
+            "services.transcript_cleanup.find_api_key", return_value="test-key"
+        ), patch("services.transcript_cleanup.OpenAI", return_value=client):
+            rule, error = polish_cleanup_rule("expand SCWA")
+
+        self.assertEqual(rule, "expand SCWA")
+        self.assertIsNotNone(error)
+
+
 if __name__ == "__main__":
     unittest.main()

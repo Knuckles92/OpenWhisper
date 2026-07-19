@@ -146,6 +146,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_model_download_requested = self.request_model_download
         self.ui_controller.on_model_delete_requested = self.request_model_delete
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
+        self.ui_controller.on_dictation_transcribe = self.transcribe_clip
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -576,6 +577,28 @@ class ApplicationController(QObject):
         in ``_connect_signals``.
         """
         self.minimize_to_tray_requested.emit()
+
+    def transcribe_clip(self, audio_path: str) -> str:
+        """Transcribe a short audio clip outside the main recording flow.
+
+        Used by the settings dialog's rule-dictation feature; called from a
+        worker thread, returns the transcript synchronously.
+
+        Args:
+            audio_path: Path to the audio clip to transcribe.
+
+        Returns:
+            The transcript text.
+
+        Raises:
+            RuntimeError: When no backend is ready or the engine is busy.
+        """
+        backend = self.current_backend
+        if backend is None:
+            raise RuntimeError("No transcription engine is available")
+        if getattr(backend, "is_transcribing", False):
+            raise RuntimeError("Transcription engine is busy")
+        return backend.transcribe(audio_path)
 
     def retranscribe_audio(self, audio_path: str) -> None:
         """Re-transcribe an existing audio file (UI callback target).

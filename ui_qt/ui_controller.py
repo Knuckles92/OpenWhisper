@@ -64,6 +64,7 @@ class UIController(QObject):
         self.on_hf_policy_changed: Optional[Callable] = None  # Callback for HuggingFace access policy change
         self.on_model_download_requested: Optional[Callable] = None  # Model Manager: fetch a model
         self.on_model_delete_requested: Optional[Callable] = None  # Model Manager: delete cached files
+        self.on_dictation_transcribe: Optional[Callable] = None  # Settings dialog: transcribe a dictated clip
         self.get_loaded_local_model: Optional[Callable] = None  # Provider: currently loaded model name
 
         # Non-modal Model Manager dialog (single instance, created lazily)
@@ -458,6 +459,7 @@ class UIController(QObject):
                 consent dialog's "Open Settings" action).
         """
         dialog = SettingsDialog(self.main_window)
+        dialog.on_dictation_transcribe = self.on_dictation_transcribe
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:

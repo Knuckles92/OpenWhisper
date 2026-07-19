@@ -886,6 +886,36 @@ class TestApplicationController(unittest.TestCase):
         self.assertIsNone(entry.get("cleanup_provider"))
         self.assertIsNone(entry.get("cleanup_model"))
 
+    def test_transcribe_clip_delegates_to_current_backend(self):
+        controller = self._create_controller()
+
+        class _Backend:
+            def transcribe(self, path):
+                return f"clip transcript for {path}"
+
+        controller.current_backend = _Backend()
+        self.assertEqual(
+            controller.transcribe_clip("dictation.wav"),
+            "clip transcript for dictation.wav",
+        )
+
+    def test_transcribe_clip_raises_without_backend_or_when_busy(self):
+        controller = self._create_controller()
+
+        controller.current_backend = None
+        with self.assertRaises(RuntimeError):
+            controller.transcribe_clip("dictation.wav")
+
+        class _BusyBackend:
+            is_transcribing = True
+
+            def transcribe(self, _path):
+                return "should not run"
+
+        controller.current_backend = _BusyBackend()
+        with self.assertRaises(RuntimeError):
+            controller.transcribe_clip("dictation.wav")
+
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()
         controller.hotkey_manager = None

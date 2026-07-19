@@ -157,6 +157,22 @@ class AppConfig:
         "and preserve meaning, tone, and proper nouns. "
         "Return only the cleaned transcript text with no preamble or quotes."
     )
+    # Learned cleanup rules (user-taught behaviors appended to the base prompt)
+    MAX_TRANSCRIPT_CLEANUP_RULES: int = 50
+    TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT: str = (
+        "You convert a user's instruction into one short rule for an AI that "
+        "cleans up speech-to-text transcripts. Rewrite the instruction as a "
+        "single, clear, imperative directive. Preserve every specific detail "
+        "exactly - names, spellings, capitalization, abbreviations, "
+        "expansions, and formatting requests. Do not add behaviors the user "
+        "did not ask for, do not generalize, and do not explain. If the "
+        "instruction contains several related behaviors, join them into one "
+        "rule with semicolons. Return only the rule text with no numbering, "
+        "quotes, or preamble.\n\n"
+        "Example input: so um whenever I say my name it should be spelled "
+        "D Y L A N F I O R I\n"
+        'Example output: Always spell the user\'s name "Dylan Fiori".'
+    )
 
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
