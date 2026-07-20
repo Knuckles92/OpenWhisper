@@ -27,13 +27,12 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
 - **Auto-paste** – Transcription automatically pastes to your active window
 - **System Tray** – Minimize to tray, always accessible
-- **Smart Splitting** – Large audio files split automatically to avoid API limits
+- **Smart Splitting(API)** – Large audio files split automatically to avoid API limits
 - **Audio Device Selection** – Choose your preferred microphone input
 - **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
-- **Live Streaming** *(experimental)* – Real-time transcription preview while recording
-- **Caret Indicator** *(experimental)* – Visual marker at cursor location when pasting
+- **Live Streaming** – Real-time transcription preview while recording
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
