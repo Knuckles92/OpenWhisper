@@ -34,6 +34,11 @@ node_modules/
 .pytest_cache/
 *.spec
 
+# PyInstaller / Inno Setup build output
+/build/
+/dist/
+/installer/Output/
+
 # Editor / tool state
 .claude/settings.local.json
 .claude/settings.local.json.bak
