@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QCheckBox,
     QSlider, QFrame, QScrollArea, QTextEdit,
-    QLineEdit, QListWidget,
+    QLineEdit, QListWidget, QStackedWidget,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -556,73 +556,156 @@ class SettingsDialog(QDialog):
         """Build the Learned Rules cleanup subtab (rule teaching UI)."""
         scroll_area, layout = self._cleanup_subtab_scaffold()
 
-        # Title
-        title = QLabel("Learned Rules")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
+        hero = QFrame()
+        hero.setObjectName("cleanupRulesHero")
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(20, 18, 20, 18)
+        hero_layout.setSpacing(16)
 
-        # Learned rules: user-taught behaviors appended to the base prompt
+        hero_copy = QVBoxLayout()
+        hero_copy.setContentsMargins(0, 0, 0, 0)
+        hero_copy.setSpacing(5)
+
+        eyebrow = QLabel("PERSONAL CLEANUP PROFILE")
+        eyebrow.setObjectName("cleanupRulesEyebrow")
+        hero_copy.addWidget(eyebrow)
+
+        title = QLabel("Make every transcript sound like you")
+        title.setObjectName("cleanupRulesTitle")
+        title.setWordWrap(True)
+        hero_copy.addWidget(title)
+
         self.cleanup_rules_info = QLabel(
-            "Teach the cleanup AI new behaviors — how to spell names, expand "
-            "acronyms, or format text. Rules are added to the cleanup prompt "
-            "on every transcript."
+            "Teach OpenWhisper your preferred spellings, terminology, and "
+            "formatting. These instructions are applied automatically whenever "
+            "AI cleanup runs."
         )
-        self.cleanup_rules_info.setObjectName("infoLabel")
+        self.cleanup_rules_info.setObjectName("cleanupRulesDescription")
         self.cleanup_rules_info.setWordWrap(True)
-        layout.addWidget(self.cleanup_rules_info)
+        hero_copy.addWidget(self.cleanup_rules_info)
+        hero_layout.addLayout(hero_copy, stretch=1)
+
+        hero_mark = QLabel("AI")
+        hero_mark.setObjectName("cleanupRulesHeroMark")
+        hero_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hero_mark.setFixedSize(52, 52)
+        hero_layout.addWidget(hero_mark, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(hero)
+
+        composer = QFrame()
+        composer.setObjectName("cleanupRulesCard")
+        composer_layout = QVBoxLayout(composer)
+        composer_layout.setContentsMargins(18, 16, 18, 18)
+        composer_layout.setSpacing(12)
+
+        composer_title = QLabel("Teach a new rule")
+        composer_title.setObjectName("cleanupRulesSectionTitle")
+        composer_layout.addWidget(composer_title)
+
+        composer_hint = QLabel(
+            "Write a natural instruction. The AI will turn it into a clear, "
+            "reusable rule before saving."
+        )
+        composer_hint.setObjectName("cleanupRulesSectionHint")
+        composer_hint.setWordWrap(True)
+        composer_layout.addWidget(composer_hint)
 
         rule_input_row = QHBoxLayout()
-        rule_input_row.setSpacing(8)
+        rule_input_row.setSpacing(10)
         self.cleanup_rule_input = QLineEdit()
-        self.cleanup_rule_input.setMinimumHeight(36)
+        self.cleanup_rule_input.setObjectName("cleanupRuleInput")
+        self.cleanup_rule_input.setMinimumHeight(44)
         self.cleanup_rule_input.setPlaceholderText(
-            'e.g. Always spell my name "Alex Rivera"'
+            'Try: Always spell my name "Alex Rivera"'
         )
         self.cleanup_rule_input.returnPressed.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_input, stretch=1)
 
         self.cleanup_rule_mic_btn = Button("Dictate")
+        self.cleanup_rule_mic_btn.setObjectName("cleanupRuleDictateButton")
+        self.cleanup_rule_mic_btn.set_base_minimum_size(92, 44)
         self.cleanup_rule_mic_btn.setToolTip(
             "Speak the instruction instead of typing it"
         )
         self.cleanup_rule_mic_btn.clicked.connect(self._toggle_rule_dictation)
         rule_input_row.addWidget(self.cleanup_rule_mic_btn)
 
-        self.cleanup_rule_add_btn = Button("Add Rule")
+        self.cleanup_rule_add_btn = PrimaryButton("+ Add rule")
+        self.cleanup_rule_add_btn.setObjectName("cleanupRuleAddButton")
+        self.cleanup_rule_add_btn.set_base_minimum_size(112, 44)
         self.cleanup_rule_add_btn.clicked.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_add_btn)
-        layout.addLayout(rule_input_row)
+        composer_layout.addLayout(rule_input_row)
 
         self.cleanup_rule_status = QLabel("")
-        self.cleanup_rule_status.setObjectName("infoLabel")
+        self.cleanup_rule_status.setObjectName("cleanupRuleStatus")
         self.cleanup_rule_status.setWordWrap(True)
-        layout.addWidget(self.cleanup_rule_status)
+        composer_layout.addWidget(self.cleanup_rule_status)
+        layout.addWidget(composer)
 
-        self.cleanup_rules_label = QLabel("Learned rules:")
-        layout.addWidget(self.cleanup_rules_label)
+        library = QFrame()
+        library.setObjectName("cleanupRulesCard")
+        library_layout = QVBoxLayout(library)
+        library_layout.setContentsMargins(18, 16, 18, 18)
+        library_layout.setSpacing(12)
+
+        library_header = QHBoxLayout()
+        library_header.setContentsMargins(0, 0, 0, 0)
+        self.cleanup_rules_label = QLabel("Your rule library")
+        self.cleanup_rules_label.setObjectName("cleanupRulesSectionTitle")
+        library_header.addWidget(self.cleanup_rules_label)
+        library_header.addStretch()
+        self.cleanup_rules_count = QLabel()
+        self.cleanup_rules_count.setObjectName("cleanupRulesCount")
+        self.cleanup_rules_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        library_header.addWidget(self.cleanup_rules_count)
+        library_layout.addLayout(library_header)
 
         self.cleanup_rules_list = QListWidget()
+        self.cleanup_rules_list.setObjectName("cleanupRulesList")
         self.cleanup_rules_list.setWordWrap(True)
-        self.cleanup_rules_list.setMinimumHeight(120)
+        self.cleanup_rules_list.setSpacing(6)
+        self.cleanup_rules_list.setMinimumHeight(176)
         self.cleanup_rules_list.itemSelectionChanged.connect(
             self._update_cleanup_rule_controls
         )
         self.cleanup_rules_list.itemDoubleClicked.connect(
             lambda _item: self._edit_cleanup_rule()
         )
-        layout.addWidget(self.cleanup_rules_list)
+        library_layout.addWidget(self.cleanup_rules_list)
+
+        self.cleanup_rules_empty = QLabel(
+            "No rules yet\n\nAdd your first instruction above to start building "
+            "a personal cleanup profile."
+        )
+        self.cleanup_rules_empty.setObjectName("cleanupRulesEmpty")
+        self.cleanup_rules_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cleanup_rules_empty.setWordWrap(True)
+        self.cleanup_rules_empty.setMinimumHeight(176)
+        library_layout.addWidget(self.cleanup_rules_empty)
+
+        interaction_hint = QLabel("Select a rule or double-click it to edit")
+        interaction_hint.setObjectName("cleanupRulesInteractionHint")
+        interaction_hint.setWordWrap(True)
+        library_layout.addWidget(interaction_hint)
 
         rule_btn_row = QHBoxLayout()
         rule_btn_row.setSpacing(8)
-        self.cleanup_rule_edit_btn = Button("Edit…")
+        rule_btn_row.addStretch()
+
+        self.cleanup_rule_edit_btn = Button("Edit rule")
+        self.cleanup_rule_edit_btn.setObjectName("cleanupRuleEditButton")
+        self.cleanup_rule_edit_btn.set_base_minimum_size(96, 38)
         self.cleanup_rule_edit_btn.clicked.connect(self._edit_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_edit_btn)
 
         self.cleanup_rule_delete_btn = Button("Delete")
+        self.cleanup_rule_delete_btn.setObjectName("cleanupRuleDeleteButton")
+        self.cleanup_rule_delete_btn.set_base_minimum_size(88, 38)
         self.cleanup_rule_delete_btn.clicked.connect(self._delete_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_delete_btn)
-        rule_btn_row.addStretch()
-        layout.addLayout(rule_btn_row)
+        library_layout.addLayout(rule_btn_row)
+        layout.addWidget(library)
 
         layout.addStretch()
         return scroll_area
@@ -936,6 +1019,13 @@ class SettingsDialog(QDialog):
         """Gate rule controls on the master toggle and worker activity."""
         enabled = self.transcript_cleanup_check.isChecked()
         busy = self._rule_polishing or self._rule_dictation_state != "idle"
+        rule_count = self.cleanup_rules_list.count()
+        self.cleanup_rules_count.setText(
+            f"{rule_count} / {config.MAX_TRANSCRIPT_CLEANUP_RULES}"
+        )
+        self.cleanup_rules_list.setVisible(rule_count > 0)
+        self.cleanup_rules_empty.setVisible(rule_count == 0)
+        self.cleanup_rules_empty.setEnabled(enabled)
         self.cleanup_rule_input.setEnabled(enabled and not busy)
         self.cleanup_rule_add_btn.setEnabled(enabled and not busy)
         # While recording, the mic button is the Stop control and must stay
@@ -1027,6 +1117,7 @@ class SettingsDialog(QDialog):
             return
         self.cleanup_rules_list.addItem(rule)
         self.cleanup_rule_input.clear()
+        self._update_cleanup_rule_controls()
 
     def _edit_cleanup_rule(self):
         """Open the rule editor for the selected rule."""

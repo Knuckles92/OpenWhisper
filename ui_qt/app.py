@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
+from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
 
@@ -77,6 +78,10 @@ class QtApplication:
         self.app = QApplication.instance()
         if self.app is None:
             self.app = QApplication([])
+
+        # Application-wide icon: inherited by every window and dialog, and
+        # used by the taskbar and alt-tab switcher.
+        self.app.setWindowIcon(app_icon())
 
         self.theme_manager = ThemeManager()
         self._tooltip_filter = RoundedTooltipFilter(self.app)

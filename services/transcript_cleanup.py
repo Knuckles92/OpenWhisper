@@ -104,13 +104,9 @@ def find_api_key(provider: str) -> Optional[str]:
     if not api_key:
         try:
             from dotenv import load_dotenv
+            from config import env_file_path
 
-            env_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "..",
-                config.ENV_FILE,
-            )
-            load_dotenv(env_path)
+            load_dotenv(env_file_path())
             api_key = os.getenv(env_key)
         except ImportError:
             logger.warning(

@@ -384,6 +384,9 @@ class DummyUIController:
         self.download_started = []
         self.download_finished = []
         self.deleted_models = []
+        self.component_progress_events = []
+        self.component_state_changes = 0
+        self.component_install_results = []
 
     def show_hf_consent_dialog(self, model_name, policy, env_blocked=False):
         self.consent_requests.append((model_name, policy, env_blocked))
@@ -394,6 +397,15 @@ class DummyUIController:
 
     def refresh_model_manager(self):
         self.model_manager_refreshes += 1
+
+    def on_component_progress(self, component_id, phase, done, total):
+        self.component_progress_events.append((component_id, phase, done, total))
+
+    def on_component_state_changed(self):
+        self.component_state_changes += 1
+
+    def on_component_install_finished(self, component_id, success, message):
+        self.component_install_results.append((component_id, success, message))
 
     def on_model_download_started(self, model_name):
         self.download_started.append(model_name)

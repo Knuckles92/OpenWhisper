@@ -67,6 +67,11 @@ class UIController(QObject):
         self.on_dictation_transcribe: Optional[Callable] = None  # Settings dialog: transcribe a dictated clip
         self.get_loaded_local_model: Optional[Callable] = None  # Provider: currently loaded model name
 
+        # Downloadable components (assigned by ApplicationController)
+        self.on_component_install: Optional[Callable] = None
+        self.on_component_cancel: Optional[Callable] = None
+        self.on_component_remove: Optional[Callable] = None
+
         # Non-modal Model Manager dialog (single instance, created lazily)
         self._model_manager_dialog = None
 
@@ -533,6 +538,15 @@ class UIController(QObject):
             dialog.on_download_requested = self.on_model_download_requested
             dialog.on_delete_requested = self.on_model_delete_requested
             dialog.on_set_active_requested = self._on_manager_set_active
+            dialog.component_install_requested.connect(
+                self.on_component_install_requested
+            )
+            dialog.component_cancel_requested.connect(
+                self.on_component_cancel_requested
+            )
+            dialog.component_remove_requested.connect(
+                self.on_component_remove_requested
+            )
             self._model_manager_dialog = dialog
 
         self._model_manager_dialog.refresh()
@@ -573,6 +587,49 @@ class UIController(QObject):
         """Reflect a model delete outcome in the Model Manager."""
         if self._model_manager_dialog is not None:
             self._model_manager_dialog.show_delete_result(model_name, success, error)
+
+    # ── Downloadable components ────────────────────────────────────
+    #
+    # Callbacks are assigned by ApplicationController, matching the pattern
+    # used for recording and model actions.
+
+    def on_component_install_requested(self, component_id: str):
+        """Forward a component install request to the application controller."""
+        if self.on_component_install:
+            self.on_component_install(component_id)
+
+    def on_component_cancel_requested(self, component_id: str):
+        """Forward a component cancel request to the application controller."""
+        if self.on_component_cancel:
+            self.on_component_cancel(component_id)
+
+    def on_component_remove_requested(self, component_id: str):
+        """Forward a component removal request to the application controller."""
+        if self.on_component_remove:
+            self.on_component_remove(component_id)
+
+    def on_component_progress(
+        self, component_id: str, phase: str, done: int, total: int
+    ):
+        """Reflect component install progress in the Model Manager."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.set_component_progress(
+                component_id, phase, done, total
+            )
+
+    def on_component_state_changed(self):
+        """Re-render component rows after an install, cancel, or removal."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.refresh_components()
+
+    def on_component_install_finished(
+        self, component_id: str, success: bool, message: str
+    ):
+        """Reflect a finished component install in the Model Manager."""
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.finish_component_install(
+                component_id, success, message
+            )
 
     def open_hotkey_dialog(self):
         """Open the hotkey configuration dialog."""

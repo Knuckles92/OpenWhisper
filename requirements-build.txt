@@ -1,0 +1,8 @@
+# Tooling for producing the Windows installer. Not needed to run from source.
+#
+#   pip install -r requirements.txt -r requirements-build.txt
+#   .\scripts\build_installer.ps1
+#
+# Inno Setup is a separate system install and is not a pip package:
+#   winget install -e --id JRSoftware.InnoSetup
+pyinstaller>=6.10.0

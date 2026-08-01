@@ -3,9 +3,11 @@ Configuration constants for the OpenWhisper application.
 """
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Dict, List, Tuple
+
+from _version import __version__
 
 try:
     import numpy as np
@@ -13,14 +15,117 @@ except ImportError:  # pragma: no cover - lightweight fallback for test/import e
     np = SimpleNamespace(int16="int16")
 
 
+APP_NAME = "OpenWhisper"
+ENV_FILE_NAME = ".env"
+
+
+def is_frozen() -> bool:
+    """True when running from a PyInstaller bundle rather than source."""
+    return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+
+
+def bundle_root() -> str:
+    """Directory holding bundled read-only assets (stylesheets, icons).
+
+    Under PyInstaller this is the extraction dir (``sys._MEIPASS``); from
+    source it is the repository root.
+    """
+    if is_frozen():
+        return sys._MEIPASS  # type: ignore[attr-defined]
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def local_app_dir() -> str:
+    """Per-user application directory, e.g. ``%LOCALAPPDATA%\\OpenWhisper``.
+
+    Always absolute, regardless of whether the app is frozen.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get(
+            "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+        )
+    return os.path.join(base, APP_NAME)
+
+
+def data_root() -> str:
+    """Directory for writable user data.
+
+    Frozen builds install to ``%LOCALAPPDATA%\\Programs\\OpenWhisper``, which
+    must be treated as read-only, so user data goes to
+    ``%LOCALAPPDATA%\\OpenWhisper`` instead. Running from source returns ``""``
+    so every path stays CWD-relative exactly as before — developer workflows
+    and the test suite are unaffected.
+    """
+    if not is_frozen():
+        return ""
+
+    root = local_app_dir()
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def components_root() -> str:
+    """Directory holding downloaded components.
+
+    Unlike settings, this is always an absolute per-user path — components are
+    multi-gigabyte binaries that should not be duplicated per source checkout,
+    and they deliberately live outside the install directory so upgrading the
+    application does not delete them.
+    """
+    return os.path.join(local_app_dir(), "components")
+
+
+def user_data_path(filename: str) -> str:
+    """Resolve ``filename`` against the writable user-data root.
+
+    Returns the bare filename when running from source, preserving the
+    historical CWD-relative behavior.
+    """
+    root = data_root()
+    return os.path.join(root, filename) if root else filename
+
+
+def env_file_path() -> str:
+    """Locate the optional ``.env`` file holding API keys.
+
+    Frozen builds look in the user-data root first, because the bundle
+    directory is read-only and a user-supplied ``.env`` cannot live there.
+    Falls back to the repository root so source checkouts keep working.
+    """
+    candidates = []
+    root = data_root()
+    if root:
+        candidates.append(os.path.join(root, ENV_FILE_NAME))
+    candidates.append(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ENV_FILE_NAME)
+    )
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return candidates[0]
+
+
 @dataclass
 class AppConfig:
     """Centralized configuration for the OpenWhisper application."""
 
-    # File paths
-    SETTINGS_FILE: str = "openwhisper_settings.json"
-    RECORDED_AUDIO_FILE: str = "recorded_audio.wav"
-    LOG_FILE: str = "openwhisper.log"
+    # Application version (see _version.py)
+    VERSION: str = __version__
+
+    # File paths. These resolve under %LOCALAPPDATA%\OpenWhisper in frozen
+    # builds and stay CWD-relative when running from source.
+    SETTINGS_FILE: str = field(
+        default_factory=lambda: user_data_path("openwhisper_settings.json")
+    )
+    RECORDED_AUDIO_FILE: str = field(
+        default_factory=lambda: user_data_path("recorded_audio.wav")
+    )
+    LOG_FILE: str = field(default_factory=lambda: user_data_path("openwhisper.log"))
     ENV_FILE: str = ".env"
 
     # Logging configuration
@@ -30,11 +135,17 @@ class AppConfig:
     LOG_BACKUP_COUNT: int = 3
 
     # History and recordings
-    HISTORY_FILE: str = "transcription_history.json"
-    RECORDINGS_FOLDER: str = "recordings"
+    HISTORY_FILE: str = field(
+        default_factory=lambda: user_data_path("transcription_history.json")
+    )
+    RECORDINGS_FOLDER: str = field(
+        default_factory=lambda: user_data_path("recordings")
+    )
     # Default when retention mode is "custom" (None / keep_all means unlimited).
     MAX_SAVED_RECORDINGS: int = 20
-    DATABASE_FILE: str = "openwhisper.db"
+    DATABASE_FILE: str = field(
+        default_factory=lambda: user_data_path("openwhisper.db")
+    )
 
     # Audio settings
     CHUNK_SIZE: int = 1024

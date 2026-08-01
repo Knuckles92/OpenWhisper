@@ -10,11 +10,55 @@ import threading
 import logging
 import time
 import numpy as np
-from scipy import signal
 from typing import Callable, List, Optional
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+def fft_resample(samples: np.ndarray, num_samples: int) -> np.ndarray:
+    """Resample a 1-D signal to ``num_samples`` via the frequency domain.
+
+    Equivalent to ``scipy.signal.resample`` for the mono float32 preview
+    chunks this module handles, without pulling scipy (110 MB) into the
+    distribution for a single call. Working in the frequency domain gives
+    implicit anti-aliasing on downsample, which naive interpolation does not.
+
+    Args:
+        samples: 1-D input signal.
+        num_samples: Desired output length; must be positive.
+
+    Returns:
+        The resampled signal as float32.
+    """
+    n_in = len(samples)
+    spectrum = np.fft.rfft(samples).copy()
+    n_out_bins = num_samples // 2 + 1
+
+    # The Nyquist bin needs care whenever the output length changes, because
+    # irfft treats the final bin as its own conjugate twin (counted once) while
+    # every other bin is counted twice. scipy.signal.resample makes the same
+    # two adjustments.
+    if num_samples < n_in:
+        spectrum = spectrum[:n_out_bins]
+        if num_samples % 2 == 0:
+            # Truncation promoted an ordinary two-sided component into the
+            # Nyquist slot; double it to preserve its energy.
+            spectrum[-1] *= 2.0
+    elif num_samples > n_in:
+        if n_in % 2 == 0:
+            # The input's real Nyquist component is about to become an ordinary
+            # two-sided bin; halve it so the energy splits between +/- Nyquist.
+            spectrum[-1] *= 0.5
+        if n_out_bins > len(spectrum):
+            spectrum = np.concatenate(
+                [spectrum, np.zeros(n_out_bins - len(spectrum), dtype=spectrum.dtype)]
+            )
+        else:
+            spectrum = spectrum[:n_out_bins]
+
+    resampled = np.fft.irfft(spectrum, num_samples) * (num_samples / n_in)
+    return resampled.astype(np.float32)
 
 
 def append_preview_text(existing: str, chunk_text: str) -> str:
@@ -266,7 +310,7 @@ class StreamingTranscriber:
             )
             if num_samples <= 0:
                 return None
-            audio_array = signal.resample(audio_array, num_samples)
+            audio_array = fft_resample(audio_array, num_samples)
 
         return audio_array
 

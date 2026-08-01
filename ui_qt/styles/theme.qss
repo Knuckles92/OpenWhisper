@@ -636,3 +636,243 @@ QToolTip {
     padding: 6px 10px;
     font-size: 12px;
 }
+
+/* Learned Rules: layered profile, composer, and library surfaces */
+QFrame#cleanupRulesHero {
+    background-color: #202b3a;
+    border: 1px solid #2d4a69;
+    border-radius: 16px;
+}
+
+QLabel#cleanupRulesEyebrow {
+    color: #64b5ff;
+    background-color: transparent;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+}
+
+QLabel#cleanupRulesTitle {
+    color: #ffffff;
+    background-color: transparent;
+    font-size: 21px;
+    font-weight: 700;
+}
+
+QLabel#cleanupRulesDescription {
+    color: #aeb9c6;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#cleanupRulesHeroMark,
+QLabel#cleanupRuleDialogMark {
+    color: #ffffff;
+    background-color: #0a84ff;
+    border: 1px solid #3298ff;
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+QFrame#cleanupRulesCard {
+    background-color: #242426;
+    border: 1px solid #39393d;
+    border-radius: 14px;
+}
+
+QLabel#cleanupRulesSectionTitle {
+    color: #f5f5f7;
+    background-color: transparent;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#cleanupRulesSectionHint,
+QLabel#cleanupRulesInteractionHint {
+    color: #8e8e93;
+    background-color: transparent;
+    font-size: 11px;
+}
+
+QLabel#cleanupRulesCount {
+    color: #64b5ff;
+    background-color: #17283a;
+    border: 1px solid #294866;
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QLineEdit#cleanupRuleInput {
+    background-color: #1c1c1e;
+    border: 1px solid #48484a;
+    border-radius: 10px;
+    padding: 9px 13px;
+}
+
+QLineEdit#cleanupRuleInput:hover {
+    border-color: #636366;
+}
+
+QLineEdit#cleanupRuleInput:focus {
+    background-color: #202022;
+    border: 1px solid #0a84ff;
+}
+
+QPushButton#cleanupRuleDictateButton,
+QPushButton#cleanupRuleEditButton,
+QPushButton#cleanupRuleDeleteButton,
+QPushButton#cleanupRuleAddButton {
+    min-height: 44px;
+    max-height: 44px;
+    border-radius: 10px;
+    padding: 0 15px;
+    font-size: 12px;
+}
+
+QPushButton#cleanupRuleAddButton {
+    color: #ffffff;
+    background-color: #0a84ff;
+    border: 1px solid #3298ff;
+}
+
+QPushButton#cleanupRuleAddButton:hover {
+    background-color: #2492ff;
+}
+
+QPushButton#cleanupRuleAddButton:disabled {
+    color: #636366;
+    background-color: #2c2c2e;
+    border-color: #3a3a3c;
+}
+
+QPushButton#cleanupRuleDeleteButton {
+    min-height: 38px;
+    max-height: 38px;
+    color: #ff6961;
+    background-color: transparent;
+    border: 1px solid #5b3434;
+}
+
+QPushButton#cleanupRuleDeleteButton:hover {
+    color: #ffffff;
+    background-color: #a93636;
+    border-color: #c34545;
+}
+
+QPushButton#cleanupRuleDeleteButton:disabled {
+    color: #636366;
+    background-color: transparent;
+    border-color: #3a3a3c;
+}
+
+QPushButton#cleanupRuleEditButton {
+    min-height: 38px;
+    max-height: 38px;
+}
+
+QLabel#cleanupRuleStatus {
+    color: #8e8e93;
+    background-color: transparent;
+    min-height: 14px;
+    font-size: 11px;
+}
+
+QListWidget#cleanupRulesList {
+    color: #f5f5f7;
+    background-color: transparent;
+    border: none;
+    outline: none;
+    padding: 0px;
+}
+
+QListWidget#cleanupRulesList::item {
+    background-color: #1c1c1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 9px;
+    padding: 11px 13px;
+}
+
+QListWidget#cleanupRulesList::item:hover {
+    background-color: #2c2c2e;
+    border-color: #545456;
+}
+
+QListWidget#cleanupRulesList::item:selected {
+    color: #ffffff;
+    background-color: #173d63;
+    border: 1px solid #0a84ff;
+}
+
+QLabel#cleanupRulesEmpty {
+    color: #77777c;
+    background-color: #1f1f21;
+    border: 1px dashed #48484a;
+    border-radius: 10px;
+    padding: 24px;
+    font-size: 12px;
+}
+
+/* Learned Rule review dialog */
+QDialog#cleanupRuleDialog {
+    background-color: #19191b;
+}
+
+QLabel#cleanupRuleDialogTitle {
+    color: #ffffff;
+    background-color: transparent;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#cleanupRuleDialogSubtitle,
+QLabel#cleanupRuleDialogInfo {
+    color: #9a9aa0;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#cleanupRuleOriginal {
+    color: #d6d6da;
+    background-color: #242426;
+    border-left: 3px solid #0a84ff;
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 12px;
+}
+
+QLabel#cleanupRuleNotice {
+    color: #ffd08a;
+    background-color: #332817;
+    border: 1px solid #64491f;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 11px;
+}
+
+QFrame#cleanupRuleEditorCard {
+    background-color: #242426;
+    border: 1px solid #3a3a3c;
+    border-radius: 12px;
+}
+
+QLabel#cleanupRuleEditorLabel {
+    color: #64b5ff;
+    background-color: transparent;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+QTextEdit#cleanupRuleEditor {
+    background-color: #1c1c1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 11px;
+}
+
+QTextEdit#cleanupRuleEditor:focus {
+    border: 1px solid #0a84ff;
+}

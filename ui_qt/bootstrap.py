@@ -5,6 +5,7 @@ from __future__ import annotations
 import faulthandler
 import logging
 import signal
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -24,10 +25,16 @@ def setup_logging() -> None:
         backupCount=config.LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
+    handlers = [file_handler]
+    # A windowed (--noconsole) build has no stdout, so StreamHandler would
+    # raise on every log record it tried to write.
+    if sys.stdout is not None:
+        handlers.append(logging.StreamHandler())
+
     logging.basicConfig(
         level=level,
         format=config.LOG_FORMAT,
-        handlers=[file_handler, logging.StreamHandler()],
+        handlers=handlers,
         force=True,
     )
     _enable_crash_logging()

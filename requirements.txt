@@ -14,7 +14,6 @@ faster-whisper>=1.0.0
 # CPU-only works out of the box; do not install requirements-gpu.txt.
 python-dotenv>=1.0.0
 PyQt6>=6.0.0
-scipy>=1.10.0
 sqlalchemy>=2.0.0
 # Note: faster-whisper automatically installs transitive dependencies:
 #   - av (audio/video processing)

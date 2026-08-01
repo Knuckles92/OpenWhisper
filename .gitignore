@@ -33,6 +33,13 @@ node_modules/
 *__pycache__*
 .pytest_cache/
 *.spec
+# ...but the packaging spec is source, not build output.
+!OpenWhisper.spec
+
+# PyInstaller / Inno Setup build output
+/build/
+/dist/
+/installer/Output/
 
 # Editor / tool state
 .claude/settings.local.json

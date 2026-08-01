@@ -36,8 +36,8 @@ class OpenAIBackend(TranscriptionBackend):
         if not api_key:
             try:
                 from dotenv import load_dotenv
-                env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', config.ENV_FILE)
-                load_dotenv(env_path)
+                from config import env_file_path
+                load_dotenv(env_file_path())
                 api_key = os.getenv('OPENAI_API_KEY')
             except ImportError:
                 logger.warning("python-dotenv not installed. Skipping .env file loading.")

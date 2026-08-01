@@ -12,6 +12,9 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, Final, Optional, Set, Tuple
 
+# Re-exported: callers have long imported format_size_bytes from here, and it
+# is used throughout this module's own messages.
+from services.format_utils import format_size_bytes
 from services.settings import (
     HuggingFaceAccessPolicy,
     is_hf_hub_offline_env_set,
@@ -238,22 +241,6 @@ def delete_model_from_cache(model_name: str) -> None:
     logger.info(f"Deleted '{repo_id}' from HF cache")
 
 
-def format_size_bytes(size_bytes: int) -> str:
-    """Return a human-readable size for an actual on-disk byte count.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        A string like ``"1.53 GB"`` / ``"145 MB"`` / ``"12 KB"``.
-    """
-    if size_bytes >= 1_000_000_000:
-        return f"{size_bytes / 1_000_000_000:.2f} GB"
-    if size_bytes >= 1_000_000:
-        return f"{size_bytes / 1_000_000:.0f} MB"
-    if size_bytes >= 1_000:
-        return f"{size_bytes / 1_000:.0f} KB"
-    return f"{size_bytes} B"
 
 
 class HuggingFaceAccessCoordinator:

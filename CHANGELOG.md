@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-31
+
 ### Added
+- **Windows Installer** - First binary distribution. `OpenWhisper-Setup-2.0.0.exe` installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper` with no admin rights and no UAC prompt; Start Menu, optional desktop, and optional sign-in-startup shortcuts; proper Add/Remove Programs registration. Built with PyInstaller (onedir) plus Inno Setup via `scripts\build_installer.ps1`. Not yet code-signed, so SmartScreen warns on first run
+- **Downloadable Components** - Optional add-ons are fetched on demand instead of shipping in the installer, keeping the download near 135 MB rather than over 1 GB. **GPU Acceleration** (NVIDIA cuBLAS + cuDNN, ~2 GB) is the first component, installed from *Manage models → Components* with determinate progress, cancel, and removal. Downloads resume from a partial file, verify SHA-256 before use, and are committed with two atomic renames so an interruption leaves either the old install or the new one — never a mixture. Components live in `%LOCALAPPDATA%\OpenWhisper\components`, outside the install directory, so upgrading the app does not delete them
+- **Application Icon** - A real multi-resolution icon (16-256 px) for the executable, taskbar, window, and system tray, rendered from the same microphone mark as the loading screen. Small sizes use a simplified solid glyph so the shape still reads at 16 px. Regenerate with `python scripts/generate_icon.py`
 - **Project website** - [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/)
 - **Model Technical Profiles** - Model Manager tiles now open bundled, offline technical profiles with model origin, practical guidance, specifications, limitations, and explicit links to the conversion and upstream model pages
 - **Explicit Hugging Face Download Consent** - Model loading is now cache-first: cached models always load locally with zero network checks. A missing model triggers a consent dialog (Download once / Always allow / Cancel) governed by a three-value policy in Settings → Advanced (`ask`/`always`/`never`). The legacy fully-offline toggle migrates automatically (`true`→`never`, otherwise `ask`); `HF_HUB_OFFLINE=1` in the environment remains a hard override that disables downloads entirely
@@ -32,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`requirements-gpu.txt`** - Opt-in NVIDIA CUDA wheels (cuDNN 9, cuBLAS, CUDA 12 runtime) so GPU acceleration works without installing the CUDA Toolkit.
 
 ### Changed
+- **User data location in installed builds** - Settings, the history database, logs, and saved recordings resolve to `%LOCALAPPDATA%\OpenWhisper` when running from the installer, since the install directory must be treated as read-only. Running from source is unchanged: paths stay relative to the working directory
+- **`format_size_bytes` moved to `services/format_utils.py`** - It is generic display formatting, not Hugging Face logic, and its previous home forced unrelated modules to import `services.hf_access` just to render a size. Still re-exported from `services.hf_access` so existing imports keep working
+- **Stylesheet asset paths are resolved absolutely** - Qt resolves relative `url()` references in a stylesheet against the process working directory, so the check-mark icon only loaded when the app was launched from the repository root. Paths are now made absolute at load time, and a missing stylesheet is logged instead of failing silently
 - **"Transcription Engine" naming** - The main-window backend picker is now labeled "Transcription Engine" (was "Transcription Model"), reserving the word "model" for actual models (local Whisper checkpoints, cleanup chat models)
 - **History Sidebar Redesign** - Single animation clock drives both the sidebar and window resize in lockstep (no more main-content wobble), fixed-width content is clipped instead of re-laid-out every frame, content populates before the first expand (no pop-in), section headers show counts, history cards show a model badge, and both sections share one scroll area
 - Explicit overlay state routing via `OverlayState` enum and naming standardization
@@ -39,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default hotkeys are numpad-aware on Windows/Linux (`kp *`, `kp -`)
 
 ### Removed
+- **scipy dependency** - It was pulled in for a single `signal.resample` call that downsamples streaming preview chunks to 16 kHz, at a cost of ~110 MB installed. Replaced with an equivalent FFT resampler built on numpy (`services.streaming_transcriber.fft_resample`), verified to match `scipy.signal.resample` to float32 precision across up-, down-, and equal-length cases
 - Experimental Meeting Mode and meeting insights (added and removed during this cycle; never in a tagged release)
 - **Duplicate model controls in Settings** - "Default Model" (General tab) and the Whisper Model/Device/Compute combos (Advanced tab) duplicated the main window's engine dropdown and inline Engine Settings panel while writing the same settings keys; each choice now has a single home (engine dropdown; Engine Settings panel / Model Manager)
 - Experimental live typing into the focused window (settings toggle and keystroke injection)

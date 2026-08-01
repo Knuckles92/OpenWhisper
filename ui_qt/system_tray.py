@@ -3,11 +3,12 @@ System Tray Implementation for PyQt6 UI.
 Manages system tray icon and menu.
 """
 import logging
-from pathlib import Path
 from typing import Optional, Callable
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import pyqtSignal
+
+from ui_qt.utils.app_icon import app_icon
 
 logger = logging.getLogger(__name__)
 
@@ -39,33 +40,7 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _setup_icon(self):
         """Setup the tray icon."""
-        # Try to load the icon from the res directory
-        icon_path = Path("res/icon.png")
-
-        if icon_path.exists():
-            self.setIcon(QIcon(str(icon_path)))
-        else:
-            # Create a simple gradient icon if the file doesn't exist
-            pixmap = QPixmap(64, 64)
-            pixmap.fill(Qt.GlobalColor.transparent)
-
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # Draw gradient background
-            from PyQt6.QtGui import QLinearGradient
-            gradient = QLinearGradient(0, 0, 64, 64)
-            gradient.setColorAt(0, QColor(99, 102, 241))
-            gradient.setColorAt(1, QColor(139, 92, 246))
-
-            painter.fillRect(pixmap.rect(), gradient)
-
-            # Draw circle
-            painter.setPen(Qt.GlobalColor.white)
-            painter.drawEllipse(16, 16, 32, 32)
-            painter.end()
-
-            self.setIcon(QIcon(pixmap))
+        self.setIcon(app_icon())
 
     def _setup_menu(self):
         """Setup the tray context menu."""

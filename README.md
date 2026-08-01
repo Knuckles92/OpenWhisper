@@ -52,7 +52,9 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 ## GPU Acceleration (Windows / Linux)
 
-For significantly faster transcription speeds with an NVIDIA GPU, install the CUDA runtime libraries used by faster-whisper (CTranslate2). These ship as pip wheels — **you do not need the CUDA Toolkit installer**:
+> **Installer builds:** the Windows installer ships CPU transcription only, which keeps the download around 135 MB instead of over 1 GB. NVIDIA GPU acceleration is an optional ~2 GB download from **Manage models → Components** inside the app.
+
+Running **from source**, install the CUDA runtime libraries used by faster-whisper (CTranslate2) for significantly faster transcription with an NVIDIA GPU. These ship as pip wheels — **you do not need the CUDA Toolkit installer**:
 
 ```bash
 pip install -r requirements-gpu.txt
@@ -66,6 +68,25 @@ With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming tran
 
 ## Installation
 
+### Windows — installer (recommended)
+
+Download **OpenWhisper-Setup-2.0.0.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
+
+- No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
+- Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
+- A speech model (~150 MB) downloads on first use, with a consent prompt.
+
+> **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
+> ```powershell
+> Get-FileHash .\OpenWhisper-Setup-2.0.0.exe -Algorithm SHA256
+> ```
+
+To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whether to keep your settings and history.
+
+### Install from source (all platforms)
+
+Use this for macOS and Linux, for development, or for NVIDIA GPU acceleration.
+
 **Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase.
 
 ```bash
@@ -78,6 +99,33 @@ venv\Scripts\activate
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Building the installer yourself
+
+```powershell
+.\venv\Scripts\activate
+pip install -r requirements.txt -r requirements-build.txt
+winget install -e --id JRSoftware.InnoSetup
+.\scripts\build_installer.ps1 -Clean
+```
+
+The result lands in `installer\Output\`. See [`OpenWhisper.spec`](OpenWhisper.spec) for what is and isn't bundled.
+
+### Publishing the GPU component
+
+The installer ships CPU-only; the CUDA runtime is delivered as a downloadable component.
+
+```powershell
+python scripts\build_component.py gpu-accel
+```
+
+This writes `build\components\gpu-accel\*.zip` (split into `cublas`, `cudnn`, and `nvrtc` parts so a failed download only re-fetches one piece) plus a `catalog-fragment.json` containing each archive's SHA-256 and size. To publish:
+
+1. Upload the `.zip` files as GitHub Release assets.
+2. Paste their download URLs into the fragment's `url` fields.
+3. Publish the fragment at `https://openwhisper.fiorilabs.tech/components/v1/index.json`.
+
+The app reads that URL to discover versions and sizes. Keeping the index on the website rather than in the release means a bad component can be pulled by editing one small JSON file. If the index is unreachable, already-installed components keep working and the Components panel simply reports that it could not check for updates.
 
 OPTIONAL: For cloud transcription, set your API key:
 ```bash

@@ -10,6 +10,13 @@ from typing import Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
+from services.components import (
+    ComponentCanceled,
+    ComponentError,
+    component_coordinator,
+    install_component,
+    uninstall_component,
+)
 from services.database import db
 from services.hf_access import (
     AccessDecision,
@@ -62,6 +69,15 @@ class ApplicationController(QObject):
     model_download_finished = pyqtSignal(str, bool)
     model_deleted = pyqtSignal(str, bool, str)
     model_cache_changed = pyqtSignal()
+    # Downloadable components (emitted possibly from worker threads).
+    # (component_id, phase, done_units, total_units); throttled in the worker
+    # so a multi-gigabyte download cannot flood the Qt event queue.
+    component_progress = pyqtSignal(str, str, int, int)
+    component_install_started = pyqtSignal(str)
+    # (component_id, success, message). Unlike model downloads there are many
+    # distinct user-facing failure causes, so the message is carried along.
+    component_install_finished = pyqtSignal(str, bool, str)
+    component_state_changed = pyqtSignal()
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -70,6 +86,12 @@ class ApplicationController(QObject):
         saved_device_id = settings_manager.load_audio_input_device()
         self.recorder = AudioRecorder(device_id=saved_device_id)
         self.executor = ThreadPoolExecutor(max_workers=2)
+        # Component installs get their own single worker. They can run for
+        # tens of minutes, and letting one occupy the shared 2-worker pool
+        # would starve transcription and model loading.
+        self.component_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="component"
+        )
 
         self.hotkey_manager = None
         self.streaming_transcriber = None
@@ -147,6 +169,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_model_delete_requested = self.request_model_delete
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
+        self.ui_controller.on_component_install = self.request_component_install
+        self.ui_controller.on_component_cancel = self.cancel_component_install
+        self.ui_controller.on_component_remove = self.request_component_uninstall
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -437,6 +462,98 @@ class ApplicationController(QObject):
         # cached, so this never re-enters the consent flow.
         self.reload_whisper_model()
 
+    # ------------------------------------------------------------------
+    # Downloadable components
+    # ------------------------------------------------------------------
+
+    def request_component_install(self, component_id: str) -> None:
+        """Start installing a component on the component worker thread.
+
+        No-op when an install for this component is already in flight.
+
+        Args:
+            component_id: Component to install (see ``ComponentId``).
+        """
+        cancel_event = component_coordinator.begin_install(component_id)
+        if cancel_event is None:
+            return
+
+        self.component_install_started.emit(component_id)
+        self.component_executor.submit(
+            self._component_install_worker, component_id, cancel_event
+        )
+
+    def cancel_component_install(self, component_id: str) -> None:
+        """Request cancellation of an in-flight component install."""
+        component_coordinator.cancel_install(component_id)
+
+    def request_component_uninstall(self, component_id: str) -> None:
+        """Remove an installed component from disk."""
+        try:
+            uninstall_component(component_id)
+            self.status_update.emit("Component removed")
+        except Exception as exc:
+            logger.error(f"Failed to remove component '{component_id}': {exc}")
+            self.status_update.emit(f"Could not remove the component: {exc}")
+        finally:
+            self.component_state_changed.emit()
+
+    def _component_install_worker(
+        self, component_id: str, cancel_event
+    ) -> None:
+        """Download and install a component off the Qt thread.
+
+        Progress is emitted at most ~10 times per second: a 2 GB download in
+        1 MiB chunks would otherwise queue thousands of cross-thread events
+        and visibly stall the UI.
+
+        Args:
+            component_id: Component being installed.
+            cancel_event: Event the download loop polls to abort.
+        """
+        import time
+
+        last_emit = [0.0]
+        last_percent = [-1]
+
+        def progress(phase: str, done: int, total: int) -> None:
+            now = time.monotonic()
+            percent = int(done * 100 / total) if total > 0 else -1
+            is_final = total > 0 and done >= total
+            if (now - last_emit[0] < 0.1
+                    and percent == last_percent[0]
+                    and not is_final):
+                return
+            last_emit[0] = now
+            last_percent[0] = percent
+            self.component_progress.emit(component_id, phase, done, total)
+
+        success, message = False, ""
+        try:
+            entry = component_coordinator.catalog_entry(component_id)
+            if entry is None:
+                raise ComponentError(
+                    "Could not reach the download server. Check your internet "
+                    "connection and try again."
+                )
+
+            install_component(component_id, entry, progress, cancel_event)
+            success = True
+            message = "Restart OpenWhisper to enable this component."
+        except ComponentCanceled:
+            message = "Installation canceled."
+            logger.info(f"Install of '{component_id}' was canceled")
+        except ComponentError as exc:
+            message = str(exc)
+            logger.error(f"Install of '{component_id}' failed: {exc}")
+        except Exception as exc:
+            message = f"Installation failed: {exc}"
+            logger.error(f"Install of '{component_id}' failed", exc_info=True)
+        finally:
+            component_coordinator.end_install(component_id)
+            self.component_install_finished.emit(component_id, success, message)
+            self.component_state_changed.emit()
+
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
         """Run the approved download/load on a worker thread with busy states.
 
@@ -639,6 +756,16 @@ class ApplicationController(QObject):
         self.model_cache_changed.connect(
             self.ui_controller.refresh_local_engine_controls
         )
+        self.component_progress.connect(self.ui_controller.on_component_progress)
+        self.component_install_started.connect(
+            lambda _component_id: self.ui_controller.on_component_state_changed()
+        )
+        self.component_install_finished.connect(
+            self.ui_controller.on_component_install_finished
+        )
+        self.component_state_changed.connect(
+            self.ui_controller.on_component_state_changed
+        )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
@@ -718,11 +845,21 @@ class ApplicationController(QObject):
             logger.debug(f"Error during streaming cleanup: {exc}")
 
         try:
-            self.executor.shutdown(wait=True, cancel_futures=True)
-        except TypeError:
-            self.executor.shutdown(wait=False)
+            # Must happen before the shutdown below: cancel_futures only
+            # cancels futures that have not started, so an in-flight
+            # multi-gigabyte download would hold shutdown open for minutes.
+            # The download loop checks its cancel event once per MiB.
+            component_coordinator.cancel_all()
         except Exception as exc:
-            logger.debug(f"Error during executor shutdown: {exc}")
+            logger.debug(f"Error cancelling component installs: {exc}")
+
+        for executor in (self.executor, self.component_executor):
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
+            except Exception as exc:
+                logger.debug(f"Error during executor shutdown: {exc}")
 
         try:
             for backend_name, backend in self.transcription_backends.items():

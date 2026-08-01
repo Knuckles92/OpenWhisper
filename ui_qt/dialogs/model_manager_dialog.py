@@ -13,7 +13,7 @@ a single instance and re-raises it instead of stacking copies.
 import logging
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config
+from services.components import component_coordinator
 from services.hf_access import (
     CachedModelInfo,
     format_size_bytes,
@@ -43,6 +44,7 @@ from services.settings import (
 )
 from ui_qt.widgets import Button
 from ui_qt.dialogs.model_details_dialog import ModelDetailsDialog
+from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,12 @@ class _CompactStat(QWidget):
 
 
 class ModelManagerDialog(QDialog):
-    """Non-modal manager for the local Whisper model cache."""
+    """Non-modal manager for the local Whisper model cache and components."""
+
+    # Re-emitted for the controller; the dialog never installs anything itself.
+    component_install_requested = pyqtSignal(str)
+    component_cancel_requested = pyqtSignal(str)
+    component_remove_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -87,6 +94,7 @@ class ModelManagerDialog(QDialog):
         super().__init__(parent)
         self._get_loaded_model = get_loaded_model
         self._downloading_model: Optional[str] = None
+        self._component_rows: Dict[str, ComponentRowWidget] = {}
 
         self.setWindowTitle("Model Manager")
         self.setModal(False)
@@ -97,6 +105,78 @@ class ModelManagerDialog(QDialog):
         self.refresh()
 
     # ── Construction ───────────────────────────────────────────────
+
+    def _build_components_section(self) -> QVBoxLayout:
+        """Build the optional-components group shown above the model list.
+
+        Components live here rather than in Settings because this dialog is
+        deliberately non-modal — a multi-gigabyte download must not lock the
+        user out of the app — and because Settings commits on accept, which
+        does not compose with an in-flight install.
+        """
+        section = QVBoxLayout()
+        section.setSpacing(6)
+
+        heading = QLabel("Components")
+        heading.setObjectName("headerLabel")
+        section.addWidget(heading)
+
+        caption = QLabel(
+            "Optional add-ons. These are downloaded on demand so the "
+            "installer stays small."
+        )
+        caption.setObjectName("infoLabel")
+        caption.setWordWrap(True)
+        section.addWidget(caption)
+
+        for info in component_coordinator.list_components():
+            row = ComponentRowWidget(info.component_id)
+            row.install_clicked.connect(self.component_install_requested)
+            row.cancel_clicked.connect(self.component_cancel_requested)
+            row.remove_clicked.connect(self._confirm_component_removal)
+            self._component_rows[info.component_id] = row
+            section.addWidget(row)
+
+        return section
+
+    def refresh_components(self) -> None:
+        """Re-read component state from disk and re-render every row."""
+        for component_id, row in self._component_rows.items():
+            row.update_state(
+                component_coordinator.describe(component_id),
+                component_coordinator.is_installing(component_id),
+            )
+
+    def set_component_progress(
+        self, component_id: str, phase: str, done: int, total: int
+    ) -> None:
+        """Forward install progress to the matching row."""
+        row = self._component_rows.get(component_id)
+        if row is not None:
+            row.set_progress(phase, done, total)
+
+    def finish_component_install(
+        self, component_id: str, success: bool, message: str
+    ) -> None:
+        """Render the outcome of an install attempt."""
+        self.refresh_components()
+        if message:
+            self.message_label.setText(message)
+
+    def _confirm_component_removal(self, component_id: str) -> None:
+        """Ask before deleting a multi-gigabyte component."""
+        info = component_coordinator.describe(component_id)
+        confirmed = QMessageBox.question(
+            self,
+            "Remove component",
+            f"Remove {info.display_name} "
+            f"({format_size_bytes(info.install_bytes)})?\n\n"
+            "You can install it again later.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed == QMessageBox.StandardButton.Yes:
+            self.component_remove_requested.emit(component_id)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -138,6 +218,8 @@ class ModelManagerDialog(QDialog):
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
         layout.addWidget(self.env_banner)
+
+        layout.addLayout(self._build_components_section())
 
         stats_row = QHBoxLayout()
         stats_row.setSpacing(8)
@@ -282,6 +364,7 @@ class ModelManagerDialog(QDialog):
 
     def refresh(self) -> None:
         """Re-scan the cache and re-render every row and the header stats."""
+        self.refresh_components()
         cached = scan_cached_models()
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
