@@ -113,9 +113,16 @@ class ModelManagerDialog(QDialog):
         deliberately non-modal — a multi-gigabyte download must not lock the
         user out of the app — and because Settings commits on accept, which
         does not compose with an in-flight install.
+
+        Returns an empty layout on platforms with no installable components, so
+        no heading advertises a section with nothing in it.
         """
         section = QVBoxLayout()
         section.setSpacing(6)
+
+        infos = component_coordinator.list_components()
+        if not infos:
+            return section
 
         heading = QLabel("Components")
         heading.setObjectName("headerLabel")
@@ -129,7 +136,7 @@ class ModelManagerDialog(QDialog):
         caption.setWordWrap(True)
         section.addWidget(caption)
 
-        for info in component_coordinator.list_components():
+        for info in infos:
             row = ComponentRowWidget(info.component_id)
             row.install_clicked.connect(self.component_install_requested)
             row.cancel_clicked.connect(self.component_cancel_requested)

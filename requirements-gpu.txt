@@ -1,23 +1,43 @@
-# GPU (NVIDIA CUDA) support for local Whisper transcription on Windows.
+# GPU (NVIDIA CUDA) support for local Whisper transcription — Windows and Linux.
 #
-# faster-whisper's engine (CTranslate2) needs the CUDA 12 runtime libraries at
-# inference time but does NOT declare them as dependencies. Installing these
-# wheels provides cublas64_12.dll, cuDNN 9, and the CUDA runtime WITHOUT
-# requiring the full NVIDIA CUDA Toolkit installer.
+# faster-whisper's engine (CTranslate2) loads its CUDA libraries at runtime and
+# does NOT declare them as dependencies. These wheels supply them WITHOUT the
+# full NVIDIA CUDA Toolkit installer.
 #
 # Install (after the base requirements) only if you have an NVIDIA GPU:
 #     pip install -r requirements.txt
 #     pip install -r requirements-gpu.txt
 #
-# CPU-only, macOS, and Linux users should NOT install this file (the wheels are
-# ~750 MB and Windows-only). Local transcription runs fine on CPU without them.
+# You also need an NVIDIA driver providing CUDA 12 (>= 525). The driver supplies
+# nvcuda.dll / libcuda.so.1 and never comes from pip. macOS users should skip
+# this file entirely: faster-whisper has no Metal/MPS backend. CPU-only
+# transcription works fine everywhere without these wheels.
 #
-# app_qt.py registers these DLL directories at startup (see
-# _register_cuda_dll_directories) so no PATH editing or CUDA Toolkit is needed.
+# What CTranslate2 4.8 actually loads, verified by inspecting the binaries:
+#     Windows   cublas64_12.dll    + nvcuda.dll     (driver-owned)
+#     Linux     libcublas.so.12    + libcuda.so.1   (driver-owned)
+#
+# cuDNN is deliberately absent. CTranslate2 4.8 has no import-table entry and no
+# LoadLibrary/dlopen name string for it on either platform, and a GPU
+# transcription with cuDNN fully removed loads zero cuDNN modules — so the
+# ~800 MB nvidia-cudnn-cu12 wheel would be pure download weight.
+#
+# Loading these libraries differs per platform, because Linux has no mutable
+# equivalent of the Windows DLL search path:
+#     Windows   app_qt._register_cuda_dll_directories() registers the wheels'
+#               bin/ directories with os.add_dll_directory and prepends them to
+#               PATH (CTranslate2's loader ignores the former).
+#     Linux     app_qt._preload_cuda_libraries() loads the .so files with
+#               RTLD_GLOBAL, because LD_LIBRARY_PATH is read by ld.so at process
+#               start and cannot be changed from inside a running process.
 
-# cuDNN 9 for CUDA 12 — transitively pulls in nvidia-cublas-cu12 and
-# nvidia-cuda-nvrtc-cu12, which supply cublas64_12.dll.
-nvidia-cudnn-cu12>=9.0,<10 ; sys_platform == "win32"
+# cuBLAS — the one library CTranslate2 requires for GPU inference. Ships
+# cublasLt alongside it, and declares nvidia-cuda-nvrtc-cu12 as a dependency
+# (cuBLAS JITs kernels through NVRTC on architectures newer than its build
+# target), so NVRTC arrives transitively.
+nvidia-cublas-cu12>=12.3 ; sys_platform == "win32" or sys_platform == "linux"
 
-# CUDA 12 runtime (cudart64_12.dll) — a load-time dependency of cuBLAS.
-nvidia-cuda-runtime-cu12>=12.3 ; sys_platform == "win32"
+# CUDA runtime. Not observed loading during transcription on either platform,
+# but it is ~11 MB and is a load-time dependency of some cuBLAS builds, so it
+# stays as cheap insurance.
+nvidia-cuda-runtime-cu12>=12.3 ; sys_platform == "win32" or sys_platform == "linux"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch OpenWhisper (macOS) using the project's virtualenv.
+# Launch OpenWhisper (macOS / Linux) using the project's virtualenv.
 # Lives in the repo so `git pull` updates launcher logic without reinstalling.
 set -euo pipefail
 
@@ -36,6 +36,38 @@ cd "$REPO"
 export VIRTUAL_ENV
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 unset PYTHONHOME
+
+if [ "$(uname -s)" = "Linux" ]; then
+    # app_qt.py preloads these with RTLD_GLOBAL, which is enough on its own.
+    # Exporting LD_LIBRARY_PATH as well costs nothing and covers the loader
+    # paths a preload cannot reach: libraries dlopen'd by a child process, and
+    # any NVIDIA wheel layout that does not set RPATH on its own libraries.
+    # ld.so only reads this at process start, hence doing it here.
+    NVIDIA_LIB_DIRS="$("$PYTHON" - <<'PY'
+import os
+import site
+from pathlib import Path
+
+roots = list(site.getsitepackages())
+user_site = site.getusersitepackages()
+if user_site:
+    roots.append(user_site)
+
+found = []
+for root in dict.fromkeys(roots):
+    nvidia_root = Path(root) / "nvidia"
+    if not nvidia_root.is_dir():
+        continue
+    for lib_dir in sorted(nvidia_root.glob("*/lib")):
+        if lib_dir.is_dir():
+            found.append(str(lib_dir))
+print(os.pathsep.join(dict.fromkeys(found)))
+PY
+    )"
+    if [ -n "$NVIDIA_LIB_DIRS" ]; then
+        export LD_LIBRARY_PATH="$NVIDIA_LIB_DIRS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+fi
 
 run_openwhisper() {
     if [ "${OPENWHISPER_ATTACHED:-0}" = "1" ]; then

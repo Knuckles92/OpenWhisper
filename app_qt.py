@@ -11,59 +11,106 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
 
+# ``os.add_dll_directory`` unregisters a path when its returned handle is
+# closed. Keep the handles alive for the process lifetime; relying on garbage
+# collection here makes CUDA availability depend on timing.
+_CUDA_DLL_DIRECTORY_HANDLES = []
+
+# Same reasoning for Linux: a ``ctypes.CDLL`` object owns its ``dlopen`` handle
+# and closes it when collected, which would unload libraries CTranslate2 is
+# about to request by SONAME.
+_CUDA_LIBRARY_HANDLES = []
+
+# Names of the libraries preloaded on Linux, for ``ui_qt.bootstrap`` to log once
+# logging is configured. This module runs before that, so it cannot log itself.
+CUDA_PRELOADED_LIBRARIES: list = []
+
+
 def _register_cuda_dll_directories() -> None:
-    """Make NVIDIA pip-packaged CUDA DLLs loadable by CTranslate2 on Windows.
+    """Register NVIDIA CUDA DLL directories for CTranslate2 on Windows.
 
-    CTranslate2 (faster-whisper's engine) loads cublas64_12.dll / cuDNN lazily
-    at inference time via the Win32 ``LoadLibrary`` call, which uses the standard
-    search order and therefore consults ``PATH``. The nvidia-*-cu12 wheels drop
-    those DLLs under ``site-packages/nvidia/<lib>/bin``, which is on neither the
-    default search path nor ``PATH``.
-
-    We register each directory two ways because the two consumers use different
-    search mechanisms:
-
-    * ``os.add_dll_directory`` — satisfies Python's own loader / ``ctypes``.
-    * prepending to ``os.environ["PATH"]`` — satisfies CTranslate2's C++
-      ``LoadLibrary`` call, which ignores the ``add_dll_directory`` registry.
-
-    Without the PATH prepend, transcription fails with
-    "Library cublas64_12.dll is not found or cannot be loaded" even when the
-    wheel is installed. Install the DLLs with ``pip install -r requirements-gpu.txt``.
-
-    Source installs only. A frozen build has no meaningful ``site-packages``:
-    ``getsitepackages()`` points into the bundle, and ``getusersitepackages()``
-    can resolve to an unrelated system Python's user-site — registering that
-    would put a stranger's DLLs on this process's search path. Packaged builds
-    get their CUDA runtime from the downloadable GPU component instead.
+    Both the Windows DLL search path and ``PATH`` are updated because
+    CTranslate2 loads CUDA libraries through Win32 ``LoadLibrary``. Source
+    installs search ``site-packages``; frozen builds search bundle directories.
     """
     if sys.platform != "win32":
         return
-    if getattr(sys, "frozen", False):
-        return
 
-    search_roots = []
-    for site_dir in site.getsitepackages():
-        search_roots.append(Path(site_dir))
-    user_site = site.getusersitepackages()
-    if user_site:
-        search_roots.append(Path(user_site))
+    if getattr(sys, "frozen", False):
+        executable_root = Path(sys.executable).resolve().parent
+        search_roots = [
+            Path(getattr(sys, "_MEIPASS", executable_root)),
+            executable_root,
+            executable_root / "_internal",
+        ]
+    else:
+        search_roots = [Path(site_dir) for site_dir in site.getsitepackages()]
+        user_site = site.getusersitepackages()
+        if user_site:
+            search_roots.append(Path(user_site))
 
     nvidia_subdirs = ("cublas", "cudnn", "cuda_runtime", "cuda_nvrtc")
     bin_dirs = []
-    for root in search_roots:
+    for root in dict.fromkeys(search_roots):
         nvidia_root = root / "nvidia"
         if not nvidia_root.is_dir():
             continue
         for subdir in nvidia_subdirs:
             bin_dir = nvidia_root / subdir / "bin"
             if bin_dir.is_dir():
-                os.add_dll_directory(str(bin_dir))
+                try:
+                    handle = os.add_dll_directory(str(bin_dir))
+                except OSError:
+                    continue
+                _CUDA_DLL_DIRECTORY_HANDLES.append(handle)
                 bin_dirs.append(str(bin_dir))
 
     if bin_dirs:
         existing = os.environ.get("PATH", "")
         os.environ["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + existing
+
+
+def _preload_cuda_libraries() -> None:
+    """Preload NVIDIA pip-wheel CUDA libraries for CTranslate2 on Linux.
+
+    Linux has no mutable equivalent of the Windows DLL search path:
+    ``LD_LIBRARY_PATH`` is read by ``ld.so`` at process start, so setting it
+    from inside a running process has no effect. CTranslate2 ``dlopen``s
+    ``libcublas.so.12`` by bare SONAME, and glibc satisfies such a request from
+    already-loaded objects first — so loading the wheel's copy from its absolute
+    path with ``RTLD_GLOBAL`` here makes that later lookup resolve without any
+    environment variable. PyTorch bootstraps its own NVIDIA wheels the same way.
+
+    Never raises: absent or broken CUDA libraries must degrade to CPU
+    transcription, never prevent the application from starting.
+    """
+    if sys.platform != "linux":
+        return
+
+    import ctypes
+
+    try:
+        search_roots = [Path(site_dir) for site_dir in site.getsitepackages()]
+        user_site = site.getusersitepackages()
+        if user_site:
+            search_roots.append(Path(user_site))
+    except Exception:
+        return
+
+    for root in dict.fromkeys(search_roots):
+        nvidia_root = root / "nvidia"
+        if not nvidia_root.is_dir():
+            continue
+        # Load order does not matter: each wheel's libraries resolve their
+        # siblings through their own RPATH, so anything that cannot load on its
+        # own is not a library CTranslate2 would have found either.
+        for library in sorted(nvidia_root.glob("*/lib/*.so.*")):
+            try:
+                handle = ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                continue
+            _CUDA_LIBRARY_HANDLES.append(handle)
+            CUDA_PRELOADED_LIBRARIES.append(library.name)
 
 
 def _patch_subprocess_for_windows() -> None:
@@ -90,8 +137,8 @@ def _activate_downloadable_components() -> None:
     """Register DLLs from installed components (packaged builds only).
 
     Source installs get their CUDA runtime from ``requirements-gpu.txt`` via
-    ``_register_cuda_dll_directories`` above; packaged builds get it from the
-    downloadable GPU component instead.
+    the two functions above; packaged builds get it from the downloadable GPU
+    component instead.
     """
     if not getattr(sys, "frozen", False):
         return
@@ -104,6 +151,7 @@ def _activate_downloadable_components() -> None:
 
 
 _register_cuda_dll_directories()
+_preload_cuda_libraries()
 _activate_downloadable_components()
 _patch_subprocess_for_windows()
 

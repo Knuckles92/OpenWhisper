@@ -49,6 +49,87 @@ CATALOG_URL: Final[str] = (
 # payloads (a Python minor upgrade, a numpy major upgrade, a new MSVC runtime).
 COMPONENT_API: Final[int] = 1
 
+# The website currently serves its SPA shell for unknown paths, so relying on
+# the remote catalog alone can leave a brand-new install with a disabled
+# Install button. Keep one verified, release-pinned catalog entry in the app as
+# a fallback. A valid remote catalog is merged over this entry and can publish
+# future updates without requiring a new OpenWhisper release.
+_BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
+    {
+        "name": "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/20/e2/"
+            "fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/"
+            "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl"
+        ),
+        "sha256": "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661",
+        "size_bytes": 553_162_896,
+        "extract": "nvidia-wheel",
+    },
+    {
+        "name": "nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/52/de/"
+            "823919be3b9d0ccbf1f784035423c5f18f4267fb0123558d58b813c6ec86/"
+            "nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl"
+        ),
+        "sha256": "72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349",
+        "size_bytes": 76_408_187,
+        "extract": "nvidia-wheel",
+    },
+    {
+        "name": "nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/59/df/"
+            "e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/"
+            "nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl"
+        ),
+        "sha256": "8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891",
+        "size_bytes": 3_591_604,
+        "extract": "nvidia-wheel",
+    },
+)
+
+# Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
+# NOT from the application version: the payload is unchanged by an app release,
+# and an app-derived version would report "update available" after every release.
+# scripts/build_component.py imports this so the published catalog and the
+# built-in fallback below can never disagree — a mismatch makes an installed
+# component look outdated every time the remote catalog is unreachable.
+GPU_COMPONENT_VERSION: Final[str] = "cuda12.9"
+
+_BUILTIN_CATALOG: Final[dict] = {
+    "schema": 1,
+    "components": {
+        "gpu-accel": {
+            "version": GPU_COMPONENT_VERSION,
+            "component_api": COMPONENT_API,
+            "platform": "win_amd64",
+            # Sum of the DLLs the four archives above extract (cuBLAS 12.9.2.10,
+            # NVRTC 12.9.86, CUDA runtime 12.9.79). Measured, not estimated: it
+            # drives the pre-install free-space check.
+            "install_bytes": 959_060_480,
+            "archives": _BUILTIN_GPU_ARCHIVES,
+        },
+    },
+}
+
+# CTranslate2 4.8 loads exactly one CUDA library by name (plus nvcuda.dll from
+# the driver): cuBLAS. cuDNN is intentionally not listed — the ctranslate2 wheel
+# bundles its own 266 KB cudnn64_9.dll stub in the package directory and calls
+# os.add_dll_directory on that directory at import time, so probing for
+# "cudnn64_9.dll" answers a different question depending on whether ctranslate2
+# has been imported yet. It never gates real GPU capability.
+_REQUIRED_GPU_DLLS: Final[Tuple[str, ...]] = (
+    "cublas64_12.dll",
+)
+
+# Linux equivalents. Delivered by pip wheels (requirements-gpu.txt) rather than
+# by a component, so they are only ever probed, never installed from here.
+_REQUIRED_GPU_SHARED_OBJECTS: Final[Tuple[str, ...]] = (
+    "libcublas.so.12",
+)
+
 _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _CHUNK_BYTES: Final[int] = 1 << 20  # 1 MiB: IO and hashing dominate at this size
 _NETWORK_TIMEOUT_S: Final[int] = 30
@@ -67,6 +148,7 @@ class ComponentState:
     """Lifecycle state of a component on this machine."""
 
     NOT_INSTALLED: Final[str] = "not_installed"
+    EXTERNAL: Final[str] = "external"  # usable CUDA supplied outside components
     INSTALLED: Final[str] = "installed"
     UPDATE_AVAILABLE: Final[str] = "update_available"
     INCOMPATIBLE: Final[str] = "incompatible"  # built for a different runtime
@@ -120,7 +202,11 @@ class ComponentInfo:
     @property
     def is_usable(self) -> bool:
         """True when the component is installed and safe to activate."""
-        return self.state in (ComponentState.INSTALLED, ComponentState.UPDATE_AVAILABLE)
+        return self.state in (
+            ComponentState.EXTERNAL,
+            ComponentState.INSTALLED,
+            ComponentState.UPDATE_AVAILABLE,
+        )
 
 
 # Static descriptions. The catalog supplies versions, sizes, and URLs; these
@@ -129,11 +215,57 @@ COMPONENT_DESCRIPTIONS: Final[Dict[str, Dict[str, str]]] = {
     ComponentId.GPU_ACCEL: {
         "display_name": "GPU Acceleration",
         "summary": (
-            "NVIDIA CUDA runtime (cuBLAS and cuDNN) for 2-4x faster local "
-            "transcription. Requires an NVIDIA graphics card."
+            "NVIDIA CUDA runtime (cuBLAS) for 2-4x faster local transcription. "
+            "Requires an NVIDIA graphics card."
         ),
     },
 }
+
+
+def available_component_ids() -> Tuple[str, ...]:
+    """Components that can be installed on this platform.
+
+    Component payloads are native Windows DLLs activated through
+    ``os.add_dll_directory``, so there is nothing installable elsewhere. Linux
+    GPU users get the same libraries from pip wheels instead
+    (``requirements-gpu.txt``), and macOS has no CUDA backend at all. An empty
+    tuple keeps the UI from offering a payload it could never activate.
+
+    Returns:
+        Installable component identifiers, in display order.
+    """
+    if sys.platform != "win32":
+        return ()
+    return (ComponentId.GPU_ACCEL,)
+
+
+def gpu_runtime_available() -> bool:
+    """Return whether the CUDA libraries CTranslate2 needs can be loaded.
+
+    This deliberately probes the native libraries rather than the managed
+    component sentinel. Users may already have a working CUDA Toolkit, NVIDIA
+    pip wheels, or DLLs retained from an older OpenWhisper installer.
+
+    Returns:
+        True when every library CTranslate2 loads for GPU inference resolves.
+    """
+    try:
+        import ctypes
+
+        if sys.platform == "win32":
+            for dll_name in _REQUIRED_GPU_DLLS:
+                ctypes.WinDLL(dll_name)
+            return True
+
+        if sys.platform == "linux":
+            for so_name in _REQUIRED_GPU_SHARED_OBJECTS:
+                ctypes.CDLL(so_name)
+            return True
+    except (AttributeError, OSError):
+        return False
+
+    # macOS: faster-whisper has no Metal/MPS backend.
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -401,6 +533,80 @@ def _safe_extract(
             progress(InstallPhase.EXTRACTING, index + 1, len(members))
 
 
+def _safe_extract_nvidia_wheel(
+    archive_path: str,
+    target_dir: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> None:
+    """Extract only native NVIDIA DLLs from an official PyPI wheel.
+
+    The managed component uses a flat ``bin`` directory so it can be added to
+    the native loader search path with one registration. The wheel's Python
+    package metadata and import shims are not needed by CTranslate2.
+
+    Args:
+        archive_path: Verified NVIDIA wheel downloaded from PyPI.
+        target_dir: Component staging directory.
+        progress: Progress sink.
+        cancel: Set to abort; checked before every member.
+
+    Raises:
+        ComponentCanceled: The cancel event was set.
+        ComponentError: The wheel contains unsafe paths or no NVIDIA DLLs.
+    """
+    with zipfile.ZipFile(archive_path) as archive:
+        dll_members = []
+        for member in archive.infolist():
+            name = member.filename.replace(chr(92), "/")
+            if name.startswith("/") or ".." in name.split("/"):
+                raise ComponentError(f"Archive contains an unsafe path: {name}")
+            parts = name.split("/")
+            if (
+                len(parts) >= 4
+                and parts[0].lower() == "nvidia"
+                and parts[-2].lower() == "bin"
+                and parts[-1].lower().endswith(".dll")
+            ):
+                dll_members.append(member)
+
+        if not dll_members:
+            raise ComponentError(
+                "The NVIDIA package did not contain the expected CUDA libraries."
+            )
+
+        bin_dir = os.path.join(target_dir, "bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        for index, member in enumerate(dll_members):
+            if cancel.is_set():
+                raise ComponentCanceled()
+            destination = os.path.join(
+                bin_dir, member.filename.replace(chr(92), "/").split("/")[-1]
+            )
+            with archive.open(member) as source, open(destination, "wb") as out:
+                shutil.copyfileobj(source, out)
+            progress(InstallPhase.EXTRACTING, index + 1, len(dll_members))
+
+
+def _validate_component_payload(component_id: str, target_dir: str) -> None:
+    """Ensure a staged component has its minimum required runtime files."""
+    if component_id != ComponentId.GPU_ACCEL:
+        return
+
+    bin_dir = os.path.join(target_dir, "bin")
+    try:
+        names = {name.casefold() for name in os.listdir(bin_dir)}
+    except OSError as exc:
+        raise ComponentError("The GPU component has no library folder.") from exc
+
+    missing = [name for name in _REQUIRED_GPU_DLLS if name.casefold() not in names]
+    if missing:
+        raise ComponentError(
+            "The GPU component is missing required libraries: "
+            + ", ".join(missing)
+        )
+
+
 def install_component(
     component_id: str,
     entry: dict,
@@ -461,8 +667,15 @@ def install_component(
     destination = component_dir(component_id)
     rollback = destination + ".old"
     try:
-        for archive_path in archive_paths:
-            _safe_extract(archive_path, staging, progress, cancel)
+        for archive, archive_path in zip(archives, archive_paths):
+            if archive.get("extract") == "nvidia-wheel":
+                _safe_extract_nvidia_wheel(
+                    archive_path, staging, progress, cancel
+                )
+            else:
+                _safe_extract(archive_path, staging, progress, cancel)
+
+        _validate_component_payload(component_id, staging)
 
         progress(InstallPhase.FINALIZING, 0, 0)
         with open(os.path.join(staging, _MANIFEST_NAME), "w", encoding="utf-8") as out:
@@ -614,8 +827,9 @@ class ComponentCoordinator:
     def fetch_catalog(self, force: bool = False) -> Optional[dict]:
         """Return the component catalog, fetching it at most once per session.
 
-        Returns None when the catalog is unreachable. Callers must treat that
-        as "no update information available", never as "nothing is installed".
+        A release-pinned built-in entry keeps first-time GPU installation
+        available when the website is unreachable or misconfigured. A valid
+        remote catalog is merged over it so published updates take precedence.
         """
         with self._lock:
             if self._catalog is not None and not force:
@@ -623,18 +837,34 @@ class ComponentCoordinator:
             if self._catalog_failed and not force:
                 return None
 
+        remote_failed = False
         try:
             with _open(CATALOG_URL) as response:
-                catalog = json.loads(response.read().decode("utf-8"))
+                remote_catalog = json.loads(response.read().decode("utf-8"))
+            if not isinstance(remote_catalog, dict) or not isinstance(
+                remote_catalog.get("components"), dict
+            ):
+                raise ValueError("catalog has no components object")
+
+            catalog = dict(_BUILTIN_CATALOG)
+            catalog["components"] = {
+                **_BUILTIN_CATALOG["components"],
+                **remote_catalog["components"],
+            }
+            for key, value in remote_catalog.items():
+                if key != "components":
+                    catalog[key] = value
         except Exception as exc:
-            logger.warning(f"Could not fetch the component catalog: {exc}")
-            with self._lock:
-                self._catalog_failed = True
-            return None
+            remote_failed = True
+            catalog = _BUILTIN_CATALOG
+            logger.warning(
+                "Could not use the remote component catalog; using the "
+                f"built-in GPU catalog: {exc}"
+            )
 
         with self._lock:
             self._catalog = catalog
-            self._catalog_failed = False
+            self._catalog_failed = remote_failed
         return catalog
 
     def catalog_entry(self, component_id: str) -> Optional[dict]:
@@ -664,6 +894,22 @@ class ComponentCoordinator:
         present = is_installed(component_id)
 
         if not present:
+            if component_id == ComponentId.GPU_ACCEL and gpu_runtime_available():
+                return ComponentInfo(
+                    component_id=component_id,
+                    display_name=meta.get("display_name", component_id),
+                    summary=meta.get("summary", ""),
+                    state=ComponentState.EXTERNAL,
+                    installed_version=None,
+                    available_version=available_version,
+                    download_bytes=download_bytes,
+                    install_bytes=0,
+                    reason=(
+                        "CUDA libraries are already available from your "
+                        "existing setup."
+                    ),
+                )
+
             # A directory without the sentinel is a partial install.
             state = (
                 ComponentState.BROKEN
@@ -685,10 +931,31 @@ class ComponentCoordinator:
 
         installed_version = (installed_manifest or {}).get("version")
         incompatible = check_compatibility(installed_manifest or {})
+        outdated = (
+            available_version
+            and installed_version
+            and available_version != installed_version
+            # A failed fetch falls back to the release-pinned built-in catalog,
+            # whose version legitimately differs from what a remote catalog
+            # installed. Offering an update there would re-download megabytes to
+            # replace an identical payload every time the network is down.
+            and not self._catalog_failed
+        )
+
         if incompatible:
             state, reason = ComponentState.INCOMPATIBLE, incompatible
-        elif available_version and installed_version and available_version != installed_version:
-            state, reason = ComponentState.UPDATE_AVAILABLE, ""
+        elif outdated:
+            # Say what the user gets, since an update is their choice: a slimmer
+            # payload reclaims disk, and the row already shows the download size.
+            reclaimed = installed_size_bytes(component_id) - int(
+                (entry or {}).get("install_bytes", 0) or 0
+            )
+            state = ComponentState.UPDATE_AVAILABLE
+            reason = (
+                f"Update frees {format_size_bytes(reclaimed)} of disk space."
+                if reclaimed > 0
+                else ""
+            )
         else:
             state, reason = ComponentState.INSTALLED, ""
 
@@ -705,8 +972,12 @@ class ComponentCoordinator:
         )
 
     def list_components(self) -> Tuple[ComponentInfo, ...]:
-        """Describe every known component."""
-        return tuple(self.describe(cid) for cid in COMPONENT_DESCRIPTIONS)
+        """Describe every component installable on this platform.
+
+        Empty on platforms with no component payload, so callers can hide the
+        whole section rather than render an unusable row.
+        """
+        return tuple(self.describe(cid) for cid in available_component_ids())
 
 
 component_coordinator = ComponentCoordinator()

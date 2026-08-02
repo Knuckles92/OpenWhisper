@@ -130,6 +130,7 @@ _ROW_STYLE = """
 # carries live progress.
 _STATE_BADGES = {
     ComponentState.NOT_INSTALLED: ("Not installed", "idle"),
+    ComponentState.EXTERNAL: ("Available", "installed"),
     ComponentState.INSTALLED: ("Installed", "installed"),
     ComponentState.UPDATE_AVAILABLE: ("Update available", "warning"),
     ComponentState.INCOMPATIBLE: ("Update required", "warning"),
@@ -299,10 +300,14 @@ class ComponentRowWidget(QFrame):
         text, tone = _STATE_BADGES.get(info.state, ("Unknown", "idle"))
         self._set_badge(text, tone)
 
-        if info.state == ComponentState.INSTALLED:
-            self.size_label.setText(format_size_bytes(info.install_bytes))
+        if info.state in (ComponentState.EXTERNAL, ComponentState.INSTALLED):
+            self.size_label.setText(
+                "Existing setup"
+                if info.state == ComponentState.EXTERNAL
+                else format_size_bytes(info.install_bytes)
+            )
             self.install_button.hide()
-            self.remove_button.show()
+            self.remove_button.setVisible(info.state == ComponentState.INSTALLED)
         else:
             if info.download_bytes:
                 self.size_label.setText(f"{format_size_bytes(info.download_bytes)} download")
@@ -319,8 +324,15 @@ class ComponentRowWidget(QFrame):
                 "" if can_install
                 else "Could not reach the download server. Check your connection and reopen this window."
             )
+            # UPDATE_AVAILABLE belongs here too: a pending update is an offer,
+            # not an obligation, and the user must still be able to remove the
+            # component outright instead of being forced to update it first.
             self.remove_button.setVisible(
-                info.state in (ComponentState.BROKEN, ComponentState.INCOMPATIBLE)
+                info.state in (
+                    ComponentState.BROKEN,
+                    ComponentState.INCOMPATIBLE,
+                    ComponentState.UPDATE_AVAILABLE,
+                )
             )
 
     def set_progress(self, phase: str, done: int, total: int) -> None:

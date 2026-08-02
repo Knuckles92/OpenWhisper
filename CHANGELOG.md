@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Linux NVIDIA GPU Acceleration** - `pip install -r requirements-gpu.txt` now installs the CUDA libraries on Linux as well as Windows (previously every wheel was marked `sys_platform == "win32"`, so the command silently installed nothing). Because `LD_LIBRARY_PATH` is read by `ld.so` at process start and cannot be changed from inside a running process, the libraries are preloaded with `RTLD_GLOBAL` at startup so CTranslate2's `dlopen("libcublas.so.12")` resolves to the already-loaded object; `scripts/openwhisper` also exports `LD_LIBRARY_PATH`. Requires an NVIDIA driver providing CUDA 12 (>= 525); no CUDA Toolkit needed
+
+### Changed
+- **GPU component more than halved: ~1.4 GB → ~633 MB download** (2.08 GB → 959 MB installed). CTranslate2 4.8 never loads cuDNN — it has no import-table entry and no `LoadLibrary`/`dlopen` name string for it on either platform, and a GPU transcription with cuDNN fully removed loads zero cuDNN modules — so the ~740 MB cuDNN wheel has been dropped from the payload. Existing installs keep working and are *offered* the slimmer update rather than forced onto it, with the row stating how much disk it frees
+
+### Fixed
+- **GPU component installation unavailable** - Model Manager now falls back to a release-pinned, SHA-256-verified set of NVIDIA CUDA wheels when the remote component catalog is unavailable or returns the website HTML shell, so the Install action remains usable
+- **Existing CUDA setups shown as missing** - Working system, pip-wheel, and older bundled CUDA installations are detected as `Available — Existing setup`; installer upgrades also keep bundle-owned NVIDIA DLL directories registered instead of silently falling back to CPU
+- **Local transcription failed on every attempt when CUDA libraries were missing** - CTranslate2 reports a CUDA device from the driver alone and resolves cuBLAS lazily on the first encoder pass, so on a machine with a driver but no CUDA libraries (no GPU component on Windows, no `requirements-gpu.txt` on Linux) the GPU model loaded successfully and then raised `Library cublas64_12.dll is not found or cannot be loaded` on every transcription. The libraries are now probed before the device is chosen — about 50 ms once, nothing afterwards — so such a machine loads on the CPU with the same model, logs why, and shows `GPU unavailable, using CPU` in the device display. A GPU load that fails despite the probe also falls back rather than leaving the backend unavailable
+- **GPU capability probe gave order-dependent answers** - The check required `cudnn64_9.dll`, which the ctranslate2 wheel ships as a 266 KB stub in a directory it registers with `os.add_dll_directory` at import time. The probe therefore always passed after ctranslate2 was imported and always failed before it, so a working cuBLAS-only CUDA setup could be reported as no GPU at all
+- **Spurious "Update available" while offline** - The built-in fallback catalog published a different version string than `scripts/build_component.py` emitted, so every unreachable-catalog fetch made an installed component look outdated. Both now read one shared constant, and an update is never offered from a fallback catalog
+- **Components section offered a Windows payload on Linux and macOS** - The section is now hidden where no component can be activated
+- **Remove button hidden on components with a pending update** - Updating is the user's choice, so removing the component outright stays available
+
 ## [2.0.0] - 2026-07-31
 
 ### Added

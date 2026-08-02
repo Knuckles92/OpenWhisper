@@ -8,10 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from services.components import ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo
 from ui_qt.dialogs import model_manager_dialog as dialog_module
 from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 from ui_qt.widgets import Button
+from ui_qt.widgets.component_row_widget import ComponentRowWidget
 
 
 def _cached(repo_id, size_bytes):
@@ -75,7 +77,6 @@ class TestModelRows(_DialogTestCase):
         self.assertFalse(row.set_active_button.isVisibleTo(dialog))
         self.assertEqual(row.badge.text(), "Not downloaded")
         self.assertEqual(row.size_label.text(), "~76 MB")
-
     def test_cached_row_shows_real_size_and_delete(self):
         dialog = self._make_dialog(
             cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)}
@@ -359,6 +360,50 @@ class TestActions(_DialogTestCase):
         dialog.on_set_active_requested = requested.append
         dialog.rows["tiny"].set_active_button.click()
         self.assertEqual(requested, ["tiny"])
+
+
+class TestComponentRows(_DialogTestCase):
+    """GPU component states must expose an honest, usable action."""
+
+    @staticmethod
+    def _info(state, download_bytes=0, reason=""):
+        return ComponentInfo(
+            component_id="gpu-accel",
+            display_name="GPU Acceleration",
+            summary="CUDA runtime",
+            state=state,
+            installed_version=None,
+            available_version="test",
+            download_bytes=download_bytes,
+            install_bytes=0,
+            reason=reason,
+        )
+
+    def test_missing_gpu_component_has_enabled_install_button(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.update_state(
+            self._info(ComponentState.NOT_INSTALLED, download_bytes=1_000_000),
+            installing=False,
+        )
+
+        self.assertFalse(row.install_button.isHidden())
+        self.assertTrue(row.install_button.isEnabled())
+        self.assertEqual(row.install_button.text(), "Install")
+
+    def test_existing_cuda_setup_is_not_reported_missing(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.update_state(
+            self._info(
+                ComponentState.EXTERNAL,
+                reason="CUDA libraries are already available.",
+            ),
+            installing=False,
+        )
+
+        self.assertEqual(row.badge.text(), "Available")
+        self.assertEqual(row.size_label.text(), "Existing setup")
+        self.assertTrue(row.install_button.isHidden())
+        self.assertTrue(row.remove_button.isHidden())
 
 
 if __name__ == "__main__":

@@ -45,26 +45,37 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
-| GPU | CUDA (NVIDIA) | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) |
+| GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
 
 ## GPU Acceleration (Windows / Linux)
 
-> **Installer builds:** the Windows installer ships CPU transcription only, which keeps the download around 135 MB instead of over 1 GB. NVIDIA GPU acceleration is an optional ~2 GB download from **Manage models → Components** inside the app.
+**Prerequisite (both platforms):** an NVIDIA driver providing CUDA 12 — version 525 or newer. The driver supplies `nvcuda.dll` / `libcuda.so.1` and never comes from pip. **You do not need the CUDA Toolkit installer.**
 
-Running **from source**, install the CUDA runtime libraries used by faster-whisper (CTranslate2) for significantly faster transcription with an NVIDIA GPU. These ship as pip wheels — **you do not need the CUDA Toolkit installer**:
+> **Installer builds:** the Windows installer ships CPU transcription only, which keeps the download around 135 MB. NVIDIA GPU acceleration is an optional ~633 MB download (959 MB installed) from **Manage models → Components** inside the app. OpenWhisper verifies every download by SHA-256 and preserves an existing working CUDA setup during upgrades.
+
+Running **from source**, install the CUDA libraries faster-whisper's engine (CTranslate2) loads at runtime:
 
 ```bash
 pip install -r requirements-gpu.txt
 ```
 
-This installs cuDNN 9, cuBLAS, and the CUDA 12 runtime (~750 MB, Windows only). OpenWhisper registers these DLL directories at startup — both via `os.add_dll_directory` and by prepending them to `PATH`, which is required because CTranslate2's loader ignores the former. No PATH editing or CUDA Toolkit needed. (CPU-only users should skip this file; transcription works fine without it.)
+That pulls cuBLAS plus NVRTC and the CUDA 12 runtime — about 633 MB of wheels, 959 MB installed, on both Windows and Linux. CPU-only users should skip this file; transcription works fine without it. macOS users should skip it too: faster-whisper has no Metal/MPS backend, so transcription runs on CPU there.
 
-GPU auto-detection uses CTranslate2 directly, so **torch is not required**. With `device: auto`, the app detects the GPU and selects optimal settings (turbo model + float16 on GPU, base + int8 on CPU).
+**cuDNN is deliberately not installed.** CTranslate2 4.8 has no import-table entry and no `LoadLibrary`/`dlopen` name string for cuDNN on either platform, and a GPU transcription with cuDNN fully removed loads zero cuDNN modules — so the ~800 MB `nvidia-cudnn-cu12` wheel would be pure download weight.
 
-With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming transcription uses ~15-20% GPU vs 40-60% CPU. macOS has no CUDA support, so transcription runs on CPU there.
+How the libraries get found differs by platform, because Linux has no mutable equivalent of the Windows DLL search path:
+
+| Platform | Mechanism |
+|----------|-----------|
+| Windows | `app_qt._register_cuda_dll_directories()` registers the wheels' `bin` directories with `os.add_dll_directory` **and** prepends them to `PATH` — both are needed, because CTranslate2's loader ignores the former |
+| Linux | `app_qt._preload_cuda_libraries()` loads the `.so` files with `RTLD_GLOBAL` before the model loads, so CTranslate2's later `dlopen("libcublas.so.12")` resolves to the already-loaded object. `LD_LIBRARY_PATH` is read by `ld.so` at process start and cannot be changed from inside a running process; `scripts/openwhisper` also exports it for good measure |
+
+Either way, no PATH editing and no CUDA Toolkit. GPU auto-detection uses CTranslate2 directly, so **torch is not required**. With `device: auto`, the app detects the GPU and selects optimal settings (turbo model + float16 on GPU, base + int8 on CPU). If a GPU is detected but its libraries cannot be loaded, the model falls back to CPU with a warning in `openwhisper.log` rather than failing.
+
+With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming transcription uses ~15-20% GPU vs 40-60% CPU.
 
 ## Installation
 
@@ -119,13 +130,13 @@ The installer ships CPU-only; the CUDA runtime is delivered as a downloadable co
 python scripts\build_component.py gpu-accel
 ```
 
-This writes `build\components\gpu-accel\*.zip` (split into `cublas`, `cudnn`, and `nvrtc` parts so a failed download only re-fetches one piece) plus a `catalog-fragment.json` containing each archive's SHA-256 and size. To publish:
+This writes `build\components\gpu-accel\*.zip` (split into `cublas` and `nvrtc` parts so a failed download only re-fetches one piece) plus a `catalog-fragment.json` containing each archive's SHA-256 and size. The payload version comes from `GPU_COMPONENT_VERSION` in `services/components.py`, which the in-app fallback catalog also uses — keeping them in one place means an unreachable catalog can never make an installed component look outdated. To publish:
 
 1. Upload the `.zip` files as GitHub Release assets.
 2. Paste their download URLs into the fragment's `url` fields.
 3. Publish the fragment at `https://openwhisper.fiorilabs.tech/components/v1/index.json`.
 
-The app reads that URL to discover versions and sizes. Keeping the index on the website rather than in the release means a bad component can be pulled by editing one small JSON file. If the index is unreachable, already-installed components keep working and the Components panel simply reports that it could not check for updates.
+The app reads that URL to discover versions and sizes. Keeping the index on the website rather than in the release means a bad component can be pulled by editing one small JSON file. If the index is unreachable or invalid, the app falls back to its release-pinned, SHA-256-verified NVIDIA wheels, so first-time installation and existing components both keep working.
 
 OPTIONAL: For cloud transcription, set your API key:
 ```bash

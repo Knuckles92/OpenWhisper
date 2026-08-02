@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from _version import __version__  # noqa: E402
-from services.components import COMPONENT_API  # noqa: E402
+from services.components import COMPONENT_API, GPU_COMPONENT_VERSION  # noqa: E402
 
 BUILD_ROOT = REPO_ROOT / "build" / "components"
 
@@ -41,12 +41,16 @@ TARGET_PYTHON = "3.12"
 TARGET_ABI = "cp312"
 TARGET_PLATFORM = "win_amd64"
 
-# gpu-accel is split into three archives. A single ~1 GB download that fails
-# at 95% with no per-part retry is a support problem; parts also give honest
+# gpu-accel is split into two archives. A single ~600 MB download that fails at
+# 95% with no per-part retry is a support problem; parts also give honest
 # progress and let a corrupt piece be re-fetched on its own.
+#
+# There is deliberately no "cudnn" group: CTranslate2 4.8 never loads cuDNN (no
+# import-table entry and no LoadLibrary name string for it), so shipping the
+# ~740 MB wheel would more than double the download for libraries that are never
+# mapped into the process. See requirements-gpu.txt for the full evidence.
 GPU_ARCHIVE_GROUPS: Dict[str, List[str]] = {
     "cublas": ["cublas"],
-    "cudnn": ["cudnn"],
     "nvrtc": ["cuda_nvrtc", "cuda_runtime"],
 }
 
@@ -122,10 +126,10 @@ def build_gpu_accel() -> dict:
             archive_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True
         ) as archive:
             for dll in dll_paths:
-                # Flatten into a single bin/ directory. cuDNN 9's dispatcher
-                # LoadLibrary()s its sub-libraries by bare name, so one flat
-                # directory on the search path is more reliable than the
-                # wheel's nvidia/<lib>/bin split.
+                # Flatten into a single bin/ directory: CTranslate2 LoadLibrary()s
+                # cublas64_12.dll by bare name, so one directory on the search
+                # path resolves everything, whereas the wheel's
+                # nvidia/<lib>/bin split would need one registration per library.
                 archive.write(dll, f"bin/{dll.name}")
                 install_bytes += dll.stat().st_size
 
@@ -139,7 +143,8 @@ def build_gpu_accel() -> dict:
         print(f"   {archive_path.name}: {_human(size)} ({len(dll_paths)} DLLs)")
 
     return {
-        "version": f"{__version__}+cuda12",
+        # Shared with the in-app fallback catalog so the two can never disagree.
+        "version": GPU_COMPONENT_VERSION,
         "component_api": COMPONENT_API,
         "platform": TARGET_PLATFORM,
         "app_min_version": __version__,

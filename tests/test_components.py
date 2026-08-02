@@ -15,6 +15,7 @@ from services.components import (
     ComponentCanceled,
     ComponentCoordinator,
     ComponentError,
+    ComponentId,
     ComponentState,
     check_compatibility,
 )
@@ -126,7 +127,9 @@ def test_cancel_all_sets_every_flag():
 
 def test_describe_reports_states(component_root):
     coordinator = ComponentCoordinator()
-    with patch.object(coordinator, "fetch_catalog", return_value=None):
+    with patch.object(coordinator, "fetch_catalog", return_value=None), patch.object(
+        components, "gpu_runtime_available", return_value=False
+    ):
         info = coordinator.describe("gpu-accel")
         assert info.state == ComponentState.NOT_INSTALLED
         assert info.is_usable is False
@@ -136,6 +139,111 @@ def test_describe_reports_states(component_root):
         assert info.state == ComponentState.INSTALLED
         assert info.is_usable is True
         assert info.installed_version == "1.0"
+
+
+def test_describe_recognizes_an_existing_cuda_setup(component_root):
+    coordinator = ComponentCoordinator()
+    with patch.object(coordinator, "fetch_catalog", return_value=None), patch.object(
+        components, "gpu_runtime_available", return_value=True
+    ):
+        info = coordinator.describe(ComponentId.GPU_ACCEL)
+
+    assert info.state == ComponentState.EXTERNAL
+    assert info.is_usable is True
+    assert "existing setup" in info.reason
+
+
+def test_fetch_catalog_uses_built_in_gpu_fallback():
+    coordinator = ComponentCoordinator()
+    with patch.object(components, "_open", side_effect=OSError("offline")):
+        catalog = coordinator.fetch_catalog()
+
+    entry = catalog["components"][ComponentId.GPU_ACCEL]
+    assert entry["archives"]
+    assert all(
+        archive["url"].startswith("https://files.pythonhosted.org/")
+        for archive in entry["archives"]
+    )
+    assert all(archive["sha256"] for archive in entry["archives"])
+
+
+def test_built_in_catalog_ships_no_cudnn_wheel():
+    """The payload must not regain the ~740 MB library CTranslate2 never loads."""
+    names = [
+        archive["name"].lower()
+        for archive in components._BUILTIN_GPU_ARCHIVES
+    ]
+    assert names
+    assert not any("cudnn" in name for name in names)
+    assert any("cublas" in name for name in names)
+
+
+def test_available_component_ids_is_empty_off_windows():
+    """Linux and macOS have no installable component payload."""
+    with patch.object(components.sys, "platform", "linux"):
+        assert components.available_component_ids() == ()
+        assert ComponentCoordinator().list_components() == ()
+
+    with patch.object(components.sys, "platform", "win32"):
+        assert components.available_component_ids() == (ComponentId.GPU_ACCEL,)
+
+
+def test_gpu_runtime_probes_shared_objects_on_linux():
+    """A Linux user with the pip wheels installed counts as GPU-capable."""
+    loaded = []
+
+    class _FakeCtypes:
+        RTLD_GLOBAL = 0
+
+        @staticmethod
+        def CDLL(name, *args, **kwargs):
+            loaded.append(name)
+            return object()
+
+    with patch.object(components.sys, "platform", "linux"), patch.dict(
+        "sys.modules", {"ctypes": _FakeCtypes}
+    ):
+        assert components.gpu_runtime_available() is True
+
+    assert loaded == list(components._REQUIRED_GPU_SHARED_OBJECTS)
+
+
+def test_gpu_runtime_unavailable_on_macos():
+    """faster-whisper has no Metal/MPS backend, so never claim GPU support."""
+    with patch.object(components.sys, "platform", "darwin"):
+        assert components.gpu_runtime_available() is False
+
+
+def test_offline_catalog_does_not_offer_a_spurious_update(component_root):
+    """A fallback catalog version must not masquerade as a newer payload.
+
+    The built-in catalog is a release pin whose version legitimately differs
+    from whatever the remote catalog installed. Treating that as an update
+    re-downloads an identical payload every time the network is down.
+    """
+    coordinator = ComponentCoordinator()
+    _make_installed(component_root, "gpu-accel", {"version": "installed-version"})
+
+    with patch.object(components, "_open", side_effect=OSError("offline")):
+        info = coordinator.describe("gpu-accel")
+
+    assert coordinator._catalog_failed is True
+    assert info.state == ComponentState.INSTALLED
+
+
+def test_update_available_explains_the_disk_it_frees(component_root):
+    """The user chooses whether to update, so the row must state the payoff."""
+    coordinator = ComponentCoordinator()
+    _make_installed(component_root, "gpu-accel", {"version": "old"})
+    entry = {"version": "new", "install_bytes": 0, "archives": []}
+
+    with patch.object(coordinator, "fetch_catalog", return_value={
+        "schema": 1, "components": {"gpu-accel": entry},
+    }):
+        info = coordinator.describe("gpu-accel")
+
+    assert info.state == ComponentState.UPDATE_AVAILABLE
+    assert "frees" in info.reason
 
 
 def test_describe_flags_incompatible_installs(component_root):
@@ -192,6 +300,98 @@ def test_safe_extract_writes_normal_members(tmp_path):
     out = tmp_path / "out"
     components._safe_extract(str(archive), str(out), lambda *a: None, threading.Event())
     assert (out / "bin" / "lib.dll").read_text() == "payload"
+
+
+def test_safe_extract_nvidia_wheel_flattens_only_dlls(tmp_path):
+    wheel = tmp_path / "nvidia.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("nvidia/cublas/bin/cublas64_12.dll", b"cublas")
+        archive.writestr("nvidia/cublas/__init__.py", "ignored")
+
+    out = tmp_path / "out"
+    components._safe_extract_nvidia_wheel(
+        str(wheel), str(out), lambda *args: None, threading.Event()
+    )
+
+    assert (out / "bin" / "cublas64_12.dll").read_bytes() == b"cublas"
+    assert not (out / "nvidia").exists()
+
+
+def test_validate_gpu_payload_rejects_missing_core_dlls(tmp_path):
+    """cuBLAS is the one library CTranslate2 cannot run on the GPU without."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "cudart64_12.dll").write_bytes(b"runtime")
+
+    with pytest.raises(ComponentError, match="cublas64_12.dll"):
+        components._validate_component_payload(ComponentId.GPU_ACCEL, str(tmp_path))
+
+
+def test_validate_gpu_payload_does_not_require_cudnn(tmp_path):
+    """CTranslate2 4.8 never loads cuDNN, so a payload without it is valid.
+
+    Guards the ~740 MB saving: reintroducing a cuDNN requirement here would
+    silently make every published component fail verification.
+    """
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "cublas64_12.dll").write_bytes(b"cublas")
+
+    components._validate_component_payload(ComponentId.GPU_ACCEL, str(tmp_path))
+
+
+def test_install_component_accepts_verified_nvidia_wheels(
+    component_root, tmp_path, monkeypatch
+):
+    cublas_wheel = tmp_path / "cublas.whl"
+    with zipfile.ZipFile(cublas_wheel, "w") as archive:
+        archive.writestr("nvidia/cublas/bin/cublas64_12.dll", b"cublas")
+    nvrtc_wheel = tmp_path / "nvrtc.whl"
+    with zipfile.ZipFile(nvrtc_wheel, "w") as archive:
+        archive.writestr("nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll", b"nvrtc")
+
+    sources = {
+        "cublas.whl": cublas_wheel,
+        "nvrtc.whl": nvrtc_wheel,
+    }
+
+    def fake_download(_url, _sha, _size, destination, *_args, **_kwargs):
+        source = sources[Path(destination).name]
+        Path(destination).write_bytes(source.read_bytes())
+
+    monkeypatch.setattr(components, "_download_verified", fake_download)
+    entry = {
+        "version": "test",
+        "component_api": components.COMPONENT_API,
+        "platform": "win_amd64",
+        "install_bytes": 12,
+        "archives": [
+            {
+                "name": "cublas.whl",
+                "url": "https://example.invalid/cublas.whl",
+                "sha256": "unused",
+                "size_bytes": 6,
+                "extract": "nvidia-wheel",
+            },
+            {
+                "name": "nvrtc.whl",
+                "url": "https://example.invalid/nvrtc.whl",
+                "sha256": "unused",
+                "size_bytes": 6,
+                "extract": "nvidia-wheel",
+            },
+        ],
+    }
+
+    components.install_component(
+        ComponentId.GPU_ACCEL,
+        entry,
+        lambda *args: None,
+        threading.Event(),
+    )
+
+    installed = component_root / ComponentId.GPU_ACCEL
+    assert (installed / ".installed").read_text() == "test"
+    assert (installed / "bin" / "cublas64_12.dll").read_bytes() == b"cublas"
+    assert (installed / "bin" / "nvrtc64_120_0.dll").read_bytes() == b"nvrtc"
 
 
 def test_safe_extract_honors_cancellation(tmp_path):

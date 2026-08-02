@@ -80,8 +80,8 @@ def activate_components() -> ActivationReport:
 
     try:
         from services.components import (
-            ComponentId, check_compatibility, component_dir, is_installed,
-            prune_orphans, read_manifest,
+            available_component_ids, check_compatibility, component_dir,
+            is_installed, prune_orphans, read_manifest,
         )
     except Exception:
         logger.debug("Component system unavailable", exc_info=True)
@@ -92,7 +92,7 @@ def activate_components() -> ActivationReport:
     except Exception:
         logger.debug("Could not prune component orphans", exc_info=True)
 
-    for component_id in (ComponentId.GPU_ACCEL,):
+    for component_id in available_component_ids():
         try:
             if not is_installed(component_id):
                 continue
