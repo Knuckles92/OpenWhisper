@@ -5,7 +5,7 @@ Usage::
     python scripts/build_component.py gpu-accel
 
 Resolves the NVIDIA wheels that ``requirements-gpu.txt`` selects for the target
-platform, verifies each one's SHA-256 against PyPI, measures the payload, and
+platform, records the SHA-256 that pip reports for each, measures the payload, and
 prints a ready-to-paste ``_BUILTIN_GPU_ARCHIVES`` block plus the matching
 ``install_bytes``. Nothing is uploaded and nothing needs hosting: the catalog
 entries point straight at PyPI, whose published wheels are immutable, and the
@@ -121,6 +121,10 @@ def _resolve_wheels() -> List[dict]:
 def _measure(archives: List[dict]) -> Dict[str, int]:
     """Download each wheel and total the DLL bytes the component will install.
 
+    The digests come from pip's resolution report rather than being recomputed
+    here; this pass exists to measure the extracted payload.
+
+
     The size the installer needs is the extracted payload, not the compressed
     wheel, and it drives the pre-install free-space check — so it is measured
     rather than estimated.
@@ -193,7 +197,7 @@ def _emit(archives: List[dict], sizes: Dict[str, int]) -> None:
 
 
 def build_gpu_accel() -> None:
-    """Resolve, verify, measure, and emit the gpu-accel catalog entry."""
+    """Resolve, measure, and emit the gpu-accel catalog entry."""
     archives = _resolve_wheels()
     sizes = _measure(archives)
     _emit(archives, sizes)

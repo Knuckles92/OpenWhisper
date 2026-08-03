@@ -89,9 +89,9 @@ _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
 # NOT from the application version: the payload is unchanged by an app release,
 # and an app-derived version would report "update available" after every release.
-# scripts/build_component.py imports this so the published catalog and the
-# built-in fallback below can never disagree — a mismatch makes an installed
-# component look outdated every time the remote catalog is unreachable.
+# scripts/build_component.py imports this rather than deriving its own, so the
+# emitted catalog block and the constant below can never disagree — a mismatch
+# would make an installed component look outdated for no reason.
 GPU_COMPONENT_VERSION: Final[str] = "cuda12.9"
 
 _BUILTIN_CATALOG: Final[dict] = {
@@ -101,7 +101,7 @@ _BUILTIN_CATALOG: Final[dict] = {
             "version": GPU_COMPONENT_VERSION,
             "component_api": COMPONENT_API,
             "platform": "win_amd64",
-            # Sum of the DLLs the four archives above extract (cuBLAS 12.9.2.10,
+            # Sum of the DLLs the three archives above extract (cuBLAS 12.9.2.10,
             # NVRTC 12.9.86, CUDA runtime 12.9.79). Measured, not estimated: it
             # drives the pre-install free-space check.
             "install_bytes": 959_060_480,
@@ -402,11 +402,13 @@ def _describe_network_error(exc: Exception) -> str:
     import ssl
 
     if isinstance(exc, ssl.SSLCertVerificationError):
+        # Name the host the app actually contacts. Component payloads are
+        # fetched from PyPI and nowhere else, so listing our own domains here
+        # would send a blocked user to allowlist hosts that are never used.
         return (
             "The download server's certificate could not be verified. This is "
             "usually caused by network security software that inspects HTTPS "
-            "traffic. Ask your IT team to allow "
-            "openwhisper.fiorilabs.tech and github.com."
+            "traffic. Ask your IT team to allow files.pythonhosted.org."
         )
     if isinstance(exc, urllib.error.HTTPError):
         return f"The download server returned an error ({exc.code} {exc.reason})."
@@ -512,8 +514,9 @@ def _safe_extract(
 ) -> None:
     """Extract a zip, rejecting entries that escape ``target_dir``.
 
-    We build these archives ourselves, but validating costs three lines and
-    removes an entire class of failure if a mirror is ever compromised.
+    Every shipped catalog entry uses the ``nvidia-wheel`` extractor, so this is
+    reached only by tests today. It stays because validating costs three lines
+    and removes an entire class of failure for any future plain-zip payload.
     """
     with zipfile.ZipFile(archive_path) as archive:
         members = archive.infolist()
@@ -850,8 +853,10 @@ class ComponentCoordinator:
     def describe(self, component_id: str) -> ComponentInfo:
         """Summarize a component's state for the UI.
 
-        The installed manifest is consulted first, so a failed catalog fetch
-        never makes an installed component look missing.
+        What is on disk decides whether a component counts as installed; the
+        catalog only supplies the version and sizes to compare against. A
+        component with no catalog entry is therefore still reported as installed
+        rather than missing.
         """
         meta = COMPONENT_DESCRIPTIONS.get(component_id, {})
         entry = self.catalog_entry(component_id)

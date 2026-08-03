@@ -54,7 +54,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 **Prerequisite (both platforms):** an NVIDIA driver providing CUDA 12 — version 525 or newer. The driver supplies `nvcuda.dll` / `libcuda.so.1` and never comes from pip. **You do not need the CUDA Toolkit installer.**
 
-> **Installer builds:** the Windows installer ships CPU transcription only, which keeps the download around 135 MB. NVIDIA GPU acceleration is an optional ~633 MB download (959 MB installed) from **Manage models → Components** inside the app. OpenWhisper verifies every download by SHA-256 and preserves an existing working CUDA setup during upgrades.
+> **Installer builds:** the Windows installer ships CPU transcription only, which keeps the download under 90 MB. NVIDIA GPU acceleration is an optional ~633 MB download (959 MB installed) from **Manage models → Components** inside the app. OpenWhisper verifies every download by SHA-256 and preserves an existing working CUDA setup during upgrades.
 
 Running **from source**, install the CUDA libraries faster-whisper's engine (CTranslate2) loads at runtime:
 
@@ -62,9 +62,9 @@ Running **from source**, install the CUDA libraries faster-whisper's engine (CTr
 pip install -r requirements-gpu.txt
 ```
 
-That pulls cuBLAS plus NVRTC and the CUDA 12 runtime — about 633 MB of wheels, 959 MB installed, on both Windows and Linux. CPU-only users should skip this file; transcription works fine without it. macOS users should skip it too: faster-whisper has no Metal/MPS backend, so transcription runs on CPU there.
+That pulls cuBLAS plus NVRTC and the CUDA 12 runtime — roughly 630 MB of wheels on Windows, a little more on Linux, and under 1 GB once installed. (The component figures above are smaller because the component extracts only the DLLs, not the whole wheels.) CPU-only users should skip this file; transcription works fine without it. macOS users should skip it too: faster-whisper has no Metal/MPS backend, so transcription runs on CPU there.
 
-**cuDNN is deliberately not installed.** CTranslate2 4.8 has no import-table entry and no `LoadLibrary`/`dlopen` name string for cuDNN on either platform, and a GPU transcription with cuDNN fully removed loads zero cuDNN modules — so the ~800 MB `nvidia-cudnn-cu12` wheel would be pure download weight.
+**cuDNN is deliberately not installed.** CTranslate2 4.8 has no import-table entry and no `LoadLibrary`/`dlopen` name string for cuDNN on either platform, and a GPU transcription with cuDNN fully removed loads zero cuDNN modules — so the `nvidia-cudnn-cu12` wheel (737 MB on Windows, 799 MB on Linux) would be pure download weight.
 
 How the libraries get found differs by platform, because Linux has no mutable equivalent of the Windows DLL search path:
 
@@ -142,7 +142,7 @@ To move to newer CUDA wheels, bump the pins in `requirements-gpu.txt`, then:
 python scripts\build_component.py gpu-accel
 ```
 
-That resolves what pip would install for `win_amd64`, downloads each wheel to verify its digest and measure the extracted payload, and prints a ready-to-paste `_BUILTIN_GPU_ARCHIVES` block plus the matching `install_bytes`. Paste both into `services/components.py` and bump `GPU_COMPONENT_VERSION` so existing installs are offered the new payload.
+That resolves what pip would install for `win_amd64`, records the SHA-256 pip reports for each wheel, downloads them to measure the extracted payload, and prints a ready-to-paste `_BUILTIN_GPU_ARCHIVES` block plus the matching `install_bytes`. Paste both into `services/components.py` and bump `GPU_COMPONENT_VERSION` so existing installs are offered the new payload.
 
 Two things not to skip: `install_bytes` drives the pre-install free-space check, so it must be the measured value the script prints rather than an estimate; and `GPU_COMPONENT_VERSION` is what the Model Manager compares against an installed manifest, so leaving it unchanged means nobody is told an update exists.
 

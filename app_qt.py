@@ -1,4 +1,10 @@
-"""Thin compatibility entrypoint for the Qt application"""
+"""Entry point for the Qt application.
+
+Delegates the app itself to :mod:`ui_qt.bootstrap`, but owns the native-library
+bootstrap that must run before anything imports CTranslate2 or Qt: registering
+the CUDA DLL directories on Windows, preloading them on Linux, and activating
+installed components.
+"""
 
 import os
 import platform
@@ -49,7 +55,7 @@ def _register_cuda_dll_directories() -> None:
         if user_site:
             search_roots.append(Path(user_site))
 
-    nvidia_subdirs = ("cublas", "cudnn", "cuda_runtime", "cuda_nvrtc")
+    nvidia_subdirs = ("cublas", "cuda_runtime", "cuda_nvrtc")
     bin_dirs = []
     for root in dict.fromkeys(search_roots):
         nvidia_root = root / "nvidia"

@@ -153,7 +153,9 @@ class LocalWhisperBackend(TranscriptionBackend):
         Returns:
             Tuple of (device, compute_type, model) where:
             - device: "cuda" for GPU or "cpu" for CPU
-            - compute_type: "float16" for GPU, "int8" for CPU (if supported)
+            - compute_type: "float16" for GPU, "int8" for CPU, each narrowed
+              afterwards to something the hardware actually supports (a Pascal
+              card has no float16 and lands on int8_float32)
             - model: "turbo" for GPU, "base" for CPU
         """
         # Use override values if provided, otherwise check user settings

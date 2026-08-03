@@ -270,15 +270,19 @@ def test_describe_flags_incompatible_installs(component_root):
     assert info.reason
 
 
-def test_describe_survives_catalog_failure(component_root):
-    """An unreachable catalog must never hide an installed component."""
+def test_describe_survives_a_missing_catalog_entry(component_root):
+    """What is on disk decides installed-ness, not what the catalog knows.
+
+    A payload dropped from the catalog must not make an install vanish from the
+    UI, leaving the user with files they cannot see or remove.
+    """
     coordinator = ComponentCoordinator()
     _make_installed(component_root, "gpu-accel", {"version": "1.0"})
-    with patch.object(coordinator, "fetch_catalog", side_effect=OSError("offline")):
-        with patch.object(coordinator, "catalog_entry", return_value=None):
-            info = coordinator.describe("gpu-accel")
+    with patch.object(coordinator, "catalog_entry", return_value=None):
+        info = coordinator.describe("gpu-accel")
 
     assert info.state == ComponentState.INSTALLED
+    assert info.installed_version == "1.0"
 
 
 # --- archive safety -------------------------------------------------------

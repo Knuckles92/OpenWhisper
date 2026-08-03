@@ -20,7 +20,8 @@
 # cuDNN is deliberately absent. CTranslate2 4.8 has no import-table entry and no
 # LoadLibrary/dlopen name string for it on either platform, and a GPU
 # transcription with cuDNN fully removed loads zero cuDNN modules — so the
-# ~800 MB nvidia-cudnn-cu12 wheel would be pure download weight.
+# nvidia-cudnn-cu12 wheel (737 MB on Windows, 799 MB on Linux) would be pure
+# download weight.
 #
 # Loading these libraries differs per platform, because Linux has no mutable
 # equivalent of the Windows DLL search path:

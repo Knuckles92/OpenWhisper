@@ -316,14 +316,11 @@ class ComponentRowWidget(QFrame):
 
             self.install_button.show()
             self.install_button.setText(_PRIMARY_LABELS.get(info.state, "Install"))
-            # Without a catalog there is nothing to fetch; keep the button
-            # visible but inert so the row still explains itself.
-            can_install = bool(info.download_bytes) or info.state == ComponentState.BROKEN
-            self.install_button.setEnabled(can_install)
-            self.install_button.setToolTip(
-                "" if can_install
-                else "Could not reach the download server. Check your connection and reopen this window."
-            )
+            # The catalog ships with the app, so a component always has a size
+            # to download. This previously guarded against an unreachable remote
+            # catalog, which no longer exists.
+            self.install_button.setEnabled(True)
+            self.install_button.setToolTip("")
             # UPDATE_AVAILABLE belongs here too: a pending update is an offer,
             # not an obligation, and the user must still be able to remove the
             # component outright instead of being forced to update it first.
