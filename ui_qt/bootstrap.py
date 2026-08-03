@@ -16,6 +16,42 @@ _CRASH_LOG_FILE = None
 _QT_MESSAGE_HANDLER_INSTALLED = False
 
 
+def log_cuda_preload_summary() -> None:
+    """Report the Linux CUDA preload once logging is available.
+
+    ``app_qt`` preloads the NVIDIA wheel libraries before logging is configured,
+    so it cannot report the outcome itself. This is the only signal that
+    distinguishes "no CUDA wheels installed" from "wheels present but
+    unloadable" when GPU transcription falls back to the CPU.
+
+    The entry module is looked up through ``sys.modules`` rather than imported,
+    because ``app_qt`` imports this module at its own module level and importing
+    it back would be a cycle. Both keys must be tried: running
+    ``python app_qt.py`` registers the entry module as ``__main__``, so checking
+    only ``"app_qt"`` silently skipped this log in every real launch — verified
+    on Linux, where neither branch below ever fired.
+    """
+    if sys.platform != "linux":
+        return
+
+    entrypoint = sys.modules.get("app_qt") or sys.modules.get("__main__")
+    preloaded = getattr(entrypoint, "CUDA_PRELOADED_LIBRARIES", None)
+    if preloaded is None:
+        return
+
+    if preloaded:
+        logging.info(
+            "Preloaded %d CUDA library/libraries: %s",
+            len(preloaded),
+            ", ".join(sorted(preloaded)),
+        )
+    else:
+        logging.info(
+            "No NVIDIA CUDA libraries preloaded — local transcription will "
+            "use CPU (install requirements-gpu.txt for GPU acceleration)"
+        )
+
+
 def setup_logging() -> None:
     """Setup application logging."""
     level = getattr(logging, config.LOG_LEVEL, logging.INFO)
@@ -203,25 +239,7 @@ def main() -> int:
             "HF_HUB_OFFLINE set in environment — Hugging Face downloads disabled"
         )
 
-    # app_qt preloads Linux CUDA libraries before logging exists, so report the
-    # outcome here: it is the only signal distinguishing "no CUDA wheels
-    # installed" from "wheels present but unloadable" when GPU falls back to CPU.
-    # Read through sys.modules rather than importing — app_qt imports this module
-    # at its own module level, so importing it back would be a cycle.
-    if sys.platform == "linux":
-        entrypoint = sys.modules.get("app_qt")
-        preloaded = getattr(entrypoint, "CUDA_PRELOADED_LIBRARIES", None)
-        if preloaded:
-            logging.info(
-                "Preloaded %d CUDA library/libraries: %s",
-                len(preloaded),
-                ", ".join(sorted(preloaded)),
-            )
-        elif preloaded is not None:
-            logging.info(
-                "No NVIDIA CUDA libraries preloaded — local transcription will "
-                "use CPU (install requirements-gpu.txt for GPU acceleration)"
-            )
+    log_cuda_preload_summary()
 
     profiler.mark("early_imports_started")
     QtApplication, LoadingScreen = get_early_runtime_components()

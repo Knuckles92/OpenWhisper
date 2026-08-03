@@ -2,16 +2,15 @@
 
 Copy everything below the line into the agent on the Ubuntu laptop.
 
-**Before you send it:** the branch `installer-downloadable` is not on GitHub yet and
-the changes are uncommitted locally, so a fresh clone will not contain them. Commit
-and push first:
+Status: the branch `installer-downloadable` is pushed and ready. The repo is
+public, so no credentials are needed to clone it.
 
-```bash
-git add -A && git commit -m "feat: Linux CUDA support, slim GPU component, GPU bug fixes"
-git push -u origin installer-downloadable
-```
+Do not commit, push, or modify anything while testing — this is a read-and-report
+task.
 
-The repo is public, so the agent needs no credentials.
+**If you already ran this once:** three bugs the first round found have been fixed.
+Jump to *Round 2 — retest after fixes* at the bottom; a `git pull` plus that
+section is enough, no need to repeat Tests 1–3.
 
 ---
 
@@ -51,16 +50,24 @@ nvidia-smi                       # must show a GPU and CUDA >= 12 (driver >= 525
 python3 --version                # 3.10-3.12
 sudo apt install -y libportaudio2 espeak-ng
 
-git clone https://github.com/Knuckles92/OpenWhisper.git ~/openwhisper-gputest
+git clone -b installer-downloadable https://github.com/Knuckles92/OpenWhisper.git ~/openwhisper-gputest
 cd ~/openwhisper-gputest
-git checkout installer-downloadable
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Confirm you are on the right commit before testing — `git log --oneline -1` should
-mention Linux CUDA support. If `requirements-gpu.txt` still marks every wheel
-`sys_platform == "win32"`, you have the wrong branch; stop and say so.
+Confirm you are on the right code before testing:
+
+```bash
+git log --oneline -3
+grep sys_platform requirements-gpu.txt              # expect: ... == "win32" or sys_platform == "linux"
+grep -c '__main__' ui_qt/bootstrap.py               # expect >= 1 (round-2 fixes present)
+```
+
+If those markers still say only `sys_platform == "win32"`, you are on the wrong
+branch — stop and say so rather than testing old code. If the `__main__` grep
+returns 0 you have the round-1 code, which is fine for Tests 1–7 but predates the
+fixes checked in *Round 2*.
 
 ## Test 1 — does the GPU requirements file install anything on Linux?
 
@@ -118,9 +125,15 @@ print('list_components       :', component_coordinator.list_components())  # exp
 
 Transcript *accuracy* does not matter; which device is used does.
 
+The app is cache-first and never downloads a model itself, so populate the cache
+first. Verify the cache check agrees before going further — if it reports `False`,
+say so rather than reporting a GPU failure, because the backend will refuse to load
+for an unrelated reason.
+
 ```bash
 espeak-ng -w /tmp/test.wav "The quick brown fox jumps over the lazy dog."
 python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu')"
+python -c "from services.hf_access import is_model_cached; print('tiny cached:', is_model_cached('tiny'))"   # expect True
 
 python - <<'PY'
 import time, app_qt
@@ -151,7 +164,7 @@ import app_qt, ctranslate2
 print("driver still reports devices:", ctranslate2.get_cuda_device_count())  # expect >= 1
 from transcriber.local_backend import LocalWhisperBackend
 b = LocalWhisperBackend(model_name="tiny")
-print("device_info    :", b.device_info)          # expect "tiny | cpu (int8) - GPU unavailable, using CPU"
+print("device_info    :", b.device_info)          # must contain "cpu (int8)" and "GPU unavailable, using CPU"
 print("fallback_reason:", b.gpu_fallback_reason)  # expect a cuBLAS message
 print("transcript     :", repr(b.transcribe("/tmp/test.wav")))  # must still produce text
 PY
@@ -160,8 +173,14 @@ pip install -r requirements-gpu.txt   # restore
 
 ## Test 6 — the actual GUI
 
+`python app_qt.py` runs in the **foreground and does not exit** — it is a GUI app
+with a system tray icon, so launching it directly from a non-interactive shell will
+block until killed. Either background it or bound it:
+
 ```bash
-python app_qt.py        # then also try: ./scripts/ow
+python app_qt.py &                 # then interact, and `kill %1` when done
+# or:  timeout 180 python app_qt.py
+# or:  ./scripts/ow                # backgrounds itself; logs to openwhisper.launch.log
 ```
 
 Check and report:
@@ -191,6 +210,104 @@ python -m pytest tests/ -q      # add QT_QPA_PLATFORM=offscreen if Qt tests misb
 
 Expected ~294 passing. Report every failure with its full traceback and say whether
 it looks platform-related or like a real bug.
+
+## Round 2 — retest after fixes
+
+Three bugs from the first run are fixed. Each is Linux- or hardware-specific and
+**cannot be verified on Windows**, so this section is the only real check on them.
+
+```bash
+cd ~/openwhisper-gputest && git pull && source venv/bin/activate
+```
+
+### R1 — the preload log now appears under a normal launch
+
+Previously `ui_qt/bootstrap.py` looked up `sys.modules["app_qt"]`, but
+`python app_qt.py` registers the entry module as `__main__`, so **neither** the
+success nor the "no CUDA libraries" message ever printed. It now checks both keys.
+
+```bash
+rm -f openwhisper.log
+python app_qt.py &                 # let it reach the main window, then: kill %1
+grep -i "preload" openwhisper.log
+```
+
+Expect a line like `Preloaded 8 CUDA library/libraries: libcublas.so.12, ...`.
+Also confirm it appears via `./scripts/ow`. Report the exact line, or its absence.
+
+### R2 — Pascal now prefers int8_float32 over float32
+
+Your GTX 1050 Ti supports neither float16 variant, so `auto` fell back to
+`float32`, which roughly doubles the weights in VRAM — turbo then peaked at
+3957/4096 MiB and OOM'd to CPU. The GPU fallback order now tries `int8_float32`
+first, which should roughly halve that.
+
+```bash
+python - <<'PY'
+import app_qt
+from transcriber.local_backend import LocalWhisperBackend
+b = LocalWhisperBackend(model_name="tiny")
+print("compute type chosen for a float16 request:", b._select_best_compute_type("cuda", "float16"))
+print("supported on this GPU:", sorted(b._get_supported_compute_types("cuda")))
+PY
+```
+
+Expect `int8_float32`. Then the real question — does turbo now fit on the GPU?
+
+```bash
+python - <<'PY'
+import time, app_qt
+from transcriber.local_backend import LocalWhisperBackend
+t0 = time.perf_counter(); b = LocalWhisperBackend(model_name="auto")
+print(f"load: {time.perf_counter()-t0:.2f}s")
+print("device_info    :", b.device_info)          # hoping for "turbo | cuda (int8_float32)"
+print("fallback_reason:", b.gpu_fallback_reason)  # hoping for None
+print("transcript:", repr(b.transcribe("/tmp/test.wav")))
+PY
+```
+
+Sample `nvidia-smi --query-gpu=memory.used --format=csv -l 1` alongside it and
+report the peak. If it still OOMs that is a useful result too — say so with the
+peak figure, and check that R3 below reads correctly.
+
+Also worth reporting: the GUI cold start was ~113 s last time, dominated by the
+turbo OOM plus a CPU reload. Time it again (`python app_qt.py` to main window) —
+if turbo now fits, that number should drop a lot.
+
+### R3 — out-of-memory no longer blames missing packages
+
+Previously an OOM told the user to install `requirements-gpu.txt` — which was
+already installed — and the status read `GPU unavailable`. The cause is now
+classified.
+
+If turbo still OOMs on this card, confirm the log says something like *"The GPU ran
+out of memory. Choose a smaller model, or set the compute type to int8"* and that
+`device_info` reads `GPU out of memory, using CPU` rather than `GPU unavailable,
+using CPU`. If turbo now fits and you cannot trigger an OOM naturally, exercise the
+classifier directly instead:
+
+```bash
+python -c "
+import app_qt
+from transcriber.local_backend import LocalWhisperBackend
+b = LocalWhisperBackend(model_name='tiny')
+print(b._describe_gpu_failure(RuntimeError('CUDA failed with error out of memory')))
+print(b._describe_gpu_failure(RuntimeError('Library libcublas.so.12 is not found or cannot be loaded')))
+"
+```
+
+Expect the first to mention running out of memory and **not** mention
+`requirements-gpu.txt`; expect the second to mention `requirements-gpu.txt`.
+
+### R4 — suite still green
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -q
+```
+
+Expect **303 passed** (was 294; 9 new tests cover the three fixes).
+
+---
 
 ## Report back
 

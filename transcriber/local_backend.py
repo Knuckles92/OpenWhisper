@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 # loaded"), a driver problem, or GPU memory exhaustion.
 _GPU_ERROR_MARKERS = ("cublas", "cudnn", "cudart", "libcu", "cuda", "gpu")
 
+# Causes that need different actions from the user. Exhausted VRAM and absent
+# libraries both surface as a failed GPU load, but telling someone with a full
+# 4 GB card to install packages they already have sends them after the wrong
+# problem — observed on a GTX 1050 Ti, where the auto-selected turbo model at
+# float32 peaked at 3957/4096 MiB before failing.
+_GPU_OOM_MARKERS = ("out of memory", "outofmemory")
+_GPU_LIBRARY_MARKERS = (
+    "cublas", "cudnn", "cudart", "libcu", "is not found", "cannot be loaded",
+)
+
 
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
@@ -49,8 +59,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._model_missing = False
         self._last_loaded_model: Optional[str] = None
         # Set when a GPU load failed and the model was loaded on the CPU instead,
-        # so the UI can explain why acceleration is inactive.
+        # so the UI can explain why acceleration is inactive. ``reason`` is the
+        # raw error; ``note`` is the short, cause-specific status suffix.
         self.gpu_fallback_reason: Optional[str] = None
+        self.gpu_fallback_note: Optional[str] = None
         self._load_model()
 
     def _cuda_is_available(self) -> bool:
@@ -110,8 +122,17 @@ class LocalWhisperBackend(TranscriptionBackend):
             # CPU fallback order: int8 (fastest) -> int8_float32 -> float32 (most compatible)
             fallback_order = ["int8", "int8_float32", "float32"]
         else:
-            # GPU fallback order: float16 (fastest) -> int8_float16 -> float32
-            fallback_order = ["float16", "int8_float16", "float32"]
+            # GPU fallback order: float16 (fastest) -> int8_float16 ->
+            # int8_float32 -> float32 (most compatible).
+            #
+            # int8_float32 precedes float32 because of memory, not speed. Pascal
+            # and older cards support neither float16 variant, so they land on
+            # float32, which roughly doubles the weights in VRAM — enough that the
+            # auto-selected turbo model exhausts a 4 GB card (measured at
+            # 3957/4096 MiB on a GTX 1050 Ti before failing) and drops to the CPU.
+            # int8_float32 halves that at a small accuracy cost, which beats
+            # losing the GPU entirely. Cards with float16 never reach this entry.
+            fallback_order = ["float16", "int8_float16", "int8_float32", "float32"]
 
         for fallback in fallback_order:
             if fallback in supported:
@@ -274,8 +295,40 @@ class LocalWhisperBackend(TranscriptionBackend):
             "requirements-gpu.txt (Linux) to restore GPU acceleration."
         )
         self.gpu_fallback_reason = "CUDA libraries (cuBLAS) could not be loaded"
+        self.gpu_fallback_note = "GPU unavailable, using CPU"
         self._device = "cpu"
         self._compute_type = self._select_best_compute_type("cpu", "int8")
+
+    def _describe_gpu_failure(self, error: Exception) -> Tuple[str, str]:
+        """Classify a GPU failure into actionable advice and a short status note.
+
+        The causes need different responses — install the libraries, pick a
+        smaller model, or investigate — so they must not share one message.
+
+        Args:
+            error: The exception raised by the GPU attempt.
+
+        Returns:
+            ``(advice, note)``: advice is appended to the log warning and may be
+            empty; note is the short suffix shown in :attr:`device_info`.
+        """
+        text = str(error).lower()
+
+        if any(marker in text for marker in _GPU_OOM_MARKERS):
+            return (
+                "The GPU ran out of memory. Choose a smaller model, or set the "
+                "compute type to int8 in Settings, to keep using the GPU.",
+                "GPU out of memory, using CPU",
+            )
+
+        if any(marker in text for marker in _GPU_LIBRARY_MARKERS):
+            return (
+                "Install the GPU component (Windows) or requirements-gpu.txt "
+                "(Linux) to restore GPU acceleration.",
+                "GPU unavailable, using CPU",
+            )
+
+        return ("", "GPU load failed, using CPU")
 
     def _retry_on_cpu(self, error: Exception) -> bool:
         """Reload the model on the CPU after a GPU load failure.
@@ -306,14 +359,15 @@ class LocalWhisperBackend(TranscriptionBackend):
         if not any(marker in str(error).lower() for marker in _GPU_ERROR_MARKERS):
             return False
 
+        advice, note = self._describe_gpu_failure(error)
         logger.warning(
-            f"GPU model load failed ({error}); falling back to CPU. Install the "
-            "GPU component (Windows) or requirements-gpu.txt (Linux) to restore "
-            "GPU acceleration."
+            f"GPU model load failed ({error}); falling back to CPU."
+            + (f" {advice}" if advice else "")
         )
         self._device = "cpu"
         self._compute_type = self._select_best_compute_type("cpu", "int8")
         self.gpu_fallback_reason = str(error)
+        self.gpu_fallback_note = note
 
         self.model = WhisperModel(
             self.model_name,
@@ -609,9 +663,11 @@ class LocalWhisperBackend(TranscriptionBackend):
         if self._device and self._compute_type:
             info = f"{self.model_name} | {self._device} ({self._compute_type})"
             # Without this the display is indistinguishable from a machine that
-            # simply has no GPU, which hides a fixable problem.
-            if self.gpu_fallback_reason:
-                info += " — GPU unavailable, using CPU"
+            # simply has no GPU, which hides a fixable problem. The note is
+            # cause-specific: "GPU unavailable" would overstate an out-of-memory
+            # failure, where the GPU was found and working.
+            if self.gpu_fallback_note:
+                info += f" — {self.gpu_fallback_note}"
             return info
         return "Not initialized"
 

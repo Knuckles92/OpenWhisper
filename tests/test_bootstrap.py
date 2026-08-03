@@ -176,5 +176,54 @@ class TestBootstrap(unittest.TestCase):
         self.assertTrue(_FakeApplicationController.instances[0].cleaned_up)
 
 
+class CudaPreloadSummaryTests(unittest.TestCase):
+    """The Linux CUDA preload log must survive being run as ``__main__``.
+
+    ``python app_qt.py`` registers the entry module as ``__main__``, not
+    ``app_qt``, so a lookup of only ``sys.modules["app_qt"]`` silently logged
+    nothing in every real launch — confirmed on Linux hardware.
+    """
+
+    class _Entrypoint:
+        def __init__(self, libraries):
+            self.CUDA_PRELOADED_LIBRARIES = libraries
+
+    def _capture(self, modules):
+        with patch.object(bootstrap.sys, "platform", "linux"), patch.dict(
+            bootstrap.sys.modules, modules, clear=False
+        ):
+            with self.assertLogs(level="INFO") as captured:
+                bootstrap.log_cuda_preload_summary()
+        return "\n".join(captured.output)
+
+    def test_logs_when_entry_module_is_main(self):
+        entry = self._Entrypoint(["libcublas.so.12", "libcudart.so.12"])
+        modules = {"__main__": entry}
+        with patch.dict(bootstrap.sys.modules, {}, clear=False):
+            bootstrap.sys.modules.pop("app_qt", None)
+            output = self._capture(modules)
+
+        self.assertIn("Preloaded 2 CUDA library/libraries", output)
+        self.assertIn("libcublas.so.12", output)
+
+    def test_logs_when_entry_module_is_app_qt(self):
+        entry = self._Entrypoint(["libcublas.so.12"])
+        output = self._capture({"app_qt": entry})
+
+        self.assertIn("Preloaded 1 CUDA library/libraries", output)
+
+    def test_reports_when_nothing_was_preloaded(self):
+        """An empty list is a real answer: wheels absent, so CPU it is."""
+        output = self._capture({"app_qt": self._Entrypoint([])})
+
+        self.assertIn("No NVIDIA CUDA libraries preloaded", output)
+
+    def test_silent_on_non_linux(self):
+        with patch.object(bootstrap.sys, "platform", "win32"):
+            with patch.object(bootstrap.logging, "info") as info:
+                bootstrap.log_cuda_preload_summary()
+        info.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

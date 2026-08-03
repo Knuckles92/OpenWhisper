@@ -75,6 +75,8 @@ How the libraries get found differs by platform, because Linux has no mutable eq
 
 Either way, no PATH editing and no CUDA Toolkit. GPU auto-detection uses CTranslate2 directly, so **torch is not required**. With `device: auto`, the app detects the GPU and selects optimal settings (turbo model + float16 on GPU, base + int8 on CPU). If a GPU is detected but its libraries cannot be loaded, the model falls back to CPU with a warning in `openwhisper.log` rather than failing.
 
+**Older GPUs (Pascal and earlier):** CTranslate2 does not support `float16` there, so `auto` falls back to `int8_float32` rather than `float32` — the latter roughly doubles the weights in VRAM, enough that the auto-selected turbo model exhausts a 4 GB card and drops to CPU (measured on a GTX 1050 Ti at 3957/4096 MiB before failing). If VRAM is still tight, pick a smaller **Model** in Settings → Advanced. Cards that support `float16` are unaffected. Verified working with driver 580 / CUDA 13 — a newer driver than the CUDA 12 wheels, which is fine.
+
 With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming transcription uses ~15-20% GPU vs 40-60% CPU.
 
 ## Installation
@@ -98,7 +100,15 @@ To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whethe
 
 Use this for macOS and Linux, for development, or for NVIDIA GPU acceleration.
 
-**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase.
+**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase; 3.11 is verified working too.
+
+On Debian, Ubuntu, and Pop!_OS, two system libraries are not shipped by the pip wheels and must be installed first — PyQt6 6.5+ refuses to start without the second one:
+
+```bash
+sudo apt install -y libportaudio2 libxcb-cursor0
+```
+
+`libportaudio2` backs `sounddevice` (recording); `libxcb-cursor0` is required by Qt's `xcb` platform plugin. Without it the app exits with *"no Qt platform plugin could be initialized"*.
 
 ```bash
 git clone https://github.com/Knuckles92/OpenWhisper

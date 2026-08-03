@@ -149,6 +149,91 @@ def test_non_gpu_errors_do_not_switch_devices(stub_backend):
     assert len(built) == 1
 
 
+def test_out_of_memory_is_not_reported_as_missing_libraries(stub_backend):
+    """VRAM exhaustion and absent libraries need opposite actions.
+
+    Observed on a GTX 1050 Ti: the auto-selected turbo model at float32 peaked at
+    3957/4096 MiB and failed, and the old message told the user to install wheels
+    they already had.
+    """
+    def factory(device):
+        if device == "cuda":
+            raise RuntimeError("CUDA failed with error out of memory")
+        return object()
+
+    stub_backend(factory)
+
+    backend = module.LocalWhisperBackend(model_name="turbo")
+
+    assert backend.is_available()
+    assert backend._device == "cpu"
+    assert backend.gpu_fallback_note == "GPU out of memory, using CPU"
+    assert "GPU out of memory" in backend.device_info
+    # Must not send the user after a packaging problem they do not have.
+    assert "requirements-gpu" not in backend.device_info
+
+
+def test_missing_libraries_advise_installing_them(stub_backend):
+    """The other branch must still point at the packaging fix."""
+    def factory(device):
+        if device == "cuda":
+            raise RuntimeError(CUBLAS_ERROR)
+        return object()
+
+    stub_backend(factory)
+
+    backend = module.LocalWhisperBackend(model_name="turbo")
+
+    assert backend.gpu_fallback_note == "GPU unavailable, using CPU"
+    advice, _note = backend._describe_gpu_failure(RuntimeError(CUBLAS_ERROR))
+    assert "requirements-gpu.txt" in advice
+
+
+def test_unclassified_gpu_failure_gets_a_neutral_note(stub_backend):
+    """Do not guess a cause when the error does not identify one."""
+    backend_cls = module.LocalWhisperBackend
+    stub_backend(gpu_libraries=False)
+    backend = backend_cls(model_name="tiny")
+
+    advice, note = backend._describe_gpu_failure(RuntimeError("cuda broke somehow"))
+    assert advice == ""
+    assert note == "GPU load failed, using CPU"
+
+
+def test_gpus_without_float16_prefer_int8_over_float32(stub_backend):
+    """Pascal-era cards must not land on float32 and exhaust their VRAM.
+
+    They support neither float16 variant, and float32 roughly doubles the weights
+    in memory — enough that turbo OOMs on a 4 GB card and drops to the CPU.
+    """
+    stub_backend(gpu_libraries=False)
+    backend = module.LocalWhisperBackend(model_name="tiny")
+
+    pascal = {"float32", "int8", "int8_float32"}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            module.LocalWhisperBackend,
+            "_get_supported_compute_types",
+            lambda self, device: pascal,
+        )
+        assert backend._select_best_compute_type("cuda", "float16") == "int8_float32"
+
+
+def test_gpus_with_float16_are_unaffected(stub_backend):
+    """The memory-driven ordering must not touch cards that support float16."""
+    stub_backend(gpu_libraries=False)
+    backend = module.LocalWhisperBackend(model_name="tiny")
+
+    modern = {"float16", "int8_float16", "int8_float32", "float32", "int8"}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            module.LocalWhisperBackend,
+            "_get_supported_compute_types",
+            lambda self, device: modern,
+        )
+        assert backend._select_best_compute_type("cuda", "float16") == "float16"
+
+
 def test_cpu_load_failure_still_reports_unavailable(stub_backend):
     """The fallback must not mask a genuine failure as a working backend."""
     def factory(device):
