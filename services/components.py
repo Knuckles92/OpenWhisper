@@ -1,8 +1,12 @@
 """Downloadable components: catalog, install, and removal.
 
 The installer ships CPU transcription only. Optional payloads that would
-otherwise dominate the download — currently the ~2 GB NVIDIA CUDA runtime —
+otherwise dominate the download — currently the ~960 MB NVIDIA CUDA runtime —
 are fetched on demand and unpacked under ``%LOCALAPPDATA%\\OpenWhisper\\components``.
+
+The catalog describing those payloads ships in the application rather than being
+fetched: its entries are immutable PyPI wheel URLs with pinned SHA-256 digests,
+so there is no server of ours to host, keep up, or fail over from.
 
 This module deliberately mirrors :mod:`services.hf_access`: string constants
 for decisions and actions live here rather than in the Qt layer, so business
@@ -38,22 +42,14 @@ from services.format_utils import format_size_bytes
 
 logger = logging.getLogger(__name__)
 
-# Where the catalog lives. Kept off the archive host so a bad release can be
-# corrected by editing one small JSON file. The path is versioned so a future
-# application generation can publish an incompatible catalog shape.
-CATALOG_URL: Final[str] = (
-    "https://openwhisper.fiorilabs.tech/components/v1/index.json"
-)
-
 # Bumped when the shell changes in a way that invalidates existing component
 # payloads (a Python minor upgrade, a numpy major upgrade, a new MSVC runtime).
 COMPONENT_API: Final[int] = 1
 
-# The website currently serves its SPA shell for unknown paths, so relying on
-# the remote catalog alone can leave a brand-new install with a disabled
-# Install button. Keep one verified, release-pinned catalog entry in the app as
-# a fallback. A valid remote catalog is merged over this entry and can publish
-# future updates without requiring a new OpenWhisper release.
+# The component payload, pinned at release time. Entries point straight at PyPI,
+# which needs no hosting of our own and cannot rot: a published wheel's URL and
+# contents are immutable, and the SHA-256 below is verified before anything is
+# extracted. Regenerate with ``python scripts/build_component.py gpu-accel``.
 _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
     {
         "name": "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
@@ -771,8 +767,6 @@ class ComponentCoordinator:
         self._lock = threading.Lock()
         self._active: Set[str] = set()
         self._cancel_flags: Dict[str, threading.Event] = {}
-        self._catalog: Optional[dict] = None
-        self._catalog_failed = False
 
     # -- install claims ----------------------------------------------------
 
@@ -825,47 +819,24 @@ class ComponentCoordinator:
     # -- catalog -----------------------------------------------------------
 
     def fetch_catalog(self, force: bool = False) -> Optional[dict]:
-        """Return the component catalog, fetching it at most once per session.
+        """Return the component catalog.
 
-        A release-pinned built-in entry keeps first-time GPU installation
-        available when the website is unreachable or misconfigured. A valid
-        remote catalog is merged over it so published updates take precedence.
+        The catalog ships in the application (:data:`_BUILTIN_CATALOG`) and
+        needs no network access: its entries point at immutable PyPI wheel URLs
+        with pinned SHA-256 digests, so there is nothing to resolve at runtime.
+
+        An earlier design fetched a catalog from the project website and treated
+        the built-in copy as a fallback. That inverted reality — the website
+        serves its SPA shell for unknown paths, so the remote branch never once
+        succeeded, while costing a wasted request and a warning per session. It
+        also made every install look outdated, because the permanently-failed
+        remote flag suppressed update detection. Regenerate the pinned entries
+        with ``python scripts/build_component.py gpu-accel``.
+
+        Args:
+            force: Accepted for call-compatibility; the catalog is static.
         """
-        with self._lock:
-            if self._catalog is not None and not force:
-                return self._catalog
-            if self._catalog_failed and not force:
-                return None
-
-        remote_failed = False
-        try:
-            with _open(CATALOG_URL) as response:
-                remote_catalog = json.loads(response.read().decode("utf-8"))
-            if not isinstance(remote_catalog, dict) or not isinstance(
-                remote_catalog.get("components"), dict
-            ):
-                raise ValueError("catalog has no components object")
-
-            catalog = dict(_BUILTIN_CATALOG)
-            catalog["components"] = {
-                **_BUILTIN_CATALOG["components"],
-                **remote_catalog["components"],
-            }
-            for key, value in remote_catalog.items():
-                if key != "components":
-                    catalog[key] = value
-        except Exception as exc:
-            remote_failed = True
-            catalog = _BUILTIN_CATALOG
-            logger.warning(
-                "Could not use the remote component catalog; using the "
-                f"built-in GPU catalog: {exc}"
-            )
-
-        with self._lock:
-            self._catalog = catalog
-            self._catalog_failed = remote_failed
-        return catalog
+        return _BUILTIN_CATALOG
 
     def catalog_entry(self, component_id: str) -> Optional[dict]:
         """Catalog entry for ``component_id``, or None when unavailable."""
@@ -931,15 +902,14 @@ class ComponentCoordinator:
 
         installed_version = (installed_manifest or {}).get("version")
         incompatible = check_compatibility(installed_manifest or {})
+        # The catalog is a release pin, so a version difference always means the
+        # shipped payload really changed. (A previous guard suppressed this when
+        # a remote catalog fetch had failed — which was always, so no install was
+        # ever offered an update.)
         outdated = (
             available_version
             and installed_version
             and available_version != installed_version
-            # A failed fetch falls back to the release-pinned built-in catalog,
-            # whose version legitimately differs from what a remote catalog
-            # installed. Offering an update there would re-download megabytes to
-            # replace an identical payload every time the network is down.
-            and not self._catalog_failed
         )
 
         if incompatible:

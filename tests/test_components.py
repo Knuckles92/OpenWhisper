@@ -153,10 +153,18 @@ def test_describe_recognizes_an_existing_cuda_setup(component_root):
     assert "existing setup" in info.reason
 
 
-def test_fetch_catalog_uses_built_in_gpu_fallback():
-    coordinator = ComponentCoordinator()
-    with patch.object(components, "_open", side_effect=OSError("offline")):
-        catalog = coordinator.fetch_catalog()
+def test_catalog_needs_no_network(monkeypatch):
+    """The catalog ships in the app; nothing is fetched to read it.
+
+    Guards against reintroducing a hosted catalog: the previous design fetched
+    one from the project website, which served its SPA shell for that path, so
+    the request never succeeded and only cost a warning per session.
+    """
+    def _fail(*args, **kwargs):
+        raise AssertionError("the catalog must not open a network connection")
+
+    monkeypatch.setattr(components, "_open", _fail)
+    catalog = ComponentCoordinator().fetch_catalog()
 
     entry = catalog["components"][ComponentId.GPU_ACCEL]
     assert entry["archives"]
@@ -214,21 +222,23 @@ def test_gpu_runtime_unavailable_on_macos():
         assert components.gpu_runtime_available() is False
 
 
-def test_offline_catalog_does_not_offer_a_spurious_update(component_root):
-    """A fallback catalog version must not masquerade as a newer payload.
+def test_a_superseded_install_is_offered_the_update(component_root):
+    """A shipped-version difference must reach the user as a choice.
 
-    The built-in catalog is a release pin whose version legitimately differs
-    from whatever the remote catalog installed. Treating that as an update
-    re-downloads an identical payload every time the network is down.
+    An earlier guard suppressed this whenever a remote catalog fetch had failed —
+    which was always, since no catalog was ever served — so nobody was offered
+    the slimmer payload and everyone kept ~1 GB of unused cuDNN on disk.
     """
     coordinator = ComponentCoordinator()
-    _make_installed(component_root, "gpu-accel", {"version": "installed-version"})
+    _make_installed(
+        component_root, "gpu-accel", {"version": "cuda12.9-cudnn9.24"}
+    )
 
-    with patch.object(components, "_open", side_effect=OSError("offline")):
-        info = coordinator.describe("gpu-accel")
+    info = coordinator.describe("gpu-accel")
 
-    assert coordinator._catalog_failed is True
-    assert info.state == ComponentState.INSTALLED
+    assert info.installed_version == "cuda12.9-cudnn9.24"
+    assert info.available_version == components.GPU_COMPONENT_VERSION
+    assert info.state == ComponentState.UPDATE_AVAILABLE
 
 
 def test_update_available_explains_the_disk_it_frees(component_root):

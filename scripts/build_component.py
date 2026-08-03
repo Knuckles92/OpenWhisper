@@ -1,156 +1,202 @@
-"""Build downloadable component archives and the catalog that describes them.
+"""Regenerate the pinned component catalog in ``services/components.py``.
 
 Usage::
 
     python scripts/build_component.py gpu-accel
 
-Produces ``build/components/<id>/*.zip`` plus a ``catalog-fragment.json``
-holding each archive's SHA-256 and size. Upload the archives as GitHub Release
-assets, paste the fragment into the published
-``components/v1/index.json``, and fill in the resulting download URLs.
+Resolves the NVIDIA wheels that ``requirements-gpu.txt`` selects for the target
+platform, verifies each one's SHA-256 against PyPI, measures the payload, and
+prints a ready-to-paste ``_BUILTIN_GPU_ARCHIVES`` block plus the matching
+``install_bytes``. Nothing is uploaded and nothing needs hosting: the catalog
+entries point straight at PyPI, whose published wheels are immutable, and the
+application verifies the digest before extracting anything.
 
-The dependency closure is resolved with ``pip install --target`` against a
-pinned requirements file rather than by copying from the development venv.
-A dev venv carries torch, pytest, and ~170 other top-level entries, and a
-copy-based build silently drifts from what the app was tested against.
+An earlier version of this script repacked the DLLs into zips for hosting as
+GitHub Release assets, described by a JSON catalog on the project website. That
+indirection bought the ability to re-point a payload without an app release, but
+the website served its SPA shell for the catalog path so the fetch never once
+succeeded, and a CUDA bump changes ``requirements-gpu.txt`` anyway — which is an
+app release by definition.
+
+The dependency closure is resolved with ``pip install --dry-run`` against the
+pinned requirements file rather than by reading the development venv. A dev venv
+carries torch, pytest, and ~170 other top-level entries, and a copy-based build
+silently drifts from what the app was tested against.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
-import shutil
 import subprocess
 import sys
-import zipfile
+import tempfile
 from pathlib import Path
 from typing import Dict, List
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from _version import __version__  # noqa: E402
 from services.components import COMPONENT_API, GPU_COMPONENT_VERSION  # noqa: E402
-
-BUILD_ROOT = REPO_ROOT / "build" / "components"
 
 # Must match the interpreter the application is frozen with.
 TARGET_PYTHON = "3.12"
 TARGET_ABI = "cp312"
 TARGET_PLATFORM = "win_amd64"
 
-# gpu-accel is split into two archives. A single ~600 MB download that fails at
-# 95% with no per-part retry is a support problem; parts also give honest
-# progress and let a corrupt piece be re-fetched on its own.
-#
-# There is deliberately no "cudnn" group: CTranslate2 4.8 never loads cuDNN (no
-# import-table entry and no LoadLibrary name string for it), so shipping the
-# ~740 MB wheel would more than double the download for libraries that are never
-# mapped into the process. See requirements-gpu.txt for the full evidence.
-GPU_ARCHIVE_GROUPS: Dict[str, List[str]] = {
-    "cublas": ["cublas"],
-    "nvrtc": ["cuda_nvrtc", "cuda_runtime"],
-}
+# Wheels whose DLLs the component ships, in install order. cuDNN is deliberately
+# absent: CTranslate2 4.8 has no import-table entry and no LoadLibrary name
+# string for it, and a GPU transcription with cuDNN removed loads zero cuDNN
+# modules — so shipping the ~740 MB wheel would more than double the download for
+# libraries never mapped into the process.
+EXPECTED_PACKAGES: List[str] = [
+    "nvidia-cublas-cu12",
+    "nvidia-cuda-nvrtc-cu12",
+    "nvidia-cuda-runtime-cu12",
+]
 
 
-def _run(command: List[str]) -> None:
-    print("   $", " ".join(command))
-    subprocess.run(command, check=True)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _human(num_bytes: int) -> str:
-    value = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if value < 1024 or unit == "GB":
-            return f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} GB"
-
-
-def build_gpu_accel() -> dict:
-    """Download the NVIDIA CUDA wheels and repack them as flat DLL archives.
+def _resolve_wheels() -> List[dict]:
+    """Ask pip which wheels satisfy requirements-gpu.txt for the target platform.
 
     Returns:
-        A catalog entry for the component, with URLs left blank.
+        One dict per wheel with ``name``, ``url``, ``sha256`` and ``size_bytes``.
+
+    Raises:
+        SystemExit: pip failed, or resolved a set that does not match
+            ``EXPECTED_PACKAGES``.
     """
-    work = BUILD_ROOT / "gpu-accel"
-    raw = work / "raw"
-    if work.exists():
-        shutil.rmtree(work)
-    raw.mkdir(parents=True)
+    with tempfile.TemporaryDirectory() as work:
+        report = Path(work) / "report.json"
+        command = [
+            sys.executable, "-m", "pip", "install",
+            "--dry-run", "--quiet",
+            "--report", str(report),
+            "--target", str(Path(work) / "target"),
+            "--only-binary=:all:",
+            "--platform", TARGET_PLATFORM,
+            "--python-version", TARGET_PYTHON,
+            "--implementation", "cp",
+            "--abi", TARGET_ABI,
+            "-r", str(REPO_ROOT / "requirements-gpu.txt"),
+        ]
+        print("=> Resolving CUDA wheels for", TARGET_PLATFORM)
+        print("   $", " ".join(command))
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise SystemExit(
+                "pip could not resolve requirements-gpu.txt:\n" + result.stderr
+            )
+        resolved = json.loads(report.read_text(encoding="utf-8"))
 
-    print("=> Resolving CUDA wheels")
-    _run([
-        sys.executable, "-m", "pip", "install",
-        "--target", str(raw),
-        "--only-binary=:all:",
-        "--platform", TARGET_PLATFORM,
-        "--python-version", TARGET_PYTHON,
-        "--implementation", "cp",
-        "--abi", TARGET_ABI,
-        "--no-compile",
-        "-r", str(REPO_ROOT / "requirements-gpu.txt"),
-    ])
-
-    nvidia_root = raw / "nvidia"
-    if not nvidia_root.is_dir():
-        raise SystemExit("No nvidia/ tree was produced; check requirements-gpu.txt")
-
-    print("=> Packing archives")
     archives = []
-    install_bytes = 0
-
-    for archive_name, subdirs in GPU_ARCHIVE_GROUPS.items():
-        dll_paths = []
-        for subdir in subdirs:
-            bin_dir = nvidia_root / subdir / "bin"
-            if bin_dir.is_dir():
-                dll_paths.extend(sorted(bin_dir.glob("*.dll")))
-
-        if not dll_paths:
-            print(f"   (skipping '{archive_name}': no DLLs found)")
-            continue
-
-        archive_path = work / f"gpu-accel-{archive_name}.zip"
-        with zipfile.ZipFile(
-            archive_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True
-        ) as archive:
-            for dll in dll_paths:
-                # Flatten into a single bin/ directory: CTranslate2 LoadLibrary()s
-                # cublas64_12.dll by bare name, so one directory on the search
-                # path resolves everything, whereas the wheel's
-                # nvidia/<lib>/bin split would need one registration per library.
-                archive.write(dll, f"bin/{dll.name}")
-                install_bytes += dll.stat().st_size
-
-        size = archive_path.stat().st_size
+    for item in resolved.get("install", []):
+        download = item.get("download_info") or {}
+        url = download.get("url", "")
+        digest = (download.get("archive_info") or {}).get("hashes", {}).get("sha256")
+        if not url or not digest:
+            raise SystemExit(
+                f"pip reported no URL/sha256 for {item.get('metadata', {}).get('name')}"
+            )
         archives.append({
-            "name": archive_path.name,
-            "url": f"<fill in: GitHub Release asset URL for {archive_path.name}>",
-            "sha256": _sha256(archive_path),
-            "size_bytes": size,
+            "name": url.rsplit("/", 1)[-1],
+            "url": url,
+            "sha256": digest,
+            "package": item["metadata"]["name"].lower(),
+            "version": item["metadata"]["version"],
         })
-        print(f"   {archive_path.name}: {_human(size)} ({len(dll_paths)} DLLs)")
 
-    return {
-        # Shared with the in-app fallback catalog so the two can never disagree.
-        "version": GPU_COMPONENT_VERSION,
-        "component_api": COMPONENT_API,
-        "platform": TARGET_PLATFORM,
-        "app_min_version": __version__,
-        "install_bytes": install_bytes,
-        "archives": archives,
-    }
+    found = sorted(a["package"] for a in archives)
+    if found != sorted(EXPECTED_PACKAGES):
+        raise SystemExit(
+            f"Resolved an unexpected wheel set.\n  expected: {sorted(EXPECTED_PACKAGES)}"
+            f"\n  got     : {found}\nUpdate EXPECTED_PACKAGES if this is intended."
+        )
+    # Preserve EXPECTED_PACKAGES order so the emitted block is stable across runs.
+    order = {name: index for index, name in enumerate(EXPECTED_PACKAGES)}
+    archives.sort(key=lambda a: order[a["package"]])
+    return archives
+
+
+def _measure(archives: List[dict]) -> Dict[str, int]:
+    """Download each wheel and total the DLL bytes the component will install.
+
+    The size the installer needs is the extracted payload, not the compressed
+    wheel, and it drives the pre-install free-space check — so it is measured
+    rather than estimated.
+
+    Returns:
+        Mapping of wheel name to its compressed size, plus ``install_bytes``.
+    """
+    import zipfile
+    from urllib.request import urlopen
+
+    sizes: Dict[str, int] = {}
+    install_bytes = 0
+    with tempfile.TemporaryDirectory() as work:
+        for archive in archives:
+            target = Path(work) / archive["name"]
+            print(f"=> Downloading {archive['name']}")
+            with urlopen(archive["url"]) as response, target.open("wb") as out:
+                while chunk := response.read(1 << 20):
+                    out.write(chunk)
+
+            sizes[archive["name"]] = target.stat().st_size
+            with zipfile.ZipFile(target) as wheel:
+                for member in wheel.infolist():
+                    parts = member.filename.replace("\\", "/").split("/")
+                    # Mirror components._safe_extract_nvidia_wheel's selection.
+                    if (
+                        len(parts) >= 4
+                        and parts[0].lower() == "nvidia"
+                        and parts[-2].lower() == "bin"
+                        and parts[-1].lower().endswith(".dll")
+                    ):
+                        install_bytes += member.file_size
+    sizes["install_bytes"] = install_bytes
+    return sizes
+
+
+def _emit(archives: List[dict], sizes: Dict[str, int]) -> None:
+    """Print the block to paste into services/components.py."""
+    print()
+    print("=" * 78)
+    print("Paste into services/components.py, replacing _BUILTIN_GPU_ARCHIVES:")
+    print("=" * 78)
+    print()
+    print("_BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (")
+    for archive in archives:
+        print("    {")
+        print(f'        "name": "{archive["name"]}",')
+        print('        "url": (')
+        head, tail = archive["url"].rsplit("/", 1)
+        print(f'            "{head}/"')
+        print(f'            "{tail}"')
+        print("        ),")
+        print(f'        "sha256": "{archive["sha256"]}",')
+        print(f'        "size_bytes": {sizes[archive["name"]]:_},')
+        print('        "extract": "nvidia-wheel",')
+        print("    },")
+    print(")")
+    print()
+    download_total = sum(sizes[a["name"]] for a in archives)
+    print(f'    # In _BUILTIN_CATALOG: "install_bytes": {sizes["install_bytes"]:_},')
+    print(f"    # Download total: {download_total / 1e6:.0f} MB")
+    print(f"    # Installed     : {sizes['install_bytes'] / 1e6:.0f} MB")
+    print(f'    # Version pin   : GPU_COMPONENT_VERSION = "{GPU_COMPONENT_VERSION}"')
+    print(f"    #                 (component_api {COMPONENT_API})")
+    print()
+    print("Bump GPU_COMPONENT_VERSION when the CUDA versions above change, so")
+    print("existing installs are offered the new payload.")
+    for archive in archives:
+        print(f"  resolved {archive['package']}=={archive['version']}")
+
+
+def build_gpu_accel() -> None:
+    """Resolve, verify, measure, and emit the gpu-accel catalog entry."""
+    archives = _resolve_wheels()
+    sizes = _measure(archives)
+    _emit(archives, sizes)
 
 
 BUILDERS = {"gpu-accel": build_gpu_accel}
@@ -160,21 +206,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("component", choices=sorted(BUILDERS), help="Component to build")
     args = parser.parse_args()
-
-    entry = BUILDERS[args.component]()
-
-    fragment_path = BUILD_ROOT / args.component / "catalog-fragment.json"
-    fragment = {"schema": 1, "components": {args.component: entry}}
-    fragment_path.write_text(json.dumps(fragment, indent=2), encoding="utf-8")
-
-    download_total = sum(a["size_bytes"] for a in entry["archives"])
-    print()
-    print(f"Download size : {_human(download_total)}")
-    print(f"Installed size: {_human(entry['install_bytes'])}")
-    print(f"Catalog       : {fragment_path}")
-    print()
-    print("Next: upload the .zip files as GitHub Release assets, put their URLs")
-    print("into the fragment, and publish it at components/v1/index.json.")
+    BUILDERS[args.component]()
     return 0
 
 

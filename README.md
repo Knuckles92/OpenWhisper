@@ -132,21 +132,19 @@ winget install -e --id JRSoftware.InnoSetup
 
 The result lands in `installer\Output\`. See [`OpenWhisper.spec`](OpenWhisper.spec) for what is and isn't bundled.
 
-### Publishing the GPU component
+### Updating the GPU component
 
-The installer ships CPU-only; the CUDA runtime is delivered as a downloadable component.
+The installer ships CPU-only; the CUDA runtime is a downloadable component. **Nothing is hosted for it** — the catalog lives in `services/components.py` and points straight at PyPI, whose published wheels are immutable, and every download's SHA-256 is verified before extraction.
+
+To move to newer CUDA wheels, bump the pins in `requirements-gpu.txt`, then:
 
 ```powershell
 python scripts\build_component.py gpu-accel
 ```
 
-This writes `build\components\gpu-accel\*.zip` (split into `cublas` and `nvrtc` parts so a failed download only re-fetches one piece) plus a `catalog-fragment.json` containing each archive's SHA-256 and size. The payload version comes from `GPU_COMPONENT_VERSION` in `services/components.py`, which the in-app fallback catalog also uses — keeping them in one place means an unreachable catalog can never make an installed component look outdated. To publish:
+That resolves what pip would install for `win_amd64`, downloads each wheel to verify its digest and measure the extracted payload, and prints a ready-to-paste `_BUILTIN_GPU_ARCHIVES` block plus the matching `install_bytes`. Paste both into `services/components.py` and bump `GPU_COMPONENT_VERSION` so existing installs are offered the new payload.
 
-1. Upload the `.zip` files as GitHub Release assets.
-2. Paste their download URLs into the fragment's `url` fields.
-3. Publish the fragment at `https://openwhisper.fiorilabs.tech/components/v1/index.json`.
-
-The app reads that URL to discover versions and sizes. Keeping the index on the website rather than in the release means a bad component can be pulled by editing one small JSON file. If the index is unreachable or invalid, the app falls back to its release-pinned, SHA-256-verified NVIDIA wheels, so first-time installation and existing components both keep working.
+Two things not to skip: `install_bytes` drives the pre-install free-space check, so it must be the measured value the script prints rather than an estimate; and `GPU_COMPONENT_VERSION` is what the Model Manager compares against an installed manifest, so leaving it unchanged means nobody is told an update exists.
 
 OPTIONAL: For cloud transcription, set your API key:
 ```bash
