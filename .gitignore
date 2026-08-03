@@ -41,11 +41,6 @@ node_modules/
 /dist/
 /installer/Output/
 
-# PyInstaller / Inno Setup build output
-/build/
-/dist/
-/installer/Output/
-
 # Editor / tool state
 .claude/settings.local.json
 .claude/settings.local.json.bak
