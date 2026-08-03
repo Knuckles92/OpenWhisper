@@ -5,7 +5,7 @@ All notable changes to OpenWhisper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-08-02
 
 ### Added
 - **Linux NVIDIA GPU Acceleration** - `pip install -r requirements-gpu.txt` now installs the CUDA libraries on Linux as well as Windows (previously every wheel was marked `sys_platform == "win32"`, so the command silently installed nothing). Because `LD_LIBRARY_PATH` is read by `ld.so` at process start and cannot be changed from inside a running process, the libraries are preloaded with `RTLD_GLOBAL` at startup so CTranslate2's `dlopen("libcublas.so.12")` resolves to the already-loaded object; `scripts/openwhisper` also exports `LD_LIBRARY_PATH`. Requires an NVIDIA driver providing CUDA 12 (>= 525); no CUDA Toolkit needed

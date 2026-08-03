@@ -3,7 +3,7 @@
 ; Build via scripts\build_installer.ps1, which passes AppVersion on the
 ; command line so the version stays owned by _version.py. To compile by hand:
 ;
-;   ISCC.exe /DAppVersion=2.0.0 installer\OpenWhisper.iss
+;   ISCC.exe /DAppVersion=2.1.0 installer\OpenWhisper.iss
 ;
 ; Per-user install: no UAC prompt, no admin rights. The app only needs a
 ; low-level keyboard hook, which runs unelevated.
