@@ -5,7 +5,7 @@ All notable changes to OpenWhisper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.1] - 2026-08-05
 
 ### Fixed
 - **GPU component required an app restart to take effect** - Installing *GPU Acceleration* from the Model Manager only registered the CUDA DLL directory at the next startup, so the running session kept transcribing on the CPU with no way to use what was just downloaded. A successful install is now activated in the running process — Windows resolves DLL names fresh on every load attempt, so registering the directory mid-session is sufficient — and the whisper engine reloads automatically, so the first transcription after the download already runs on the GPU. The "Restart OpenWhisper" message remains only for the rare case where in-session activation fails
