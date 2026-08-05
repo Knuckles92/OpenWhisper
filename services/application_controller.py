@@ -10,10 +10,14 @@ from typing import Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
+from services.component_runtime import activate_component
 from services.components import (
     ComponentCanceled,
     ComponentError,
+    ComponentId,
+    available_component_ids,
     component_coordinator,
+    gpu_runtime_available,
     install_component,
     uninstall_component,
 )
@@ -33,7 +37,12 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.settings import HuggingFaceAccessPolicy, SettingsKey, settings_manager
-from transcriber import LocalWhisperBackend, OpenAIBackend, TranscriptionBackend
+from transcriber import (
+    GpuFallbackCause,
+    LocalWhisperBackend,
+    OpenAIBackend,
+    TranscriptionBackend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +87,10 @@ class ApplicationController(QObject):
     # distinct user-facing failure causes, so the message is carried along.
     component_install_finished = pyqtSignal(str, bool, str)
     component_state_changed = pyqtSignal()
+    # A local model load ended in a GPU→CPU fallback (emitted possibly from
+    # worker threads); the connected slot reverts the persisted device setting
+    # and raises a cause-specific warning on the Qt main thread.
+    gpu_fallback_detected = pyqtSignal()
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -228,6 +241,9 @@ class ApplicationController(QObject):
                 else:
                     self.status_update.emit("Whisper engine ready")
                     logger.info(f"Whisper reloaded: {info}")
+                # After the ready status, so the warning is what remains visible.
+                if getattr(local_backend, "gpu_fallback_note", None):
+                    self.gpu_fallback_detected.emit()
             else:
                 logger.warning("Local whisper backend not found")
                 self.status_update.emit("Ready")
@@ -244,10 +260,15 @@ class ApplicationController(QObject):
         For a new installation whose selected backend is Local Whisper with an
         uncached model, this is the moment the consent dialog may first appear
         — after the main UI is available, never during startup, and never for
-        API-only users.
+        API-only users. The same deferral applies to a GPU fallback from the
+        bootstrap-time model load: it is reported here, once there is a UI to
+        report it to.
         """
         if isinstance(self.current_backend, LocalWhisperBackend):
             QTimer.singleShot(0, self.ensure_local_model_available)
+            backend = self.transcription_backends.get("local_whisper")
+            if backend is not None and getattr(backend, "gpu_fallback_note", None):
+                self.gpu_fallback_detected.emit()
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.
@@ -539,7 +560,20 @@ class ApplicationController(QObject):
 
             install_component(component_id, entry, progress, cancel_event)
             success = True
-            message = "Restart OpenWhisper to enable this component."
+            # Activate in the running process so the component works without a
+            # restart: Windows resolves DLL names fresh on every load attempt,
+            # so registering the new directory now is enough. The engine reload
+            # that actually picks the GPU up happens on the main thread, in
+            # _on_component_install_finished.
+            activated, activation_reason = activate_component(component_id)
+            if activated:
+                message = "Installed and ready to use — no restart needed."
+            else:
+                logger.warning(
+                    f"Component '{component_id}' installed but could not be "
+                    f"activated in this session: {activation_reason}"
+                )
+                message = "Restart OpenWhisper to enable this component."
         except ComponentCanceled:
             message = "Installation canceled."
             logger.info(f"Install of '{component_id}' was canceled")
@@ -553,6 +587,92 @@ class ApplicationController(QObject):
             component_coordinator.end_install(component_id)
             self.component_install_finished.emit(component_id, success, message)
             self.component_state_changed.emit()
+
+    def _on_component_install_finished(
+        self, component_id: str, success: bool, _message: str
+    ) -> None:
+        """Put a freshly installed GPU component to use (Qt main thread).
+
+        A persisted device of "cpu" is moved back to "auto" first: it is
+        either the residue of an earlier GPU fallback (see
+        ``_on_gpu_fallback``) or a pre-existing choice the install supersedes —
+        nobody downloads a ~1 GB CUDA runtime to keep transcribing on the CPU.
+        "auto" rather than "cuda" so machines without a usable GPU degrade
+        silently instead of falling back again.
+        """
+        if not success or component_id != ComponentId.GPU_ACCEL:
+            return
+        if not gpu_runtime_available():
+            return  # activation failed; the restart message already covers it
+
+        device = settings_manager.get(
+            SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE
+        )
+        if device == "cpu":
+            logger.info(
+                "GPU component installed — moving whisper device setting "
+                "from 'cpu' back to 'auto'"
+            )
+            settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "auto")
+            self.ui_controller.refresh_local_engine_controls()
+
+        backend = self.transcription_backends.get("local_whisper")
+        if (
+            backend is not None
+            and backend.is_available()
+            and getattr(backend, "device", None) == "cuda"
+        ):
+            return  # already on the GPU (e.g. a component update)
+
+        self.reload_whisper_model()
+
+    def _on_gpu_fallback(self) -> None:
+        """Reflect a GPU→CPU fallback in settings and the UI (Qt main thread).
+
+        Persists the device the engine actually uses, so the Device combo does
+        not claim CUDA while transcription runs on the CPU, and raises a
+        status message that names the fix instead of just the symptom.
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is None or not getattr(backend, "gpu_fallback_note", None):
+            return
+
+        device = settings_manager.get(
+            SettingsKey.WHISPER_DEVICE, config.FASTER_WHISPER_DEVICE
+        )
+        if device != "cpu":
+            logger.info(
+                f"GPU fallback: reverting whisper device setting "
+                f"from '{device}' to 'cpu'"
+            )
+            settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "cpu")
+            self.ui_controller.refresh_local_engine_controls()
+
+        self.status_update.emit(self._describe_gpu_fallback(backend))
+
+    @staticmethod
+    def _describe_gpu_fallback(backend) -> str:
+        """Status message for a GPU fallback, naming the cause-specific fix."""
+        cause = getattr(backend, "gpu_fallback_cause", None)
+        if cause == GpuFallbackCause.OUT_OF_MEMORY:
+            return (
+                "GPU out of memory — using CPU. Pick a smaller model or int8 "
+                "quantization, then set the device back to auto."
+            )
+        if (
+            cause == GpuFallbackCause.MISSING_LIBRARIES
+            and ComponentId.GPU_ACCEL in available_component_ids()
+        ):
+            return (
+                "GPU found, but CUDA is not installed — using CPU. Install "
+                "GPU Acceleration under Manage models to enable it."
+            )
+        if cause == GpuFallbackCause.MISSING_LIBRARIES:
+            return (
+                "GPU found, but its CUDA libraries are missing — using CPU. "
+                "Install requirements-gpu.txt to enable GPU acceleration."
+            )
+        return "GPU failed to load — using CPU. See openwhisper.log for details."
 
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
         """Run the approved download/load on a worker thread with busy states.
@@ -612,6 +732,8 @@ class ApplicationController(QObject):
                     if backend.is_available():
                         self.device_info_update.emit(backend.device_info)
                         self.status_update.emit("Whisper engine ready")
+                    if getattr(backend, "gpu_fallback_note", None):
+                        self.gpu_fallback_detected.emit()
                 return
 
             if decision == AccessDecision.LOAD_CACHED:
@@ -636,6 +758,8 @@ class ApplicationController(QObject):
                 logger.info(f"Model '{model_name}' ready: {backend.device_info}")
             else:
                 self.status_update.emit(f"Model '{model_name}' failed to load")
+            if getattr(backend, "gpu_fallback_note", None):
+                self.gpu_fallback_detected.emit()
         except Exception as exc:
             logger.error(f"Model download/load failed for '{model_name}': {exc}")
             self.status_update.emit(f"Model download failed: {exc}")
@@ -763,6 +887,8 @@ class ApplicationController(QObject):
         self.component_install_finished.connect(
             self.ui_controller.on_component_install_finished
         )
+        self.component_install_finished.connect(self._on_component_install_finished)
+        self.gpu_fallback_detected.connect(self._on_gpu_fallback)
         self.component_state_changed.connect(
             self.ui_controller.on_component_state_changed
         )

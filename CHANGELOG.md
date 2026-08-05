@@ -5,6 +5,14 @@ All notable changes to OpenWhisper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **GPU component required an app restart to take effect** - Installing *GPU Acceleration* from the Model Manager only registered the CUDA DLL directory at the next startup, so the running session kept transcribing on the CPU with no way to use what was just downloaded. A successful install is now activated in the running process — Windows resolves DLL names fresh on every load attempt, so registering the directory mid-session is sufficient — and the whisper engine reloads automatically, so the first transcription after the download already runs on the GPU. The "Restart OpenWhisper" message remains only for the rare case where in-session activation fails
+- **Device setting kept claiming CUDA after a GPU→CPU fallback** - When a GPU load fell back to the CPU, the main-window Device combo and the persisted setting still read `cuda`/`auto` while transcription actually ran on the CPU. The setting now reverts to `cpu` and the inline combos refresh to match; installing the GPU component moves a `cpu` device back to `auto` automatically so the download immediately restores acceleration
+- **Fallback message named the symptom but not the fix** - The status line said the app was using the CPU without saying what would bring the GPU back. It now gives cause-specific guidance: install *GPU Acceleration* under *Manage models* (missing CUDA libraries, Windows), install `requirements-gpu.txt` (Linux), or pick a smaller model / int8 quantization (GPU out of memory)
+- **Stale "GPU unavailable, using CPU" note survived a successful GPU reload** - The fallback state was never cleared on reload, so even after the cause was fixed and the model loaded on the GPU, the device readout kept reporting the old failure. Every model load now starts from a clean slate
+
 ## [2.1.0] - 2026-08-02
 
 ### Added

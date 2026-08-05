@@ -179,10 +179,13 @@ class FakeLocalBackend:
     def __init__(self, model_name=None):
         self.model_name = model_name or "base"
         self.device_info = "cpu"
+        self.device = "cpu"
         self.is_transcribing = False
         self.cleaned_up = False
         self.is_model_missing = False
         self.last_loaded_model = self.model_name
+        self.gpu_fallback_note = None
+        self.gpu_fallback_cause = None
 
     def is_available(self):
         return not self.is_model_missing
@@ -200,9 +203,11 @@ class FakeLocalBackend:
         if model_name:
             self.model_name = model_name
         self.device_info = "cpu-reloaded"
-        # Mirrors a successful cache-only load
+        # Mirrors a successful cache-only load, which resets fallback state
         self.is_model_missing = False
         self.last_loaded_model = self.model_name
+        self.gpu_fallback_note = None
+        self.gpu_fallback_cause = None
 
     def cleanup(self):
         self.cleaned_up = True
@@ -480,8 +485,13 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     pyqt_module = types.ModuleType("PyQt6")
 
+    # Constants holder with no behavior, safe to expose for real (imported
+    # before patch.dict swaps the transcriber package for the stub).
+    from transcriber import GpuFallbackCause as _RealGpuFallbackCause
+
     transcriber_module = types.ModuleType("transcriber")
     transcriber_module.TranscriptionBackend = object
+    transcriber_module.GpuFallbackCause = _RealGpuFallbackCause
     transcriber_module.LocalWhisperBackend = FakeLocalBackend
     transcriber_module.OpenAIBackend = FakeOpenAIBackend
 
@@ -1076,6 +1086,150 @@ class TestApplicationController(unittest.TestCase):
             controller.ui_controller.deleted_models,
             [("tiny", False, "Files are in use by another process")],
         )
+
+    # ── GPU component install / fallback ───────────────────────────
+
+    def test_component_install_activates_and_reloads_without_restart(self):
+        import threading
+
+        controller = self._create_controller()
+        self.settings.all_settings["whisper_device"] = "cpu"
+        reload_requests = []
+        controller.reload_whisper_model = lambda: reload_requests.append(True)
+
+        with patch.object(
+            self.app_controller_module, "install_component", lambda *a, **k: None
+        ), patch.object(
+            self.app_controller_module, "activate_component", lambda cid: (True, "")
+        ), patch.object(
+            self.app_controller_module, "gpu_runtime_available", lambda: True
+        ):
+            controller._component_install_worker("gpu-accel", threading.Event())
+
+        component_id, success, message = (
+            controller.ui_controller.component_install_results[-1]
+        )
+        self.assertEqual(component_id, "gpu-accel")
+        self.assertTrue(success)
+        self.assertNotIn("Restart", message)
+        # The persisted CPU device (fallback residue) moves back to auto so the
+        # follow-up reload can adopt the GPU.
+        self.assertEqual(self.settings.all_settings["whisper_device"], "auto")
+        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
+        self.assertEqual(reload_requests, [True])
+
+    def test_component_activation_failure_keeps_the_restart_message(self):
+        import threading
+
+        controller = self._create_controller()
+        self.settings.all_settings["whisper_device"] = "cpu"
+        reload_requests = []
+        controller.reload_whisper_model = lambda: reload_requests.append(True)
+
+        with patch.object(
+            self.app_controller_module, "install_component", lambda *a, **k: None
+        ), patch.object(
+            self.app_controller_module,
+            "activate_component",
+            lambda cid: (False, "registration failed"),
+        ), patch.object(
+            self.app_controller_module, "gpu_runtime_available", lambda: False
+        ):
+            controller._component_install_worker("gpu-accel", threading.Event())
+
+        _cid, success, message = (
+            controller.ui_controller.component_install_results[-1]
+        )
+        self.assertTrue(success)
+        self.assertIn("Restart OpenWhisper", message)
+        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        self.assertEqual(reload_requests, [])
+
+    def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.gpu_fallback_note = "GPU unavailable, using CPU"
+        backend.gpu_fallback_cause = (
+            self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+        )
+        self.settings.all_settings["whisper_device"] = "cuda"
+
+        with patch.object(
+            self.app_controller_module,
+            "available_component_ids",
+            lambda: ("gpu-accel",),
+        ):
+            controller.gpu_fallback_detected.emit()
+
+        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
+        self.assertIn("Manage models", controller.ui_controller.statuses[-1])
+
+    def test_gpu_fallback_out_of_memory_does_not_advertise_the_component(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.gpu_fallback_note = "GPU out of memory, using CPU"
+        backend.gpu_fallback_cause = (
+            self.app_controller_module.GpuFallbackCause.OUT_OF_MEMORY
+        )
+        self.settings.all_settings["whisper_device"] = "auto"
+
+        controller.gpu_fallback_detected.emit()
+
+        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        status = controller.ui_controller.statuses[-1]
+        self.assertIn("out of memory", status)
+        self.assertNotIn("Manage models", status)
+
+    def test_reload_worker_leaves_the_fallback_warning_visible(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+
+        def reload_with_fallback(model_name=None):
+            backend.device_info = "turbo | cpu (int8) — GPU unavailable, using CPU"
+            backend.gpu_fallback_note = "GPU unavailable, using CPU"
+            backend.gpu_fallback_cause = (
+                self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+            )
+
+        backend.reload_model = reload_with_fallback
+        self.settings.all_settings["whisper_device"] = "cuda"
+
+        with patch.object(
+            self.app_controller_module,
+            "available_component_ids",
+            lambda: ("gpu-accel",),
+        ):
+            controller.reload_whisper_model()
+            controller._reload_timer.timeout.emit()
+            fn, args = controller.executor.submissions[0]
+            fn(*args)
+
+        statuses = controller.ui_controller.statuses
+        self.assertIn("Whisper engine ready", statuses)
+        # Emitted after the ready status, so the actionable warning is what
+        # remains on screen.
+        self.assertIn("Manage models", statuses[-1])
+        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+
+    def test_startup_fallback_is_reported_once_the_ui_is_ready(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.gpu_fallback_note = "GPU unavailable, using CPU"
+        backend.gpu_fallback_cause = (
+            self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+        )
+        self.settings.all_settings["whisper_device"] = "auto"
+
+        with patch.object(
+            self.app_controller_module,
+            "available_component_ids",
+            lambda: ("gpu-accel",),
+        ):
+            controller.notify_main_ui_ready()
+
+        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        self.assertIn("Manage models", controller.ui_controller.statuses[-1])
 
 
 if __name__ == "__main__":

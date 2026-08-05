@@ -72,6 +72,7 @@ def test_missing_cuda_libraries_select_cpu_up_front(stub_backend):
     assert backend._device == "cpu"
     assert backend._compute_type == "int8"
     assert "cuBLAS" in backend.gpu_fallback_reason
+    assert backend.gpu_fallback_cause == module.GpuFallbackCause.MISSING_LIBRARIES
 
 
 def test_working_cuda_libraries_stay_on_gpu(stub_backend):
@@ -168,6 +169,7 @@ def test_out_of_memory_is_not_reported_as_missing_libraries(stub_backend):
     assert backend.is_available()
     assert backend._device == "cpu"
     assert backend.gpu_fallback_note == "GPU out of memory, using CPU"
+    assert backend.gpu_fallback_cause == module.GpuFallbackCause.OUT_OF_MEMORY
     assert "GPU out of memory" in backend.device_info
     # Must not send the user after a packaging problem they do not have.
     assert "requirements-gpu" not in backend.device_info
@@ -185,8 +187,9 @@ def test_missing_libraries_advise_installing_them(stub_backend):
     backend = module.LocalWhisperBackend(model_name="turbo")
 
     assert backend.gpu_fallback_note == "GPU unavailable, using CPU"
-    advice, _note = backend._describe_gpu_failure(RuntimeError(CUBLAS_ERROR))
+    advice, _note, cause = backend._describe_gpu_failure(RuntimeError(CUBLAS_ERROR))
     assert "requirements-gpu.txt" in advice
+    assert cause == module.GpuFallbackCause.MISSING_LIBRARIES
 
 
 def test_unclassified_gpu_failure_gets_a_neutral_note(stub_backend):
@@ -195,9 +198,12 @@ def test_unclassified_gpu_failure_gets_a_neutral_note(stub_backend):
     stub_backend(gpu_libraries=False)
     backend = backend_cls(model_name="tiny")
 
-    advice, note = backend._describe_gpu_failure(RuntimeError("cuda broke somehow"))
+    advice, note, cause = backend._describe_gpu_failure(
+        RuntimeError("cuda broke somehow")
+    )
     assert advice == ""
     assert note == "GPU load failed, using CPU"
+    assert cause == module.GpuFallbackCause.UNKNOWN
 
 
 def test_gpus_without_float16_prefer_int8_over_float32(stub_backend):
@@ -232,6 +238,31 @@ def test_gpus_with_float16_are_unaffected(stub_backend):
             lambda self, device: modern,
         )
         assert backend._select_best_compute_type("cuda", "float16") == "float16"
+
+
+def test_reload_after_fixing_the_gpu_clears_the_fallback_state(stub_backend):
+    """Installing the GPU component and reloading must drop the stale note.
+
+    Without the reset in ``_load_model`` the device readout keeps saying
+    "GPU unavailable, using CPU" even though the reload landed on the GPU.
+    """
+    _built, _probes = stub_backend(gpu_libraries=False)
+    backend = module.LocalWhisperBackend(model_name="turbo")
+    assert backend.gpu_fallback_note is not None
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            "services.components.gpu_runtime_available", lambda: True
+        )
+        # Skip cleanup()'s CUDA-destructor sleeps; only the reload matters here.
+        backend.model = None
+        backend.reload_model("turbo")
+
+    assert backend._device == "cuda"
+    assert backend.gpu_fallback_reason is None
+    assert backend.gpu_fallback_note is None
+    assert backend.gpu_fallback_cause is None
+    assert "GPU unavailable" not in backend.device_info
 
 
 def test_cpu_load_failure_still_reports_unavailable(stub_backend):

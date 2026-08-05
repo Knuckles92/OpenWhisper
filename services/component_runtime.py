@@ -69,6 +69,49 @@ def register_dll_directory(path: str) -> bool:
     return True
 
 
+def activate_component(component_id: str) -> Tuple[bool, str]:
+    """Put one installed component on the native search path.
+
+    Also usable mid-session, right after an install: the Windows loader
+    resolves DLL names fresh on every load attempt, so registering the
+    directory now makes the component work without restarting the app.
+    Never raises.
+
+    Args:
+        component_id: Component to activate.
+
+    Returns:
+        ``(activated, reason)``: reason explains a False result and is empty
+        on success.
+    """
+    try:
+        from services.components import (
+            check_compatibility, component_dir, is_installed, read_manifest,
+        )
+
+        if not is_installed(component_id):
+            return False, "The component is not installed."
+
+        manifest = read_manifest(component_id) or {}
+        reason = check_compatibility(manifest)
+        if reason:
+            logger.warning(f"Component '{component_id}' is not usable: {reason}")
+            return False, reason
+
+        bin_dir = os.path.join(component_dir(component_id), "bin")
+        if not register_dll_directory(bin_dir):
+            return False, "Its library folder is missing."
+
+        logger.info(
+            f"Activated component '{component_id}' "
+            f"version {manifest.get('version', 'unknown')}"
+        )
+        return True, ""
+    except Exception as exc:
+        logger.warning(f"Failed to activate component '{component_id}': {exc}")
+        return False, str(exc)
+
+
 def activate_components() -> ActivationReport:
     """Put every usable installed component on the native search path.
 
@@ -80,8 +123,7 @@ def activate_components() -> ActivationReport:
 
     try:
         from services.components import (
-            available_component_ids, check_compatibility, component_dir,
-            is_installed, prune_orphans, read_manifest,
+            available_component_ids, is_installed, prune_orphans,
         )
     except Exception:
         logger.debug("Component system unavailable", exc_info=True)
@@ -93,28 +135,12 @@ def activate_components() -> ActivationReport:
         logger.debug("Could not prune component orphans", exc_info=True)
 
     for component_id in available_component_ids():
-        try:
-            if not is_installed(component_id):
-                continue
-
-            manifest = read_manifest(component_id) or {}
-            reason = check_compatibility(manifest)
-            if reason:
-                logger.warning(f"Component '{component_id}' is not usable: {reason}")
-                rejected.append((component_id, reason))
-                continue
-
-            bin_dir = os.path.join(component_dir(component_id), "bin")
-            if register_dll_directory(bin_dir):
-                activated.append(component_id)
-                logger.info(
-                    f"Activated component '{component_id}' "
-                    f"version {manifest.get('version', 'unknown')}"
-                )
-            else:
-                rejected.append((component_id, "Its library folder is missing."))
-        except Exception as exc:
-            logger.warning(f"Failed to activate component '{component_id}': {exc}")
-            rejected.append((component_id, str(exc)))
+        if not is_installed(component_id):
+            continue
+        ok, reason = activate_component(component_id)
+        if ok:
+            activated.append(component_id)
+        else:
+            rejected.append((component_id, reason))
 
     return ActivationReport(tuple(activated), tuple(rejected))

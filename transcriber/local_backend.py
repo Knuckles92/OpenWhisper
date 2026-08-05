@@ -31,6 +31,19 @@ _GPU_LIBRARY_MARKERS = (
 )
 
 
+class GpuFallbackCause:
+    """Why a GPU load fell back to the CPU.
+
+    Defined here rather than inferred from the note text so callers (the
+    application controller) can pick cause-specific remediation — installing
+    the GPU component fixes missing libraries but not exhausted VRAM.
+    """
+
+    MISSING_LIBRARIES = "missing_libraries"
+    OUT_OF_MEMORY = "out_of_memory"
+    UNKNOWN = "unknown"
+
+
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
 
@@ -60,9 +73,11 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._last_loaded_model: Optional[str] = None
         # Set when a GPU load failed and the model was loaded on the CPU instead,
         # so the UI can explain why acceleration is inactive. ``reason`` is the
-        # raw error; ``note`` is the short, cause-specific status suffix.
+        # raw error; ``note`` is the short, cause-specific status suffix;
+        # ``cause`` is one of the ``GpuFallbackCause`` constants.
         self.gpu_fallback_reason: Optional[str] = None
         self.gpu_fallback_note: Optional[str] = None
+        self.gpu_fallback_cause: Optional[str] = None
         self._load_model()
 
     def _cuda_is_available(self) -> bool:
@@ -216,6 +231,13 @@ class LocalWhisperBackend(TranscriptionBackend):
         ``download_and_load``).
         """
         try:
+            # A reload is a fresh attempt: without this reset, a successful GPU
+            # load after the user fixes the cause (e.g. installs the GPU
+            # component) would keep showing the stale fallback note.
+            self.gpu_fallback_reason = None
+            self.gpu_fallback_note = None
+            self.gpu_fallback_cause = None
+
             self._device, self._compute_type, detected_model = self._detect_hardware()
 
             # Before committing to the GPU. Also covers an explicit device="cuda"
@@ -298,10 +320,11 @@ class LocalWhisperBackend(TranscriptionBackend):
         )
         self.gpu_fallback_reason = "CUDA libraries (cuBLAS) could not be loaded"
         self.gpu_fallback_note = "GPU unavailable, using CPU"
+        self.gpu_fallback_cause = GpuFallbackCause.MISSING_LIBRARIES
         self._device = "cpu"
         self._compute_type = self._select_best_compute_type("cpu", "int8")
 
-    def _describe_gpu_failure(self, error: Exception) -> Tuple[str, str]:
+    def _describe_gpu_failure(self, error: Exception) -> Tuple[str, str, str]:
         """Classify a GPU failure into actionable advice and a short status note.
 
         The causes need different responses — install the libraries, pick a
@@ -311,8 +334,9 @@ class LocalWhisperBackend(TranscriptionBackend):
             error: The exception raised by the GPU attempt.
 
         Returns:
-            ``(advice, note)``: advice is appended to the log warning and may be
-            empty; note is the short suffix shown in :attr:`device_info`.
+            ``(advice, note, cause)``: advice is appended to the log warning and
+            may be empty; note is the short suffix shown in :attr:`device_info`;
+            cause is one of the ``GpuFallbackCause`` constants.
         """
         text = str(error).lower()
 
@@ -321,6 +345,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                 "The GPU ran out of memory. Choose a smaller model, or set the "
                 "compute type to int8 in Settings, to keep using the GPU.",
                 "GPU out of memory, using CPU",
+                GpuFallbackCause.OUT_OF_MEMORY,
             )
 
         if any(marker in text for marker in _GPU_LIBRARY_MARKERS):
@@ -328,9 +353,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 "Install the GPU component (Windows) or requirements-gpu.txt "
                 "(Linux) to restore GPU acceleration.",
                 "GPU unavailable, using CPU",
+                GpuFallbackCause.MISSING_LIBRARIES,
             )
 
-        return ("", "GPU load failed, using CPU")
+        return ("", "GPU load failed, using CPU", GpuFallbackCause.UNKNOWN)
 
     def _retry_on_cpu(self, error: Exception) -> bool:
         """Reload the model on the CPU after a GPU load failure.
@@ -361,7 +387,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         if not any(marker in str(error).lower() for marker in _GPU_ERROR_MARKERS):
             return False
 
-        advice, note = self._describe_gpu_failure(error)
+        advice, note, cause = self._describe_gpu_failure(error)
         logger.warning(
             f"GPU model load failed ({error}); falling back to CPU."
             + (f" {advice}" if advice else "")
@@ -370,6 +396,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._compute_type = self._select_best_compute_type("cpu", "int8")
         self.gpu_fallback_reason = str(error)
         self.gpu_fallback_note = note
+        self.gpu_fallback_cause = cause
 
         self.model = WhisperModel(
             self.model_name,
@@ -629,6 +656,15 @@ class LocalWhisperBackend(TranscriptionBackend):
                 logger.debug("[cleanup] Cleanup complete!")
         except Exception as e:
             logger.debug(f"[cleanup] Exception: {e}")
+
+    @property
+    def device(self) -> Optional[str]:
+        """Device the engine actually loaded on ("cuda"/"cpu"), or None.
+
+        This is the resolved device, which can differ from the settings value:
+        an "auto" or "cuda" selection lands here as "cpu" after a GPU fallback.
+        """
+        return self._device
 
     @property
     def last_loaded_model(self) -> Optional[str]:
