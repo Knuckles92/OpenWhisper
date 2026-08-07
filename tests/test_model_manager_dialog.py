@@ -1,5 +1,6 @@
 """Qt tests for the Model Manager dialog and its model rows."""
 import os
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -10,7 +11,15 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from services.components import ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo
+from services.settings import (
+    SettingsKey,
+    SettingsManager,
+    TranscriptCleanupModelSort,
+    TranscriptCleanupProvider,
+    default_transcript_cleanup_model,
+)
 from ui_qt.dialogs import model_manager_dialog as dialog_module
+from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 from ui_qt.widgets import Button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
@@ -360,6 +369,191 @@ class TestActions(_DialogTestCase):
         dialog.on_set_active_requested = requested.append
         dialog.rows["tiny"].set_active_button.click()
         self.assertEqual(requested, ["tiny"])
+
+
+class TestTextModelManager(_DialogTestCase):
+    """Text models use one provider-to-model selection flow."""
+
+    def _make_text_dialog(
+        self, provider="openai", model="gpt-test", api_keys=None
+    ):
+        values = {
+            SettingsKey.WHISPER_MODEL: "base",
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
+                TranscriptCleanupModelSort.MOST_POPULAR
+            ),
+        }
+
+        class FakeSettings:
+            def get(self, key, default=None):
+                return values.get(key, default)
+
+            def save_setting(self, key, value):
+                values[key] = value
+
+            def load_all_settings(self):
+                return dict(values)
+
+            def save_all_settings(self, settings):
+                values.clear()
+                values.update(settings)
+
+        patchers = [
+            patch.object(dialog_module, "scan_cached_models", return_value={}),
+            patch.object(dialog_module, "settings_manager", FakeSettings()),
+            patch.object(
+                dialog_module,
+                "find_api_key",
+                side_effect=lambda selected_provider: (api_keys or {}).get(
+                    selected_provider
+                ),
+            ),
+            patch.object(
+                dialog_module, "is_hf_hub_offline_env_set", return_value=False
+            ),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return ModelManagerDialog(), values
+
+    def test_provider_credential_status_shows_when_key_is_found(self):
+        dialog, _values = self._make_text_dialog(
+            provider=TranscriptCleanupProvider.OPENROUTER,
+            api_keys={TranscriptCleanupProvider.OPENROUTER: "test-key"},
+        )
+
+        status = dialog.text_model_picker.provider_requirement
+        self.assertEqual(status.text(), "✓ OPENROUTER_API_KEY found")
+        self.assertTrue(status.property("available"))
+
+    def test_provider_credential_status_keeps_requirement_when_key_is_missing(self):
+        dialog, _values = self._make_text_dialog(
+            provider=TranscriptCleanupProvider.OPENROUTER
+        )
+
+        status = dialog.text_model_picker.provider_requirement
+        self.assertEqual(status.text(), "Requires OPENROUTER_API_KEY")
+        self.assertFalse(status.property("available"))
+
+    def test_voice_and_text_have_separate_tabs(self):
+        dialog, _values = self._make_text_dialog()
+        labels = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+        self.assertEqual(labels, ["Voice", "Text"])
+
+    def test_text_models_use_one_labeled_provider_selector(self):
+        dialog, _values = self._make_text_dialog()
+        labels = [
+            dialog.text_model_picker.provider_combo.itemText(i)
+            for i in range(dialog.text_model_picker.provider_combo.count())
+        ]
+        self.assertEqual(labels, ["OpenAI", "OpenRouter"])
+        self.assertEqual(
+            dialog.text_model_picker.provider,
+            TranscriptCleanupProvider.OPENAI,
+        )
+        self.assertFalse(hasattr(dialog, "text_provider_tabs"))
+        self.assertEqual(
+            dialog.text_model_picker.active_summary.text(),
+            "Active now: OpenAI · gpt-test",
+        )
+
+    def test_switching_provider_updates_the_same_model_picker(self):
+        dialog, _values = self._make_text_dialog()
+
+        index = dialog.text_model_picker.provider_combo.findData(
+            TranscriptCleanupProvider.OPENROUTER
+        )
+        dialog.text_model_picker.provider_combo.setCurrentIndex(index)
+
+        self.assertEqual(
+            dialog.text_model_picker.provider,
+            TranscriptCleanupProvider.OPENROUTER,
+        )
+        self.assertEqual(dialog.text_model_picker.provider_title.text(), "OpenRouter")
+        self.assertEqual(
+            dialog.text_model_picker.model_combo.currentText(),
+            default_transcript_cleanup_model("openrouter"),
+        )
+        self.assertFalse(dialog.text_model_picker.sort_combo.isHidden())
+
+    def test_set_active_persists_provider_and_model(self):
+        dialog, values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        index = picker.provider_combo.findData(
+            TranscriptCleanupProvider.OPENROUTER
+        )
+        picker.provider_combo.setCurrentIndex(index)
+        picker.model_combo.setCurrentText("anthropic/claude-test")
+
+        dialog._activate_text_model(TranscriptCleanupProvider.OPENROUTER)
+
+        self.assertEqual(
+            values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER], "openrouter"
+        )
+        self.assertEqual(
+            values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL],
+            "anthropic/claude-test",
+        )
+        self.assertEqual(picker.activate_button.text(), "Active")
+        self.assertFalse(picker.activate_button.isEnabled())
+
+    def test_catalog_result_populates_matching_provider(self):
+        dialog, _values = self._make_text_dialog(model="gpt-4o-mini")
+        models = ["gpt-4.1", "gpt-4o-mini", "o4-mini"]
+
+        dialog._on_text_models_loaded(
+            TranscriptCleanupProvider.OPENAI,
+            TranscriptCleanupModelSort.ALPHABETICAL,
+            models,
+            "",
+        )
+
+        picker = dialog.text_model_picker
+        self.assertEqual(picker.model_combo.count(), len(models))
+        self.assertEqual(picker.model_combo.currentText(), "gpt-4o-mini")
+        self.assertEqual(picker.status_label.text(), "3 models available")
+
+
+class TestCleanupSettingsOwnership(_DialogTestCase):
+    """Cleanup Settings must not overwrite Model Manager selections."""
+
+    def test_saving_cleanup_settings_preserves_text_model_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            isolated.save_all_settings(
+                {
+                    SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter",
+                    SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "provider/model-test",
+                    SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
+                        TranscriptCleanupModelSort.NEWEST
+                    ),
+                }
+            )
+            with (
+                patch.object(settings_dialog_module, "settings_manager", isolated),
+                patch.object(
+                    settings_dialog_module.history_manager,
+                    "set_max_recordings",
+                ),
+            ):
+                dialog = settings_dialog_module.SettingsDialog()
+                dialog._save_settings()
+
+            saved = isolated.load_all_settings()
+            self.assertEqual(
+                saved[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER], "openrouter"
+            )
+            self.assertEqual(
+                saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL],
+                "provider/model-test",
+            )
+            self.assertEqual(
+                saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT],
+                TranscriptCleanupModelSort.NEWEST,
+            )
 
 
 class TestComponentRows(_DialogTestCase):

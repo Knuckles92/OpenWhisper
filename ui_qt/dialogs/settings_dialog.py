@@ -21,14 +21,10 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     RecordingRetentionMode,
     SettingsKey,
-    TranscriptCleanupModelSort,
-    TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
-    default_transcript_cleanup_model,
     resolve_max_saved_recordings,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
-    resolve_transcript_cleanup_model_sort,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -40,7 +36,7 @@ from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.widgets import (
-    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button, SearchableComboBox,
+    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,10 +46,6 @@ class SettingsDialog(QDialog):
     """Settings dialog with tabbed interface."""
 
     settings_changed = pyqtSignal(dict)
-
-    #: Internal: emitted from the model-list worker thread
-    #: (provider, sort, models, error).
-    _cleanup_models_loaded = pyqtSignal(str, str, list, str)
 
     #: Internal: emitted from the rule-polish worker thread
     #: (raw instruction, polished rule, error).
@@ -87,22 +79,12 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.setInterval(60_000)
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
 
-        # Live-loaded cleanup model lists, keyed by (provider, sort).
-        self._cleanup_models_cache: dict = {}
-        self._cleanup_models_loading = False
-        # Model text remembered per provider so switching providers never
-        # carries one provider's model id over to the other.
-        self._cleanup_model_by_provider: dict = {}
-        self._active_cleanup_provider: str = ""
-
         self._setup_ui()
         self._load_settings()
 
-        self._cleanup_models_loaded.connect(self._on_cleanup_models_loaded)
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
         self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
         self.finished.connect(self._release_rule_recorder)
-        self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _setup_ui(self):
         """Setup the user interface."""
@@ -350,8 +332,9 @@ class SettingsDialog(QDialog):
         """Create AI transcript cleanup (post-processing) settings tab.
 
         Split into subtabs so the growing cleanup feature set stays
-        scannable: General holds provider/model/prompt settings, Learned
-        Rules holds the rule-teaching UI.
+        scannable: General holds behavior/prompt settings, while Learned Rules
+        holds the rule-teaching UI. Provider and model selection live in the
+        centralized Model Manager.
         """
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
@@ -386,7 +369,7 @@ class SettingsDialog(QDialog):
         return scroll_area, layout
 
     def _create_cleanup_general_subtab(self):
-        """Build the General cleanup subtab (provider, model, prompt)."""
+        """Build the General cleanup subtab (behavior and prompt)."""
         scroll_area, layout = self._cleanup_subtab_scaffold()
 
         # Title
@@ -401,94 +384,25 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(self._update_cleanup_prompt_ui)
         layout.addWidget(self.transcript_cleanup_check)
 
-        # Provider selection
-        layout.addSpacing(8)
-        self.cleanup_provider_label = QLabel("Provider:")
-        layout.addWidget(self.cleanup_provider_label)
-
-        self.cleanup_provider_combo = NoWheelComboBox()
-        self.cleanup_provider_combo.addItem("OpenAI", TranscriptCleanupProvider.OPENAI)
-        self.cleanup_provider_combo.addItem(
-            "OpenRouter", TranscriptCleanupProvider.OPENROUTER
+        model_card = QFrame()
+        model_card.setObjectName("cleanupModelSummaryCard")
+        model_card_layout = QVBoxLayout(model_card)
+        model_card_layout.setContentsMargins(16, 14, 16, 14)
+        model_card_layout.setSpacing(4)
+        model_eyebrow = QLabel("TEXT MODEL")
+        model_eyebrow.setObjectName("cleanupModelSummaryEyebrow")
+        model_card_layout.addWidget(model_eyebrow)
+        self.cleanup_model_summary = QLabel("")
+        self.cleanup_model_summary.setObjectName("cleanupModelSummary")
+        self.cleanup_model_summary.setWordWrap(True)
+        model_card_layout.addWidget(self.cleanup_model_summary)
+        model_hint = QLabel(
+            "Provider and model selection now live in Model Manager → Text."
         )
-        self.cleanup_provider_combo.setMinimumHeight(36)
-        self.cleanup_provider_combo.currentIndexChanged.connect(
-            self._on_cleanup_provider_changed
-        )
-        layout.addWidget(self.cleanup_provider_combo)
-
-        # Model-list sort order (OpenRouter supports server-side ranking;
-        # OpenAI's models endpoint does not, so this row hides for OpenAI).
-        sort_row = QHBoxLayout()
-        sort_row.setSpacing(8)
-        self.cleanup_model_sort_label = QLabel("Sort models by:")
-        sort_row.addWidget(self.cleanup_model_sort_label)
-
-        self.cleanup_model_sort_combo = NoWheelComboBox()
-        self.cleanup_model_sort_combo.addItem(
-            "A → Z", TranscriptCleanupModelSort.ALPHABETICAL
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Most popular", TranscriptCleanupModelSort.MOST_POPULAR
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Top this week", TranscriptCleanupModelSort.TOP_WEEKLY
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Newest", TranscriptCleanupModelSort.NEWEST
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Cheapest first", TranscriptCleanupModelSort.PRICING_LOW_TO_HIGH
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Priciest first", TranscriptCleanupModelSort.PRICING_HIGH_TO_LOW
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Largest context", TranscriptCleanupModelSort.CONTEXT_HIGH_TO_LOW
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Highest throughput",
-            TranscriptCleanupModelSort.THROUGHPUT_HIGH_TO_LOW,
-        )
-        self.cleanup_model_sort_combo.addItem(
-            "Lowest latency", TranscriptCleanupModelSort.LATENCY_LOW_TO_HIGH
-        )
-        self.cleanup_model_sort_combo.setMinimumHeight(36)
-        self.cleanup_model_sort_combo.setToolTip(
-            "How the model dropdown is ordered (OpenRouter server-side ranking)"
-        )
-        self.cleanup_model_sort_combo.currentIndexChanged.connect(
-            self._on_cleanup_sort_changed
-        )
-        sort_row.addWidget(self.cleanup_model_sort_combo, stretch=1)
-        layout.addLayout(sort_row)
-
-        # Model selection (live-loaded from the provider's API)
-        self.cleanup_model_label = QLabel("Model:")
-        layout.addWidget(self.cleanup_model_label)
-
-        model_row = QHBoxLayout()
-        model_row.setSpacing(8)
-        # Type-to-search: typing narrows the combo's own dropdown
-        # (case-insensitive substring match on the live-loaded list).
-        self.cleanup_model_combo = SearchableComboBox()
-        self.cleanup_model_combo.setMinimumHeight(36)
-        model_row.addWidget(self.cleanup_model_combo, stretch=1)
-
-        self.cleanup_model_refresh_btn = Button("Refresh")
-        self.cleanup_model_refresh_btn.setToolTip(
-            "Reload the model list from the provider's API"
-        )
-        self.cleanup_model_refresh_btn.clicked.connect(
-            lambda: self._fetch_cleanup_models(force=True)
-        )
-        model_row.addWidget(self.cleanup_model_refresh_btn)
-        layout.addLayout(model_row)
-
-        self.cleanup_models_status = QLabel("")
-        self.cleanup_models_status.setObjectName("infoLabel")
-        self.cleanup_models_status.setWordWrap(True)
-        layout.addWidget(self.cleanup_models_status)
+        model_hint.setObjectName("cleanupModelSummaryHint")
+        model_hint.setWordWrap(True)
+        model_card_layout.addWidget(model_hint)
+        layout.addWidget(model_card)
 
         # Thinking / reasoning effort
         self.cleanup_reasoning_label = QLabel("Thinking level:")
@@ -827,14 +741,6 @@ class SettingsDialog(QDialog):
         """Enable cleanup controls when AI cleanup is on."""
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
-            self.cleanup_provider_label,
-            self.cleanup_provider_combo,
-            self.cleanup_model_sort_label,
-            self.cleanup_model_sort_combo,
-            self.cleanup_model_label,
-            self.cleanup_model_combo,
-            self.cleanup_model_refresh_btn,
-            self.cleanup_models_status,
             self.cleanup_reasoning_label,
             self.cleanup_reasoning_combo,
             self.cleanup_reasoning_info,
@@ -849,152 +755,9 @@ class SettingsDialog(QDialog):
             self.cleanup_rules_list,
         ):
             widget.setEnabled(enabled)
-        if self._cleanup_models_loading:
-            self.cleanup_model_refresh_btn.setEnabled(False)
         self._update_cleanup_rule_controls()
 
-    # ── Cleanup model live loading ─────────────────────────────────
-
-    def _current_cleanup_provider(self) -> str:
-        """Return the provider currently selected in the Cleanup tab."""
-        return (
-            self.cleanup_provider_combo.currentData()
-            or TranscriptCleanupProvider.OPENAI
-        )
-
-    def _current_cleanup_sort(self) -> str:
-        """Return the model-list sort for the current provider selection.
-
-        OpenAI's models endpoint has no server-side sort, so anything but
-        OpenRouter always resolves to alphabetical.
-        """
-        if (
-            self._current_cleanup_provider()
-            != TranscriptCleanupProvider.OPENROUTER
-        ):
-            return TranscriptCleanupModelSort.ALPHABETICAL
-        return (
-            self.cleanup_model_sort_combo.currentData()
-            or TranscriptCleanupModelSort.ALPHABETICAL
-        )
-
-    def _update_cleanup_sort_visibility(self):
-        """Show the sort selector only for OpenRouter."""
-        is_openrouter = (
-            self._current_cleanup_provider()
-            == TranscriptCleanupProvider.OPENROUTER
-        )
-        self.cleanup_model_sort_label.setVisible(is_openrouter)
-        self.cleanup_model_sort_combo.setVisible(is_openrouter)
-
-    def _on_tab_changed(self, index: int):
-        """Lazily fetch the model list the first time the Cleanup tab opens."""
-        if index != self._cleanup_tab_index:
-            return
-        provider = self._current_cleanup_provider()
-        sort = self._current_cleanup_sort()
-        if (provider, sort) not in self._cleanup_models_cache:
-            self._fetch_cleanup_models()
-
-    def _on_cleanup_provider_changed(self):
-        """Swap to the new provider's remembered model and reload the list."""
-        provider = self._current_cleanup_provider()
-        self._update_cleanup_sort_visibility()
-        # Remember the outgoing provider's model and restore the incoming
-        # provider's last one — model ids are provider-specific, so text
-        # must never carry over between providers.
-        current = self.cleanup_model_combo.currentText().strip()
-        if self._active_cleanup_provider and current:
-            self._cleanup_model_by_provider[self._active_cleanup_provider] = current
-        self._active_cleanup_provider = provider
-        self.cleanup_model_combo.setCurrentText(
-            self._cleanup_model_by_provider.get(provider)
-            or default_transcript_cleanup_model(provider)
-        )
-        # Drop the previous provider's items immediately so a slow or failed
-        # fetch never leaves the other provider's model list in the combo.
-        self._populate_cleanup_models(provider, self._current_cleanup_sort())
-        self._fetch_cleanup_models()
-
-    def _on_cleanup_sort_changed(self):
-        """Reload the model list in the newly selected order."""
-        self._fetch_cleanup_models()
-
-    def _fetch_cleanup_models(self, force: bool = False):
-        """Load the provider's model list in a background thread.
-
-        Args:
-            force: Bypass the in-dialog cache and hit the API again.
-        """
-        provider = self._current_cleanup_provider()
-        sort = self._current_cleanup_sort()
-        if not force and (provider, sort) in self._cleanup_models_cache:
-            self.cleanup_models_status.setText(
-                f"{len(self._cleanup_models_cache[(provider, sort)])} "
-                "models available"
-            )
-            self._populate_cleanup_models(provider, sort)
-            return
-        if self._cleanup_models_loading:
-            return
-
-        self._cleanup_models_loading = True
-        self.cleanup_model_refresh_btn.setEnabled(False)
-        self.cleanup_models_status.setText("Loading models…")
-
-        def worker():
-            try:
-                from services.transcript_cleanup import list_cleanup_models
-
-                models = list_cleanup_models(provider, sort=sort)
-                error = ""
-            except Exception as exc:
-                models = []
-                error = str(exc)
-            try:
-                self._cleanup_models_loaded.emit(provider, sort, models, error)
-            except RuntimeError:
-                pass  # Dialog was closed before the fetch finished.
-
-        threading.Thread(
-            target=worker, name="cleanup-models-fetch", daemon=True
-        ).start()
-
-    def _on_cleanup_models_loaded(
-        self, provider: str, sort: str, models: list, error: str
-    ):
-        """Apply a finished model-list fetch on the main thread."""
-        self._cleanup_models_loading = False
-        self.cleanup_model_refresh_btn.setEnabled(
-            self.transcript_cleanup_check.isChecked()
-        )
-        if not error:
-            self._cleanup_models_cache[(provider, sort)] = models
-        if (provider, sort) != (
-            self._current_cleanup_provider(),
-            self._current_cleanup_sort(),
-        ):
-            # Selection changed mid-fetch; the switch's own fetch was skipped
-            # by the loading guard, so start it now for the current selection.
-            self._fetch_cleanup_models()
-            return
-        if error:
-            self.cleanup_models_status.setText(f"Couldn't load models: {error}")
-            return
-        self.cleanup_models_status.setText(f"{len(models)} models available")
-        self._populate_cleanup_models(provider, sort)
-
-    def _populate_cleanup_models(self, provider: str, sort: str):
-        """Fill the model combo from the cache, preserving the current text."""
-        models = self._cleanup_models_cache.get((provider, sort), [])
-        current = self.cleanup_model_combo.currentText().strip()
-        self.cleanup_model_combo.blockSignals(True)
-        self.cleanup_model_combo.clear()
-        self.cleanup_model_combo.addItems(models)
-        self.cleanup_model_combo.setCurrentText(
-            current or default_transcript_cleanup_model(provider)
-        )
-        self.cleanup_model_combo.blockSignals(False)
+    # ── Cleanup prompt ───────────────────────────────────────────────
 
     def _open_cleanup_prompt_editor(self):
         """Open a larger popup editor for the cleanup prompt."""
@@ -1070,10 +833,11 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_status.setText("Polishing rule with AI…")
         self._update_cleanup_rule_controls()
 
-        # Use the dialog's current (possibly unsaved) selections so polish
-        # matches what the user sees in the tab.
-        provider = self._current_cleanup_provider()
-        model = self.cleanup_model_combo.currentText().strip() or None
+        # Model ownership lives in Model Manager; use its persisted selection.
+        # Reasoning remains staged here so an unsaved thinking-level change is
+        # reflected when polishing a learned rule.
+        provider = resolve_transcript_cleanup_provider()
+        model = resolve_transcript_cleanup_model()
         reasoning = self.cleanup_reasoning_combo.currentData()
 
         def worker():
@@ -1281,33 +1045,14 @@ class SettingsDialog(QDialog):
                 resolve_transcript_cleanup_rules(settings)
             )
 
-            # Cleanup provider / model / thinking level. Signals stay blocked
-            # so loading never triggers a network fetch; that happens lazily
-            # when the Cleanup tab is opened.
+            # Provider/model are read-only here; Model Manager owns selection.
             saved_provider = resolve_transcript_cleanup_provider(settings)
-            provider_index = self.cleanup_provider_combo.findData(saved_provider)
-            self.cleanup_provider_combo.blockSignals(True)
-            self.cleanup_provider_combo.setCurrentIndex(max(0, provider_index))
-            self.cleanup_provider_combo.blockSignals(False)
-            sort_index = self.cleanup_model_sort_combo.findData(
-                resolve_transcript_cleanup_model_sort(settings)
+            saved_model = resolve_transcript_cleanup_model(settings)
+            provider_name = (
+                "OpenAI" if saved_provider == "openai" else "OpenRouter"
             )
-            self.cleanup_model_sort_combo.blockSignals(True)
-            self.cleanup_model_sort_combo.setCurrentIndex(max(0, sort_index))
-            self.cleanup_model_sort_combo.blockSignals(False)
-            self._update_cleanup_sort_visibility()
-            # Only one model is persisted and it belongs to the saved
-            # provider; the other provider starts from its default.
-            self._cleanup_model_by_provider = {
-                provider: default_transcript_cleanup_model(provider)
-                for provider in TranscriptCleanupProvider.ALL
-            }
-            self._cleanup_model_by_provider[saved_provider] = (
-                resolve_transcript_cleanup_model(settings)
-            )
-            self._active_cleanup_provider = saved_provider
-            self.cleanup_model_combo.setCurrentText(
-                self._cleanup_model_by_provider[saved_provider]
+            self.cleanup_model_summary.setText(
+                f"{provider_name} · {saved_model}"
             )
             reasoning_index = self.cleanup_reasoning_combo.findData(
                 resolve_transcript_cleanup_reasoning(settings)
@@ -1369,19 +1114,9 @@ class SettingsDialog(QDialog):
             self.transcript_cleanup_check.setChecked(config.TRANSCRIPT_CLEANUP_ENABLED)
             self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
             self.cleanup_rules_list.clear()
-            self.cleanup_provider_combo.blockSignals(True)
-            self.cleanup_provider_combo.setCurrentIndex(0)
-            self.cleanup_provider_combo.blockSignals(False)
-            self.cleanup_model_sort_combo.blockSignals(True)
-            self.cleanup_model_sort_combo.setCurrentIndex(0)
-            self.cleanup_model_sort_combo.blockSignals(False)
-            self._update_cleanup_sort_visibility()
-            self._cleanup_model_by_provider = {
-                provider: default_transcript_cleanup_model(provider)
-                for provider in TranscriptCleanupProvider.ALL
-            }
-            self._active_cleanup_provider = self._current_cleanup_provider()
-            self.cleanup_model_combo.setCurrentText(config.TRANSCRIPT_CLEANUP_MODEL)
+            self.cleanup_model_summary.setText(
+                f"OpenAI · {config.TRANSCRIPT_CLEANUP_MODEL}"
+            )
             self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(True)
@@ -1436,18 +1171,8 @@ class SettingsDialog(QDialog):
                 settings[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT] = (
                     prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
                 )
-            cleanup_provider = self._current_cleanup_provider()
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = cleanup_provider
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] = (
-                self.cleanup_model_combo.currentText().strip()
-                or resolve_transcript_cleanup_model(
-                    {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: cleanup_provider}
-                )
-            )
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT] = (
-                self.cleanup_model_sort_combo.currentData()
-                or config.TRANSCRIPT_CLEANUP_MODEL_SORT
-            )
+            # Provider, model, and catalog order pass through untouched because
+            # Model Manager is their single owner.
             settings[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] = (
                 self.cleanup_reasoning_combo.currentData()
             )

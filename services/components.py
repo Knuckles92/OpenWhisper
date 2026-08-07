@@ -9,9 +9,10 @@ fetched: its entries are immutable PyPI wheel URLs with pinned SHA-256 digests,
 so there is no server of ours to host, keep up, or fail over from.
 
 This module deliberately mirrors :mod:`services.hf_access`: string constants
-for decisions and actions live here rather than in the Qt layer, so business
-logic can interpret results without importing UI modules, and a coordinator
-singleton owns claim tokens so at most one install per component is in flight.
+for component states and install phases live here rather than in the Qt layer,
+so business logic can interpret results without importing UI modules, and a
+coordinator singleton owns claim tokens so at most one install per component
+is in flight.
 
 Networking uses :mod:`urllib.request` rather than ``httpx`` (which is present
 transitively via ``openai``) for two Windows-specific reasons: ``urllib``
@@ -159,18 +160,6 @@ class InstallPhase:
     VERIFYING: Final[str] = "verifying"
     EXTRACTING: Final[str] = "extracting"
     FINALIZING: Final[str] = "finalizing"
-
-
-class ComponentAction:
-    """User choices returned by the component install prompt.
-
-    Defined here rather than on the Qt dialog so ``services`` code can
-    interpret a result without importing UI modules.
-    """
-
-    CANCEL: Final[str] = "cancel"
-    INSTALL: Final[str] = "install"
-    OPEN_COMPONENTS: Final[str] = "open_components"
 
 
 class ComponentError(Exception):

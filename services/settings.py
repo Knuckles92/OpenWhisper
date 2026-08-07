@@ -528,7 +528,7 @@ def resolve_transcript_cleanup_model(
 def resolve_transcript_cleanup_model_sort(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the validated model-list sort order for the Cleanup tab.
+    """Return the validated model-list sort order for Model Manager's Text tab.
 
     Args:
         settings: Optional loaded settings dict. Loads from disk when omitted.

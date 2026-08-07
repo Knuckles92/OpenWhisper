@@ -250,7 +250,7 @@ class TranscriptionRuntime:
         if not enabled or not raw or not raw.strip():
             return raw, None, None
 
-        # Re-apply provider/model each run so Settings changes take effect
+        # Re-apply provider/model each run so Model Manager changes take effect
         # without restarting (a provider switch rebuilds the client).
         self._transcript_cleanup.configure(
             resolve_transcript_cleanup_provider(settings),

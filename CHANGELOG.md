@@ -5,6 +5,11 @@ All notable changes to OpenWhisper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Voice and text models now share one Model Manager** - The manager has dedicated Voice and Text tabs, with a guided provider → model picker for cleanup chat models. Provider, catalog sorting, and active text-model selection moved out of Settings → Cleanup; that tab now focuses on cleanup behavior, prompts, and learned rules while showing the active text model as a read-only summary
+
 ## [2.1.1] - 2026-08-05
 
 ### Fixed
