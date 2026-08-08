@@ -9,7 +9,7 @@ import threading
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QCheckBox,
+    QWidget, QLabel, QCheckBox, QPushButton,
     QSlider, QFrame, QScrollArea, QTextEdit,
     QLineEdit, QListWidget, QStackedWidget,
 )
@@ -65,6 +65,8 @@ class SettingsDialog(QDialog):
         self.on_settings_save: Optional[Callable] = None
         # Transcribes a short dictated clip; wired by UIController.
         self.on_dictation_transcribe: Optional[Callable[[str], str]] = None
+        # Set by the Cleanup → Model Manager link; read after exec() returns.
+        self.open_model_manager_on_close = False
 
         # Learned-rules worker state (AI polish + dictation)
         self._rule_polishing = False
@@ -388,16 +390,33 @@ class SettingsDialog(QDialog):
         model_card.setObjectName("cleanupModelSummaryCard")
         model_card_layout = QVBoxLayout(model_card)
         model_card_layout.setContentsMargins(16, 14, 16, 14)
-        model_card_layout.setSpacing(4)
+        model_card_layout.setSpacing(6)
+        model_header = QHBoxLayout()
+        model_header.setContentsMargins(0, 0, 0, 0)
+        model_header.setSpacing(8)
         model_eyebrow = QLabel("TEXT MODEL")
         model_eyebrow.setObjectName("cleanupModelSummaryEyebrow")
-        model_card_layout.addWidget(model_eyebrow)
+        model_header.addWidget(model_eyebrow)
+        model_header.addStretch()
+        self.open_model_manager_btn = QPushButton("Open Model Manager…")
+        self.open_model_manager_btn.setObjectName("cleanupModelManagerLink")
+        self.open_model_manager_btn.setFlat(True)
+        self.open_model_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_model_manager_btn.setToolTip(
+            "Save settings and open Model Manager → Text to choose the "
+            "cleanup provider and chat model"
+        )
+        self.open_model_manager_btn.clicked.connect(
+            self._open_model_manager_from_cleanup
+        )
+        model_header.addWidget(self.open_model_manager_btn)
+        model_card_layout.addLayout(model_header)
         self.cleanup_model_summary = QLabel("")
         self.cleanup_model_summary.setObjectName("cleanupModelSummary")
         self.cleanup_model_summary.setWordWrap(True)
         model_card_layout.addWidget(self.cleanup_model_summary)
         model_hint = QLabel(
-            "Provider and model selection now live in Model Manager → Text."
+            "Provider and model selection live in Model Manager → Text."
         )
         model_hint.setObjectName("cleanupModelSummaryHint")
         model_hint.setWordWrap(True)
@@ -716,6 +735,31 @@ class SettingsDialog(QDialog):
         """
         self.tabs.setCurrentIndex(self._advanced_tab_index)
         self.hf_policy_combo.setFocus()
+
+    def _open_model_manager_from_cleanup(self):
+        """Save Settings, close it, then open Model Manager → Text.
+
+        Model Manager is non-modal and cannot share an ``exec()`` session with
+        Settings — opening it mid-modal stacks behind the main window and
+        becomes unresponsive on Windows. The controller opens it after
+        ``exec()`` returns when ``open_model_manager_on_close`` is set.
+        """
+        self.open_model_manager_on_close = True
+        self._save_settings()
+
+    def _refresh_cleanup_model_summary(self):
+        """Reload the read-only cleanup provider/model line from settings."""
+        try:
+            settings = settings_manager.load_all_settings()
+            saved_provider = resolve_transcript_cleanup_provider(settings)
+            saved_model = resolve_transcript_cleanup_model(settings)
+        except Exception:
+            saved_provider = "openai"
+            saved_model = config.TRANSCRIPT_CLEANUP_MODEL
+        provider_name = (
+            "OpenAI" if saved_provider == "openai" else "OpenRouter"
+        )
+        self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
     def _update_threshold_display(self, value):
         """Update threshold value display."""
@@ -1046,14 +1090,7 @@ class SettingsDialog(QDialog):
             )
 
             # Provider/model are read-only here; Model Manager owns selection.
-            saved_provider = resolve_transcript_cleanup_provider(settings)
-            saved_model = resolve_transcript_cleanup_model(settings)
-            provider_name = (
-                "OpenAI" if saved_provider == "openai" else "OpenRouter"
-            )
-            self.cleanup_model_summary.setText(
-                f"{provider_name} · {saved_model}"
-            )
+            self._refresh_cleanup_model_summary()
             reasoning_index = self.cleanup_reasoning_combo.findData(
                 resolve_transcript_cleanup_reasoning(settings)
             )

@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QFrame, QMessageBox
 
 from services.components import ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo
@@ -21,6 +22,7 @@ from services.settings import (
 from ui_qt.dialogs import model_manager_dialog as dialog_module
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
+from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets import Button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 
@@ -72,6 +74,52 @@ class _DialogTestCase(unittest.TestCase):
 
 class TestModelRows(_DialogTestCase):
     """Per-row status, size, and action availability."""
+
+    def test_dialog_uses_compact_resizable_default(self):
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        self.addCleanup(self.app.setStyleSheet, previous_stylesheet)
+        dialog = self._make_dialog()
+        dialog.show()
+        self.app.processEvents()
+
+        self.assertEqual((dialog.width(), dialog.height()), (900, 620))
+        self.assertEqual(
+            (dialog.minimumWidth(), dialog.minimumHeight()), (720, 480)
+        )
+        self.assertTrue(dialog.isSizeGripEnabled())
+        self.assertTrue(
+            dialog.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.assertFalse(
+            dialog.windowFlags() & Qt.WindowType.MSWindowsFixedSizeDialogHint
+        )
+
+        dialog.resize(800, 560)
+        self.app.processEvents()
+
+        self.assertEqual((dialog.width(), dialog.height()), (800, 560))
+
+        dialog.resize(740, 500)
+        self.app.processEvents()
+
+        self.assertEqual((dialog.width(), dialog.height()), (740, 500))
+
+    def test_tall_tabs_scroll_instead_of_growing_dialog(self):
+        dialog = self._make_dialog()
+
+        self.assertTrue(dialog.voice_scroll_area.widgetResizable())
+        self.assertTrue(dialog.text_scroll_area.widgetResizable())
+        self.assertIsNotNone(dialog.voice_scroll_area.widget())
+        self.assertIsNotNone(dialog.text_scroll_area.widget())
+        self.assertGreater(
+            dialog.voice_scroll_area.widget().minimumSizeHint().height(),
+            dialog.voice_scroll_area.minimumSizeHint().height(),
+        )
+        self.assertGreater(
+            dialog.text_scroll_area.widget().minimumSizeHint().height(),
+            dialog.text_scroll_area.minimumSizeHint().height(),
+        )
 
     def test_catalog_excludes_auto(self):
         dialog = self._make_dialog()
@@ -426,7 +474,7 @@ class TestTextModelManager(_DialogTestCase):
         )
 
         status = dialog.text_model_picker.provider_requirement
-        self.assertEqual(status.text(), "✓ OPENROUTER_API_KEY found")
+        self.assertEqual(status.text(), "OPENROUTER_API_KEY found")
         self.assertTrue(status.property("available"))
 
     def test_provider_credential_status_keeps_requirement_when_key_is_missing(self):
@@ -442,6 +490,28 @@ class TestTextModelManager(_DialogTestCase):
         dialog, _values = self._make_text_dialog()
         labels = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
         self.assertEqual(labels, ["Voice", "Text"])
+        self.assertFalse(dialog.tabs.tabIcon(0).isNull())
+        self.assertFalse(dialog.tabs.tabIcon(1).isNull())
+
+    def test_text_flow_uses_distinct_numbered_section_cards(self):
+        dialog, _values = self._make_text_dialog()
+        cards = [
+            frame
+            for frame in dialog.text_model_picker.findChildren(QFrame)
+            if frame.objectName() == "textModelSectionCard"
+        ]
+
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(
+            dialog.text_model_picker.current_model_value.text(), "gpt-test"
+        )
+        self.assertGreaterEqual(
+            dialog.text_model_picker.active_summary_card.minimumHeight(), 56
+        )
+        self.assertFalse(
+            dialog.text_model_picker.active_summary_icon.pixmap().isNull()
+        )
+        self.assertFalse(dialog.text_model_picker.refresh_button.icon().isNull())
 
     def test_text_models_use_one_labeled_provider_selector(self):
         dialog, _values = self._make_text_dialog()
@@ -478,6 +548,32 @@ class TestTextModelManager(_DialogTestCase):
             default_transcript_cleanup_model("openrouter"),
         )
         self.assertFalse(dialog.text_model_picker.sort_combo.isHidden())
+
+    def test_active_now_badge_only_shows_for_active_provider(self):
+        dialog, _values = self._make_text_dialog(
+            provider=TranscriptCleanupProvider.OPENROUTER,
+            model="openrouter/free",
+        )
+        picker = dialog.text_model_picker
+
+        self.assertFalse(picker.active_summary_card.isHidden())
+        self.assertEqual(
+            picker.active_summary.text(),
+            "Active now: OpenRouter · openrouter/free",
+        )
+
+        openai_index = picker.provider_combo.findData(
+            TranscriptCleanupProvider.OPENAI
+        )
+        picker.provider_combo.setCurrentIndex(openai_index)
+
+        self.assertTrue(picker.active_summary_card.isHidden())
+        self.assertEqual(picker.current_model_value.text(), "openrouter/free")
+
+        picker.provider_combo.setCurrentIndex(
+            picker.provider_combo.findData(TranscriptCleanupProvider.OPENROUTER)
+        )
+        self.assertFalse(picker.active_summary_card.isHidden())
 
     def test_set_active_persists_provider_and_model(self):
         dialog, values = self._make_text_dialog()
@@ -554,6 +650,39 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT],
                 TranscriptCleanupModelSort.NEWEST,
             )
+
+    def test_cleanup_tab_links_to_model_manager(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            with (
+                patch.object(settings_dialog_module, "settings_manager", isolated),
+                patch.object(
+                    settings_dialog_module.history_manager,
+                    "set_max_recordings",
+                ),
+            ):
+                dialog = settings_dialog_module.SettingsDialog()
+                self.assertFalse(dialog.open_model_manager_on_close)
+
+                dialog.open_model_manager_btn.click()
+
+                self.assertTrue(dialog.open_model_manager_on_close)
+                self.assertEqual(
+                    dialog.result(),
+                    dialog.DialogCode.Accepted,
+                )
+
+
+class TestModelManagerTabFocus(_DialogTestCase):
+    """Model Manager can open directly on the Text tab."""
+
+    def test_show_text_tab_selects_text_processing(self):
+        dialog = self._make_dialog()
+        self.assertIs(dialog.tabs.currentWidget(), dialog.voice_tab)
+
+        dialog.show_text_tab()
+
+        self.assertIs(dialog.tabs.currentWidget(), dialog.text_tab)
 
 
 class TestComponentRows(_DialogTestCase):

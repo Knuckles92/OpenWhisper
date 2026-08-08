@@ -201,9 +201,29 @@ QLineEdit:focus {
     border: 1px solid #0a84ff;
 }
 
-/* Compact Model Manager controls */
+/* Model Manager — dense dark desktop treatment */
+QDialog#modelManagerDialog {
+    background-color: #10161c;
+}
+
+QWidget#modelManagerVoiceTab,
+QWidget#modelManagerTextTab {
+    background-color: #10161c;
+}
+
+QWidget#textModelPicker {
+    background-color: transparent;
+}
+
+QLabel#modelManagerHeaderIcon {
+    background-color: #121d28;
+    border: 1px solid #268cff;
+    border-radius: 13px;
+    padding: 3px;
+}
+
 QLabel#modelManagerTitle {
-    color: #f5f5f7;
+    color: #f2f5f8;
     font-size: 22px;
     font-weight: 700;
     background-color: transparent;
@@ -211,63 +231,115 @@ QLabel#modelManagerTitle {
 }
 
 QLabel#modelManagerSubtitle {
-    color: #8e8e93;
-    font-size: 12px;
+    color: #9da8b5;
+    font-size: 13px;
     background-color: transparent;
     border: none;
 }
 
+QTabWidget#modelManagerTabs::pane {
+    border: none;
+    border-top: 1px solid #29333d;
+    background-color: transparent;
+    top: -1px;
+}
+
 #modelManagerTabs QTabBar::tab {
-    background-color: #2c2c2e;
-    color: #8e8e93;
-    border: 1px solid #3a3a3c;
-    border-radius: 9px;
-    min-width: 116px;
-    padding: 8px 22px;
-    margin: 10px 4px 8px 0px;
+    background-color: #141b22;
+    color: #a8b1bd;
+    border: 1px solid #35404a;
+    min-width: 200px;
+    min-height: 32px;
+    padding: 5px 16px;
+    margin: 8px 0px 10px 0px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#modelManagerTabs QTabBar::tab:first {
+    border-top-left-radius: 11px;
+    border-bottom-left-radius: 11px;
+}
+
+#modelManagerTabs QTabBar::tab:last {
+    border-top-right-radius: 11px;
+    border-bottom-right-radius: 11px;
+}
+
+#modelManagerTabs QTabBar::tab:selected {
+    background-color: #172b45;
+    color: #edf6ff;
+    border-color: #318dff;
+}
+
+#modelManagerTabs QTabBar::tab:hover:!selected {
+    background-color: #1a232c;
+    color: #f2f5f8;
+    border-color: #52606d;
+}
+
+QFrame#textTabAccent {
+    background-color: #2793ff;
+    border: none;
+    border-radius: 1px;
+}
+
+QLabel#textTabTitle {
+    color: #f1f4f7;
+    background-color: transparent;
+    border: none;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#textTabSubtitle {
+    color: #98a3b0;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+}
+
+QFrame#textModelSectionCard {
+    background-color: #141b22;
+    border: 1px solid #35404a;
+    border-radius: 12px;
+}
+
+QLabel#textModelStepNumber {
+    color: #eaf4ff;
+    background-color: #152130;
+    border: 1px solid #2d91ff;
+    border-radius: 14px;
     font-size: 13px;
     font-weight: 600;
 }
 
-#modelManagerTabs QTabBar::tab:selected {
-    background-color: #0a84ff;
-    color: #ffffff;
-    border-color: #0a84ff;
-}
-
-#modelManagerTabs QTabBar::tab:hover:!selected {
-    background-color: #3a3a3c;
-    color: #f5f5f7;
-    border-color: #48484a;
-}
-
-QFrame#textModelPickerCard {
-    background-color: #232325;
-    border: 1px solid #3a3a3c;
-    border-radius: 12px;
-}
-
-QLabel#textModelSectionLabel {
-    color: #f5f5f7;
-    font-size: 12px;
-    font-weight: 700;
+QLabel#textModelStepTitle {
+    color: #f0f3f6;
     background-color: transparent;
     border: none;
-    padding-top: 2px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QFrame#textProviderIdentityCard {
+    background-color: #111820;
+    border: 1px solid #242e37;
+    border-radius: 11px;
 }
 
 QLabel#textProviderMark {
     color: #ffffff;
     background-color: #5e5ce6;
-    border: 1px solid #7d7aff;
-    border-radius: 11px;
-    font-size: 11px;
+    border: 1px solid #827fff;
+    border-radius: 10px;
+    font-size: 14px;
     font-weight: 700;
 }
 
 QLabel#textProviderTitle {
-    color: #f5f5f7;
-    font-size: 16px;
+    color: #f0f3f6;
+    font-size: 15px;
     font-weight: 700;
     background-color: transparent;
     border: none;
@@ -276,17 +348,26 @@ QLabel#textProviderTitle {
 QLabel#textProviderDescription,
 QLabel#textModelStatus,
 QLabel#textModelFootnote {
-    color: #8e8e93;
-    font-size: 11px;
+    color: #98a3b0;
+    font-size: 12px;
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#textProviderCredentialIcon,
+QLabel#textModelActiveIcon,
+QLabel#textModelCatalogIcon,
+QLabel#textCurrentModelIcon,
+QLabel#textModelFootnoteIcon {
     background-color: transparent;
     border: none;
 }
 
 QLabel#textProviderRequirement {
-    color: #bf5af2;
+    color: #e0a052;
     background-color: transparent;
     border: none;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
 }
 
@@ -294,18 +375,23 @@ QLabel#textProviderRequirement[available="true"] {
     color: #30d158;
 }
 
+QFrame#textModelActiveCard {
+    background-color: #0f2a21;
+    border: 1px solid #217353;
+    border-radius: 10px;
+}
+
 QLabel#textModelActiveSummary {
-    color: #30d158;
-    background-color: rgba(48, 209, 88, 0.1);
-    border: 1px solid rgba(48, 209, 88, 0.28);
-    border-radius: 8px;
-    padding: 9px 12px;
-    font-size: 11px;
+    color: #42df91;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 QLabel#textModelFieldLabel {
-    color: #aeaeb2;
-    font-size: 11px;
+    color: #9da8b5;
+    font-size: 12px;
     font-weight: 600;
     background-color: transparent;
     border: none;
@@ -314,21 +400,129 @@ QLabel#textModelFieldLabel {
 QComboBox#textModelProviderCombo,
 QComboBox#textModelSort,
 QComboBox#textModelCombo {
-    min-height: 34px;
-    border-radius: 8px;
-    font-size: 12px;
+    color: #eef2f6;
+    background-color: #161e26;
+    border: 1px solid #3b4752;
+    border-radius: 9px;
+    font-size: 14px;
+    padding-left: 12px;
+    padding-right: 32px;
 }
 
 QComboBox#textModelProviderCombo {
-    color: #f5f5f7;
-    background-color: #2c2c2e;
-    border: 1px solid #48484a;
-    padding-left: 12px;
     font-weight: 600;
 }
 
-QComboBox#textModelProviderCombo:focus {
+QComboBox#textModelProviderCombo:focus,
+QComboBox#textModelSort:focus,
+QComboBox#textModelCombo:focus {
     border-color: #0a84ff;
+}
+
+QComboBox#textModelProviderCombo::down-arrow,
+QComboBox#textModelSort::down-arrow,
+QComboBox#textModelCombo::down-arrow {
+    image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
+    border: none;
+    width: 16px;
+    height: 16px;
+    margin-right: 10px;
+}
+
+QFrame#textModelCatalogSummary {
+    background-color: #111820;
+    border: 1px solid #242e37;
+    border-radius: 10px;
+}
+
+QFrame#textModelCatalogSeparator {
+    background-color: transparent;
+    border: none;
+    border-top: 1px dashed #3a4651;
+}
+
+QFrame#textCurrentModelCard {
+    min-width: 140px;
+    background-color: #12231f;
+    border: 1px solid #204438;
+    border-radius: 9px;
+}
+
+QLabel#textCurrentModelEyebrow {
+    color: #a7b0bb;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#textCurrentModelValue {
+    color: #f0f5f3;
+    background-color: transparent;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QPushButton#textModelRefreshButton {
+    color: #4aa0ff;
+    background-color: #141b22;
+    border: 1px solid #318dff;
+    border-radius: 9px;
+    padding: 6px 12px;
+}
+
+QPushButton#textModelRefreshButton:hover {
+    color: #83bdff;
+    background-color: #172538;
+    border-color: #62aaff;
+}
+
+QPushButton#textModelActivateButton {
+    color: #eef6ff;
+    background-color: #17345a;
+    border: 1px solid #318dff;
+    border-radius: 9px;
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+QPushButton#textModelActivateButton:hover {
+    background-color: #1c4678;
+    border-color: #66adff;
+}
+
+QPushButton#textModelActivateButton:disabled,
+QPushButton#textModelActivateButton[current="true"] {
+    color: #dcecff;
+    background-color: #1a3c68;
+    border-color: #3b95ff;
+}
+
+QFrame#textModelFootnoteCard {
+    background-color: #141b22;
+    border: 1px solid #303b45;
+    border-radius: 10px;
+}
+
+QLabel#modelManagerMessage {
+    color: #8e99a6;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QPushButton#modelManagerCloseButton {
+    color: #aeb8c3;
+    background-color: #151c23;
+    border: 1px solid #35404a;
+    border-radius: 9px;
+    font-size: 13px;
+}
+
+QPushButton#modelManagerCloseButton:hover {
+    color: #f0f3f6;
+    background-color: #1b252e;
+    border-color: #4b5966;
 }
 
 QLabel#modelManagerCachePath {
@@ -634,6 +828,25 @@ QLabel#cleanupModelSummaryHint {
     font-size: 11px;
     background-color: transparent;
     border: none;
+}
+
+QPushButton#cleanupModelManagerLink {
+    color: #0a84ff;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 0;
+    min-height: 0;
+}
+
+QPushButton#cleanupModelManagerLink:hover {
+    color: #409cff;
+    text-decoration: underline;
+}
+
+QPushButton#cleanupModelManagerLink:pressed {
+    color: #0a84ff;
 }
 
 /* Fixed / Raw transcript version toggle */

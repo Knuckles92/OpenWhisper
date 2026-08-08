@@ -490,6 +490,12 @@ class UIController(QObject):
 
         dialog.settings_changed.connect(on_settings_changed)
         dialog.exec()
+        # Open only after Settings' modal loop ends — showing the non-modal
+        # Model Manager during exec() stacks behind the main window on Windows.
+        if dialog.open_model_manager_on_close:
+            QTimer.singleShot(
+                0, lambda: self.open_model_manager_dialog(tab="text")
+            )
 
     def refresh_local_engine_controls(self):
         """Re-sync the inline local-engine combos with the persisted settings.
@@ -526,8 +532,12 @@ class UIController(QObject):
         dialog.exec()
         return dialog.result_action
 
-    def open_model_manager_dialog(self):
-        """Show the non-modal Model Manager (single instance, re-raised)."""
+    def open_model_manager_dialog(self, tab: str = "voice"):
+        """Show the non-modal Model Manager (single instance, re-raised).
+
+        Args:
+            tab: ``\"voice\"`` or ``\"text\"`` — which manager tab to show.
+        """
         from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 
         if self._model_manager_dialog is None:
@@ -550,6 +560,8 @@ class UIController(QObject):
             self._model_manager_dialog = dialog
 
         self._model_manager_dialog.refresh()
+        if tab == "text":
+            self._model_manager_dialog.show_text_tab()
         self._model_manager_dialog.show()
         self._model_manager_dialog.raise_()
         self._model_manager_dialog.activateWindow()
