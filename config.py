@@ -285,6 +285,18 @@ class AppConfig:
         'Example output: Always spell the user\'s name "Alex Rivera".'
     )
 
+    # Meeting Mode defaults
+    MEETING_WHISPER_MODEL: str = "auto"  # dedicated meeting ASR model selection
+    MEETING_LLM_PROVIDER: str = "openrouter"
+    MEETING_LLM_MODEL: str = "openai/gpt-4o-mini"
+    MEETING_AGENT_CORE: str = "pi"  # "pi" (Node sidecar) | "direct" (OpenRouter REST)
+    MEETING_SERVER_BIND: str = "localhost"  # "localhost" | "lan"
+    MEETING_SERVER_PORT: int = 0  # 0 = ephemeral port
+    MEETINGS_FOLDER: str = field(
+        default_factory=lambda: user_data_path("meetings")
+    )
+    MEETING_CHECKPOINT_BASE_S: int = 45
+
     # Waveform style settings
     CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None

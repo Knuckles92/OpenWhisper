@@ -1,0 +1,592 @@
+"""FastAPI application for the meeting dashboard: SPA, REST API, WebSocket.
+
+``create_app`` wires every pinned route against a ``MeetingEngine`` and a
+``MeetingRepository``. All blocking engine/repository calls run through
+``asyncio.to_thread`` so the event loop never stalls on SQLite or engine
+locks. When the built React frontend (``webui/dist``) is absent, a compact
+self-contained fallback page is served so the live pipeline can be verified
+without the frontend build.
+"""
+from __future__ import annotations
+
+import asyncio
+import functools
+import json
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, Optional, Set
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+import config
+from meeting.export.json_export import export_json
+from meeting.export.markdown import export_markdown
+from meeting.export.transcript_txt import export_transcript_txt
+from meeting.reinsight import rerun_insights
+from meeting.web.auth import resolve_role
+from meeting.web.ws import WsHub
+
+logger = logging.getLogger(__name__)
+
+#: Meeting fields safe to expose to dashboard clients. Tokens and the raw
+#: state_json snapshot are deliberately excluded.
+_PUBLIC_MEETING_KEYS = (
+    "id", "title", "status", "started_at", "ended_at",
+    "paused_total_s", "cloud_enabled", "asr_model",
+)
+
+#: Export format -> (exporter, media type, file extension).
+_EXPORTERS = {
+    "md": (export_markdown, "text/markdown", "md"),
+    "json": (export_json, "application/json", "json"),
+    "txt": (export_transcript_txt, "text/plain", "txt"),
+}
+
+
+def _public_meeting(meeting: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Strip a repository meeting dict down to client-safe fields."""
+    if not meeting:
+        return {}
+    return {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
+
+
+def _webui_dist_dir() -> str:
+    """Location of the built React frontend inside the bundle/repo."""
+    return os.path.join(config.bundle_root(), "webui", "dist")
+
+
+def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
+    """Build the dashboard FastAPI app.
+
+    Args:
+        engine: The ``MeetingEngine`` (actions, lifecycle, live state).
+        repository: A ``MeetingRepository`` for reads and history.
+        hub: The shared ``WsHub`` handling WebSocket connections.
+
+    Returns:
+        A fully-routed ``FastAPI`` application (docs endpoints disabled).
+    """
+
+    #: Consolidation runs hold a worker for a whole LLM round trip. They get a
+    #: dedicated single-thread executor so they can never drain the loop's
+    #: shared pool and stall authentication for every other client.
+    insights_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="meeting-reinsights"
+    )
+    #: Meeting ids with a consolidation run in flight (double-click guard).
+    insights_running: Set[str] = set()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        hub.on_startup()
+        try:
+            yield
+        finally:
+            hub.on_shutdown()
+            insights_executor.shutdown(wait=False)
+
+    app = FastAPI(
+        title="OpenWhisper Meeting",
+        lifespan=lifespan,
+        docs_url=None, redoc_url=None, openapi_url=None,
+    )
+
+    dist_dir = _webui_dist_dir()
+    assets_dir = os.path.join(dist_dir, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # ------------------------------------------------------------------
+    # Auth helpers
+    # ------------------------------------------------------------------
+
+    async def _current_meeting() -> Optional[Dict[str, Any]]:
+        meeting_id = getattr(engine, "meeting_id", None)
+        if not meeting_id:
+            return None
+        return await asyncio.to_thread(repository.get_meeting, meeting_id)
+
+    async def _resolve(token: str) -> Optional[str]:
+        meeting = await _current_meeting()
+        if not meeting:
+            return None
+        return resolve_role(
+            token, meeting.get("host_token"), meeting.get("guest_token")
+        )
+
+    async def _require(token: str, host_only: bool = False) -> str:
+        role = await _resolve(token)
+        if role is None:
+            raise HTTPException(status_code=401, detail="invalid token")
+        if host_only and role != "host":
+            raise HTTPException(status_code=403, detail="host only")
+        return role
+
+    def _stored_state(meeting_id: str, meeting: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse a meeting row's persisted state document (blocking)."""
+        try:
+            return json.loads(meeting.get("state_json") or "{}")
+        except (TypeError, ValueError):
+            logger.exception("Corrupt state_json for meeting %s", meeting_id)
+            return {}
+
+    async def _state_for(meeting_id: str,
+                         meeting: Dict[str, Any]) -> Dict[str, Any]:
+        """Live snapshot for the current meeting, stored snapshot otherwise.
+
+        Both branches block (store lock / JSON parse of a whole document), so
+        both run on a worker thread.
+        """
+        store = getattr(engine, "store", None)
+        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            return await asyncio.to_thread(store.snapshot)
+        return await asyncio.to_thread(_stored_state, meeting_id, meeting)
+
+    async def _json_body(request: Request) -> Dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        return body
+
+    # ------------------------------------------------------------------
+    # Dashboard page + WebSocket
+    # ------------------------------------------------------------------
+
+    @app.get("/m/{token}", response_class=HTMLResponse)
+    async def dashboard(token: str) -> Response:
+        role = await _resolve(token)
+        if role is None:
+            raise HTTPException(status_code=403, detail="invalid or expired link")
+        index_path = os.path.join(dist_dir, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path, media_type="text/html")
+        return HTMLResponse(_FALLBACK_PAGE)
+
+    @app.websocket("/ws")
+    async def ws_endpoint(websocket: WebSocket) -> None:
+        await hub.handle_connection(websocket)
+
+    # ------------------------------------------------------------------
+    # Session + transcript
+    # ------------------------------------------------------------------
+
+    @app.get("/api/session")
+    async def api_session(token: str = "") -> Dict[str, Any]:
+        role = await _require(token)
+        meeting = await _current_meeting()
+        store = getattr(engine, "store", None)
+        state = await asyncio.to_thread(store.snapshot) if store is not None else {}
+        return {"role": role, "meeting": _public_meeting(meeting), "state": state}
+
+    @app.get("/api/transcript")
+    async def api_transcript(token: str = "", after_start_s: float = -1.0,
+                             limit: Optional[int] = None) -> Dict[str, Any]:
+        await _require(token)
+        items = await asyncio.to_thread(engine.get_transcript, after_start_s, limit)
+        return {"items": items}
+
+    # ------------------------------------------------------------------
+    # Past meetings (host only)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/meetings")
+    async def api_meetings(token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        rows = await asyncio.to_thread(repository.list_meetings)
+        return {"meetings": [_public_meeting(row) for row in rows]}
+
+    @app.get("/api/meetings/{meeting_id}")
+    async def api_meeting_detail(meeting_id: str, token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        segments = await asyncio.to_thread(repository.get_segments, meeting_id)
+        return {
+            "meeting": _public_meeting(meeting),
+            "state": await _state_for(meeting_id, meeting),
+            "segments": segments,
+        }
+
+    @app.post("/api/meetings/{meeting_id}/rename")
+    async def api_rename_meeting(meeting_id: str, request: Request,
+                                 token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        title = str(body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="title required")
+        store = getattr(engine, "store", None)
+        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            results = await asyncio.to_thread(
+                engine.apply_client_action, "host", None,
+                {"op": "set_title", "text": title},
+            )
+            ok = bool(results and results[0].ok)
+        else:
+            meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+            if meeting is None:
+                raise HTTPException(status_code=404, detail="unknown meeting")
+            await asyncio.to_thread(repository.update_meeting, meeting_id,
+                                    title=title)
+            ok = True
+        return {"ok": ok, "title": title}
+
+    @app.post("/api/meetings/{meeting_id}/reinsights")
+    async def api_rerun_insights(meeting_id: str,
+                                 token: str = "") -> Dict[str, Any]:
+        """Re-run the consolidation pass over a past meeting's transcript."""
+        await _require(token, host_only=True)
+        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+            raise HTTPException(
+                status_code=409,
+                detail="cannot re-run insights on the active meeting",
+            )
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        # The meeting's own recorded provider/model win; the engine's options
+        # fill in for meetings recorded with cloud intelligence off.
+        options = getattr(engine, "options", None)
+        provider = (meeting.get("agent_provider")
+                    or getattr(options, "llm_provider", "") or "openrouter")
+        model = meeting.get("agent_model") or getattr(options, "llm_model", "") or ""
+        # Check-and-claim with no await between: a double-click cannot start
+        # two agent cores writing the same past meeting.
+        if meeting_id in insights_running:
+            raise HTTPException(
+                status_code=409,
+                detail="insights are already running for this meeting",
+            )
+        insights_running.add(meeting_id)
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                insights_executor,
+                functools.partial(
+                    rerun_insights, repository, meeting_id,
+                    provider=provider, model=model,
+                    agent_core_kind=getattr(options, "agent_core_kind", "direct"),
+                    sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            insights_running.discard(meeting_id)
+
+    @app.delete("/api/meetings/{meeting_id}")
+    async def api_delete_meeting(meeting_id: str, token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+            raise HTTPException(status_code=409,
+                                detail="cannot delete the active meeting")
+        await asyncio.to_thread(repository.delete_meeting, meeting_id)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Search + export (host only)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/search")
+    async def api_search(token: str = "", q: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        results = await asyncio.to_thread(repository.search_transcripts, q)
+        return {"results": results}
+
+    @app.get("/api/export/{fmt}")
+    async def api_export(fmt: str, token: str = "",
+                         meeting_id: str = "") -> Response:
+        await _require(token, host_only=True)
+        entry = _EXPORTERS.get(fmt)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="unknown export format")
+        target_id = meeting_id or getattr(engine, "meeting_id", None) or ""
+        if not target_id:
+            raise HTTPException(status_code=404, detail="no meeting")
+        meeting = await asyncio.to_thread(repository.get_meeting, target_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        state = await _state_for(target_id, meeting)
+        segments = await asyncio.to_thread(repository.get_segments, target_id)
+        exporter, media_type, extension = entry
+        content = await asyncio.to_thread(
+            exporter, _public_meeting(meeting), state, segments
+        )
+        filename = f"meeting-{target_id}.{extension}"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Meeting control (host only)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/meeting/end")
+    async def api_meeting_end(token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        await asyncio.to_thread(engine.end)
+        return {"ok": True}
+
+    @app.post("/api/meeting/pause")
+    async def api_meeting_pause(token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        await asyncio.to_thread(engine.pause)
+        return {"ok": True}
+
+    @app.post("/api/meeting/resume")
+    async def api_meeting_resume(token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        await asyncio.to_thread(engine.resume)
+        return {"ok": True}
+
+    @app.post("/api/meeting/cloud")
+    async def api_meeting_cloud(request: Request, token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        enabled = bool(body.get("enabled"))
+        await asyncio.to_thread(engine.set_cloud_enabled, enabled)
+        return {"ok": True, "enabled": enabled}
+
+    return app
+
+
+#: Self-contained dark-theme dashboard served when webui/dist is missing.
+#: Vanilla JS: connects to /ws, prompts guests for a name (close code 4400),
+#: renders live transcript, topic, cards, and questions. Verification aid
+#: only; the React build replaces it when present.
+_FALLBACK_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenWhisper Meeting</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background:#111418; color:#e8eaed; font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
+  header { padding:14px 20px; background:#1a1f26; border-bottom:1px solid #2a313b;
+           display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:17px; font-weight:600; }
+  #status { color:#9aa4b2; font-size:12px; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:10px; background:#243041; color:#8ab4f8; }
+  main { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; padding:16px 20px;
+         max-width:1200px; margin:0 auto; }
+  @media (max-width:800px){ main{ grid-template-columns:1fr; } }
+  section { background:#1a1f26; border:1px solid #2a313b; border-radius:10px;
+            padding:12px 14px; margin-bottom:16px; }
+  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+               color:#9aa4b2; margin-bottom:8px; }
+  #topic { font-size:15px; font-weight:600; }
+  #summary { color:#c3c9d1; font-size:13px; margin-top:6px; white-space:pre-wrap; }
+  #transcript { max-height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+  .seg { display:flex; gap:8px; }
+  .seg .t { color:#6f7a87; font-variant-numeric:tabular-nums; flex:none; }
+  .seg .who { color:#8ab4f8; flex:none; }
+  .card { margin-bottom:12px; }
+  .card h3 { font-size:12px; color:#c3c9d1; margin-bottom:4px; text-transform:capitalize; }
+  .card ul { margin-left:18px; }
+  .card li { margin:3px 0; }
+  .badge { font-size:10px; color:#6f7a87; margin-left:6px; }
+  .q { border-left:3px solid #b8860b; padding-left:8px; margin:6px 0; }
+  .q .ans { color:#7dcf85; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Meeting</h1>
+  <span class="pill" id="role-pill">&hellip;</span>
+  <span id="status">connecting&hellip;</span>
+</header>
+<main>
+  <div>
+    <section><h2>Topic</h2><div id="topic">&mdash;</div><div id="summary"></div></section>
+    <section><h2>Transcript</h2><div id="transcript"></div></section>
+  </div>
+  <div>
+    <section><h2>Cards</h2><div id="cards"></div></section>
+    <section><h2>Questions</h2><div id="questions"></div></section>
+  </div>
+</main>
+<script>
+"use strict";
+var token = decodeURIComponent(location.pathname.split("/").pop());
+var CARD_KEYS = ["key_points","decisions","action_items","risks","timeline","user_notes"];
+var state = null, meeting = null, role = null, segs = {}, ws = null, pingTimer = null;
+function $(id){ return document.getElementById(id); }
+function esc(s){ var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; }
+function fmtT(s){ s = Math.max(0, Math.floor(s || 0)); var m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0"); }
+function setStatus(s){ $("status").textContent = s; }
+function speakerName(sg){
+  if (state && sg.speaker_participant_id){
+    var p = (state.participants || {})[sg.speaker_participant_id];
+    if (p) return p.display_name;
+  }
+  return sg.channel === "mic" ? "Me" : "Others";
+}
+function renderHeader(){
+  if (!state) return;
+  var bits = [state.status || ""];
+  bits.push(state.intelligence_online ? "AI online" : "AI offline");
+  if (state.cloud_enabled) bits.push("cloud");
+  $("role-pill").textContent = (role || "") + " \\u00b7 " + bits.join(" \\u00b7 ");
+  var t = state.title || (meeting && meeting.title) || "Meeting";
+  $("title").textContent = t;
+  document.title = t + " \\u2014 OpenWhisper";
+}
+function addSegments(items){
+  if (!items || !items.length) return;
+  for (var i = 0; i < items.length; i++){ segs[items[i].id] = items[i]; }
+  renderTranscript();
+}
+function renderTranscript(){
+  var el = $("transcript");
+  var stick = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  var arr = Object.values(segs).sort(function(a, b){ return a.start_s - b.start_s; });
+  var html = "";
+  for (var i = 0; i < arr.length; i++){
+    var sg = arr[i];
+    html += '<div class="seg"><span class="t">' + fmtT(sg.start_s) + '</span><span class="who">'
+          + esc(speakerName(sg)) + ':</span><span>' + esc(sg.text) + '</span></div>';
+  }
+  el.innerHTML = html;
+  if (stick) el.scrollTop = el.scrollHeight;
+}
+function renderState(){
+  if (!state) return;
+  renderHeader();
+  $("topic").textContent = (state.topic && state.topic.current) || "\\u2014";
+  $("summary").textContent = state.rolling_summary || "";
+  var html = "";
+  for (var i = 0; i < CARD_KEYS.length; i++){
+    var key = CARD_KEYS[i];
+    var live = ((state.cards || {})[key] || []).filter(function(it){ return it.status !== "removed"; });
+    if (!live.length) continue;
+    html += '<div class="card"><h3>' + esc(key.replace(/_/g, " ")) + '</h3><ul>';
+    for (var j = 0; j < live.length; j++){
+      var it = live[j];
+      html += '<li>' + esc(it.text) + '<span class="badge">' + esc(it.status)
+            + (it.pinned ? " \\u00b7 pinned" : "") + '</span></li>';
+    }
+    html += '</ul></div>';
+  }
+  $("cards").innerHTML = html || '<div class="badge">No items yet.</div>';
+  var qh = "";
+  var qs = state.questions || [];
+  for (var k = 0; k < qs.length; k++){
+    var q = qs[k];
+    if (q.status === "dismissed") continue;
+    qh += '<div class="q">' + esc(q.text);
+    if (q.answer) qh += '<div class="ans">' + esc(q.answer) + '</div>';
+    else if (q.suggested_answer) qh += '<div class="badge">suggested: ' + esc(q.suggested_answer) + '</div>';
+    qh += '</div>';
+  }
+  $("questions").innerHTML = qh || '<div class="badge">No questions.</div>';
+}
+function applyEffect(e){
+  if (!e || !state) return;
+  if (e.entity === "item" && e.item){
+    var arr = state.cards[e.item.card] || (state.cards[e.item.card] = []);
+    var idx = arr.findIndex(function(x){ return x.id === e.item.id; });
+    if (idx >= 0) arr[idx] = e.item; else arr.push(e.item);
+  } else if (e.entity === "topic"){ state.topic = e.topic; }
+  else if (e.entity === "rolling_summary"){ state.rolling_summary = e.text; }
+  else if (e.entity === "title"){ state.title = e.text; }
+  else if (e.entity === "cloud_enabled"){ state.cloud_enabled = e.enabled; }
+  else if (e.entity === "participant" && e.participant){
+    state.participants[e.participant.id] = e.participant; renderTranscript();
+  } else if (e.entity === "question" && e.question){
+    var qs = state.questions || (state.questions = []);
+    var qi = qs.findIndex(function(x){ return x.id === e.question.id; });
+    if (qi >= 0) qs[qi] = e.question; else qs.push(e.question);
+  } else if (e.entity === "segment_speaker"){
+    var sg = segs[e.segment_id];
+    if (sg){ sg.speaker_participant_id = e.participant_id; renderTranscript(); }
+  }
+}
+function handle(msg){
+  switch (msg.type){
+    case "hello":
+      role = msg.role; state = msg.state; meeting = msg.meeting;
+      segs = {}; addSegments(msg.segments); renderState(); setStatus("live");
+      break;
+    case "segments": addSegments(msg.items); break;
+    case "patch":
+      // Seq guard: a patch that lost a race must never regress newer state.
+      (msg.results || []).forEach(function(r){
+        if (!state) return;
+        if (r.seq != null && r.seq <= state.seq) return;
+        applyEffect(r.effect);
+        if (r.seq != null) state.seq = r.seq;
+      });
+      renderState();
+      break;
+    case "status":
+      if (state){ state.status = msg.status; state.intelligence_online = msg.intelligence_online; }
+      renderHeader();
+      break;
+    case "presence":
+      if (msg.participant && state) state.participants[msg.participant.id] = msg.participant;
+      if (msg.participant) setStatus(msg.participant.display_name + (msg.event === "joined" ? " joined" : " left"));
+      break;
+    case "meeting_ended":
+      if (state) state.status = "ended";
+      renderHeader(); setStatus("meeting ended");
+      break;
+  }
+}
+function guestId(){
+  var id = "";
+  try { id = sessionStorage.getItem("ow_guest_id") || ""; } catch (e) { return ""; }
+  if (!id){
+    id = "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    try { sessionStorage.setItem("ow_guest_id", id); } catch (e) { /* private mode */ }
+  }
+  return id;
+}
+function connect(name){
+  var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host
+          + "/ws?token=" + encodeURIComponent(token);
+  if (name){
+    url += "&name=" + encodeURIComponent(name);
+    // Stable key so reconnects reuse one participant, never a new one.
+    var gid = guestId();
+    if (gid) url += "&guest_id=" + encodeURIComponent(gid);
+  }
+  setStatus("connecting\\u2026");
+  ws = new WebSocket(url);
+  ws.onopen = function(){
+    pingTimer = setInterval(function(){
+      try { ws.send(JSON.stringify({type: "ping"})); } catch (e) {}
+    }, 20000);
+  };
+  ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch (e) {} };
+  ws.onclose = function(ev){
+    clearInterval(pingTimer);
+    if (ev.code === 4400){
+      var n = (prompt("Enter your display name to join:") || "").trim();
+      if (n){ sessionStorage.setItem("ow_name", n); connect(n); }
+      else setStatus("A display name is required to join.");
+      return;
+    }
+    if (ev.code === 4401){ setStatus("Invalid or expired link."); return; }
+    setStatus("Disconnected \\u2014 reconnecting\\u2026");
+    setTimeout(function(){ connect(name); }, 2000);
+  };
+}
+connect(sessionStorage.getItem("ow_name") || "");
+</script>
+</body>
+</html>
+"""

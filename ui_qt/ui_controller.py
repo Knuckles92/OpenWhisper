@@ -4,9 +4,9 @@ Manages the main window, overlay, and dialogs.
 Bridges between UI and application logic.
 """
 import logging
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -72,6 +72,19 @@ class UIController(QObject):
         self.on_component_cancel: Optional[Callable] = None
         self.on_component_remove: Optional[Callable] = None
 
+        # Meeting Mode (assigned by ApplicationController)
+        self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
+        self.on_meeting_end: Optional[Callable] = None
+        self.on_meeting_pause: Optional[Callable] = None
+        self.on_meeting_resume: Optional[Callable] = None
+        self.on_meeting_cancel: Optional[Callable] = None
+        self.on_meeting_open_dashboard: Optional[Callable] = None
+        self.on_meeting_copy_guest_link: Optional[Callable] = None
+        self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
+        self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
+        self._meeting_active = False
+        self._meeting_urls: dict = {}
+
         # Non-modal Model Manager dialog (single instance, created lazily)
         self._model_manager_dialog = None
 
@@ -95,6 +108,27 @@ class UIController(QObject):
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
+        self.main_window.meeting_dashboard_requested.connect(
+            self._on_meeting_open_dashboard
+        )
+
+        # Meeting panel signals
+        panel = self.main_window.meeting_panel
+        panel.start_requested.connect(self._on_meeting_start_requested)
+        panel.pause_requested.connect(
+            lambda: self.on_meeting_pause and self.on_meeting_pause()
+        )
+        panel.resume_requested.connect(
+            lambda: self.on_meeting_resume and self.on_meeting_resume()
+        )
+        panel.end_requested.connect(
+            lambda: self.on_meeting_end and self.on_meeting_end()
+        )
+        panel.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
+        panel.copy_guest_link_requested.connect(
+            lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
+        )
+        panel.cloud_toggled.connect(self._on_meeting_cloud_toggled)
 
         # Set up the copied animation callback
         self.main_window.on_show_copied_animation = self.show_copied_animation
@@ -104,6 +138,12 @@ class UIController(QObject):
         self.tray_manager.hide_requested.connect(self._on_tray_hide)
         self.tray_manager.exit_requested.connect(self._on_tray_exit)
         self.tray_manager.toggle_recording.connect(self._on_tray_toggle_recording)
+        self.tray_manager.meeting_toggle_requested.connect(
+            self._on_tray_meeting_toggle
+        )
+        self.tray_manager.meeting_dashboard_requested.connect(
+            self._on_meeting_open_dashboard
+        )
 
         # Overlay signals
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
@@ -200,7 +240,13 @@ class UIController(QObject):
         self.overlay.update_audio_levels(levels)
 
     def start_recording(self):
-        """Start recording."""
+        """Start recording.
+
+        Returns:
+            False when the application layer refused the start (e.g. Meeting
+            Mode is active) and the recording UI was rolled back; True
+            otherwise.
+        """
         self.is_recording = True
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
         logger.info("Recording started")
@@ -211,9 +257,24 @@ class UIController(QObject):
             self.main_window._update_recording_state()
 
         if self.on_record_start:
-            self.on_record_start()
+            if self.on_record_start() is False:
+                self._revert_refused_record_start()
+                return False
         else:
             self.record_started.emit()
+        return True
+
+    def _revert_refused_record_start(self):
+        """Undo the recording UI after a refused start.
+
+        The record button, window, and tab lock all flip to "recording" before
+        the callback runs, so a refusal two layers down has to be unwound here
+        — otherwise the UI shows a red, captureless recording state.
+        """
+        logger.info("Recording start refused; reverting recording state")
+        self.is_recording = False
+        self.main_window.is_recording = False
+        self.main_window._update_recording_state()
 
     def stop_recording(self):
         """Stop recording."""
@@ -465,6 +526,7 @@ class UIController(QObject):
         """
         dialog = SettingsDialog(self.main_window)
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
+        dialog.get_meeting_active = self.get_meeting_active
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:
@@ -642,6 +704,127 @@ class UIController(QObject):
             self._model_manager_dialog.finish_component_install(
                 component_id, success, message
             )
+
+    # ── Meeting Mode ───────────────────────────────────────────────
+
+    def _on_meeting_start_requested(self, cloud_enabled: bool):
+        """Forward a panel Start Meeting request to the application runtime."""
+        if self.on_meeting_start:
+            self.on_meeting_start(cloud_enabled)
+
+    def _on_meeting_cloud_toggled(self, enabled: bool):
+        """Forward the cloud-intelligence checkbox to the application runtime."""
+        if self.on_meeting_toggle_cloud:
+            self.on_meeting_toggle_cloud(enabled)
+
+    def _on_meeting_open_dashboard(self):
+        """Open the host meeting dashboard in the browser."""
+        if self.on_meeting_open_dashboard:
+            self.on_meeting_open_dashboard()
+
+    def _on_tray_meeting_toggle(self):
+        """Start or end a meeting from the system tray menu."""
+        if self._meeting_active:
+            if self.on_meeting_end:
+                self.on_meeting_end()
+        elif self.on_meeting_start:
+            self.on_meeting_start(None)
+
+    def on_meeting_state_changed(self, payload: Any) -> None:
+        """Apply a meeting-state payload to the panel and tray.
+
+        Args:
+            payload: Partial meeting-state dict from MeetingRuntime
+                (``active``, ``paused``, ``status``, ``cloud_enabled``,
+                ``elapsed_s``).
+        """
+        if not isinstance(payload, dict):
+            return
+        self.main_window.meeting_panel.set_meeting_state(payload)
+        if "active" in payload:
+            self._meeting_active = bool(payload["active"])
+            self.tray_manager.set_meeting_active(self._meeting_active)
+            if not self._meeting_active:
+                self._meeting_urls = {}
+
+    def set_meeting_status(self, status: str) -> None:
+        """Update meeting status on the panel and main status line.
+
+        Args:
+            status: Human-readable meeting status string.
+        """
+        if not status:
+            return
+        self.main_window.meeting_panel.set_status_text(status)
+        self.set_status(status)
+
+    def on_meeting_error(self, message: str) -> None:
+        """Surface a meeting error in status and a modal warning.
+
+        Args:
+            message: Error description from MeetingRuntime.
+        """
+        text = message or "Meeting error"
+        self.set_meeting_status(text)
+        QMessageBox.warning(self.main_window, "Meeting Error", text)
+
+    def on_meeting_server_started(self, result: Any) -> None:
+        """Store session URLs after the meeting web server starts.
+
+        Args:
+            result: Dict with ``meeting_id``, ``url``, ``host_url``,
+                ``guest_url`` from MeetingEngine.start().
+        """
+        if not isinstance(result, dict):
+            return
+        self._meeting_urls = dict(result)
+        if self.on_meeting_open_dashboard:
+            self.on_meeting_open_dashboard()
+
+    def show_meeting_consent_dialog(self) -> bool:
+        """Show the one-time cloud-intelligence consent dialog.
+
+        Returns:
+            True when the user enables cloud intelligence.
+        """
+        from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
+
+        dialog = MeetingConsentDialog(parent=self.main_window)
+        dialog.exec()
+        return dialog.result_action == MeetingConsentDialog.RESULT_ENABLE
+
+    def show_meeting_recovery_dialog(
+        self,
+        meetings: List[Dict[str, Any]],
+        on_finalize: Optional[Callable[[str], None]] = None,
+        on_discard: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Show the interrupted-meeting recovery dialog.
+
+        Args:
+            meetings: Interrupted meeting dicts from the recovery scan.
+            on_finalize: Callback receiving a meeting id to finalize.
+            on_discard: Callback receiving a meeting id to discard.
+        """
+        from ui_qt.dialogs.meeting_recovery_dialog import MeetingRecoveryDialog
+
+        dialog = MeetingRecoveryDialog(list(meetings or []), parent=self.main_window)
+        dialog.on_finalize = on_finalize
+        dialog.on_discard = on_discard
+        dialog.exec()
+
+    def copy_meeting_guest_link(self, url: str) -> None:
+        """Copy the guest dashboard URL to the clipboard.
+
+        Args:
+            url: Guest join URL for the active meeting.
+        """
+        if not url:
+            return
+        QApplication.clipboard().setText(url)
+        self._meeting_urls["guest_url"] = url
+        self.set_meeting_status("Guest link copied")
+        self.show_copied_animation()
 
     def open_hotkey_dialog(self):
         """Open the hotkey configuration dialog."""

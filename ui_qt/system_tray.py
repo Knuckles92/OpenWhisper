@@ -20,11 +20,14 @@ class SystemTrayManager(QSystemTrayIcon):
     hide_requested = pyqtSignal()
     exit_requested = pyqtSignal()
     toggle_recording = pyqtSignal()
+    meeting_toggle_requested = pyqtSignal()
+    meeting_dashboard_requested = pyqtSignal()
 
     def __init__(self, main_window=None):
         """Initialize system tray manager."""
         super().__init__()
         self.main_window = main_window
+        self._meeting_active = False
 
         # Callbacks
         self.on_show: Optional[Callable] = None
@@ -56,8 +59,16 @@ class SystemTrayManager(QSystemTrayIcon):
 
         # Toggle recording action
         self.menu.addSeparator()
-        toggle_action = self.menu.addAction("Start Recording")
-        toggle_action.triggered.connect(self._on_toggle)
+        self.toggle_action = self.menu.addAction("Start Recording")
+        self.toggle_action.triggered.connect(self._on_toggle)
+
+        # Meeting Mode actions
+        self.menu.addSeparator()
+        self.meeting_toggle_action = self.menu.addAction("Start Meeting")
+        self.meeting_toggle_action.triggered.connect(self._on_meeting_toggle)
+        self.meeting_dashboard_action = self.menu.addAction("Open Meeting Dashboard")
+        self.meeting_dashboard_action.triggered.connect(self._on_meeting_dashboard)
+        self.meeting_dashboard_action.setEnabled(False)
 
         # Settings action
         self.menu.addSeparator()
@@ -106,6 +117,14 @@ class SystemTrayManager(QSystemTrayIcon):
         """Handle toggle recording action."""
         self.toggle_recording.emit()
 
+    def _on_meeting_toggle(self):
+        """Handle Start/End Meeting from the tray menu."""
+        self.meeting_toggle_requested.emit()
+
+    def _on_meeting_dashboard(self):
+        """Handle Open Meeting Dashboard from the tray menu."""
+        self.meeting_dashboard_requested.emit()
+
     def _on_settings(self):
         """Handle settings action."""
         if self.main_window:
@@ -120,12 +139,25 @@ class SystemTrayManager(QSystemTrayIcon):
         QApplication.instance().quit()
 
     def set_recording(self, is_recording: bool):
-        """Update the menu based on recording state."""
-        for action in self.menu.actions():
-            if "Recording" in action.text():
-                if is_recording:
-                    action.setText("Stop Recording")
-                else:
-                    action.setText("Start Recording")
-                break
+        """Update the menu based on recording state.
 
+        Args:
+            is_recording: True while a dictation recording is active.
+        """
+        if is_recording:
+            self.toggle_action.setText("Stop Recording")
+        else:
+            self.toggle_action.setText("Start Recording")
+
+    def set_meeting_active(self, active: bool):
+        """Update meeting menu labels for the current session state.
+
+        Args:
+            active: True while a Meeting Mode session is running.
+        """
+        self._meeting_active = bool(active)
+        if self._meeting_active:
+            self.meeting_toggle_action.setText("End Meeting")
+        else:
+            self.meeting_toggle_action.setText("Start Meeting")
+        self.meeting_dashboard_action.setEnabled(self._meeting_active)

@@ -33,6 +33,7 @@ ICON_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
 datas = [
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
+    (str(REPO_ROOT / "webui" / "dist"), "webui/dist"),
 ]
 binaries = []
 hiddenimports = [

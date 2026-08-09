@@ -233,6 +233,7 @@ from ui_qt.widgets import (
     TabbedContentWidget, QuickRecordTab, UploadFileTab,
     CompactRecordController,
 )
+from ui_qt.widgets.meeting_panel import MeetingPanel
 from services.history_manager import history_manager
 from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
@@ -260,6 +261,7 @@ class MainWindow(QMainWindow):
     retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
+    meeting_dashboard_requested = pyqtSignal()
 
     def __init__(self):
         """Initialize the main window."""
@@ -443,6 +445,11 @@ class MainWindow(QMainWindow):
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
         self._on_tab_changed(self.tabbed_content.current_index())
 
+        # Meeting Mode strip sits above the footer so it stays visible in
+        # compact mode (outside the tabbed/compact content swap).
+        self.meeting_panel = MeetingPanel()
+        outer_layout.addWidget(self.meeting_panel)
+
         self._build_footer(outer_layout)
 
     _FOOTER_BAR_STYLE = """
@@ -598,6 +605,10 @@ class MainWindow(QMainWindow):
         history_action.setShortcut(QKeySequence(self.HISTORY_SHORTCUT))
         compact_action = view_menu.addAction("Compact Mode", self.toggle_compact_mode)
         compact_action.setShortcut(QKeySequence(self.COMPACT_SHORTCUT))
+        view_menu.addSeparator()
+        view_menu.addAction(
+            "Open Meeting Dashboard", self.meeting_dashboard_requested.emit
+        )
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -960,6 +971,7 @@ class MainWindow(QMainWindow):
             self.compact_controller.show()
             self.history_edge_tab.hide()
             self.history_sidebar.hide()
+            self.meeting_panel.hide()
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
             self.compact_button.setText("Full Size")
@@ -984,6 +996,7 @@ class MainWindow(QMainWindow):
             self.tabbed_content.show()
             self.history_edge_tab.show()
             self.history_sidebar.show()
+            self.meeting_panel.show()
             self.title_bar.title_label.show()
             self.title_bar.maximize_btn.show()
             self.compact_button.setText("Compact")

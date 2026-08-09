@@ -8,10 +8,15 @@
 recordings/
 meeting_audio/
 meeting_recordings/
+# Meeting Mode spool root (config.MEETINGS_FOLDER)
+meetings/
 
 # Local data and settings (auto-generated at runtime)
 openwhisper_settings.json
 openwhisper.db
+# WAL journaling (enabled for Meeting Mode) keeps two sidecar files alongside it
+openwhisper.db-wal
+openwhisper.db-shm
 transcription_history.json
 transcription_history.json.bak
 meetings.json
@@ -40,6 +45,11 @@ node_modules/
 /build/
 /dist/
 /installer/Output/
+
+# Pi sidecar bundle: a ~15 MB build artifact rebuilt by `node sidecar/build.mjs`
+# and shipped inside the meeting-agent component archive, never read from the
+# repo at runtime. (webui/dist IS committed — OpenWhisper.spec bundles it.)
+sidecar/dist/
 
 # Editor / tool state
 .claude/settings.local.json

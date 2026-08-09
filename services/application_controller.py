@@ -33,6 +33,7 @@ from services.hf_access import (
 from services.recorder import AudioRecorder
 from services.runtime import (
     HotkeyRuntime,
+    MeetingRuntime,
     StreamingRuntime,
     TranscriptionRuntime,
 )
@@ -91,6 +92,22 @@ class ApplicationController(QObject):
     # worker threads); the connected slot reverts the persisted device setting
     # and raises a cause-specific warning on the Qt main thread.
     gpu_fallback_detected = pyqtSignal()
+    # Meeting Mode (emitted possibly from engine worker threads).
+    # Partial state payload dict for the meeting panel: any of active/paused/
+    # status/cloud_enabled/elapsed_s.
+    meeting_state_changed = pyqtSignal(object)
+    meeting_status_update = pyqtSignal(str)
+    meeting_error = pyqtSignal(str)
+    # Start result dict: meeting_id, url, host_url, guest_url.
+    meeting_server_started = pyqtSignal(object)
+    # List of interrupted meeting dicts found by the startup recovery scan.
+    meeting_recovery_found = pyqtSignal(object)
+    # One-time cloud-intelligence consent; the connected slot shows the
+    # consent dialog on the Qt main thread and routes the result back into
+    # MeetingRuntime.on_consent_result (mirrors hf_consent_requested).
+    meeting_consent_requested = pyqtSignal()
+    # Guest URL ready for clipboard copy (clipboard access is main-thread only).
+    meeting_guest_link_ready = pyqtSignal(str)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -129,9 +146,14 @@ class ApplicationController(QObject):
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._do_reload_whisper_model)
 
+        # Exclusive mode: True while a meeting session runs; dictation start
+        # paths and engine reloads refuse while set (owned by MeetingRuntime).
+        self.meeting_active = False
+
         self.hotkey_runtime = HotkeyRuntime(self)
         self.streaming_runtime = StreamingRuntime(self)
         self.transcription_runtime = TranscriptionRuntime(self)
+        self.meeting_runtime = MeetingRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
         self._setup_ui_callbacks()
@@ -182,9 +204,22 @@ class ApplicationController(QObject):
         self.ui_controller.on_model_delete_requested = self.request_model_delete
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
+        self.ui_controller.get_meeting_active = self.is_meeting_active
         self.ui_controller.on_component_install = self.request_component_install
         self.ui_controller.on_component_cancel = self.cancel_component_install
         self.ui_controller.on_component_remove = self.request_component_uninstall
+        self.ui_controller.on_meeting_start = self.meeting_runtime.start_meeting
+        self.ui_controller.on_meeting_end = self.meeting_runtime.end_meeting
+        self.ui_controller.on_meeting_pause = self.meeting_runtime.pause_meeting
+        self.ui_controller.on_meeting_resume = self.meeting_runtime.resume_meeting
+        self.ui_controller.on_meeting_cancel = self.meeting_runtime.cancel_meeting
+        self.ui_controller.on_meeting_open_dashboard = (
+            self.meeting_runtime.open_dashboard
+        )
+        self.ui_controller.on_meeting_copy_guest_link = (
+            self.meeting_runtime.copy_guest_link
+        )
+        self.ui_controller.on_meeting_toggle_cloud = self.meeting_runtime.toggle_cloud
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -194,6 +229,12 @@ class ApplicationController(QObject):
         into a single reload, and the request is refused while a recording or
         transcription is in progress.
         """
+        if self.meeting_active:
+            logger.info("Ignoring whisper reload: a meeting is in progress")
+            self.status_update.emit("End the meeting before changing the engine")
+            self.engine_busy_changed.emit(False)
+            return
+
         backend = self.current_backend
         if self.recorder.is_recording or getattr(backend, "is_transcribing", False):
             logger.info("Ignoring whisper reload: recording/transcribing in progress")
@@ -269,6 +310,9 @@ class ApplicationController(QObject):
             backend = self.transcription_backends.get("local_whisper")
             if backend is not None and getattr(backend, "gpu_fallback_note", None):
                 self.gpu_fallback_detected.emit()
+        # Meeting crash recovery: scan now that there is a UI to show the
+        # recovery dialog over.
+        QTimer.singleShot(0, self.meeting_runtime.setup)
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.
@@ -794,17 +838,58 @@ class ApplicationController(QObject):
     def reconfigure_streaming(self) -> None:
         self.streaming_runtime.reconfigure_streaming()
 
-    def start_recording(self) -> None:
-        """Start audio recording (UI callback target)."""
+    def start_recording(self) -> bool:
+        """Start audio recording (UI callback target).
+
+        Returns:
+            False when the start was refused because Meeting Mode is active,
+            so the caller can roll its recording UI back; True otherwise.
+        """
+        if self._refuse_dictation_during_meeting():
+            return False
         self.transcription_runtime.start_recording()
+        return True
 
     def stop_recording(self) -> None:
         """Stop recording and submit transcription (UI callback target)."""
         self.transcription_runtime.stop_recording()
 
-    def toggle_recording(self) -> None:
-        """Toggle recording on/off (hotkey callback target)."""
+    def toggle_recording(self) -> bool:
+        """Toggle recording on/off (hotkey callback target).
+
+        Returns:
+            False when a start was refused because Meeting Mode is active;
+            True otherwise.
+        """
+        if not self.recorder.is_recording and self._refuse_dictation_during_meeting():
+            return False
         self.transcription_runtime.toggle_recording()
+        return True
+
+    def is_meeting_active(self) -> bool:
+        """Whether Meeting Mode currently owns the microphone.
+
+        Exposed to the UI layer (Settings dialog rule dictation) so features
+        that open their own capture stream can refuse before starting one.
+
+        Returns:
+            True while a meeting session is running.
+        """
+        return bool(self.meeting_active)
+
+    def _refuse_dictation_during_meeting(self) -> bool:
+        """Exclusive mode: block dictation starts while a meeting is active.
+
+        Returns:
+            True when the start was refused (meeting in progress).
+        """
+        if not self.meeting_active:
+            return False
+        logger.info("Dictation start refused: Meeting Mode is active")
+        self.status_update.emit(
+            "Meeting Mode is active — end the meeting to use dictation"
+        )
+        return True
 
     def cancel(self) -> None:
         """Cancel an active recording or transcription (UI/hotkey callback target)."""
@@ -832,8 +917,16 @@ class ApplicationController(QObject):
             The transcript text.
 
         Raises:
-            RuntimeError: When no backend is ready or the engine is busy.
+            RuntimeError: When Meeting Mode is active, no backend is ready, or
+                the engine is busy.
         """
+        if self.meeting_active:
+            # Exclusive mode: the meeting owns the microphone and a dedicated
+            # Whisper instance; a second capture stream and model would fight
+            # it for the device and the GPU.
+            raise RuntimeError(
+                "Meeting Mode is active — end the meeting to use dictation"
+            )
         backend = self.current_backend
         if backend is None:
             raise RuntimeError("No transcription engine is available")
@@ -860,6 +953,41 @@ class ApplicationController(QObject):
     def update_status_with_auto_hide(self, status: str) -> None:
         """Emit a thread-safe status update (HotkeyManager callback target)."""
         self.hotkey_runtime.update_status_with_auto_hide(status)
+
+    def _on_meeting_consent_requested(self) -> None:
+        """Show the meeting cloud-consent dialog and act on it (Qt main thread).
+
+        Mirrors the HF consent round-trip: the runtime emitted the request
+        (possibly holding a pending start or toggle), this slot shows the
+        dialog, persists a granted consent, and hands the outcome back to the
+        runtime's continuation.
+        """
+        granted = False
+        try:
+            granted = self.ui_controller.show_meeting_consent_dialog()
+        except Exception as exc:
+            logger.error(f"Meeting consent dialog failed: {exc}")
+
+        if granted:
+            try:
+                settings_manager.save_setting(
+                    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, True
+                )
+            except Exception as exc:
+                logger.warning(f"Could not persist meeting cloud consent: {exc}")
+
+        self.meeting_runtime.on_consent_result(granted)
+
+    def _on_meeting_recovery_found(self, meetings) -> None:
+        """Show the meeting recovery dialog for interrupted sessions (Qt main thread)."""
+        try:
+            self.ui_controller.show_meeting_recovery_dialog(
+                list(meetings),
+                on_finalize=self.meeting_runtime.finalize_recovered,
+                on_discard=self.meeting_runtime.discard_recovered,
+            )
+        except Exception as exc:
+            logger.error(f"Meeting recovery dialog failed: {exc}")
 
     def _connect_signals(self) -> None:
         """Connect Qt signals to UI controller methods."""
@@ -891,6 +1019,19 @@ class ApplicationController(QObject):
         self.gpu_fallback_detected.connect(self._on_gpu_fallback)
         self.component_state_changed.connect(
             self.ui_controller.on_component_state_changed
+        )
+        self.meeting_state_changed.connect(
+            self.ui_controller.on_meeting_state_changed
+        )
+        self.meeting_status_update.connect(self.ui_controller.set_meeting_status)
+        self.meeting_error.connect(self.ui_controller.on_meeting_error)
+        self.meeting_server_started.connect(
+            self.ui_controller.on_meeting_server_started
+        )
+        self.meeting_recovery_found.connect(self._on_meeting_recovery_found)
+        self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
+        self.meeting_guest_link_ready.connect(
+            self.ui_controller.copy_meeting_guest_link
         )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
@@ -947,6 +1088,13 @@ class ApplicationController(QObject):
                 self._periodic_refresh_timer.stop()
         except Exception as exc:
             logger.debug(f"Error stopping watchdog timers: {exc}")
+
+        try:
+            # Shut the meeting engine down early: it owns capture streams, a
+            # web server, and possibly a sidecar process.
+            self.meeting_runtime.cleanup()
+        except Exception as exc:
+            logger.debug(f"Error during meeting runtime cleanup: {exc}")
 
         try:
             self.hotkey_runtime.cleanup()

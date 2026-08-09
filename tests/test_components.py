@@ -193,7 +193,11 @@ def test_available_component_ids_is_empty_off_windows():
         assert ComponentCoordinator().list_components() == ()
 
     with patch.object(components.sys, "platform", "win32"):
-        assert components.available_component_ids() == (ComponentId.GPU_ACCEL,)
+        assert components.available_component_ids() == (
+            ComponentId.GPU_ACCEL,
+            ComponentId.MEETING_AGENT,
+            ComponentId.SPEAKER_ID,
+        )
 
 
 def test_gpu_runtime_probes_shared_objects_on_linux():

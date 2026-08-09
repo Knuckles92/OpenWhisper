@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Meeting Mode** - Capture system audio and microphone with live ASR, speaker diarization, and a browser dashboard other participants can join over the LAN. An optional intelligence agent tracks key points, decisions, and action items; finished sessions export to Markdown, plain text, and JSON. Meeting Intelligence Agent and Speaker Identification ship as downloadable components
+
 ### Changed
 - **Voice and text models now share one Model Manager** - The manager has dedicated Voice and Text tabs, with a guided provider → model picker for cleanup chat models. Provider, catalog sorting, and active text-model selection moved out of Settings → Cleanup; that tab now focuses on cleanup behavior, prompts, and learned rules while showing the active text model as a read-only summary
 

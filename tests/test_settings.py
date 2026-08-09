@@ -251,5 +251,79 @@ class TestTranscriptCleanupRules(unittest.TestCase):
             os.rmdir(temp_dir)
 
 
+class TestMeetingSettings(unittest.TestCase):
+    """Meeting Mode resolvers backing the Settings dialog's Meeting tab."""
+
+    def setUp(self):
+        from services.settings import (
+            MeetingAgentCore,
+            MeetingServerBind,
+            SettingsKey,
+            resolve_meeting_agent_core,
+            resolve_meeting_llm_model,
+            resolve_meeting_llm_provider,
+            resolve_meeting_server_bind,
+            resolve_meeting_server_port,
+            resolve_meeting_whisper_model,
+        )
+        self.keys = SettingsKey
+        self.agent_cores = MeetingAgentCore
+        self.binds = MeetingServerBind
+        self.resolve_whisper_model = resolve_meeting_whisper_model
+        self.resolve_provider = resolve_meeting_llm_provider
+        self.resolve_llm_model = resolve_meeting_llm_model
+        self.resolve_agent_core = resolve_meeting_agent_core
+        self.resolve_bind = resolve_meeting_server_bind
+        self.resolve_port = resolve_meeting_server_port
+
+    def test_defaults_come_from_config(self):
+        self.assertEqual(self.resolve_whisper_model({}), config.MEETING_WHISPER_MODEL)
+        self.assertEqual(self.resolve_provider({}), config.MEETING_LLM_PROVIDER)
+        self.assertEqual(self.resolve_llm_model({}), config.MEETING_LLM_MODEL)
+        self.assertEqual(self.resolve_agent_core({}), config.MEETING_AGENT_CORE)
+        self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
+        self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
+
+    def test_saved_choices_round_trip(self):
+        saved = {
+            self.keys.MEETING_WHISPER_MODEL: "small.en",
+            self.keys.MEETING_LLM_PROVIDER: "openai",
+            self.keys.MEETING_LLM_MODEL: "  gpt-4o-mini  ",
+            self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
+            self.keys.MEETING_SERVER_BIND: self.binds.LAN,
+            self.keys.MEETING_SERVER_PORT: 8099,
+        }
+        self.assertEqual(self.resolve_whisper_model(saved), "small.en")
+        self.assertEqual(self.resolve_provider(saved), "openai")
+        self.assertEqual(self.resolve_llm_model(saved), "gpt-4o-mini")
+        self.assertEqual(self.resolve_agent_core(saved), self.agent_cores.DIRECT)
+        self.assertEqual(self.resolve_bind(saved), self.binds.LAN)
+        self.assertEqual(self.resolve_port(saved), 8099)
+
+    def test_unknown_values_fall_back_to_defaults(self):
+        saved = {
+            self.keys.MEETING_WHISPER_MODEL: "not-a-model",
+            self.keys.MEETING_LLM_PROVIDER: "not-a-provider",
+            self.keys.MEETING_LLM_MODEL: "   ",
+            self.keys.MEETING_AGENT_CORE: "not-a-core",
+            self.keys.MEETING_SERVER_BIND: "everywhere",
+        }
+        self.assertEqual(self.resolve_whisper_model(saved), config.MEETING_WHISPER_MODEL)
+        self.assertEqual(self.resolve_provider(saved), config.MEETING_LLM_PROVIDER)
+        self.assertEqual(self.resolve_llm_model(saved), config.MEETING_LLM_MODEL)
+        self.assertEqual(self.resolve_agent_core(saved), config.MEETING_AGENT_CORE)
+        self.assertEqual(self.resolve_bind(saved), config.MEETING_SERVER_BIND)
+
+    def test_port_is_clamped_and_tolerates_junk(self):
+        self.assertEqual(self.resolve_port({self.keys.MEETING_SERVER_PORT: -5}), 0)
+        self.assertEqual(
+            self.resolve_port({self.keys.MEETING_SERVER_PORT: 99999}), 65535
+        )
+        self.assertEqual(
+            self.resolve_port({self.keys.MEETING_SERVER_PORT: "nope"}),
+            config.MEETING_SERVER_PORT,
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -87,6 +87,48 @@ _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
     },
 )
 
+# TODO(meeting-mode): placeholder digest — replace with the real SHA-256 pinned
+# at release time once the meeting-agent / speaker-id payloads are published.
+_PLACEHOLDER_SHA256: Final[str] = "0" * 64
+
+# Version of the meeting-agent payload (portable win-x64 Node LTS + the built
+# Pi sidecar bundle.cjs). Versioned by its own contents, like the GPU payload.
+MEETING_AGENT_COMPONENT_VERSION: Final[str] = "node22-pi1"
+
+# Version of the speaker-id payload (WeSpeaker-family ONNX embedding model).
+SPEAKER_ID_COMPONENT_VERSION: Final[str] = "wespeaker-v1"
+
+# TODO(meeting-mode): these archives are not published yet. URLs follow the
+# project's release-asset naming convention
+# (<component-id>-<platform>-<version>.zip under the project releases);
+# replace url/sha256/size_bytes with the real pinned values produced by
+# ``python scripts/build_component.py <component-id>`` before shipping.
+_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = (
+    {
+        "name": f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip",
+        "url": (
+            "https://openwhisper.fiorilabs.tech/components/"
+            f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
+        ),
+        "sha256": _PLACEHOLDER_SHA256,
+        "size_bytes": 30_000_000,  # ~30 MB compressed, estimate
+        "extract": "zip",
+    },
+)
+
+_BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
+    {
+        "name": f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip",
+        "url": (
+            "https://openwhisper.fiorilabs.tech/components/"
+            f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip"
+        ),
+        "sha256": _PLACEHOLDER_SHA256,
+        "size_bytes": 28_000_000,  # ~28 MB ONNX model, estimate
+        "extract": "zip",
+    },
+)
+
 # Version of the gpu-accel payload. Derived from the CUDA libraries it carries,
 # NOT from the application version: the payload is unchanged by an app release,
 # and an app-derived version would report "update available" after every release.
@@ -107,6 +149,23 @@ _BUILTIN_CATALOG: Final[dict] = {
             # drives the pre-install free-space check.
             "install_bytes": 959_060_480,
             "archives": _BUILTIN_GPU_ARCHIVES,
+        },
+        "meeting-agent": {
+            "version": MEETING_AGENT_COMPONENT_VERSION,
+            "component_api": COMPONENT_API,
+            "platform": "win_amd64",
+            # TODO(meeting-mode): measure once the payload exists (portable
+            # Node runtime dominates the extracted size).
+            "install_bytes": 85_000_000,
+            "archives": _BUILTIN_MEETING_AGENT_ARCHIVES,
+        },
+        "speaker-id": {
+            "version": SPEAKER_ID_COMPONENT_VERSION,
+            "component_api": COMPONENT_API,
+            "platform": "win_amd64",
+            # TODO(meeting-mode): measure once the payload exists.
+            "install_bytes": 30_000_000,
+            "archives": _BUILTIN_SPEAKER_ID_ARCHIVES,
         },
     },
 }
@@ -139,6 +198,8 @@ class ComponentId:
     """Stable identifiers for downloadable components."""
 
     GPU_ACCEL: Final[str] = "gpu-accel"
+    MEETING_AGENT: Final[str] = "meeting-agent"
+    SPEAKER_ID: Final[str] = "speaker-id"
 
 
 class ComponentState:
@@ -204,6 +265,21 @@ COMPONENT_DESCRIPTIONS: Final[Dict[str, Dict[str, str]]] = {
             "Requires an NVIDIA graphics card."
         ),
     },
+    ComponentId.MEETING_AGENT: {
+        "display_name": "Meeting Intelligence Agent",
+        "summary": (
+            "Node runtime plus the Pi agent that maintains live meeting "
+            "insights (key points, decisions, action items) during Meeting "
+            "Mode. Requires an OpenRouter API key."
+        ),
+    },
+    ComponentId.SPEAKER_ID: {
+        "display_name": "Speaker Identification",
+        "summary": (
+            "Speaker-embedding model (WeSpeaker ONNX) that separates remote "
+            "voices into individual speakers during Meeting Mode."
+        ),
+    },
 }
 
 
@@ -221,7 +297,7 @@ def available_component_ids() -> Tuple[str, ...]:
     """
     if sys.platform != "win32":
         return ()
-    return (ComponentId.GPU_ACCEL,)
+    return (ComponentId.GPU_ACCEL, ComponentId.MEETING_AGENT, ComponentId.SPEAKER_ID)
 
 
 def gpu_runtime_available() -> bool:
@@ -284,6 +360,38 @@ def is_installed(component_id: str) -> bool:
     interrupted extract is correctly reported as missing.
     """
     return os.path.isfile(os.path.join(component_dir(component_id), _SENTINEL_NAME))
+
+
+def meeting_agent_payload_dir() -> Optional[str]:
+    """Install directory of the meeting-agent component, when installed.
+
+    Returns:
+        Absolute path to the installed payload (containing the portable Node
+        runtime and the sidecar ``bundle.cjs``), or None when the component is
+        not installed.
+    """
+    if not is_installed(ComponentId.MEETING_AGENT):
+        return None
+    return component_dir(ComponentId.MEETING_AGENT)
+
+
+def speaker_model_path() -> Optional[str]:
+    """Path to the installed speaker-embedding ONNX model, when installed.
+
+    Returns:
+        Absolute path to the first ``.onnx`` file inside the speaker-id
+        component tree, or None when the component (or the model file) is
+        missing.
+    """
+    if not is_installed(ComponentId.SPEAKER_ID):
+        return None
+    root = component_dir(ComponentId.SPEAKER_ID)
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in sorted(filenames):
+            if name.lower().endswith(".onnx"):
+                return os.path.join(dirpath, name)
+    logger.warning("speaker-id component is installed but contains no .onnx model")
+    return None
 
 
 def read_manifest(component_id: str) -> Optional[dict]:

@@ -1,5 +1,7 @@
 # Core dependencies
-sounddevice>=0.4.6
+# sounddevice >= 0.5.0 bundles a PortAudio build that exposes WASAPI
+# "[Loopback]" input devices, which Meeting Mode uses for system audio.
+sounddevice>=0.5.0
 numpy>=1.24.0
 # Global hotkeys: the `keyboard` library (per-key suppression) on Windows;
 # `pynput` on macOS/Linux (also drives synthetic Cmd+V / Ctrl+V auto-paste).
@@ -15,6 +17,12 @@ faster-whisper>=1.0.0
 python-dotenv>=1.0.0
 PyQt6>=6.0.0
 sqlalchemy>=2.0.0
+
+# Meeting Mode: dashboard web server (FastAPI + WebSocket over uvicorn)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+# Meeting Mode: fallback system-audio loopback capture backend
+soundcard>=0.4.3 ; sys_platform == "win32"
 # Note: faster-whisper automatically installs transitive dependencies:
 #   - av (audio/video processing)
 #   - ctranslate2 (inference engine)

@@ -19,7 +19,7 @@ from services.models import (
 logger = logging.getLogger(__name__)
 
 # Schema version for future migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class DatabaseManager:
@@ -34,11 +34,16 @@ class DatabaseManager:
             pool_pre_ping=True,
         )
 
-        # Enable foreign keys for every raw SQLite connection
+        # Enable foreign keys for every raw SQLite connection. WAL journaling
+        # is required by Meeting Mode: capture-thread writes, web-server reads,
+        # and Qt reads run concurrently, and DELETE-mode journaling produces
+        # "database is locked" errors under that load.
         @event.listens_for(self.engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
 
         self._session_factory = sessionmaker(
@@ -80,6 +85,7 @@ class DatabaseManager:
 
         Base.metadata.create_all(self.engine)
         self._drop_removed_meeting_tables()
+        self._ensure_meeting_fts()
 
         # Ensure schema_version row exists
         with self.get_session() as session:
@@ -105,6 +111,51 @@ class DatabaseManager:
             conn.execute(text("DROP TABLE IF EXISTS meeting_insights"))
             conn.execute(text("DROP TABLE IF EXISTS meeting_chunks"))
             conn.execute(text("DROP TABLE IF EXISTS meetings"))
+
+    def _ensure_meeting_fts(self) -> None:
+        """Create the meeting-transcript FTS5 table and its sync triggers.
+
+        FTS virtual tables cannot be expressed as ORM models, so this runs as
+        raw SQL after ``create_all`` on both fresh and migrated databases.
+        """
+        statements = [
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS meeting_segments_fts USING fts5(
+                text, content='meeting_segments', content_rowid='rowid'
+            )
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS meeting_segments_fts_ai
+            AFTER INSERT ON meeting_segments BEGIN
+                INSERT INTO meeting_segments_fts(rowid, text)
+                VALUES (new.rowid, new.text);
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS meeting_segments_fts_ad
+            AFTER DELETE ON meeting_segments BEGIN
+                INSERT INTO meeting_segments_fts(meeting_segments_fts, rowid, text)
+                VALUES ('delete', old.rowid, old.text);
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS meeting_segments_fts_au
+            AFTER UPDATE OF text ON meeting_segments BEGIN
+                INSERT INTO meeting_segments_fts(meeting_segments_fts, rowid, text)
+                VALUES ('delete', old.rowid, old.text);
+                INSERT INTO meeting_segments_fts(rowid, text)
+                VALUES (new.rowid, new.text);
+            END
+            """,
+        ]
+        try:
+            with self.engine.begin() as conn:
+                for statement in statements:
+                    conn.execute(text(statement))
+        except Exception as e:
+            # FTS5 is compiled into every mainstream SQLite build; if it is
+            # missing, meeting search degrades but nothing else breaks.
+            logger.warning(f"Could not initialize meeting FTS index: {e}")
 
     def _maybe_run_migrations(self) -> None:
         """Check if the database already exists and needs migrations."""
@@ -208,6 +259,14 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Migration v8->v9 failed: {e}")
                 raise
+
+        if from_version < 10:
+            # Meeting Mode tables (meeting_sessions, meeting_audio_chunks,
+            # meeting_segments, meeting_participants, meeting_state_items,
+            # meeting_questions, meeting_events) are new in v10 and created by
+            # Base.metadata.create_all after migrations run; the FTS index is
+            # created by _ensure_meeting_fts. Nothing to transform here.
+            logger.info("Migration v9->v10: Meeting Mode tables added via create_all")
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")

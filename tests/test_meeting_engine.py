@@ -1,0 +1,694 @@
+"""
+Tests for MeetingEngine orchestration: intelligence health reporting, the
+scheduler health signal, consent-revocation teardown, end-failure unwinding,
+and mid-meeting diarizer degradation.
+
+Every subsystem the engine imports lazily (capture, ASR, diarizer, web server,
+agent core, scheduler) is replaced with an in-process fake, so nothing here
+touches an audio device, a Whisper model, a socket, or the network.
+"""
+import os
+import sys
+import threading
+import types
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
+
+
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
+
+class FakeSource:
+    """Capture source that reports itself active without opening a device."""
+
+    def __init__(self, channel, index=0, samplerate=16000, channels=1):
+        self.channel = channel
+        self.started = False
+        self.stopped = False
+        self.callback = None
+
+    def start(self, callback):
+        self.callback = callback
+        self.started = True
+
+    def is_active(self):
+        return self.started and not self.stopped
+
+    def stop(self):
+        self.stopped = True
+
+
+class FakeSpool:
+    """Spool writer that swallows blocks and never produces chunks."""
+
+    def __init__(self, meeting_id, channel, spool_dir, clock, repository,
+                 on_chunk=None):
+        self.channel = channel
+        self.on_chunk = on_chunk
+        self.flushes = 0
+
+    def feed(self, block):
+        pass
+
+    def flush(self):
+        self.flushes += 1
+        return None
+
+
+class FakeAsr:
+    """ASR engine stand-in; records lifecycle calls."""
+
+    instances = []
+
+    def __init__(self, model, meeting_id, repository):
+        self.model = model
+        self.meeting_id = meeting_id
+        self.is_available = True
+        self.on_segments = None
+        self.chunks = []
+        self.drains = 0
+        self.stops = 0
+        self.requeues = 0
+        FakeAsr.instances.append(self)
+
+    def start(self, on_segments):
+        self.on_segments = on_segments
+
+    def enqueue(self, chunk):
+        self.chunks.append(chunk)
+
+    def drain(self, timeout_s):
+        self.drains += 1
+        return True
+
+    def stop(self):
+        self.stops += 1
+
+    def requeue_pending(self):
+        self.requeues += 1
+
+
+class FakeServer:
+    """Web server stand-in that records broadcasts instead of sending them."""
+
+    instances = []
+
+    def __init__(self, engine, repository, bind="localhost", port=0):
+        self.engine = engine
+        self.host_url = "http://127.0.0.1:9999/h/token"
+        self.guest_url = "http://127.0.0.1:9999/g/token"
+        self.messages = []
+        self.stopped = False
+        FakeServer.instances.append(self)
+
+    def start(self):
+        return self.host_url
+
+    def broadcast(self, message):
+        self.messages.append(dict(message))
+
+    def stop(self):
+        self.stopped = True
+
+
+class FakeDiarizer:
+    """Diarizer whose availability and assignments the test drives."""
+
+    def __init__(self):
+        self.available = True
+        self.next_participant = None
+        self.assigned = []
+        self.pins = []
+        self.relabel_cb = None
+        self.availability_probes = 0
+
+    def is_available(self):
+        self.availability_probes += 1
+        return self.available
+
+    def assign(self, segment, audio, sample_rate):
+        self.assigned.append(segment.segment_id)
+        return self.next_participant
+
+    def set_relabel_callback(self, cb):
+        self.relabel_cb = cb
+
+    def pin(self, segment_id, participant_id):
+        self.pins.append((segment_id, participant_id))
+
+
+class FakeAgentCore:
+    """Agent core stand-in with a settable health verdict."""
+
+    def __init__(self, healthy=True):
+        self.healthy = healthy
+        self.config = None
+        self.cancels = 0
+        self.shutdowns = 0
+
+    def initialize(self, cfg, tools):
+        self.config = cfg
+
+    def checkpoint(self, payload):
+        return AgentResult(ok=True)
+
+    def consolidate(self, payload):
+        return AgentResult(ok=True)
+
+    def cancel(self):
+        self.cancels += 1
+
+    def is_healthy(self):
+        return self.healthy
+
+    def shutdown(self):
+        self.shutdowns += 1
+
+
+class FakeScheduler:
+    """Checkpoint scheduler stand-in recording its construction kwargs."""
+
+    instances = []
+
+    def __init__(self, engine, agent_core, base_interval_s=45.0,
+                 min_interval_s=30.0, max_interval_s=60.0, on_health=None):
+        self.engine = engine
+        self.agent_core = agent_core
+        self.on_health = on_health
+        self.started = False
+        self.stopped = False
+        self.consolidations = 0
+        self.seeded = None
+        FakeScheduler.instances.append(self)
+
+    def _mark_sent(self, segments):
+        self.seeded = list(segments)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+    def notify_segments(self, count):
+        pass
+
+    def run_consolidation(self, timeout_s=120.0):
+        self.consolidations += 1
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def db(tmp_path):
+    from services.database import DatabaseManager
+    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
+    yield manager
+    manager.close()
+
+
+@pytest.fixture
+def repo(db):
+    from meeting.persist.repository import SqlMeetingRepository
+    return SqlMeetingRepository(db=db)
+
+
+@pytest.fixture
+def fakes(monkeypatch):
+    """Install fake lazy-import targets for every engine subsystem.
+
+    Returns a namespace with the stub modules (so a test can swap a class),
+    the agent cores handed out by the patched factory, and the diarizer.
+    """
+    FakeAsr.instances = []
+    FakeServer.instances = []
+    FakeScheduler.instances = []
+
+    capture_devices = types.ModuleType("meeting.capture.devices")
+    capture_devices.find_mic_device = lambda device_id=None: {
+        "index": 1, "samplerate": 16000, "channels": 1,
+    }
+    capture_devices.find_loopback_device = lambda: {
+        "index": 2, "samplerate": 16000, "channels": 2,
+    }
+
+    sd_stream = types.ModuleType("meeting.capture.sd_stream")
+    sd_stream.SdCaptureSource = FakeSource
+
+    soundcard_stream = types.ModuleType("meeting.capture.soundcard_stream")
+
+    class _UnavailableLoopback:
+        @staticmethod
+        def available():
+            return False
+
+    soundcard_stream.SoundcardLoopbackSource = _UnavailableLoopback
+
+    spool = types.ModuleType("meeting.capture.spool")
+    spool.SpoolWriter = FakeSpool
+
+    asr_engine = types.ModuleType("meeting.asr.engine")
+    asr_engine.MeetingAsrEngine = FakeAsr
+
+    asr_audio = types.ModuleType("meeting.asr.audio")
+    asr_audio.load_wav_int16 = lambda path: (
+        np.zeros(16000 * 10, dtype=np.int16), 16000,
+    )
+    asr_audio.prepare_for_whisper = lambda frames, rate: (
+        frames.astype(np.float32) / 32768.0
+    )
+
+    web_server = types.ModuleType("meeting.web.server")
+    web_server.MeetingWebServer = FakeServer
+
+    diarizer = FakeDiarizer()
+    clustering = types.ModuleType("meeting.diarize.clustering")
+    clustering.create_diarizer = (
+        lambda model_path, store, repository, meeting_id: diarizer
+    )
+
+    modules = {
+        "meeting.capture.devices": capture_devices,
+        "meeting.capture.sd_stream": sd_stream,
+        "meeting.capture.soundcard_stream": soundcard_stream,
+        "meeting.capture.spool": spool,
+        "meeting.asr.engine": asr_engine,
+        "meeting.asr.audio": asr_audio,
+        "meeting.web.server": web_server,
+        "meeting.diarize.clustering": clustering,
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    cores = []
+    ns = types.SimpleNamespace(
+        modules=modules, cores=cores, diarizer=diarizer,
+        core_healthy=True,
+        asr=FakeAsr.instances, servers=FakeServer.instances,
+        schedulers=FakeScheduler.instances,
+    )
+
+    def create_agent_core(kind, payload_dir=None):
+        core = FakeAgentCore(healthy=ns.core_healthy)
+        cores.append(core)
+        return core
+
+    monkeypatch.setattr("meeting.agent.base.create_agent_core",
+                        create_agent_core, raising=True)
+    monkeypatch.setattr("meeting.agent.scheduler.CheckpointScheduler",
+                        FakeScheduler, raising=True)
+
+    return ns
+
+
+@pytest.fixture
+def make_engine(repo, tmp_path, fakes):
+    """Factory building engines wired to the fakes, torn down after the test."""
+    from meeting.engine import MeetingEngine, MeetingEngineOptions
+
+    engines = []
+
+    def build(cloud_enabled=True, **overrides):
+        options = MeetingEngineOptions(
+            title="Test meeting",
+            cloud_enabled=cloud_enabled,
+            spool_root=str(tmp_path / "spool"),
+            agent_core_kind="direct",
+            **overrides,
+        )
+        engine = MeetingEngine(options, repository=repo)
+        engine.events = []
+        engine.add_listener(
+            lambda kind, payload: engine.events.append((kind, dict(payload)))
+        )
+        engines.append(engine)
+        return engine
+
+    yield build
+
+    for engine in engines:
+        try:
+            engine.shutdown()
+        except Exception:
+            pass
+        engine._stop_heartbeat()
+
+
+def events_of(engine, kind):
+    """All payloads emitted by ``engine`` for one listener event kind."""
+    return [payload for k, payload in engine.events if k == kind]
+
+
+def loopback_segment(meeting_id, seg_id, start=1.0, end=3.0, chunk_id=None):
+    return TranscriptSegment(
+        segment_id=seg_id, meeting_id=meeting_id, chunk_id=chunk_id,
+        channel="loopback", start_s=start, end_s=end, text="hello there",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Intelligence health
+# ---------------------------------------------------------------------------
+
+class TestIntelligenceHealth:
+    def test_unhealthy_core_reports_offline_and_meeting_still_starts(
+            self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        fakes.core_healthy = False
+
+        result = engine.start()
+
+        assert result["meeting_id"]
+        # The meeting itself is unaffected: transcript-only, still active.
+        assert engine.is_active()
+        assert fakes.asr and fakes.asr[0].on_segments is not None
+        assert engine._scheduler is None
+
+        online = engine.store.with_state(lambda s: s.intelligence_online)
+        assert online is False
+
+        intel = events_of(engine, "intelligence")
+        assert intel and intel[-1]["online"] is False
+        assert intel[-1].get("error")  # a reason is reported, not silence
+
+        statuses = events_of(engine, "status")
+        assert statuses[-1]["intelligence_online"] is False
+        # The unusable core is released so a later retry rebuilds it.
+        assert fakes.cores[0].shutdowns == 1
+        assert engine._agent_core is None
+
+    def test_healthy_core_reports_online(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        assert engine.store.with_state(lambda s: s.intelligence_online) is True
+        assert events_of(engine, "intelligence")[-1]["online"] is True
+        assert fakes.schedulers and fakes.schedulers[0].started
+
+    def test_cloud_disabled_starts_no_intelligence(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+
+        assert fakes.cores == []
+        assert fakes.schedulers == []
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+
+    def test_scheduler_health_signal_is_wired_and_propagates(
+            self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        scheduler = fakes.schedulers[0]
+        assert callable(scheduler.on_health), (
+            "CheckpointScheduler must receive an on_health callback"
+        )
+
+        before = len(events_of(engine, "intelligence"))
+        scheduler.on_health(False)
+
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+        intel = events_of(engine, "intelligence")
+        assert len(intel) == before + 1
+        assert intel[-1]["online"] is False
+        assert intel[-1].get("error")
+        # Dashboard clients learn about it too.
+        broadcasts = [
+            m for m in fakes.servers[0].messages
+            if m.get("type") == "status" and m.get("intelligence_online") is False
+        ]
+        assert broadcasts
+
+        scheduler.on_health(True)
+        assert engine.store.with_state(lambda s: s.intelligence_online) is True
+
+
+class TestCloudToggle:
+    def test_stop_intelligence_shuts_the_agent_core_down(
+            self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        core = fakes.cores[0]
+        scheduler = fakes.schedulers[0]
+
+        engine.set_cloud_enabled(False)
+
+        assert scheduler.stopped
+        assert core.cancels == 1
+        assert core.shutdowns == 1, (
+            "revoking consent must not leave the agent process alive"
+        )
+        assert engine._agent_core is None
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+        assert events_of(engine, "intelligence")[-1]["online"] is False
+
+    def test_reenabling_does_not_resend_the_whole_transcript(
+            self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        repo.add_segments([
+            loopback_segment(meeting_id, "sg_a", 1.0, 3.0),
+            loopback_segment(meeting_id, "sg_b", 4.0, 6.0),
+        ])
+
+        engine.set_cloud_enabled(False)
+        engine.set_cloud_enabled(True)
+
+        assert len(fakes.schedulers) == 2
+        seeded = fakes.schedulers[1].seeded
+        assert seeded is not None, "the rebuilt scheduler was not seeded"
+        assert {s["id"] for s in seeded} == {"sg_a", "sg_b"}
+        # A brand-new core is built, since the old one was shut down.
+        assert len(fakes.cores) == 2
+        assert engine.store.with_state(lambda s: s.intelligence_online) is True
+
+
+# ---------------------------------------------------------------------------
+# End / lifecycle
+# ---------------------------------------------------------------------------
+
+class TestEndLifecycle:
+    def test_end_failure_still_emits_ended(self, make_engine, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        meeting_id = engine.meeting_id
+
+        def boom():
+            raise RuntimeError("spool flush exploded")
+
+        engine._flush_spools = boom
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert not engine._end_thread.is_alive()
+
+        errors = events_of(engine, "error")
+        assert errors and errors[-1]["code"] == "end_failed"
+        ended = events_of(engine, "ended")
+        assert ended, "a failed end must still emit 'ended' so the app unwinds"
+        assert ended[-1]["meeting_id"] == meeting_id
+        assert engine.is_active() is False
+        assert repo.get_meeting(meeting_id)["status"] == "failed"
+
+    def test_normal_end_emits_ended_and_marks_the_meeting(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        assert events_of(engine, "ended")[-1]["canceled"] is False
+        assert repo.get_meeting(meeting_id)["status"] == "ended"
+        assert fakes.schedulers[0].consolidations == 1
+        assert fakes.cores[0].shutdowns == 1
+
+    def test_end_racing_start_waits_for_the_pipeline(self, make_engine, fakes):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingAsr(FakeAsr):
+            def __init__(self, model, meeting_id, repository):
+                super().__init__(model, meeting_id, repository)
+                entered.set()
+                release.wait(timeout=10.0)
+
+        fakes.modules["meeting.asr.engine"].MeetingAsrEngine = BlockingAsr
+
+        engine = make_engine(cloud_enabled=False)
+        starter = threading.Thread(target=engine.start, name="test-start")
+        starter.start()
+        try:
+            assert entered.wait(timeout=5.0)
+            ender = threading.Thread(target=engine.end, name="test-end")
+            ender.start()
+            try:
+                # The end must not run against the half-built pipeline.
+                ender.join(timeout=0.5)
+                assert engine._end_thread is None
+                assert ender.is_alive()
+            finally:
+                release.set()
+                ender.join(timeout=10.0)
+        finally:
+            release.set()
+            starter.join(timeout=10.0)
+
+        assert not starter.is_alive()
+        end_thread = engine._end_thread
+        assert end_thread is not None
+        end_thread.join(timeout=10.0)
+        assert events_of(engine, "ended")
+        # The pipeline that start() built was fully torn down by the end.
+        assert engine.is_active() is False
+        assert fakes.servers[0].stopped is False  # server outlives end()
+
+    def test_double_end_reuses_the_same_worker(self, make_engine):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+
+        engine.end()
+        first = engine._end_thread
+        engine.end()
+        assert engine._end_thread is first
+        first.join(timeout=10.0)
+        assert len(events_of(engine, "ended")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Diarization degradation
+# ---------------------------------------------------------------------------
+
+class TestDiarizationDegradation:
+    def _prime(self, engine, repo):
+        """Register a chunk the loopback segments can be sliced out of."""
+        chunk_id = repo.register_chunk(
+            meeting_id=engine.meeting_id, channel="loopback", seq=0,
+            file_path=os.devnull, start_s=0.0, duration_s=10.0,
+            sample_rate=16000,
+        )
+        engine._chunk_index[chunk_id] = SpooledChunk(
+            chunk_id=chunk_id, meeting_id=engine.meeting_id,
+            channel="loopback", seq=0, file_path=os.devnull, start_s=0.0,
+            duration_s=10.0, sample_rate=16000,
+        )
+        return chunk_id
+
+    def test_none_assignment_while_available_keeps_diarization_on(
+            self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        chunk_id = self._prime(engine, repo)
+        fakes.diarizer.next_participant = None  # short segment: normal None
+
+        engine._on_segments([
+            loopback_segment(engine.meeting_id, "sg_short", chunk_id=chunk_id),
+        ])
+
+        assert engine.store.with_state(lambda s: s.diarization_available) is True
+        assert engine._degraded_diarization is False
+        assert repo.get_segments(engine.meeting_id)  # really persisted
+
+    def test_degradation_flips_availability_once(self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        chunk_id = self._prime(engine, repo)
+        assert engine.store.with_state(lambda s: s.diarization_available) is True
+
+        fakes.diarizer.available = False
+        fakes.diarizer.next_participant = None
+
+        engine._on_segments([
+            loopback_segment(engine.meeting_id, "sg_1", chunk_id=chunk_id),
+        ])
+        engine._on_segments([
+            loopback_segment(engine.meeting_id, "sg_2", 4.0, 6.0,
+                             chunk_id=chunk_id),
+        ])
+
+        assert engine.store.with_state(lambda s: s.diarization_available) is False
+        assert engine._degraded_diarization is True
+
+        notices = [
+            payload for payload in events_of(engine, "status")
+            if set(payload) == {"diarization_available"}
+        ]
+        assert len(notices) == 1
+        assert notices[0]["diarization_available"] is False
+
+        broadcasts = [
+            m for m in fakes.servers[0].messages
+            if m.get("type") == "status"
+            and m.get("diarization_available") is False
+        ]
+        assert len(broadcasts) == 1
+        # Only probed until it latched; the second batch does not re-probe.
+        assert fakes.diarizer.availability_probes == 2  # startup + degradation
+        # The diarizer object stays so human corrections still reach pin().
+        assert engine._diarizer is fakes.diarizer
+
+    def test_pin_still_works_after_degradation(self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        chunk_id = self._prime(engine, repo)
+        repo.add_segments([loopback_segment(engine.meeting_id, "sg_p")])
+        fakes.diarizer.available = False
+        engine._on_segments([
+            loopback_segment(engine.meeting_id, "sg_1", chunk_id=chunk_id),
+        ])
+        assert engine._degraded_diarization is True
+
+        participant = engine.add_guest("Riley")
+        results = engine.apply_client_action("host", None, {
+            "op": "reassign_segment_speaker", "segment_id": "sg_p",
+            "participant_id": participant["id"],
+        })
+
+        assert results[0].ok, results[0].reason
+        assert fakes.diarizer.pins == [("sg_p", participant["id"])]
+
+
+# ---------------------------------------------------------------------------
+# Store wiring
+# ---------------------------------------------------------------------------
+
+class TestStoreWiring:
+    def test_pinned_segments_are_protected_from_the_diarizer(
+            self, make_engine, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        repo.add_segments([loopback_segment(engine.meeting_id, "sg_pinned")])
+        participant = engine.add_guest("Alex")
+        human = engine.apply_client_action("host", None, {
+            "op": "reassign_segment_speaker", "segment_id": "sg_pinned",
+            "participant_id": participant["id"],
+        })
+        assert human[0].ok
+
+        other = engine.add_guest("Sam")
+        [rejected] = engine.store.apply("system", "diarizer", [{
+            "op": "reassign_segment_speaker", "segment_id": "sg_pinned",
+            "participant_id": other["id"],
+        }])
+
+        assert rejected.ok is False
+        assert rejected.reason == "segment_pinned"
+        assert repo.get_segment("sg_pinned")["speaker_participant_id"] == (
+            participant["id"]
+        )
+
+
+def test_engine_module_has_no_dead_recent_text_api():
+    """The unused topic-shift buffer is gone (the scheduler reads the DB)."""
+    from meeting.engine import MeetingEngine
+
+    assert not hasattr(MeetingEngine, "get_recent_text")

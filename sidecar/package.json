@@ -1,0 +1,21 @@
+{
+  "name": "openwhisper-meeting-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi agent sidecar for OpenWhisper Meeting Mode. Speaks NDJSON JSON-RPC 2.0 over stdio; registers exactly three meeting-state tools (patch_state, ask_question, resolve_question) that bridge back to the Python host.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-ai": "latest",
+    "typebox": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

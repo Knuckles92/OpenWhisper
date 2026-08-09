@@ -50,6 +50,15 @@ class SettingsKey:
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
+    # Meeting Mode
+    MEETING_WHISPER_MODEL: Final[str] = "meeting_whisper_model"
+    MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
+    MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
+    MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
+    MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
+    MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
+    MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
 
 
 class RecordingRetentionMode:
@@ -109,6 +118,22 @@ class TranscriptCleanupReasoning:
     HIGH: Final[str] = "high"
 
     ALL: Final[Tuple[str, ...]] = (OFF, LOW, MEDIUM, HIGH)
+
+
+class MeetingAgentCore:
+    """Values for ``SettingsKey.MEETING_AGENT_CORE``."""
+    PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
+    DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
+
+    ALL: Final[Tuple[str, ...]] = (PI, DIRECT)
+
+
+class MeetingServerBind:
+    """Values for ``SettingsKey.MEETING_SERVER_BIND``."""
+    LOCALHOST: Final[str] = "localhost"  # Dashboard reachable on this machine only
+    LAN: Final[str] = "lan"              # Explicitly shared on the local network
+
+    ALL: Final[Tuple[str, ...]] = (LOCALHOST, LAN)
 
 
 class HuggingFaceAccessPolicy:
@@ -590,6 +615,139 @@ def resolve_transcript_cleanup_rules(
         return []
     rules = [r.strip() for r in raw if isinstance(r, str) and r.strip()]
     return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
+
+
+def resolve_meeting_whisper_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated Whisper model used by Meeting Mode ASR.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``config.WHISPER_MODEL_CHOICES`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
+    if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
+        return model
+    return config.MEETING_WHISPER_MODEL
+
+
+def resolve_meeting_llm_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated LLM provider for meeting intelligence.
+
+    Reuses the transcript-cleanup provider vocabulary (``openai`` /
+    ``openrouter``) so API keys and base URLs resolve through the same
+    plumbing.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``TranscriptCleanupProvider`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    provider = settings.get(SettingsKey.MEETING_LLM_PROVIDER)
+    if provider in TranscriptCleanupProvider.ALL:
+        return provider
+    return config.MEETING_LLM_PROVIDER
+
+
+def resolve_meeting_llm_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the chat model id used for meeting intelligence.
+
+    Empty or missing values fall back to the config default.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Non-empty model id string.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    model = settings.get(SettingsKey.MEETING_LLM_MODEL)
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    return config.MEETING_LLM_MODEL
+
+
+def resolve_meeting_agent_core(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated meeting agent core kind.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``MeetingAgentCore`` value, falling back to the config default when
+        the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    core = settings.get(SettingsKey.MEETING_AGENT_CORE)
+    if core in MeetingAgentCore.ALL:
+        return core
+    return config.MEETING_AGENT_CORE
+
+
+def resolve_meeting_server_bind(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated dashboard server bind mode.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``MeetingServerBind`` value, falling back to the config default when
+        the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    bind = settings.get(SettingsKey.MEETING_SERVER_BIND)
+    if bind in MeetingServerBind.ALL:
+        return bind
+    return config.MEETING_SERVER_BIND
+
+
+def resolve_meeting_server_port(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return the validated dashboard server port.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        Port clamped to 0-65535 (0 requests an ephemeral port), falling back
+        to the config default on non-numeric values.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.MEETING_SERVER_PORT, config.MEETING_SERVER_PORT)
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        port = config.MEETING_SERVER_PORT
+    return max(0, min(65535, port))
 
 
 def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str:

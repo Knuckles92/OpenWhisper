@@ -1248,3 +1248,109 @@ QTextEdit#cleanupRuleEditor {
 QTextEdit#cleanupRuleEditor:focus {
     border: 1px solid #0a84ff;
 }
+
+/* ── Meeting Mode ─────────────────────────────────────────────── */
+
+QWidget#meetingPanel {
+    background-color: #1c1c1e;
+    border-top: 1px solid #2c2c2e;
+    min-height: 40px;
+}
+
+QLabel#meetingStatusPill {
+    background-color: #0a84ff;
+    color: #ffffff;
+    border-radius: 10px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 64px;
+}
+
+QLabel#meetingElapsedLabel {
+    color: #f5f5f7;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: "Segoe UI", "Helvetica Neue", monospace;
+    background-color: transparent;
+    padding: 0 4px;
+}
+
+QPushButton#meetingStartButton,
+QPushButton#meetingPauseButton,
+QPushButton#meetingDashboardButton,
+QPushButton#meetingGuestLinkButton {
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+
+QPushButton#meetingEndButton {
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+
+QCheckBox#meetingCloudCheckbox {
+    color: #8e8e93;
+    font-size: 12px;
+    spacing: 6px;
+    background-color: transparent;
+}
+
+QCheckBox#meetingCloudCheckbox:hover {
+    color: #f5f5f7;
+}
+
+QDialog#meetingConsentDialog,
+QDialog#meetingRecoveryDialog {
+    background-color: #1c1c1e;
+    color: #f5f5f7;
+}
+
+QLabel#consentBodyLabel {
+    color: #d1d1d6;
+    font-size: 13px;
+    background-color: transparent;
+    line-height: 1.4;
+}
+
+QFrame#meetingRecoveryRow {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 10px;
+}
+
+QLabel#meetingRecoveryRowLabel {
+    color: #f5f5f7;
+    font-size: 13px;
+    background-color: transparent;
+}
+
+QPushButton#meetingConsentNotNowButton,
+QPushButton#meetingConsentEnableButton,
+QPushButton#meetingRecoveryCloseButton,
+QPushButton#meetingRecoveryFinalizeButton,
+QPushButton#meetingRecoveryDiscardButton {
+    padding: 8px 16px;
+    font-size: 13px;
+}
+
+/* Meeting tab in Settings */
+QLabel#meetingModelsStatus {
+    color: #8e8e93;
+    font-size: 12px;
+}
+
+QLabel#meetingBindWarning {
+    background-color: #3a2a1c;
+    border: 1px solid #ff9f0a;
+    border-radius: 8px;
+    color: #ffd60a;
+    font-size: 12px;
+    padding: 10px 12px;
+}
+
+QPushButton#meetingModelsRefreshButton {
+    font-size: 13px;
+}

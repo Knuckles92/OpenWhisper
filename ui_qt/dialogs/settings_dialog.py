@@ -19,10 +19,19 @@ from PyQt6.QtGui import QFont
 from config import config
 from services.settings import (
     HuggingFaceAccessPolicy,
+    MeetingAgentCore,
+    MeetingServerBind,
     RecordingRetentionMode,
     SettingsKey,
+    TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
     resolve_max_saved_recordings,
+    resolve_meeting_agent_core,
+    resolve_meeting_llm_model,
+    resolve_meeting_llm_provider,
+    resolve_meeting_server_bind,
+    resolve_meeting_server_port,
+    resolve_meeting_whisper_model,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
@@ -36,7 +45,7 @@ from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.widgets import (
-    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button,
+    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button, SearchableComboBox,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +63,10 @@ class SettingsDialog(QDialog):
     #: Internal: emitted from the rule-dictation worker thread (text, error).
     _rule_dictation_finished = pyqtSignal(str, str)
 
+    #: Internal: emitted from the meeting model-catalog worker thread
+    #: (provider, model ids, error).
+    _meeting_models_loaded = pyqtSignal(str, list, str)
+
     def __init__(self, parent=None):
         """Initialize settings dialog."""
         super().__init__(parent)
@@ -65,8 +78,15 @@ class SettingsDialog(QDialog):
         self.on_settings_save: Optional[Callable] = None
         # Transcribes a short dictated clip; wired by UIController.
         self.on_dictation_transcribe: Optional[Callable[[str], str]] = None
+        # Reports whether Meeting Mode owns the mic; wired by UIController.
+        self.get_meeting_active: Optional[Callable[[], bool]] = None
         # Set by the Cleanup → Model Manager link; read after exec() returns.
         self.open_model_manager_on_close = False
+
+        # Meeting intelligence model catalog (provider -> model ids), fetched
+        # lazily when the Meeting tab is opened.
+        self._meeting_models_cache: dict = {}
+        self._meeting_models_loading: set = set()
 
         # Learned-rules worker state (AI polish + dictation)
         self._rule_polishing = False
@@ -86,6 +106,8 @@ class SettingsDialog(QDialog):
 
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
         self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
+        self._meeting_models_loaded.connect(self._on_meeting_models_loaded)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.finished.connect(self._release_rule_recorder)
 
     def _setup_ui(self):
@@ -105,6 +127,7 @@ class SettingsDialog(QDialog):
         self._create_audio_tab()
         self._create_hotkeys_tab()
         self._create_cleanup_tab()
+        self._create_meeting_tab()
         self._create_advanced_tab()
 
         layout.addWidget(self.tabs)
@@ -643,6 +666,190 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return scroll_area
 
+    def _create_meeting_tab(self):
+        """Create the Meeting Mode settings tab with scrollable content.
+
+        Covers the meeting-only ASR model, the intelligence provider/model and
+        agent core, and the dashboard's network exposure — the settings the
+        engine reads through ``resolve_meeting_*()``.
+        """
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("Meeting Mode")
+        title.setObjectName("headerLabel")
+        layout.addWidget(title)
+
+        # Transcription
+        layout.addSpacing(12)
+        asr_title = QLabel("Transcription")
+        asr_title.setObjectName("sectionLabel")
+        layout.addWidget(asr_title)
+
+        meeting_model_label = QLabel("Meeting transcription model:")
+        layout.addWidget(meeting_model_label)
+
+        self.meeting_model_combo = NoWheelComboBox()
+        self.meeting_model_combo.addItems(config.WHISPER_MODEL_CHOICES)
+        self.meeting_model_combo.setMinimumHeight(36)
+        layout.addWidget(self.meeting_model_combo)
+
+        meeting_model_info = QLabel(
+            "Meetings load their own Whisper instance, separate from the "
+            "dictation engine. \"auto\" picks turbo on a GPU and base on the "
+            "CPU; a large model alongside your dictation model can exhaust "
+            "GPU memory."
+        )
+        meeting_model_info.setObjectName("infoLabel")
+        meeting_model_info.setWordWrap(True)
+        layout.addWidget(meeting_model_info)
+
+        # Intelligence (provider + chat model + agent core)
+        layout.addSpacing(24)
+        intelligence_title = QLabel("Intelligence")
+        intelligence_title.setObjectName("sectionLabel")
+        layout.addWidget(intelligence_title)
+
+        meeting_provider_label = QLabel("Provider:")
+        layout.addWidget(meeting_provider_label)
+
+        self.meeting_provider_combo = NoWheelComboBox()
+        self.meeting_provider_combo.addItem(
+            "OpenAI", TranscriptCleanupProvider.OPENAI
+        )
+        self.meeting_provider_combo.addItem(
+            "OpenRouter", TranscriptCleanupProvider.OPENROUTER
+        )
+        self.meeting_provider_combo.setMinimumHeight(36)
+        self.meeting_provider_combo.currentIndexChanged.connect(
+            self._on_meeting_provider_changed
+        )
+        layout.addWidget(self.meeting_provider_combo)
+
+        meeting_llm_model_label = QLabel("Model:")
+        layout.addWidget(meeting_llm_model_label)
+
+        meeting_model_row = QHBoxLayout()
+        meeting_model_row.setSpacing(8)
+        self.meeting_llm_model_combo = SearchableComboBox()
+        self.meeting_llm_model_combo.setObjectName("meetingLlmModelCombo")
+        self.meeting_llm_model_combo.setMinimumHeight(36)
+        meeting_model_row.addWidget(self.meeting_llm_model_combo, stretch=1)
+
+        self.meeting_models_refresh_btn = Button("Refresh")
+        self.meeting_models_refresh_btn.setObjectName("meetingModelsRefreshButton")
+        self.meeting_models_refresh_btn.set_base_minimum_size(92, 36)
+        self.meeting_models_refresh_btn.setToolTip(
+            "Reload the provider's model list"
+        )
+        self.meeting_models_refresh_btn.clicked.connect(self._refresh_meeting_models)
+        meeting_model_row.addWidget(self.meeting_models_refresh_btn)
+        layout.addLayout(meeting_model_row)
+
+        self.meeting_models_status = QLabel("")
+        self.meeting_models_status.setObjectName("meetingModelsStatus")
+        self.meeting_models_status.setWordWrap(True)
+        layout.addWidget(self.meeting_models_status)
+
+        meeting_core_label = QLabel("Agent core:")
+        layout.addWidget(meeting_core_label)
+
+        self.meeting_agent_core_combo = NoWheelComboBox()
+        self.meeting_agent_core_combo.addItem(
+            "Pi (bundled sidecar)", MeetingAgentCore.PI
+        )
+        self.meeting_agent_core_combo.addItem(
+            "Direct (no sidecar)", MeetingAgentCore.DIRECT
+        )
+        self.meeting_agent_core_combo.setMinimumHeight(36)
+        layout.addWidget(self.meeting_agent_core_combo)
+
+        meeting_intelligence_info = QLabel(
+            "Meeting insights run on the selected chat model. Pi uses the "
+            "bundled Meeting Agent component and falls back to Direct when it "
+            "is not installed. OpenAI needs OPENAI_API_KEY; OpenRouter needs "
+            "OPENROUTER_API_KEY (environment or .env). Transcript text and "
+            "meeting state are sent to the provider — audio never leaves this "
+            "computer, and nothing is sent until you enable cloud "
+            "intelligence for a meeting."
+        )
+        meeting_intelligence_info.setObjectName("infoLabel")
+        meeting_intelligence_info.setWordWrap(True)
+        layout.addWidget(meeting_intelligence_info)
+
+        # Dashboard access (privacy control)
+        layout.addSpacing(24)
+        meeting_server_title = QLabel("Dashboard Access")
+        meeting_server_title.setObjectName("sectionLabel")
+        layout.addWidget(meeting_server_title)
+
+        meeting_bind_label = QLabel("Who can open the meeting dashboard:")
+        layout.addWidget(meeting_bind_label)
+
+        self.meeting_bind_combo = NoWheelComboBox()
+        self.meeting_bind_combo.setObjectName("meetingBindCombo")
+        self.meeting_bind_combo.addItem(
+            "Localhost only (this computer)", MeetingServerBind.LOCALHOST
+        )
+        self.meeting_bind_combo.addItem(
+            "Share on local network", MeetingServerBind.LAN
+        )
+        self.meeting_bind_combo.setMinimumHeight(36)
+        self.meeting_bind_combo.currentIndexChanged.connect(
+            self._update_meeting_bind_ui
+        )
+        layout.addWidget(self.meeting_bind_combo)
+
+        self.meeting_bind_warning = QLabel(
+            "Sharing on the local network serves the live meeting — running "
+            "transcript, notes, insights, and audio playback — over plain, "
+            "unencrypted HTTP. Anyone on your network who has (or guesses) "
+            "the link can read and edit the meeting."
+        )
+        self.meeting_bind_warning.setObjectName("meetingBindWarning")
+        self.meeting_bind_warning.setWordWrap(True)
+        layout.addWidget(self.meeting_bind_warning)
+
+        meeting_port_label = QLabel("Dashboard port:")
+        layout.addWidget(meeting_port_label)
+
+        meeting_port_row = QHBoxLayout()
+        meeting_port_row.setSpacing(8)
+        self.meeting_port_spinbox = NoWheelSpinBox()
+        self.meeting_port_spinbox.setMinimum(0)
+        self.meeting_port_spinbox.setMaximum(65535)
+        self.meeting_port_spinbox.setSpecialValueText("Automatic")
+        self.meeting_port_spinbox.setValue(config.MEETING_SERVER_PORT)
+        self.meeting_port_spinbox.setMinimumHeight(36)
+        meeting_port_row.addWidget(self.meeting_port_spinbox)
+        meeting_port_row.addStretch()
+        layout.addLayout(meeting_port_row)
+
+        meeting_port_info = QLabel(
+            "0 (Automatic) lets the meeting server pick a free port each "
+            "session. Pick a fixed port only if you need a stable link."
+        )
+        meeting_port_info.setObjectName("infoLabel")
+        meeting_port_info.setWordWrap(True)
+        layout.addWidget(meeting_port_info)
+
+        layout.addStretch()
+
+        scroll_area.setWidget(content)
+        tab_layout.addWidget(scroll_area)
+        self._meeting_tab_index = self.tabs.addTab(tab, "Meeting")
+
     def _create_advanced_tab(self):
         """Create advanced settings tab with scrollable content."""
         tab = QWidget()
@@ -958,6 +1165,13 @@ class SettingsDialog(QDialog):
         if self.on_dictation_transcribe is None:
             self.cleanup_rule_status.setText("Dictation is unavailable.")
             return
+        if self.get_meeting_active is not None and self.get_meeting_active():
+            # Exclusive mode: a meeting already owns the microphone and a
+            # Whisper instance, so a second capture stream would fight it.
+            self.cleanup_rule_status.setText(
+                "Meeting Mode is active — end the meeting to dictate a rule."
+            )
+            return
 
         # Own a private recorder writing to a temp file so dictation never
         # touches the main flow's recording, even if a hotkey recording is
@@ -1048,6 +1262,126 @@ class SettingsDialog(QDialog):
             self._rule_recorder.cleanup()
             self._rule_recorder = None
 
+    # ── Meeting Mode ───────────────────────────────────────────────
+
+    def _on_tab_changed(self, index: int):
+        """Load the meeting model catalog the first time its tab is shown."""
+        if index == getattr(self, "_meeting_tab_index", -1):
+            self._fetch_meeting_models(self.meeting_provider_combo.currentData())
+
+    def _on_meeting_provider_changed(self):
+        """Load the newly selected provider's catalog into the same picker."""
+        self.meeting_llm_model_combo.clear()
+        self._fetch_meeting_models(self.meeting_provider_combo.currentData())
+
+    def _refresh_meeting_models(self):
+        """Reload the current provider's catalog, bypassing the cache."""
+        self._fetch_meeting_models(
+            self.meeting_provider_combo.currentData(), force=True
+        )
+
+    def _fetch_meeting_models(self, provider: str, force: bool = False):
+        """Load one provider's chat-model catalog on a worker thread.
+
+        Uses the same ``list_cleanup_models`` fetcher as the cleanup model
+        picker, so provider base URLs and API-key lookup stay in one place.
+
+        Args:
+            provider: A ``TranscriptCleanupProvider`` value.
+            force: Bypass the in-dialog cache when true.
+        """
+        if not provider:
+            return
+        if not force and provider in self._meeting_models_cache:
+            self._apply_meeting_models(self._meeting_models_cache[provider])
+            return
+        if provider in self._meeting_models_loading:
+            return
+
+        self._meeting_models_loading.add(provider)
+        self.meeting_models_status.setText("Loading models…")
+
+        def worker():
+            try:
+                from services.transcript_cleanup import list_cleanup_models
+
+                models = list_cleanup_models(provider)
+                error = ""
+            except Exception as exc:
+                models = []
+                error = str(exc)
+            try:
+                self._meeting_models_loaded.emit(provider, models, error)
+            except RuntimeError:
+                pass  # Dialog was closed before the catalog finished.
+
+        threading.Thread(
+            target=worker, name=f"meeting-models-{provider}", daemon=True
+        ).start()
+
+    def _on_meeting_models_loaded(self, provider: str, models: list, error: str):
+        """Apply a finished catalog fetch on the main thread."""
+        self._meeting_models_loading.discard(provider)
+        if not error:
+            self._meeting_models_cache[provider] = list(models)
+        if provider != self.meeting_provider_combo.currentData():
+            return
+        if error:
+            self.meeting_models_status.setText(
+                f"Couldn't load models: {error}. Type a model id instead."
+            )
+            return
+        self._apply_meeting_models(models)
+
+    def _apply_meeting_models(self, models: list):
+        """Fill the model picker, keeping any model id already selected."""
+        current = self.meeting_llm_model_combo.currentText().strip()
+        self.meeting_llm_model_combo.clear()
+        self.meeting_llm_model_combo.addItems(list(models))
+        if current:
+            self.meeting_llm_model_combo.setCurrentText(current)
+        self.meeting_models_status.setText(f"{len(models)} models available")
+
+    def _update_meeting_bind_ui(self):
+        """Show the LAN exposure warning only when sharing is selected."""
+        is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
+        self.meeting_bind_warning.setVisible(is_lan)
+
+    def _load_meeting_settings(self, settings: dict):
+        """Apply the stored Meeting Mode settings to their controls.
+
+        Args:
+            settings: Loaded settings dict; an empty dict yields the defaults.
+        """
+        model_index = self.meeting_model_combo.findText(
+            resolve_meeting_whisper_model(settings)
+        )
+        self.meeting_model_combo.setCurrentIndex(max(0, model_index))
+
+        provider_index = self.meeting_provider_combo.findData(
+            resolve_meeting_llm_provider(settings)
+        )
+        # Signals blocked: the catalog is fetched lazily when the tab opens,
+        # never while the dialog is still being populated.
+        self.meeting_provider_combo.blockSignals(True)
+        self.meeting_provider_combo.setCurrentIndex(max(0, provider_index))
+        self.meeting_provider_combo.blockSignals(False)
+        self.meeting_llm_model_combo.setCurrentText(
+            resolve_meeting_llm_model(settings)
+        )
+
+        core_index = self.meeting_agent_core_combo.findData(
+            resolve_meeting_agent_core(settings)
+        )
+        self.meeting_agent_core_combo.setCurrentIndex(max(0, core_index))
+
+        bind_index = self.meeting_bind_combo.findData(
+            resolve_meeting_server_bind(settings)
+        )
+        self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
+        self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
+        self._update_meeting_bind_ui()
+
     def _populate_audio_devices(self):
         """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
@@ -1128,6 +1462,8 @@ class SettingsDialog(QDialog):
             )
             self._update_streaming_font_ui()
 
+            self._load_meeting_settings(settings)
+
             # Typed load performs legacy hf_hub_offline migration
             policy = settings_manager.load_hf_access_policy()
             policy_index = self.hf_policy_combo.findData(policy)
@@ -1166,6 +1502,7 @@ class SettingsDialog(QDialog):
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
             self._update_streaming_font_ui()
+            self._load_meeting_settings({})
             self.hf_policy_combo.setCurrentIndex(
                 max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
             )
@@ -1233,6 +1570,29 @@ class SettingsDialog(QDialog):
                 self.recording_retention_combo.currentData()
             )
             settings[SettingsKey.MAX_SAVED_RECORDINGS] = self.max_recordings_spinbox.value()
+
+            # Meeting Mode. An empty model id is dropped so the resolver falls
+            # back to the configured default instead of storing a blank.
+            settings[SettingsKey.MEETING_WHISPER_MODEL] = (
+                self.meeting_model_combo.currentText()
+            )
+            settings[SettingsKey.MEETING_LLM_PROVIDER] = (
+                self.meeting_provider_combo.currentData()
+            )
+            meeting_llm_model = self.meeting_llm_model_combo.currentText().strip()
+            if meeting_llm_model:
+                settings[SettingsKey.MEETING_LLM_MODEL] = meeting_llm_model
+            else:
+                settings.pop(SettingsKey.MEETING_LLM_MODEL, None)
+            settings[SettingsKey.MEETING_AGENT_CORE] = (
+                self.meeting_agent_core_combo.currentData()
+            )
+            settings[SettingsKey.MEETING_SERVER_BIND] = (
+                self.meeting_bind_combo.currentData()
+            )
+            settings[SettingsKey.MEETING_SERVER_PORT] = (
+                self.meeting_port_spinbox.value()
+            )
 
             # Save audio input device (None for system default)
             if new_audio_device is None:

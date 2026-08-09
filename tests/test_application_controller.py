@@ -347,9 +347,10 @@ class DummyMainWindow:
         self.partial_updates = []
         self.tabbed_content = DummyTabbedContent()
         self.tray_visibility_toggles = 0
+        self.recording_state_updates = []
 
     def _update_recording_state(self):
-        pass
+        self.recording_state_updates.append(self.is_recording)
 
     def set_partial_transcription(self, text, is_final):
         self.partial_updates.append((text, is_final))
@@ -392,10 +393,54 @@ class DummyUIController:
         self.component_progress_events = []
         self.component_state_changes = 0
         self.component_install_results = []
+        self.meeting_states = []
+        self.meeting_statuses = []
+        self.meeting_errors = []
+        self.meeting_servers = []
+        self.meeting_guest_links = []
+        self.meeting_consent_requests = 0
+        self.meeting_consent_result = False
+        self.meeting_recovery_requests = []
+        self.on_record_start = None
+
+    def start_recording(self):
+        """Mirror UIController.start_recording, including refusal rollback."""
+        self.is_recording = True
+        if not self.main_window.is_recording:
+            self.main_window.is_recording = True
+            self.main_window._update_recording_state()
+        if self.on_record_start and self.on_record_start() is False:
+            self.is_recording = False
+            self.main_window.is_recording = False
+            self.main_window._update_recording_state()
+            return False
+        return True
 
     def show_hf_consent_dialog(self, model_name, policy, env_blocked=False):
         self.consent_requests.append((model_name, policy, env_blocked))
         return self.consent_result
+
+    def on_meeting_state_changed(self, payload):
+        self.meeting_states.append(payload)
+
+    def set_meeting_status(self, status):
+        self.meeting_statuses.append(status)
+
+    def on_meeting_error(self, message):
+        self.meeting_errors.append(message)
+
+    def on_meeting_server_started(self, payload):
+        self.meeting_servers.append(payload)
+
+    def copy_meeting_guest_link(self, url):
+        self.meeting_guest_links.append(url)
+
+    def show_meeting_consent_dialog(self):
+        self.meeting_consent_requests += 1
+        return self.meeting_consent_result
+
+    def show_meeting_recovery_dialog(self, meetings, on_finalize, on_discard):
+        self.meeting_recovery_requests.append(meetings)
 
     def refresh_local_engine_controls(self):
         self.engine_controls_refreshes += 1
@@ -937,6 +982,129 @@ class TestApplicationController(unittest.TestCase):
         controller.current_backend = _BusyBackend()
         with self.assertRaises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
+
+    # ── Meeting Mode exclusivity ───────────────────────────────────
+
+    _MEETING_REFUSAL = "Meeting Mode is active — end the meeting to use dictation"
+
+    def test_dictation_start_is_refused_and_rolled_back_during_a_meeting(self):
+        """A refused start must not leave the UI in a fake recording state."""
+        controller = self._create_controller()
+        ui = controller.ui_controller
+        controller.meeting_active = True
+
+        self.assertFalse(ui.start_recording())
+
+        self.assertFalse(controller.recorder.is_recording)
+        self.assertFalse(ui.is_recording)
+        self.assertFalse(ui.main_window.is_recording)
+        # Flipped to recording, then reverted once the refusal came back.
+        self.assertEqual(ui.main_window.recording_state_updates, [True, False])
+        self.assertIn(self._MEETING_REFUSAL, ui.statuses)
+
+    def test_recording_starts_normally_without_a_meeting(self):
+        controller = self._create_controller()
+        ui = controller.ui_controller
+
+        self.assertTrue(ui.start_recording())
+
+        self.assertTrue(controller.recorder.is_recording)
+        self.assertTrue(ui.main_window.is_recording)
+
+    def test_toggle_recording_is_refused_during_a_meeting(self):
+        controller = self._create_controller()
+        controller.meeting_active = True
+
+        self.assertFalse(controller.toggle_recording())
+
+        self.assertFalse(controller.recorder.is_recording)
+        self.assertIn(self._MEETING_REFUSAL, controller.ui_controller.statuses)
+
+    def test_transcribe_clip_is_refused_during_a_meeting(self):
+        """Settings-dialog rule dictation must not run beside a meeting."""
+        controller = self._create_controller()
+        controller.meeting_active = True
+
+        class _Backend:
+            def transcribe(self, _path):
+                return "should not run"
+
+        controller.current_backend = _Backend()
+        with self.assertRaises(RuntimeError):
+            controller.transcribe_clip("dictation.wav")
+
+    def test_second_meeting_start_is_refused_while_one_is_running(self):
+        """Exclusive mode, not engine state, guards against a second engine."""
+        controller = self._create_controller()
+        runtime = controller.meeting_runtime
+        launched = []
+        runtime._launch = lambda cloud: launched.append(cloud)
+        controller.meeting_active = True
+
+        runtime.start_meeting(cloud_enabled=False)
+
+        self.assertEqual(launched, [])
+        self.assertIn(
+            "A meeting is already in progress",
+            controller.ui_controller.meeting_statuses,
+        )
+
+    def test_declined_cloud_consent_resyncs_the_toggle(self):
+        """Declining consent from the toggle must put the checkbox back."""
+        controller = self._create_controller()
+        controller.ui_controller.meeting_consent_result = False
+
+        controller.meeting_runtime.toggle_cloud(True)
+
+        self.assertEqual(controller.ui_controller.meeting_consent_requests, 1)
+        self.assertIn(
+            {"cloud_enabled": False}, controller.ui_controller.meeting_states
+        )
+        self.assertIn(
+            "Cloud intelligence stays off",
+            controller.ui_controller.meeting_statuses,
+        )
+
+    def test_meeting_cleanup_gives_up_on_a_hanging_engine_shutdown(self):
+        """App exit must not wait minutes for the engine to drain."""
+        import threading
+
+        controller = self._create_controller()
+        runtime = controller.meeting_runtime
+        runtime_module = sys.modules[type(runtime).__module__]
+        blocked = threading.Event()
+
+        class _HangingEngine:
+            def shutdown(self):
+                blocked.wait(30)
+
+        runtime._engine = _HangingEngine()
+        controller.meeting_active = True
+
+        try:
+            with patch.object(runtime_module, "SHUTDOWN_JOIN_TIMEOUT_S", 0.05):
+                started = time.monotonic()
+                runtime.cleanup()
+                elapsed = time.monotonic() - started
+        finally:
+            blocked.set()
+
+        self.assertLess(elapsed, 5.0)
+        self.assertFalse(controller.meeting_active)
+        self.assertIsNone(runtime._engine)
+
+    def test_dashboard_urls_are_redacted_before_logging(self):
+        controller = self._create_controller()
+        redact = sys.modules[
+            type(controller.meeting_runtime).__module__
+        ].redact_meeting_url
+
+        self.assertEqual(
+            redact("http://127.0.0.1:8123/m/secret-host-token"),
+            "http://127.0.0.1:8123/<redacted>",
+        )
+        self.assertEqual(redact(""), "")
+        self.assertEqual(redact("not-a-url"), "<redacted>")
 
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()

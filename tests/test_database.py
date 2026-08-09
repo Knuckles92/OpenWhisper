@@ -71,7 +71,7 @@ class TestDatabaseManager:
         assert entry is None
 
     def test_migration_removes_meeting_tables(self, tmp_path):
-        """Verify schema v7 drops all meeting-mode tables."""
+        """Legacy meeting tables stay dropped; schema reaches current version."""
         db_path = str(tmp_path / "legacy.db")
 
         import sqlite3
@@ -125,7 +125,7 @@ class TestDatabaseManager:
         finally:
             conn.close()
 
-        from services.database import DatabaseManager
+        from services.database import SCHEMA_VERSION, DatabaseManager
 
         manager = DatabaseManager(db_path=db_path)
         try:
@@ -140,10 +140,13 @@ class TestDatabaseManager:
                     "SELECT version FROM schema_version"
                 ).scalar_one()
 
+            # Legacy names must remain absent (startup drop + never recreated).
             assert "meeting_insights" not in tables
             assert "meeting_chunks" not in tables
             assert "meetings" not in tables
-            assert version == 9
+            # Fresh Meeting Mode tables use different names.
+            assert "meeting_sessions" in tables
+            assert version == SCHEMA_VERSION
         finally:
             manager.close()
 
@@ -211,7 +214,7 @@ class TestDatabaseManager:
             assert "raw_text" in columns
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 9
+            assert version == SCHEMA_VERSION == 10
         finally:
             manager.close()
 
@@ -281,7 +284,7 @@ class TestDatabaseManager:
 
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 9
+            assert version == SCHEMA_VERSION == 10
         finally:
             manager.close()
 
