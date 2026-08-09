@@ -274,7 +274,8 @@ class SpoolWriter:
                  clock: MeetingClock, repository,
                  on_chunk: Callable[[SpooledChunk], None],
                  target_sec: float = 20.0, max_sec: float = 32.0,
-                 queue_size: int = QUEUE_MAX_BLOCKS) -> None:
+                 queue_size: int = QUEUE_MAX_BLOCKS,
+                 initial_seq: int = 0) -> None:
         """Args:
             meeting_id: Owning meeting session id.
             channel: ``mic`` or ``loopback``.
@@ -289,6 +290,8 @@ class SpoolWriter:
             max_sec: Hard maximum chunk duration.
             queue_size: Capture blocks buffered between the audio thread and
                 the writer thread before blocks are dropped.
+            initial_seq: First per-channel sequence number, used after a
+                watchdog restart so files and database keys never collide.
         """
         self._meeting_id = meeting_id
         self._channel = channel
@@ -313,7 +316,7 @@ class SpoolWriter:
         self._consumed = 0         # native samples already cut into chunks
         self._origin_s = 0.0       # meeting time of the stream's first sample
         self._scanner: Optional[_CutScanner] = None
-        self._seq = 0
+        self._seq = max(0, int(initial_seq))
         self._gap_logs = 0
         self._final_chunk: Optional[SpooledChunk] = None
 

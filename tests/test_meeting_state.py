@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
+from meeting.state.patches import AGENT_OPS
 
 
 class FakeRepository:
@@ -27,18 +28,34 @@ class FakeRepository:
     def on_ops_applied(self, meeting_id, state, results, actor_type, actor_id):
         self.ops_applied_calls.append((actor_type, actor_id, list(results)))
         for r in results:
+            undo_seq = r.op.get("_undo_event_seq")
+            action = r.op.get("op")
+            if actor_type == "system" and isinstance(undo_seq, int):
+                action = f"undo:{undo_seq}"
             self.events[r.seq] = {
                 "seq": r.seq,
                 "actor_type": actor_type,
                 "actor_id": actor_id,
-                "action": r.op.get("op"),
+                "action": action,
                 "target_id": r.target_id,
                 "payload": r.op,
                 "inverse": r.inverse,
             }
+            effect = r.effect or {}
+            if effect.get("entity") == "segment_speaker":
+                seg = self.segments[effect["segment_id"]]
+                seg["speaker_participant_id"] = effect.get("participant_id")
+                seg["speaker_source"] = effect.get("source")
+                seg["speaker_pinned"] = bool(effect.get("pinned"))
 
     def get_event(self, meeting_id, seq):
         return self.events.get(seq)
+
+    def event_is_undone(self, meeting_id, seq):
+        return any(
+            event.get("action") == f"undo:{seq}"
+            for event in self.events.values()
+        )
 
     def segment_exists(self, segment_id):
         return segment_id in self.segments
@@ -53,6 +70,13 @@ class FakeRepository:
         seg["speaker_pinned"] = pinned
 
 
+class FailingRepository(FakeRepository):
+    """Repository that proves failed durability never leaks live state."""
+
+    def on_ops_applied(self, *args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+
 def make_store():
     repo = FakeRepository()
 
@@ -61,18 +85,27 @@ def make_store():
         prior = repo.get_segment(effect["segment_id"])
         if prior is None:
             raise ValueError("unknown segment")
-        # Capture before mutating: the fake's get_segment aliases live state
-        # (the real repository returns fresh dicts).
         prior_pid = prior["speaker_participant_id"]
-        repo.update_segment_speaker(
-            effect["segment_id"], effect["participant_id"],
-            effect["source"], effect["pinned"])
         return {"op": "reassign_segment_speaker",
                 "segment_id": effect["segment_id"],
                 "participant_id": prior_pid}
 
     state = MeetingState(meeting_id="m_test")
-    store = MeetingStateStore(
+    class LegacyFixtureStore(MeetingStateStore):
+        """Add valid anchors to older tests that predate evidence enforcement."""
+
+        def apply(self, actor_type, actor_id, ops):
+            if actor_type == "agent":
+                ops = [
+                    ({**op, "evidence": ["sg_known"]}
+                     if isinstance(op, dict)
+                     and op.get("op") in AGENT_OPS
+                     and "evidence" not in op else op)
+                    for op in ops
+                ]
+            return super().apply(actor_type, actor_id, ops)
+
+    store = LegacyFixtureStore(
         state, repository=repo,
         segment_handler=segment_handler,
         segment_exists=repo.segment_exists,
@@ -194,6 +227,41 @@ class TestItemOps:
 
 
 class TestAgentBoundaries:
+    def test_agent_claim_requires_evidence(self):
+        repo = FakeRepository()
+        store = MeetingStateStore(
+            MeetingState(meeting_id="m_test"),
+            repository=repo,
+            segment_exists=repo.segment_exists,
+        )
+        [result] = store.apply("agent", "agent", [{
+            "op": "add_item", "card": "decisions", "text": "Unsupported",
+        }])
+        assert result.ok is False
+        assert result.reason == "missing_evidence"
+
+    def test_persistence_failure_rejects_without_state_or_notification(self):
+        repo = FailingRepository()
+        store = MeetingStateStore(
+            MeetingState(meeting_id="m_test"),
+            repository=repo,
+            segment_exists=repo.segment_exists,
+        )
+        notifications = []
+        store.subscribe(lambda seq, applied: notifications.append((seq, applied)))
+
+        [result] = store.apply("agent", "agent", [{
+            "op": "add_item", "card": "decisions", "text": "Ship",
+            "evidence": ["sg_known"],
+        }])
+
+        assert result.ok is False
+        assert result.reason == "persistence_error"
+        assert result.seq is None
+        assert store.seq == 0
+        assert store.snapshot()["cards"]["decisions"] == []
+        assert notifications == []
+
     def test_agent_cannot_use_human_ops(self):
         store, _ = make_store()
         for op in (
@@ -555,6 +623,10 @@ class TestStoreMechanics:
         assert item["text"] == "Original"
         # Undo restored the pre-edit status too (proposed)
         assert item["status"] == "proposed"
+
+        # The same activity row cannot be applied twice; undo the generated
+        # undo event to redo instead.
+        assert store.undo(edited.seq, "p_host") == []
 
     def test_undo_of_add_removes_item(self):
         store, repo = make_store()

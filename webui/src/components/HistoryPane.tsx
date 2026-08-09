@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { CARD_KEYS } from '../types';
 import type { ExportFormat, MeetingRow, MeetingStateDoc, SearchRow } from '../types';
+import type { Segment } from '../types';
+import TranscriptPane from './TranscriptPane';
+import EvidenceChip from './EvidenceChip';
 
 interface HistoryPaneProps {
   token: string;
@@ -17,6 +20,8 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
   const [error, setError] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [detail, setDetail] = useState<MeetingStateDoc | null>(null);
+  const [detailSegments, setDetailSegments] = useState<Segment[]>([]);
+  const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [rerunNote, setRerunNote] = useState<string | null>(null);
@@ -40,14 +45,27 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
 
   useEffect(() => {
     setDetail(null);
+    setDetailSegments([]);
     setDetailError(null);
     setRerunNote(null);
     if (!selectedId) return;
     let cancelled = false;
     api
       .meeting(token, selectedId)
-      .then((res) => {
-        if (!cancelled) setDetail(res.state);
+      .then(async (res) => {
+        if (cancelled) return;
+        setDetail(res.state);
+        let segments = res.segments;
+        setDetailSegments(segments);
+        let cursor = res.transcript_next_cursor ?? undefined;
+        while (cursor && !cancelled) {
+          const page = await api.meetingTranscriptPage(token, selectedId, cursor);
+          const byId = new Map(segments.map((segment) => [segment.id, segment]));
+          for (const segment of page.items) byId.set(segment.id, segment);
+          segments = [...byId.values()].sort((a, b) => a.start_s - b.start_s);
+          setDetailSegments(segments);
+          cursor = page.next_cursor ?? undefined;
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -71,6 +89,17 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
     }
+  };
+
+  const selectSearchResult = (row: SearchRow) => {
+    const meetingId = String(row.meeting_id ?? '');
+    const segmentId = String(row.segment_id ?? '');
+    if (!meetingId) return;
+    setSelectedId(meetingId);
+    setHighlightSegmentId(segmentId || null);
+    window.setTimeout(() => {
+      document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 250);
   };
 
   const selected = meetings.find((m) => m.id === selectedId);
@@ -170,13 +199,13 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
           <div className="search-results">
             <h3 className="card-section-title">Search results</h3>
             {searchResults.map((row, i) => (
-              <div key={i} className="search-hit">
+              <button key={i} type="button" className="search-hit" onClick={() => selectSearchResult(row)}>
                 {Object.entries(row).map(([k, v]) => (
                   <div key={k}>
                     <strong>{k}:</strong> {String(v)}
                   </div>
                 ))}
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -263,7 +292,19 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
                   ) : detail.topic?.current || detail.rolling_summary || cardCounts.length ? (
                     <>
                       {detail.topic?.current && (
-                        <p style={{ margin: '0 0 6px' }}>{detail.topic.current}</p>
+                        <>
+                          <p style={{ margin: '0 0 6px' }}>{detail.topic.current}</p>
+                          <div className="evidence-row">
+                            {(detail.topic.history[detail.topic.history.length - 1]?.evidence ?? [])
+                              .map((segmentId) => (
+                                <EvidenceChip
+                                  key={segmentId}
+                                  segmentId={segmentId}
+                                  onClick={setHighlightSegmentId}
+                                />
+                              ))}
+                          </div>
+                        </>
                       )}
                       {detail.rolling_summary && (
                         <p
@@ -277,6 +318,15 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
                           {detail.rolling_summary}
                         </p>
                       )}
+                      <div className="evidence-row">
+                        {(detail.rolling_summary_evidence ?? []).map((segmentId) => (
+                          <EvidenceChip
+                            key={segmentId}
+                            segmentId={segmentId}
+                            onClick={setHighlightSegmentId}
+                          />
+                        ))}
+                      </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {cardCounts.map(({ key, count }) => (
                           <span key={key} className="participant-kind">
@@ -284,6 +334,55 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
                           </span>
                         ))}
                       </div>
+                      {CARD_KEYS.map((key) => (
+                        <div key={key} style={{ marginTop: 12 }}>
+                          {(detail.cards?.[key] ?? [])
+                            .filter((item) => item.status !== 'removed')
+                            .map((item) => (
+                              <article className="card-item" key={item.id}>
+                                <strong>{key.replace(/_/g, ' ')}</strong>
+                                <p>{item.text}</p>
+                                <div className="evidence-row">
+                                  {item.evidence.map((segmentId) => (
+                                    <EvidenceChip
+                                      key={segmentId}
+                                      segmentId={segmentId}
+                                      onClick={(id) => {
+                                        setHighlightSegmentId(id);
+                                        requestAnimationFrame(() => {
+                                          document.getElementById(`seg-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        });
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              </article>
+                            ))}
+                        </div>
+                      ))}
+                      {detail.questions.length > 0 && (
+                        <div style={{ marginTop: 12 }}>
+                          <strong>questions</strong>
+                          {detail.questions.map((question) => (
+                            <article className="question-item" key={question.id}>
+                              <p className="question-text">{question.text}</p>
+                              <span className="participant-kind">{question.status}</span>
+                              {(question.answer || question.suggested_answer) && (
+                                <p>{question.answer || question.suggested_answer}</p>
+                              )}
+                              <div className="evidence-row">
+                                {question.evidence.map((segmentId) => (
+                                  <EvidenceChip
+                                    key={segmentId}
+                                    segmentId={segmentId}
+                                    onClick={setHighlightSegmentId}
+                                  />
+                                ))}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
                     </>
                   ) : (
                     <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
@@ -291,6 +390,22 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
                     </p>
                   )}
                 </div>
+
+                <section className="panel" style={{ marginTop: 16 }}>
+                  <div className="panel-header"><span>Recording</span></div>
+                  <div className="panel-body">
+                    <audio controls preload="metadata" src={api.audioUrl(token, selected.id)} />
+                  </div>
+                </section>
+
+                <TranscriptPane
+                  segments={detailSegments}
+                  participants={detail ? Object.values(detail.participants) : []}
+                  highlightSegmentId={highlightSegmentId}
+                  onHighlightClear={() => setHighlightSegmentId(null)}
+                  onReassignSpeaker={() => undefined}
+                  readOnly
+                />
 
                 <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
                   ID: {selected.id}

@@ -123,6 +123,8 @@ def _reject(op: Dict[str, Any], reason: str, **extra) -> OpResult:
 def _check_evidence(op: Dict[str, Any], ctx: OpContext) -> Optional[str]:
     """Validate the op's evidence list; returns a rejection reason or None."""
     evidence = op.get("evidence") or []
+    if ctx.is_agent and not evidence:
+        return "missing_evidence"
     if not isinstance(evidence, list) or len(evidence) > MAX_EVIDENCE_REFS:
         return "invalid_evidence"
     if ctx.segment_exists is not None:
@@ -219,7 +221,9 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
         reason = _check_data_size(changes["data"])
         if reason:
             return _reject(op, reason, target_id=item.id)
-    reason = _check_evidence(op, ctx)
+    reason = _check_evidence(op, ctx) if (
+        op.get("evidence") or (ctx.is_agent and not item.evidence)
+    ) else None
     if reason:
         return _reject(op, reason, target_id=item.id)
 
@@ -345,12 +349,19 @@ def _op_set_rolling_summary(state: MeetingState, op: Dict[str, Any],
         # A blank summary silently wipes human-visible content. Only the undo
         # path (a system actor restoring a prior empty value) may clear it.
         return _reject(op, "invalid_text")
+    reason = _check_evidence(op, ctx)
+    if reason:
+        return _reject(op, reason)
     prev = state.rolling_summary
+    prev_evidence = list(state.rolling_summary_evidence)
     state.rolling_summary = text
+    state.rolling_summary_evidence = list(op.get("evidence") or [])
     return OpResult(
         ok=True, op=op,
-        effect={"entity": "rolling_summary", "text": text},
-        inverse={"op": "set_rolling_summary", "text": prev},
+        effect={"entity": "rolling_summary", "text": text,
+                "evidence": list(state.rolling_summary_evidence)},
+        inverse={"op": "set_rolling_summary", "text": prev,
+                 "evidence": prev_evidence},
     )
 
 
@@ -661,8 +672,16 @@ def _op_reassign_segment_speaker(state: MeetingState, op: Dict[str, Any],
         ok=True, op=op, target_id=segment_id,
         effect={"entity": "segment_speaker", "segment_id": segment_id,
                 "participant_id": participant_id,
-                "source": "human" if ctx.is_human else "diarizer",
-                "pinned": ctx.is_human},
+                "source": (
+                    op.get("_source", "diarizer")
+                    if ctx.actor_type == "system"
+                    else ("human" if ctx.is_human else "diarizer")
+                ),
+                "pinned": (
+                    bool(op.get("_pinned"))
+                    if ctx.actor_type == "system"
+                    else ctx.is_human
+                )},
         inverse=None,  # inverse filled in by the store, which knows prior state
     )
 
@@ -723,6 +742,11 @@ def apply_ops(state: MeetingState, ops: List[Dict[str, Any]],
         if ctx.is_agent and name not in AGENT_OPS:
             results.append(_reject(op, "agent_forbidden"))
             continue
+        if ctx.is_agent:
+            evidence_reason = _check_evidence(op, ctx)
+            if evidence_reason:
+                results.append(_reject(op, evidence_reason))
+                continue
         if name in AGENT_ONLY_OPS and ctx.actor_type not in ("agent", "system"):
             results.append(_reject(op, "agent_only"))
             continue

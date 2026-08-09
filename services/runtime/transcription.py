@@ -68,6 +68,11 @@ class TranscriptionRuntime:
 
     def start_recording(self) -> None:
         """Start audio recording."""
+        if self.controller.is_meeting_active():
+            self.controller.status_update.emit(
+                "Meeting Mode is active — end the meeting to use dictation"
+            )
+            return
         if self.controller.recorder.start_recording():
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
@@ -187,6 +192,11 @@ class TranscriptionRuntime:
         Args:
             audio_path: Path to the saved recording.
         """
+        if self.controller.is_meeting_active():
+            self.controller.status_update.emit(
+                "Meeting Mode is active — end it before retranscribing"
+            )
+            return
         if not os.path.exists(audio_path):
             logger.error(
                 f"Audio file not found for re-transcription: {audio_path}"
@@ -210,6 +220,11 @@ class TranscriptionRuntime:
 
     def upload_audio_file(self, audio_path: str) -> None:
         """Transcribe an uploaded audio file."""
+        if self.controller.is_meeting_active():
+            self.controller.status_update.emit(
+                "Meeting Mode is active — end it before uploading audio"
+            )
+            return
         if not os.path.exists(audio_path):
             logger.error(f"Uploaded audio file not found: {audio_path}")
             self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -443,6 +458,11 @@ class TranscriptionRuntime:
 
     def on_model_changed(self, model_name: str) -> None:
         """Handle model selection change."""
+        if self.controller.is_meeting_active():
+            self.controller.status_update.emit(
+                "End the meeting before changing transcription models"
+            )
+            return
         model_value = config.MODEL_VALUE_MAP.get(model_name)
         if model_value and model_value in self.controller.transcription_backends:
             self.controller.current_backend = self.controller.transcription_backends[

@@ -10,6 +10,7 @@ touches an audio device, a Whisper model, a socket, or the network.
 import os
 import sys
 import threading
+import time
 import types
 
 import numpy as np
@@ -29,6 +30,7 @@ class FakeSource:
 
     def __init__(self, channel, index=0, samplerate=16000, channels=1):
         self.channel = channel
+        self.device_id = index
         self.started = False
         self.stopped = False
         self.callback = None
@@ -48,7 +50,7 @@ class FakeSpool:
     """Spool writer that swallows blocks and never produces chunks."""
 
     def __init__(self, meeting_id, channel, spool_dir, clock, repository,
-                 on_chunk=None):
+                 on_chunk=None, initial_seq=0):
         self.channel = channel
         self.on_chunk = on_chunk
         self.flushes = 0
@@ -496,7 +498,7 @@ class TestEndLifecycle:
         assert ended, "a failed end must still emit 'ended' so the app unwinds"
         assert ended[-1]["meeting_id"] == meeting_id
         assert engine.is_active() is False
-        assert repo.get_meeting(meeting_id)["status"] == "failed"
+        assert repo.get_meeting(meeting_id)["status"] == "needs_recovery"
 
     def test_normal_end_emits_ended_and_marks_the_meeting(
             self, make_engine, repo, fakes):
@@ -565,20 +567,59 @@ class TestEndLifecycle:
 
 
 # ---------------------------------------------------------------------------
+# Capture recovery
+# ---------------------------------------------------------------------------
+
+class TestCaptureRecovery:
+    def test_default_loopback_change_restarts_only_that_channel(
+            self, make_engine, fakes, monkeypatch):
+        import meeting.engine as engine_module
+
+        loopback_index = [2]
+        fakes.modules["meeting.capture.devices"].find_loopback_device = lambda: {
+            "index": loopback_index[0], "samplerate": 16000, "channels": 2,
+        }
+        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(engine_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        original_mic = engine._capture_source("mic")
+        original_loopback = engine._capture_source("loopback")
+
+        loopback_index[0] = 9
+        deadline = time.monotonic() + 2.0
+        while (engine._capture_source("loopback") is original_loopback
+               and time.monotonic() < deadline):
+            time.sleep(0.01)
+
+        replacement = engine._capture_source("loopback")
+        assert replacement is not original_loopback
+        assert replacement.device_id == 9
+        assert original_loopback.stopped is True
+        assert engine._capture_source("mic") is original_mic
+        assert original_mic.is_active() is True
+        capture = engine.store.snapshot()["capture"]
+        assert capture["mic_available"] is True
+        assert capture["loopback_available"] is True
+        assert capture["message"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Diarization degradation
 # ---------------------------------------------------------------------------
 
 class TestDiarizationDegradation:
     def _prime(self, engine, repo):
         """Register a chunk the loopback segments can be sliced out of."""
+        seq = repo.next_chunk_seq(engine.meeting_id, "loopback")
         chunk_id = repo.register_chunk(
-            meeting_id=engine.meeting_id, channel="loopback", seq=0,
+            meeting_id=engine.meeting_id, channel="loopback", seq=seq,
             file_path=os.devnull, start_s=0.0, duration_s=10.0,
             sample_rate=16000,
         )
         engine._chunk_index[chunk_id] = SpooledChunk(
             chunk_id=chunk_id, meeting_id=engine.meeting_id,
-            channel="loopback", seq=0, file_path=os.devnull, start_s=0.0,
+            channel="loopback", seq=seq, file_path=os.devnull, start_s=0.0,
             duration_s=10.0, sample_rate=16000,
         )
         return chunk_id
@@ -590,7 +631,7 @@ class TestDiarizationDegradation:
         chunk_id = self._prime(engine, repo)
         fakes.diarizer.next_participant = None  # short segment: normal None
 
-        engine._on_segments([
+        engine._on_chunk_result(engine._chunk_index[chunk_id], [
             loopback_segment(engine.meeting_id, "sg_short", chunk_id=chunk_id),
         ])
 
@@ -607,12 +648,14 @@ class TestDiarizationDegradation:
         fakes.diarizer.available = False
         fakes.diarizer.next_participant = None
 
-        engine._on_segments([
+        engine._on_chunk_result(engine._chunk_index[chunk_id], [
             loopback_segment(engine.meeting_id, "sg_1", chunk_id=chunk_id),
         ])
-        engine._on_segments([
+        # A second chunk is needed because chunk commits are idempotent.
+        second_id = self._prime(engine, repo)
+        engine._on_chunk_result(engine._chunk_index[second_id], [
             loopback_segment(engine.meeting_id, "sg_2", 4.0, 6.0,
-                             chunk_id=chunk_id),
+                             chunk_id=second_id),
         ])
 
         assert engine.store.with_state(lambda s: s.diarization_available) is False
@@ -620,7 +663,7 @@ class TestDiarizationDegradation:
 
         notices = [
             payload for payload in events_of(engine, "status")
-            if set(payload) == {"diarization_available"}
+            if payload.get("diarization_available") is False
         ]
         assert len(notices) == 1
         assert notices[0]["diarization_available"] is False
@@ -642,7 +685,7 @@ class TestDiarizationDegradation:
         chunk_id = self._prime(engine, repo)
         repo.add_segments([loopback_segment(engine.meeting_id, "sg_p")])
         fakes.diarizer.available = False
-        engine._on_segments([
+        engine._on_chunk_result(engine._chunk_index[chunk_id], [
             loopback_segment(engine.meeting_id, "sg_1", chunk_id=chunk_id),
         ])
         assert engine._degraded_diarization is True
@@ -682,7 +725,9 @@ class TestStoreWiring:
 
         assert rejected.ok is False
         assert rejected.reason == "segment_pinned"
-        assert repo.get_segment("sg_pinned")["speaker_participant_id"] == (
+        assert repo.get_segment(
+            engine.meeting_id, "sg_pinned"
+        )["speaker_participant_id"] == (
             participant["id"]
         )
 

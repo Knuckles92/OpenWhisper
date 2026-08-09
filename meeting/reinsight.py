@@ -187,7 +187,9 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
     store = MeetingStateStore(
         _load_state(meeting, meeting_id),
         repository=repository,
-        segment_exists=repository.segment_exists,
+        segment_exists=lambda segment_id: repository.segment_exists(
+            meeting_id, segment_id
+        ),
     )
     tools = _OfflineToolHost(store)
 

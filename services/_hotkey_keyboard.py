@@ -124,6 +124,7 @@ class HotkeyManager:
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
+        self.on_meeting_toggle: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -158,6 +159,17 @@ class HotkeyManager:
                         import threading
                         threading.Thread(target=self.on_record_toggle, daemon=True).start()
                 return False  # Always suppress record toggle key
+
+            elif (self.hotkeys.get('meeting_toggle')
+                  and self._matches_hotkey(
+                      event, self.hotkeys.get('meeting_toggle')
+                  )):
+                if self.on_meeting_toggle:
+                    import threading
+                    threading.Thread(
+                        target=self.on_meeting_toggle, daemon=True
+                    ).start()
+                return False
 
             # Check cancel hotkey
             elif self._matches_hotkey(event, self.hotkeys['cancel']):
@@ -297,6 +309,7 @@ class HotkeyManager:
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
+                     on_meeting_toggle: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
                      is_transcribing_fn: Callable[[], bool] = None):
@@ -315,6 +328,7 @@ class HotkeyManager:
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
+        self.on_meeting_toggle = on_meeting_toggle
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

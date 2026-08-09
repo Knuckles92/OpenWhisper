@@ -10,6 +10,7 @@ without the frontend build.
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import json
 import logging
@@ -26,7 +27,10 @@ import config
 from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
+from meeting.audio_playback import build_playback
 from meeting.reinsight import rerun_insights
+from meeting.persist.data_lifecycle import delete_meeting_data
+from meeting.state.schema import MeetingState
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
 
@@ -45,6 +49,30 @@ _EXPORTERS = {
     "json": (export_json, "application/json", "json"),
     "txt": (export_transcript_txt, "text/plain", "txt"),
 }
+
+_TRANSCRIPT_PAGE_DEFAULT = 500
+_TRANSCRIPT_PAGE_MAX = 1000
+
+
+def _encode_cursor(item: Dict[str, Any]) -> str:
+    raw = json.dumps(
+        [float(item.get("start_s", 0.0)), str(item.get("id", ""))],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
+    if not cursor:
+        return None, None
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        start_s, segment_id = json.loads(
+            base64.urlsafe_b64decode(cursor + padding).decode("utf-8")
+        )
+        return float(start_s), str(segment_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid transcript cursor") from exc
 
 
 def _public_meeting(meeting: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -126,13 +154,45 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             raise HTTPException(status_code=403, detail="host only")
         return role
 
+    async def _require_meeting(token: str, meeting_id: str) -> str:
+        role = await _require(token)
+        if role == "guest" and meeting_id != getattr(engine, "meeting_id", None):
+            raise HTTPException(status_code=403, detail="guest access is current meeting only")
+        return role
+
+    async def _transcript_page(meeting_id: str, cursor: str,
+                               limit: int) -> Dict[str, Any]:
+        start_s, segment_id = _decode_cursor(cursor)
+        page_limit = max(1, min(int(limit), _TRANSCRIPT_PAGE_MAX))
+        rows = await asyncio.to_thread(
+            repository.get_segments_page, meeting_id, start_s, segment_id,
+            page_limit + 1,
+        )
+        has_more = len(rows) > page_limit
+        items = rows[:page_limit]
+        return {
+            "items": items,
+            "next_cursor": _encode_cursor(items[-1])
+            if has_more and items else None,
+        }
+
     def _stored_state(meeting_id: str, meeting: Dict[str, Any]) -> Dict[str, Any]:
         """Parse a meeting row's persisted state document (blocking)."""
         try:
-            return json.loads(meeting.get("state_json") or "{}")
-        except (TypeError, ValueError):
+            raw = json.loads(meeting.get("state_json") or "{}")
+            if not isinstance(raw, dict):
+                raise ValueError("state_json is not an object")
+            raw.setdefault("meeting_id", meeting_id)
+            raw.setdefault("title", str(meeting.get("title") or ""))
+            raw.setdefault("status", str(meeting.get("status") or "ended"))
+            return MeetingState.from_dict(raw).to_dict()
+        except (KeyError, TypeError, ValueError):
             logger.exception("Corrupt state_json for meeting %s", meeting_id)
-            return {}
+            return MeetingState(
+                meeting_id=meeting_id,
+                title=str(meeting.get("title") or ""),
+                status=str(meeting.get("status") or "ended"),
+            ).to_dict()
 
     async def _state_for(meeting_id: str,
                          meeting: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,11 +246,20 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         return {"role": role, "meeting": _public_meeting(meeting), "state": state}
 
     @app.get("/api/transcript")
-    async def api_transcript(token: str = "", after_start_s: float = -1.0,
-                             limit: Optional[int] = None) -> Dict[str, Any]:
+    async def api_transcript(token: str = "", cursor: str = "",
+                             limit: int = _TRANSCRIPT_PAGE_DEFAULT,
+                             after_start_s: Optional[float] = None) -> Dict[str, Any]:
         await _require(token)
-        items = await asyncio.to_thread(engine.get_transcript, after_start_s, limit)
-        return {"items": items}
+        meeting_id = getattr(engine, "meeting_id", None)
+        if not meeting_id:
+            return {"items": [], "next_cursor": None}
+        # Compatibility for the old scheduler/debug client contract.
+        if after_start_s is not None and not cursor:
+            items = await asyncio.to_thread(
+                engine.get_transcript, after_start_s, min(limit, _TRANSCRIPT_PAGE_MAX)
+            )
+            return {"items": items, "next_cursor": None}
+        return await _transcript_page(meeting_id, cursor, limit)
 
     # ------------------------------------------------------------------
     # Past meetings (host only)
@@ -208,12 +277,53 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
-        segments = await asyncio.to_thread(repository.get_segments, meeting_id)
+        transcript = await _transcript_page(
+            meeting_id, "", _TRANSCRIPT_PAGE_DEFAULT
+        )
         return {
             "meeting": _public_meeting(meeting),
             "state": await _state_for(meeting_id, meeting),
-            "segments": segments,
+            "segments": transcript["items"],
+            "transcript_next_cursor": transcript["next_cursor"],
         }
+
+    @app.get("/api/meetings/{meeting_id}/transcript")
+    async def api_meeting_transcript(meeting_id: str, token: str = "",
+                                     cursor: str = "",
+                                     limit: int = _TRANSCRIPT_PAGE_DEFAULT) -> Dict[str, Any]:
+        await _require_meeting(token, meeting_id)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        return await _transcript_page(meeting_id, cursor, limit)
+
+    @app.get("/api/meetings/{meeting_id}/segments/{segment_id}")
+    async def api_segment(meeting_id: str, segment_id: str,
+                          token: str = "") -> Dict[str, Any]:
+        await _require_meeting(token, meeting_id)
+        segment = await asyncio.to_thread(
+            repository.get_segment, meeting_id, segment_id
+        )
+        if segment is None:
+            raise HTTPException(status_code=404, detail="unknown segment")
+        return {"segment": segment}
+
+    @app.get("/api/meetings/{meeting_id}/audio")
+    async def api_meeting_audio(meeting_id: str, token: str = "") -> Response:
+        await _require_meeting(token, meeting_id)
+        try:
+            path = await asyncio.to_thread(
+                build_playback, repository, meeting_id
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return FileResponse(
+            path, media_type="audio/wav", filename=f"meeting-{meeting_id}.wav",
+            content_disposition_type="inline",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/api/meetings/{meeting_id}/rename")
     async def api_rename_meeting(meeting_id: str, request: Request,
@@ -234,8 +344,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
             if meeting is None:
                 raise HTTPException(status_code=404, detail="unknown meeting")
-            await asyncio.to_thread(repository.update_meeting, meeting_id,
-                                    title=title)
+            await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
             ok = True
         return {"ok": ok, "title": title}
 
@@ -288,7 +397,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
             raise HTTPException(status_code=409,
                                 detail="cannot delete the active meeting")
-        await asyncio.to_thread(repository.delete_meeting, meeting_id)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        options = getattr(engine, "options", None)
+        meetings_root = getattr(options, "spool_root", None) or config.MEETINGS_FOLDER
+        await asyncio.to_thread(
+            delete_meeting_data, repository, meeting_id, meetings_root
+        )
         return {"ok": True}
 
     # ------------------------------------------------------------------
@@ -300,6 +416,18 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         await _require(token, host_only=True)
         results = await asyncio.to_thread(repository.search_transcripts, q)
         return {"results": results}
+
+    @app.get("/api/events")
+    async def api_events(token: str = "", before_seq: Optional[int] = None,
+                         limit: int = 100) -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        meeting_id = getattr(engine, "meeting_id", None)
+        if not meeting_id:
+            return {"events": []}
+        events = await asyncio.to_thread(
+            repository.list_events, meeting_id, before_seq, limit
+        )
+        return {"events": events}
 
     @app.get("/api/export/{fmt}")
     async def api_export(fmt: str, token: str = "",
@@ -358,6 +486,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         enabled = bool(body.get("enabled"))
         await asyncio.to_thread(engine.set_cloud_enabled, enabled)
         return {"ok": True, "enabled": enabled}
+
+    @app.post("/api/meeting/tokens/regenerate")
+    async def api_regenerate_tokens(token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        result = await asyncio.to_thread(engine.regenerate_tokens)
+        return {"ok": True, **result}
 
     return app
 

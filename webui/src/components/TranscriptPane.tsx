@@ -7,6 +7,7 @@ interface TranscriptPaneProps {
   highlightSegmentId: string | null;
   onHighlightClear: () => void;
   onReassignSpeaker: (segmentId: string, participantId: string | null) => void;
+  readOnly?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -29,17 +30,27 @@ export default function TranscriptPane({
   highlightSegmentId,
   onHighlightClear,
   onReassignSpeaker,
+  readOnly = false,
 }: TranscriptPaneProps) {
   const sorted = useMemo(
     () => [...segments].sort((a, b) => a.start_s - b.start_s),
     [segments],
   );
+  const highlightedAvailable = Boolean(
+    highlightSegmentId && sorted.some((segment) => segment.id === highlightSegmentId),
+  );
 
   useEffect(() => {
-    if (!highlightSegmentId) return;
+    if (!highlightSegmentId || !highlightedAvailable) return;
+    requestAnimationFrame(() => {
+      document.getElementById(`seg-${highlightSegmentId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
     const t = window.setTimeout(onHighlightClear, 3000);
     return () => clearTimeout(t);
-  }, [highlightSegmentId, onHighlightClear]);
+  }, [highlightSegmentId, highlightedAvailable, onHighlightClear]);
 
   return (
     <section className="panel">
@@ -63,7 +74,9 @@ export default function TranscriptPane({
                   <div className="segment-meta">
                     <span>{formatTime(seg.start_s)}</span>
                     <span className="segment-speaker">
-                      <select
+                      {readOnly ? (
+                        <span>{speakerLabel(participants, seg.speaker_participant_id, seg.channel)}</span>
+                      ) : <select
                         value={seg.speaker_participant_id ?? ''}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -79,7 +92,7 @@ export default function TranscriptPane({
                             {p.display_name}
                           </option>
                         ))}
-                      </select>
+                      </select>}
                     </span>
                     {seg.speaker_pinned && (
                       <span title="Speaker pinned" style={{ fontSize: 11 }}>

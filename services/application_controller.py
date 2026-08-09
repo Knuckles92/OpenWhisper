@@ -229,7 +229,7 @@ class ApplicationController(QObject):
         into a single reload, and the request is refused while a recording or
         transcription is in progress.
         """
-        if self.meeting_active:
+        if self.is_meeting_active():
             logger.info("Ignoring whisper reload: a meeting is in progress")
             self.status_update.emit("End the meeting before changing the engine")
             self.engine_busy_changed.emit(False)
@@ -246,6 +246,11 @@ class ApplicationController(QObject):
 
     def _do_reload_whisper_model(self) -> None:
         """Debounce fired: kick off the reload on a worker thread (UI thread)."""
+        if self.is_meeting_active():
+            logger.info("Canceling queued whisper reload: meeting owns the engine")
+            self.status_update.emit("End the meeting before changing the engine")
+            self.engine_busy_changed.emit(False)
+            return
         if self._reload_in_flight:
             # A reload is already running; retry shortly so the newest settings win.
             self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
@@ -875,7 +880,10 @@ class ApplicationController(QObject):
         Returns:
             True while a meeting session is running.
         """
-        return bool(self.meeting_active)
+        runtime = getattr(self, "meeting_runtime", None)
+        return bool(
+            runtime.is_claimed if runtime is not None else self.meeting_active
+        )
 
     def _refuse_dictation_during_meeting(self) -> bool:
         """Exclusive mode: block dictation starts while a meeting is active.
@@ -883,7 +891,7 @@ class ApplicationController(QObject):
         Returns:
             True when the start was refused (meeting in progress).
         """
-        if not self.meeting_active:
+        if not self.is_meeting_active():
             return False
         logger.info("Dictation start refused: Meeting Mode is active")
         self.status_update.emit(
@@ -904,6 +912,13 @@ class ApplicationController(QObject):
         """
         self.minimize_to_tray_requested.emit()
 
+    def toggle_meeting_mode(self) -> None:
+        """Start or end Meeting Mode from its optional global hotkey."""
+        if self.meeting_runtime.is_active:
+            self.meeting_runtime.end_meeting()
+        elif not self.meeting_runtime.is_claimed:
+            self.meeting_runtime.start_meeting()
+
     def transcribe_clip(self, audio_path: str) -> str:
         """Transcribe a short audio clip outside the main recording flow.
 
@@ -920,7 +935,7 @@ class ApplicationController(QObject):
             RuntimeError: When Meeting Mode is active, no backend is ready, or
                 the engine is busy.
         """
-        if self.meeting_active:
+        if self.is_meeting_active():
             # Exclusive mode: the meeting owns the microphone and a dedicated
             # Whisper instance; a second capture stream and model would fight
             # it for the device and the GPU.
@@ -940,15 +955,18 @@ class ApplicationController(QObject):
         Args:
             audio_path: Path to the saved recording.
         """
-        self.transcription_runtime.retranscribe_audio(audio_path)
+        if not self._refuse_dictation_during_meeting():
+            self.transcription_runtime.retranscribe_audio(audio_path)
 
     def upload_audio_file(self, audio_path: str) -> None:
         """Transcribe an uploaded audio file (UI callback target)."""
-        self.transcription_runtime.upload_audio_file(audio_path)
+        if not self._refuse_dictation_during_meeting():
+            self.transcription_runtime.upload_audio_file(audio_path)
 
     def on_model_changed(self, model_name: str) -> None:
         """Switch the active transcription backend (UI callback target)."""
-        self.transcription_runtime.on_model_changed(model_name)
+        if not self._refuse_dictation_during_meeting():
+            self.transcription_runtime.on_model_changed(model_name)
 
     def update_status_with_auto_hide(self, status: str) -> None:
         """Emit a thread-safe status update (HotkeyManager callback target)."""

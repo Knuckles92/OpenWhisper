@@ -151,6 +151,7 @@ _BUILTIN_CATALOG: Final[dict] = {
             "archives": _BUILTIN_GPU_ARCHIVES,
         },
         "meeting-agent": {
+            "published": False,
             "version": MEETING_AGENT_COMPONENT_VERSION,
             "component_api": COMPONENT_API,
             "platform": "win_amd64",
@@ -160,6 +161,7 @@ _BUILTIN_CATALOG: Final[dict] = {
             "archives": _BUILTIN_MEETING_AGENT_ARCHIVES,
         },
         "speaker-id": {
+            "published": False,
             "version": SPEAKER_ID_COMPONENT_VERSION,
             "component_api": COMPONENT_API,
             "platform": "win_amd64",
@@ -297,7 +299,31 @@ def available_component_ids() -> Tuple[str, ...]:
     """
     if sys.platform != "win32":
         return ()
-    return (ComponentId.GPU_ACCEL, ComponentId.MEETING_AGENT, ComponentId.SPEAKER_ID)
+    return tuple(
+        component_id for component_id in (
+            ComponentId.GPU_ACCEL,
+            ComponentId.MEETING_AGENT,
+            ComponentId.SPEAKER_ID,
+        )
+        if component_is_published(component_id)
+    )
+
+
+def component_is_published(component_id: str) -> bool:
+    """Whether a catalog entry has production-ready immutable artifacts."""
+    entry = (_BUILTIN_CATALOG.get("components") or {}).get(component_id)
+    if not isinstance(entry, dict) or entry.get("published", True) is False:
+        return False
+    archives = entry.get("archives") or ()
+    if not archives or int(entry.get("install_bytes") or 0) <= 0:
+        return False
+    for archive in archives:
+        digest = str(archive.get("sha256") or "").lower()
+        if (len(digest) != 64 or digest == _PLACEHOLDER_SHA256
+                or not str(archive.get("url") or "").startswith("https://")
+                or int(archive.get("size_bytes") or 0) <= 0):
+            return False
+    return True
 
 
 def gpu_runtime_available() -> bool:
@@ -370,7 +396,8 @@ def meeting_agent_payload_dir() -> Optional[str]:
         runtime and the sidecar ``bundle.cjs``), or None when the component is
         not installed.
     """
-    if not is_installed(ComponentId.MEETING_AGENT):
+    if (not component_is_published(ComponentId.MEETING_AGENT)
+            or not is_installed(ComponentId.MEETING_AGENT)):
         return None
     return component_dir(ComponentId.MEETING_AGENT)
 
@@ -383,7 +410,8 @@ def speaker_model_path() -> Optional[str]:
         component tree, or None when the component (or the model file) is
         missing.
     """
-    if not is_installed(ComponentId.SPEAKER_ID):
+    if (not component_is_published(ComponentId.SPEAKER_ID)
+            or not is_installed(ComponentId.SPEAKER_ID)):
         return None
     root = component_dir(ComponentId.SPEAKER_ID)
     for dirpath, _dirnames, filenames in os.walk(root):

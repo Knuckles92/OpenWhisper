@@ -221,3 +221,7 @@ class MeetingWebServer:
         Thread-safe: marshals into the server's event loop via the hub.
         """
         self._hub.schedule_broadcast(dict(message))
+
+    def invalidate_connections(self) -> None:
+        """Close sockets authenticated with the previous token pair."""
+        self._hub.schedule_invalidate_connections()

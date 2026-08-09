@@ -27,11 +27,11 @@ export interface OpCounters {
 const PATCH_STATE_DESCRIPTION = `Apply targeted state-patch operations to the live meeting state document. Every op is validated by the host; results are returned per-op (ok, reason, target_id, seq, current_revision) so a rejected op never blocks the rest of the batch.
 
 Allowed ops (each op is an object with an "op" key):
-- {"op":"add_item","card":C,"text":T,"data":{},"evidence":[...]} — C is one of key_points | decisions | action_items | risks | timeline | user_notes. timeline items use data.start_s; action_items use data.owner_participant_id; risks may carry data.severity.
+- {"op":"add_item","card":C,"text":T,"data":{},"evidence":[...]} — C is one of key_points | decisions | action_items | risks | timeline. timeline items use data.start_s; action_items use data.owner_participant_id; risks may carry data.severity. user_notes is human-only.
 - {"op":"update_item","id":I,"base_revision":R,"set":{"text":...,"data":...},"evidence":[...]} — base_revision MUST equal the item's current revision from the state snapshot; mismatches are rejected with the current revision echoed back.
-- {"op":"remove_item","id":I,"base_revision":R}
+- {"op":"remove_item","id":I,"base_revision":R,"evidence":[...]}
 - {"op":"set_topic","text":T,"evidence":[...]}
-- {"op":"set_rolling_summary","text":T}
+- {"op":"set_rolling_summary","text":T,"evidence":[...]}
 - {"op":"upsert_participant","id":P?,"display_name":N,"kind":"others_cluster","evidence":[...]}
 - {"op":"suggest_participant_name","participant_id":P,"display_name":N,"evidence":[...]}
 
@@ -57,8 +57,16 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
   const opSchema = {
     type: "object" as const,
     description: 'A single state-patch op; must include an "op" key.',
-    properties: { op: { type: "string" as const, description: "Op name, e.g. add_item." } },
-    required: ["op"],
+    properties: {
+      op: { type: "string" as const, description: "Op name, e.g. add_item." },
+      evidence: {
+        type: "array" as const,
+        items: { type: "string" as const },
+        minItems: 1,
+        description: "At least one supporting transcript segment id.",
+      },
+    },
+    required: ["op", "evidence"],
     additionalProperties: true,
   };
 
@@ -117,10 +125,11 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
         evidence: {
           type: "array",
           items: { type: "string", description: "Transcript segment id (sg_...)." },
+          minItems: 1,
           description: "Segment ids motivating the question.",
         },
       },
-      required: ["text"],
+      required: ["text", "evidence"],
       additionalProperties: false,
     },
     execute: async (params) =>
@@ -146,10 +155,11 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
         evidence: {
           type: "array",
           items: { type: "string", description: "Transcript segment id (sg_...)." },
+          minItems: 1,
           description: "Segment ids containing the answer.",
         },
       },
-      required: ["question_id", "answer_text", "confidence"],
+      required: ["question_id", "answer_text", "confidence", "evidence"],
       additionalProperties: false,
     },
     execute: async (params) =>

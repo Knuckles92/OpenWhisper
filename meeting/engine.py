@@ -19,6 +19,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -50,6 +51,8 @@ CONSOLIDATION_TIMEOUT_S = 120.0
 START_WAIT_TIMEOUT_S = 120.0
 #: Guest display names are clamped to this length.
 MAX_GUEST_NAME_LEN = 80
+CAPTURE_WATCHDOG_INTERVAL_S = 2.0
+CAPTURE_RETRY_INTERVAL_S = 10.0
 
 #: Engine listener: ``cb(kind, payload)`` with kinds ``status``, ``segments``,
 #: ``server_started``, ``error``, ``ended``, ``intelligence``.
@@ -120,6 +123,10 @@ class MeetingEngine:
 
         self._sources: List[Any] = []
         self._spools: Dict[str, Any] = {}
+        self._capture_lock = threading.RLock()
+        self._capture_watchdog_stop: Optional[threading.Event] = None
+        self._capture_watchdog_thread: Optional[threading.Thread] = None
+        self._capture_last_attempt: Dict[str, float] = {}
         self._asr: Optional[Any] = None
         self._diarizer: Optional[Any] = None
         self._server: Optional[Any] = None
@@ -181,13 +188,17 @@ class MeetingEngine:
         """Emit the current status to listeners and connected web clients."""
         if self.store is None:
             return
-        status, intel, diar = self.store.with_state(
-            lambda s: (s.status, s.intelligence_online, s.diarization_available)
+        status, intel, diar, capture = self.store.with_state(
+            lambda s: (
+                s.status, s.intelligence_online, s.diarization_available,
+                dict(s.capture),
+            )
         )
         payload = {
             "status": status,
             "intelligence_online": intel,
             "diarization_available": diar,
+            "capture": capture,
         }
         listener_payload = dict(payload)
         if note:
@@ -266,11 +277,15 @@ class MeetingEngine:
                 state,
                 repository=self.repository,
                 segment_handler=self._handle_segment_op,
-                segment_exists=self.repository.segment_exists,
+                segment_exists=lambda sg_id: self.repository.segment_exists(
+                    meeting_id, sg_id
+                ),
                 # Lets the validator reject a stale diarizer re-cluster that
                 # would revert a human speaker correction.
                 segment_pinned=lambda sg_id: bool(
-                    (self.repository.get_segment(sg_id) or {}).get("speaker_pinned")
+                    (self.repository.get_segment(meeting_id, sg_id) or {}).get(
+                        "speaker_pinned"
+                    )
                 ),
             )
             results = self.store.apply("system", None, [{
@@ -317,11 +332,9 @@ class MeetingEngine:
                     or self.store is None):
                 return
             self.clock.pause()
-            self.store.with_state(lambda s: setattr(s, "status", "paused"))
-            try:
-                self.repository.update_meeting(self.meeting_id, status="paused")
-            except Exception:
-                logger.exception("Failed to persist paused status")
+            if not self.store.update_runtime_fields(status="paused"):
+                self.clock.resume()
+                raise RuntimeError("Could not persist paused meeting state")
         self._emit_status()
 
     def resume(self) -> None:
@@ -331,11 +344,9 @@ class MeetingEngine:
                     or self.store is None):
                 return
             self.clock.resume()
-            self.store.with_state(lambda s: setattr(s, "status", "active"))
-            try:
-                self.repository.update_meeting(self.meeting_id, status="active")
-            except Exception:
-                logger.exception("Failed to persist active status")
+            if not self.store.update_runtime_fields(status="active"):
+                self.clock.pause()
+                raise RuntimeError("Could not persist resumed meeting state")
         self._emit_status()
 
     def end(self) -> None:
@@ -385,21 +396,32 @@ class MeetingEngine:
         return thread
 
     def _end_worker(self, drain_timeout_s: float) -> None:
-        ended_persisted = False
+        terminal_persisted = False
         try:
             self._stop_capture()
             self._flush_spools()
+            drained = True
             if self._asr is not None:
                 try:
-                    self._asr.drain(drain_timeout_s)
+                    drained = bool(self._asr.drain(drain_timeout_s))
                 except Exception:
                     logger.exception("ASR drain failed at meeting end")
+                    drained = False
+            try:
+                unfinished = self.repository.count_unfinished_chunks(
+                    self.meeting_id
+                )
+            except Exception:
+                logger.exception("Could not verify unfinished ASR chunks")
+                unfinished = 1
+            complete = drained and unfinished == 0
             scheduler = self._scheduler
-            if scheduler is not None:
+            if scheduler is not None and complete:
                 try:
                     scheduler.run_consolidation(timeout_s=CONSOLIDATION_TIMEOUT_S)
                 except Exception:
                     logger.exception("Consolidation pass failed")
+            if scheduler is not None:
                 try:
                     scheduler.stop()
                 except Exception:
@@ -412,29 +434,36 @@ class MeetingEngine:
                     logger.exception("ASR stop failed")
             self._shutdown_agent_core()
             self.clock.pause()
+            status = "ended" if complete else "needs_recovery"
+            if self.store is not None:
+                if not self.store.update_runtime_fields(status=status):
+                    raise RuntimeError("Could not persist terminal meeting state")
             try:
                 self.repository.update_meeting(
                     self.meeting_id,
-                    status="ended",
+                    status=status,
                     ended_at=now_iso(),
                     paused_total_s=self.clock.paused_total_s(),
                 )
-                ended_persisted = True
+                terminal_persisted = True
             except Exception:
-                logger.exception("Failed to persist ended status")
-            if self.store is not None:
-                self.store.with_state(lambda s: setattr(s, "status", "ended"))
-                self._persist_snapshot()
+                logger.exception("Failed to persist terminal meeting metadata")
+                raise
             self._stop_heartbeat()
             self._active = False
-            self._broadcast({"type": "meeting_ended"})
+            self._broadcast({"type": "meeting_ended", "status": status})
             self._emit_status()
-            self._emit("ended", {"meeting_id": self.meeting_id, "canceled": False})
+            self._emit("ended", {
+                "meeting_id": self.meeting_id,
+                "canceled": False,
+                "status": status,
+                "unfinished_chunks": unfinished,
+            })
         except Exception as exc:
             logger.exception("Meeting end failed")
             self._active = False
             self._emit("error", {"code": "end_failed", "message": str(exc)})
-            self._finish_failed_end(exc, ended_persisted)
+            self._finish_failed_end(exc, terminal_persisted)
 
     def _finish_failed_end(self, exc: Exception, ended_persisted: bool) -> None:
         """Unwind after ``_end_worker`` raised, still reporting ``ended``.
@@ -460,7 +489,7 @@ class MeetingEngine:
         except Exception:
             logger.exception("Clock pause failed after a failed end")
         self._stop_heartbeat()
-        status = "ended" if ended_persisted else "failed"
+        status = "needs_recovery"
         if not ended_persisted:
             try:
                 self.repository.update_meeting(
@@ -470,16 +499,17 @@ class MeetingEngine:
                 logger.exception("Failed to persist failed end status")
         if self.store is not None:
             try:
-                self.store.with_state(lambda s: setattr(s, "status", status))
+                self.store.update_runtime_fields(status=status)
             except Exception:
                 logger.exception("Failed to update state status after a failed end")
-        self._broadcast({"type": "meeting_ended"})
+        self._broadcast({"type": "meeting_ended", "status": status})
         try:
             self._emit_status()
         except Exception:
             logger.exception("Status emit failed after a failed end")
         self._emit("ended", {
-            "meeting_id": self.meeting_id, "canceled": False, "error": str(exc),
+            "meeting_id": self.meeting_id, "canceled": False,
+            "status": status, "error": str(exc),
         })
 
     def cancel(self) -> None:
@@ -525,8 +555,7 @@ class MeetingEngine:
         except Exception:
             logger.exception("Failed to persist canceled status")
         if self.store is not None:
-            self.store.with_state(lambda s: setattr(s, "status", "failed"))
-            self._persist_snapshot()
+            self.store.update_runtime_fields(status="failed")
         self._broadcast({"type": "meeting_ended"})
         self._emit_status()
         self._emit("ended", {"meeting_id": self.meeting_id, "canceled": True})
@@ -702,8 +731,12 @@ class MeetingEngine:
                 "code": "capture_unavailable",
                 "message": "No audio devices could be opened.",
             })
-            return "No audio devices could be opened; no audio is being recorded."
-        return " ".join(notes) or None
+            note = "No audio devices could be opened; no audio is being recorded."
+        else:
+            note = " ".join(notes) or None
+        self._update_capture_status(note or "")
+        self._start_capture_watchdog()
+        return note
 
     def _start_source(self, source: Any) -> bool:
         """Start one capture source and verify it is really delivering audio.
@@ -721,6 +754,9 @@ class MeetingEngine:
         spool = SpoolWriter(
             self.meeting_id, source.channel, self._spool_dir,
             self.clock, self.repository, on_chunk=self._on_chunk,
+            initial_seq=self.repository.next_chunk_seq(
+                self.meeting_id, source.channel
+            ),
         )
         started = False
         try:
@@ -746,8 +782,9 @@ class MeetingEngine:
                 logger.exception("Failed to release spool for %s",
                                  source.channel)
             return False
-        self._spools[source.channel] = spool
-        self._sources.append(source)
+        with self._capture_lock:
+            self._spools[source.channel] = spool
+            self._sources.append(source)
         return True
 
     def _make_block_router(self, channel: str, spool: Any) -> Callable[[CaptureBlock], None]:
@@ -769,7 +806,9 @@ class MeetingEngine:
         return route
 
     def _stop_capture(self) -> None:
-        sources, self._sources = self._sources, []
+        self._stop_capture_watchdog()
+        with self._capture_lock:
+            sources, self._sources = self._sources, []
         for source in sources:
             try:
                 source.stop()
@@ -777,7 +816,9 @@ class MeetingEngine:
                 logger.exception("Capture source stop failed")
 
     def _flush_spools(self) -> None:
-        for spool in self._spools.values():
+        with self._capture_lock:
+            spools = list(self._spools.values())
+        for spool in spools:
             try:
                 chunk = spool.flush()
             except Exception:
@@ -785,6 +826,162 @@ class MeetingEngine:
                 continue
             if chunk is not None:
                 self._on_chunk(chunk)
+
+    def _start_capture_watchdog(self) -> None:
+        """Start device-loss/default-device monitoring for this meeting."""
+        if (self._capture_watchdog_thread is not None
+                and self._capture_watchdog_thread.is_alive()):
+            return
+        stop = threading.Event()
+        self._capture_watchdog_stop = stop
+        self._capture_watchdog_thread = threading.Thread(
+            target=self._capture_watchdog_loop,
+            name="meeting-capture-watchdog",
+            daemon=True,
+        )
+        self._capture_watchdog_thread.start()
+
+    def _stop_capture_watchdog(self) -> None:
+        stop = self._capture_watchdog_stop
+        if stop is not None:
+            stop.set()
+        thread = self._capture_watchdog_thread
+        if (thread is not None and thread.is_alive()
+                and thread is not threading.current_thread()):
+            thread.join(timeout=3.0)
+        self._capture_watchdog_thread = None
+        self._capture_watchdog_stop = None
+
+    def _capture_watchdog_loop(self) -> None:
+        """Restart failed sources and follow default-device changes."""
+        stop = self._capture_watchdog_stop
+        while (stop is not None
+               and not stop.wait(CAPTURE_WATCHDOG_INTERVAL_S)):
+            if not self._active:
+                return
+            for channel in (CHANNEL_MIC, CHANNEL_LOOPBACK):
+                try:
+                    desired = self._probe_capture_device(channel)
+                    source = self._capture_source(channel)
+                    active = source is not None and bool(source.is_active())
+                    changed = False
+                    if active:
+                        source_id = getattr(source, "device_id", None)
+                        desired_id = desired.get("index") if desired else None
+                        if channel == CHANNEL_MIC and desired is not None:
+                            changed = (
+                                self.options.mic_device_id is None
+                                and isinstance(source_id, int)
+                                and source_id != desired_id
+                            )
+                        elif (channel == CHANNEL_LOOPBACK
+                              and isinstance(source_id, int)
+                              and desired is not None):
+                            changed = (
+                                source_id != desired_id
+                            )
+                        elif channel == CHANNEL_LOOPBACK:
+                            current = getattr(
+                                source, "is_default_device_current", None
+                            )
+                            if callable(current):
+                                changed = not bool(current())
+                    if active and not changed:
+                        continue
+                    now = time.monotonic()
+                    if (now - self._capture_last_attempt.get(channel, 0.0)
+                            < CAPTURE_RETRY_INTERVAL_S):
+                        continue
+                    self._capture_last_attempt[channel] = now
+                    self._restart_capture_channel(channel, desired)
+                except Exception:
+                    logger.exception("Capture watchdog failed for %s", channel)
+            self._update_capture_status()
+
+    def _probe_capture_device(self, channel: str) -> Optional[Dict[str, Any]]:
+        from meeting.capture.devices import find_loopback_device, find_mic_device
+
+        if channel == CHANNEL_LOOPBACK:
+            return find_loopback_device()
+        return find_mic_device(self.options.mic_device_id)
+
+    def _capture_source(self, channel: str) -> Optional[Any]:
+        with self._capture_lock:
+            return next(
+                (source for source in self._sources
+                 if source.channel == channel), None
+            )
+
+    def _restart_capture_channel(
+        self, channel: str, desired: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Retire one channel and open its configured/default replacement."""
+        self._retire_capture_channel(channel)
+        try:
+            from meeting.capture.devices import find_loopback_device, find_mic_device
+            from meeting.capture.sd_stream import SdCaptureSource
+
+            if channel == CHANNEL_MIC:
+                desired = find_mic_device(self.options.mic_device_id)
+            elif desired is None:
+                desired = find_loopback_device()
+            if desired is not None:
+                if self._start_source(SdCaptureSource(
+                    channel, desired["index"], desired["samplerate"],
+                    desired["channels"],
+                )):
+                    return True
+            if channel == CHANNEL_LOOPBACK:
+                from meeting.capture.soundcard_stream import SoundcardLoopbackSource
+                if SoundcardLoopbackSource.available():
+                    return self._start_source(SoundcardLoopbackSource())
+        except Exception:
+            logger.exception("Could not restart %s capture", channel)
+        return False
+
+    def _retire_capture_channel(self, channel: str) -> None:
+        with self._capture_lock:
+            sources = [s for s in self._sources if s.channel == channel]
+            self._sources = [s for s in self._sources if s.channel != channel]
+            spool = self._spools.pop(channel, None)
+        for source in sources:
+            try:
+                source.stop()
+            except Exception:
+                logger.exception("Could not stop stale %s source", channel)
+        if spool is not None:
+            try:
+                chunk = spool.flush()
+                if chunk is not None:
+                    self._on_chunk(chunk)
+            except Exception:
+                logger.exception("Could not flush stale %s spool", channel)
+
+    def _update_capture_status(self, message: str = "") -> None:
+        if self.store is None:
+            return
+        with self._capture_lock:
+            active = {
+                source.channel for source in self._sources
+                if bool(source.is_active())
+            }
+        if not message:
+            missing = []
+            if CHANNEL_MIC not in active:
+                missing.append("Microphone unavailable")
+            if CHANNEL_LOOPBACK not in active:
+                missing.append("System audio unavailable")
+            message = "; ".join(missing)
+        capture = {
+            "mic_available": CHANNEL_MIC in active,
+            "loopback_available": CHANNEL_LOOPBACK in active,
+            "message": message,
+        }
+        previous = self.store.with_state(lambda state: dict(state.capture))
+        if capture == previous:
+            return
+        if self.store.update_runtime_fields(capture=capture):
+            self._emit_status(note=message or None)
 
     def _on_chunk(self, chunk: SpooledChunk) -> None:
         """Route a finalized chunk to ASR (idempotent per chunk id)."""
@@ -824,7 +1021,7 @@ class MeetingEngine:
                            "audio is recorded and can be transcribed later.",
             })
             return
-        asr.start(self._on_segments)
+        asr.start(self._on_chunk_result)
         self._asr = asr
         requeue = getattr(asr, "requeue_pending", None)
         if callable(requeue):
@@ -835,28 +1032,28 @@ class MeetingEngine:
         else:
             logger.debug("ASR engine exposes no requeue_pending; skipping")
 
-    def _on_segments(self, segments: List[TranscriptSegment]) -> None:
-        """ASR callback: assign speakers, persist, notify, and broadcast."""
-        if not segments:
-            return
+    def _on_chunk_result(
+        self, chunk: SpooledChunk, segments: List[TranscriptSegment]
+    ) -> None:
+        """Assign speakers, atomically commit the chunk, then publish it."""
         try:
             self._assign_speakers(segments)
         except Exception:
             logger.exception("Speaker assignment failed")
-        try:
-            self.repository.add_segments(segments)
-        except Exception:
-            logger.exception("Failed to persist transcript segments")
+        rows, committed = self.repository.commit_chunk_transcription(
+            self.meeting_id, chunk.chunk_id, segments
+        )
+        if not committed:
+            return
         scheduler = self._scheduler
         if scheduler is not None:
             try:
-                scheduler.notify_segments(len(segments))
+                scheduler.notify_segments(len(rows))
             except Exception:
                 logger.exception("Scheduler notify failed")
-        created = now_iso()
-        items = [self._segment_dict(seg, created) for seg in segments]
-        self._emit("segments", {"items": items})
-        self._broadcast({"type": "segments", "items": items})
+        if rows:
+            self._emit("segments", {"items": rows})
+            self._broadcast({"type": "segments", "items": rows})
 
     def _assign_speakers(self, segments: List[TranscriptSegment]) -> None:
         """Mic segments become 'Me'; loopback segments go to the diarizer."""
@@ -949,9 +1146,7 @@ class MeetingEngine:
             self._diarizer = None
             logger.info("Diarization disabled; loopback stays channel-labeled")
         if self.store is not None:
-            self.store.with_state(
-                lambda s: setattr(s, "diarization_available", available)
-            )
+            self.store.update_runtime_fields(diarization_available=available)
 
     def _check_diarizer_degraded(self) -> None:
         """Flip diarization off once the diarizer stops being available.
@@ -972,13 +1167,10 @@ class MeetingEngine:
             logger.exception("Diarizer availability probe failed")
         self._degraded_diarization = True
         if self.store is not None:
-            self.store.with_state(
-                lambda s: setattr(s, "diarization_available", False)
-            )
+            self.store.update_runtime_fields(diarization_available=False)
         logger.warning("Diarization degraded mid-meeting; loopback segments "
                        "fall back to channel-level labels")
-        self._emit("status", {"diarization_available": False})
-        self._broadcast({"type": "status", "diarization_available": False})
+        self._emit_status()
 
     def _on_diarizer_relabel(self, ops: List[Dict[str, Any]]) -> None:
         """Apply re-clustering relabel ops through the single-writer store."""
@@ -1007,23 +1199,18 @@ class MeetingEngine:
         pinned = bool(effect.get("pinned"))
         prior = None
         try:
-            prior = self.repository.get_segment(segment_id)
+            prior = self.repository.get_segment(self.meeting_id, segment_id)
         except Exception:
             logger.exception("Failed to read prior segment %s", segment_id)
-        self.repository.update_segment_speaker(
-            segment_id, participant_id, source, pinned
-        )
-        if pinned and source == "human" and participant_id and self._diarizer is not None:
-            try:
-                self._diarizer.pin(segment_id, participant_id)
-            except Exception:
-                logger.exception("Diarizer pin failed for %s", segment_id)
         if prior is None:
             return None
         return {
             "op": "reassign_segment_speaker",
             "segment_id": segment_id,
             "participant_id": prior.get("speaker_participant_id"),
+            "_source": prior.get("speaker_source", "channel"),
+            "_pinned": bool(prior.get("speaker_pinned")),
+            "force": True,
         }
 
     # ------------------------------------------------------------------
@@ -1104,7 +1291,7 @@ class MeetingEngine:
                 self._seed_scheduler_watermark(scheduler)
                 scheduler.start()
                 self._scheduler = scheduler
-            self.store.with_state(lambda s: setattr(s, "intelligence_online", True))
+            self.store.update_runtime_fields(intelligence_online=True)
             self._emit("intelligence", {"online": True})
             self._emit_status()
         except Exception as exc:
@@ -1115,7 +1302,7 @@ class MeetingEngine:
                     created_core.shutdown()
                 except Exception:
                     logger.exception("Agent core cleanup failed")
-            self.store.with_state(lambda s: setattr(s, "intelligence_online", False))
+            self.store.update_runtime_fields(intelligence_online=False)
             self._emit("intelligence", {"online": False, "error": str(exc)})
             self._emit_status()
 
@@ -1148,9 +1335,7 @@ class MeetingEngine:
         if created_core is not None and self._agent_core is created_core:
             self._shutdown_agent_core()
         if self.store is not None:
-            self.store.with_state(
-                lambda s: setattr(s, "intelligence_online", False)
-            )
+            self.store.update_runtime_fields(intelligence_online=False)
         self._emit("intelligence", {"online": False, "error": reason})
         self._emit_status(note=reason)
 
@@ -1164,9 +1349,7 @@ class MeetingEngine:
         """
         online = bool(online)
         if self.store is not None:
-            self.store.with_state(
-                lambda s: setattr(s, "intelligence_online", online)
-            )
+            self.store.update_runtime_fields(intelligence_online=online)
         payload: Dict[str, Any] = {"online": online}
         if not online:
             payload["error"] = ("Checkpoints failed repeatedly; continuing "
@@ -1218,7 +1401,7 @@ class MeetingEngine:
         self._shutdown_agent_core()
         self._intelligence_restarted = True
         if self.store is not None:
-            self.store.with_state(lambda s: setattr(s, "intelligence_online", False))
+            self.store.update_runtime_fields(intelligence_online=False)
         self._emit("intelligence", {"online": False})
         self._emit_status()
 
@@ -1233,13 +1416,41 @@ class MeetingEngine:
         """
         if self.store is None:
             return
-        self.store.apply("host", self._me_participant_id, [{
+        results = self.store.apply("host", self._me_participant_id, [{
             "op": "set_cloud_enabled", "enabled": bool(enabled),
         }])
+        if not results or not results[0].ok:
+            raise RuntimeError(
+                results[0].reason if results else "cloud state update failed"
+            )
         if enabled:
             self._maybe_start_intelligence()
         else:
             self._stop_intelligence()
+
+    def regenerate_tokens(self) -> Dict[str, str]:
+        """Rotate host/guest capability links and disconnect old sessions."""
+        if not self.meeting_id:
+            raise RuntimeError("No active meeting")
+        from meeting.web.auth import generate_token_pair
+
+        host_token, guest_token = generate_token_pair()
+        self.repository.replace_tokens(
+            self.meeting_id, host_token, guest_token
+        )
+        server = self._server
+        host_url = getattr(server, "host_url", "") if server else ""
+        guest_url = getattr(server, "guest_url", "") if server else ""
+        self._emit("server_started", {
+            "url": getattr(server, "base_url", "") if server else "",
+            "host_url": host_url,
+            "guest_url": guest_url,
+        })
+        if server is not None:
+            invalidate = getattr(server, "invalidate_connections", None)
+            if callable(invalidate):
+                invalidate()
+        return {"host_url": host_url, "guest_url": guest_url}
 
     # ------------------------------------------------------------------
     # Client actions (web server entry points)
@@ -1259,13 +1470,35 @@ class MeetingEngine:
         """
         if self.store is None:
             return [OpResult(ok=False, op=dict(op), reason="inactive")]
-        return self.store.apply(actor_type, actor_id, [op])
+        results = self.store.apply(actor_type, actor_id, [op])
+        self._apply_diarizer_pins(results)
+        return results
 
     def undo(self, seq: int, actor_id) -> List[OpResult]:
         """Host undo of a past event by its ``seq`` (empty when impossible)."""
         if self.store is None:
             return []
-        return self.store.undo(seq, actor_id)
+        results = self.store.undo(seq, actor_id)
+        self._apply_diarizer_pins(results)
+        return results
+
+    def _apply_diarizer_pins(self, results: List[OpResult]) -> None:
+        """Teach the diarizer only after a speaker edit commits."""
+        if self._diarizer is None:
+            return
+        for result in results:
+            effect = result.effect or {}
+            if (not result.ok or effect.get("entity") != "segment_speaker"
+                    or not effect.get("pinned")
+                    or effect.get("source") != "human"
+                    or not effect.get("participant_id")):
+                continue
+            try:
+                self._diarizer.pin(
+                    effect["segment_id"], effect["participant_id"]
+                )
+            except Exception:
+                logger.exception("Diarizer pin failed for %s", effect["segment_id"])
 
     def add_guest(self, display_name: str) -> Dict[str, Any]:
         """Create a guest participant for a joining dashboard client.

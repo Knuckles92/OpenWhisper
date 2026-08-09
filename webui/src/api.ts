@@ -4,10 +4,13 @@ import type {
   ExportFormat,
   MeetingDetailResponse,
   MeetingRow,
+  AuditEvent,
+  RegenerateTokensResponse,
   RerunInsightsResponse,
   SearchRow,
   Segment,
   SessionResponse,
+  TranscriptPage,
 } from './types';
 
 export class ApiError extends Error {
@@ -58,11 +61,28 @@ export const api = {
     return request<SessionResponse>(`/api/session?${qs({ token })}`);
   },
 
-  async transcript(token: string, afterStartS = -1, limit?: number): Promise<Segment[]> {
-    const data = await request<unknown>(
-      `/api/transcript?${qs({ token, after_start_s: afterStartS, limit })}`,
+  transcriptPage(token: string, cursor?: string, limit = 500): Promise<TranscriptPage> {
+    return request<TranscriptPage>(
+      `/api/transcript?${qs({ token, cursor, limit })}`,
     );
-    return asArray<Segment>(data, 'items', 'segments');
+  },
+
+  meetingTranscriptPage(
+    token: string,
+    meetingId: string,
+    cursor?: string,
+    limit = 500,
+  ): Promise<TranscriptPage> {
+    return request<TranscriptPage>(
+      `/api/meetings/${encodeURIComponent(meetingId)}/transcript?${qs({ token, cursor, limit })}`,
+    );
+  },
+
+  async segment(token: string, meetingId: string, segmentId: string): Promise<Segment> {
+    const data = await request<{ segment: Segment }>(
+      `/api/meetings/${encodeURIComponent(meetingId)}/segments/${encodeURIComponent(segmentId)}?${qs({ token })}`,
+    );
+    return data.segment;
   },
 
   async meetings(token: string): Promise<MeetingRow[]> {
@@ -108,6 +128,24 @@ export const api = {
 
   exportUrl(token: string, fmt: ExportFormat, meetingId: string): string {
     return `/api/export/${fmt}?${qs({ token, meeting_id: meetingId })}`;
+  },
+
+  audioUrl(token: string, meetingId: string): string {
+    return `/api/meetings/${encodeURIComponent(meetingId)}/audio?${qs({ token })}`;
+  },
+
+  async events(token: string, beforeSeq?: number): Promise<AuditEvent[]> {
+    const data = await request<unknown>(
+      `/api/events?${qs({ token, before_seq: beforeSeq })}`,
+    );
+    return asArray<AuditEvent>(data, 'events', 'items');
+  },
+
+  regenerateTokens(token: string): Promise<RegenerateTokensResponse> {
+    return request<RegenerateTokensResponse>(
+      `/api/meeting/tokens/regenerate?${qs({ token })}`,
+      { method: 'POST' },
+    );
   },
 
   endMeeting(token: string): Promise<unknown> {

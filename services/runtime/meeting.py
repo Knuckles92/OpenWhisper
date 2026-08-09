@@ -9,7 +9,6 @@ even when Meeting Mode dependencies are unavailable.
 from __future__ import annotations
 
 import logging
-import shutil
 import threading
 import webbrowser
 from datetime import datetime
@@ -144,6 +143,12 @@ class MeetingRuntime:
         except Exception:
             return False
 
+    @property
+    def is_claimed(self) -> bool:
+        """True during consent/startup as well as an active meeting."""
+        with self._lock:
+            return self._starting or self.controller.meeting_active or self.is_active
+
     def start_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
         """Start a meeting session (UI/tray callback target).
 
@@ -165,11 +170,13 @@ class MeetingRuntime:
                 "A meeting is already in progress"
             )
             return
-        if self.controller.recorder.is_recording:
+        backend = getattr(self.controller, "current_backend", None)
+        if (self.controller.recorder.is_recording
+                or bool(getattr(backend, "is_transcribing", False))):
             with self._lock:
                 self._starting = False
             self.controller.status_update.emit(
-                "Stop recording before starting a meeting"
+                "Finish recording or transcription before starting a meeting"
             )
             return
 
@@ -254,6 +261,7 @@ class MeetingRuntime:
 
     def _start_worker(self, cloud: bool) -> None:
         """Build and start the engine off the Qt thread; report via signals."""
+        engine = None
         try:
             from meeting.engine import MeetingEngine
 
@@ -272,7 +280,7 @@ class MeetingRuntime:
         except Exception as exc:
             logger.error("Failed to start meeting", exc_info=True)
             with self._lock:
-                if self._engine is engine:
+                if engine is not None and self._engine is engine:
                     self._engine = None
             self.controller.meeting_active = False
             self.controller.meeting_error.emit(f"Could not start the meeting: {exc}")
@@ -544,12 +552,12 @@ class MeetingRuntime:
 
     def _discard_recovered_worker(self, meeting_id: str) -> None:
         try:
+            from meeting.persist.data_lifecycle import delete_meeting_data
+
             repository = self._repository()
-            meeting = repository.get_meeting(meeting_id)
-            repository.delete_meeting(meeting_id)
-            spool_dir = (meeting or {}).get("spool_dir")
-            if spool_dir:
-                shutil.rmtree(spool_dir, ignore_errors=True)
+            delete_meeting_data(
+                repository, meeting_id, config.MEETINGS_FOLDER
+            )
             self.controller.meeting_status_update.emit(
                 "Interrupted meeting discarded"
             )
@@ -585,9 +593,14 @@ class MeetingRuntime:
                 self.controller.meeting_error.emit(str(message))
             elif kind == "ended":
                 self.controller.meeting_active = False
-                self.controller.meeting_status_update.emit("Meeting ended")
+                status = str(payload.get("status") or "ended")
+                message = (
+                    "Meeting ended — transcription recovery needed"
+                    if status == "needs_recovery" else "Meeting ended"
+                )
+                self.controller.meeting_status_update.emit(message)
                 self.controller.meeting_state_changed.emit(
-                    {"active": False, "status": "ended"}
+                    {"active": False, "status": status}
                 )
             elif kind == "intelligence":
                 online = bool(

@@ -464,9 +464,10 @@ class OnlineDiarizer:
                 pid = self._track(segment, embedding, cluster.participant_id)
                 do_recluster = self._should_recluster()
 
-        # DB write outside the lock; a failure here degrades via assign().
-        self._repository.set_segment_embedding(
-            segment.segment_id, embedding.astype(np.float32).tobytes())
+        # The ASR chunk commit persists this in the same transaction as the
+        # segment and chunk status. Writing it here would race a row that does
+        # not exist until that commit.
+        segment.embedding = embedding.astype(np.float32).tobytes()
 
         if do_recluster:
             relabel_ops = self._filter_stale_ops(self._recluster())

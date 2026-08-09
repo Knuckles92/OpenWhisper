@@ -37,7 +37,7 @@ export type ParamSpec =
   | { type: "string"; description?: string }
   | { type: "number"; description?: string }
   | { type: "boolean"; description?: string }
-  | { type: "array"; items: ParamSpec; description?: string }
+  | { type: "array"; items: ParamSpec; description?: string; minItems?: number }
   | ObjectSpec;
 
 export interface ObjectSpec {
@@ -106,6 +106,7 @@ function toTypebox(spec: ParamSpec): any {
     case "boolean":
       return Type.Boolean(opts);
     case "array":
+      if (spec.minItems !== undefined) opts.minItems = spec.minItems;
       return Type.Array(toTypebox(spec.items), opts);
     case "object": {
       const required = new Set(spec.required ?? []);

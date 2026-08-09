@@ -89,6 +89,12 @@ export interface MeetingStateDoc {
   title: string;
   topic: TopicState;
   rolling_summary: string;
+  rolling_summary_evidence: string[];
+  capture: {
+    mic_available: boolean;
+    loopback_available: boolean;
+    message: string;
+  };
   participants: Record<string, Participant>;
   cards: Record<CardKey, CardItem[]>;
   questions: Question[];
@@ -185,7 +191,7 @@ export const ops = {
 export type Effect =
   | { entity: 'item'; item: CardItem }
   | { entity: 'topic'; topic: TopicState }
-  | { entity: 'rolling_summary'; text: string }
+  | { entity: 'rolling_summary'; text: string; evidence: string[] }
   | { entity: 'title'; text: string }
   | { entity: 'cloud_enabled'; enabled: boolean }
   | { entity: 'participant'; participant: Participant }
@@ -247,9 +253,10 @@ export interface PresenceMsg {
 
 export interface StatusMsg {
   type: 'status';
-  status: string;
-  intelligence_online: boolean;
-  diarization_available: boolean;
+  status?: string;
+  intelligence_online?: boolean;
+  diarization_available?: boolean;
+  capture?: MeetingStateDoc['capture'];
 }
 
 export interface ActionResultMsg {
@@ -266,6 +273,7 @@ export interface ErrorMsg {
 
 export interface MeetingEndedMsg {
   type: 'meeting_ended';
+  status?: string;
 }
 
 export interface PongMsg {
@@ -304,6 +312,28 @@ export interface MeetingDetailResponse {
   meeting: MeetingRow;
   state: MeetingStateDoc;
   segments: Segment[];
+  transcript_next_cursor: string | null;
+}
+
+export interface TranscriptPage {
+  items: Segment[];
+  next_cursor: string | null;
+}
+
+export interface AuditEvent {
+  seq: number;
+  ts: string;
+  actor_type: string;
+  actor_id: string | null;
+  action: string;
+  target_id: string | null;
+  undoable: boolean;
+}
+
+export interface RegenerateTokensResponse {
+  ok: boolean;
+  host_url: string;
+  guest_url: string;
 }
 
 export interface RerunInsightsResponse {

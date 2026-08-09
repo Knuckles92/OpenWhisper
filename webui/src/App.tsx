@@ -3,7 +3,9 @@ import { api } from './api';
 import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
 import HistoryPane from './components/HistoryPane';
+import ActivityPane from './components/ActivityPane';
 import JoinGate from './components/JoinGate';
+import MeetingOverview from './components/MeetingOverview';
 import ParticipantsPane from './components/ParticipantsPane';
 import QuestionInbox from './components/QuestionInbox';
 import TranscriptPane from './components/TranscriptPane';
@@ -29,6 +31,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   const [ui, dispatch] = useReducer(meetingReducer, initialUiState);
   const socketRef = useRef<MeetingSocket | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
 
   const isHost = role === 'host';
@@ -64,6 +67,25 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     };
   }, [token, guestName]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      let cursor: string | undefined;
+      do {
+        const page = await api.transcriptPage(token, cursor);
+        if (cancelled) return;
+        dispatch({ type: 'hydrate_segments', segments: page.items });
+        cursor = page.next_cursor ?? undefined;
+      } while (cursor);
+    };
+    hydrate().catch(() => {
+      /* live WebSocket remains usable when background history hydration fails */
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const sendOp = useCallback((op: Op) => {
     socketRef.current?.sendAction(op);
   }, []);
@@ -77,13 +99,22 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     [ui.state],
   );
 
-  const handleEvidenceClick = useCallback((segmentId: string) => {
+  const handleEvidenceClick = useCallback(async (segmentId: string) => {
+    if (!ui.segments.some((segment) => segment.id === segmentId) && ui.state) {
+      try {
+        const segment = await api.segment(token, ui.state.meeting_id, segmentId);
+        dispatch({ type: 'hydrate_segments', segments: [segment] });
+      } catch {
+        return;
+      }
+    }
     setHighlightSegmentId(segmentId);
     setShowHistory(false);
+    setShowActivity(false);
     requestAnimationFrame(() => {
       document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
-  }, []);
+  }, [token, ui.segments, ui.state]);
 
   if (!ui.state) {
     return <div className="loading-screen">Connecting…</div>;
@@ -102,27 +133,56 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         lastError={ui.lastError}
         onSendOp={sendOp}
         onClearError={() => dispatch({ type: 'clear_error' })}
-        onToggleHistory={() => setShowHistory((v) => !v)}
+        onToggleHistory={() => {
+          setShowHistory((v) => !v);
+          setShowActivity(false);
+        }}
         showHistory={showHistory}
+        onToggleActivity={() => {
+          setShowActivity((v) => !v);
+          setShowHistory(false);
+        }}
+        showActivity={showActivity}
       />
 
       {showHistory && isHost ? (
         <div className="app-main" style={{ gridTemplateColumns: '1fr' }}>
           <HistoryPane token={token} onClose={() => setShowHistory(false)} />
         </div>
+      ) : showActivity && isHost ? (
+        <div className="app-main" style={{ gridTemplateColumns: '1fr' }}>
+          <ActivityPane token={token} onUndo={sendUndo} />
+        </div>
       ) : (
         <div className="app-main">
-          <TranscriptPane
-            segments={ui.segments}
-            participants={participants}
-            highlightSegmentId={highlightSegmentId}
-            onHighlightClear={() => setHighlightSegmentId(null)}
-            onReassignSpeaker={(segmentId, participantId) =>
-              sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
-            }
-          />
+          <div>
+            <section className="panel">
+              <div className="panel-header"><span>Recording</span></div>
+              <div className="panel-body">
+                <audio controls preload="metadata" src={api.audioUrl(token, ui.state.meeting_id)} />
+              </div>
+            </section>
+            <TranscriptPane
+              segments={ui.segments}
+              participants={participants}
+              highlightSegmentId={highlightSegmentId}
+              onHighlightClear={() => setHighlightSegmentId(null)}
+              onReassignSpeaker={(segmentId, participantId) =>
+                sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
+              }
+            />
+          </div>
 
           <div className="center-stack">
+            <MeetingOverview
+              topic={ui.state.topic.current}
+              topicEvidence={
+                ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
+              }
+              summary={ui.state.rolling_summary}
+              summaryEvidence={ui.state.rolling_summary_evidence}
+              onEvidenceClick={handleEvidenceClick}
+            />
             <CardsPane
               cards={ui.state.cards}
               onSendOp={sendOp}

@@ -11,18 +11,15 @@ Two ordering rules keep concurrent writers honest:
   order can never invert the seq order the batches were assigned. Subscribers
   must therefore be non-blocking (the web hub only marshals the batch onto its
   event loop).
-* Write-through persistence runs **outside** the state lock, drained from a
-  FIFO queue under a dedicated persistence lock. Queue order is seq order
-  because entries are appended under the state lock, so the stored snapshot
-  still advances monotonically — while readers (``snapshot``) are never blocked
-  by a slow SQLite transaction.
+* Write-through persistence completes **before** live state is replaced or
+  subscribers are notified. A database failure therefore rejects the batch
+  without exposing state that cannot survive a restart.
 """
 from __future__ import annotations
 
 import logging
 import threading
-from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from meeting.interfaces import OpResult
 from meeting.state.patches import SEGMENT_OPS, OpContext, apply_ops
@@ -35,10 +32,6 @@ logger = logging.getLogger(__name__)
 SegmentHandler = Callable[[OpResult], Optional[Dict[str, Any]]]
 
 Subscriber = Callable[[int, List[OpResult]], None]
-
-#: One queued write-through: (snapshot, applied results, actor_type, actor_id).
-PersistEntry = Tuple[Dict[str, Any], List[OpResult], str, Optional[str]]
-
 
 class MeetingStateStore:
     """Thread-safe owner of one meeting's ``MeetingState`` document."""
@@ -69,8 +62,6 @@ class MeetingStateStore:
         self._segment_pinned = segment_pinned
         self._lock = threading.RLock()
         self._subscribers: List[Subscriber] = []
-        self._persist_lock = threading.Lock()
-        self._persist_queue: Deque[PersistEntry] = deque()
 
     # ------------------------------------------------------------------
     # Introspection
@@ -113,9 +104,12 @@ class MeetingStateStore:
             ops carry their assigned ``seq`` and broadcastable ``effect``.
         """
         with self._lock:
+            # Applying to a round-tripped candidate makes repository failure
+            # a real rejection instead of leaving an unpersisted live state.
+            candidate = MeetingState.from_dict(self._state.to_dict())
             ctx = OpContext(actor_type, actor_id, self._segment_exists,
                             self._segment_pinned)
-            results = apply_ops(self._state, ops, ctx)
+            results = apply_ops(candidate, ops, ctx)
 
             for result in results:
                 if not result.ok:
@@ -124,24 +118,54 @@ class MeetingStateStore:
                     self._apply_segment_op(result)
                     if not result.ok:
                         continue
-                self._state.seq += 1
-                result.seq = self._state.seq
+                candidate.seq += 1
+                result.seq = candidate.seq
 
             applied = [r for r in results if r.ok]
             if applied:
                 if self._repository is not None:
-                    # Snapshot under the lock so the persisted document matches
-                    # this batch exactly; the write itself happens below.
-                    self._persist_queue.append(
-                        (self._state.to_dict(), applied, actor_type, actor_id)
-                    )
+                    try:
+                        self._repository.on_ops_applied(
+                            self._state.meeting_id, candidate.to_dict(), applied,
+                            actor_type, actor_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "State persistence failed (meeting %s)",
+                            self._state.meeting_id,
+                        )
+                        for result in applied:
+                            result.ok = False
+                            result.reason = "persistence_error"
+                            result.seq = None
+                        return results
+                self._state = candidate
                 # Notified under the lock: two concurrent writers can never
                 # hand their batches to subscribers out of seq order.
                 self._notify(max(r.seq or 0 for r in applied), applied)
-
-        if applied:
-            self._drain_persist_queue()
         return results
+
+    def update_runtime_fields(self, **fields: Any) -> bool:
+        """Persist lifecycle/status fields before making them observable."""
+        with self._lock:
+            candidate = MeetingState.from_dict(self._state.to_dict())
+            for key, value in fields.items():
+                if not hasattr(candidate, key):
+                    raise AttributeError(key)
+                setattr(candidate, key, value)
+            if self._repository is not None:
+                try:
+                    self._repository.persist_state(
+                        self._state.meeting_id, candidate.to_dict()
+                    )
+                except Exception:
+                    logger.exception(
+                        "Runtime state persistence failed (meeting %s)",
+                        self._state.meeting_id,
+                    )
+                    return False
+            self._state = candidate
+            return True
 
     def undo(self, event_seq: int, actor_id: Optional[str]) -> List[OpResult]:
         """Host undo: apply the recorded inverse of a past event.
@@ -156,12 +180,25 @@ class MeetingStateStore:
         """
         if self._repository is None:
             return []
-        event = self._repository.get_event(self._state.meeting_id, event_seq)
-        if not event or not event.get("inverse"):
-            return []
-        # Inverse ops carry force flags honored only for system actors, so
-        # they bypass protection without weakening it for anyone else.
-        return self.apply("system", actor_id, [event["inverse"]])
+        with self._lock:
+            event = self._repository.get_event(
+                self._state.meeting_id, event_seq
+            )
+            if not event or not event.get("inverse"):
+                return []
+            already_undone = getattr(
+                self._repository, "event_is_undone", lambda *_: False
+            )(self._state.meeting_id, event_seq)
+            if already_undone:
+                return []
+            # The marker is trusted only for system actors by the repository.
+            # It makes one undo request idempotent while the inverse's own
+            # audit event remains undoable as an explicit redo.
+            inverse = dict(event["inverse"])
+            inverse["_undo_event_seq"] = event_seq
+            # Inverse ops carry force flags honored only for system actors, so
+            # they bypass protection without weakening it for anyone else.
+            return self.apply("system", actor_id, [inverse])
 
     # ------------------------------------------------------------------
     # Fan-out
@@ -192,36 +229,6 @@ class MeetingStateStore:
                 cb(seq, applied)
             except Exception:
                 logger.exception("State subscriber raised")
-
-    # ------------------------------------------------------------------
-    # Write-through persistence
-    # ------------------------------------------------------------------
-
-    def _drain_persist_queue(self) -> None:
-        """Flush queued batches to the repository without holding the state lock.
-
-        Entries were queued under the state lock, so FIFO order is seq order;
-        the persistence lock preserves that order across concurrent writers
-        while leaving ``snapshot`` readers free during the SQLite transaction.
-        Returns once this thread's own batch has been written.
-        """
-        if self._repository is None:
-            return
-        with self._persist_lock:
-            while True:
-                try:
-                    snapshot, applied, actor_type, actor_id = \
-                        self._persist_queue.popleft()
-                except IndexError:
-                    return
-                try:
-                    self._repository.on_ops_applied(
-                        self._state.meeting_id, snapshot,
-                        applied, actor_type, actor_id,
-                    )
-                except Exception:
-                    logger.exception("State persistence failed (meeting %s)",
-                                     self._state.meeting_id)
 
     # ------------------------------------------------------------------
     # Segment ops

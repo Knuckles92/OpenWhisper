@@ -8,7 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Meeting Mode** - Capture system audio and microphone with live ASR, speaker diarization, and a browser dashboard other participants can join over the LAN. An optional intelligence agent tracks key points, decisions, and action items; finished sessions export to Markdown, plain text, and JSON. Meeting Intelligence Agent and Speaker Identification ship as downloadable components
+- **Meeting Mode** - Capture system audio and microphone with durable live ASR, crash recovery, recording playback, and a browser dashboard other participants can join over the LAN. Optional cloud intelligence tracks evidence-linked topics, summaries, key points, decisions, action items, risks, and questions. Finished sessions support full transcript history/search, audit and host undo, re-run insights, rename/delete, playback, and Markdown/JSON/plain-text export. The unpublished Meeting Intelligence Agent and Speaker Identification payloads are gated out of the component UI; the shipped Direct agent and Me/Others channel labels remain fully usable without them
+
+### Fixed
+- **Meeting transcription could be marked complete before its segments were durable** - Segment persistence and chunk completion now commit atomically with stable retry-safe IDs. Failed or interrupted drains remain recoverable and never run final consolidation over an incomplete transcript
+- **Meeting state could be broadcast before SQLite accepted it** - State patches now use persistence-first copy-on-write semantics; a failed transaction rejects the operation without advancing sequence numbers, mutating live state, or notifying clients
+- **Meeting history silently truncated long transcripts** - Live and historical transcript reads now use deterministic keyset pagination, evidence links can hydrate individual scoped segments, and search opens the complete stored meeting
+- **Meeting links could not be revoked** - Hosts can regenerate both capability links; old REST tokens stop working immediately and existing WebSockets are disconnected for re-authentication
+- **Capture loss looked like silence forever** - A per-channel watchdog restarts failed streams and follows default microphone/system-audio changes without interrupting the healthy channel, while persisting a visible degradation status
+- **Meeting deletion could orphan either database rows or recordings** - Spools are tombstoned before database deletion, restored on transaction failure, and purged only after the database commit succeeds
 
 ### Changed
 - **Voice and text models now share one Model Manager** - The manager has dedicated Voice and Text tabs, with a guided provider → model picker for cleanup chat models. Provider, catalog sorting, and active text-model selection moved out of Settings → Cleanup; that tab now focuses on cleanup behavior, prompts, and learned rules while showing the active text model as a read-only summary

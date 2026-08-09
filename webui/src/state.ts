@@ -70,6 +70,7 @@ export function applyEffect(doc: MeetingStateDoc, effect: Effect): MeetingStateD
       break;
     case 'rolling_summary':
       next.rolling_summary = effect.text;
+      next.rolling_summary_evidence = effect.evidence;
       break;
     case 'title':
       next.title = effect.text;
@@ -137,6 +138,10 @@ function mergeSegments(existing: Segment[], incoming: Segment[]): Segment[] {
   return [...map.values()].sort((a, b) => a.start_s - b.start_s);
 }
 
+function isTerminalStatus(status: string): boolean {
+  return ['ended', 'failed', 'needs_recovery'].includes(status);
+}
+
 function applySegmentSpeaker(
   segments: Segment[],
   segmentId: string,
@@ -154,6 +159,7 @@ function applySegmentSpeaker(
 export type UiAction =
   | { type: 'socket_status'; status: SocketStatus }
   | { type: 'server_message'; msg: ServerMessage }
+  | { type: 'hydrate_segments'; segments: Segment[] }
   | { type: 'clear_error' };
 
 export function meetingReducer(state: MeetingUiState, action: UiAction): MeetingUiState {
@@ -163,6 +169,9 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
 
     case 'clear_error':
       return { ...state, lastError: null };
+
+    case 'hydrate_segments':
+      return { ...state, segments: mergeSegments(state.segments, action.segments) };
 
     case 'server_message': {
       const msg = action.msg;
@@ -174,10 +183,10 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             role: h.role,
             participantId: h.participant_id,
             state: h.state,
-            segments: mergeSegments([], h.segments),
+            segments: mergeSegments(state.segments, h.segments),
             meeting: h.meeting,
             guestUrl: h.urls.guest ?? null,
-            meetingEnded: h.state.status === 'ended',
+            meetingEnded: isTerminalStatus(h.state.status),
             lastError: null,
             lastSeqByTarget: {},
           };
@@ -224,15 +233,19 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
         }
         case 'status':
           if (!state.state) return state;
+          const status = msg.status ?? state.state.status;
           return {
             ...state,
             state: {
               ...state.state,
-              status: msg.status,
-              intelligence_online: msg.intelligence_online,
-              diarization_available: msg.diarization_available,
+              status,
+              intelligence_online:
+                msg.intelligence_online ?? state.state.intelligence_online,
+              diarization_available:
+                msg.diarization_available ?? state.state.diarization_available,
+              capture: msg.capture ?? state.state.capture,
             },
-            meetingEnded: msg.status === 'ended',
+            meetingEnded: isTerminalStatus(status),
           };
         case 'action_result': {
           const results = { ...state.actionResults, [msg.client_action_id]: msg.results };
@@ -242,6 +255,13 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             lastSeqByTarget: trackSeqs(state.lastSeqByTarget, msg.results),
           };
           for (const r of msg.results) {
+            if (!r.ok) {
+              next = {
+                ...next,
+                lastError: (r.reason || 'Action was rejected').replace(/_/g, ' '),
+              };
+              continue;
+            }
             // Optimistic echo only: apply the effect but never advance the
             // document seq, or a fast echo would mask a peer's older patch.
             if (next.state && isStale(next.state, r.seq)) continue;
@@ -270,7 +290,9 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
           return {
             ...state,
             meetingEnded: true,
-            state: state.state ? { ...state.state, status: 'ended' } : null,
+            state: state.state
+              ? { ...state.state, status: msg.status ?? 'ended' }
+              : null,
           };
         default:
           return state;

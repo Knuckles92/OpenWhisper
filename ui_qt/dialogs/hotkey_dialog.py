@@ -252,6 +252,21 @@ class HotkeyDialog(QDialog):
         self.minimize_input.clicked.connect(lambda: self._start_capture("minimize_tray", self.minimize_input))
         layout.addWidget(self.minimize_input)
 
+        layout.addSpacing(12)
+
+        meeting_label = QLabel("Meeting Toggle (optional):")
+        layout.addWidget(meeting_label)
+        meeting_row = QHBoxLayout()
+        self.meeting_input = self._create_hotkey_input()
+        self.meeting_input.clicked.connect(
+            lambda: self._start_capture("meeting_toggle", self.meeting_input)
+        )
+        meeting_row.addWidget(self.meeting_input)
+        clear_meeting = Button("Clear")
+        clear_meeting.clicked.connect(self._clear_meeting_hotkey)
+        meeting_row.addWidget(clear_meeting)
+        layout.addLayout(meeting_row)
+
         layout.addSpacing(16)
 
         # Reset button
@@ -352,7 +367,8 @@ class HotkeyDialog(QDialog):
     def _reset_input_styles(self):
         """Reset all input fields to the default (non-capturing) style."""
         for input_field in (self.record_input, self.cancel_input,
-                            self.enable_input, self.minimize_input):
+                            self.enable_input, self.minimize_input,
+                            self.meeting_input):
             self._set_capturing_state(input_field, False)
 
     def _reset_to_defaults(self):
@@ -360,6 +376,11 @@ class HotkeyDialog(QDialog):
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
         self._update_displays()
         logger.info("Hotkeys reset to defaults")
+
+    def _clear_meeting_hotkey(self) -> None:
+        """Leave the optional meeting toggle unregistered."""
+        self.current_hotkeys["meeting_toggle"] = ""
+        self.meeting_input.clear()
 
     def _load_hotkeys(self):
         """Load current hotkey settings."""
@@ -388,6 +409,11 @@ class HotkeyDialog(QDialog):
         )
         self.minimize_input.setText(
             format_hotkey_display(self.current_hotkeys.get("minimize_tray", defaults["minimize_tray"]))
+        )
+        self.meeting_input.setText(
+            format_hotkey_display(
+                self.current_hotkeys.get("meeting_toggle", "")
+            )
         )
 
     def _save_hotkeys(self):

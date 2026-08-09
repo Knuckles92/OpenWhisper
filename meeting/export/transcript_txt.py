@@ -88,7 +88,7 @@ def resolve_title(meeting: Dict[str, Any], state: Dict[str, Any]) -> str:
     Returns:
         A non-empty title string.
     """
-    title = (state.get("title") or "").strip() or (meeting.get("title") or "").strip()
+    title = (meeting.get("title") or "").strip() or (state.get("title") or "").strip()
     if title:
         return title
     started = parse_iso(meeting.get("started_at"))

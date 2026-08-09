@@ -121,6 +121,29 @@ class TestMeetingLifecycle:
         repo.update_meeting("m_test1", status="ended")
         assert repo.find_interrupted_meetings() == []
 
+    def test_terminal_meeting_with_unfinished_audio_requires_recovery(self, repo):
+        make_meeting(repo)
+        chunk_id = repo.register_chunk(
+            meeting_id="m_test1", channel="mic", seq=0,
+            file_path="/tmp/c0.wav", start_s=0.0, duration_s=20.0,
+            sample_rate=16000,
+        )
+        repo.update_meeting("m_test1", status="ended")
+        assert [m["id"] for m in repo.find_interrupted_meetings()] == ["m_test1"]
+        repo.set_chunk_status(chunk_id, "done")
+        assert repo.find_interrupted_meetings() == []
+
+    def test_rename_updates_canonical_row_and_snapshot(self, repo):
+        make_meeting(repo)
+        repo.persist_state("m_test1", {
+            "meeting_id": "m_test1", "seq": 2, "title": "Old",
+            "status": "ended",
+        })
+        repo.rename_meeting("m_test1", "New title")
+        meeting = repo.get_meeting("m_test1")
+        assert meeting["title"] == "New title"
+        assert json.loads(meeting["state_json"])["title"] == "New title"
+
 
 class TestChunks:
     def test_chunk_lifecycle_and_retry_visibility(self, repo):
@@ -148,6 +171,31 @@ class TestChunks:
         repo.set_chunk_status(chunk_id, "done")
         assert repo.get_pending_chunks("m_test1") == []
 
+    def test_atomic_commit_is_idempotent_and_done_cannot_regress(self, repo):
+        make_meeting(repo)
+        chunk_id = repo.register_chunk(
+            meeting_id="m_test1", channel="mic", seq=0,
+            file_path="/tmp/c0.wav", start_s=0.0, duration_s=20.0,
+            sample_rate=16000,
+        )
+        segment = make_segment("m_test1", "sg_commit", 0.0, 2.0, "durable")
+        segment.chunk_id = chunk_id
+        rows, committed = repo.commit_chunk_transcription(
+            "m_test1", chunk_id, [segment]
+        )
+        assert committed is True
+        assert [row["id"] for row in rows] == ["sg_commit"]
+
+        retry = make_segment("m_test1", "sg_other", 2.0, 4.0, "duplicate retry")
+        retry.chunk_id = chunk_id
+        rows, committed = repo.commit_chunk_transcription(
+            "m_test1", chunk_id, [retry]
+        )
+        assert committed is False
+        assert [row["id"] for row in rows] == ["sg_commit"]
+        repo.set_chunk_status(chunk_id, "failed", error="late callback")
+        assert repo.count_unfinished_chunks("m_test1") == 0
+
 
 class TestSegments:
     def test_add_query_and_speaker_update(self, repo):
@@ -157,8 +205,8 @@ class TestSegments:
             make_segment("m_test1", "sg_2", 2.0, 4.0, "second"),
             make_segment("m_test1", "sg_3", 4.0, 6.0, "third"),
         ])
-        assert repo.segment_exists("sg_2")
-        assert not repo.segment_exists("sg_nope")
+        assert repo.segment_exists("m_test1", "sg_2")
+        assert not repo.segment_exists("m_test1", "sg_nope")
 
         segments = repo.get_segments("m_test1")
         assert [s["id"] for s in segments] == ["sg_1", "sg_2", "sg_3"]
@@ -169,19 +217,45 @@ class TestSegments:
         last2 = repo.get_last_segments("m_test1", 2)
         assert [s["id"] for s in last2] == ["sg_2", "sg_3"]
 
-        repo.update_segment_speaker("sg_1", "p_x", "human", True)
-        seg = repo.get_segment("sg_1")
-        assert seg["speaker_participant_id"] == "p_x"
+        repo.update_segment_speaker("m_test1", "sg_1", None, "human", True)
+        seg = repo.get_segment("m_test1", "sg_1")
+        assert seg["speaker_participant_id"] is None
         assert seg["speaker_pinned"] is True
 
     def test_embeddings_round_trip(self, repo):
         make_meeting(repo)
         repo.add_segments([make_segment("m_test1", "sg_e", 0.0, 2.0, "emb")])
         payload = b"\x00\x01\x02\x03"
-        repo.set_segment_embedding("sg_e", payload)
+        repo.set_segment_embedding("m_test1", "sg_e", payload)
         rows = repo.get_segment_embeddings("m_test1")
         assert len(rows) == 1
         assert rows[0]["embedding"] == payload
+
+    def test_keyset_paging_handles_equal_timestamps(self, repo):
+        make_meeting(repo)
+        repo.add_segments([
+            make_segment("m_test1", f"sg_{i}", 5.0, 6.0, str(i))
+            for i in range(5)
+        ])
+        first = repo.get_segments_page("m_test1", limit=2)
+        second = repo.get_segments_page(
+            "m_test1", first[-1]["start_s"], first[-1]["id"], limit=2
+        )
+        third = repo.get_segments_page(
+            "m_test1", second[-1]["start_s"], second[-1]["id"], limit=2
+        )
+        assert [row["id"] for row in first + second + third] == [
+            "sg_0", "sg_1", "sg_2", "sg_3", "sg_4",
+        ]
+
+    def test_segment_reads_and_updates_are_meeting_scoped(self, repo):
+        make_meeting(repo, "m_one")
+        make_meeting(repo, "m_two")
+        repo.add_segments([make_segment("m_one", "sg_one")])
+        assert repo.get_segment("m_two", "sg_one") is None
+        assert not repo.segment_exists("m_two", "sg_one")
+        repo.update_segment_speaker("m_two", "sg_one", None, "human", True)
+        assert repo.get_segment("m_one", "sg_one")["speaker_pinned"] is False
 
 
 class TestSearchAndDelete:
@@ -212,12 +286,20 @@ class TestWriteThrough:
         from meeting.state.store import MeetingStateStore
 
         make_meeting(repo)
+        repo.add_segments([
+            make_segment("m_test1", "sg_evidence", text="supporting evidence")
+        ])
         state = MeetingState(meeting_id="m_test1")
-        store = MeetingStateStore(state, repository=repo,
-                                  segment_exists=repo.segment_exists)
+        store = MeetingStateStore(
+            state, repository=repo,
+            segment_exists=lambda segment_id: repo.segment_exists(
+                "m_test1", segment_id
+            ),
+        )
 
         [added] = store.apply("agent", "agent", [
-            {"op": "add_item", "card": "decisions", "text": "Ship it"},
+            {"op": "add_item", "card": "decisions", "text": "Ship it",
+             "evidence": ["sg_evidence"]},
         ])
         assert added.ok
 
@@ -240,6 +322,15 @@ class TestWriteThrough:
         assert snapshot["seq"] == added.seq
         assert meeting["state_seq"] == added.seq
 
+        [undone] = store.undo(added.seq, "p_host")
+        assert undone.ok
+        assert store.undo(added.seq, "p_host") == []
+        events = repo.list_events("m_test1")
+        original = next(event for event in events if event["seq"] == added.seq)
+        undo_event = next(event for event in events if event["seq"] == undone.seq)
+        assert original["undoable"] is False
+        assert undo_event["undoable"] is True
+
     def test_question_and_participant_mirrors(self, repo, db):
         from meeting.state.schema import MeetingState
         from meeting.state.store import MeetingStateStore
@@ -248,8 +339,10 @@ class TestWriteThrough:
         store = MeetingStateStore(MeetingState(meeting_id="m_test1"),
                                   repository=repo)
         store.apply("agent", "agent", [
-            {"op": "ask_question", "text": "Deadline confirmed?"},
-            {"op": "upsert_participant", "display_name": "Sam"},
+            {"op": "ask_question", "text": "Deadline confirmed?",
+             "evidence": ["sg_anchor"]},
+            {"op": "upsert_participant", "display_name": "Sam",
+             "evidence": ["sg_anchor"]},
         ])
         from services.models import MeetingQuestion, MeetingParticipant
         with db.get_session() as session:

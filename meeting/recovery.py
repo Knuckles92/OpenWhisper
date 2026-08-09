@@ -133,8 +133,8 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     Rebuilds a minimal pipeline — ASR engine only, no capture, no web server,
     no agent — feeds it the meeting's pending chunks, waits for the queue to
     drain, and marks the meeting ``ended``. Segments are persisted through
-    ``repository.add_segments`` as they arrive, so a crash mid-finalize
-    remains recoverable.
+    an atomic segment/chunk commit as they arrive, so a crash mid-finalize
+    remains recoverable without duplicating evidence anchors.
 
     Args:
         repository: A ``MeetingRepository``.
@@ -154,6 +154,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     model_name = meeting.get("asr_model") or asr_model or "auto"
 
     try:
+        repository.reset_unfinished_chunks(meeting_id)
         pending = repository.get_pending_chunks(meeting_id)
     except Exception:
         logger.exception("Failed to list pending chunks for %s", meeting_id)
@@ -169,12 +170,10 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
         except Exception:
             logger.exception("Finalize progress callback raised")
 
-    def _on_segments(segments) -> None:
-        try:
-            repository.add_segments(segments)
-        except Exception:
-            logger.exception("Failed to persist recovered segments for %s",
-                             meeting_id)
+    def _on_chunk_result(chunk, segments) -> None:
+        repository.commit_chunk_transcription(
+            meeting_id, chunk.chunk_id, segments
+        )
         progress["done"] += 1
         _report()
 
@@ -188,7 +187,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                 logger.error("ASR model %r unavailable; cannot finalize %s",
                              model_name, meeting_id)
                 return False
-            engine.start(_on_segments)
+            engine.start(_on_chunk_result)
             requeue = getattr(engine, "requeue_pending", None)
             if callable(requeue):
                 requeue()
@@ -218,6 +217,10 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                                  meeting_id)
     if not drained:
         logger.error("ASR drain timed out finalizing meeting %s", meeting_id)
+        return False
+    if repository.count_unfinished_chunks(meeting_id):
+        logger.error("Unfinished chunks remain after finalizing %s", meeting_id)
+        repository.update_meeting(meeting_id, status="needs_recovery")
         return False
 
     _mark_ended(repository, meeting)

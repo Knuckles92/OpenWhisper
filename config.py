@@ -289,7 +289,7 @@ class AppConfig:
     MEETING_WHISPER_MODEL: str = "auto"  # dedicated meeting ASR model selection
     MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "openai/gpt-4o-mini"
-    MEETING_AGENT_CORE: str = "pi"  # "pi" (Node sidecar) | "direct" (OpenRouter REST)
+    MEETING_AGENT_CORE: str = "direct"  # Pi stays gated until its payload is published
     MEETING_SERVER_BIND: str = "localhost"  # "localhost" | "lan"
     MEETING_SERVER_PORT: int = 0  # 0 = ephemeral port
     MEETINGS_FOLDER: str = field(
@@ -313,14 +313,16 @@ class AppConfig:
                     'record_toggle': 'ctrl+alt+r',
                     'cancel': 'ctrl+alt+escape',
                     'enable_disable': 'ctrl+alt+shift+r',
-                    'minimize_tray': 'ctrl+alt+m'
+                    'minimize_tray': 'ctrl+alt+m',
+                    'meeting_toggle': '',
                 }
             else:
                 self.DEFAULT_HOTKEYS = {
                     'record_toggle': 'kp *',
                     'cancel': 'kp -',
                     'enable_disable': 'ctrl+alt+kp *',
-                    'minimize_tray': 'ctrl+alt+m'
+                    'minimize_tray': 'ctrl+alt+m',
+                    'meeting_toggle': '',
                 }
 
         if self.MODEL_VALUE_MAP is None:

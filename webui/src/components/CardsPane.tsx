@@ -31,7 +31,7 @@ function CardItemRow({
 
   // Host undo-anyone: quietly offered on agent-authored items, whose last
   // change the host can revert without hunting through the audit trail.
-  const canUndo = onUndo !== undefined && undoSeq !== undefined && item.author_type === 'agent';
+  const canUndo = onUndo !== undefined && undoSeq !== undefined;
 
   const statusClass =
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';

@@ -1,6 +1,6 @@
 # Meeting Mode — Progress Tracker
 
-**Updated:** 2026-08-08 · **Branch:** `meet_insight` · **Sources of truth:** `meeting-mode-plan.md` (decisions) + `meeting-mode-handoff.md` (contracts).
+**Updated:** 2026-08-09 · **Branch:** `meet_insight` · **Sources of truth:** `meeting-mode-plan.md` (decisions) + `meeting-mode-handoff.md` (contracts).
 
 Update this file whenever a milestone completes or handoff is needed. Keep §Status current.
 
@@ -11,37 +11,36 @@ Update this file whenever a milestone completes or handoff is needed. Keep §Sta
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | 0 | Foundation (interfaces/state/store/clock/DB/repo) | ✅ done | 38 unit tests green at prior handoff |
-| 1 | Capture + spool + ASR | ✅ on disk | py_compile OK; needs unit tests still |
-| 2 | Web + Qt transcript-only dashboard | ✅ wave-1 complete | webui built to `dist/`; Qt panel/tray/handlers wired |
-| 3 | Agent + intelligence | ✅ wave-1 complete | `pi_sidecar.py` + `__init__.py` added; sidecar build next |
-| 4 | Diarization | ✅ on disk | py_compile OK; needs pin-preservation tests |
+| 1 | Capture + spool + ASR | ✅ hardened | atomic segment/chunk commit, stable IDs, retry/recovery, per-channel device watchdog |
+| 2 | Web + Qt transcript-only dashboard | ✅ hardened | paged transcript/history, scoped evidence hydration, authenticated playback, capture status |
+| 3 | Agent + intelligence | ✅ hardened | evidence required on every agent op; bounded retry can recover from offline; Direct is the published default |
+| 4 | Diarization | ✅ unit-tested | durable embeddings + pin preservation; real-model parity gate remains external |
 | 5 | Multi-user hardening | ✅ unit-tested | authz + guest set_title fix; soak still manual |
-| 6 | History/exports/recovery/packaging | ✅ code-complete | spec+CHANGELOG done; component archives still placeholders |
-| 7 | Final review + full test pass | 🟡 nearly done | 85 meeting tests green; adversarial HIGH/MED fixed; manual verify left |
+| 6 | History/exports/recovery/packaging | ✅ hardened | full paging/search/playback; atomic rename/delete; unfinished ASR cannot finalize |
+| 7 | Final review + full test pass | ✅ automated green | 556 passed / 1 skipped / 36 subtests; React build + sidecar type-check/build green; manual Windows gates remain |
 
-### Verified this session (2026-08-08 resume)
-- Wave-1 gaps closed via Grok/Composer subagents:
-  - [Pi sidecar](b0157ab8-afb8-4c57-a1c1-e69ba9ecdcc0): `meeting/agent/pi_sidecar.py` + `__init__.py`
-  - [Webui](2e8128fa-0970-4807-b67f-e7f41b96272d): full React shell; `npm run build` OK → `webui/dist/`
-  - [Qt wiring](cc929e48-6232-41b8-9c81-ee024652f466): main_window panel, tray, theme.qss, ui_controller handlers
-- Next: integration import pass, sidecar `bundle.cjs` build, tests wave, packaging.
+### Verified this session (2026-08-09 hardening)
+
+- ASR callbacks are durable and idempotent; incomplete terminal sessions are recoverable.
+- State changes are persistence-first and meeting-scoped; every agent claim requires evidence.
+- History is fully paged; evidence hydration, search selection, audit/undo, token rotation, and authenticated host/guest playback are wired.
+- Failed/default-changed capture channels restart independently and report degradation.
+- Placeholder components are unreachable until real artifacts are explicitly published.
+- Full validation: 556 passed / 1 skipped / 36 subtests; React production build and sidecar type-check/build are green.
 
 ---
 
 ## Current workstream
 
-1. ~~Finish `pi_sidecar.py` + `agent/__init__.py`~~
-2. ~~Finish webui React shell + `webui/dist` build~~
-3. ~~Integration import pass~~ (fixed recovery finalize dict mismatch)
-4. ~~Sidecar `bundle.cjs`~~ (fixed pi-adapter: use `ModelRuntime.getModel`, not removed `getModel`)
-5. ~~Tests wave~~ — 84 meeting tests green (`tests/test_meeting_*.py`)
-6. ~~Packaging leftovers~~ — `OpenWhisper.spec` + CHANGELOG; component URLs still placeholder TODOs
-7. ~~Adversarial review~~ (pause/end races, sidecar stale tools, guest set_title)
-8. Manual Windows verification (user-driven)
+1. ~~Implement review remediation~~
+2. ~~Add failure-path regression coverage~~
+3. ~~Rebuild web and sidecar artifacts; run type checks~~
+4. ~~Run the complete Python suite~~
+5. Manual Windows verification (user-driven)
 
 ### Known gaps (non-blocking for code complete)
-- Webui: topic/rolling summary not rendered; host undo UI not exposed; no action-result toasts.
-- MEETING_AGENT / SPEAKER_ID component archives not published (placeholder SHA/URLs).
+- MEETING_AGENT / SPEAKER_ID component archives are not published; both are hidden and unusable until real URLs, sizes, and SHA-256 digests replace the placeholders.
+- Real speaker-model embedding parity remains unverified until the external ONNX model/reference fixtures are supplied.
 - Manual: probe_loopback, live YouTube+mic meeting, crash recovery, LAN guest join.
 
 ---
@@ -49,8 +48,7 @@ Update this file whenever a milestone completes or handoff is needed. Keep §Sta
 ## Handoff notes for next session
 
 If this session dies mid-flight:
-1. Read `meeting-mode-plan.md` then `meeting-mode-handoff.md` §3 contracts + this progress file.
-2. Run: `.\venv\Scripts\python.exe -m pytest tests/test_meeting_*.py -q -p no:cacheprovider`
-3. Prefer **Grok 4.5 / Composer** subagents for workhorses (not Opus unless truly needed); orchestrate from main session.
-4. Standing rules: greenfield, no Qt in `meeting/`, scipy banned, exclusive file ownership when parallel.
-5. Sidecar: if esbuild platform mismatch, delete `sidecar/node_modules` and `npm install` on Windows before `node build.mjs`.
+1. Read `meeting-mode-plan.md`, then `meeting-mode-handoff.md` and this file.
+2. Run: `.\venv\Scripts\python.exe -m pytest tests/ -q -p no:cacheprovider`.
+3. Standing rules: no Qt in `meeting/`; `meeting/state/patches.py` remains the validation boundary; never mark a chunk done before its segments are durable.
+4. Sidecar: if esbuild platform mismatch, rebuild with the Windows Node runtime documented in `meeting-mode-handoff.md`.

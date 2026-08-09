@@ -182,6 +182,7 @@ class HotkeyRuntime:
             on_record_toggle=self.controller.toggle_recording,
             on_cancel=self.controller.cancel,
             on_minimize_tray=self.controller.minimize_to_tray,
+            on_meeting_toggle=self.controller.toggle_meeting_mode,
             on_status_update=self.controller.update_status_with_auto_hide,
             on_status_update_auto_hide=self.controller.update_status_with_auto_hide,
         )

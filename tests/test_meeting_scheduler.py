@@ -202,6 +202,37 @@ class TestSegmentWatermark:
         assert len(agent.calls) == 2
         assert [s["id"] for s in agent.calls[1].new_segments] == ["sg_1"]
 
+    def test_offline_scheduler_recovers_after_a_successful_retry(self):
+        engine = FakeEngine([
+            {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
+        ])
+        agent = FakeAgent(fail_times=3)
+        health = []
+        sched = CheckpointScheduler(engine, agent, on_health=health.append)
+
+        for _ in range(3):
+            sched._pending_segments = 1
+            sched._fire()
+        assert health == [False]
+        assert sched._online is False
+
+        sched._pending_segments = 1
+        sched._fire()
+        assert health == [False, True]
+        assert sched._online is True
+        assert sched._consecutive_failures == 0
+
+    def test_transcript_fetch_failure_restores_claimed_work(self):
+        class FailingEngine(FakeEngine):
+            def get_transcript(self, after_start_s=-1.0, limit=None):
+                raise RuntimeError("database busy")
+
+        sched = self._sched(FailingEngine(), FakeAgent())
+        sched._pending_segments = 4
+        sched._fire()
+        assert sched._pending_segments == 4
+        assert sched._consecutive_failures == 1
+
     def test_sent_id_set_is_pruned_outside_the_refetch_window(self):
         engine = FakeEngine()
         agent = FakeAgent()

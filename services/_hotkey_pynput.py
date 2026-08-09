@@ -406,6 +406,7 @@ class HotkeyManager:
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
+        self.on_meeting_toggle: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -507,6 +508,13 @@ class HotkeyManager:
             self.trigger_action("record_toggle")
             return True
 
+        if self._matches_hotkey(
+            active_modifiers, main_key, self.hotkeys.get("meeting_toggle")
+        ):
+            logger.debug(f"Meeting toggle hotkey matched from {source}")
+            self.trigger_action("meeting_toggle")
+            return True
+
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("cancel")):
             logger.debug(f"Cancel hotkey matched from {source}")
             self.trigger_action("cancel")
@@ -548,6 +556,9 @@ class HotkeyManager:
         elif action == "minimize_tray":
             if self._should_accept_action("minimize_tray") and self.on_minimize_tray:
                 threading.Thread(target=self.on_minimize_tray, daemon=True).start()
+        elif action == "meeting_toggle":
+            if self._should_accept_action("meeting_toggle") and self.on_meeting_toggle:
+                threading.Thread(target=self.on_meeting_toggle, daemon=True).start()
 
     def _on_release(self, key) -> None:
         """Handle a global key-release event."""
@@ -661,6 +672,7 @@ class HotkeyManager:
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
+                     on_meeting_toggle: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
                      is_transcribing_fn: Callable[[], bool] = None):
@@ -679,6 +691,7 @@ class HotkeyManager:
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
+        self.on_meeting_toggle = on_meeting_toggle
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

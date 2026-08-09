@@ -10,6 +10,7 @@ survives in the database (``asr_status``) for startup recovery via
 from __future__ import annotations
 
 import logging
+import hashlib
 import queue
 import threading
 import time
@@ -17,7 +18,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from meeting.asr.audio import load_wav_int16, prepare_for_whisper
 from meeting.interfaces import SpooledChunk, TranscriptSegment
-from meeting.state.schema import new_id
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,9 @@ class MeetingAsrEngine:
             )
 
         self._queue: "queue.Queue" = queue.Queue()  # unbounded: never drop chunks
-        self._on_segments: Optional[Callable[[List[TranscriptSegment]], None]] = None
+        self._on_chunk_result: Optional[
+            Callable[[SpooledChunk, List[TranscriptSegment]], None]
+        ] = None
         self._thread: Optional[threading.Thread] = None
         self._stopping = False
         # Task accounting for drain(): counts chunks enqueued but not finished
@@ -89,14 +91,18 @@ class MeetingAsrEngine:
     # AsrEngine surface
     # ------------------------------------------------------------------
 
-    def start(self, on_segments: Callable[[List[TranscriptSegment]], None]) -> None:
+    def start(
+        self,
+        on_chunk_result: Callable[[SpooledChunk, List[TranscriptSegment]], None],
+    ) -> None:
         """Start the worker thread.
 
         Args:
-            on_segments: Called from the worker thread with each successfully
-                transcribed chunk's segments (never with an empty list).
+            on_chunk_result: Called from the worker thread after transcription,
+                including for silent chunks. It must durably store the segments
+                and mark the chunk done, or raise so the chunk is retried.
         """
-        self._on_segments = on_segments
+        self._on_chunk_result = on_chunk_result
         if self._thread is not None and self._thread.is_alive():
             return
         self._stopping = False
@@ -255,10 +261,10 @@ class MeetingAsrEngine:
         try:
             self._set_status(chunk.chunk_id, "processing")
             segments = self._transcribe_chunk(chunk)
-            self._set_status(chunk.chunk_id, "done")
+            if self._on_chunk_result is None:
+                raise RuntimeError("No durable ASR result callback is registered")
+            self._on_chunk_result(chunk, segments)
             self._attempts.pop(chunk.chunk_id, None)
-            if segments and self._on_segments is not None:
-                self._on_segments(segments)
             return False
         except Exception as e:
             logger.exception(
@@ -295,12 +301,12 @@ class MeetingAsrEngine:
         )
 
         segments: List[TranscriptSegment] = []
-        for seg in whisper_segments:
+        for ordinal, seg in enumerate(whisper_segments):
             text = (seg.text or "").strip()
             if not text:
                 continue
             segments.append(TranscriptSegment(
-                segment_id=new_id("sg"),
+                segment_id=self._stable_segment_id(chunk.chunk_id, ordinal),
                 meeting_id=self.meeting_id,
                 chunk_id=chunk.chunk_id,
                 channel=chunk.channel,
@@ -309,6 +315,11 @@ class MeetingAsrEngine:
                 text=text,
             ))
         return segments
+
+    def _stable_segment_id(self, chunk_id: int, ordinal: int) -> str:
+        """Return an idempotent evidence anchor for a chunk segment."""
+        raw = f"{self.meeting_id}:{chunk_id}:{ordinal}".encode("utf-8")
+        return f"sg_{hashlib.sha256(raw).hexdigest()[:20]}"
 
     def _set_status(self, chunk_id: int, status: str,
                     error: Optional[str] = None) -> None:

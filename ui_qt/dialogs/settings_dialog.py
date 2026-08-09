@@ -41,6 +41,7 @@ from services.settings import (
     settings_manager,
 )
 from services.history_manager import history_manager
+from services.components import ComponentId, component_is_published
 from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
@@ -767,8 +768,14 @@ class SettingsDialog(QDialog):
 
         self.meeting_agent_core_combo = NoWheelComboBox()
         self.meeting_agent_core_combo.addItem(
-            "Pi (bundled sidecar)", MeetingAgentCore.PI
+            "Pi (component unavailable in this build)", MeetingAgentCore.PI
         )
+        pi_index = self.meeting_agent_core_combo.count() - 1
+        pi_published = component_is_published(ComponentId.MEETING_AGENT)
+        model = self.meeting_agent_core_combo.model()
+        item = model.item(pi_index) if hasattr(model, "item") else None
+        if item is not None:
+            item.setEnabled(pi_published)
         self.meeting_agent_core_combo.addItem(
             "Direct (no sidecar)", MeetingAgentCore.DIRECT
         )
@@ -814,8 +821,8 @@ class SettingsDialog(QDialog):
         self.meeting_bind_warning = QLabel(
             "Sharing on the local network serves the live meeting — running "
             "transcript, notes, insights, and audio playback — over plain, "
-            "unencrypted HTTP. Anyone on your network who has (or guesses) "
-            "the link can read and edit the meeting."
+            "unencrypted HTTP. Anyone holding the guest link can read and "
+            "edit the meeting and play the raw meeting recording."
         )
         self.meeting_bind_warning.setObjectName("meetingBindWarning")
         self.meeting_bind_warning.setWordWrap(True)
@@ -1370,9 +1377,11 @@ class SettingsDialog(QDialog):
             resolve_meeting_llm_model(settings)
         )
 
-        core_index = self.meeting_agent_core_combo.findData(
-            resolve_meeting_agent_core(settings)
-        )
+        core = resolve_meeting_agent_core(settings)
+        if (core == MeetingAgentCore.PI
+                and not component_is_published(ComponentId.MEETING_AGENT)):
+            core = MeetingAgentCore.DIRECT
+        core_index = self.meeting_agent_core_combo.findData(core)
         self.meeting_agent_core_combo.setCurrentIndex(max(0, core_index))
 
         bind_index = self.meeting_bind_combo.findData(

@@ -40,6 +40,7 @@ class SoundcardLoopbackSource:
 
     def __init__(self) -> None:
         self.channel = CHANNEL_LOOPBACK
+        self.device_id = "soundcard-default"
         self._on_block: Optional[Callable[[CaptureBlock], None]] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -97,6 +98,16 @@ class SoundcardLoopbackSource:
         thread = self._thread
         return self._active and thread is not None and thread.is_alive()
 
+    def is_default_device_current(self) -> bool:
+        """Whether this fallback still records the current default speaker."""
+        try:
+            import soundcard as sc
+            return str(sc.default_speaker().name) == self.device_id
+        except Exception:
+            logger.debug("Could not probe the default soundcard speaker",
+                         exc_info=True)
+            return True
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -107,6 +118,7 @@ class SoundcardLoopbackSource:
         try:
             import soundcard as sc
             speaker = sc.default_speaker()
+            self.device_id = str(speaker.name)
             mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
         except Exception:
             logger.exception("Soundcard loopback device unavailable")

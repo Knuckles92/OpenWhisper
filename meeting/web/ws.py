@@ -247,6 +247,30 @@ class WsHub:
             return
         future.add_done_callback(_log_broadcast_failure)
 
+    def schedule_invalidate_connections(self) -> None:
+        """Close all current sockets shortly after token regeneration."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._invalidate_connections(), loop
+            )
+        except RuntimeError:
+            logger.debug("Socket invalidation dropped: server loop unavailable")
+            return
+        future.add_done_callback(_log_broadcast_failure)
+
+    async def _invalidate_connections(self) -> None:
+        # Give the regenerating REST response time to deliver the new host URL.
+        await asyncio.sleep(0.25)
+        sockets = list(self._connections)
+        self._connections.clear()
+        await asyncio.gather(
+            *(self._close(ws, WS_CLOSE_UNAUTHORIZED) for ws in sockets),
+            return_exceptions=True,
+        )
+
     async def broadcast_json(self, message: Dict[str, Any]) -> None:
         """Send ``message`` to every connected client.
 

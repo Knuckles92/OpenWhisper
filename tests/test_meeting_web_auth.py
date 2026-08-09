@@ -42,6 +42,7 @@ class FakeRepo:
         self._meetings = meetings if meetings is not None else [self._meeting]
         self.deleted = []
         self.search_calls = []
+        self._segments = []
 
     def get_meeting(self, meeting_id):
         if self._meeting and self._meeting["id"] == meeting_id:
@@ -59,13 +60,44 @@ class FakeRepo:
         return []
 
     def get_segments(self, meeting_id, after_start_s=-1.0, limit=None):
-        return []
+        rows = [
+            dict(row) for row in self._segments
+            if row["meeting_id"] == meeting_id
+            and float(row["start_s"]) > float(after_start_s)
+        ]
+        return rows[:limit] if limit else rows
+
+    def get_segments_page(self, meeting_id, cursor_start_s=None,
+                          cursor_id=None, limit=500):
+        rows = sorted(
+            (dict(row) for row in self._segments
+             if row["meeting_id"] == meeting_id),
+            key=lambda row: (row["start_s"], row["id"]),
+        )
+        if cursor_start_s is not None and cursor_id is not None:
+            rows = [
+                row for row in rows
+                if (row["start_s"], row["id"])
+                > (float(cursor_start_s), cursor_id)
+            ]
+        return rows[:limit]
+
+    def get_segment(self, meeting_id, segment_id):
+        return next((dict(row) for row in self._segments
+                     if row["meeting_id"] == meeting_id
+                     and row["id"] == segment_id), None)
 
     def get_last_segments(self, meeting_id, n):
         return []
 
     def update_meeting(self, meeting_id, **fields):
         self._meeting.update(fields)
+
+    def list_events(self, meeting_id, before_seq=None, limit=100):
+        return [{"seq": 2, "ts": "2026-01-01T00:00:01",
+                 "actor_type": "agent", "actor_id": "agent",
+                 "action": "add_item", "target_id": "it_1",
+                 "undoable": True}]
 
 
 class FakeStore:
@@ -96,6 +128,7 @@ class FakeEngine:
         self.ended = False
         self.paused = False
         self.resumed = False
+        self.tokens_regenerated = False
 
     def is_active(self):
         return not self.ended
@@ -117,6 +150,10 @@ class FakeEngine:
 
     def apply_client_action(self, actor_type, actor_id, op):
         return []
+
+    def regenerate_tokens(self):
+        self.tokens_regenerated = True
+        return {"host_url": "/m/new-host", "guest_url": "/m/new-guest"}
 
 
 @pytest.fixture
@@ -204,6 +241,90 @@ class TestHostOnlyAuthz:
         assert r.status_code == 200
         assert r.json()["role"] == "guest"
         assert "host_token" not in r.json()["meeting"]
+
+    def test_transcript_keyset_pagination_has_no_gaps(self, client):
+        tc, _, repo = client
+        repo._segments = [
+            {"id": f"sg_{i}", "meeting_id": "m_test", "start_s": 1.0,
+             "end_s": 2.0, "text": str(i), "channel": "mic"}
+            for i in range(3)
+        ]
+        first = tc.get("/api/transcript", params={
+            "token": HOST_TOKEN, "limit": 2,
+        })
+        assert first.status_code == 200
+        assert [row["id"] for row in first.json()["items"]] == ["sg_0", "sg_1"]
+        cursor = first.json()["next_cursor"]
+        assert cursor
+        second = tc.get("/api/transcript", params={
+            "token": HOST_TOKEN, "limit": 2, "cursor": cursor,
+        })
+        assert [row["id"] for row in second.json()["items"]] == ["sg_2"]
+        assert second.json()["next_cursor"] is None
+
+    def test_guest_segment_access_is_scoped_to_current_meeting(self, client):
+        tc, _, repo = client
+        repo._segments = [{
+            "id": "sg_1", "meeting_id": "m_test", "start_s": 1.0,
+            "end_s": 2.0, "text": "hello", "channel": "mic",
+        }]
+        allowed = tc.get("/api/meetings/m_test/segments/sg_1",
+                         params={"token": GUEST_TOKEN})
+        assert allowed.status_code == 200
+        blocked = tc.get("/api/meetings/m_other/segments/sg_1",
+                         params={"token": GUEST_TOKEN})
+        assert blocked.status_code == 403
+
+    def test_historical_state_is_upgraded_to_current_wire_shape(self, client):
+        tc, engine, _ = client
+        engine.store = None  # force the persisted-state branch
+        response = tc.get("/api/meetings/m_test", params={"token": HOST_TOKEN})
+        assert response.status_code == 200
+        state = response.json()["state"]
+        assert state["meeting_id"] == "m_test"
+        assert state["rolling_summary_evidence"] == []
+        assert state["capture"] == {
+            "mic_available": False,
+            "loopback_available": False,
+            "message": "",
+        }
+
+    def test_activity_and_token_rotation_are_host_only(self, client):
+        tc, engine, _ = client
+        assert tc.get("/api/events", params={"token": GUEST_TOKEN}).status_code == 403
+        events = tc.get("/api/events", params={"token": HOST_TOKEN})
+        assert events.status_code == 200
+        assert events.json()["events"][0]["undoable"] is True
+        assert tc.post("/api/meeting/tokens/regenerate",
+                       params={"token": GUEST_TOKEN}).status_code == 403
+        rotated = tc.post("/api/meeting/tokens/regenerate",
+                          params={"token": HOST_TOKEN})
+        assert rotated.status_code == 200
+        assert rotated.json()["host_url"] == "/m/new-host"
+        assert engine.tokens_regenerated is True
+
+    def test_audio_allows_current_guest_but_not_other_meetings(
+        self, client, monkeypatch, tmp_path
+    ):
+        tc, _, _ = client
+        audio = tmp_path / "playback.wav"
+        audio.write_bytes(b"RIFF-test")
+        monkeypatch.setattr("meeting.web.api.build_playback",
+                            lambda repository, meeting_id: str(audio))
+        allowed = tc.get("/api/meetings/m_test/audio",
+                         params={"token": GUEST_TOKEN})
+        assert allowed.status_code == 200
+        assert allowed.headers["cache-control"] == "no-store"
+        partial = tc.get(
+            "/api/meetings/m_test/audio",
+            params={"token": HOST_TOKEN},
+            headers={"Range": "bytes=0-3"},
+        )
+        assert partial.status_code == 206
+        assert partial.content == b"RIFF"
+        blocked = tc.get("/api/meetings/m_other/audio",
+                         params={"token": GUEST_TOKEN})
+        assert blocked.status_code == 403
 
 
 class TestRerunInsights:

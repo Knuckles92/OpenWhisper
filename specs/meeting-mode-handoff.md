@@ -2,13 +2,13 @@
 
 **Branch:** `meet_insight` · **Companion:** `specs/meeting-mode-plan.md` (the approved plan and every locked product decision — read it first).
 
-Meeting Mode is **implemented, reviewed, and green**: 535 passed / 1 skipped, the app boots and cleans up, and an end-to-end meeting runs on real hardware (capture → transcript → browser dashboard → exports → clean shutdown). This file records what was verified, what is deliberately deferred, and the two things that must happen before release.
+Meeting Mode is **implemented and hardened**. The original end-to-end hardware pass remains recorded below; the 2026-08-09 review added atomic ASR/state durability, complete history paging, authenticated recording playback, safe deletion, token rotation, capture failover, audit/undo UI, and publication gates. Validation is green: **556 passed / 1 skipped / 36 subtests**, the React production build passes, and the sidecar type-check/build passes.
 
 ---
 
 ## 1. Release blockers
 
-1. **The two downloadable components are not publishable yet.** `services/components.py` registers `meeting-agent` (Node + Pi sidecar) and `speaker-id` (WeSpeaker ONNX) with **placeholder SHA-256 digests (all zeros)** and URLs under `openwhisper.fiorilabs.tech/components/` that do not exist. They appear installable in the Model Manager, so a user clicking Install gets a failure. Either publish the payloads and pin real digests/sizes (`python scripts/build_component.py <component-id>`), or gate them out of `available_component_ids()` until then. Both degrade gracefully when absent — Pi falls back to the direct OpenRouter core, diarization falls back to channel-level Me/Others — so this is a polish/UX blocker, not a functional one.
+1. **The two optional downloadable components are not publishable yet.** `meeting-agent` and `speaker-id` still contain placeholder artifacts, but they are now explicitly `published: false`, excluded from `available_component_ids()`, rejected by payload resolvers, and disabled in Settings. A release may ship the Direct agent plus Me/Others channel labels safely. Publishing either component still requires real immutable URLs, measured sizes, pinned SHA-256 digests, and its release gate.
 2. **The diarization parity gate has never run.** `tests/test_meeting_diarize.py::test_embedding_parity_against_reference_vectors` is the plan's "cosine ≥ 0.999" gate and is the single skipped test. It runs once both `OPENWHISPER_SPEAKER_MODEL` (ONNX path) and `OPENWHISPER_SPEAKER_PARITY_REF` (an `.npz` of `audio_<i>` / `embedding_<i>` pairs) are set. Until it passes, embedding quality against the real model is unverified.
 
 ## 2. Environment facts (hard-won)
@@ -32,6 +32,10 @@ Meeting Mode is **implemented, reviewed, and green**: 535 passed / 1 skipped, th
 | Token leakage | Host token absent from `hello`, `/api/session`, `/api/meetings`, all three exports, and now from logs |
 | End to end | Real meeting: dashboard 200 + built SPA, bad token 403, exports clean, shutdown clean |
 | Regression detectors are real | The engine fixes were each reverted one at a time to confirm the test caught it |
+| Durable ASR | Segment rows and chunk `done` status commit in one transaction; stable IDs make callbacks idempotent; terminal meetings with unfinished chunks are rediscovered |
+| Durable state | Copy-on-write state is persisted before live replacement/broadcast; persistence-failure tests verify no seq/state leak |
+| History/playback | Keyset pagination covers equal timestamps; audio mixes mic+loopback with silence gaps and rejects paths outside the meeting spool |
+| Capture recovery | Default-device changes restart only the affected channel and persist/broadcast capture availability |
 
 ## 4. Architecture (as built)
 
@@ -67,7 +71,7 @@ Deliberate: `resolve_question` is **agent-only** (it stamps "answered from audio
 
 ## 6. Known gaps (deferred, not forgotten)
 
-- **Token regeneration is unimplemented.** `meeting/web/auth.py:generate_token_pair` is dead code; `engine.start()` mints tokens inline. The plan's "one-click link regeneration" mitigation for LAN sharing needs a `MeetingEngine.regenerate_tokens()` plus a forced re-auth broadcast.
+- **Token regeneration is implemented.** The host dashboard rotates both capability tokens, receives the replacement host URL, and forces connected sockets to re-authenticate. LAN traffic is still plain HTTP, so rotation limits exposure but does not encrypt it.
 - **LAN sharing is plain HTTP.** Locked decision, flagged: live transcript and tokens travel unencrypted. Mitigated by localhost default, 128-bit tokens, constant-time compare, and an explicit warning in the new Settings → Meeting tab. TLS is the fast-follow.
 - **Over-merged speakers**: re-clustering can now split them, but only within the bounded working set — very early over-merges that scroll out of the window stay merged.
 - **Sidecar RPC is not pipelined**: `RpcEndpoint.handleLine` dispatches concurrently, so `initialize` + `checkpoint` sent back-to-back can race. Harmless today (the Python side awaits `initialize`), but it would bite anything that pipelines.

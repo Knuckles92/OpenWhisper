@@ -83,7 +83,11 @@ class TestAsrSuccessPath:
         )
         engine = _make_engine(repo, backend)
         received = []
-        engine.start(on_segments=received.append)
+        def commit(chunk, segments):
+            received.append(segments)
+            repo.set_chunk_status(chunk.chunk_id, "done")
+
+        engine.start(on_chunk_result=commit)
         try:
             engine.enqueue(_chunk(tmp_path, start_s=10.0))
             assert engine.drain(5.0)
@@ -111,7 +115,9 @@ class TestAsrRetry:
             cleanup=lambda: None,
         )
         engine = _make_engine(repo, backend)
-        engine.start(on_segments=lambda _: None)
+        engine.start(on_chunk_result=lambda chunk, _: repo.set_chunk_status(
+            chunk.chunk_id, "done"
+        ))
         try:
             engine.enqueue(_chunk(tmp_path))
             assert engine.drain(10.0)
@@ -136,7 +142,11 @@ class TestAsrRetry:
         )
         engine = _make_engine(repo, backend)
         received = []
-        engine.start(on_segments=received.append)
+        def commit(chunk, segments):
+            received.append(segments)
+            repo.set_chunk_status(chunk.chunk_id, "done")
+
+        engine.start(on_chunk_result=commit)
         try:
             engine.enqueue(_chunk(tmp_path, start_s=5.0))
             assert engine.drain(10.0)

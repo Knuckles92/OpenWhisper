@@ -50,6 +50,11 @@ class SdCaptureSource:
         self._status_logged = False
         self._callback_errors = 0
 
+    @property
+    def device_id(self) -> int:
+        """Stable sounddevice index used by the capture watchdog."""
+        return self._device_index
+
     def start(self, on_block: Callable[[CaptureBlock], None]) -> None:
         """Open the stream and begin delivering blocks to ``on_block``.
 

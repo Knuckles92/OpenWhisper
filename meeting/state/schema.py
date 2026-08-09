@@ -192,6 +192,12 @@ class MeetingState:
     title: str = ""
     topic: TopicState = field(default_factory=TopicState)
     rolling_summary: str = ""
+    rolling_summary_evidence: List[str] = field(default_factory=list)
+    capture: Dict[str, Any] = field(default_factory=lambda: {
+        "mic_available": False,
+        "loopback_available": False,
+        "message": "",
+    })
     participants: Dict[str, Participant] = field(default_factory=dict)
     cards: Dict[str, List[CardItem]] = field(
         default_factory=lambda: {k: [] for k in CARD_KEYS}
@@ -220,6 +226,8 @@ class MeetingState:
             "title": self.title,
             "topic": self.topic.to_dict(),
             "rolling_summary": self.rolling_summary,
+            "rolling_summary_evidence": list(self.rolling_summary_evidence),
+            "capture": dict(self.capture),
             "participants": {pid: p.to_dict() for pid, p in self.participants.items()},
             "cards": {
                 card: [item.to_dict() for item in items]
@@ -240,6 +248,18 @@ class MeetingState:
             title=d.get("title", ""),
             topic=TopicState.from_dict(d.get("topic") or {}),
             rolling_summary=d.get("rolling_summary", ""),
+            rolling_summary_evidence=list(
+                d.get("rolling_summary_evidence") or []
+            ),
+            capture={
+                "mic_available": bool(
+                    (d.get("capture") or {}).get("mic_available", False)
+                ),
+                "loopback_available": bool(
+                    (d.get("capture") or {}).get("loopback_available", False)
+                ),
+                "message": str((d.get("capture") or {}).get("message", "")),
+            },
         )
         for pid, pd in (d.get("participants") or {}).items():
             state.participants[pid] = Participant.from_dict(pd)

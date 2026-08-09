@@ -57,6 +57,7 @@ _EVIDENCE_SCHEMA = {
     "type": "array",
     "items": {"type": "string"},
     "description": "Supporting transcript segment ids (sg_...), copied exactly.",
+    "minItems": 1,
 }
 
 _PATCH_STATE_TOOL = {
@@ -119,7 +120,7 @@ _PATCH_STATE_TOOL = {
                             "kind": {"type": "string", "enum": ["others_cluster"]},
                             "evidence": _EVIDENCE_SCHEMA,
                         },
-                        "required": ["op"],
+                        "required": ["op", "evidence"],
                     },
                 },
             },
@@ -142,7 +143,7 @@ _ASK_QUESTION_TOOL = {
                 "text": {"type": "string", "description": "The question."},
                 "evidence": _EVIDENCE_SCHEMA,
             },
-            "required": ["text"],
+            "required": ["text", "evidence"],
         },
     },
 }
@@ -164,7 +165,7 @@ _RESOLVE_QUESTION_TOOL = {
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 "evidence": _EVIDENCE_SCHEMA,
             },
-            "required": ["question_id", "answer_text", "confidence"],
+            "required": ["question_id", "answer_text", "confidence", "evidence"],
         },
     },
 }

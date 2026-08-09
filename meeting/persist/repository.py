@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text as sql_text
 
@@ -103,6 +103,36 @@ class SqlMeetingRepository:
             for key, value in fields.items():
                 setattr(row, key, value)
 
+    def rename_meeting(self, meeting_id: str, title: str) -> None:
+        """Update the canonical title and persisted state in one transaction."""
+        clean_title = str(title or "").strip()
+        if not clean_title:
+            raise ValueError("title required")
+        with self._db.get_session() as session:
+            row = session.get(MeetingSession, meeting_id)
+            if row is None:
+                raise ValueError(f"unknown meeting '{meeting_id}'")
+            state: Dict[str, Any] = {}
+            if row.state_json:
+                try:
+                    state = json.loads(row.state_json)
+                except (TypeError, ValueError):
+                    logger.warning("Replacing corrupt state for meeting %s", meeting_id)
+            state["meeting_id"] = meeting_id
+            state["title"] = clean_title
+            row.title = clean_title
+            row.state_json = json.dumps(state, ensure_ascii=False)
+
+    def replace_tokens(self, meeting_id: str, host_token: str,
+                       guest_token: str) -> None:
+        """Persist a freshly generated capability-token pair."""
+        with self._db.get_session() as session:
+            row = session.get(MeetingSession, meeting_id)
+            if row is None:
+                raise ValueError(f"unknown meeting '{meeting_id}'")
+            row.host_token = host_token
+            row.guest_token = guest_token
+
     def get_meeting(self, meeting_id: str) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:
             row = session.get(MeetingSession, meeting_id)
@@ -138,10 +168,14 @@ class SqlMeetingRepository:
         )
 
     def find_interrupted_meetings(self) -> List[Dict[str, Any]]:
-        """Meetings left in a live status — candidates for crash recovery."""
+        """Return live/recovery sessions and terminal sessions with pending ASR."""
         with self._db.get_session() as session:
+            unfinished = session.query(MeetingAudioChunk.meeting_id).filter(
+                MeetingAudioChunk.asr_status != "done"
+            )
             rows = session.query(MeetingSession).filter(
-                MeetingSession.status.in_(("active", "paused"))
+                (MeetingSession.status.in_(("active", "paused", "needs_recovery")))
+                | (MeetingSession.id.in_(unfinished))
             ).all()
             return [_session_to_dict(r) for r in rows]
 
@@ -161,6 +195,8 @@ class SqlMeetingRepository:
         with self._db.get_session() as session:
             row = session.get(MeetingAudioChunk, chunk_id)
             if row is None:
+                return
+            if row.asr_status == "done" and status != "done":
                 return
             row.asr_status = status
             if status == "processing":
@@ -192,6 +228,48 @@ class SqlMeetingRepository:
             ).order_by(MeetingAudioChunk.start_s).all()
             return [_chunk_to_dict(r) for r in rows]
 
+    def count_unfinished_chunks(self, meeting_id: str) -> int:
+        """Count every chunk that has not reached a durable done state."""
+        with self._db.get_session() as session:
+            return session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.meeting_id == meeting_id,
+                MeetingAudioChunk.asr_status != "done",
+            ).count()
+
+    def reset_unfinished_chunks(self, meeting_id: str) -> int:
+        """Reset all unfinished chunks for an explicit recovery attempt."""
+        with self._db.get_session() as session:
+            rows = session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.meeting_id == meeting_id,
+                MeetingAudioChunk.asr_status != "done",
+            ).all()
+            for row in rows:
+                row.asr_status = "pending"
+                row.asr_attempts = 0
+                row.asr_error = None
+            return len(rows)
+
+    def get_audio_chunks(self, meeting_id: str) -> List[Dict[str, Any]]:
+        """Return durable audio chunks in timeline/channel order."""
+        with self._db.get_session() as session:
+            rows = session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.meeting_id == meeting_id
+            ).order_by(
+                MeetingAudioChunk.start_s,
+                MeetingAudioChunk.channel,
+                MeetingAudioChunk.seq,
+            ).all()
+            return [_chunk_to_dict(row) for row in rows]
+
+    def next_chunk_seq(self, meeting_id: str, channel: str) -> int:
+        """Return the next unused sequence for a restarted capture channel."""
+        with self._db.get_session() as session:
+            row = session.query(MeetingAudioChunk.seq).filter(
+                MeetingAudioChunk.meeting_id == meeting_id,
+                MeetingAudioChunk.channel == channel,
+            ).order_by(MeetingAudioChunk.seq.desc()).first()
+            return int(row[0]) + 1 if row is not None else 0
+
     # ------------------------------------------------------------------
     # Segments
     # ------------------------------------------------------------------
@@ -213,27 +291,99 @@ class SqlMeetingRepository:
                     speaker_participant_id=seg.speaker_participant_id,
                     speaker_source=seg.speaker_source,
                     speaker_pinned=seg.speaker_pinned,
+                    embedding=seg.embedding,
                     created_at=created,
                 ))
 
-    def get_segment(self, segment_id: str) -> Optional[Dict[str, Any]]:
+    def commit_chunk_transcription(
+        self,
+        meeting_id: str,
+        chunk_id: int,
+        segments: List[TranscriptSegment],
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """Atomically persist a chunk result and mark its ASR work complete.
+
+        Returns:
+            Canonical stored segment rows and whether this call committed them.
+        """
+        created = _now_iso()
         with self._db.get_session() as session:
-            row = session.get(MeetingSegment, segment_id)
+            chunk = session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.id == chunk_id,
+                MeetingAudioChunk.meeting_id == meeting_id,
+            ).one_or_none()
+            if chunk is None:
+                raise ValueError("unknown meeting audio chunk")
+            if chunk.asr_status == "done":
+                rows = session.query(MeetingSegment).filter(
+                    MeetingSegment.meeting_id == meeting_id,
+                    MeetingSegment.chunk_id == chunk_id,
+                ).order_by(MeetingSegment.start_s, MeetingSegment.id).all()
+                return [_segment_to_dict(row) for row in rows], False
+            for seg in segments:
+                if seg.meeting_id != meeting_id or seg.chunk_id != chunk_id:
+                    raise ValueError("segment does not belong to chunk")
+                existing = session.get(MeetingSegment, seg.segment_id)
+                if existing is not None and (
+                    existing.meeting_id != meeting_id
+                    or existing.chunk_id != chunk_id
+                ):
+                    raise ValueError("segment id already belongs to another chunk")
+                session.merge(MeetingSegment(
+                    id=seg.segment_id,
+                    meeting_id=seg.meeting_id,
+                    chunk_id=seg.chunk_id,
+                    channel=seg.channel,
+                    start_s=seg.start_s,
+                    end_s=seg.end_s,
+                    text=seg.text,
+                    speaker_participant_id=seg.speaker_participant_id,
+                    speaker_source=seg.speaker_source,
+                    speaker_pinned=seg.speaker_pinned,
+                    embedding=seg.embedding,
+                    created_at=created,
+                ))
+            chunk.asr_status = "done"
+            chunk.asr_error = None
+            session.flush()
+            rows = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.chunk_id == chunk_id,
+            ).order_by(MeetingSegment.start_s, MeetingSegment.id).all()
+            return [_segment_to_dict(row) for row in rows], True
+
+    def get_segment(self, meeting_id: str, segment_id: str) -> Optional[Dict[str, Any]]:
+        with self._db.get_session() as session:
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == segment_id,
+            ).one_or_none()
             return _segment_to_dict(row) if row else None
 
-    def segment_exists(self, segment_id: str) -> bool:
+    def segment_exists(self, meeting_id: str, segment_id: str) -> bool:
         with self._db.get_session() as session:
             return session.query(MeetingSegment.id).filter(
+                MeetingSegment.meeting_id == meeting_id,
                 MeetingSegment.id == segment_id
             ).first() is not None
 
-    def update_segment_speaker(self, segment_id: str,
+    def update_segment_speaker(self, meeting_id: str, segment_id: str,
                                participant_id: Optional[str],
                                source: str, pinned: bool) -> None:
         with self._db.get_session() as session:
-            row = session.get(MeetingSegment, segment_id)
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == segment_id,
+            ).one_or_none()
             if row is None:
                 return
+            if participant_id is not None:
+                participant = session.query(MeetingParticipant.id).filter(
+                    MeetingParticipant.meeting_id == meeting_id,
+                    MeetingParticipant.id == participant_id,
+                ).first()
+                if participant is None:
+                    raise ValueError("participant does not belong to meeting")
             row.speaker_participant_id = participant_id
             row.speaker_source = source
             row.speaker_pinned = pinned
@@ -249,6 +399,32 @@ class SqlMeetingRepository:
                 q = q.limit(limit)
             return [_segment_to_dict(r) for r in q.all()]
 
+    def get_segments_page(
+        self,
+        meeting_id: str,
+        cursor_start_s: Optional[float] = None,
+        cursor_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Return one deterministic keyset page ordered by time and id."""
+        limit = max(1, min(int(limit), 1001))
+        with self._db.get_session() as session:
+            q = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id
+            )
+            if cursor_start_s is not None and cursor_id is not None:
+                q = q.filter(
+                    (MeetingSegment.start_s > float(cursor_start_s))
+                    | (
+                        (MeetingSegment.start_s == float(cursor_start_s))
+                        & (MeetingSegment.id > cursor_id)
+                    )
+                )
+            rows = q.order_by(
+                MeetingSegment.start_s, MeetingSegment.id
+            ).limit(limit).all()
+            return [_segment_to_dict(row) for row in rows]
+
     def get_last_segments(self, meeting_id: str, count: int) -> List[Dict[str, Any]]:
         """The most recent ``count`` segments in chronological order."""
         with self._db.get_session() as session:
@@ -257,9 +433,13 @@ class SqlMeetingRepository:
             ).order_by(MeetingSegment.start_s.desc()).limit(count).all()
             return [_segment_to_dict(r) for r in reversed(rows)]
 
-    def set_segment_embedding(self, segment_id: str, embedding: bytes) -> None:
+    def set_segment_embedding(self, meeting_id: str, segment_id: str,
+                              embedding: bytes) -> None:
         with self._db.get_session() as session:
-            row = session.get(MeetingSegment, segment_id)
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == segment_id,
+            ).one_or_none()
             if row is not None:
                 row.embedding = embedding
 
@@ -285,13 +465,17 @@ class SqlMeetingRepository:
         ts = _now_iso()
         with self._db.get_session() as session:
             for result in results:
+                undo_seq = result.op.get("_undo_event_seq")
+                action = result.op.get("op", "unknown")
+                if actor_type == "system" and isinstance(undo_seq, int):
+                    action = f"undo:{undo_seq}"
                 session.add(MeetingEvent(
                     meeting_id=meeting_id,
                     seq=result.seq or 0,
                     ts=ts,
                     actor_type=actor_type,
                     actor_id=actor_id,
-                    action=result.op.get("op", "unknown"),
+                    action=action,
                     target_id=result.target_id,
                     payload_json=json.dumps(result.op, ensure_ascii=False),
                     inverse_json=json.dumps(result.inverse, ensure_ascii=False)
@@ -305,6 +489,18 @@ class SqlMeetingRepository:
                 row.state_seq = int(state.get("seq", 0))
                 row.title = state.get("title", row.title)
                 row.cloud_enabled = bool(state.get("cloud_enabled", row.cloud_enabled))
+
+    def persist_state(self, meeting_id: str, state: Dict[str, Any]) -> None:
+        """Persist a non-audited lifecycle/status snapshot atomically."""
+        with self._db.get_session() as session:
+            row = session.get(MeetingSession, meeting_id)
+            if row is None:
+                raise ValueError(f"unknown meeting '{meeting_id}'")
+            row.state_json = json.dumps(state, ensure_ascii=False)
+            row.state_seq = int(state.get("seq", row.state_seq or 0))
+            row.status = state.get("status", row.status)
+            row.title = state.get("title", row.title)
+            row.cloud_enabled = bool(state.get("cloud_enabled", row.cloud_enabled))
 
     def _mirror_effect(self, session, meeting_id: str, result: OpResult) -> None:
         """Write-through mirror of one applied op's effect."""
@@ -346,11 +542,23 @@ class SqlMeetingRepository:
                 created_at=p["created_at"], updated_at=p["updated_at"],
             ))
         elif entity == "segment_speaker":
-            row = session.get(MeetingSegment, effect["segment_id"])
-            if row is not None:
-                row.speaker_participant_id = effect.get("participant_id")
-                row.speaker_source = effect.get("source", "human")
-                row.speaker_pinned = bool(effect.get("pinned"))
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == effect["segment_id"],
+            ).one_or_none()
+            if row is None:
+                raise ValueError("segment does not belong to meeting")
+            participant_id = effect.get("participant_id")
+            if participant_id is not None:
+                participant = session.query(MeetingParticipant.id).filter(
+                    MeetingParticipant.meeting_id == meeting_id,
+                    MeetingParticipant.id == participant_id,
+                ).first()
+                if participant is None:
+                    raise ValueError("participant does not belong to meeting")
+            row.speaker_participant_id = participant_id
+            row.speaker_source = effect.get("source", "human")
+            row.speaker_pinned = bool(effect.get("pinned"))
 
     def get_event(self, meeting_id: str, seq: int) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:
@@ -368,6 +576,44 @@ class SqlMeetingRepository:
                 "inverse": json.loads(row.inverse_json)
                 if row.inverse_json else None,
             }
+
+    def list_events(self, meeting_id: str, before_seq: Optional[int] = None,
+                    limit: int = 100) -> List[Dict[str, Any]]:
+        """Return recent audit events with undo availability."""
+        limit = max(1, min(int(limit), 500))
+        with self._db.get_session() as session:
+            undo_actions = {
+                action for (action,) in session.query(MeetingEvent.action).filter(
+                    MeetingEvent.meeting_id == meeting_id,
+                    MeetingEvent.action.like("undo:%"),
+                ).all()
+            }
+            q = session.query(MeetingEvent).filter(
+                MeetingEvent.meeting_id == meeting_id
+            )
+            if before_seq is not None:
+                q = q.filter(MeetingEvent.seq < int(before_seq))
+            rows = q.order_by(MeetingEvent.seq.desc()).limit(limit).all()
+            return [{
+                "seq": row.seq,
+                "ts": row.ts,
+                "actor_type": row.actor_type,
+                "actor_id": row.actor_id,
+                "action": row.action,
+                "target_id": row.target_id,
+                "undoable": (
+                    bool(row.inverse_json)
+                    and f"undo:{row.seq}" not in undo_actions
+                ),
+            } for row in rows]
+
+    def event_is_undone(self, meeting_id: str, seq: int) -> bool:
+        """Whether a successful audit event already reverted ``seq``."""
+        with self._db.get_session() as session:
+            return session.query(MeetingEvent.seq).filter(
+                MeetingEvent.meeting_id == meeting_id,
+                MeetingEvent.action == f"undo:{int(seq)}",
+            ).first() is not None
 
     # ------------------------------------------------------------------
     # Search

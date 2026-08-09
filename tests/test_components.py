@@ -195,9 +195,18 @@ def test_available_component_ids_is_empty_off_windows():
     with patch.object(components.sys, "platform", "win32"):
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
-            ComponentId.MEETING_AGENT,
-            ComponentId.SPEAKER_ID,
         )
+
+
+def test_unpublished_meeting_payloads_are_never_offered():
+    """Placeholder URLs/digests must stay unreachable until release artifacts exist."""
+    with patch.object(components.sys, "platform", "win32"):
+        assert components.component_is_published(ComponentId.MEETING_AGENT) is False
+        assert components.component_is_published(ComponentId.SPEAKER_ID) is False
+        assert ComponentId.MEETING_AGENT not in components.available_component_ids()
+        assert ComponentId.SPEAKER_ID not in components.available_component_ids()
+        assert components.meeting_agent_payload_dir() is None
+        assert components.speaker_model_path() is None
 
 
 def test_gpu_runtime_probes_shared_objects_on_linux():

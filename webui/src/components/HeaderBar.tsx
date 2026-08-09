@@ -17,6 +17,8 @@ interface HeaderBarProps {
   onClearError: () => void;
   onToggleHistory: () => void;
   showHistory: boolean;
+  onToggleActivity: () => void;
+  showActivity: boolean;
 }
 
 function formatStatus(status: string): string {
@@ -36,6 +38,8 @@ export default function HeaderBar({
   onClearError,
   onToggleHistory,
   showHistory,
+  onToggleActivity,
+  showActivity,
 }: HeaderBarProps) {
   const [titleDraft, setTitleDraft] = useState(state.title);
   const [copied, setCopied] = useState(false);
@@ -105,7 +109,7 @@ export default function HeaderBar({
       <div className="header-status">
         <span className={`status-chip ${statusClass}`}>
           <span className="status-dot" />
-          {formatStatus(meetingEnded ? 'ended' : state.status)}
+          {formatStatus(state.status)}
         </span>
         <span className={`socket-indicator ${socketStatus}`}>
           {socketStatus === 'open' ? 'Connected' : socketStatus === 'connecting' ? 'Reconnecting…' : 'Offline'}
@@ -120,6 +124,9 @@ export default function HeaderBar({
           <>
             <button type="button" className={showHistory ? 'primary' : 'ghost'} onClick={onToggleHistory}>
               {showHistory ? 'Live view' : 'History'}
+            </button>
+            <button type="button" className={showActivity ? 'primary' : 'ghost'} onClick={onToggleActivity}>
+              Activity
             </button>
             {state.status === 'active' && (
               <button
@@ -166,6 +173,19 @@ export default function HeaderBar({
               />
               Cloud insights
             </label>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                if (!window.confirm('Regenerate links? Everyone currently connected will be disconnected.')) return;
+                hostAction(async () => {
+                  const result = await api.regenerateTokens(token);
+                  window.location.replace(result.host_url);
+                });
+              }}
+            >
+              Regenerate links
+            </button>
           </>
         )}
       </div>
@@ -179,6 +199,12 @@ export default function HeaderBar({
       {showDiarizationBanner && (
         <div className="banner info" role="status">
           Speaker diarization unavailable — using Me / Others channels.
+        </div>
+      )}
+
+      {state.status === 'active' && state.capture?.message && (
+        <div className="banner warning" role="status">
+          {state.capture.message}
         </div>
       )}
 

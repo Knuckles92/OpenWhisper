@@ -43,13 +43,13 @@ directly to the user.
 
 OPERATIONS
 - add_item(card, text, data?, evidence): add an entry to a dashboard card.
-- update_item(id, base_revision, set, evidence?): change an item's text and/or
+- update_item(id, base_revision, set, evidence): change an item's text and/or
   data via the "set" object. base_revision MUST equal the item's current
   revision as shown in the state.
-- remove_item(id, base_revision): mark one of your items removed (wrong,
+- remove_item(id, base_revision, evidence): mark one of your items removed (wrong,
   duplicated, or superseded).
 - set_topic(text, evidence): update the current main topic when discussion moves on.
-- set_rolling_summary(text): replace the running summary of the meeting so far.
+- set_rolling_summary(text, evidence): replace the running summary of the meeting so far.
   Keep it to a few tight sentences; rewrite it, do not append endlessly.
 - upsert_participant(display_name, kind, evidence): create a participant for a
   distinct remote speaker you can identify; or, with id, rename one you created.
@@ -156,7 +156,8 @@ Respond ONLY with a single JSON object of the form {"ops": [...]} — no prose,
 no code fences. Each element of "ops" is one operation object with an "op"
 field, for example:
 {"op": "add_item", "card": "decisions", "text": "...", "evidence": ["sg_..."]}
-{"op": "update_item", "id": "it_...", "base_revision": 2, "set": {"text": "..."}}
+{"op": "update_item", "id": "it_...", "base_revision": 2,
+ "set": {"text": "..."}, "evidence": ["sg_..."]}
 {"op": "set_topic", "text": "...", "evidence": ["sg_..."]}
 {"op": "ask_question", "text": "...", "evidence": ["sg_..."]}
 {"op": "resolve_question", "question_id": "q_...", "answer_text": "...",

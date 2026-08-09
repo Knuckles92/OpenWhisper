@@ -33,6 +33,7 @@ _PRESSURE_HIGH = 8
 _PRESSURE_LOW = 3
 #: Consecutive checkpoint failures before intelligence is declared offline.
 _MAX_CONSECUTIVE_FAILURES = 3
+_RETRY_BACKOFF_S = (30.0, 60.0, 120.0, 300.0)
 #: How long consolidation waits for an in-flight checkpoint to finish — once
 #: politely, then again after canceling it.
 _CONSOLIDATION_JOIN_S = 10.0
@@ -117,6 +118,7 @@ class CheckpointScheduler:
         self._max_sent_start_s = -1.0
         self._consecutive_failures = 0
         self._online = True
+        self._retry_not_before = 0.0
         self._consolidating = False
 
     # ------------------------------------------------------------------
@@ -178,13 +180,15 @@ class CheckpointScheduler:
             self._wake.clear()
             if self._stop_event.is_set():
                 break
-            if not self._online or self._consolidating:
+            if self._consolidating:
                 continue
             with self._lock:
                 pending = self._pending_segments
             if pending <= 0:
                 continue
             elapsed = time.monotonic() - self._last_fire_mono
+            if time.monotonic() < self._retry_not_before:
+                continue
             if elapsed < self._min_interval_s:
                 continue
             due = elapsed >= self._interval_for(pending)
@@ -293,9 +297,10 @@ class CheckpointScheduler:
             fetched = self._engine.get_transcript(
                 after_start_s=self._fetch_cursor_s()
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Checkpoint transcript fetch failed")
-            fetched = []
+            self._record_failure(claimed, str(exc))
+            return
         segments = [
             seg for seg in fetched
             if str(seg.get("id") or "") not in self._sent_starts
@@ -305,6 +310,8 @@ class CheckpointScheduler:
 
         payload = self._build_payload(segments, is_consolidation=False)
         if payload is None:
+            with self._lock:
+                self._pending_segments += claimed
             return
         logger.debug(
             "Firing checkpoint %s (%d segments, %d notified)",
@@ -326,21 +333,27 @@ class CheckpointScheduler:
                 payload.request_id, applied, len(result.op_results),
             )
         else:
-            # Leave the sent-id set untouched and restore the pending count so
-            # the same segments retry on the next fire.
-            with self._lock:
-                self._pending_segments += claimed
-            self._consecutive_failures += 1
-            logger.warning(
-                "Checkpoint %s failed (%d consecutive): %s",
-                payload.request_id, self._consecutive_failures, result.error,
+            self._record_failure(claimed, result.error or "checkpoint failed")
+
+    def _record_failure(self, claimed: int, error: str) -> None:
+        """Restore claimed work and schedule a bounded health retry."""
+        with self._lock:
+            self._pending_segments += claimed
+        self._consecutive_failures += 1
+        delay = _RETRY_BACKOFF_S[min(
+            self._consecutive_failures - 1, len(_RETRY_BACKOFF_S) - 1
+        )]
+        self._retry_not_before = time.monotonic() + delay
+        logger.warning(
+            "Checkpoint failed (%d consecutive); retrying in %.0fs: %s",
+            self._consecutive_failures, delay, error,
+        )
+        if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+            logger.error(
+                "Intelligence declared offline after %d consecutive "
+                "checkpoint failures", self._consecutive_failures,
             )
-            if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                logger.error(
-                    "Intelligence declared offline after %d consecutive "
-                    "checkpoint failures", self._consecutive_failures,
-                )
-                self._set_online(False)
+            self._set_online(False)
 
     def _set_online(self, online: bool) -> None:
         if online == self._online:
@@ -348,6 +361,7 @@ class CheckpointScheduler:
         self._online = online
         if online:
             self._consecutive_failures = 0
+            self._retry_not_before = 0.0
         if self._on_health is not None:
             try:
                 self._on_health(online)

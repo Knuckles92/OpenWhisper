@@ -33,6 +33,9 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** – Real-time transcription preview while recording
+- **Meeting Mode (Windows v1)** – Record microphone and system audio into a
+  durable, searchable meeting transcript; share a tokenized live dashboard,
+  review evidence-linked insights, play the recording, and export the result
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
