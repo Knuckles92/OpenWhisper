@@ -24,6 +24,11 @@ export interface OpCounters {
   rejected: number;
 }
 
+/** Mutable policy for the currently serialized checkpoint. */
+export interface ToolPolicy {
+  polishOnly: boolean;
+}
+
 const PATCH_STATE_DESCRIPTION = `Apply targeted state-patch operations to the live meeting state document. Every op is validated by the host; results are returned per-op (ok, reason, target_id, seq, current_revision) so a rejected op never blocks the rest of the batch.
 
 Allowed ops (each op is an object with an "op" key):
@@ -34,6 +39,7 @@ Allowed ops (each op is an object with an "op" key):
 - {"op":"set_rolling_summary","text":T,"evidence":[...]}
 - {"op":"upsert_participant","id":P?,"display_name":N,"kind":"others_cluster","evidence":[...]}
 - {"op":"suggest_participant_name","participant_id":P,"display_name":N,"evidence":[...]}
+- {"op":"revise_segment_text","segment_id":S,"text":T,"evidence":[S]} — fix clear ASR text errors without changing meaning, segment structure, or speaker.
 
 Evidence is a list of transcript segment ids (sg_...) that support the claim; unknown ids are rejected. Items a human pinned, edited, or confirmed — and humans' participant names — can never be overwritten; such ops are rejected with reason "human_edited"/"human_named".`;
 
@@ -53,7 +59,11 @@ function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): st
  * @param rpc Endpoint used to bridge tool calls to the Python host.
  * @param counters Mutable applied/rejected tallies, reset per checkpoint.
  */
-export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): MeetingToolDef[] {
+export function createMeetingTools(
+  rpc: RpcEndpoint,
+  counters: OpCounters,
+  policy: ToolPolicy,
+): MeetingToolDef[] {
   const opSchema = {
     type: "object" as const,
     description: 'A single state-patch op; must include an "op" key.',
@@ -87,10 +97,28 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
       additionalProperties: false,
     },
     execute: async (params) => {
+      const requestedOps: any[] = Array.isArray(params.ops) ? params.ops : [];
+      const allowedOps = policy.polishOnly
+        ? requestedOps.filter((op) => op?.op === "revise_segment_text")
+        : requestedOps;
+      const policyRejectedResults = policy.polishOnly
+        ? requestedOps
+            .filter((op) => op?.op !== "revise_segment_text")
+            .map(() => ({ ok: false, reason: "polish_only" }))
+        : [];
+      const policyRejected = policyRejectedResults.length;
+      if (policyRejected) counters.rejected += policyRejected;
       try {
+        if (!allowedOps.length && policyRejected) {
+          const response = { results: policyRejectedResults };
+          return {
+            text: `${summarize(response.results)}\n${JSON.stringify(response)}`,
+            details: response,
+          };
+        }
         const response = await rpc.request(
           "tool.patch_state",
-          { ops: params.ops ?? [] },
+          { ops: allowedOps },
           TOOL_RPC_TIMEOUT_MS,
         );
         const results: any[] = Array.isArray(response?.results) ? response.results : [];
@@ -98,12 +126,14 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
           if (r && r.ok) counters.applied += 1;
           else counters.rejected += 1;
         }
+        const combinedResults = [...results, ...policyRejectedResults];
+        const combinedResponse = { ...response, results: combinedResults };
         return {
-          text: `${summarize(results)}\n${JSON.stringify(response)}`,
-          details: response,
+          text: `${summarize(combinedResults)}\n${JSON.stringify(combinedResponse)}`,
+          details: combinedResponse,
         };
       } catch (err) {
-        counters.rejected += Array.isArray(params.ops) ? params.ops.length : 1;
+        counters.rejected += allowedOps.length || 1;
         const message = err instanceof Error ? err.message : String(err);
         rpc.log("error", `patch_state bridge failed: ${message}`);
         return {
@@ -132,11 +162,16 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
       required: ["text", "evidence"],
       additionalProperties: false,
     },
-    execute: async (params) =>
-      bridgeSingle(rpc, counters, "tool.ask_question", {
+    execute: async (params) => {
+      if (policy.polishOnly) {
+        counters.rejected += 1;
+        return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
+      }
+      return bridgeSingle(rpc, counters, "tool.ask_question", {
         text: params.text ?? "",
         evidence: params.evidence ?? [],
-      }),
+      });
+    },
   };
 
   const resolveQuestion: MeetingToolDef = {
@@ -162,13 +197,18 @@ export function createMeetingTools(rpc: RpcEndpoint, counters: OpCounters): Meet
       required: ["question_id", "answer_text", "confidence", "evidence"],
       additionalProperties: false,
     },
-    execute: async (params) =>
-      bridgeSingle(rpc, counters, "tool.resolve_question", {
+    execute: async (params) => {
+      if (policy.polishOnly) {
+        counters.rejected += 1;
+        return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
+      }
+      return bridgeSingle(rpc, counters, "tool.resolve_question", {
         question_id: params.question_id ?? "",
         answer_text: params.answer_text ?? "",
         confidence: params.confidence ?? 0,
         evidence: params.evidence ?? [],
-      }),
+      });
+    },
   };
 
   return [patchState, askQuestion, resolveQuestion];

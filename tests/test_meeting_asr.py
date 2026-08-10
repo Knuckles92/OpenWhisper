@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from meeting.asr.engine import (
     FAST_MODE_BACKLOG_CHUNKS,
     MAX_ATTEMPTS,
+    REVISE_MIN_ADVANCE_S,
     MeetingAsrEngine,
 )
 from meeting.interfaces import SpooledChunk
@@ -194,6 +195,7 @@ class TestAsrRetry:
         )
         engine = _make_engine(repo, backend)
         received = []
+
         def commit(chunk, segments):
             received.append(segments)
             repo.set_chunk_status(chunk.chunk_id, "done")
@@ -209,3 +211,122 @@ class TestAsrRetry:
             assert any(s[1] == "done" for s in repo.statuses)
         finally:
             engine.stop()
+
+
+class TestRollingReviseScheduling:
+    def _engine(self):
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=MagicMock(),
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(FakeRepository(), backend)
+        engine.revise_window = MagicMock(
+            side_effect=lambda channel, frontier: {
+                "channel": channel,
+                "frontier": frontier,
+                "items": [],
+                "removed_ids": [],
+            }
+        )
+        return engine
+
+    def test_coalesces_until_minimum_progress_then_revises_latest(self):
+        engine = self._engine()
+        engine.schedule_revise("mic", 5.0)
+        assert engine.run_pending_revises() == []
+        engine.revise_window.assert_not_called()
+
+        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S)
+        results = engine.run_pending_revises()
+        assert results[0]["frontier"] == REVISE_MIN_ADVANCE_S
+        engine.revise_window.assert_called_once_with(
+            "mic", REVISE_MIN_ADVANCE_S
+        )
+
+        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S + 5.0)
+        assert engine.run_pending_revises() == []
+        forced = engine.run_pending_revises(force=True)
+        assert forced[0]["frontier"] == REVISE_MIN_ADVANCE_S + 5.0
+
+    def test_due_channel_is_not_blocked_by_another_channels_partial_window(self):
+        engine = self._engine()
+        engine.schedule_revise("mic", 5.0)
+        engine.schedule_revise("loopback", REVISE_MIN_ADVANCE_S)
+
+        results = engine.run_pending_revises()
+
+        assert [result["channel"] for result in results] == ["loopback"]
+        assert engine._pending_revise == {"mic": 5.0}
+
+    def test_live_revise_waits_behind_any_queued_draft(self):
+        engine = self._engine()
+        engine.schedule_revise("mic", REVISE_MIN_ADVANCE_S)
+        with engine._idle_cond:
+            # One in flight plus one queued behind it.
+            engine._outstanding = 2
+
+        assert engine.run_pending_revises() == []
+        engine.revise_window.assert_not_called()
+
+    def test_forced_revise_does_not_race_an_inflight_worker_decode(self):
+        engine = self._engine()
+        engine.schedule_revise("mic", 5.0)
+        with engine._idle_cond:
+            engine._outstanding = 1
+
+        assert engine.run_pending_revises(force=True) == []
+        engine.revise_window.assert_not_called()
+
+    def test_revise_decodes_lead_in_without_upserting_context_only_rows(
+        self, tmp_path
+    ):
+        path = str(tmp_path / "long.wav")
+        _write_wav(path, duration_s=100.0)
+        repo = FakeRepository()
+        repo.get_audio_chunks = lambda _meeting_id: [{
+            "id": 1,
+            "channel": "mic",
+            "seq": 0,
+            "start_s": 0.0,
+            "duration_s": 100.0,
+            "file_path": path,
+            "asr_status": "done",
+        }]
+        repo.get_segments = lambda _meeting_id, after_start_s=-1.0: []
+        repo.get_segments_in_range = (
+            lambda _meeting_id, _channel, _start_s, _end_s: []
+        )
+        persisted = {}
+
+        def persist(_meeting_id, _channel, _start_s, _end_s,
+                    segments, remove_ids):
+            persisted["segments"] = segments
+            persisted["remove_ids"] = remove_ids
+            return [
+                {"id": segment.segment_id, "text": segment.text}
+                for segment in segments
+            ], []
+
+        repo.revise_segments_in_range = persist
+        model = MagicMock()
+        model.transcribe.return_value = ([
+            FakeWhisperSeg(1.0, 2.0, "context only"),
+            FakeWhisperSeg(6.0, 7.0, "mutable text"),
+        ], SimpleNamespace())
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=model,
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+
+        outcome = engine.revise_window("mic", frontier_s=100.0)
+
+        audio = model.transcribe.call_args.args[0]
+        assert audio.size == pytest.approx(50.0 * 16000, rel=0.01)
+        assert outcome is not None
+        assert [segment.text for segment in persisted["segments"]] == [
+            "mutable text"
+        ]
+        assert persisted["segments"][0].start_s == pytest.approx(56.0)

@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 #: Trailing audio horizon re-decoded after each draft chunk commit.
 REVISION_WINDOW_S = 45.0
 
+#: Audio decoded before the mutable window boundary. Without this lead-in, a
+#: Whisper segment crossing the 45-second cutoff can be re-decoded from its
+#: middle and overwrite the original row with only the trailing phrase.
+REVISION_CONTEXT_S = 5.0
+
 #: Minimum IoU required to reuse an existing segment id.
 MIN_MATCH_IOU = 0.25
 

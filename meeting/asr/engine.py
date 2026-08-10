@@ -20,6 +20,7 @@ import numpy as np
 
 from meeting.asr.audio import load_wav_int16, prepare_for_whisper
 from meeting.asr.revise import (
+    REVISION_CONTEXT_S,
     REVISION_WINDOW_S,
     build_initial_prompt,
     match_segments,
@@ -49,6 +50,13 @@ QUEUE_WAIT_WARNING_S = 15.0
 #: this deliberately conservative: quiet microphones can carry usable speech
 #: at low levels, while idle loopback capture commonly produces exact zeros.
 DIGITAL_SILENCE_PEAK = 8
+
+#: Minimum meeting-clock progress per channel between rolling re-decodes.
+#: Draft chunks are intentionally short for low UI latency, but re-running a
+#: 45-second window after every 5-second chunk would spend roughly nine times
+#: real time on duplicate audio once the window is full.  A 20-second cadence
+#: keeps revisions responsive while bounding the steady-state overlap cost.
+REVISE_MIN_ADVANCE_S = 20.0
 
 #: Queue sentinel telling the worker to exit.
 _STOP = object()
@@ -117,6 +125,7 @@ class MeetingAsrEngine:
         self._fast_mode = False
         #: Coalesce revise requests per channel to the latest frontier.
         self._pending_revise: Dict[str, float] = {}
+        self._last_revised_frontier: Dict[str, float] = {}
         self._revise_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -438,14 +447,32 @@ class MeetingAsrEngine:
         """True when draft ASR should prefer catching up over revise work."""
         return self.backlog_depth() >= FAST_MODE_BACKLOG_CHUNKS
 
+    def _draft_work_precedes_revise(self) -> bool:
+        """Return whether another draft decode must run before revise work.
+
+        The normal revise call happens inside the ASR worker's durable-result
+        callback, where one outstanding item is the just-finished current
+        chunk. From every other thread, any outstanding item may still be using
+        the model and therefore also prevents a concurrent revise decode.
+        """
+        with self._idle_cond:
+            current_is_worker = threading.current_thread() is self._thread
+            current_allowance = 1 if current_is_worker else 0
+            return self._outstanding > current_allowance
+
     def schedule_revise(self, channel: str, frontier_s: float) -> None:
         """Coalesce a revise request for ``channel`` up to ``frontier_s``."""
         with self._revise_lock:
             prev = self._pending_revise.get(channel, -1.0)
             self._pending_revise[channel] = max(prev, float(frontier_s))
 
-    def run_pending_revises(self) -> List[Dict[str, Any]]:
-        """Drain coalesced revise passes while the draft queue is healthy.
+    def run_pending_revises(self, force: bool = False) -> List[Dict[str, Any]]:
+        """Drain due revise passes without delaying queued draft chunks.
+
+        Args:
+            force: Ignore the normal cadence. Used once after the final draft
+                drain so a short meeting or trailing partial interval still
+                gets a cleanup pass.
 
         Returns:
             One result dict per successful revise (``items`` / ``removed_ids``).
@@ -454,12 +481,30 @@ class MeetingAsrEngine:
         if self._stopping or self._backend is None:
             return results
         while True:
-            if self.is_backlogged():
+            # Revise work is secondary to live draft latency. Even one chunk
+            # already waiting should be transcribed before another overlapping
+            # window is decoded.
+            if self._draft_work_precedes_revise():
                 return results
             with self._revise_lock:
                 if not self._pending_revise:
                     return results
-                channel, frontier = next(iter(self._pending_revise.items()))
+                due = next(
+                    (
+                        (pending_channel, pending_frontier)
+                        for pending_channel, pending_frontier
+                        in self._pending_revise.items()
+                        if force or pending_frontier - self._last_revised_frontier.get(
+                            pending_channel, 0.0
+                        ) >= REVISE_MIN_ADVANCE_S
+                    ),
+                    None,
+                )
+                if due is None:
+                    # Keep coalesced requests for a later chunk (or the forced
+                    # end-of-meeting flush).
+                    return results
+                channel, frontier = due
                 del self._pending_revise[channel]
             try:
                 outcome = self.revise_window(channel, frontier)
@@ -469,6 +514,11 @@ class MeetingAsrEngine:
                     channel, frontier,
                 )
                 continue
+            with self._revise_lock:
+                self._last_revised_frontier[channel] = max(
+                    frontier,
+                    self._last_revised_frontier.get(channel, 0.0),
+                )
             if outcome:
                 results.append(outcome)
 
@@ -494,6 +544,7 @@ class MeetingAsrEngine:
         window_start, window_end = revision_window(frontier_s, window_s)
         if window_end - window_start < 0.5:
             return None
+        decode_start = max(0.0, window_start - REVISION_CONTEXT_S)
 
         try:
             chunks = self._repository.get_audio_chunks(self.meeting_id)
@@ -501,13 +552,13 @@ class MeetingAsrEngine:
             logger.exception("revise_window: failed to list audio chunks")
             return None
         selected = select_chunks_for_window(
-            chunks, channel, window_start, window_end
+            chunks, channel, decode_start, window_end
         )
         if not selected:
             return None
 
         audio, audio_start = stitch_window_audio(
-            selected, window_start, window_end
+            selected, decode_start, window_end
         )
         if audio.size < int(0.25 * 16000):
             return None
@@ -522,7 +573,7 @@ class MeetingAsrEngine:
         prior_text = [
             seg for seg in prior
             if seg.get("channel") == channel
-            and float(seg.get("end_s") or 0.0) <= window_start + 1e-6
+            and float(seg.get("end_s") or 0.0) <= decode_start + 1e-6
         ]
         initial_prompt = build_initial_prompt(prior_text[-12:])
 
@@ -547,6 +598,11 @@ class MeetingAsrEngine:
                 continue
             start_s = audio_start + float(seg.start)
             end_s = audio_start + float(seg.end)
+            if end_s <= window_start:
+                # Lead-in audio exists only to give the first mutable segment
+                # complete linguistic context; do not duplicate rows wholly
+                # outside the actual revision window.
+                continue
             # Anchor new inserts to the first overlapping chunk when possible.
             chunk_id = selected[0].get("id")
             for chunk in selected:

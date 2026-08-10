@@ -59,7 +59,7 @@ Diagnostics go out as `log` notifications (or stderr).
   `{"jsonrpc":"2.0","method":"hello","params":{"token":"...","protocol":1,"pi_version":"..."}}`
 - **Python → sidecar requests:** `initialize {meeting_id, provider, model,
   system_prompt}` · `checkpoint {request_id, state, new_segments,
-  is_consolidation}` → `{"applied":N,"rejected":N,"usage":{}}` ·
+  is_consolidation, is_polish}` → `{"applied":N,"rejected":N,"usage":{}}` ·
   `cancel {request_id}` · `ping {}` · `shutdown {}`
 - **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
   {ops}` · `tool.ask_question {text, evidence}` · `tool.resolve_question

@@ -5,7 +5,8 @@
  *  - FIRST line out: {"jsonrpc":"2.0","method":"hello","params":
  *      {"token":<OPENWHISPER_SIDECAR_TOKEN>,"protocol":1,"pi_version":"..."}}
  *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt}
- *      | checkpoint {request_id, state, new_segments, is_consolidation}
+ *      | checkpoint {request_id, state, new_segments, is_consolidation,
+ *                    is_polish}
  *      | cancel {request_id} | ping {} | shutdown {}
  *  - Outbound tool-bridge requests: tool.patch_state / tool.ask_question /
  *      tool.resolve_question (see tools.ts).
@@ -17,7 +18,7 @@
  * queued one.
  */
 import { RpcEndpoint } from "./rpc";
-import { createMeetingTools, OpCounters } from "./tools";
+import { createMeetingTools, OpCounters, ToolPolicy } from "./tools";
 import { createSession, PiSession, piVersion } from "./pi-adapter";
 
 const PROTOCOL_VERSION = 1;
@@ -53,6 +54,7 @@ function main(): void {
   let checkpointChain: Promise<unknown> = Promise.resolve();
   const canceledRequests = new Set<string>();
   const counters: OpCounters = { applied: 0, rejected: 0 };
+  const toolPolicy: ToolPolicy = { polishOnly: false };
 
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
@@ -69,7 +71,7 @@ function main(): void {
       provider,
       modelId,
       apiKey,
-      tools: createMeetingTools(rpc, counters),
+      tools: createMeetingTools(rpc, counters, toolPolicy),
       log: (level, msg) => rpc.log(level, msg),
     });
     rpc.log(
@@ -101,9 +103,12 @@ function main(): void {
     counters.applied = 0;
     counters.rejected = 0;
     const isConsolidation = Boolean(params?.is_consolidation);
+    const isPolish = Boolean(params?.is_polish);
+    toolPolicy.polishOnly = isPolish;
     rpc.log(
       "info",
-      `${isConsolidation ? "consolidation" : "checkpoint"} ${requestId} started ` +
+      `${isConsolidation ? "consolidation" : isPolish ? "polish" : "checkpoint"} ` +
+        `${requestId} started ` +
         `(${Array.isArray(params?.new_segments) ? params.new_segments.length : 0} new segments)`,
     );
     try {
@@ -121,6 +126,7 @@ function main(): void {
       );
       return response;
     } finally {
+      toolPolicy.polishOnly = false;
       activeRequestId = null;
     }
   }
@@ -231,6 +237,7 @@ function projectStateForPrompt(state: any): any {
  */
 function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   const isConsolidation = Boolean(params?.is_consolidation);
+  const isPolish = Boolean(params?.is_polish);
   const state = projectStateForPrompt(params?.state ?? {});
   const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
 
@@ -238,7 +245,16 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   if (systemPrompt) {
     parts.push(systemPrompt, "");
   }
-  if (isConsolidation) {
+  if (isPolish) {
+    parts.push(
+      "## Transcript polish pass",
+      "Your only job this round is cleaning clear speech-to-text errors in the",
+      "transcript below. Emit ONLY revise_segment_text operations. Keep meaning",
+      "faithful; do not invent content, change speakers, merge/split segments,",
+      "or touch cards, topic, summary, participants, or questions. Every revision",
+      "must cite the same segment_id as evidence. Leave uncertain text unchanged.",
+    );
+  } else if (isConsolidation) {
     parts.push(
       "## Final consolidation pass",
       "The meeting has ended. The transcript below is the COMPLETE final transcript.",
@@ -264,7 +280,7 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
     JSON.stringify(state, null, 2),
     "```",
     "",
-    isConsolidation
+    isConsolidation || isPolish
       ? "### Complete final transcript (JSON segments)"
       : "### New transcript segments (JSON)",
     "```json",

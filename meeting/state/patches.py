@@ -72,9 +72,9 @@ AGENT_OPS = frozenset({
 
 #: Ops only the agent may emit. ``resolve_question`` stamps an answer as
 #: "answered from audio"; letting a human reach it would attribute their words
-#: to the recording. Humans use ``answer_question`` instead. ``system`` keeps
-#: access so host undo of an agent resolution still works.
-AGENT_ONLY_OPS = frozenset({"resolve_question"})
+#: to the recording. Transcript polish is likewise agent-owned rather than an
+#: untrusted guest editing surface. ``system`` keeps access so undo works.
+AGENT_ONLY_OPS = frozenset({"resolve_question", "revise_segment_text"})
 
 #: Meeting-level metadata only the host may change, matching the host-only REST
 #: routes. Guests edit card items, not the meeting's identity or its summary.

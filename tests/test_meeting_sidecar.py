@@ -69,9 +69,11 @@ for line in sys.stdin:
         sys.stdout.flush()
         break
     elif method == "checkpoint":
+        params = msg.get("params") or {}
         sys.stdout.write(json.dumps({
             "jsonrpc": "2.0", "id": req_id,
-            "result": {"applied": 3, "rejected": 2,
+            "result": {"applied": 7 if params.get("is_polish") else 3,
+                       "rejected": 2,
                        "usage": {"totalTokens": 42}},
         }) + "\n")
         sys.stdout.flush()
@@ -194,6 +196,24 @@ class TestCheckpointResults:
         assert result.usage == {"totalTokens": 42}
         assert len(result.op_results) == 5
         assert sum(1 for r in result.op_results if r.ok) == 3
+
+    def test_polish_flag_reaches_the_sidecar(self, stub_dir):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub)
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(_cfg(), FakeTools())
+            try:
+                result = agent.checkpoint(CheckpointPayload(
+                    request_id="req-polish",
+                    state_snapshot={},
+                    new_segments=[],
+                    is_polish=True,
+                ))
+            finally:
+                agent.shutdown()
+        assert result.ok
+        assert sum(1 for item in result.op_results if item.ok) == 7
 
     def test_cancel_targets_every_in_flight_request(self, tmp_path):
         agent = PiSidecarAgent(str(tmp_path))

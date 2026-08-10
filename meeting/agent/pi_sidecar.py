@@ -267,6 +267,7 @@ class PiSidecarAgent:
                     "state": payload.state_snapshot,
                     "new_segments": payload.new_segments,
                     "is_consolidation": payload.is_consolidation,
+                    "is_polish": bool(getattr(payload, "is_polish", False)),
                 },
                 timeout_s=timeout_s,
             )

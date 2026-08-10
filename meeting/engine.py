@@ -410,9 +410,9 @@ class MeetingEngine:
                 # Flush deferred rolling revises before consolidation sees the
                 # transcript, while the Whisper model is still loaded.
                 run_pending = getattr(self._asr, "run_pending_revises", None)
-                if callable(run_pending):
+                if drained and callable(run_pending):
                     try:
-                        for outcome in run_pending():
+                        for outcome in run_pending(force=True):
                             self._publish_revise_result(outcome)
                     except Exception:
                         logger.exception("End-of-meeting ASR revise flush failed")
@@ -1077,7 +1077,9 @@ class MeetingEngine:
             return
         try:
             schedule(chunk.channel, frontier)
-            if getattr(asr, "is_backlogged", lambda: False)():
+            # A rolling re-decode must never jump ahead of even one queued
+            # draft chunk; the ASR engine also enforces this internally.
+            if getattr(asr, "backlog_depth", lambda: 0)() > 0:
                 return
             for outcome in run_pending():
                 self._publish_revise_result(outcome)

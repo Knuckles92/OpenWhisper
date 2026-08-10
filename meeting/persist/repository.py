@@ -72,6 +72,36 @@ def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
     }
 
 
+def _state_evidence_ids(state_json: Optional[str]) -> Optional[set[str]]:
+    """Return current evidence ids, or None when state cannot be inspected."""
+    if not state_json:
+        return set()
+    try:
+        state = json.loads(state_json)
+    except (TypeError, ValueError):
+        logger.warning("Could not inspect corrupt meeting state evidence")
+        return None
+
+    evidence_ids: set[str] = set()
+
+    def visit(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                visit(child_value, str(child_key))
+            return
+        if isinstance(value, list):
+            if key == "evidence" or key.endswith("_evidence"):
+                evidence_ids.update(
+                    item for item in value
+                    if isinstance(item, str) and item.startswith("sg_")
+                )
+            for item in value:
+                visit(item, key)
+
+    visit(state)
+    return evidence_ids
+
+
 class SqlMeetingRepository:
     """Implements ``meeting.interfaces.MeetingRepository`` on the app database."""
 
@@ -445,12 +475,16 @@ class SqlMeetingRepository:
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Apply a rolling revise plan: upsert matched/new rows, delete others.
 
-        Speaker-pinned rows listed in ``remove_ids`` are kept. Returns the
-        upserted canonical rows and the ids actually deleted.
+        Speaker-pinned rows and rows referenced by current dashboard evidence
+        are kept. Returns the upserted canonical rows and ids actually deleted.
         """
         created = _now_iso()
         removed: List[str] = []
         with self._db.get_session() as session:
+            meeting = session.get(MeetingSession, meeting_id)
+            protected_evidence = _state_evidence_ids(
+                meeting.state_json if meeting is not None else None
+            )
             for seg_id in remove_ids:
                 row = session.query(MeetingSegment).filter(
                     MeetingSegment.meeting_id == meeting_id,
@@ -459,7 +493,11 @@ class SqlMeetingRepository:
                 ).one_or_none()
                 if row is None:
                     continue
-                if row.speaker_pinned:
+                if (
+                    row.speaker_pinned
+                    or protected_evidence is None
+                    or seg_id in protected_evidence
+                ):
                     continue
                 # Only delete rows that still overlap the revise window.
                 if row.end_s <= float(start_s) or row.start_s >= float(end_s):

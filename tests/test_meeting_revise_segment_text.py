@@ -61,6 +61,21 @@ def test_revise_segment_text_rejects_missing_evidence():
     assert results[0].reason in {"missing_evidence", "unknown_evidence"}
 
 
+def test_revise_segment_text_rejects_untrusted_human_client():
+    state = MeetingState(meeting_id="m1", title="t")
+    ctx = OpContext(
+        "user", "guest",
+        segment_exists=lambda sid: sid == "sg_one",
+    )
+    results = apply_ops(state, [{
+        "op": "revise_segment_text",
+        "segment_id": "sg_one",
+        "text": "forged replacement",
+    }], ctx)
+    assert not results[0].ok
+    assert results[0].reason == "agent_only"
+
+
 def test_revise_segment_text_applies_via_store(tmp_path):
     repo, mid = _repo(tmp_path)
     state = MeetingState(meeting_id=mid, title="t")

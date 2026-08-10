@@ -1,6 +1,7 @@
 """Tests for bounded rolling ASR revision helpers and persistence."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import wave
@@ -215,3 +216,59 @@ def test_revise_segments_in_range_persists(tmp_path):
     assert texts["sg_old"] == "hello"
     assert texts["sg_new"] == "there"
     assert REVISION_WINDOW_S == 45.0
+
+
+def test_revise_keeps_segments_referenced_by_dashboard_evidence(tmp_path):
+    from datetime import datetime
+
+    db = DatabaseManager(db_path=str(tmp_path / "meet.db"))
+    repo = SqlMeetingRepository(db)
+    meeting_id = "m_evidence"
+    repo.create_meeting(
+        id=meeting_id,
+        title="t",
+        status="active",
+        started_at=datetime.now().isoformat(),
+        host_token="h",
+        guest_token="g",
+        cloud_enabled=True,
+        spool_dir=str(tmp_path / "spool"),
+        asr_model="base",
+        state_json=json.dumps({
+            "rolling_summary_evidence": ["sg_referenced"],
+        }),
+    )
+    chunk_id = repo.register_chunk(
+        meeting_id=meeting_id,
+        channel="mic",
+        seq=0,
+        file_path=str(tmp_path / "x.wav"),
+        start_s=0.0,
+        duration_s=10.0,
+        sample_rate=16000,
+    )
+    repo.commit_chunk_transcription(
+        meeting_id,
+        chunk_id,
+        [TranscriptSegment(
+            segment_id="sg_referenced",
+            meeting_id=meeting_id,
+            chunk_id=chunk_id,
+            channel="mic",
+            start_s=1.0,
+            end_s=3.0,
+            text="original evidence",
+        )],
+    )
+
+    _rows, removed = repo.revise_segments_in_range(
+        meeting_id,
+        "mic",
+        0.0,
+        10.0,
+        segments=[],
+        remove_ids=["sg_referenced"],
+    )
+
+    assert removed == []
+    assert repo.get_segment(meeting_id, "sg_referenced") is not None
