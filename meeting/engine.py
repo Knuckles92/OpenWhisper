@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_S = 10.0
 #: ASR drain budget for a normal, user-initiated end.
 END_DRAIN_TIMEOUT_S = 300.0
+#: Cap on the forced end-of-meeting ASR polish so consolidation can start.
+END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 #: Budget for the final consolidation pass.
@@ -398,6 +400,25 @@ class MeetingEngine:
     def _end_worker(self, drain_timeout_s: float) -> None:
         terminal_persisted = False
         try:
+            # Flip the dashboard off "Live" immediately — drain + consolidation
+            # can take a while, and leaving status=active looks hung.
+            if self.store is not None:
+                try:
+                    self.store.update_runtime_fields(status="ending")
+                except Exception:
+                    logger.exception("Could not mark meeting as ending")
+                else:
+                    self._emit_status()
+            # Stop rolling checkpoints/polish and cancel any in-flight LLM turn
+            # so end is not blocked waiting for a live pass to finish.
+            scheduler = self._scheduler
+            if scheduler is not None:
+                prepare = getattr(scheduler, "prepare_for_end", None)
+                if callable(prepare):
+                    try:
+                        prepare()
+                    except Exception:
+                        logger.exception("Scheduler prepare_for_end failed")
             self._stop_capture()
             self._flush_spools()
             drained = True
@@ -408,12 +429,33 @@ class MeetingEngine:
                     logger.exception("ASR drain failed at meeting end")
                     drained = False
                 # Flush deferred rolling revises before consolidation sees the
-                # transcript, while the Whisper model is still loaded.
+                # transcript, while the Whisper model is still loaded — but
+                # bound the wait so a long polish queue cannot delay insights.
                 run_pending = getattr(self._asr, "run_pending_revises", None)
                 if drained and callable(run_pending):
+                    revise_deadline = time.monotonic() + END_REVISE_TIMEOUT_S
                     try:
-                        for outcome in run_pending(force=True):
+                        for outcome in run_pending(
+                            force=True, deadline_mono=revise_deadline,
+                        ):
                             self._publish_revise_result(outcome)
+                    except TypeError:
+                        # Older ASR engines without deadline_mono.
+                        try:
+                            for outcome in run_pending(force=True):
+                                self._publish_revise_result(outcome)
+                                if time.monotonic() >= revise_deadline:
+                                    logger.warning(
+                                        "End-of-meeting ASR revise flush timed "
+                                        "out after %.0fs; continuing to "
+                                        "consolidation",
+                                        END_REVISE_TIMEOUT_S,
+                                    )
+                                    break
+                        except Exception:
+                            logger.exception(
+                                "End-of-meeting ASR revise flush failed"
+                            )
                     except Exception:
                         logger.exception("End-of-meeting ASR revise flush failed")
             try:

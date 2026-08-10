@@ -317,6 +317,12 @@ class TestWriteThrough:
         event = repo.get_event("m_test1", added.seq)
         assert event["inverse"] == {"op": "remove_item", "id": added.target_id}
 
+        listed = next(
+            item for item in repo.list_events("m_test1")
+            if item["seq"] == added.seq
+        )
+        assert listed["payload"]["text"] == "Ship it"
+
         meeting = repo.get_meeting("m_test1")
         snapshot = json.loads(meeting["state_json"])
         assert snapshot["seq"] == added.seq

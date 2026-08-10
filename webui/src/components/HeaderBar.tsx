@@ -45,8 +45,15 @@ export default function HeaderBar({
     setTitleDraft(state.title);
   }, [state.title]);
 
-  const statusClass =
-    state.status === 'active' ? 'live' : state.status === 'paused' ? 'paused' : 'ended';
+  const meetingLive = state.status === 'active';
+  const meetingEnding = state.status === 'ending';
+  const statusClass = meetingLive
+    ? 'live'
+    : state.status === 'paused'
+      ? 'paused'
+      : meetingEnding
+        ? 'paused'
+        : 'ended';
 
   const fullGuestUrl = guestUrl
     ? guestUrl.startsWith('http')
@@ -81,8 +88,12 @@ export default function HeaderBar({
     }
   };
 
-  const showOfflineBanner = !state.intelligence_online && state.status === 'active';
-  const showDiarizationBanner = !state.diarization_available && state.status === 'active';
+  const showOfflineBanner =
+    state.cloud_enabled &&
+    !state.intelligence_online &&
+    (meetingLive || meetingEnding);
+  const showDiarizationBanner =
+    !state.diarization_available && (meetingLive || meetingEnding);
   const meetingTitle = state.title || meeting?.title || 'Meeting';
 
   return (
@@ -103,10 +114,12 @@ export default function HeaderBar({
             <button type="button" className={showHistory ? 'primary' : 'ghost'} onClick={onToggleHistory}>
               {showHistory ? 'Live view' : 'History'}
             </button>
-            <button type="button" className={showActivity ? 'primary' : 'ghost'} onClick={onToggleActivity}>
-              Activity
-            </button>
-            {state.status === 'active' && (
+            {!showActivity && (
+              <button type="button" className="ghost" onClick={onToggleActivity}>
+                Show Pi activity
+              </button>
+            )}
+            {meetingLive && (
               <button type="button" disabled={busy} onClick={() => hostAction(() => api.pauseMeeting(token))}>
                 Pause
               </button>
@@ -116,12 +129,13 @@ export default function HeaderBar({
                 Resume
               </button>
             )}
+            {meetingEnding && <span className="status-chip">Ending…</span>}
             {fullGuestUrl && (
               <button type="button" className="primary" onClick={copyGuestLink}>
                 {copied ? 'Copied' : 'Invite'}
               </button>
             )}
-            {!meetingEnded && (
+            {!meetingEnded && !meetingEnding && (
               <button
                 type="button"
                 className="danger"
@@ -196,7 +210,13 @@ export default function HeaderBar({
         </div>
       )}
 
-      {state.status === 'active' && state.capture?.message && (
+      {meetingEnding && (
+        <div className="banner info" role="status">
+          Ending meeting — finishing transcription and insights…
+        </div>
+      )}
+
+      {meetingLive && state.capture?.message && (
         <div className="banner warning" role="status">
           {state.capture.message}
         </div>

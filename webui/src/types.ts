@@ -82,7 +82,7 @@ export interface TopicState {
 export interface MeetingStateDoc {
   meeting_id: string;
   seq: number;
-  status: string; // active | paused | ended | failed | needs_recovery
+  status: string; // active | paused | ending | ended | failed | needs_recovery
   cloud_enabled: boolean;
   intelligence_online: boolean;
   diarization_available: boolean;
@@ -335,6 +335,7 @@ export interface AuditEvent {
   actor_id: string | null;
   action: string;
   target_id: string | null;
+  payload?: Record<string, unknown>;
   undoable: boolean;
 }
 

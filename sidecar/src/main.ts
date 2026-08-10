@@ -266,11 +266,18 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   } else {
     parts.push(
       "## Rolling checkpoint",
-      "New transcript segments have arrived since your last update. Update the",
-      "meeting state via your tools: capture new key points, decisions, action",
-      "items, risks and timeline entries; keep the topic and rolling summary",
-      "current; ask or resolve inbox questions when warranted. Cite supporting",
-      "segment ids as evidence on everything you add or change.",
+      "New transcript segments have arrived since your last update. Participants",
+      "are watching this live — do not wait for the meeting to end. Update the",
+      "meeting state via your tools now:",
+      "- If topic or rolling_summary is empty and the new segments contain real",
+      "  speech, you MUST set_topic and set_rolling_summary immediately.",
+      "- If key_points is empty and the speech has a concrete claim, example, or",
+      "  plan, you MUST add at least one key_point.",
+      "- Also capture new decisions, action items, risks, and timeline entries",
+      "  when warranted; keep topic/summary current as discussion moves.",
+      "- Ask or resolve inbox questions when warranted.",
+      "Cite supporting segment ids as evidence on everything you add or change.",
+      "Only skip tools when the dashboard already reflects this new speech.",
     );
   }
   parts.push(

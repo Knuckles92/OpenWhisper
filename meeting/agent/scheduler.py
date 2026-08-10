@@ -160,6 +160,21 @@ class CheckpointScheduler:
                 and thread is not threading.current_thread()):
             thread.join(timeout=5.0)
 
+    def prepare_for_end(self) -> None:
+        """Stop rolling fires and cancel any in-flight checkpoint/polish.
+
+        Called at the start of meeting end so drain/consolidation are not
+        blocked behind a live LLM turn. Consolidation still runs afterward via
+        :meth:`run_consolidation`.
+        """
+        self._consolidating = True
+        self._stop_event.set()
+        self._wake.set()
+        try:
+            self._agent.cancel()
+        except Exception:
+            logger.exception("Agent cancel during prepare_for_end raised")
+
     def notify_segments(self, count: int) -> None:
         """Record newly transcribed segments; called by the engine per batch.
 
@@ -345,9 +360,54 @@ class CheckpointScheduler:
                 payload.request_id, applied, len(result.op_results),
             )
             self._successful_checkpoints += 1
+            # Live checkpoints sometimes return ok with zero ops even when the
+            # dashboard is still empty; seed topic/summary/key points so the
+            # UI is not stuck until end-of-meeting consolidation.
+            self._maybe_backfill_live_insights()
             self._maybe_fire_polish()
         else:
             self._record_failure(claimed, result.error or "checkpoint failed")
+
+    def _dashboard_needs_live_seed(self, snapshot: Dict[str, Any]) -> bool:
+        """True when live insights have not seeded the visible dashboard yet."""
+        topic = ((snapshot.get("topic") or {}).get("current") or "").strip()
+        summary = (snapshot.get("rolling_summary") or "").strip()
+        cards = snapshot.get("cards") or {}
+        has_key_point = any(
+            isinstance(item, dict) and item.get("status") != "removed"
+            for item in (cards.get("key_points") or [])
+        )
+        return not topic or not summary or not has_key_point
+
+    def _maybe_backfill_live_insights(self) -> None:
+        """Deterministically seed an empty live dashboard from the transcript."""
+        if self._consolidating or self._stop_event.is_set():
+            return
+        store = getattr(self._engine, "store", None)
+        if store is None:
+            return
+        try:
+            snapshot = store.snapshot()
+        except Exception:
+            logger.exception("Live insight backfill could not snapshot state")
+            return
+        if not self._dashboard_needs_live_seed(snapshot):
+            return
+        try:
+            segments = self._engine.get_transcript()
+        except Exception:
+            logger.exception("Live insight backfill transcript fetch failed")
+            return
+        if not segments:
+            return
+        try:
+            from meeting.state.repair import repair_meeting_state
+
+            applied = repair_meeting_state(store, segments)
+            if applied:
+                logger.info("Live insight backfill applied %d op(s)", applied)
+        except Exception:
+            logger.exception("Live insight backfill failed")
 
     def _maybe_fire_polish(self) -> None:
         """Run a slower transcript-text polish pass when due."""

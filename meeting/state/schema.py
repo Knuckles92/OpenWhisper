@@ -185,7 +185,7 @@ class MeetingState:
     """The complete dashboard document for one meeting."""
     meeting_id: str
     seq: int = 0
-    status: str = "active"  # active | paused | ended | failed | needs_recovery
+    status: str = "active"  # active | paused | ending | ended | failed | needs_recovery
     cloud_enabled: bool = False
     intelligence_online: bool = False
     diarization_available: bool = False

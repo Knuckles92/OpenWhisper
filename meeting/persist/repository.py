@@ -740,7 +740,12 @@ class SqlMeetingRepository:
 
     def list_events(self, meeting_id: str, before_seq: Optional[int] = None,
                     limit: int = 100) -> List[Dict[str, Any]]:
-        """Return recent audit events with undo availability."""
+        """Return recent audit events with their display payload and undo state.
+
+        The payload lets the host dashboard describe an event as a useful
+        sentence (for example, which key point the agent captured) instead of
+        exposing only an operation name and opaque target id.
+        """
         limit = max(1, min(int(limit), 500))
         with self._db.get_session() as session:
             undo_actions = {
@@ -762,6 +767,7 @@ class SqlMeetingRepository:
                 "actor_id": row.actor_id,
                 "action": row.action,
                 "target_id": row.target_id,
+                "payload": json.loads(row.payload_json),
                 "undoable": (
                     bool(row.inverse_json)
                     and f"undo:{row.seq}" not in undo_actions

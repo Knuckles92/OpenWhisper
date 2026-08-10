@@ -18,8 +18,27 @@ from meeting.interfaces import AgentResult, OpResult
 
 
 class FakeStore:
+    def __init__(self, snapshot=None):
+        self._snapshot = snapshot or {
+            "meeting_id": "m_test",
+            "seq": 1,
+            "cards": {
+                "key_points": [{
+                    "id": "it_1", "text": "seeded", "status": "proposed",
+                    "evidence": ["sg_1"],
+                }],
+            },
+            "topic": {"current": "seeded topic", "history": []},
+            "rolling_summary": "seeded summary",
+        }
+        self.apply_calls = []
+
     def snapshot(self):
-        return {"meeting_id": "m_test", "seq": 1, "cards": {}}
+        return dict(self._snapshot)
+
+    def apply(self, actor_kind, actor_id, ops):
+        self.apply_calls.append((actor_kind, actor_id, ops))
+        return [OpResult(ok=True, op=op) for op in ops]
 
 
 class FakeClock:
@@ -222,6 +241,52 @@ class TestSegmentWatermark:
         assert health == [False, True]
         assert sched._online is True
         assert sched._consecutive_failures == 0
+
+    def test_empty_checkpoint_backfills_blank_dashboard(self):
+        empty_store = FakeStore({
+            "meeting_id": "m_test",
+            "seq": 1,
+            "cards": {"key_points": []},
+            "topic": {"current": "", "history": []},
+            "rolling_summary": "",
+        })
+        engine = FakeEngine([
+            {
+                "id": "sg_1", "start_s": 0.0, "end_s": 5.0,
+                "text": "We should pack up and try the griddle.",
+            },
+        ])
+        engine.store = empty_store
+
+        class QuietAgent(FakeAgent):
+            def checkpoint(self, payload):
+                self.calls.append(payload)
+                return AgentResult(ok=True, op_results=[])
+
+        agent = QuietAgent()
+        sched = CheckpointScheduler(engine, agent)
+        sched._pending_segments = 1
+
+        with patch(
+            "meeting.state.repair.repair_meeting_state", return_value=2,
+        ) as repair:
+            sched._fire()
+            repair.assert_called_once()
+            assert repair.call_args.args[0] is empty_store
+            assert repair.call_args.args[1][0]["id"] == "sg_1"
+
+    def test_prepare_for_end_cancels_in_flight_agent(self):
+        agent = FakeAgent()
+        canceled = []
+        agent.cancel = lambda: canceled.append(True)
+        sched = CheckpointScheduler(FakeEngine(), agent)
+        sched.start()
+        try:
+            sched.prepare_for_end()
+            assert sched._consolidating is True
+            assert canceled == [True]
+        finally:
+            sched.stop()
 
     def test_transcript_fetch_failure_restores_claimed_work(self):
         class FailingEngine(FakeEngine):

@@ -142,25 +142,32 @@ adapt in your next round or checkpoint instead of repeating the same op.
 STYLE
 Be concise and concrete; write in the language of the meeting. Stay faithful to
 what was said — never fabricate. Prefer updating your own existing items over
-adding near-duplicates. When nothing meaningful changed, emit no operations at
-all. Use American spelling.
+adding near-duplicates. When the dashboard already covers the new speech and
+nothing meaningful changed, emit no operations. An empty topic, empty rolling
+summary, or empty key_points card with new speech content is NEVER "nothing
+changed" — seed them immediately. Use American spelling.
 """
 
 _CHECKPOINT_INSTRUCTIONS = """\
 ## INSTRUCTIONS
-Update the dashboard to reflect the new transcript segments:
-1. Adjust the current topic (set_topic) if discussion has moved on, and keep the
-   rolling summary current.
-2. Add genuinely new key points, decisions, action items, risks, and timeline
-   beats (timeline items need data.start_s). Do not duplicate existing items —
-   update or remove your own items (with the correct base_revision) instead.
-   Skip decisions/action_items unless the transcript shows a real decision or
+Update the dashboard to reflect the new transcript segments. Participants are
+watching this live — do not wait for the meeting to end.
+1. If the topic is empty (or still a placeholder) and the new segments contain
+   real speech, you MUST call set_topic. If discussion has moved on, update it.
+2. If the rolling summary is empty, you MUST call set_rolling_summary covering
+   what has been said so far. Otherwise rewrite it so it stays current.
+3. If key_points is empty and the new speech has a concrete claim, example, or
+   plan, you MUST add at least one key_point. Also add new distinct key points,
+   decisions, action items, risks, and timeline beats (timeline items need
+   data.start_s) when warranted. Do not duplicate existing items — update or
+   remove your own items (with the correct base_revision) instead. Skip
+   decisions/action_items unless the transcript shows a real decision or
    commitment.
-3. Cite evidence segment ids on every operation.
-4. If the new transcript answers an open question, call resolve_question with
+4. Cite evidence segment ids on every operation.
+5. If the new transcript answers an open question, call resolve_question with
    your honest confidence.
-5. Ask a new question only if it is genuinely valuable; the inbox stays quiet.
-If nothing meaningful changed, emit no operations."""
+6. Ask a new question only if it is genuinely valuable; the inbox stays quiet.
+Only emit no operations when the dashboard already reflects this new speech."""
 
 _POLISH_INSTRUCTIONS = """\
 ## INSTRUCTIONS — TRANSCRIPT POLISH PASS

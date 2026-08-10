@@ -7,6 +7,8 @@ interface MeetingOverviewProps {
   topicEvidence: string[];
   summary: string;
   summaryEvidence: string[];
+  cloudEnabled: boolean;
+  intelligenceOnline: boolean;
   onEvidenceClick: (segmentId: string) => void;
 }
 
@@ -18,6 +20,8 @@ export default function MeetingOverview({
   topicEvidence,
   summary,
   summaryEvidence,
+  cloudEnabled,
+  intelligenceOnline,
   onEvidenceClick,
 }: MeetingOverviewProps) {
   return (
@@ -28,6 +32,8 @@ export default function MeetingOverview({
       topicEvidence={topicEvidence}
       summary={summary}
       summaryEvidence={summaryEvidence}
+      cloudEnabled={cloudEnabled}
+      intelligenceOnline={intelligenceOnline}
       onEvidenceClick={onEvidenceClick}
     />
   );

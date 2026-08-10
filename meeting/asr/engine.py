@@ -466,13 +466,20 @@ class MeetingAsrEngine:
             prev = self._pending_revise.get(channel, -1.0)
             self._pending_revise[channel] = max(prev, float(frontier_s))
 
-    def run_pending_revises(self, force: bool = False) -> List[Dict[str, Any]]:
+    def run_pending_revises(
+        self,
+        force: bool = False,
+        deadline_mono: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
         """Drain due revise passes without delaying queued draft chunks.
 
         Args:
             force: Ignore the normal cadence. Used once after the final draft
                 drain so a short meeting or trailing partial interval still
                 gets a cleanup pass.
+            deadline_mono: Optional ``time.monotonic()`` deadline; when set,
+                stop before starting another revise window once the deadline
+                has passed (in-flight window still finishes).
 
         Returns:
             One result dict per successful revise (``items`` / ``removed_ids``).
@@ -481,6 +488,16 @@ class MeetingAsrEngine:
         if self._stopping or self._backend is None:
             return results
         while True:
+            if (
+                deadline_mono is not None
+                and time.monotonic() >= float(deadline_mono)
+            ):
+                logger.warning(
+                    "ASR revise flush hit deadline with %d channel(s) still "
+                    "pending",
+                    len(self._pending_revise),
+                )
+                return results
             # Revise work is secondary to live draft latency. Even one chunk
             # already waiting should be transcribed before another overlapping
             # window is decoded.

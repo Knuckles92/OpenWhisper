@@ -31,7 +31,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   const [ui, dispatch] = useReducer(meetingReducer, initialUiState);
   const socketRef = useRef<MeetingSocket | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
+  const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
 
   const isHost = role === 'host';
@@ -110,7 +110,6 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     }
     setHighlightSegmentId(segmentId);
     setShowHistory(false);
-    setShowActivity(false);
     requestAnimationFrame(() => {
       document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
@@ -135,7 +134,6 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         onClearError={() => dispatch({ type: 'clear_error' })}
         onToggleHistory={() => {
           setShowHistory((v) => !v);
-          setShowActivity(false);
         }}
         showHistory={showHistory}
         onToggleActivity={() => {
@@ -149,10 +147,6 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         <div className="app-main full-bleed">
           <HistoryPane token={token} onClose={() => setShowHistory(false)} />
         </div>
-      ) : showActivity && isHost ? (
-        <div className="app-main full-bleed">
-          <ActivityPane token={token} onUndo={sendUndo} />
-        </div>
       ) : (
         <div className="app-main">
           <MeetingOverview
@@ -164,8 +158,22 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             }
             summary={ui.state.rolling_summary}
             summaryEvidence={ui.state.rolling_summary_evidence}
+            cloudEnabled={ui.state.cloud_enabled}
+            intelligenceOnline={ui.state.intelligence_online}
             onEvidenceClick={handleEvidenceClick}
           />
+
+          {isHost && showActivity && (
+            <ActivityPane
+              token={token}
+              onUndo={sendUndo}
+              onHide={() => setShowActivity(false)}
+              refreshKey={ui.state.seq}
+              cloudEnabled={ui.state.cloud_enabled}
+              intelligenceOnline={ui.state.intelligence_online}
+              meetingStatus={ui.state.status}
+            />
+          )}
 
           <div className="stage">
             <div className="stage-conversation">
