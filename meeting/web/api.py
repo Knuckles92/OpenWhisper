@@ -382,7 +382,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 functools.partial(
                     rerun_insights, repository, meeting_id,
                     provider=provider, model=model,
-                    agent_core_kind=getattr(options, "agent_core_kind", "direct"),
+                    agent_core_kind=getattr(options, "agent_core_kind", "pi"),
                     sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
                 ),
             )

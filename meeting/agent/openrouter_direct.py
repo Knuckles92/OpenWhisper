@@ -19,6 +19,7 @@ try:
 except ImportError:  # pragma: no cover - openai is an app dependency
     OpenAI = None  # type: ignore[assignment]
 
+from config import config
 from meeting.agent.base import find_provider_api_key
 from meeting.agent.prompts import JSON_FALLBACK_INSTRUCTIONS, build_checkpoint_user_prompt
 from meeting.interfaces import (
@@ -35,11 +36,19 @@ logger = logging.getLogger(__name__)
 _CHECKPOINT_TIMEOUT_S = 60.0
 _CONSOLIDATION_TIMEOUT_S = 120.0
 _PROBE_TIMEOUT_S = 10.0
+#: Consolidation often needs an extra round to add timeline/questions after
+#: the first patch_state batch; rolling checkpoints stay at two rounds.
 _MAX_TOOL_ROUNDS = 2
-_TEMPERATURE = 0.2
+_MAX_CONSOLIDATION_TOOL_ROUNDS = 3
+#: Low temperature keeps dashboard ops stable across checkpoints; consolidation
+#: especially benefits from less paraphrase drift between runs.
+_TEMPERATURE = 0.0
 
 _DEFAULT_BASE_URLS = {"openrouter": "https://openrouter.ai/api/v1"}
-_DEFAULT_MODELS = {"openrouter": "openai/gpt-4o-mini", "openai": "gpt-4o-mini"}
+_DEFAULT_MODELS = {
+    "openrouter": config.MEETING_LLM_MODEL,
+    "openai": "gpt-4o-mini",
+}
 # OpenRouter attributes traffic to the app via this optional header.
 _OPENROUTER_HEADERS = {"X-Title": "OpenWhisper"}
 
@@ -111,8 +120,12 @@ _PATCH_STATE_TOOL = {
                             "data": {
                                 "type": "object",
                                 "description": (
-                                    "Structured item data (add_item), e.g. "
-                                    "owner_participant_id, start_s, severity."
+                                    "Structured item data (add_item). For "
+                                    "timeline items, REQUIRED: "
+                                    "{\"start_s\": <meeting seconds from the "
+                                    "segment t=…s stamp>}. Also used for "
+                                    "action_items.owner_participant_id and "
+                                    "risks.severity."
                                 ),
                             },
                             "display_name": {"type": "string"},
@@ -406,9 +419,15 @@ class DirectOpenRouterAgent:
         user_prompt = build_checkpoint_user_prompt(
             payload.state_snapshot, payload.new_segments, payload.is_consolidation,
         )
+        max_rounds = (
+            _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
+            else _MAX_TOOL_ROUNDS
+        )
         if self._json_mode:
             return self._run_json_mode(client, system_prompt, user_prompt, timeout_s)
-        return self._run_tool_mode(client, system_prompt, user_prompt, timeout_s)
+        return self._run_tool_mode(
+            client, system_prompt, user_prompt, timeout_s, max_rounds=max_rounds,
+        )
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
         """Route one model tool call to the tool host."""
@@ -434,7 +453,8 @@ class DirectOpenRouterAgent:
         raise ValueError(f"unknown tool: {name}")
 
     def _run_tool_mode(self, client: Any, system_prompt: str, user_prompt: str,
-                       timeout_s: float) -> AgentResult:
+                       timeout_s: float, max_rounds: int = _MAX_TOOL_ROUNDS,
+                       ) -> AgentResult:
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -442,7 +462,7 @@ class DirectOpenRouterAgent:
         op_results: List[OpResult] = []
         usage: Dict[str, Any] = {}
 
-        for round_index in range(_MAX_TOOL_ROUNDS):
+        for round_index in range(max_rounds):
             if self._cancel_event.is_set():
                 return AgentResult(
                     ok=False, op_results=op_results, error="canceled", usage=usage,

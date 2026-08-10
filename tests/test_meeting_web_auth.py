@@ -361,7 +361,7 @@ class TestRerunInsights:
                             "error": None}
         assert calls["meeting_id"] == "m_test"
         assert calls["provider"] == "openrouter"  # fallback when unrecorded
-        assert calls["agent_core_kind"] == "direct"
+        assert calls["agent_core_kind"] == "pi"
 
     def test_missing_transcript_is_400(self, client, monkeypatch):
         tc, engine, _ = client

@@ -68,7 +68,7 @@ class MeetingEngineOptions:
     asr_model: str = 'auto'
     llm_provider: str = 'openrouter'
     llm_model: str = ''
-    agent_core_kind: str = 'direct'   # 'pi' | 'direct'
+    agent_core_kind: str = 'pi'   # 'pi' | 'direct'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
     server_bind: str = 'localhost'    # 'localhost' | 'lan'

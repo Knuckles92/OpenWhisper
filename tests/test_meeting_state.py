@@ -126,6 +126,59 @@ class TestItemOps:
         assert item["author_type"] == "agent"
         assert results[0].seq == 1
 
+    def test_agent_duplicate_item_rejected(self):
+        store, _ = make_store()
+        store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points", "text": "Budget approved!",
+             "evidence": ["sg_known"]},
+        ])
+        dup = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points", "text": "budget approved",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert not dup.ok
+        assert dup.reason == "duplicate_item"
+
+        near = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points",
+             "text": "The budget was approved by the team",
+             "evidence": ["sg_known"]},
+        ])[0]
+        # Different claim — allowed.
+        assert near.ok
+
+        paraphrase = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points",
+             "text": "The speaker made a significant discovery three and a "
+                     "half years ago that changed their view on these topics.",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert paraphrase.ok
+        near_dup = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points",
+             "text": "The speaker's significant discovery from three and a "
+                     "half years ago changed their perspective on these topics.",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert not near_dup.ok
+        assert near_dup.reason == "duplicate_item"
+
+    def test_agent_timeline_requires_start_s(self):
+        store, _ = make_store()
+        missing = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "timeline", "text": "Kickoff",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert not missing.ok
+        assert missing.reason == "missing_start_s"
+
+        ok = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "timeline", "text": "Kickoff",
+             "data": {"start_s": 12.5}, "evidence": ["sg_known"]},
+        ])[0]
+        assert ok.ok
+        assert ok.effect["item"]["data"]["start_s"] == 12.5
+
     def test_human_add_item_is_edited(self):
         store, _ = make_store()
         results = store.apply("user", "p_guest1", [

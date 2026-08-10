@@ -69,6 +69,8 @@ def export_markdown(meeting: Dict[str, Any], state: Dict[str, Any],
             out.extend(_risk_lines(items))
         elif card == "timeline":
             out.extend(_timeline_lines(items))
+        elif card == "key_points":
+            out.extend(_key_point_lines(items, segments))
         else:
             out.extend(f"- {item['text'].strip()}" for item in items)
 
@@ -226,6 +228,37 @@ def _timeline_lines(items: List[Dict[str, Any]]) -> List[str]:
         start_s = (item.get("data") or {}).get("start_s")
         if isinstance(start_s, (int, float)) and not isinstance(start_s, bool):
             lines.append(f"- [{format_mmss(float(start_s))}] {text}")
+        else:
+            lines.append(f"- {text}")
+    return lines
+
+
+def _key_point_lines(items: List[Dict[str, Any]],
+                     segments: List[Dict[str, Any]]) -> List[str]:
+    """Key-point bullets with an optional ``[mm:ss]`` from earliest evidence.
+
+    Timestamps make the shareable Markdown document navigable against the
+    transcript without exposing raw segment ids.
+    """
+    by_id = {
+        seg["id"]: seg
+        for seg in segments
+        if isinstance(seg, dict) and seg.get("id")
+    }
+    lines: List[str] = []
+    for item in items:
+        text = item["text"].strip()
+        starts: List[float] = []
+        for seg_id in item.get("evidence") or []:
+            seg = by_id.get(seg_id)
+            if seg is None:
+                continue
+            try:
+                starts.append(float(seg.get("start_s") or 0.0))
+            except (TypeError, ValueError):
+                continue
+        if starts:
+            lines.append(f"- [{format_mmss(min(starts))}] {text}")
         else:
             lines.append(f"- {text}")
     return lines

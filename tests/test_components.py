@@ -198,15 +198,62 @@ def test_available_component_ids_is_empty_off_windows():
         )
 
 
-def test_unpublished_meeting_payloads_are_never_offered():
+def test_unpublished_meeting_payloads_are_never_offered(component_root):
     """Placeholder URLs/digests must stay unreachable until release artifacts exist."""
-    with patch.object(components.sys, "platform", "win32"):
+    with patch.object(components.sys, "platform", "win32"), patch.object(
+        components, "_source_sidecar_payload_dir", return_value=None
+    ):
         assert components.component_is_published(ComponentId.MEETING_AGENT) is False
         assert components.component_is_published(ComponentId.SPEAKER_ID) is False
         assert ComponentId.MEETING_AGENT not in components.available_component_ids()
         assert ComponentId.SPEAKER_ID not in components.available_component_ids()
         assert components.meeting_agent_payload_dir() is None
         assert components.speaker_model_path() is None
+
+
+def test_meeting_agent_payload_dir_uses_installed_bundle(component_root):
+    """A staged install with bundle.cjs is usable even when unpublished."""
+    target = _make_installed(
+        component_root,
+        ComponentId.MEETING_AGENT,
+        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+    )
+    (target / "bundle.cjs").write_text("// stub", encoding="utf-8")
+    with patch.object(components, "_source_sidecar_payload_dir", return_value=None):
+        assert components.meeting_agent_payload_dir() == str(target)
+
+
+def test_meeting_agent_payload_dir_ignores_install_without_bundle(component_root):
+    """Sentinel alone is not enough — the sidecar bundle must be present."""
+    _make_installed(
+        component_root,
+        ComponentId.MEETING_AGENT,
+        {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
+    )
+    with patch.object(components, "_source_sidecar_payload_dir", return_value=None):
+        assert components.meeting_agent_payload_dir() is None
+
+
+def test_meeting_agent_payload_dir_falls_back_to_source_dist(component_root, tmp_path):
+    """From source, a built sidecar/dist/bundle.cjs is a valid payload."""
+    dist = tmp_path / "sidecar" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "bundle.cjs").write_text("// stub", encoding="utf-8")
+    with patch.object(components, "is_frozen", return_value=False), patch.object(
+        components, "bundle_root", return_value=str(tmp_path)
+    ):
+        assert components.meeting_agent_payload_dir() == str(dist)
+
+
+def test_source_sidecar_payload_ignored_when_frozen(component_root, tmp_path):
+    """Frozen builds must not pick up a sibling source-tree sidecar/dist."""
+    dist = tmp_path / "sidecar" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "bundle.cjs").write_text("// stub", encoding="utf-8")
+    with patch.object(components, "is_frozen", return_value=True), patch.object(
+        components, "bundle_root", return_value=str(tmp_path)
+    ):
+        assert components.meeting_agent_payload_dir() is None
 
 
 def test_gpu_runtime_probes_shared_objects_on_linux():

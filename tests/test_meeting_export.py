@@ -137,7 +137,7 @@ class TestMarkdownExport:
         assert "## Summary" in md
         assert "Team aligned on milestones." in md
         assert "## Key Points" in md
-        assert "- Ship beta in June" in md
+        assert "- [00:05] Ship beta in June" in md
         assert "## Decisions" in md
         assert "- Use FastAPI" in md
         assert "## Action Items" in md

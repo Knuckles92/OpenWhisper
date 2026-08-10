@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
 from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
+from meeting.state.repair import repair_meeting_state
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
 
@@ -151,7 +152,7 @@ def _consolidate(core: Any, payload: CheckpointPayload,
 
 
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
-                   model: str, agent_core_kind: str = "direct",
+                   model: str, agent_core_kind: str = "pi",
                    sidecar_payload_dir: Optional[str] = None,
                    timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
     """Regenerate a past meeting's insights from its stored transcript.
@@ -237,6 +238,12 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
             core.shutdown()
         except Exception:
             logger.exception("Agent core shutdown failed after insight re-run")
+
+    # Structural repair: gpt-4o-mini often ships key points + summary but
+    # leaves timeline empty. Promote evidenced key points (or sample the
+    # transcript) so the durable record always has story beats.
+    repaired = repair_meeting_state(store, segments)
+    tools.applied += repaired
 
     # No explicit snapshot write: the store's write-through already persists
     # state_json/state_seq on every applied batch (see

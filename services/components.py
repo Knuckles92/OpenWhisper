@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Final, Optional, Set, Tuple
 
 from _version import __version__
-from config import components_root
+from config import bundle_root, components_root, is_frozen
 from services.format_utils import format_size_bytes
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 # Bumped when the shell changes in a way that invalidates existing component
 # payloads (a Python minor upgrade, a numpy major upgrade, a new MSVC runtime).
 COMPONENT_API: Final[int] = 1
+
+# Must match ``meeting.agent.base.SIDECAR_BUNDLE_NAME`` — kept as a local
+# constant so this module never imports the meeting package.
+_SIDECAR_BUNDLE_NAME: Final[str] = "bundle.cjs"
 
 # The component payload, pinned at release time. Entries point straight at PyPI,
 # which needs no hosting of our own and cannot rot: a published wheel's URL and
@@ -388,18 +392,48 @@ def is_installed(component_id: str) -> bool:
     return os.path.isfile(os.path.join(component_dir(component_id), _SENTINEL_NAME))
 
 
+def _payload_has_sidecar_bundle(payload_dir: str) -> bool:
+    """True when ``payload_dir`` contains the compiled Pi sidecar bundle."""
+    return os.path.isfile(os.path.join(payload_dir, _SIDECAR_BUNDLE_NAME))
+
+
+def _source_sidecar_payload_dir() -> Optional[str]:
+    """Repo ``sidecar/dist`` when running from source and the bundle is built.
+
+    Frozen installs never look here — they use the downloadable meeting-agent
+    component (or nothing).
+    """
+    if is_frozen():
+        return None
+    candidate = os.path.join(bundle_root(), "sidecar", "dist")
+    if _payload_has_sidecar_bundle(candidate):
+        return candidate
+    return None
+
+
 def meeting_agent_payload_dir() -> Optional[str]:
-    """Install directory of the meeting-agent component, when installed.
+    """Directory holding a runnable Pi sidecar payload, when available.
+
+    Resolution order:
+        1. Installed ``meeting-agent`` component tree with ``bundle.cjs``
+           (usable even before the catalog marks the component published, so
+           a locally staged install works in development).
+        2. Source-tree ``sidecar/dist`` when ``bundle.cjs`` has been built.
+        3. ``None`` — callers fall back to the direct OpenRouter agent.
 
     Returns:
-        Absolute path to the installed payload (containing the portable Node
-        runtime and the sidecar ``bundle.cjs``), or None when the component is
-        not installed.
+        Absolute path to a payload directory containing ``bundle.cjs``, or
+        None when no runnable sidecar is present.
     """
-    if (not component_is_published(ComponentId.MEETING_AGENT)
-            or not is_installed(ComponentId.MEETING_AGENT)):
-        return None
-    return component_dir(ComponentId.MEETING_AGENT)
+    if is_installed(ComponentId.MEETING_AGENT):
+        installed = component_dir(ComponentId.MEETING_AGENT)
+        if _payload_has_sidecar_bundle(installed):
+            return installed
+        logger.warning(
+            "meeting-agent component is installed but missing %s",
+            _SIDECAR_BUNDLE_NAME,
+        )
+    return _source_sidecar_payload_dir()
 
 
 def speaker_model_path() -> Optional[str]:

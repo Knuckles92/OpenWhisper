@@ -41,7 +41,7 @@ from services.settings import (
     settings_manager,
 )
 from services.history_manager import history_manager
-from services.components import ComponentId, component_is_published
+from services.components import meeting_agent_payload_dir
 from services.recorder import AudioRecorder
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
@@ -767,15 +767,17 @@ class SettingsDialog(QDialog):
         layout.addWidget(meeting_core_label)
 
         self.meeting_agent_core_combo = NoWheelComboBox()
-        self.meeting_agent_core_combo.addItem(
-            "Pi (component unavailable in this build)", MeetingAgentCore.PI
+        self._pi_payload_available = meeting_agent_payload_dir() is not None
+        pi_label = (
+            "Pi (sidecar)" if self._pi_payload_available
+            else "Pi (sidecar not built)"
         )
+        self.meeting_agent_core_combo.addItem(pi_label, MeetingAgentCore.PI)
         pi_index = self.meeting_agent_core_combo.count() - 1
-        pi_published = component_is_published(ComponentId.MEETING_AGENT)
         model = self.meeting_agent_core_combo.model()
         item = model.item(pi_index) if hasattr(model, "item") else None
         if item is not None:
-            item.setEnabled(pi_published)
+            item.setEnabled(self._pi_payload_available)
         self.meeting_agent_core_combo.addItem(
             "Direct (no sidecar)", MeetingAgentCore.DIRECT
         )
@@ -783,13 +785,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.meeting_agent_core_combo)
 
         meeting_intelligence_info = QLabel(
-            "Meeting insights run on the selected chat model. Pi uses the "
-            "bundled Meeting Agent component and falls back to Direct when it "
-            "is not installed. OpenAI needs OPENAI_API_KEY; OpenRouter needs "
-            "OPENROUTER_API_KEY (environment or .env). Transcript text and "
-            "meeting state are sent to the provider — audio never leaves this "
-            "computer, and nothing is sent until you enable cloud "
-            "intelligence for a meeting."
+            "Meeting insights run on the selected chat model. Pi is the "
+            "default agent core (sidecar bundle or Meeting Agent component) "
+            "and falls back to Direct when no payload is available. OpenAI "
+            "needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
+            "(environment or .env). Transcript text and meeting state are "
+            "sent to the provider — audio never leaves this computer, and "
+            "nothing is sent until you enable cloud intelligence for a "
+            "meeting."
         )
         meeting_intelligence_info.setObjectName("infoLabel")
         meeting_intelligence_info.setWordWrap(True)
@@ -1379,7 +1382,7 @@ class SettingsDialog(QDialog):
 
         core = resolve_meeting_agent_core(settings)
         if (core == MeetingAgentCore.PI
-                and not component_is_published(ComponentId.MEETING_AGENT)):
+                and not getattr(self, "_pi_payload_available", False)):
             core = MeetingAgentCore.DIRECT
         core_index = self.meeting_agent_core_combo.findData(core)
         self.meeting_agent_core_combo.setCurrentIndex(max(0, core_index))

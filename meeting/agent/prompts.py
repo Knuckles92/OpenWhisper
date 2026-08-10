@@ -49,8 +49,11 @@ OPERATIONS
 - remove_item(id, base_revision, evidence): mark one of your items removed (wrong,
   duplicated, or superseded).
 - set_topic(text, evidence): update the current main topic when discussion moves on.
+  Prefer the speakers' own framing (the opening puzzle, decision under debate, or
+  named theme) over a vague generic label.
 - set_rolling_summary(text, evidence): replace the running summary of the meeting so far.
-  Keep it to a few tight sentences; rewrite it, do not append endlessly.
+  Keep it to a few tight sentences; rewrite it, do not append endlessly. Always set
+  this on consolidation — never leave it blank when the transcript has content.
 - upsert_participant(display_name, kind, evidence): create a participant for a
   distinct remote speaker you can identify; or, with id, rename one you created.
 - suggest_participant_name(participant_id, display_name, evidence): propose a
@@ -60,15 +63,37 @@ OPERATIONS
   open question from what was said in the meeting.
 
 CARDS
-- key_points: important statements, findings, and agreements-in-progress.
+- key_points: important statements, findings, claims, and agreements-in-progress.
+  Prefer distinct, concrete claims (one idea per item) over vague restatements.
+  For talks/presentations, capture each major example or thesis the speaker
+  advances — including a closing discovery or "what's really at play" claim.
 - decisions: things actually decided. Add only when the transcript shows a
-  decision was made, not merely discussed.
+  decision was made, not merely discussed. Leave empty for talks/monologues
+  with no decision language.   When speakers agree to park a topic, take it
+  offline, adopt/skip a feature, choose a plan, or accept a proposed
+  agenda ("sounds good" / "on point"), that IS a decision — put it on
+  this card (not only in key_points), even if a narrator is explaining
+  the meeting around the dialogue. Keep such decisions even when you
+  also add related action items.
 - action_items: concrete follow-ups. Put the owner's participant id in
-  data.owner_participant_id when the transcript supports one.
+  data.owner_participant_id when the transcript supports one. Leave empty
+  unless someone clearly commits to doing something. Phrases like
+  "I'll check with Tim", "review his mail", "follow up after this meeting",
+  or "let's sync offline" are action items — capture them here with any
+  named owner in the text when diarized participant ids are unavailable.
+  A problem or missing feature alone is a risk/key_point, not an action
+  item — do not invent "we'll tackle X" unless a speaker actually commits.
+  On sales/discovery calls, when a speaker states the intended end-state
+  ("schedule a next step if interested, or stop if not"), capture that as
+  an action_item / planned next step — not only as a key point.
 - risks: risks, blockers, and open disagreements. Optional data.severity
-  ("low", "medium", or "high").
-- timeline: the meeting's story beats. Set data.start_s to the meeting-seconds
-  timestamp where the beat began (take it from the segment timestamps).
+  ("low", "medium", or "high"). Prefer this card for usability gaps,
+  missing work, or unresolved concerns that no one has owned yet.
+- timeline: the meeting's story beats in narrative order. Always populate
+  this when the transcript has a clear progression (opening question,
+  examples, turning point, conclusion). Each beat MUST set data.start_s to
+  the meeting-seconds timestamp where that beat began (copy from the
+  segment's t=…s value). Prefer 3–8 beats over leaving the card empty.
 - user_notes: HUMAN-ONLY. Never add, update, or remove anything on this card.
 
 EVIDENCE DISCIPLINE
@@ -122,8 +147,10 @@ Update the dashboard to reflect the new transcript segments:
 1. Adjust the current topic (set_topic) if discussion has moved on, and keep the
    rolling summary current.
 2. Add genuinely new key points, decisions, action items, risks, and timeline
-   beats. Do not duplicate existing items — update or remove your own items
-   (with the correct base_revision) instead.
+   beats (timeline items need data.start_s). Do not duplicate existing items —
+   update or remove your own items (with the correct base_revision) instead.
+   Skip decisions/action_items unless the transcript shows a real decision or
+   commitment.
 3. Cite evidence segment ids on every operation.
 4. If the new transcript answers an open question, call resolve_question with
    your honest confidence.
@@ -138,16 +165,32 @@ Finalize the dashboard as the durable record:
    authored (respect base_revision; leave human-touched items alone).
 2. Make decisions and action items complete and precisely worded; give every
    action item an owner (data.owner_participant_id) when the transcript
-   supports one.
+   supports one. If the audio is purely a talk/monologue/interview/debate
+   with no commitment language, leave decisions and action_items empty —
+   do not invent them. But if the transcript (including meeting footage
+   inside a coaching video) contains real agreements or follow-ups —
+   parking a topic offline, skipping a feature, checking with a named
+   person — put those on decisions/action_items, not only key_points.
+   Do not classify the whole clip as a "talk" just because a narrator
+   frames it.
 3. Set the final topic and rewrite the rolling summary as a complete summary of
-   the whole meeting.
-4. Ensure the timeline card tells the meeting's story with data.start_s anchors.
-5. Resolve any open question the transcript answers (resolve_question with
+   the whole meeting. Cover the opening framing, major examples, and any
+   closing discovery or thesis — not only the middle examples.
+4. Populate the timeline card with ordered story beats and data.start_s on
+   EVERY timeline item (use segment t=…s values). A durable record without
+   timeline beats is incomplete when the talk has a clear arc.
+5. Ensure key_points include: (a) the opening framing question or puzzle when
+   the transcript begins with one, (b) each major named example or case study
+   as its own item (do not leave a named example only in the summary), and
+   (c) any stated discovery/turning point.
+6. Resolve any open question the transcript answers (resolve_question with
    honest confidence). Questions you cannot resolve stay open for the host —
    you cannot dismiss them.
-6. Keep every evidence link valid — cite only segment ids that appear in the
-   transcript above.
-Do not ask new questions."""
+7. Keep every evidence link valid — cite only segment ids that appear in the
+   transcript above. Prefer citing the segments that actually support each claim.
+8. You may ask at most ONE new quiet-inbox question, and only when the
+   transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
+   claim that was teased but not yet answered). Otherwise ask none."""
 
 #: Appended to the user prompt by the direct agent's JSON-mode fallback (used
 #: when the provider/model does not support function tools).

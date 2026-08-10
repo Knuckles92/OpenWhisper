@@ -461,3 +461,14 @@ class CheckpointScheduler:
             )
         else:
             logger.warning("Consolidation failed: %s", result.error)
+
+        # Even when the agent fails or skips timeline, promote evidenced key
+        # points (or sample the transcript) so the durable record has beats.
+        try:
+            from meeting.state.repair import repair_meeting_state
+
+            store = getattr(self._engine, "store", None)
+            if store is not None:
+                repair_meeting_state(store, segments)
+        except Exception:
+            logger.exception("State repair after consolidation failed")

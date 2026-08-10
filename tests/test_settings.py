@@ -281,6 +281,7 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_provider({}), config.MEETING_LLM_PROVIDER)
         self.assertEqual(self.resolve_llm_model({}), config.MEETING_LLM_MODEL)
         self.assertEqual(self.resolve_agent_core({}), config.MEETING_AGENT_CORE)
+        self.assertEqual(config.MEETING_AGENT_CORE, self.agent_cores.PI)
         self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
         self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
 

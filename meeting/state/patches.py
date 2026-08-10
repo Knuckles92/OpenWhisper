@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from meeting.interfaces import OpResult
@@ -28,6 +29,8 @@ from meeting.state.schema import (
     new_id,
     now_iso,
 )
+
+_ITEM_TEXT_NORM_RE = re.compile(r"[^a-z0-9]+")
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +160,57 @@ def _check_text(value: Any, max_len: int = MAX_TEXT_LEN) -> Optional[str]:
     return None
 
 
+def _normalize_item_text(text: str) -> str:
+    """Collapse punctuation/case so near-identical agent adds can be rejected."""
+    return _ITEM_TEXT_NORM_RE.sub(" ", (text or "").lower()).strip()
+
+
+def _item_text_too_similar(left: str, right: str,
+                           jaccard_threshold: float = 0.68,
+                           containment_threshold: float = 0.9) -> bool:
+    """True when normalized texts match or are near-paraphrases.
+
+    Uses Jaccard on token sets, plus a containment check on longer claims
+    so a slightly reworded duplicate is rejected without collapsing short
+    distinct statements that share a couple of content words.
+    """
+    a = _normalize_item_text(left)
+    b = _normalize_item_text(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    ta, tb = set(a.split()), set(b.split())
+    if not ta or not tb:
+        return False
+    intersection = len(ta & tb)
+    jaccard = intersection / len(ta | tb)
+    if jaccard >= jaccard_threshold:
+        return True
+    # Containment is only meaningful once both sides have enough tokens;
+    # otherwise "Budget approved" would collide with every budget sentence.
+    if min(len(ta), len(tb)) >= 8:
+        containment = intersection / min(len(ta), len(tb))
+        if containment >= containment_threshold:
+            return True
+    return False
+
+
+def _check_timeline_data(data: Dict[str, Any]) -> Optional[str]:
+    """Timeline beats need a numeric meeting-clock ``start_s`` anchor."""
+    if "start_s" not in data:
+        return "missing_start_s"
+    try:
+        start_s = float(data["start_s"])
+    except (TypeError, ValueError):
+        return "invalid_start_s"
+    if start_s < 0.0:
+        return "invalid_start_s"
+    # Persist a plain float so exports/UI never see a stringified number.
+    data["start_s"] = start_s
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Item ops
 # ---------------------------------------------------------------------------
@@ -176,8 +230,18 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
     reason = _check_data_size(data)
     if reason:
         return _reject(op, reason)
+    if card == "timeline" and (ctx.is_agent or ctx.actor_type == "system"):
+        reason = _check_timeline_data(data)
+        if reason:
+            return _reject(op, reason)
     if len(state.cards[card]) >= MAX_CARD_ITEMS:
         return _reject(op, "card_full")
+    if ctx.is_agent:
+        for existing in state.cards[card]:
+            if existing.status == "removed":
+                continue
+            if _item_text_too_similar(existing.text, op["text"]):
+                return _reject(op, "duplicate_item")
 
     item = CardItem(
         id=new_id("it"),

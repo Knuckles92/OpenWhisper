@@ -132,7 +132,8 @@ class TestHappyPath:
 
         assert result["ok"] is True
         assert result["error"] is None
-        assert result["applied"] == 2  # the unknown-evidence op was rejected
+        # 2 agent ops + timeline backfill + summary backfill.
+        assert result["applied"] == 4
         assert calls == [("pi", "/payload")]
 
         state = result["state"]
@@ -142,6 +143,13 @@ class TestHappyPath:
         assert key_points[0]["status"] == "proposed"
         assert key_points[0]["author_type"] == "agent"
         assert state["cards"]["decisions"] == []
+        timeline = [
+            item for item in state["cards"]["timeline"]
+            if item.get("status") != "removed"
+        ]
+        assert len(timeline) == 1
+        assert timeline[0]["data"]["start_s"] == 0.0
+        assert timeline[0]["author_type"] == "system"
 
         # Write-through persistence, exactly as in a live meeting.
         meeting = repo.get_meeting("m_rerun")
@@ -184,9 +192,17 @@ class TestHappyPath:
 
         result = rerun_insights(repo, "m_rerun", provider="openrouter", model="m")
 
-        assert result["applied"] == 0
+        # Agent update rejected; structural repairs still run.
+        assert result["applied"] >= 3
         items = result["state"]["cards"]["key_points"]
-        assert [item["text"] for item in items] == ["Human wrote this"]
+        human = next(item for item in items if item["id"] == "it_human")
+        assert human["text"] == "Human wrote this"
+        assert human["status"] == "edited"
+        timeline = [
+            item for item in result["state"]["cards"]["timeline"]
+            if item.get("status") != "removed"
+        ]
+        assert len(timeline) >= 1
 
 
 class TestFailure:
@@ -200,7 +216,9 @@ class TestFailure:
 
         assert result["ok"] is False
         assert "model exploded" in result["error"]
-        assert result["applied"] == 0
+        # Structural repairs still run so a failed agent does not leave an
+        # empty durable record when a transcript exists.
+        assert result["applied"] == 4
         assert result["state"]["meeting_id"] == "m_rerun"
         assert core.shutdown_calls == 1
 
