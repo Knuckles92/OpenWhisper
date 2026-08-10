@@ -12,6 +12,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.capture.spool import (
+    DEFAULT_MAX_SEC,
+    DEFAULT_TARGET_SEC,
     GAP_TOLERANCE_S,
     QUIET_WINDOW_S,
     TARGET_RATE,
@@ -62,38 +64,64 @@ class TestFindCutPoint:
         return buf
 
     def test_no_cut_before_target(self):
-        buf = self._quiet_buffer(15.0, quiet_from_s=10.0)
-        assert find_cut_point(buf, TARGET_RATE, target_sec=20.0, max_sec=32.0) is None
+        buf = self._quiet_buffer(4.9, quiet_from_s=3.0)
+        assert find_cut_point(
+            buf, TARGET_RATE,
+            target_sec=DEFAULT_TARGET_SEC,
+            max_sec=DEFAULT_MAX_SEC,
+        ) is None
 
-    def test_quiet_cut_after_20s_at_400ms(self):
-        # 22s total: loud through 20.1s, then silence — cut at end of quiet window
-        buf = self._quiet_buffer(22.0, quiet_from_s=20.1)
-        cut = find_cut_point(buf, TARGET_RATE, target_sec=20.0, max_sec=32.0)
+    def test_quiet_cut_after_target_at_400ms(self):
+        # Loud just past the live target, then silence: cut at quiet-window end.
+        quiet_from_s = DEFAULT_TARGET_SEC + 0.1
+        buf = self._quiet_buffer(7.0, quiet_from_s=quiet_from_s)
+        cut = find_cut_point(
+            buf, TARGET_RATE,
+            target_sec=DEFAULT_TARGET_SEC,
+            max_sec=DEFAULT_MAX_SEC,
+        )
         assert cut is not None
         # Cut lands at start_of_quiet + quiet_window
-        expected = int(20.1 * TARGET_RATE) + int(QUIET_WINDOW_S * TARGET_RATE)
+        expected = int(quiet_from_s * TARGET_RATE) + int(
+            QUIET_WINDOW_S * TARGET_RATE
+        )
         assert abs(cut - expected) <= int(0.05 * TARGET_RATE) + 1
-        assert cut / TARGET_RATE >= 20.0 + QUIET_WINDOW_S - 0.15
+        assert cut / TARGET_RATE >= (
+            DEFAULT_TARGET_SEC + QUIET_WINDOW_S - 0.15
+        )
 
-    def test_hard_cut_at_32s_without_quiet(self):
-        buf = self._quiet_buffer(33.0)  # all loud
-        cut = find_cut_point(buf, TARGET_RATE, target_sec=20.0, max_sec=32.0)
-        assert cut == int(32.0 * TARGET_RATE)
+    def test_hard_cut_at_max_without_quiet(self):
+        buf = self._quiet_buffer(DEFAULT_MAX_SEC + 1.0)  # all loud
+        cut = find_cut_point(
+            buf, TARGET_RATE,
+            target_sec=DEFAULT_TARGET_SEC,
+            max_sec=DEFAULT_MAX_SEC,
+        )
+        assert cut == int(DEFAULT_MAX_SEC * TARGET_RATE)
 
     def test_no_hard_cut_until_max(self):
         # Between target and max with no quiet: wait for more audio
-        buf = self._quiet_buffer(25.0)
-        assert find_cut_point(buf, TARGET_RATE, target_sec=20.0, max_sec=32.0) is None
+        buf = self._quiet_buffer((DEFAULT_TARGET_SEC + DEFAULT_MAX_SEC) / 2.0)
+        assert find_cut_point(
+            buf, TARGET_RATE,
+            target_sec=DEFAULT_TARGET_SEC,
+            max_sec=DEFAULT_MAX_SEC,
+        ) is None
 
     def test_native_rate_cut_matches_16k_cut(self):
         # The writer scans at the device's native rate; the policy must not
         # shift when the same audio is presented at 44.1 kHz.
-        n = int(22.0 * 44100)
+        quiet_from_s = DEFAULT_TARGET_SEC + 0.1
+        n = int(7.0 * 44100)
         buf = np.full(n, 5000, dtype=np.int16)
-        buf[int(20.1 * 44100):] = 0
-        cut = find_cut_point(buf, 44100, target_sec=20.0, max_sec=32.0)
+        buf[int(quiet_from_s * 44100):] = 0
+        cut = find_cut_point(
+            buf, 44100,
+            target_sec=DEFAULT_TARGET_SEC,
+            max_sec=DEFAULT_MAX_SEC,
+        )
         assert cut is not None
-        assert abs(cut / 44100 - 20.5) <= 0.06
+        assert abs(cut / 44100 - (quiet_from_s + QUIET_WINDOW_S)) <= 0.06
 
 
 # ---------------------------------------------------------------------------

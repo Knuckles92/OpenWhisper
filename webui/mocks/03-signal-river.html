@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>03 · Signal River</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1520;
+      --deep: #102033;
+      --line: #24384f;
+      --text: #e7eef7;
+      --muted: #8aa0b8;
+      --teal: #2ec4b6;
+      --teal-dim: rgba(46, 196, 182, 0.14);
+      --sand: #f0d9a8;
+      --coral: #ff7a6a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Outfit, system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 20% 0%, #16304a 0%, transparent 55%),
+        radial-gradient(700px 400px at 90% 10%, #0f2a2a 0%, transparent 50%),
+        var(--bg);
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      min-height: 100vh;
+    }
+    .main { display: flex; flex-direction: column; min-width: 0; }
+    header {
+      padding: 18px 28px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .brand {
+      font-size: 0.78rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--teal);
+      font-weight: 600;
+    }
+    h1 {
+      margin: 6px 0 0;
+      font-size: 1.55rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pill {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--deep) 80%, transparent);
+      color: var(--muted);
+    }
+    .pill.live { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 45%, var(--line)); }
+    button {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #043532;
+      font-weight: 600;
+    }
+    .topic-strip {
+      margin: 8px 28px 0;
+      padding: 16px 18px;
+      background: linear-gradient(90deg, var(--teal-dim), transparent 70%);
+      border-left: 3px solid var(--teal);
+      animation: slide 600ms ease both;
+    }
+    @keyframes slide {
+      from { opacity: 0; transform: translateX(-8px); }
+      to { opacity: 1; transform: none; }
+    }
+    .topic-strip .label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.7rem;
+      color: var(--teal);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .topic-strip h2 {
+      margin: 6px 0 4px;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .topic-strip p { margin: 0; color: var(--muted); font-size: 0.95rem; max-width: 60ch; }
+    .river {
+      flex: 1;
+      padding: 22px 28px 40px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .bubble {
+      max-width: min(640px, 92%);
+      padding: 12px 14px 14px;
+      background: var(--deep);
+      border: 1px solid var(--line);
+      position: relative;
+    }
+    .bubble.me {
+      align-self: flex-end;
+      background: color-mix(in srgb, var(--teal-dim) 80%, var(--deep));
+      border-color: color-mix(in srgb, var(--teal) 30%, var(--line));
+    }
+    .bubble .who {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--sand);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .bubble.me .who { color: var(--teal); }
+    .bubble time {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+    .bubble p { margin: 0; line-height: 1.45; font-size: 0.98rem; }
+    .rail {
+      border-left: 1px solid var(--line);
+      background: color-mix(in srgb, #081018 70%, var(--deep));
+      padding: 18px 16px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .rail h3 {
+      margin: 0 0 10px;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .card {
+      border: 1px solid var(--line);
+      padding: 12px;
+      background: var(--deep);
+      margin-bottom: 8px;
+    }
+    .card .k {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.68rem;
+      color: var(--teal);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .card.q .k { color: var(--sand); }
+    .card p { margin: 0; font-size: 0.9rem; line-height: 1.4; }
+    .people { display: grid; gap: 8px; }
+    .person {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      padding: 6px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    }
+    .person span:last-child { color: var(--muted); font-size: 0.78rem; }
+    .on::before {
+      content: "";
+      display: inline-block;
+      width: 6px; height: 6px;
+      background: var(--teal);
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .back {
+      position: fixed; bottom: 14px; left: 14px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      border: 1px solid var(--line);
+      padding: 6px 10px;
+      background: var(--deep);
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .rail { border-left: none; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="main">
+      <header>
+        <div>
+          <div class="brand">OpenWhisper Signal</div>
+          <h1>Q3 Planning Sync</h1>
+        </div>
+        <div class="meta">
+          <span class="pill live">● LIVE 42:18</span>
+          <span class="pill">socket open</span>
+          <button>Pause</button>
+          <button class="primary">Copy link</button>
+        </div>
+      </header>
+
+      <div class="topic-strip">
+        <div class="label">Now discussing</div>
+        <h2>Soft-launch gating &amp; pricing page timing</h2>
+        <p>Marketing ships first; checkout can wait. Cohort stays gated.</p>
+      </div>
+
+      <div class="river">
+        <div class="bubble me">
+          <div class="who"><span>Alex</span><time>41:02</time></div>
+          <p>If we slip the beta, we still need the pricing page live for the waitlist.</p>
+        </div>
+        <div class="bubble">
+          <div class="who"><span>Jordan</span><time>41:18</time></div>
+          <p>Agreed — marketing can ship copy without the full checkout flow.</p>
+        </div>
+        <div class="bubble">
+          <div class="who"><span>Sam</span><time>41:31</time></div>
+          <p>I'll own the FAQ rewrite and ping legal by Thursday.</p>
+        </div>
+        <div class="bubble me">
+          <div class="who"><span>Alex</span><time>41:44</time></div>
+          <p>Can we keep the rollout gated to the existing cohort first?</p>
+        </div>
+        <div class="bubble">
+          <div class="who"><span>Jordan</span><time>41:52</time></div>
+          <p>Yes. Soft launch only — no public announcement until metrics look clean.</p>
+        </div>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <div>
+        <h3>Insights</h3>
+        <div class="card">
+          <div class="k">Action</div>
+          <p>Sam rewrites FAQ and loops legal by Thursday.</p>
+        </div>
+        <div class="card">
+          <div class="k">Decision</div>
+          <p>Soft launch only — no public announcement until metrics are clean.</p>
+        </div>
+        <div class="card q">
+          <div class="k">Question</div>
+          <p>Who approves the final pricing page copy?</p>
+        </div>
+      </div>
+      <div>
+        <h3>Participants</h3>
+        <div class="people">
+          <div class="person"><span class="on">Alex</span><span>Host</span></div>
+          <div class="person"><span class="on">Jordan</span><span>Guest</span></div>
+          <div class="person"><span class="on">Sam</span><span>Guest</span></div>
+          <div class="person"><span class="on">Riley</span><span>Guest</span></div>
+          <div class="person"><span>Casey</span><span>Away</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <a class="back" href="index.html">← Concepts</a>
+</body>
+</html>

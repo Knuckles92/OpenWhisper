@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>09 · Kitchen Table</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --wood: #6b4f35;
+      --plank: #8a6846;
+      --grain: #5a412c;
+      --cloth: #f3ece1;
+      --ink: #2a241c;
+      --soft: #6d6254;
+      --butter: #f0d48a;
+      --sage: #9bb08a;
+      --tomato: #c96b52;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Nunito, system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        repeating-linear-gradient(
+          90deg,
+          var(--wood) 0px,
+          var(--plank) 18px,
+          var(--wood) 36px,
+          var(--grain) 38px,
+          var(--wood) 48px
+        );
+    }
+    .room {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px 18px 50px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      color: #f5ebe0;
+    }
+    .brand {
+      font-size: 0.75rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--butter);
+      font-weight: 800;
+    }
+    h1 {
+      margin: 4px 0 0;
+      font-size: 1.55rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      border: none;
+      background: var(--cloth);
+      color: var(--ink);
+      padding: 8px 13px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 700;
+      box-shadow: 0 2px 0 rgba(0,0,0,.2);
+    }
+    button.primary { background: var(--butter); }
+    button.danger { background: #f0c8bc; color: #6d2f1c; }
+    .tablecloth {
+      background:
+        radial-gradient(circle at 20% 20%, rgba(255,255,255,.35), transparent 40%),
+        var(--cloth);
+      border-radius: 40px;
+      padding: 28px 24px 24px;
+      box-shadow:
+        0 18px 0 rgba(0,0,0,.18),
+        inset 0 0 0 10px #e8dfd2;
+      position: relative;
+    }
+    .saucer {
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #fff, #e8e0d4 60%, #d4c8b6);
+      border: 2px solid #cbbba4;
+      position: absolute;
+      top: -18px; right: 48px;
+      box-shadow: 0 4px 0 rgba(0,0,0,.12);
+    }
+    .saucer::after {
+      content: "";
+      position: absolute;
+      inset: 16px;
+      border-radius: 50%;
+      background: #d7e4ea;
+      border: 2px solid #b7c7cf;
+    }
+    .now {
+      text-align: center;
+      max-width: 640px;
+      margin: 0 auto 22px;
+      animation: sit 600ms ease both;
+    }
+    @keyframes sit {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+    .now .label {
+      font-family: Caveat, cursive;
+      font-size: 1.35rem;
+      color: var(--tomato);
+      margin-bottom: 4px;
+    }
+    .now h2 {
+      margin: 0 0 8px;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .now p { margin: 0; color: var(--soft); line-height: 1.45; }
+    .placemats {
+      display: grid;
+      grid-template-columns: 1.2fr 0.9fr;
+      gap: 16px;
+    }
+    .mat {
+      background: #fffdf8;
+      border-radius: 22px;
+      border: 1px solid #e2d8c6;
+      overflow: hidden;
+      min-height: 420px;
+    }
+    .mat-h {
+      padding: 12px 16px;
+      background: #efe7d8;
+      font-weight: 800;
+      font-size: 0.88rem;
+      display: flex;
+      justify-content: space-between;
+      color: var(--soft);
+    }
+    .chat { padding: 10px 14px 16px; }
+    .line {
+      margin: 10px 0;
+      max-width: 92%;
+    }
+    .line.them { }
+    .line.me { margin-left: auto; }
+    .bubble {
+      display: inline-block;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: #f0e9dc;
+      line-height: 1.4;
+    }
+    .line.me .bubble { background: #e4edd9; }
+    .bubble .who {
+      font-size: 0.75rem;
+      font-weight: 800;
+      color: var(--soft);
+      margin-bottom: 2px;
+    }
+    .bubble time {
+      float: right;
+      margin-left: 12px;
+      font-size: 0.72rem;
+      color: #9a8d7a;
+      font-weight: 700;
+    }
+    .bubble p { margin: 0; }
+    .notes { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .napkin {
+      background: #fff;
+      border: 1px dashed #cbbba4;
+      border-radius: 14px;
+      padding: 12px 14px;
+      transform: rotate(-0.5deg);
+    }
+    .napkin:nth-child(2) { transform: rotate(0.6deg); background: #fff8e8; }
+    .napkin:nth-child(3) { transform: rotate(-0.3deg); background: #f3f7ef; }
+    .napkin .k {
+      font-family: Caveat, cursive;
+      font-size: 1.25rem;
+      color: var(--tomato);
+      margin-bottom: 2px;
+    }
+    .napkin p { margin: 0; line-height: 1.35; }
+    .seats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 18px;
+    }
+    .seat {
+      background: rgba(255,253,248,.9);
+      border: 2px solid #d8cbb6;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+    .seat.here { background: var(--butter); border-color: #c9a84a; }
+    .back {
+      display: inline-block;
+      margin-top: 20px;
+      color: #e8dcc8;
+      text-decoration: none;
+    }
+    @media (max-width: 860px) {
+      .placemats { grid-template-columns: 1fr; }
+      .saucer { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="room">
+    <header>
+      <div>
+        <div class="brand">OpenWhisper Table</div>
+        <h1>Q3 Planning Sync</h1>
+      </div>
+      <div class="actions">
+        <button>History</button>
+        <button>Pause</button>
+        <button class="primary">Pass the link</button>
+        <button class="danger">End</button>
+      </div>
+    </header>
+
+    <div class="tablecloth">
+      <div class="saucer" aria-hidden="true"></div>
+      <div class="now">
+        <div class="label">what we’re on about</div>
+        <h2>Soft-launch gating &amp; pricing page timing</h2>
+        <p>Marketing first. Cohort stays gated. Checkout can wait for a cleaner day.</p>
+      </div>
+
+      <div class="placemats">
+        <section class="mat">
+          <div class="mat-h"><span>Around the table</span><span>42:18</span></div>
+          <div class="chat">
+            <div class="line me"><div class="bubble"><div class="who">Alex <time>41:02</time></div><p>If we slip the beta, we still need the pricing page live for the waitlist.</p></div></div>
+            <div class="line them"><div class="bubble"><div class="who">Jordan <time>41:18</time></div><p>Agreed — marketing can ship copy without the full checkout flow.</p></div></div>
+            <div class="line them"><div class="bubble"><div class="who">Sam <time>41:31</time></div><p>I'll own the FAQ rewrite and ping legal by Thursday.</p></div></div>
+            <div class="line me"><div class="bubble"><div class="who">Alex <time>41:44</time></div><p>Can we keep the rollout gated to the existing cohort first?</p></div></div>
+            <div class="line them"><div class="bubble"><div class="who">Jordan <time>41:52</time></div><p>Yes. Soft launch only — no public announcement until metrics look clean.</p></div></div>
+          </div>
+        </section>
+        <aside class="mat">
+          <div class="mat-h"><span>Napkin notes</span><span>keep these</span></div>
+          <div class="notes">
+            <div class="napkin"><div class="k">Do</div><p>Sam rewrites FAQ and loops legal by Thursday.</p></div>
+            <div class="napkin"><div class="k">Decided</div><p>Soft launch only — no public announcement yet.</p></div>
+            <div class="napkin"><div class="k">Still open</div><p>Who approves the final pricing page copy?</p></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="seats">
+        <span class="seat here">Alex</span>
+        <span class="seat here">Jordan</span>
+        <span class="seat here">Sam</span>
+        <span class="seat here">Riley</span>
+        <span class="seat">Casey</span>
+      </div>
+    </div>
+    <a class="back" href="index.html">← Concepts</a>
+  </div>
+</body>
+</html>

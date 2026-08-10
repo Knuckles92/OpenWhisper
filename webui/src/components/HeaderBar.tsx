@@ -21,10 +21,6 @@ interface HeaderBarProps {
   showActivity: boolean;
 }
 
-function formatStatus(status: string): string {
-  return status.replace(/_/g, ' ');
-}
-
 export default function HeaderBar({
   token,
   isHost,
@@ -87,39 +83,21 @@ export default function HeaderBar({
 
   const showOfflineBanner = !state.intelligence_online && state.status === 'active';
   const showDiarizationBanner = !state.diarization_available && state.status === 'active';
+  const meetingTitle = state.title || meeting?.title || 'Meeting';
 
   return (
     <header className="header-bar">
-      <div className="header-title">
-        {isHost ? (
-          <input
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            }}
-            aria-label="Meeting title"
-          />
-        ) : (
-          <h1 style={{ margin: 0 }}>{state.title || meeting?.title || 'Meeting'}</h1>
-        )}
-      </div>
-
-      <div className="header-status">
-        <span className={`status-chip ${statusClass}`}>
-          <span className="status-dot" />
-          {formatStatus(state.status)}
-        </span>
-        <span className={`socket-indicator ${socketStatus}`}>
-          {socketStatus === 'open' ? 'Connected' : socketStatus === 'connecting' ? 'Reconnecting…' : 'Offline'}
-        </span>
-        {!state.cloud_enabled && (
-          <span className="status-chip">Transcript only</span>
-        )}
+      <div className="header-brand">
+        OpenWhisper <em>Meeting</em>
       </div>
 
       <div className="header-actions">
+        {socketStatus !== 'open' && (
+          <span className={`socket-indicator ${socketStatus}`}>
+            {socketStatus === 'connecting' ? 'Reconnecting…' : 'Offline'}
+          </span>
+        )}
+        {!state.cloud_enabled && <span className="status-chip">Transcript only</span>}
         {isHost && (
           <>
             <button type="button" className={showHistory ? 'primary' : 'ghost'} onClick={onToggleHistory}>
@@ -129,21 +107,18 @@ export default function HeaderBar({
               Activity
             </button>
             {state.status === 'active' && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => hostAction(() => api.pauseMeeting(token))}
-              >
+              <button type="button" disabled={busy} onClick={() => hostAction(() => api.pauseMeeting(token))}>
                 Pause
               </button>
             )}
             {state.status === 'paused' && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => hostAction(() => api.resumeMeeting(token))}
-              >
+              <button type="button" disabled={busy} onClick={() => hostAction(() => api.resumeMeeting(token))}>
                 Resume
+              </button>
+            )}
+            {fullGuestUrl && (
+              <button type="button" className="primary" onClick={copyGuestLink}>
+                {copied ? 'Copied' : 'Invite'}
               </button>
             )}
             {!meetingEnded && (
@@ -160,7 +135,7 @@ export default function HeaderBar({
                 End
               </button>
             )}
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <label className="cloud-toggle">
               <input
                 type="checkbox"
                 checked={state.cloud_enabled}
@@ -189,6 +164,25 @@ export default function HeaderBar({
           </>
         )}
       </div>
+
+      {isHost && (
+        <div className="header-title-edit">
+          <input
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+            aria-label="Meeting title"
+            placeholder="Meeting title"
+          />
+          <span className={`status-chip ${statusClass}`}>
+            <span className="status-dot" />
+            {meetingTitle}
+          </span>
+        </div>
+      )}
 
       {showOfflineBanner && (
         <div className="banner warning" role="status">

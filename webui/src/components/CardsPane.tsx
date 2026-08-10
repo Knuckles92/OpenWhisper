@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
-import { CARD_LABELS, sortedCardItems } from '../state';
+import { sortedCardItems } from '../state';
 import EvidenceChip from './EvidenceChip';
 
 interface CardsPaneProps {
@@ -11,16 +11,33 @@ interface CardsPaneProps {
   onUndo?: (seq: number) => void;
   /** Newest event seq per item id, from the reducer. */
   lastSeqByTarget: Record<string, number>;
+  /** When true, omit the outer panel chrome (embedded in Captured rail). */
+  embedded?: boolean;
+}
+
+const CAPTURE_TAGS: Record<CardKey, string> = {
+  key_points: 'Key point',
+  decisions: 'Decision',
+  action_items: 'Action',
+  risks: 'Risk',
+  timeline: 'Timeline',
+  user_notes: 'Note',
+};
+
+function captureTag(cardKey: CardKey): string {
+  return CAPTURE_TAGS[cardKey];
 }
 
 function CardItemRow({
   item,
+  tag,
   onSendOp,
   onEvidenceClick,
   onUndo,
   undoSeq,
 }: {
   item: CardItem;
+  tag: string;
   onSendOp: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   onUndo?: (seq: number) => void;
@@ -29,8 +46,6 @@ function CardItemRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
 
-  // Host undo-anyone: quietly offered on agent-authored items, whose last
-  // change the host can revert without hunting through the audit trail.
   const canUndo = onUndo !== undefined && undoSeq !== undefined;
 
   const statusClass =
@@ -47,6 +62,7 @@ function CardItemRow({
   if (item.status === 'removed') {
     return (
       <div className={`card-item removed${item.pinned ? ' pinned' : ''}`}>
+        <div className="capture-tag">{tag}</div>
         <p className="card-item-text">{item.text}</p>
       </div>
     );
@@ -54,6 +70,7 @@ function CardItemRow({
 
   return (
     <div className={`card-item ${statusClass}${item.pinned ? ' pinned' : ''}`}>
+      <div className="capture-tag">{tag}</div>
       {editing ? (
         <textarea
           value={draft}
@@ -124,6 +141,27 @@ function CardSection({
   onUndo?: (seq: number) => void;
   lastSeqByTarget: Record<string, number>;
 }) {
+  const tag = captureTag(cardKey);
+
+  return (
+    <div className="card-section">
+      {sortedCardItems(items).map((item) => (
+        <CardItemRow
+          key={item.id}
+          item={item}
+          tag={tag}
+          onSendOp={onSendOp}
+          onEvidenceClick={onEvidenceClick}
+          onUndo={onUndo}
+          undoSeq={lastSeqByTarget[item.id]}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
+  const [cardKey, setCardKey] = useState<CardKey>('key_points');
   const [newText, setNewText] = useState('');
 
   const addItem = () => {
@@ -134,32 +172,30 @@ function CardSection({
   };
 
   return (
-    <div className="card-section">
-      <h3 className="card-section-title">{CARD_LABELS[cardKey]}</h3>
-      {sortedCardItems(items).map((item) => (
-        <CardItemRow
-          key={item.id}
-          item={item}
-          onSendOp={onSendOp}
-          onEvidenceClick={onEvidenceClick}
-          onUndo={onUndo}
-          undoSeq={lastSeqByTarget[item.id]}
-        />
-      ))}
-      <div className="card-add-row">
-        <input
-          type="text"
-          placeholder={`Add to ${CARD_LABELS[cardKey].toLowerCase()}…`}
-          value={newText}
-          onChange={(e) => setNewText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addItem();
-          }}
-        />
-        <button type="button" className="primary" onClick={addItem}>
-          Add
-        </button>
-      </div>
+    <div className="card-add-row">
+      <select
+        value={cardKey}
+        onChange={(e) => setCardKey(e.target.value as CardKey)}
+        aria-label="Capture type"
+      >
+        {CARD_KEYS.map((key) => (
+          <option key={key} value={key}>
+            {CAPTURE_TAGS[key]}
+          </option>
+        ))}
+      </select>
+      <input
+        type="text"
+        placeholder={`Add ${CAPTURE_TAGS[cardKey].toLowerCase()}…`}
+        value={newText}
+        onChange={(e) => setNewText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') addItem();
+        }}
+      />
+      <button type="button" className="primary" onClick={addItem}>
+        Add
+      </button>
     </div>
   );
 }
@@ -170,25 +206,37 @@ export default function CardsPane({
   onEvidenceClick,
   onUndo,
   lastSeqByTarget,
+  embedded = false,
 }: CardsPaneProps) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <span>Meeting cards</span>
-      </div>
-      <div className="panel-body">
-        {CARD_KEYS.map((key) => (
+  const body = (
+    <>
+      {CARD_KEYS.map((key) => {
+        const items = cards[key] ?? [];
+        if (items.length === 0) return null;
+        return (
           <CardSection
             key={key}
             cardKey={key}
-            items={cards[key] ?? []}
+            items={items}
             onSendOp={onSendOp}
             onEvidenceClick={onEvidenceClick}
             onUndo={onUndo}
             lastSeqByTarget={lastSeqByTarget}
           />
-        ))}
-      </div>
+        );
+      })}
+      <CaptureComposer onSendOp={onSendOp} />
+    </>
+  );
+
+  if (embedded) {
+    return <div className="capture-cards">{body}</div>;
+  }
+
+  return (
+    <section className="panel capture">
+      <h3 className="capture-heading">Captured</h3>
+      <div className="capture-body">{body}</div>
     </section>
   );
 }

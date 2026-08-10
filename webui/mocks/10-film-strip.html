@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>10 · Film Strip</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --void: #141210;
+      --emulsion: #1c1916;
+      --frame: #2a2621;
+      --sprocket: #0e0d0b;
+      --ink: #f0e6d6;
+      --muted: #a89a86;
+      --amber: #d4a15a;
+      --slate: #7d8f98;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Schibsted Grotesk", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 500px at 50% -20%, #2a241c 0%, transparent 55%),
+        var(--void);
+    }
+    .studio {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 18px;
+      padding: 0 8px;
+    }
+    .brand {
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--amber);
+      font-weight: 600;
+    }
+    h1 {
+      margin: 6px 0 0;
+      font-family: "Libre Baskerville", Georgia, serif;
+      font-size: 1.55rem;
+      font-weight: 400;
+    }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      border: 1px solid #3a342c;
+      background: var(--emulsion);
+      color: var(--ink);
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    button.primary { background: var(--amber); border-color: var(--amber); color: #1a140c; font-weight: 600; }
+    button.danger { color: #e0b0a0; border-color: #5a3a32; }
+    .slate-board {
+      border: 2px solid #3a342c;
+      background: linear-gradient(180deg, #221e19, var(--emulsion));
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 18px;
+      align-items: center;
+      animation: clap 500ms ease both;
+    }
+    @keyframes clap {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: none; }
+    }
+    .take {
+      font-family: "Libre Baskerville", Georgia, serif;
+      font-size: 2rem;
+      color: var(--amber);
+      line-height: 1;
+    }
+    .slate-board h2 {
+      margin: 0 0 4px;
+      font-size: 1.2rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .slate-board p { margin: 0; color: var(--muted); font-size: 0.92rem; line-height: 1.4; }
+    .meta {
+      text-align: right;
+      font-size: 0.78rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .meta strong { display: block; color: var(--slate); font-size: 1rem; letter-spacing: 0; text-transform: none; margin-bottom: 4px; }
+    .reel {
+      display: grid;
+      grid-template-columns: 1.3fr 0.85fr;
+      gap: 14px;
+    }
+    .strip {
+      background: var(--sprocket);
+      border: 1px solid #2e2923;
+      padding: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .strip::before,
+    .strip::after {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 18px;
+      background:
+        repeating-linear-gradient(
+          180deg,
+          #0a0908 0 10px,
+          #2a2621 10px 14px,
+          #0a0908 14px 22px
+        );
+      z-index: 2;
+    }
+    .strip::before { left: 0; }
+    .strip::after { right: 0; }
+    .frames {
+      padding: 14px 28px;
+      max-height: 560px;
+      overflow: auto;
+    }
+    .frame {
+      background: var(--frame);
+      border: 1px solid #3a342c;
+      margin: 10px 0;
+      padding: 12px 14px;
+      transition: border-color 160ms ease, background 160ms ease;
+    }
+    .frame:hover { border-color: var(--amber); background: #322c25; }
+    .frame .top {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .frame .top strong { color: var(--amber); font-weight: 600; }
+    .frame p {
+      margin: 0;
+      font-family: "Libre Baskerville", Georgia, serif;
+      font-size: 0.98rem;
+      line-height: 1.5;
+    }
+    .marginalia {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .note {
+      background: var(--emulsion);
+      border: 1px solid #3a342c;
+      padding: 14px 16px;
+    }
+    .note .k {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--amber);
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .note.q .k { color: var(--slate); }
+    .note p {
+      margin: 0;
+      font-family: "Libre Baskerville", Georgia, serif;
+      font-size: 0.98rem;
+      line-height: 1.4;
+    }
+    .cast {
+      background: var(--emulsion);
+      border: 1px solid #3a342c;
+      padding: 14px 16px;
+    }
+    .cast h3 {
+      margin: 0 0 10px;
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .cast ul { list-style: none; padding: 0; margin: 0; }
+    .cast li {
+      display: flex;
+      justify-content: space-between;
+      padding: 7px 0;
+      border-bottom: 1px solid #2e2923;
+      font-size: 0.9rem;
+    }
+    .cast li span:last-child { color: var(--muted); font-size: 0.78rem; }
+    .back {
+      display: inline-block;
+      margin-top: 20px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0 8px;
+    }
+    @media (max-width: 900px) {
+      .reel { grid-template-columns: 1fr; }
+      .slate-board { grid-template-columns: 1fr; }
+      .meta { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <div class="studio">
+    <header>
+      <div>
+        <div class="brand">OpenWhisper Pictures</div>
+        <h1>Q3 Planning Sync</h1>
+      </div>
+      <div class="actions">
+        <button>Dailies</button>
+        <button>Pause</button>
+        <button class="primary">Share cut</button>
+        <button class="danger">Wrap</button>
+      </div>
+    </header>
+
+    <section class="slate-board">
+      <div class="take">C</div>
+      <div>
+        <h2>Soft-launch gating &amp; pricing page timing</h2>
+        <p>Marketing ships first. Cohort stays gated. Checkout waits for a cleaner take.</p>
+      </div>
+      <div class="meta">
+        <strong>REC 42:18</strong>
+        Scene 3 · Take continuous
+      </div>
+    </section>
+
+    <div class="reel">
+      <section class="strip">
+        <div class="frames">
+          <article class="frame">
+            <div class="top"><strong>Alex</strong><span>41:02</span></div>
+            <p>If we slip the beta, we still need the pricing page live for the waitlist.</p>
+          </article>
+          <article class="frame">
+            <div class="top"><strong>Jordan</strong><span>41:18</span></div>
+            <p>Agreed — marketing can ship copy without the full checkout flow.</p>
+          </article>
+          <article class="frame">
+            <div class="top"><strong>Sam</strong><span>41:31</span></div>
+            <p>I'll own the FAQ rewrite and ping legal by Thursday.</p>
+          </article>
+          <article class="frame">
+            <div class="top"><strong>Alex</strong><span>41:44</span></div>
+            <p>Can we keep the rollout gated to the existing cohort first?</p>
+          </article>
+          <article class="frame">
+            <div class="top"><strong>Jordan</strong><span>41:52</span></div>
+            <p>Yes. Soft launch only — no public announcement until metrics look clean.</p>
+          </article>
+        </div>
+      </section>
+
+      <aside class="marginalia">
+        <div class="note">
+          <div class="k">Continuity · Action</div>
+          <p>Sam rewrites FAQ and loops legal by Thursday.</p>
+        </div>
+        <div class="note">
+          <div class="k">Locked · Decision</div>
+          <p>Soft launch only — no public announcement until metrics are clean.</p>
+        </div>
+        <div class="note q">
+          <div class="k">Pickup needed</div>
+          <p>Who approves the final pricing page copy?</p>
+        </div>
+        <div class="cast">
+          <h3>Cast</h3>
+          <ul>
+            <li><span>Alex</span><span>Host</span></li>
+            <li><span>Jordan</span><span>Guest</span></li>
+            <li><span>Sam</span><span>Guest</span></li>
+            <li><span>Riley</span><span>Guest</span></li>
+            <li><span>Casey</span><span>Away</span></li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+    <a class="back" href="index.html">← Concepts</a>
+  </div>
+</body>
+</html>

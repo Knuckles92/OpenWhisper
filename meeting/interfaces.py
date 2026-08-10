@@ -130,11 +130,14 @@ class CheckpointPayload:
         new_segments: Transcript segments added since the previous checkpoint
             (for ``consolidate``: the complete final transcript).
         is_consolidation: True for the end-of-meeting full pass.
+        is_polish: True for a transcript-text cleanup pass (``revise_segment_text``
+            only; does not advance the card-checkpoint cursor).
     """
     request_id: str
     state_snapshot: Dict[str, Any]
     new_segments: List[Dict[str, Any]]
     is_consolidation: bool = False
+    is_polish: bool = False
 
 
 @dataclass
@@ -390,8 +393,21 @@ class MeetingRepository(Protocol):
         self, meeting_id: str, segment_id: str,
         participant_id: Optional[str], source: str, pinned: bool,
     ) -> None: ...
+    def update_segment_text(
+        self, meeting_id: str, segment_id: str, text: str,
+    ) -> Optional[Dict[str, Any]]: ...
     def get_segments(self, meeting_id: str, after_start_s: float = -1.0,
                      limit: Optional[int] = None) -> List[Dict[str, Any]]: ...
+    def get_segments_in_range(
+        self, meeting_id: str, channel: str,
+        start_s: float, end_s: float,
+    ) -> List[Dict[str, Any]]: ...
+    def revise_segments_in_range(
+        self, meeting_id: str, channel: str,
+        start_s: float, end_s: float,
+        segments: List[TranscriptSegment],
+        remove_ids: List[str],
+    ) -> Any: ...
     def get_segments_page(
         self, meeting_id: str, cursor_start_s: Optional[float] = None,
         cursor_id: Optional[str] = None, limit: int = 500,

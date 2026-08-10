@@ -170,8 +170,9 @@ class TestSegmentWatermark:
             {"id": "loop_4", "start_s": 24.0, "end_s": 32.0, "text": "loop four"},
         ])
         sched._fire()
-        assert len(agent.calls) == 2
-        assert [s["id"] for s in agent.calls[1].new_segments] == [
+        card_calls = [c for c in agent.calls if not c.is_polish]
+        assert len(card_calls) == 2
+        assert [s["id"] for s in card_calls[1].new_segments] == [
             "loop_1", "loop_2", "loop_3", "loop_4",
         ]
 
@@ -251,7 +252,9 @@ class TestSegmentWatermark:
             assert len(sched._sent_starts) <= 3
             assert "sg_0" not in sched._sent_starts
             assert "sg_11" in sched._sent_starts
-        assert len(agent.calls) == 12
+        card_calls = [c for c in agent.calls if not c.is_polish]
+        assert len(card_calls) == 12
+        assert any(c.is_polish for c in agent.calls)
 
 
 class TestConsolidationRace:

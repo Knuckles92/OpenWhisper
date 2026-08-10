@@ -110,8 +110,10 @@ class TestModelRows(_DialogTestCase):
 
         self.assertTrue(dialog.voice_scroll_area.widgetResizable())
         self.assertTrue(dialog.text_scroll_area.widgetResizable())
+        self.assertTrue(dialog.meeting_scroll_area.widgetResizable())
         self.assertIsNotNone(dialog.voice_scroll_area.widget())
         self.assertIsNotNone(dialog.text_scroll_area.widget())
+        self.assertIsNotNone(dialog.meeting_scroll_area.widget())
         self.assertGreater(
             dialog.voice_scroll_area.widget().minimumSizeHint().height(),
             dialog.voice_scroll_area.minimumSizeHint().height(),
@@ -119,6 +121,10 @@ class TestModelRows(_DialogTestCase):
         self.assertGreater(
             dialog.text_scroll_area.widget().minimumSizeHint().height(),
             dialog.text_scroll_area.minimumSizeHint().height(),
+        )
+        self.assertGreater(
+            dialog.meeting_scroll_area.widget().minimumSizeHint().height(),
+            dialog.meeting_scroll_area.minimumSizeHint().height(),
         )
 
     def test_catalog_excludes_auto(self):
@@ -486,12 +492,13 @@ class TestTextModelManager(_DialogTestCase):
         self.assertEqual(status.text(), "Requires OPENROUTER_API_KEY")
         self.assertFalse(status.property("available"))
 
-    def test_voice_and_text_have_separate_tabs(self):
+    def test_voice_text_and_meeting_have_separate_tabs(self):
         dialog, _values = self._make_text_dialog()
         labels = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
-        self.assertEqual(labels, ["Voice", "Text"])
+        self.assertEqual(labels, ["Voice", "Text", "Meeting"])
         self.assertFalse(dialog.tabs.tabIcon(0).isNull())
         self.assertFalse(dialog.tabs.tabIcon(1).isNull())
+        self.assertFalse(dialog.tabs.tabIcon(2).isNull())
 
     def test_text_flow_uses_distinct_numbered_section_cards(self):
         dialog, _values = self._make_text_dialog()
@@ -662,19 +669,152 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                self.assertFalse(dialog.open_model_manager_on_close)
+                self.assertIsNone(dialog.open_model_manager_on_close)
 
                 dialog.open_model_manager_btn.click()
 
-                self.assertTrue(dialog.open_model_manager_on_close)
+                self.assertEqual(dialog.open_model_manager_on_close, "text")
+                self.assertEqual(
+                    dialog.result(),
+                    dialog.DialogCode.Accepted,
+                )
+
+    def test_saving_meeting_settings_preserves_model_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            isolated.save_all_settings(
+                {
+                    SettingsKey.MEETING_WHISPER_MODEL: "tiny",
+                    SettingsKey.MEETING_LLM_PROVIDER: "openai",
+                    SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
+                }
+            )
+            with (
+                patch.object(settings_dialog_module, "settings_manager", isolated),
+                patch.object(
+                    settings_dialog_module.history_manager,
+                    "set_max_recordings",
+                ),
+            ):
+                dialog = settings_dialog_module.SettingsDialog()
+                dialog._save_settings()
+
+            saved = isolated.load_all_settings()
+            self.assertEqual(saved[SettingsKey.MEETING_WHISPER_MODEL], "tiny")
+            self.assertEqual(saved[SettingsKey.MEETING_LLM_PROVIDER], "openai")
+            self.assertEqual(
+                saved[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini"
+            )
+
+    def test_meeting_tab_links_to_model_manager(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            with (
+                patch.object(settings_dialog_module, "settings_manager", isolated),
+                patch.object(
+                    settings_dialog_module.history_manager,
+                    "set_max_recordings",
+                ),
+            ):
+                dialog = settings_dialog_module.SettingsDialog()
+                self.assertIsNone(dialog.open_model_manager_on_close)
+
+                dialog.open_meeting_model_manager_btn.click()
+
+                self.assertEqual(dialog.open_model_manager_on_close, "meeting")
                 self.assertEqual(
                     dialog.result(),
                     dialog.DialogCode.Accepted,
                 )
 
 
+class TestMeetingModelManager(_DialogTestCase):
+    """Meeting tab owns Whisper ASR and intelligence model selection."""
+
+    def _make_meeting_dialog(
+        self,
+        whisper="auto",
+        provider="openrouter",
+        model="deepseek/test-model",
+        cached=None,
+    ):
+        values = {
+            SettingsKey.WHISPER_MODEL: "base",
+            SettingsKey.MEETING_WHISPER_MODEL: whisper,
+            SettingsKey.MEETING_LLM_PROVIDER: provider,
+            SettingsKey.MEETING_LLM_MODEL: model,
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-test",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
+                TranscriptCleanupModelSort.ALPHABETICAL
+            ),
+        }
+
+        class FakeSettings:
+            def get(self, key, default=None):
+                return values.get(key, default)
+
+            def save_setting(self, key, value):
+                values[key] = value
+
+            def load_all_settings(self):
+                return dict(values)
+
+            def save_all_settings(self, settings):
+                values.clear()
+                values.update(settings)
+
+        patchers = [
+            patch.object(
+                dialog_module,
+                "scan_cached_models",
+                return_value=cached or {},
+            ),
+            patch.object(dialog_module, "settings_manager", FakeSettings()),
+            patch.object(
+                dialog_module, "find_api_key", return_value=None
+            ),
+            patch.object(
+                dialog_module, "is_hf_hub_offline_env_set", return_value=False
+            ),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return ModelManagerDialog(), values
+
+    def test_meeting_catalog_includes_auto(self):
+        dialog, _values = self._make_meeting_dialog()
+        self.assertIn("auto", dialog.meeting_rows)
+        self.assertIn("base", dialog.meeting_rows)
+
+    def test_meeting_set_active_persists_whisper_model(self):
+        dialog, values = self._make_meeting_dialog(
+            whisper="auto",
+            cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)},
+        )
+        dialog.meeting_rows["tiny"].set_active_button.click()
+        self.assertEqual(values[SettingsKey.MEETING_WHISPER_MODEL], "tiny")
+        self.assertTrue(dialog.meeting_rows["tiny"].is_active)
+
+    def test_meeting_llm_activation_persists_provider_and_model(self):
+        dialog, values = self._make_meeting_dialog()
+        picker = dialog.meeting_model_picker
+        index = picker.provider_combo.findData(
+            TranscriptCleanupProvider.OPENAI
+        )
+        picker.provider_combo.setCurrentIndex(index)
+        picker.model_combo.setCurrentText("gpt-4o-mini")
+
+        dialog._activate_meeting_llm_model(TranscriptCleanupProvider.OPENAI)
+
+        self.assertEqual(values[SettingsKey.MEETING_LLM_PROVIDER], "openai")
+        self.assertEqual(values[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini")
+        self.assertEqual(picker.activate_button.text(), "Active")
+
+
 class TestModelManagerTabFocus(_DialogTestCase):
-    """Model Manager can open directly on the Text tab."""
+    """Model Manager can open directly on Text or Meeting tabs."""
 
     def test_show_text_tab_selects_text_processing(self):
         dialog = self._make_dialog()
@@ -683,6 +823,14 @@ class TestModelManagerTabFocus(_DialogTestCase):
         dialog.show_text_tab()
 
         self.assertIs(dialog.tabs.currentWidget(), dialog.text_tab)
+
+    def test_show_meeting_tab_selects_meeting(self):
+        dialog = self._make_dialog()
+        self.assertIs(dialog.tabs.currentWidget(), dialog.voice_tab)
+
+        dialog.show_meeting_tab()
+
+        self.assertIs(dialog.tabs.currentWidget(), dialog.meeting_tab)
 
 
 class TestComponentRows(_DialogTestCase):

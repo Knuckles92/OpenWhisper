@@ -1,6 +1,6 @@
 """
-Tabbed content widget for the Quick Record workspace.
-Keeps the existing tab container API while exposing only Quick Record.
+Tabbed content widget for the main window workspace.
+Hosts Quick Record, Upload File, and Meeting Mode pages.
 """
 import logging
 from typing import Optional
@@ -24,6 +24,7 @@ class TabbedContentWidget(QWidget):
     # Tab indices
     TAB_QUICK_RECORD = 0
     TAB_UPLOAD_FILE = 1
+    TAB_MEETING_MODE = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,6 +58,7 @@ class TabbedContentWidget(QWidget):
 
         self.tab_bar.addTab("Quick Record")
         self.tab_bar.addTab("Upload File")
+        self.tab_bar.addTab("Meeting Mode")
 
         # Center the tab bar horizontally
         tab_container = QWidget()

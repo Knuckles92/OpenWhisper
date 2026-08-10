@@ -6,6 +6,8 @@ interface QuestionInboxProps {
   questions: Question[];
   onSendOp: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
+  /** When true, omit the outer panel chrome (embedded in Captured rail). */
+  embedded?: boolean;
 }
 
 const SUGGEST_HIGH = 0.8;
@@ -47,9 +49,8 @@ function QuestionRow({
   };
 
   return (
-    <div
-      className={`question-item ${q.status}`}
-    >
+    <div className={`question-item ${q.status}`}>
+      <div className="capture-tag">Question</div>
       <p className="question-text">{q.text}</p>
 
       {q.answer && (
@@ -57,7 +58,7 @@ function QuestionRow({
           {q.answer}
           {q.answer_source === 'audio' && (
             <span className="audio-badge" title="Answered from meeting audio">
-              ✓ from audio
+              from audio
             </span>
           )}
         </p>
@@ -120,37 +121,50 @@ function QuestionRow({
   );
 }
 
-export default function QuestionInbox({ questions, onSendOp, onEvidenceClick }: QuestionInboxProps) {
+export default function QuestionInbox({
+  questions,
+  onSendOp,
+  onEvidenceClick,
+  embedded = false,
+}: QuestionInboxProps) {
   const open = questions.filter((q) => q.status === 'open');
   const rest = questions.filter((q) => q.status !== 'open');
+
+  const body = (
+    <>
+      {questions.length === 0 ? (
+        <p className="empty-state">No questions yet.</p>
+      ) : (
+        <>
+          {open.map((q) => (
+            <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
+          ))}
+          {rest.length > 0 && (
+            <>
+              <h3 className="card-section-title" style={{ marginTop: 16 }}>
+                Resolved / dismissed
+              </h3>
+              {rest.map((q) => (
+                <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="capture-questions">{body}</div>;
+  }
 
   return (
     <section className="panel">
       <div className="panel-header">
         <span>Questions</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{open.length} open</span>
+        <span className="meta">{open.length} open</span>
       </div>
-      <div className="panel-body">
-        {questions.length === 0 ? (
-          <p className="empty-state">No questions yet.</p>
-        ) : (
-          <>
-            {open.map((q) => (
-              <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
-            ))}
-            {rest.length > 0 && (
-              <>
-                <h3 className="card-section-title" style={{ marginTop: 16 }}>
-                  Resolved / dismissed
-                </h3>
-                {rest.map((q) => (
-                  <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
-                ))}
-              </>
-            )}
-          </>
-        )}
-      </div>
+      <div className="panel-body">{body}</div>
     </section>
   );
 }

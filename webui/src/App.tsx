@@ -146,64 +146,74 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
       />
 
       {showHistory && isHost ? (
-        <div className="app-main" style={{ gridTemplateColumns: '1fr' }}>
+        <div className="app-main full-bleed">
           <HistoryPane token={token} onClose={() => setShowHistory(false)} />
         </div>
       ) : showActivity && isHost ? (
-        <div className="app-main" style={{ gridTemplateColumns: '1fr' }}>
+        <div className="app-main full-bleed">
           <ActivityPane token={token} onUndo={sendUndo} />
         </div>
       ) : (
         <div className="app-main">
-          <div>
-            <section className="panel">
-              <div className="panel-header"><span>Recording</span></div>
-              <div className="panel-body">
-                <audio controls preload="metadata" src={api.audioUrl(token, ui.state.meeting_id)} />
-              </div>
-            </section>
-            <TranscriptPane
-              segments={ui.segments}
-              participants={participants}
-              highlightSegmentId={highlightSegmentId}
-              onHighlightClear={() => setHighlightSegmentId(null)}
-              onReassignSpeaker={(segmentId, participantId) =>
-                sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
-              }
-            />
-          </div>
-
-          <div className="center-stack">
-            <MeetingOverview
-              topic={ui.state.topic.current}
-              topicEvidence={
-                ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
-              }
-              summary={ui.state.rolling_summary}
-              summaryEvidence={ui.state.rolling_summary_evidence}
-              onEvidenceClick={handleEvidenceClick}
-            />
-            <CardsPane
-              cards={ui.state.cards}
-              onSendOp={sendOp}
-              onEvidenceClick={handleEvidenceClick}
-              onUndo={isHost ? sendUndo : undefined}
-              lastSeqByTarget={ui.lastSeqByTarget}
-            />
-            <QuestionInbox
-              questions={ui.state.questions}
-              onSendOp={sendOp}
-              onEvidenceClick={handleEvidenceClick}
-            />
-          </div>
-
-          <ParticipantsPane
-            participants={participants}
-            onlineIds={ui.onlineIds}
-            onRename={(participantId, displayName) =>
-              sendOp({ op: 'rename_participant', participant_id: participantId, display_name: displayName })
+          <MeetingOverview
+            meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
+            status={ui.state.status}
+            topic={ui.state.topic.current}
+            topicEvidence={
+              ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
             }
+            summary={ui.state.rolling_summary}
+            summaryEvidence={ui.state.rolling_summary_evidence}
+            onEvidenceClick={handleEvidenceClick}
           />
+
+          <div className="stage">
+            <div className="stage-conversation">
+              <TranscriptPane
+                segments={ui.segments}
+                participants={participants}
+                highlightSegmentId={highlightSegmentId}
+                onHighlightClear={() => setHighlightSegmentId(null)}
+                onReassignSpeaker={(segmentId, participantId) =>
+                  sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
+                }
+                headerExtra={
+                  <div className="recording-inline">
+                    <audio controls preload="metadata" src={api.audioUrl(token, ui.state.meeting_id)} />
+                  </div>
+                }
+              />
+            </div>
+
+            <div className="stage-rail">
+              <section className="panel capture">
+                <h3 className="capture-heading">Captured</h3>
+                <div className="capture-body">
+                  <CardsPane
+                    cards={ui.state.cards}
+                    onSendOp={sendOp}
+                    onEvidenceClick={handleEvidenceClick}
+                    onUndo={isHost ? sendUndo : undefined}
+                    lastSeqByTarget={ui.lastSeqByTarget}
+                    embedded
+                  />
+                  <QuestionInbox
+                    questions={ui.state.questions}
+                    onSendOp={sendOp}
+                    onEvidenceClick={handleEvidenceClick}
+                    embedded
+                  />
+                </div>
+              </section>
+              <ParticipantsPane
+                participants={participants}
+                onlineIds={ui.onlineIds}
+                onRename={(participantId, displayName) =>
+                  sendOp({ op: 'rename_participant', participant_id: participantId, display_name: displayName })
+                }
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

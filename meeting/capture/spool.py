@@ -76,6 +76,15 @@ _CUT_SCAN_HOP_S = 0.05
 #: Capture blocks the queue holds before dropping (~12 s at 1024/44.1 kHz).
 QUEUE_MAX_BLOCKS = 512
 
+#: Preferred chunk duration (seconds) before quiet-cut scanning starts.
+#: Kept short so the dashboard sees near-live transcripts.
+DEFAULT_TARGET_SEC = 5.0
+
+#: Hard maximum chunk duration (seconds) when no quiet cut appears.  A longer
+#: ceiling than the live target avoids slicing continuous speech every few
+#: seconds while still bounding transcript latency when a speaker never pauses.
+DEFAULT_MAX_SEC = 20.0
+
 #: ``flush()`` waits at most this long for the writer thread to finish.
 FLUSH_TIMEOUT_S = 30.0
 
@@ -154,8 +163,8 @@ class _CutScanner:
 
     Audio is folded into fixed ``_CUT_SCAN_HOP_S`` frames as it arrives and
     only the energy of each frame is kept, so a cut decision costs O(new
-    audio) instead of rescanning the whole (up to 32 s) buffer on every
-    capture block.
+    audio) instead of rescanning the whole bounded buffer on every capture
+    block.
     """
 
     def __init__(self, sample_rate: int, target_sec: float, max_sec: float,
@@ -273,7 +282,8 @@ class SpoolWriter:
     def __init__(self, meeting_id: str, channel: str, spool_dir: str,
                  clock: MeetingClock, repository,
                  on_chunk: Callable[[SpooledChunk], None],
-                 target_sec: float = 20.0, max_sec: float = 32.0,
+                 target_sec: float = DEFAULT_TARGET_SEC,
+                 max_sec: float = DEFAULT_MAX_SEC,
                  queue_size: int = QUEUE_MAX_BLOCKS,
                  initial_seq: int = 0) -> None:
         """Args:

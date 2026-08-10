@@ -388,6 +388,24 @@ class SqlMeetingRepository:
             row.speaker_source = source
             row.speaker_pinned = pinned
 
+    def update_segment_text(
+        self, meeting_id: str, segment_id: str, text: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Replace a segment's transcript text; return the stored row or None."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            raise ValueError("segment text must be non-empty")
+        with self._db.get_session() as session:
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == segment_id,
+            ).one_or_none()
+            if row is None:
+                return None
+            row.text = cleaned
+            session.flush()
+            return _segment_to_dict(row)
+
     def get_segments(self, meeting_id: str, after_start_s: float = -1.0,
                      limit: Optional[int] = None) -> List[Dict[str, Any]]:
         with self._db.get_session() as session:
@@ -398,6 +416,98 @@ class SqlMeetingRepository:
             if limit:
                 q = q.limit(limit)
             return [_segment_to_dict(r) for r in q.all()]
+
+    def get_segments_in_range(
+        self,
+        meeting_id: str,
+        channel: str,
+        start_s: float,
+        end_s: float,
+    ) -> List[Dict[str, Any]]:
+        """Segments on ``channel`` overlapping ``[start_s, end_s)``."""
+        with self._db.get_session() as session:
+            rows = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.channel == channel,
+                MeetingSegment.end_s > float(start_s),
+                MeetingSegment.start_s < float(end_s),
+            ).order_by(MeetingSegment.start_s, MeetingSegment.id).all()
+            return [_segment_to_dict(r) for r in rows]
+
+    def revise_segments_in_range(
+        self,
+        meeting_id: str,
+        channel: str,
+        start_s: float,
+        end_s: float,
+        segments: List[TranscriptSegment],
+        remove_ids: List[str],
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Apply a rolling revise plan: upsert matched/new rows, delete others.
+
+        Speaker-pinned rows listed in ``remove_ids`` are kept. Returns the
+        upserted canonical rows and the ids actually deleted.
+        """
+        created = _now_iso()
+        removed: List[str] = []
+        with self._db.get_session() as session:
+            for seg_id in remove_ids:
+                row = session.query(MeetingSegment).filter(
+                    MeetingSegment.meeting_id == meeting_id,
+                    MeetingSegment.id == seg_id,
+                    MeetingSegment.channel == channel,
+                ).one_or_none()
+                if row is None:
+                    continue
+                if row.speaker_pinned:
+                    continue
+                # Only delete rows that still overlap the revise window.
+                if row.end_s <= float(start_s) or row.start_s >= float(end_s):
+                    continue
+                session.delete(row)
+                removed.append(seg_id)
+
+            upserted_ids: List[str] = []
+            for seg in segments:
+                if seg.meeting_id != meeting_id or seg.channel != channel:
+                    raise ValueError("segment does not belong to revise window")
+                existing = session.get(MeetingSegment, seg.segment_id)
+                if existing is not None and existing.meeting_id != meeting_id:
+                    raise ValueError("segment id already belongs to another meeting")
+                if existing is not None and existing.speaker_pinned:
+                    # Preserve human pin; still allow ASR text/time cleanup.
+                    speaker_id = existing.speaker_participant_id
+                    speaker_source = existing.speaker_source
+                    pinned = True
+                else:
+                    speaker_id = seg.speaker_participant_id
+                    speaker_source = seg.speaker_source
+                    pinned = bool(seg.speaker_pinned)
+                session.merge(MeetingSegment(
+                    id=seg.segment_id,
+                    meeting_id=seg.meeting_id,
+                    chunk_id=seg.chunk_id,
+                    channel=seg.channel,
+                    start_s=seg.start_s,
+                    end_s=seg.end_s,
+                    text=seg.text,
+                    speaker_participant_id=speaker_id,
+                    speaker_source=speaker_source,
+                    speaker_pinned=pinned,
+                    embedding=seg.embedding if existing is None else existing.embedding,
+                    created_at=(
+                        existing.created_at if existing is not None else created
+                    ),
+                ))
+                upserted_ids.append(seg.segment_id)
+
+            session.flush()
+            rows = []
+            for seg_id in upserted_ids:
+                row = session.get(MeetingSegment, seg_id)
+                if row is not None:
+                    rows.append(_segment_to_dict(row))
+            return rows, removed
 
     def get_segments_page(
         self,
@@ -559,6 +669,19 @@ class SqlMeetingRepository:
             row.speaker_participant_id = participant_id
             row.speaker_source = effect.get("source", "human")
             row.speaker_pinned = bool(effect.get("pinned"))
+        elif entity == "segment_text":
+            row = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id,
+                MeetingSegment.id == effect["segment_id"],
+            ).one_or_none()
+            if row is None:
+                raise ValueError("segment does not belong to meeting")
+            text = (effect.get("text") or "").strip()
+            if not text:
+                raise ValueError("segment text must be non-empty")
+            row.text = text
+            # Keep the broadcast payload aligned with the persisted row.
+            effect["segment"] = _segment_to_dict(row)
 
     def get_event(self, meeting_id: str, seq: int) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:

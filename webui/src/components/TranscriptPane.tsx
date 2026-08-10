@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import type { Participant, Segment } from '../types';
 
 interface TranscriptPaneProps {
@@ -8,6 +8,8 @@ interface TranscriptPaneProps {
   onHighlightClear: () => void;
   onReassignSpeaker: (segmentId: string, participantId: string | null) => void;
   readOnly?: boolean;
+  /** Optional control rendered under the Conversation header (e.g. audio). */
+  headerExtra?: ReactNode;
 }
 
 function formatTime(seconds: number): string {
@@ -31,6 +33,7 @@ export default function TranscriptPane({
   onHighlightClear,
   onReassignSpeaker,
   readOnly = false,
+  headerExtra,
 }: TranscriptPaneProps) {
   const sorted = useMemo(
     () => [...segments].sort((a, b) => a.start_s - b.start_s),
@@ -55,9 +58,10 @@ export default function TranscriptPane({
   return (
     <section className="panel">
       <div className="panel-header">
-        <span>Transcript</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{sorted.length} segments</span>
+        <span>Conversation</span>
+        <span className="meta">{sorted.length} segments</span>
       </div>
+      {headerExtra}
       <div className="panel-body">
         {sorted.length === 0 ? (
           <p className="empty-state">Waiting for speech…</p>
@@ -71,37 +75,41 @@ export default function TranscriptPane({
                   id={`seg-${seg.id}`}
                   className={`segment${highlighted ? ' highlight' : ''}`}
                 >
-                  <div className="segment-meta">
-                    <span>{formatTime(seg.start_s)}</span>
-                    <span className="segment-speaker">
-                      {readOnly ? (
-                        <span>{speakerLabel(participants, seg.speaker_participant_id, seg.channel)}</span>
-                      ) : <select
-                        value={seg.speaker_participant_id ?? ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          onReassignSpeaker(seg.id, val || null);
-                        }}
-                        aria-label="Speaker"
-                      >
-                        <option value="">
-                          {speakerLabel(participants, null, seg.channel)}
-                        </option>
-                        {participants.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.display_name}
-                          </option>
-                        ))}
-                      </select>}
-                    </span>
-                    {seg.speaker_pinned && (
-                      <span title="Speaker pinned" style={{ fontSize: 11 }}>
-                        📌
+                  <time className="segment-time">{formatTime(seg.start_s)}</time>
+                  <div>
+                    <div className="segment-meta">
+                      <span className="segment-speaker">
+                        {readOnly ? (
+                          <span>{speakerLabel(participants, seg.speaker_participant_id, seg.channel)}</span>
+                        ) : (
+                          <select
+                            value={seg.speaker_participant_id ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              onReassignSpeaker(seg.id, val || null);
+                            }}
+                            aria-label="Speaker"
+                          >
+                            <option value="">
+                              {speakerLabel(participants, null, seg.channel)}
+                            </option>
+                            {participants.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.display_name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </span>
-                    )}
-                    <span style={{ fontSize: 11, opacity: 0.7 }}>{seg.channel}</span>
+                      {seg.speaker_pinned && (
+                        <span title="Speaker pinned" className="segment-channel">
+                          pinned
+                        </span>
+                      )}
+                      <span className="segment-channel">{seg.channel}</span>
+                    </div>
+                    <p className="segment-text">{seg.text}</p>
                   </div>
-                  <p className="segment-text">{seg.text}</p>
                 </article>
               );
             })}

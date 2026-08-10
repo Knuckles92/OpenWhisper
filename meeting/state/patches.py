@@ -67,6 +67,7 @@ AGENT_OPS = frozenset({
     "set_topic", "set_rolling_summary",
     "upsert_participant", "suggest_participant_name",
     "ask_question", "resolve_question",
+    "revise_segment_text",
 })
 
 #: Ops only the agent may emit. ``resolve_question`` stamps an answer as
@@ -81,7 +82,7 @@ HOST_ONLY_OPS = frozenset({"set_topic", "set_rolling_summary", "set_title"})
 
 #: Ops that target the transcript segment log rather than the state document.
 #: They are validated here but applied by the store's segment handler.
-SEGMENT_OPS = frozenset({"reassign_segment_speaker"})
+SEGMENT_OPS = frozenset({"reassign_segment_speaker", "revise_segment_text"})
 
 #: The full vocabulary (human actions include everything below).
 ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset({
@@ -750,6 +751,33 @@ def _op_reassign_segment_speaker(state: MeetingState, op: Dict[str, Any],
     )
 
 
+def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
+                            ctx: OpContext) -> OpResult:
+    """In-place transcript polish; structure changes belong to ASR revise."""
+    segment_id = op.get("segment_id")
+    if not isinstance(segment_id, str) or not segment_id:
+        return _reject(op, "invalid_segment")
+    if ctx.segment_exists is not None and not ctx.segment_exists(segment_id):
+        return _reject(op, "unknown_segment", target_id=segment_id)
+    text_reason = _check_text(op.get("text"), MAX_TEXT_LEN)
+    if text_reason:
+        return _reject(op, text_reason, target_id=segment_id)
+    # Agents must cite the segment they are editing (keeps evidence discipline).
+    if ctx.is_agent:
+        evidence = op.get("evidence") or []
+        if segment_id not in evidence:
+            return _reject(op, "missing_evidence", target_id=segment_id)
+    return OpResult(
+        ok=True, op=op, target_id=segment_id,
+        effect={
+            "entity": "segment_text",
+            "segment_id": segment_id,
+            "text": str(op.get("text") or "").strip(),
+        },
+        inverse=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -774,6 +802,7 @@ _HANDLERS: Dict[str, Callable[[MeetingState, Dict[str, Any], OpContext], OpResul
     "dismiss_question": _op_dismiss_question,
     "reopen_question": _op_reopen_question,
     "reassign_segment_speaker": _op_reassign_segment_speaker,
+    "revise_segment_text": _op_revise_segment_text,
 }
 
 

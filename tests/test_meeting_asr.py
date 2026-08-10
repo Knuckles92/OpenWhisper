@@ -12,7 +12,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from meeting.asr.engine import MAX_ATTEMPTS, MeetingAsrEngine
+from meeting.asr.engine import (
+    FAST_MODE_BACKLOG_CHUNKS,
+    MAX_ATTEMPTS,
+    MeetingAsrEngine,
+)
 from meeting.interfaces import SpooledChunk
 
 
@@ -100,8 +104,56 @@ class TestAsrSuccessPath:
             assert segs[0].meeting_id == "m_test"
             assert segs[0].channel == "mic"
             assert ("done" in [s[1] for s in repo.statuses])
+            kwargs = model.transcribe.call_args.kwargs
+            assert kwargs["beam_size"] == 5
+            assert kwargs["condition_on_previous_text"] is False
         finally:
             engine.stop()
+
+    def test_digital_silence_skips_whisper_but_commits_chunk(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock()
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=model,
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        chunk = _chunk(tmp_path)
+        _write_wav(chunk.file_path, amp=0)
+        received = []
+
+        def commit(done_chunk, segments):
+            received.append((done_chunk, segments))
+            repo.set_chunk_status(done_chunk.chunk_id, "done")
+
+        engine.start(on_chunk_result=commit)
+        try:
+            engine.enqueue(chunk)
+            assert engine.drain(5.0)
+            model.transcribe.assert_not_called()
+            assert received == [(chunk, [])]
+            assert any(status == "done" for _, status, _ in repo.statuses)
+        finally:
+            engine.stop()
+
+    def test_backlog_uses_fast_decode_until_queue_recovers(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock(return_value=([], SimpleNamespace()))
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=model,
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+
+        with engine._idle_cond:
+            engine._outstanding = FAST_MODE_BACKLOG_CHUNKS + 1
+        assert engine._beam_size_for_backlog() == 1
+
+        with engine._idle_cond:
+            engine._outstanding = 1
+        assert engine._beam_size_for_backlog() == 5
 
 
 class TestAsrRetry:

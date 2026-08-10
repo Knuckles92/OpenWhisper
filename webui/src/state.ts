@@ -208,6 +208,9 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
                 eff.pinned,
               );
             }
+            if (r.effect?.entity === 'segment_text' && r.effect.segment) {
+              nextSegments = mergeSegments(nextSegments, [r.effect.segment as Segment]);
+            }
           }
           return {
             ...state,
@@ -216,8 +219,14 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             lastSeqByTarget: trackSeqs(state.lastSeqByTarget, msg.results),
           };
         }
-        case 'segments':
-          return { ...state, segments: mergeSegments(state.segments, msg.items) };
+        case 'segments': {
+          const withUpserts = mergeSegments(state.segments, msg.items ?? []);
+          const removed = new Set(msg.removed_ids ?? []);
+          const segments = removed.size
+            ? withUpserts.filter((seg) => !removed.has(seg.id))
+            : withUpserts;
+          return { ...state, segments };
+        }
         case 'presence': {
           const online = new Set(state.onlineIds);
           if (msg.event === 'joined') online.add(msg.participant.id);

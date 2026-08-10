@@ -112,23 +112,23 @@ class UIController(QObject):
             self._on_meeting_open_dashboard
         )
 
-        # Meeting panel signals
-        panel = self.main_window.meeting_panel
-        panel.start_requested.connect(self._on_meeting_start_requested)
-        panel.pause_requested.connect(
+        # Meeting Mode tab signals
+        meeting_tab = self.main_window.meeting_mode_tab
+        meeting_tab.start_requested.connect(self._on_meeting_start_requested)
+        meeting_tab.pause_requested.connect(
             lambda: self.on_meeting_pause and self.on_meeting_pause()
         )
-        panel.resume_requested.connect(
+        meeting_tab.resume_requested.connect(
             lambda: self.on_meeting_resume and self.on_meeting_resume()
         )
-        panel.end_requested.connect(
+        meeting_tab.end_requested.connect(
             lambda: self.on_meeting_end and self.on_meeting_end()
         )
-        panel.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
-        panel.copy_guest_link_requested.connect(
+        meeting_tab.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
+        meeting_tab.copy_guest_link_requested.connect(
             lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
         )
-        panel.cloud_toggled.connect(self._on_meeting_cloud_toggled)
+        meeting_tab.cloud_toggled.connect(self._on_meeting_cloud_toggled)
 
         # Set up the copied animation callback
         self.main_window.on_show_copied_animation = self.show_copied_animation
@@ -554,9 +554,10 @@ class UIController(QObject):
         dialog.exec()
         # Open only after Settings' modal loop ends — showing the non-modal
         # Model Manager during exec() stacks behind the main window on Windows.
-        if dialog.open_model_manager_on_close:
+        manager_tab = dialog.open_model_manager_on_close
+        if manager_tab:
             QTimer.singleShot(
-                0, lambda: self.open_model_manager_dialog(tab="text")
+                0, lambda tab=manager_tab: self.open_model_manager_dialog(tab=tab)
             )
 
     def refresh_local_engine_controls(self):
@@ -598,7 +599,8 @@ class UIController(QObject):
         """Show the non-modal Model Manager (single instance, re-raised).
 
         Args:
-            tab: ``\"voice\"`` or ``\"text\"`` — which manager tab to show.
+            tab: ``\"voice\"``, ``\"text\"``, or ``\"meeting\"`` — which
+                manager tab to show.
         """
         from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 
@@ -624,6 +626,8 @@ class UIController(QObject):
         self._model_manager_dialog.refresh()
         if tab == "text":
             self._model_manager_dialog.show_text_tab()
+        elif tab == "meeting":
+            self._model_manager_dialog.show_meeting_tab()
         self._model_manager_dialog.show()
         self._model_manager_dialog.raise_()
         self._model_manager_dialog.activateWindow()
@@ -731,7 +735,7 @@ class UIController(QObject):
             self.on_meeting_start(None)
 
     def on_meeting_state_changed(self, payload: Any) -> None:
-        """Apply a meeting-state payload to the panel and tray.
+        """Apply a meeting-state payload to the Meeting Mode tab and tray.
 
         Args:
             payload: Partial meeting-state dict from MeetingRuntime
@@ -740,22 +744,30 @@ class UIController(QObject):
         """
         if not isinstance(payload, dict):
             return
-        self.main_window.meeting_panel.set_meeting_state(payload)
+        self.main_window.meeting_mode_tab.set_meeting_state(payload)
         if "active" in payload:
             self._meeting_active = bool(payload["active"])
             self.tray_manager.set_meeting_active(self._meeting_active)
-            if not self._meeting_active:
+            if self._meeting_active:
+                self.switch_to_meeting_mode()
+                self.main_window.tabbed_content.set_recording_state(
+                    True, TabbedContentWidget.TAB_MEETING_MODE
+                )
+            else:
                 self._meeting_urls = {}
+                # Don't unlock if Quick Record is mid-recording.
+                if not self.main_window.is_recording:
+                    self.main_window.tabbed_content.set_recording_state(False, -1)
 
     def set_meeting_status(self, status: str) -> None:
-        """Update meeting status on the panel and main status line.
+        """Update meeting status on the Meeting Mode tab and main status line.
 
         Args:
             status: Human-readable meeting status string.
         """
         if not status:
             return
-        self.main_window.meeting_panel.set_status_text(status)
+        self.main_window.meeting_mode_tab.set_status_text(status)
         self.set_status(status)
 
     def on_meeting_error(self, message: str) -> None:
@@ -873,6 +885,10 @@ class UIController(QObject):
     def switch_to_upload_file(self):
         """Switch to the Upload File tab."""
         self.switch_to_tab(TabbedContentWidget.TAB_UPLOAD_FILE)
+
+    def switch_to_meeting_mode(self):
+        """Switch to the Meeting Mode tab."""
+        self.switch_to_tab(TabbedContentWidget.TAB_MEETING_MODE)
 
     def update_hotkey_display(self, hotkeys: dict):
         """

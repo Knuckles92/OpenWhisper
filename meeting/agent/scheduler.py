@@ -43,6 +43,14 @@ _CONSOLIDATION_JOIN_S = 10.0
 #: after it. The fetch re-reads this window and drops ids already sent, which is
 #: what keeps whole stretches of one channel from becoming invisible forever.
 _REFETCH_WINDOW_S = 180.0
+#: Fire a transcript polish pass after this many successful card checkpoints.
+_POLISH_EVERY_N_CHECKPOINTS = 2
+#: Also fire polish when at least this many seconds have elapsed since the
+#: last polish (even if checkpoint count is low).
+_POLISH_MIN_INTERVAL_S = 90.0
+#: How much recent transcript to prefer in a polish payload (full digest still
+#: included via get_transcript; this caps enormous meetings for the prompt).
+_POLISH_MAX_SEGMENTS = 400
 
 _WORD_RE = re.compile(r"[a-z']+")
 
@@ -120,6 +128,8 @@ class CheckpointScheduler:
         self._online = True
         self._retry_not_before = 0.0
         self._consolidating = False
+        self._successful_checkpoints = 0
+        self._last_polish_mono = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -244,7 +254,8 @@ class CheckpointScheduler:
     # ------------------------------------------------------------------
 
     def _build_payload(self, segments: List[Dict[str, Any]],
-                       is_consolidation: bool) -> Optional[CheckpointPayload]:
+                       is_consolidation: bool,
+                       is_polish: bool = False) -> Optional[CheckpointPayload]:
         store = getattr(self._engine, "store", None)
         if store is None:
             return None
@@ -253,6 +264,7 @@ class CheckpointScheduler:
             state_snapshot=store.snapshot(),
             new_segments=segments,
             is_consolidation=is_consolidation,
+            is_polish=is_polish,
         )
 
     def _fetch_cursor_s(self) -> float:
@@ -332,8 +344,64 @@ class CheckpointScheduler:
                 "Checkpoint %s done: %d/%d ops applied",
                 payload.request_id, applied, len(result.op_results),
             )
+            self._successful_checkpoints += 1
+            self._maybe_fire_polish()
         else:
             self._record_failure(claimed, result.error or "checkpoint failed")
+
+    def _maybe_fire_polish(self) -> None:
+        """Run a slower transcript-text polish pass when due."""
+        if self._consolidating or self._stop_event.is_set():
+            return
+        due_by_count = (
+            self._successful_checkpoints > 0
+            and self._successful_checkpoints % _POLISH_EVERY_N_CHECKPOINTS == 0
+        )
+        due_by_time = (
+            self._last_polish_mono > 0.0
+            and (time.monotonic() - self._last_polish_mono) >= _POLISH_MIN_INTERVAL_S
+            and self._successful_checkpoints >= 1
+        ) or (
+            self._last_polish_mono <= 0.0
+            and self._successful_checkpoints >= _POLISH_EVERY_N_CHECKPOINTS
+        )
+        if not (due_by_count or due_by_time):
+            return
+        if not self._agent.is_healthy():
+            return
+        try:
+            segments = self._engine.get_transcript()
+        except Exception:
+            logger.exception("Polish transcript fetch failed")
+            return
+        if not segments:
+            return
+        if len(segments) > _POLISH_MAX_SEGMENTS:
+            segments = segments[-_POLISH_MAX_SEGMENTS:]
+        payload = self._build_payload(segments, is_consolidation=False, is_polish=True)
+        if payload is None:
+            return
+        logger.info(
+            "Firing transcript polish %s over %d segments",
+            payload.request_id, len(segments),
+        )
+        try:
+            result = self._agent.checkpoint(payload)
+        except Exception as exc:
+            logger.exception("Agent polish raised")
+            result = AgentResult(ok=False, error=str(exc))
+        self._last_polish_mono = time.monotonic()
+        if result.ok:
+            applied = sum(1 for r in result.op_results if r.ok)
+            logger.info(
+                "Polish %s done: %d/%d ops applied",
+                payload.request_id, applied, len(result.op_results),
+            )
+        else:
+            logger.warning(
+                "Polish %s failed: %s",
+                payload.request_id, result.error or "unknown",
+            )
 
     def _record_failure(self, claimed: int, error: str) -> None:
         """Restore claimed work and schedule a bounded health retry."""

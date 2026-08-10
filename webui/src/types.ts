@@ -202,6 +202,12 @@ export type Effect =
       participant_id: string | null;
       source: string;
       pinned: boolean;
+    }
+  | {
+      entity: 'segment_text';
+      segment_id: string;
+      text: string;
+      segment: Segment;
     };
 
 // ---------------------------------------------------------------------------
@@ -243,6 +249,8 @@ export interface PatchMsg {
 export interface SegmentsMsg {
   type: 'segments';
   items: Segment[];
+  /** Segment ids removed by a rolling ASR revise pass. */
+  removed_ids?: string[];
 }
 
 export interface PresenceMsg {

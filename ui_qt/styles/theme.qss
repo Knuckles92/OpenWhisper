@@ -207,7 +207,8 @@ QDialog#modelManagerDialog {
 }
 
 QWidget#modelManagerVoiceTab,
-QWidget#modelManagerTextTab {
+QWidget#modelManagerTextTab,
+QWidget#modelManagerMeetingTab {
     background-color: #10161c;
 }
 
@@ -248,7 +249,7 @@ QTabWidget#modelManagerTabs::pane {
     background-color: #141b22;
     color: #a8b1bd;
     border: 1px solid #35404a;
-    min-width: 200px;
+    min-width: 160px;
     min-height: 32px;
     padding: 5px 16px;
     margin: 8px 0px 10px 0px;
@@ -278,13 +279,15 @@ QTabWidget#modelManagerTabs::pane {
     border-color: #52606d;
 }
 
-QFrame#textTabAccent {
+QFrame#textTabAccent,
+QFrame#meetingTabAccent {
     background-color: #2793ff;
     border: none;
     border-radius: 1px;
 }
 
-QLabel#textTabTitle {
+QLabel#textTabTitle,
+QLabel#meetingTabTitle {
     color: #f1f4f7;
     background-color: transparent;
     border: none;
@@ -292,7 +295,8 @@ QLabel#textTabTitle {
     font-weight: 700;
 }
 
-QLabel#textTabSubtitle {
+QLabel#textTabSubtitle,
+QLabel#meetingTabSubtitle {
     color: #98a3b0;
     background-color: transparent;
     border: none;
@@ -800,13 +804,15 @@ QTabBar::tab:hover {
     border: none;
 }
 
-QFrame#cleanupModelSummaryCard {
+QFrame#cleanupModelSummaryCard,
+QFrame#meetingModelSummaryCard {
     background-color: #232325;
     border: 1px solid #3a3a3c;
     border-radius: 10px;
 }
 
-QLabel#cleanupModelSummaryEyebrow {
+QLabel#cleanupModelSummaryEyebrow,
+QLabel#meetingModelSummaryEyebrow {
     color: #bf5af2;
     font-size: 10px;
     font-weight: 700;
@@ -815,7 +821,8 @@ QLabel#cleanupModelSummaryEyebrow {
     border: none;
 }
 
-QLabel#cleanupModelSummary {
+QLabel#cleanupModelSummary,
+QLabel#meetingModelSummary {
     color: #f5f5f7;
     font-size: 13px;
     font-weight: 600;
@@ -823,14 +830,16 @@ QLabel#cleanupModelSummary {
     border: none;
 }
 
-QLabel#cleanupModelSummaryHint {
+QLabel#cleanupModelSummaryHint,
+QLabel#meetingModelSummaryHint {
     color: #8e8e93;
     font-size: 11px;
     background-color: transparent;
     border: none;
 }
 
-QPushButton#cleanupModelManagerLink {
+QPushButton#cleanupModelManagerLink,
+QPushButton#meetingModelManagerLink {
     color: #0a84ff;
     background-color: transparent;
     border: none;
@@ -1251,10 +1260,14 @@ QTextEdit#cleanupRuleEditor:focus {
 
 /* ── Meeting Mode ─────────────────────────────────────────────── */
 
-QWidget#meetingPanel {
-    background-color: #1c1c1e;
-    border-top: 1px solid #2c2c2e;
-    min-height: 40px;
+QWidget#meetingModeTab,
+QWidget#meetingModeContent {
+    background-color: transparent;
+}
+
+QLabel#meetingModeSubtitle {
+    color: #8e8e93;
+    background-color: transparent;
 }
 
 QLabel#meetingStatusPill {
@@ -1269,32 +1282,39 @@ QLabel#meetingStatusPill {
 
 QLabel#meetingElapsedLabel {
     color: #f5f5f7;
-    font-size: 13px;
+    font-size: 18px;
     font-weight: 600;
     font-family: "Segoe UI", "Helvetica Neue", monospace;
     background-color: transparent;
     padding: 0 4px;
 }
 
-QPushButton#meetingStartButton,
+QPushButton#meetingStartButton {
+    padding: 12px 28px;
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: 10px;
+    min-width: 220px;
+}
+
 QPushButton#meetingPauseButton,
 QPushButton#meetingDashboardButton,
 QPushButton#meetingGuestLinkButton {
-    padding: 6px 14px;
+    padding: 8px 16px;
     font-size: 13px;
     border-radius: 8px;
 }
 
 QPushButton#meetingEndButton {
-    padding: 6px 14px;
+    padding: 8px 16px;
     font-size: 13px;
     border-radius: 8px;
 }
 
 QCheckBox#meetingCloudCheckbox {
     color: #8e8e93;
-    font-size: 12px;
-    spacing: 6px;
+    font-size: 13px;
+    spacing: 8px;
     background-color: transparent;
 }
 

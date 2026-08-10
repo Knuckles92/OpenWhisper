@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Meeting UI Overhaul Concepts</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14201c;
+      --mist: #eef3ef;
+      --leaf: #2f6b4f;
+      --sand: #d8e0d6;
+      --paper: #f7faf7;
+      --soft: #4d5d56;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 480px at 10% -10%, #c9e4d4 0%, transparent 55%),
+        radial-gradient(700px 420px at 100% 0%, #dce8e1 0%, transparent 50%),
+        linear-gradient(180deg, #f4f8f5 0%, var(--mist) 100%);
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .brand {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2.8rem, 6vw, 4.2rem);
+      line-height: 0.95;
+      letter-spacing: -0.02em;
+      margin: 0 0 12px;
+    }
+    .lede {
+      max-width: 42ch;
+      font-size: 1.1rem;
+      line-height: 1.5;
+      color: #3a4a43;
+      margin: 0 0 40px;
+    }
+    h2.group {
+      margin: 36px 0 12px;
+      font-size: 0.78rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      font-weight: 700;
+    }
+    h2.group:first-of-type { margin-top: 0; }
+    ol {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+    }
+    a.card {
+      display: grid;
+      grid-template-columns: 72px 1fr auto;
+      gap: 18px;
+      align-items: center;
+      text-decoration: none;
+      color: inherit;
+      padding: 18px 20px;
+      background: color-mix(in srgb, var(--paper) 88%, white);
+      border: 1px solid color-mix(in srgb, var(--sand) 80%, #9bb5a4);
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+    a.card:hover {
+      transform: translateY(-2px);
+      border-color: var(--leaf);
+      background: #fff;
+    }
+    .num {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 2rem;
+      color: var(--leaf);
+    }
+    h3 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    p {
+      margin: 0;
+      color: var(--soft);
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    .tag {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #6a7f74;
+    }
+    .go {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--leaf);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    footer {
+      margin-top: 36px;
+      font-size: 0.85rem;
+      color: #667870;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 class="brand">Meeting UI<br />overhauls</h1>
+    <p class="lede">Ten static HTML mocks for the OpenWhisper meeting web interface — comfort-first rooms and a few stranger layouts.</p>
+
+    <h2 class="group">Comfortable</h2>
+    <ol>
+      <li>
+        <a class="card" href="02-focus-stage.html">
+          <span class="num">02</span>
+          <div>
+            <h3>Focus Stage</h3>
+            <p>Topic as hero. Soft light, calm reading, one composition.</p>
+            <span class="tag">Light · airy</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="06-coastal-fog.html">
+          <span class="num">06</span>
+          <div>
+            <h3>Coastal Fog</h3>
+            <p>Misty blues and warm sand — easy on the eyes for long meetings.</p>
+            <span class="tag">Light · soft contrast</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="07-conservatory.html">
+          <span class="num">07</span>
+          <div>
+            <h3>Conservatory</h3>
+            <p>Glasshouse calm. Frosted panes, botanical wash, gentle greens.</p>
+            <span class="tag">Light · glass</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="05-night-ledger.html">
+          <span class="num">05</span>
+          <div>
+            <h3>Night Ledger</h3>
+            <p>Quiet dark mode — ink, graphite, gold accent, low glare.</p>
+            <span class="tag">Dark · precise</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="03-signal-river.html">
+          <span class="num">03</span>
+          <div>
+            <h3>Signal River</h3>
+            <p>Chat-stream transcript with a slim insights rail.</p>
+            <span class="tag">Dark · familiar</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+    </ol>
+
+    <h2 class="group">Outside the box</h2>
+    <ol>
+      <li>
+        <a class="card" href="08-route-map.html">
+          <span class="num">08</span>
+          <div>
+            <h3>Route Map</h3>
+            <p>Meeting as a transit line — topics are stops on a route.</p>
+            <span class="tag">Wayfinding</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="09-kitchen-table.html">
+          <span class="num">09</span>
+          <div>
+            <h3>Kitchen Table</h3>
+            <p>Wood grain, tablecloth, napkin notes — collaboration as dinner chat.</p>
+            <span class="tag">Homey</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="10-film-strip.html">
+          <span class="num">10</span>
+          <div>
+            <h3>Film Strip</h3>
+            <p>Transcript as film frames; slate board for the current topic.</p>
+            <span class="tag">Cinema</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="04-workshop-bench.html">
+          <span class="num">04</span>
+          <div>
+            <h3>Workshop Bench</h3>
+            <p>Clipboard + sticky captures on a workshop plank.</p>
+            <span class="tag">Tactile</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+      <li>
+        <a class="card" href="01-broadcast-desk.html">
+          <span class="num">01</span>
+          <div>
+            <h3>Broadcast Desk</h3>
+            <p>Control-room density — ON AIR strip, mono timestamps, live feed.</p>
+            <span class="tag">Ops</span>
+          </div>
+          <span class="go">Open</span>
+        </a>
+      </li>
+    </ol>
+
+    <footer>Static mocks only — not wired to the live meeting backend. Open <code>webui/mocks/index.html</code> in a browser.</footer>
+  </main>
+</body>
+</html>

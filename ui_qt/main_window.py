@@ -230,10 +230,9 @@ from ui_qt.widgets import (
     SuccessButton, WarningButton, ControlPanel, Button,
     HistorySidebar, HistoryEdgeTab, HotkeyHintFilter,
     TranscriptionStatsWidget,
-    TabbedContentWidget, QuickRecordTab, UploadFileTab,
+    TabbedContentWidget, QuickRecordTab, UploadFileTab, MeetingModeTab,
     CompactRecordController,
 )
-from ui_qt.widgets.meeting_panel import MeetingPanel
 from services.history_manager import history_manager
 from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
@@ -384,11 +383,14 @@ class MainWindow(QMainWindow):
         self.upload_file_tab = UploadFileTab()
         self.tabbed_content.add_tab(self.upload_file_tab, "Upload File")
 
+        self.meeting_mode_tab = MeetingModeTab()
+        self.tabbed_content.add_tab(self.meeting_mode_tab, "Meeting Mode")
+
         # All transcription tabs; used to fan out shared state (model
         # selection, engine settings, collapse mirroring, device info).
         self.transcription_tabs = (self.quick_record_tab, self.upload_file_tab)
 
-        # Sync the stack with the tab bar after all tabs are added
+        # Sync the stack with the tab bar after all tabs have been added
         # (fixes timing issue where tab bar index is restored before stack has widgets)
         self.tabbed_content.sync_stack_with_tab_bar()
 
@@ -444,11 +446,6 @@ class MainWindow(QMainWindow):
 
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
         self._on_tab_changed(self.tabbed_content.current_index())
-
-        # Meeting Mode strip sits above the footer so it stays visible in
-        # compact mode (outside the tabbed/compact content swap).
-        self.meeting_panel = MeetingPanel()
-        outer_layout.addWidget(self.meeting_panel)
 
         self._build_footer(outer_layout)
 
@@ -666,10 +663,10 @@ class MainWindow(QMainWindow):
             "Recording in progress..." if is_recording else "Ready to record"
         )
 
-        # Lock/unlock tabs during recording
+        # Lock/unlock tabs during recording (keep Meeting Mode lock if active)
         if is_recording:
             self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
-        else:
+        elif not self.meeting_mode_tab.is_meeting_active:
             self.tabbed_content.set_recording_state(False, -1)
 
         self.record_toggled.emit(is_recording)
@@ -679,7 +676,8 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.compact_controller.set_recording_state(False)
         self.compact_controller.set_status("Ready to record")
-        self.tabbed_content.set_recording_state(False, -1)
+        if not self.meeting_mode_tab.is_meeting_active:
+            self.tabbed_content.set_recording_state(False, -1)
 
         self.record_canceled.emit()
 
@@ -737,10 +735,10 @@ class MainWindow(QMainWindow):
             "Recording in progress..." if self.is_recording else "Ready to record"
         )
 
-        # Lock/unlock tabs during recording
+        # Lock/unlock tabs during recording (keep Meeting Mode lock if active)
         if self.is_recording:
             self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
-        else:
+        elif not self.meeting_mode_tab.is_meeting_active:
             self.tabbed_content.set_recording_state(False, -1)
 
     def set_status(self, status_text: str):
@@ -971,7 +969,6 @@ class MainWindow(QMainWindow):
             self.compact_controller.show()
             self.history_edge_tab.hide()
             self.history_sidebar.hide()
-            self.meeting_panel.hide()
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
             self.compact_button.setText("Full Size")
@@ -996,7 +993,6 @@ class MainWindow(QMainWindow):
             self.tabbed_content.show()
             self.history_edge_tab.show()
             self.history_sidebar.show()
-            self.meeting_panel.show()
             self.title_bar.title_label.show()
             self.title_bar.maximize_btn.show()
             self.compact_button.setText("Compact")

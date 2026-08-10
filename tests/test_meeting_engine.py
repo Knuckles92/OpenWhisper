@@ -588,11 +588,14 @@ class TestCaptureRecovery:
 
         loopback_index[0] = 9
         deadline = time.monotonic() + 2.0
-        while (engine._capture_source("loopback") is original_loopback
-               and time.monotonic() < deadline):
+        replacement = original_loopback
+        while time.monotonic() < deadline:
+            candidate = engine._capture_source("loopback")
+            if candidate is not None and candidate is not original_loopback:
+                replacement = candidate
+                break
             time.sleep(0.01)
 
-        replacement = engine._capture_source("loopback")
         assert replacement is not original_loopback
         assert replacement.device_id == 9
         assert original_loopback.stopped is True

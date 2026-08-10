@@ -59,7 +59,9 @@ _PATCH_STATE_OPS = (
     "add_item", "update_item", "remove_item",
     "set_topic", "set_rolling_summary",
     "upsert_participant", "suggest_participant_name",
+    "revise_segment_text",
 )
+_POLISH_ONLY_OPS = frozenset({"revise_segment_text"})
 _AGENT_CARDS = [key for key in CARD_KEYS if key != "user_notes"]
 
 _EVIDENCE_SCHEMA = {
@@ -130,6 +132,12 @@ _PATCH_STATE_TOOL = {
                             },
                             "display_name": {"type": "string"},
                             "participant_id": {"type": "string"},
+                            "segment_id": {
+                                "type": "string",
+                                "description": (
+                                    "Transcript segment id (revise_segment_text)."
+                                ),
+                            },
                             "kind": {"type": "string", "enum": ["others_cluster"]},
                             "evidence": _EVIDENCE_SCHEMA,
                         },
@@ -224,6 +232,7 @@ class DirectOpenRouterAgent:
         self._headers: Optional[Dict[str, str]] = None
         self._model: str = ""
         self._json_mode = False
+        self._polish_mode = False
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
@@ -417,17 +426,26 @@ class DirectOpenRouterAgent:
 
         system_prompt = self._cfg.system_prompt or ""
         user_prompt = build_checkpoint_user_prompt(
-            payload.state_snapshot, payload.new_segments, payload.is_consolidation,
+            payload.state_snapshot,
+            payload.new_segments,
+            payload.is_consolidation,
+            is_polish=bool(getattr(payload, "is_polish", False)),
         )
         max_rounds = (
             _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
             else _MAX_TOOL_ROUNDS
         )
-        if self._json_mode:
-            return self._run_json_mode(client, system_prompt, user_prompt, timeout_s)
-        return self._run_tool_mode(
-            client, system_prompt, user_prompt, timeout_s, max_rounds=max_rounds,
-        )
+        self._polish_mode = bool(getattr(payload, "is_polish", False))
+        try:
+            if self._json_mode:
+                return self._run_json_mode(
+                    client, system_prompt, user_prompt, timeout_s
+                )
+            return self._run_tool_mode(
+                client, system_prompt, user_prompt, timeout_s, max_rounds=max_rounds,
+            )
+        finally:
+            self._polish_mode = False
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
         """Route one model tool call to the tool host."""
@@ -437,7 +455,14 @@ class DirectOpenRouterAgent:
             ops = args.get("ops")
             if not isinstance(ops, list):
                 raise ValueError("'ops' must be a list of op objects")
+            if self._polish_mode:
+                ops = [
+                    op for op in ops
+                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
+                ]
             return tools.apply_agent_ops(ops)
+        if self._polish_mode and name in ("ask_question", "resolve_question"):
+            return []
         if name == "ask_question":
             return [tools.ask_question(
                 str(args.get("text") or ""),
@@ -592,6 +617,11 @@ class DirectOpenRouterAgent:
                 )
 
             assert self._tools is not None
+            if self._polish_mode:
+                ops = [
+                    op for op in ops
+                    if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
+                ]
             op_results = self._tools.apply_agent_ops(ops) if ops else []
             return AgentResult(ok=True, op_results=op_results, usage=usage)
 

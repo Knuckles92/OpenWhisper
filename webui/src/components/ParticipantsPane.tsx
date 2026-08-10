@@ -37,19 +37,21 @@ export default function ParticipantsPane({ participants, onlineIds, onRename }: 
   return (
     <section className="panel">
       <div className="panel-header">
-        <span>Participants</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{participants.length}</span>
+        <span>In the room</span>
+        <span className="meta">{participants.length}</span>
       </div>
-      <div className="panel-body">
-        {sorted.length === 0 ? (
-          <p className="empty-state">No participants yet.</p>
-        ) : (
-          sorted.map((p) => (
-            <div key={p.id} className="participant-row">
-              {onlineIds.has(p.id) && (
-                <span className="participant-online" title="Online" aria-hidden />
-              )}
-              <div className="participant-name">
+      {sorted.length === 0 ? (
+        <p className="empty-state people-empty">No participants yet.</p>
+      ) : (
+        <div className="people">
+          {sorted.map((p) => {
+            const online = onlineIds.has(p.id);
+            return (
+              <span
+                key={p.id}
+                className={`chip${online ? ' on' : ''}`}
+                title={`${KIND_LABELS[p.kind]}${p.is_provisional ? ' · provisional' : ''}`}
+              >
                 {editingId === p.id ? (
                   <input
                     value={draft}
@@ -60,26 +62,30 @@ export default function ParticipantsPane({ participants, onlineIds, onRename }: 
                       if (e.key === 'Escape') setEditingId(null);
                     }}
                     autoFocus
+                    aria-label="Rename participant"
                   />
                 ) : (
-                  <span onDoubleClick={() => startEdit(p)} title="Double-click to rename">
+                  <span
+                    onDoubleClick={() => startEdit(p)}
+                    title="Double-click to rename"
+                    style={{ cursor: 'default' }}
+                  >
                     {p.display_name}
-                    {p.is_provisional && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 4 }}>
-                        (provisional)
-                      </span>
-                    )}
                   </span>
                 )}
-              </div>
-              <span className="participant-kind">{KIND_LABELS[p.kind]}</span>
-              <button type="button" className="ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => startEdit(p)}>
-                Rename
-              </button>
-            </div>
-          ))
-        )}
-      </div>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => startEdit(p)}
+                  aria-label={`Rename ${p.display_name}`}
+                >
+                  Rename
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

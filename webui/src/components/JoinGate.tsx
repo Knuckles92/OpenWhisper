@@ -16,6 +16,9 @@ export default function JoinGate({ meetingTitle, onJoin }: JoinGateProps) {
   return (
     <div className="join-gate">
       <div className="join-card">
+        <p className="brand">
+          OpenWhisper <em>Meeting</em>
+        </p>
         <h1>Join meeting</h1>
         <p>
           Enter your name to join <strong>{meetingTitle}</strong>.

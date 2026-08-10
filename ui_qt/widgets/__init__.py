@@ -31,6 +31,7 @@ from ui_qt.widgets.tabbed_content import TabbedContentWidget
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
+from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
 from ui_qt.widgets.compact_record_controller import CompactRecordController
 from ui_qt.widgets.no_wheel import NoWheelComboBox, NoWheelSpinBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
@@ -60,6 +61,7 @@ __all__ = [
     "TranscriptionTabBase",
     "QuickRecordTab",
     "UploadFileTab",
+    "MeetingModeTab",
     "CompactRecordController",
     "NoWheelComboBox",
     "NoWheelSpinBox",

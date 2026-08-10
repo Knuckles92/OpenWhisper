@@ -407,6 +407,15 @@ class MeetingEngine:
                 except Exception:
                     logger.exception("ASR drain failed at meeting end")
                     drained = False
+                # Flush deferred rolling revises before consolidation sees the
+                # transcript, while the Whisper model is still loaded.
+                run_pending = getattr(self._asr, "run_pending_revises", None)
+                if callable(run_pending):
+                    try:
+                        for outcome in run_pending():
+                            self._publish_revise_result(outcome)
+                    except Exception:
+                        logger.exception("End-of-meeting ASR revise flush failed")
             try:
                 unfinished = self.repository.count_unfinished_chunks(
                     self.meeting_id
@@ -1054,6 +1063,84 @@ class MeetingEngine:
         if rows:
             self._emit("segments", {"items": rows})
             self._broadcast({"type": "segments", "items": rows})
+        self._maybe_revise_transcript(chunk)
+
+    def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
+        """Schedule and run a bounded rolling re-decode for recent audio."""
+        asr = self._asr
+        if asr is None:
+            return
+        frontier = float(chunk.start_s) + float(chunk.duration_s)
+        schedule = getattr(asr, "schedule_revise", None)
+        run_pending = getattr(asr, "run_pending_revises", None)
+        if not callable(schedule) or not callable(run_pending):
+            return
+        try:
+            schedule(chunk.channel, frontier)
+            if getattr(asr, "is_backlogged", lambda: False)():
+                return
+            for outcome in run_pending():
+                self._publish_revise_result(outcome)
+        except Exception:
+            logger.exception("Rolling transcript revise failed")
+
+    def _publish_revise_result(self, outcome: Dict[str, Any]) -> None:
+        """Assign speakers for new revise rows and broadcast upserts/removals."""
+        items = list(outcome.get("items") or [])
+        removed_ids = list(outcome.get("removed_ids") or [])
+        if not items and not removed_ids:
+            return
+
+        # Re-run speaker assignment for rows that still lack a participant.
+        needing = []
+        for row in items:
+            if row.get("speaker_participant_id") or row.get("speaker_pinned"):
+                continue
+            needing.append(TranscriptSegment(
+                segment_id=row["id"],
+                meeting_id=self.meeting_id,
+                chunk_id=row.get("chunk_id"),
+                channel=row.get("channel") or CHANNEL_MIC,
+                start_s=float(row.get("start_s") or 0.0),
+                end_s=float(row.get("end_s") or 0.0),
+                text=row.get("text") or "",
+            ))
+        if needing:
+            try:
+                self._assign_speakers(needing)
+            except Exception:
+                logger.exception("Speaker assignment failed for revise batch")
+            for seg in needing:
+                if not seg.speaker_participant_id:
+                    continue
+                try:
+                    self.repository.update_segment_speaker(
+                        self.meeting_id,
+                        seg.segment_id,
+                        seg.speaker_participant_id,
+                        seg.speaker_source,
+                        False,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist revise speaker for %s", seg.segment_id
+                    )
+                for row in items:
+                    if row.get("id") == seg.segment_id:
+                        row["speaker_participant_id"] = seg.speaker_participant_id
+                        row["speaker_source"] = seg.speaker_source
+                        break
+
+        payload = {"items": items, "removed_ids": removed_ids}
+        self._emit("segments", payload)
+        self._broadcast({"type": "segments", **payload})
+        scheduler = self._scheduler
+        if scheduler is not None and items:
+            try:
+                # Revised text should refresh agent context even when ids reuse.
+                scheduler.notify_segments(len(items))
+            except Exception:
+                logger.exception("Scheduler notify failed after revise")
 
     def _assign_speakers(self, segments: List[TranscriptSegment]) -> None:
         """Mic segments become 'Me'; loopback segments go to the diarizer."""
@@ -1182,21 +1269,19 @@ class MeetingEngine:
             logger.exception("Diarizer relabel batch failed")
 
     def _handle_segment_op(self, result: OpResult) -> Optional[Dict[str, Any]]:
-        """Store segment handler: persist a speaker reassignment.
+        """Store segment handler: persist speaker or text mutations.
 
         Args:
-            result: The validated ``reassign_segment_speaker`` result whose
-                ``effect`` carries segment_id/participant_id/source/pinned.
+            result: A validated segment-log op result (``reassign_segment_speaker``
+                or ``revise_segment_text``).
 
         Returns:
-            The inverse op dict restoring the prior speaker, or None when the
-            segment had no prior row.
+            The inverse op dict restoring the prior row fields, or None when
+            the segment had no prior row.
         """
         effect = result.effect or {}
+        op_name = (result.op or {}).get("op")
         segment_id = effect.get("segment_id")
-        participant_id = effect.get("participant_id")
-        source = effect.get("source", "human")
-        pinned = bool(effect.get("pinned"))
         prior = None
         try:
             prior = self.repository.get_segment(self.meeting_id, segment_id)
@@ -1204,6 +1289,29 @@ class MeetingEngine:
             logger.exception("Failed to read prior segment %s", segment_id)
         if prior is None:
             return None
+
+        if op_name == "revise_segment_text":
+            # Persistence is via on_ops_applied/_mirror_effect; enrich the
+            # broadcast effect with the full post-apply segment shape.
+            new_text = effect.get("text") or ""
+            updated = dict(prior)
+            updated["text"] = new_text
+            result.effect = {
+                "entity": "segment_text",
+                "segment_id": segment_id,
+                "text": new_text,
+                "segment": updated,
+            }
+            return {
+                "op": "revise_segment_text",
+                "segment_id": segment_id,
+                "text": prior.get("text") or "",
+                "evidence": [segment_id],
+            }
+
+        participant_id = effect.get("participant_id")
+        source = effect.get("source", "human")
+        pinned = bool(effect.get("pinned"))
         return {
             "op": "reassign_segment_speaker",
             "segment_id": segment_id,

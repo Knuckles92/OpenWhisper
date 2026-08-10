@@ -61,6 +61,11 @@ OPERATIONS
 - ask_question(text, evidence): add a question to the quiet inbox.
 - resolve_question(question_id, answer_text, confidence, evidence): answer an
   open question from what was said in the meeting.
+- revise_segment_text(segment_id, text, evidence): fix obvious ASR errors in an
+  existing transcript line in place. Keep the same meaning; do not invent
+  content, merge/split lines, or change speakers. evidence MUST include the
+  segment_id you are editing. Prefer this on polish passes; use sparingly on
+  normal checkpoints.
 
 CARDS
 - key_points: important statements, findings, claims, and agreements-in-progress.
@@ -157,6 +162,20 @@ Update the dashboard to reflect the new transcript segments:
 5. Ask a new question only if it is genuinely valuable; the inbox stays quiet.
 If nothing meaningful changed, emit no operations."""
 
+_POLISH_INSTRUCTIONS = """\
+## INSTRUCTIONS — TRANSCRIPT POLISH PASS
+Your only job this round is cleaning ASR transcript text.
+1. Emit ONLY revise_segment_text ops. Do not touch cards, topic, summary,
+   participants, or questions.
+2. Fix clear speech-to-text mistakes: wrong words, missing punctuation/casing,
+   duplicated fragments, and obvious garble when the intended phrasing is clear
+   from surrounding lines.
+3. Keep meaning faithful — never invent facts, names, or decisions that were
+   not spoken. When unsure, leave the line alone.
+4. Every op needs evidence that includes the segment_id you are editing.
+5. Prefer polishing recent or obviously broken lines; skip clean text.
+If nothing needs fixing, emit no operations."""
+
 _CONSOLIDATION_INSTRUCTIONS = """\
 ## INSTRUCTIONS — FINAL CONSOLIDATION PASS
 The meeting has ended. The transcript above is the COMPLETE final transcript.
@@ -190,7 +209,9 @@ Finalize the dashboard as the durable record:
    transcript above. Prefer citing the segments that actually support each claim.
 8. You may ask at most ONE new quiet-inbox question, and only when the
    transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
-   claim that was teased but not yet answered). Otherwise ask none."""
+   claim that was teased but not yet answered). Otherwise ask none.
+9. Optionally emit revise_segment_text for remaining obvious ASR errors in the
+   final transcript (same rules as polish: no invented content)."""
 
 #: Appended to the user prompt by the direct agent's JSON-mode fallback (used
 #: when the provider/model does not support function tools).
@@ -205,6 +226,8 @@ field, for example:
 {"op": "ask_question", "text": "...", "evidence": ["sg_..."]}
 {"op": "resolve_question", "question_id": "q_...", "answer_text": "...",
  "confidence": 0.9, "evidence": ["sg_..."]}
+{"op": "revise_segment_text", "segment_id": "sg_...", "text": "...",
+ "evidence": ["sg_..."]}
 An empty {"ops": []} is valid when nothing changed."""
 
 
@@ -324,28 +347,30 @@ def format_segment_line(segment: Dict[str, Any],
 
 def build_checkpoint_user_prompt(state: Dict[str, Any],
                                  new_segments: List[Dict[str, Any]],
-                                 is_consolidation: bool = False) -> str:
-    """Build the user prompt for one checkpoint or the final consolidation.
+                                 is_consolidation: bool = False,
+                                 is_polish: bool = False) -> str:
+    """Build the user prompt for one checkpoint, polish, or consolidation.
 
     Args:
         state: A ``MeetingState.to_dict()`` snapshot (the rolling context).
         new_segments: Segment dicts added since the last checkpoint; for
-            consolidation, the complete final transcript.
+            consolidation/polish, typically a broader transcript window.
         is_consolidation: True for the end-of-meeting full pass.
+        is_polish: True for a transcript-text cleanup pass.
 
     Returns:
         The complete user prompt: compact dashboard state, transcript lines,
-        then the checkpoint or consolidation instructions.
+        then the checkpoint, polish, or consolidation instructions.
     """
     participants = state.get("participants") or {}
     parts: List[str] = []
     parts.append("## CURRENT DASHBOARD STATE")
     parts.append(render_state_compact(state))
     parts.append("")
-    parts.append(
-        "## FULL MEETING TRANSCRIPT" if is_consolidation
-        else "## NEW TRANSCRIPT SEGMENTS"
-    )
+    if is_consolidation or is_polish:
+        parts.append("## FULL MEETING TRANSCRIPT")
+    else:
+        parts.append("## NEW TRANSCRIPT SEGMENTS")
     if new_segments:
         parts.extend(
             format_segment_line(segment, participants)
@@ -354,8 +379,10 @@ def build_checkpoint_user_prompt(state: Dict[str, Any],
     else:
         parts.append("(no new segments)")
     parts.append("")
-    parts.append(
-        _CONSOLIDATION_INSTRUCTIONS if is_consolidation
-        else _CHECKPOINT_INSTRUCTIONS
-    )
+    if is_polish:
+        parts.append(_POLISH_INSTRUCTIONS)
+    elif is_consolidation:
+        parts.append(_CONSOLIDATION_INSTRUCTIONS)
+    else:
+        parts.append(_CHECKPOINT_INSTRUCTIONS)
     return "\n".join(parts)
