@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.asr.revise import (
     REVISION_WINDOW_S,
+    align_revision_start,
     build_initial_prompt,
     interval_iou,
     match_segments,
@@ -32,6 +33,16 @@ def test_revision_window_caps_at_horizon():
     start0, end0 = revision_window(10.0, window_s=45.0)
     assert start0 == 0.0
     assert end0 == 10.0
+
+
+def test_align_revision_start_never_bisects_existing_segment():
+    existing = [
+        {"start_s": 40.0, "end_s": 70.0},
+        {"start_s": 58.0, "end_s": 62.0},
+    ]
+
+    assert align_revision_start(55.0, existing) == 40.0
+    assert align_revision_start(75.0, existing) == 75.0
 
 
 def test_interval_iou_and_match_prefers_overlap():

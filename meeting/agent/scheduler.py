@@ -1,9 +1,10 @@
 """Adaptive checkpoint scheduling for the meeting-intelligence agent.
 
 Fires agent checkpoints only when new transcript exists, on an adaptive
-interval (45s base, shrunk to 30s under segment pressure, stretched to 60s
-when quiet), with an early trigger on topic shift (content-word Jaccard
-between the last two 60-second transcript windows). Checkpoints run
+interval (15s base, shrunk to 5s under segment pressure, stretched to 20s
+when quiet), with a fast first pass and an early trigger on topic shift
+(content-word Jaccard between the last two 60-second transcript windows).
+Checkpoints run
 sequentially on one worker thread, so work that becomes due while a
 checkpoint is in flight coalesces naturally into the next fire.
 """
@@ -44,10 +45,11 @@ _CONSOLIDATION_JOIN_S = 10.0
 #: what keeps whole stretches of one channel from becoming invisible forever.
 _REFETCH_WINDOW_S = 180.0
 #: Fire a transcript polish pass after this many successful card checkpoints.
-_POLISH_EVERY_N_CHECKPOINTS = 2
+#: Card/topic freshness takes priority because both jobs share one agent.
+_POLISH_EVERY_N_CHECKPOINTS = 6
 #: Also fire polish when at least this many seconds have elapsed since the
 #: last polish (even if checkpoint count is low).
-_POLISH_MIN_INTERVAL_S = 90.0
+_POLISH_MIN_INTERVAL_S = 300.0
 #: How much recent transcript to prefer in a polish payload (full digest still
 #: included via get_transcript; this caps enormous meetings for the prompt).
 _POLISH_MAX_SEGMENTS = 400
@@ -89,9 +91,9 @@ class CheckpointScheduler:
     """
 
     def __init__(self, engine: Any, agent_core: Any,
-                 base_interval_s: float = 45.0,
-                 min_interval_s: float = 30.0,
-                 max_interval_s: float = 60.0,
+                 base_interval_s: float = 15.0,
+                 min_interval_s: float = 5.0,
+                 max_interval_s: float = 20.0,
                  on_health: Optional[Callable[[bool], None]] = None) -> None:
         """Args:
             engine: The ``MeetingEngine`` (provides ``store``, ``clock``, and
@@ -110,6 +112,9 @@ class CheckpointScheduler:
         self._base_interval_s = base_interval_s
         self._min_interval_s = min_interval_s
         self._max_interval_s = max_interval_s
+        # Seed the dashboard shortly after the first transcript arrives. Keep
+        # custom sub-second intervals useful in tests and embeddings.
+        self._initial_interval_s = min(3.0, min_interval_s)
         self._on_health = on_health
 
         self._lock = threading.Lock()
@@ -161,19 +166,16 @@ class CheckpointScheduler:
             thread.join(timeout=5.0)
 
     def prepare_for_end(self) -> None:
-        """Stop rolling fires and cancel any in-flight checkpoint/polish.
+        """Stop new rolling fires without blocking the meeting-end path.
 
-        Called at the start of meeting end so drain/consolidation are not
-        blocked behind a live LLM turn. Consolidation still runs afterward via
-        :meth:`run_consolidation`.
+        An in-flight cloud request is handled later by
+        :meth:`run_consolidation`, after the durable meeting has already been
+        marked ended. Calling the agent's synchronous cancellation RPC here
+        would otherwise delay capture shutdown and the user's end action.
         """
         self._consolidating = True
         self._stop_event.set()
         self._wake.set()
-        try:
-            self._agent.cancel()
-        except Exception:
-            logger.exception("Agent cancel during prepare_for_end raised")
 
     def notify_segments(self, count: int) -> None:
         """Record newly transcribed segments; called by the engine per batch.
@@ -213,6 +215,10 @@ class CheckpointScheduler:
                 continue
             elapsed = time.monotonic() - self._last_fire_mono
             if time.monotonic() < self._retry_not_before:
+                continue
+            if not self._sent_starts:
+                if elapsed >= self._initial_interval_s:
+                    self._fire()
                 continue
             if elapsed < self._min_interval_s:
                 continue
@@ -335,6 +341,10 @@ class CheckpointScheduler:
         if not segments:
             return
 
+        # Seed structural live state before the network request. A slow or
+        # uncooperative model must not leave the visible topic, summary, and
+        # key points blank until the checkpoint eventually returns.
+        self._maybe_backfill_live_insights()
         payload = self._build_payload(segments, is_consolidation=False)
         if payload is None:
             with self._lock:
@@ -360,10 +370,6 @@ class CheckpointScheduler:
                 payload.request_id, applied, len(result.op_results),
             )
             self._successful_checkpoints += 1
-            # Live checkpoints sometimes return ok with zero ops even when the
-            # dashboard is still empty; seed topic/summary/key points so the
-            # UI is not stuck until end-of-meeting consolidation.
-            self._maybe_backfill_live_insights()
             self._maybe_fire_polish()
         else:
             self._record_failure(claimed, result.error or "checkpoint failed")

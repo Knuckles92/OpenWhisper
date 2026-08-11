@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.asr.engine import (
+    DRAFT_PROMPT_WORDS,
     FAST_MODE_BACKLOG_CHUNKS,
     MAX_ATTEMPTS,
     REVISE_MIN_ADVANCE_S,
@@ -50,7 +51,9 @@ def _make_engine(repo, backend):
         name="fake",
     ))
     with patch("transcriber.local_backend.LocalWhisperBackend", fake_cls):
-        engine = MeetingAsrEngine("base", "m_test", repo)
+        engine = MeetingAsrEngine(
+            "base", "m_test", repo, enable_revisions=True
+        )
     engine._backend = backend
     engine.is_available = True
     return engine
@@ -108,8 +111,57 @@ class TestAsrSuccessPath:
             kwargs = model.transcribe.call_args.kwargs
             assert kwargs["beam_size"] == 5
             assert kwargs["condition_on_previous_text"] is False
+            assert kwargs["language"] is None
+            assert kwargs["initial_prompt"] is None
         finally:
             engine.stop()
+
+    def test_next_chunk_receives_bounded_committed_context(self, tmp_path):
+        repo = FakeRepository()
+        model = MagicMock()
+        model.transcribe.side_effect = [
+            ([FakeWhisperSeg(0.0, 0.4, "one two three")], SimpleNamespace()),
+            ([FakeWhisperSeg(0.0, 0.4, "four")], SimpleNamespace()),
+        ]
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=model,
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+        engine.start(on_chunk_result=lambda chunk, segments: None)
+        try:
+            first = _chunk(tmp_path, chunk_id=1, start_s=0.0)
+            second = _chunk(tmp_path, chunk_id=2, start_s=1.0)
+            engine.enqueue(first)
+            assert engine.drain(5.0)
+            engine.enqueue(second)
+            assert engine.drain(5.0)
+
+            calls = model.transcribe.call_args_list
+            assert calls[0].kwargs["initial_prompt"] is None
+            assert calls[1].kwargs["initial_prompt"] == "one two three"
+            assert len(engine._draft_context[("m_test", "mic")]) <= DRAFT_PROMPT_WORDS
+        finally:
+            engine.stop()
+
+    def test_recovery_context_excludes_later_and_other_channel_rows(self, tmp_path):
+        repo = FakeRepository()
+        repo.get_segments = lambda _meeting_id, after_start_s=-1.0: [
+            {"channel": "mic", "end_s": 4.0, "text": "safe earlier words"},
+            {"channel": "loopback", "end_s": 4.0, "text": "other channel"},
+            {"channel": "mic", "end_s": 8.0, "text": "future words"},
+        ]
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=MagicMock(),
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+
+        prompt = engine._draft_prompt(_chunk(tmp_path, start_s=5.0))
+
+        assert prompt == "safe earlier words"
 
     def test_digital_silence_skips_whisper_but_commits_chunk(self, tmp_path):
         repo = FakeRepository()
@@ -278,7 +330,7 @@ class TestRollingReviseScheduling:
         assert engine.run_pending_revises(force=True) == []
         engine.revise_window.assert_not_called()
 
-    def test_revise_decodes_lead_in_without_upserting_context_only_rows(
+    def test_revise_starts_at_mutable_boundary_without_duplicating_context(
         self, tmp_path
     ):
         path = str(tmp_path / "long.wav")
@@ -311,8 +363,8 @@ class TestRollingReviseScheduling:
         repo.revise_segments_in_range = persist
         model = MagicMock()
         model.transcribe.return_value = ([
-            FakeWhisperSeg(1.0, 2.0, "context only"),
-            FakeWhisperSeg(6.0, 7.0, "mutable text"),
+            FakeWhisperSeg(1.0, 2.0, "first mutable text"),
+            FakeWhisperSeg(6.0, 7.0, "more mutable text"),
         ], SimpleNamespace())
         backend = SimpleNamespace(
             is_available=lambda: True,
@@ -324,9 +376,72 @@ class TestRollingReviseScheduling:
         outcome = engine.revise_window("mic", frontier_s=100.0)
 
         audio = model.transcribe.call_args.args[0]
-        assert audio.size == pytest.approx(50.0 * 16000, rel=0.01)
+        assert audio.size == pytest.approx(45.0 * 16000, rel=0.01)
+        assert model.transcribe.call_args.kwargs["condition_on_previous_text"] is True
         assert outcome is not None
         assert [segment.text for segment in persisted["segments"]] == [
-            "mutable text"
+            "first mutable text",
+            "more mutable text",
         ]
         assert persisted["segments"][0].start_s == pytest.approx(56.0)
+
+    def test_revise_expands_boundary_to_preserve_crossing_segment_prefix(
+        self, tmp_path
+    ):
+        path = str(tmp_path / "long.wav")
+        _write_wav(path, duration_s=100.0)
+        crossing = {
+            "id": "sg_crossing",
+            "meeting_id": "m_test",
+            "chunk_id": 1,
+            "channel": "mic",
+            "start_s": 40.0,
+            "end_s": 70.0,
+            "text": "the complete original segment",
+            "speaker_pinned": False,
+        }
+        repo = FakeRepository()
+        repo.get_audio_chunks = lambda _meeting_id: [{
+            "id": 1,
+            "channel": "mic",
+            "seq": 0,
+            "start_s": 0.0,
+            "duration_s": 100.0,
+            "file_path": path,
+            "asr_status": "done",
+        }]
+        repo.get_segments = lambda _meeting_id, after_start_s=-1.0: []
+        repo.get_segments_in_range = (
+            lambda _meeting_id, _channel, start_s, _end_s:
+            [crossing] if start_s <= crossing["end_s"] else []
+        )
+        persisted = {}
+
+        def persist(_meeting_id, _channel, start_s, _end_s,
+                    segments, remove_ids):
+            persisted["start_s"] = start_s
+            persisted["segments"] = segments
+            persisted["remove_ids"] = remove_ids
+            return [{"id": segment.segment_id} for segment in segments], []
+
+        repo.revise_segments_in_range = persist
+        model = MagicMock()
+        model.transcribe.return_value = ([
+            FakeWhisperSeg(0.0, 30.0, "the complete revised segment"),
+        ], SimpleNamespace())
+        backend = SimpleNamespace(
+            is_available=lambda: True,
+            model=model,
+            cleanup=lambda: None,
+        )
+        engine = _make_engine(repo, backend)
+
+        outcome = engine.revise_window("mic", frontier_s=100.0)
+
+        audio = model.transcribe.call_args.args[0]
+        assert audio.size == pytest.approx(60.0 * 16000, rel=0.01)
+        assert outcome is not None
+        assert persisted["start_s"] == 40.0
+        assert persisted["remove_ids"] == []
+        assert persisted["segments"][0].segment_id == "sg_crossing"
+        assert persisted["segments"][0].start_s == 40.0

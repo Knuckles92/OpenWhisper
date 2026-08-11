@@ -24,6 +24,7 @@ try:
         resolve_meeting_agent_core,
         resolve_meeting_llm_model,
         resolve_meeting_llm_provider,
+        resolve_meeting_language,
         resolve_meeting_server_bind,
         resolve_meeting_server_port,
         resolve_meeting_whisper_model,
@@ -328,6 +329,7 @@ class MeetingRuntime:
             cloud_enabled=cloud,
             mic_device_id=settings_manager.load_audio_input_device(),
             asr_model=resolve_meeting_whisper_model(settings),
+            asr_language=resolve_meeting_language(settings),
             llm_provider=resolve_meeting_llm_provider(settings),
             llm_model=resolve_meeting_llm_model(settings),
             agent_core_kind=agent_kind,
@@ -517,7 +519,12 @@ class MeetingRuntime:
                 meeting = repository.get_meeting(meeting_id)
                 if meeting is None:
                     raise ValueError(f"Unknown meeting '{meeting_id}'")
-                if not finalize(repository, meeting):
+                settings = settings_manager.load_all_settings()
+                if not finalize(
+                    repository,
+                    meeting,
+                    asr_language=resolve_meeting_language(settings),
+                ):
                     self.controller.meeting_error.emit(
                         "Could not finalize the meeting — "
                         "transcription may still be pending"

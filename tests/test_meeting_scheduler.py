@@ -101,6 +101,14 @@ class FakeAgent:
 
 
 class TestAdaptiveInterval:
+    def test_defaults_prioritize_live_dashboard_freshness(self):
+        sched = CheckpointScheduler(FakeEngine(), FakeAgent())
+
+        assert sched._initial_interval_s == 3.0
+        assert sched._interval_for(2) == 20.0
+        assert sched._interval_for(3) == 15.0
+        assert sched._interval_for(8) == 5.0
+
     def test_pinned_intervals(self):
         engine = FakeEngine()
         agent = FakeAgent()
@@ -275,7 +283,7 @@ class TestSegmentWatermark:
             assert repair.call_args.args[0] is empty_store
             assert repair.call_args.args[1][0]["id"] == "sg_1"
 
-    def test_prepare_for_end_cancels_in_flight_agent(self):
+    def test_prepare_for_end_never_blocks_on_agent_cancel(self):
         agent = FakeAgent()
         canceled = []
         agent.cancel = lambda: canceled.append(True)
@@ -284,7 +292,8 @@ class TestSegmentWatermark:
         try:
             sched.prepare_for_end()
             assert sched._consolidating is True
-            assert canceled == [True]
+            assert sched._stop_event.is_set()
+            assert canceled == []
         finally:
             sched.stop()
 

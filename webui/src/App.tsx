@@ -187,7 +187,16 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 }
                 headerExtra={
                   <div className="recording-inline">
-                    <audio controls preload="metadata" src={api.audioUrl(token, ui.state.meeting_id)} />
+                    <audio
+                      key={`${ui.state.meeting_id}:${ui.state.status}`}
+                      controls
+                      preload="metadata"
+                      src={api.audioUrl(
+                        token,
+                        ui.state.meeting_id,
+                        ui.state.status,
+                      )}
+                    />
                   </div>
                 }
               />

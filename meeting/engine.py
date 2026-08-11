@@ -46,8 +46,10 @@ END_DRAIN_TIMEOUT_S = 300.0
 END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
-#: Budget for the final consolidation pass.
-CONSOLIDATION_TIMEOUT_S = 120.0
+#: Budget for the post-end consolidation pass. The durable meeting is marked
+#: ended before this optional polish starts, so it never holds the UI in the
+#: "Ending" state.
+CONSOLIDATION_TIMEOUT_S = 20.0
 #: How long end/cancel waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
@@ -68,6 +70,7 @@ class MeetingEngineOptions:
     cloud_enabled: bool = False
     mic_device_id: Optional[int] = None
     asr_model: str = 'auto'
+    asr_language: str = 'auto'
     llm_provider: str = 'openrouter'
     llm_model: str = ''
     agent_core_kind: str = 'pi'   # 'pi' | 'direct'
@@ -467,23 +470,20 @@ class MeetingEngine:
                 unfinished = 1
             complete = drained and unfinished == 0
             scheduler = self._scheduler
-            if scheduler is not None and complete:
-                try:
-                    scheduler.run_consolidation(timeout_s=CONSOLIDATION_TIMEOUT_S)
-                except Exception:
-                    logger.exception("Consolidation pass failed")
-            if scheduler is not None:
-                try:
-                    scheduler.stop()
-                except Exception:
-                    logger.exception("Scheduler stop failed")
-                self._scheduler = None
             if self._asr is not None:
                 try:
                     self._asr.stop()
                 except Exception:
                     logger.exception("ASR stop failed")
-            self._shutdown_agent_core()
+            # Make the durable dashboard useful immediately, even if the
+            # optional cloud consolidation below is slow or unavailable.
+            if self.store is not None:
+                try:
+                    from meeting.state.repair import repair_meeting_state
+
+                    repair_meeting_state(self.store, self.get_transcript())
+                except Exception:
+                    logger.exception("Immediate end-state repair failed")
             self.clock.pause()
             status = "ended" if complete else "needs_recovery"
             if self.store is not None:
@@ -510,6 +510,25 @@ class MeetingEngine:
                 "status": status,
                 "unfinished_chunks": unfinished,
             })
+
+            # The user's end action is complete once capture and transcript
+            # persistence are complete. Final insight cleanup is useful, but
+            # it must not keep the UI or exclusive microphone mode stuck in
+            # "Ending" while a cloud model takes a minute to respond.
+            if scheduler is not None and complete:
+                try:
+                    scheduler.run_consolidation(
+                        timeout_s=CONSOLIDATION_TIMEOUT_S
+                    )
+                except Exception:
+                    logger.exception("Post-end consolidation pass failed")
+            if scheduler is not None:
+                try:
+                    scheduler.stop()
+                except Exception:
+                    logger.exception("Scheduler stop failed")
+                self._scheduler = None
+            self._shutdown_agent_core()
         except Exception as exc:
             logger.exception("Meeting end failed")
             self._active = False
@@ -1057,8 +1076,18 @@ class MeetingEngine:
     def _start_asr(self) -> None:
         try:
             from meeting.asr.engine import MeetingAsrEngine
-            asr = MeetingAsrEngine(self.options.asr_model, self.meeting_id,
-                                   self.repository)
+            language = (self.options.asr_language or "auto").strip().lower()
+            asr = MeetingAsrEngine(
+                self.options.asr_model,
+                self.meeting_id,
+                self.repository,
+                language=None if language == "auto" else language,
+                # Real-meeting evaluation found rolling rewrites improved some
+                # meetings but degraded others by up to 4.9 absolute WER.
+                # A durable record must prefer the stable draft until a
+                # no-reference quality gate is proven trustworthy.
+                enable_revisions=False,
+            )
         except Exception as exc:
             logger.exception("Meeting ASR engine unavailable")
             self._emit("error", {"code": "asr_unavailable", "message": str(exc)})

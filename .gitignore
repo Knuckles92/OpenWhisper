@@ -10,6 +10,9 @@ meeting_audio/
 meeting_recordings/
 # Meeting Mode spool root (config.MEETINGS_FOLDER)
 meetings/
+# Downloaded corpora and generated dogfood benchmark outputs.
+benchmarks/meeting_mode/data/
+benchmarks/meeting_mode/results/
 
 # Local data and settings (auto-generated at runtime)
 openwhisper_settings.json

@@ -52,6 +52,7 @@ class SettingsKey:
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
     # Meeting Mode
     MEETING_WHISPER_MODEL: Final[str] = "meeting_whisper_model"
+    MEETING_LANGUAGE: Final[str] = "meeting_language"
     MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
@@ -126,6 +127,49 @@ class MeetingAgentCore:
     DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
 
     ALL: Final[Tuple[str, ...]] = (PI, DIRECT)
+
+
+class MeetingLanguage:
+    """Spoken-language choices exposed by Meeting Mode settings."""
+
+    AUTO: Final[str] = "auto"
+    CHOICES: Final[Tuple[Tuple[str, str], ...]] = (
+        (AUTO, "Detect automatically"),
+        ("en", "English"),
+        ("es", "Spanish"),
+        ("fr", "French"),
+        ("de", "German"),
+        ("it", "Italian"),
+        ("pt", "Portuguese"),
+        ("nl", "Dutch"),
+        ("pl", "Polish"),
+        ("ru", "Russian"),
+        ("uk", "Ukrainian"),
+        ("tr", "Turkish"),
+        ("ar", "Arabic"),
+        ("he", "Hebrew"),
+        ("hi", "Hindi"),
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("vi", "Vietnamese"),
+        ("th", "Thai"),
+        ("id", "Indonesian"),
+        ("sv", "Swedish"),
+        ("da", "Danish"),
+        ("no", "Norwegian"),
+        ("fi", "Finnish"),
+        ("cs", "Czech"),
+        ("el", "Greek"),
+        ("ro", "Romanian"),
+        ("hu", "Hungarian"),
+    )
+    ALL: Final[Tuple[str, ...]] = (
+        "auto", "en", "es", "fr", "de", "it", "pt", "nl", "pl",
+        "ru", "uk", "tr", "ar", "he", "hi", "zh", "ja", "ko",
+        "vi", "th", "id", "sv", "da", "no", "fi", "cs", "el",
+        "ro", "hu",
+    )
 
 
 class MeetingServerBind:
@@ -636,6 +680,28 @@ def resolve_meeting_whisper_model(
     if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
         return model
     return config.MEETING_WHISPER_MODEL
+
+
+def resolve_meeting_language(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated Meeting Mode spoken-language preference.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        ``"auto"`` or a supported ISO-639-1 Whisper language code.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    language = settings.get(SettingsKey.MEETING_LANGUAGE)
+    if isinstance(language, str):
+        language = language.strip().lower()
+        if language in MeetingLanguage.ALL:
+            return language
+    return config.MEETING_LANGUAGE
 
 
 def resolve_meeting_llm_provider(

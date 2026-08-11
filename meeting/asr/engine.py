@@ -20,8 +20,8 @@ import numpy as np
 
 from meeting.asr.audio import load_wav_int16, prepare_for_whisper
 from meeting.asr.revise import (
-    REVISION_CONTEXT_S,
     REVISION_WINDOW_S,
+    align_revision_start,
     build_initial_prompt,
     match_segments,
     revise_segment_id,
@@ -51,6 +51,11 @@ QUEUE_WAIT_WARNING_S = 15.0
 #: at low levels, while idle loopback capture commonly produces exact zeros.
 DIGITAL_SILENCE_PEAK = 8
 
+#: Number of preceding recognized words supplied to the next draft decode on
+#: the same channel. Ten-meeting dogfood reduced strict tcWER on every tested
+#: meeting (0.9--4.4 absolute points) with no measurable throughput cost.
+DRAFT_PROMPT_WORDS = 50
+
 #: Minimum meeting-clock progress per channel between rolling re-decodes.
 #: Draft chunks are intentionally short for low UI latency, but re-running a
 #: 45-second window after every 5-second chunk would spend roughly nine times
@@ -71,7 +76,14 @@ class MeetingAsrEngine:
     recoverable).
     """
 
-    def __init__(self, model_name: str, meeting_id: str, repository: Any) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        meeting_id: str,
+        repository: Any,
+        language: Optional[str] = None,
+        enable_revisions: bool = False,
+    ) -> None:
         """Load a dedicated Whisper model for one meeting.
 
         Args:
@@ -79,9 +91,17 @@ class MeetingAsrEngine:
                 base on CPU inside ``LocalWhisperBackend``).
             meeting_id: Owning meeting session id.
             repository: ``MeetingRepository`` for chunk status bookkeeping.
+            language: Optional ISO-639-1 language code. ``None`` keeps
+                Whisper's automatic per-decode detection.
+            enable_revisions: Whether experimental rolling transcript rewrites
+                may run. Disabled by default because real-meeting dogfood found
+                meeting-dependent regressions; the benchmark can opt in for
+                continued research.
         """
         self.meeting_id = meeting_id
         self._repository = repository
+        self.language = language.strip().lower() if language else None
+        self.revisions_enabled = bool(enable_revisions)
         self._backend = None
         self.is_available = False
 
@@ -123,6 +143,11 @@ class MeetingAsrEngine:
         self._enqueued_at: Dict[int, float] = {}
         self._queue_wait_warned: set = set()
         self._fast_mode = False
+        # A small, per-meeting/channel transcript tail restores linguistic
+        # continuity across the short WAV files required for live latency.
+        # The key includes meeting_id because the benchmark deliberately
+        # reuses one loaded model for several independent meetings.
+        self._draft_context: Dict[tuple[str, str], List[str]] = {}
         #: Coalesce revise requests per channel to the latest frontier.
         self._pending_revise: Dict[str, float] = {}
         self._last_revised_frontier: Dict[str, float] = {}
@@ -193,6 +218,7 @@ class MeetingAsrEngine:
             if thread.is_alive():
                 logger.warning("Meeting ASR worker did not stop within 10s")
         self._thread = None
+        self._draft_context.clear()
 
         backend = self._backend
         self._backend = None
@@ -306,11 +332,17 @@ class MeetingAsrEngine:
             self._set_status(chunk.chunk_id, "processing")
             self._log_queue_wait(chunk)
             segments = self._transcribe_chunk(
-                chunk, beam_size=self._beam_size_for_backlog()
+                chunk,
+                beam_size=self._beam_size_for_backlog(),
+                initial_prompt=self._draft_prompt(chunk),
             )
             if self._on_chunk_result is None:
                 raise RuntimeError("No durable ASR result callback is registered")
             self._on_chunk_result(chunk, segments)
+            # Advance context only after the result callback returns, because
+            # that callback is the durability boundary. A failed commit and
+            # retry must see the same preceding prompt as the first attempt.
+            self._remember_draft_segments(chunk, segments)
             self._attempts.pop(chunk.chunk_id, None)
             return False
         except Exception as e:
@@ -371,7 +403,10 @@ class MeetingAsrEngine:
         return peak <= DIGITAL_SILENCE_PEAK
 
     def _transcribe_chunk(
-        self, chunk: SpooledChunk, beam_size: int = 5
+        self,
+        chunk: SpooledChunk,
+        beam_size: int = 5,
+        initial_prompt: Optional[str] = None,
     ) -> List[TranscriptSegment]:
         """Load, convert, and transcribe one spooled WAV chunk.
 
@@ -379,6 +414,9 @@ class MeetingAsrEngine:
             chunk: Durable audio chunk to transcribe.
             beam_size: Whisper decode beam size. Backlogged live processing
                 uses one beam to recover; normal processing uses five.
+            initial_prompt: Optional preceding transcript context. The worker
+                supplies its bounded durable per-channel tail; callers may
+                leave it unset for a context-free decode.
 
         Returns:
             Meeting-clock-timestamped segments; empty when the chunk holds no
@@ -397,10 +435,12 @@ class MeetingAsrEngine:
             beam_size=beam_size,
             vad_filter=True,
             word_timestamps=False,
-            # Avoid prompt feedback loops between multiple decode windows in
-            # a long no-pause chunk. Each durable chunk is already a separate
-            # call and therefore never inherits text from the previous chunk.
+            language=self.language,
+            # Avoid Whisper's unbounded automatic feedback between internal
+            # decode windows. Cross-chunk continuity comes only from the
+            # explicitly bounded ``initial_prompt`` above.
             condition_on_previous_text=False,
+            initial_prompt=initial_prompt or None,
         )
 
         segments: List[TranscriptSegment] = []
@@ -418,6 +458,53 @@ class MeetingAsrEngine:
                 text=text,
             ))
         return segments
+
+    def _draft_prompt(self, chunk: SpooledChunk) -> Optional[str]:
+        """Return bounded durable transcript context preceding ``chunk``.
+
+        On recovery, the cache is hydrated only from rows ending before this
+        chunk. This avoids leaking later transcript text into an earlier hole.
+        Normal live processing then advances the in-memory tail after each
+        successful durable callback.
+
+        Args:
+            chunk: Chunk about to be decoded.
+
+        Returns:
+            Up to :data:`DRAFT_PROMPT_WORDS` preceding words, or ``None``.
+        """
+        key = (chunk.meeting_id, chunk.channel)
+        if key not in self._draft_context:
+            words: List[str] = []
+            get_segments = getattr(self._repository, "get_segments", None)
+            if callable(get_segments):
+                try:
+                    rows = get_segments(chunk.meeting_id, after_start_s=-1.0)
+                    for row in rows:
+                        if (
+                            row.get("channel") == chunk.channel
+                            and float(row.get("end_s") or 0.0)
+                            <= chunk.start_s + 1e-6
+                        ):
+                            words.extend(str(row.get("text") or "").split())
+                except Exception:
+                    logger.exception("Could not hydrate meeting ASR draft context")
+            self._draft_context[key] = words[-DRAFT_PROMPT_WORDS:]
+        prompt = " ".join(self._draft_context[key][-DRAFT_PROMPT_WORDS:]).strip()
+        return prompt or None
+
+    def _remember_draft_segments(
+        self,
+        chunk: SpooledChunk,
+        segments: List[TranscriptSegment],
+    ) -> None:
+        """Append a durably committed chunk result to its prompt context."""
+        key = (chunk.meeting_id, chunk.channel)
+        words = self._draft_context.setdefault(key, [])
+        for segment in segments:
+            words.extend(segment.text.split())
+        if len(words) > DRAFT_PROMPT_WORDS:
+            del words[:-DRAFT_PROMPT_WORDS]
 
     def _stable_segment_id(self, chunk_id: int, ordinal: int) -> str:
         """Return an idempotent evidence anchor for a chunk segment."""
@@ -462,6 +549,8 @@ class MeetingAsrEngine:
 
     def schedule_revise(self, channel: str, frontier_s: float) -> None:
         """Coalesce a revise request for ``channel`` up to ``frontier_s``."""
+        if not self.revisions_enabled:
+            return
         with self._revise_lock:
             prev = self._pending_revise.get(channel, -1.0)
             self._pending_revise[channel] = max(prev, float(frontier_s))
@@ -485,7 +574,7 @@ class MeetingAsrEngine:
             One result dict per successful revise (``items`` / ``removed_ids``).
         """
         results: List[Dict[str, Any]] = []
-        if self._stopping or self._backend is None:
+        if not self.revisions_enabled or self._stopping or self._backend is None:
             return results
         while True:
             if (
@@ -558,10 +647,23 @@ class MeetingAsrEngine:
         """
         if self._backend is None or not self._backend.is_available():
             return None
-        window_start, window_end = revision_window(frontier_s, window_s)
-        if window_end - window_start < 0.5:
+        nominal_start, window_end = revision_window(frontier_s, window_s)
+        if window_end - nominal_start < 0.5:
             return None
-        decode_start = max(0.0, window_start - REVISION_CONTEXT_S)
+
+        # Never bisect a previously persisted Whisper segment at the sliding
+        # boundary. A crossing row contains words before the nominal horizon;
+        # replacing or deleting the whole row after decoding only its suffix
+        # progressively erases the transcript on every rolling pass.
+        try:
+            boundary_segments = self._repository.get_segments_in_range(
+                self.meeting_id, channel, nominal_start, window_end
+            )
+        except Exception:
+            logger.exception("revise_window: failed to align mutable boundary")
+            return None
+        window_start = align_revision_start(nominal_start, boundary_segments)
+        decode_start = window_start
 
         try:
             chunks = self._repository.get_audio_chunks(self.meeting_id)
@@ -601,7 +703,13 @@ class MeetingAsrEngine:
                 beam_size=beam_size,
                 vad_filter=True,
                 word_timestamps=False,
-                condition_on_previous_text=False,
+                language=self.language,
+                # The stitched revise window can span several internal
+                # 30-second Whisper windows. Preserve decoder context within
+                # this one bounded call; no state carries into the next call,
+                # so the long-meeting feedback loop avoided by draft decoding
+                # remains impossible.
+                condition_on_previous_text=True,
                 initial_prompt=initial_prompt or None,
             )
         except Exception:
@@ -615,11 +723,6 @@ class MeetingAsrEngine:
                 continue
             start_s = audio_start + float(seg.start)
             end_s = audio_start + float(seg.end)
-            if end_s <= window_start:
-                # Lead-in audio exists only to give the first mutable segment
-                # complete linguistic context; do not duplicate rows wholly
-                # outside the actual revision window.
-                continue
             # Anchor new inserts to the first overlapping chunk when possible.
             chunk_id = selected[0].get("id")
             for chunk in selected:

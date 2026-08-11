@@ -22,11 +22,6 @@ logger = logging.getLogger(__name__)
 #: Trailing audio horizon re-decoded after each draft chunk commit.
 REVISION_WINDOW_S = 45.0
 
-#: Audio decoded before the mutable window boundary. Without this lead-in, a
-#: Whisper segment crossing the 45-second cutoff can be re-decoded from its
-#: middle and overwrite the original row with only the trailing phrase.
-REVISION_CONTEXT_S = 5.0
-
 #: Minimum IoU required to reuse an existing segment id.
 MIN_MATCH_IOU = 0.25
 
@@ -49,6 +44,35 @@ def revision_window(frontier_s: float, window_s: float = REVISION_WINDOW_S) -> T
     end_s = max(0.0, float(frontier_s))
     start_s = max(0.0, end_s - max(0.0, float(window_s)))
     return start_s, end_s
+
+
+def align_revision_start(
+    nominal_start_s: float,
+    existing: Sequence[Dict[str, Any]],
+) -> float:
+    """Move a rolling boundary to the start of any segment it would bisect.
+
+    Whisper can emit segments up to roughly 30 seconds long. Deleting or
+    replacing a row that begins before the mutable 45-second horizon loses the
+    un-redecoded prefix forever. Expanding to the earliest crossing segment
+    makes every mutable row fully represented in the replacement audio while
+    keeping work bounded by one Whisper segment beyond the normal horizon.
+
+    Args:
+        nominal_start_s: Start of the configured trailing revision horizon.
+        existing: Segments overlapping that horizon.
+
+    Returns:
+        A safe start at an existing segment boundary.
+    """
+    nominal = max(0.0, float(nominal_start_s))
+    crossing_starts = [
+        float(row.get("start_s") or 0.0)
+        for row in existing
+        if float(row.get("start_s") or 0.0) < nominal
+        and float(row.get("end_s") or 0.0) > nominal
+    ]
+    return max(0.0, min(crossing_starts, default=nominal))
 
 
 def interval_iou(

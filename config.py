@@ -287,6 +287,7 @@ class AppConfig:
 
     # Meeting Mode defaults
     MEETING_WHISPER_MODEL: str = "auto"  # dedicated meeting ASR model selection
+    MEETING_LANGUAGE: str = "auto"  # auto-detect, or an ISO-639-1 Whisper code
     MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "deepseek/deepseek-v4-flash-0731"
     MEETING_AGENT_CORE: str = "pi"  # Direct is the fallback when no sidecar payload is present

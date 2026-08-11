@@ -20,6 +20,7 @@ from config import config
 from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingAgentCore,
+    MeetingLanguage,
     MeetingServerBind,
     RecordingRetentionMode,
     SettingsKey,
@@ -28,6 +29,7 @@ from services.settings import (
     resolve_meeting_agent_core,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
+    resolve_meeting_language,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
     resolve_meeting_whisper_model,
@@ -715,6 +717,19 @@ class SettingsDialog(QDialog):
         self.meeting_model_summary.setObjectName("meetingModelSummary")
         self.meeting_model_summary.setWordWrap(True)
         model_card_layout.addWidget(self.meeting_model_summary)
+
+        meeting_language_label = QLabel("Spoken language:")
+        model_card_layout.addWidget(meeting_language_label)
+        self.meeting_language_combo = NoWheelComboBox()
+        self.meeting_language_combo.setObjectName("meetingLanguageCombo")
+        for code, label in MeetingLanguage.CHOICES:
+            self.meeting_language_combo.addItem(label, code)
+        self.meeting_language_combo.setMinimumHeight(36)
+        self.meeting_language_combo.setToolTip(
+            "Choose the meeting language when known. This avoids unreliable "
+            "language detection on short chunks and strong accents."
+        )
+        model_card_layout.addWidget(self.meeting_language_combo)
         model_hint = QLabel(
             "Whisper and chat model selection live in Model Manager → Meeting."
         )
@@ -1276,6 +1291,10 @@ class SettingsDialog(QDialog):
         self._refresh_meeting_model_summary()
 
         core = resolve_meeting_agent_core(settings)
+        language_index = self.meeting_language_combo.findData(
+            resolve_meeting_language(settings)
+        )
+        self.meeting_language_combo.setCurrentIndex(max(0, language_index))
         if (core == MeetingAgentCore.PI
                 and not getattr(self, "_pi_payload_available", False)):
             core = MeetingAgentCore.DIRECT
@@ -1482,6 +1501,9 @@ class SettingsDialog(QDialog):
             # Model Manager is their single owner.
             settings[SettingsKey.MEETING_AGENT_CORE] = (
                 self.meeting_agent_core_combo.currentData()
+            )
+            settings[SettingsKey.MEETING_LANGUAGE] = (
+                self.meeting_language_combo.currentData()
             )
             settings[SettingsKey.MEETING_SERVER_BIND] = (
                 self.meeting_bind_combo.currentData()

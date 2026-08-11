@@ -127,6 +127,7 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
 
 def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                      asr_model: str = "auto",
+                     asr_language: str = "auto",
                      on_progress: Optional[Callable[[int, int], None]] = None) -> bool:
     """Headless finalization: transcribe remaining chunks and mark ended.
 
@@ -140,6 +141,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
         repository: A ``MeetingRepository``.
         meeting: The meeting dict to finalize.
         asr_model: Fallback model name when the meeting row records none.
+        asr_language: Spoken-language preference (``auto`` or ISO-639-1).
         on_progress: Optional ``cb(done_chunks, total_chunks)`` progress hint,
             invoked as chunk transcriptions complete.
 
@@ -182,7 +184,13 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     try:
         if total:
             from meeting.asr.engine import MeetingAsrEngine
-            engine = MeetingAsrEngine(model_name, meeting_id, repository)
+            language = (asr_language or "auto").strip().lower()
+            engine = MeetingAsrEngine(
+                model_name,
+                meeting_id,
+                repository,
+                language=None if language == "auto" else language,
+            )
             if not getattr(engine, "is_available", False):
                 logger.error("ASR model %r unavailable; cannot finalize %s",
                              model_name, meeting_id)

@@ -68,9 +68,12 @@ class FakeAsr:
 
     instances = []
 
-    def __init__(self, model, meeting_id, repository):
+    def __init__(self, model, meeting_id, repository, language=None,
+                 enable_revisions=True):
         self.model = model
         self.meeting_id = meeting_id
+        self.language = language
+        self.enable_revisions = enable_revisions
         self.is_available = True
         self.on_segments = None
         self.chunks = []
@@ -178,8 +181,8 @@ class FakeScheduler:
 
     instances = []
 
-    def __init__(self, engine, agent_core, base_interval_s=45.0,
-                 min_interval_s=30.0, max_interval_s=60.0, on_health=None):
+    def __init__(self, engine, agent_core, base_interval_s=15.0,
+                 min_interval_s=5.0, max_interval_s=20.0, on_health=None):
         self.engine = engine
         self.agent_core = agent_core
         self.on_health = on_health
@@ -401,7 +404,15 @@ class TestIntelligenceHealth:
 
         assert fakes.cores == []
         assert fakes.schedulers == []
+        assert fakes.asr[0].enable_revisions is False
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
+
+    def test_asr_receives_pinned_meeting_language(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=False, asr_language="en")
+
+        engine.start()
+
+        assert fakes.asr[0].language == "en"
 
     def test_scheduler_health_signal_is_wired_and_propagates(
             self, make_engine, fakes):
@@ -514,13 +525,46 @@ class TestEndLifecycle:
         assert fakes.schedulers[0].consolidations == 1
         assert fakes.cores[0].shutdowns == 1
 
+    def test_end_event_precedes_slow_consolidation(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        scheduler = fakes.schedulers[0]
+        consolidation_entered = threading.Event()
+        consolidation_release = threading.Event()
+
+        def slow_consolidation(timeout_s=120.0):
+            scheduler.consolidations += 1
+            consolidation_entered.set()
+            consolidation_release.wait(timeout=5.0)
+
+        scheduler.run_consolidation = slow_consolidation
+        try:
+            engine.end()
+            assert consolidation_entered.wait(timeout=5.0)
+
+            ended = events_of(engine, "ended")
+            assert ended, "end must be published before final insight polish"
+            assert engine.is_active() is False
+            assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+        finally:
+            consolidation_release.set()
+            engine._end_thread.join(timeout=10.0)
+
     def test_end_racing_start_waits_for_the_pipeline(self, make_engine, fakes):
         entered = threading.Event()
         release = threading.Event()
 
         class BlockingAsr(FakeAsr):
-            def __init__(self, model, meeting_id, repository):
-                super().__init__(model, meeting_id, repository)
+            def __init__(self, model, meeting_id, repository, language=None,
+                         enable_revisions=True):
+                super().__init__(
+                    model,
+                    meeting_id,
+                    repository,
+                    language=language,
+                    enable_revisions=enable_revisions,
+                )
                 entered.set()
                 release.wait(timeout=10.0)
 

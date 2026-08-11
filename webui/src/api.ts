@@ -130,8 +130,8 @@ export const api = {
     return `/api/export/${fmt}?${qs({ token, meeting_id: meetingId })}`;
   },
 
-  audioUrl(token: string, meetingId: string): string {
-    return `/api/meetings/${encodeURIComponent(meetingId)}/audio?${qs({ token })}`;
+  audioUrl(token: string, meetingId: string, revision?: string | number): string {
+    return `/api/meetings/${encodeURIComponent(meetingId)}/audio?${qs({ token, revision })}`;
   },
 
   async events(token: string, beforeSeq?: number): Promise<AuditEvent[]> {
