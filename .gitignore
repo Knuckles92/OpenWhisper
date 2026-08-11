@@ -13,6 +13,8 @@ meetings/
 # Downloaded corpora and generated dogfood benchmark outputs.
 benchmarks/meeting_mode/data/
 benchmarks/meeting_mode/results/
+# Local meeting-mode dogfood/eval workspace (audio, ffmpeg, DBs — can exceed GitHub limits).
+tmp_meeting_eval/
 
 # Local data and settings (auto-generated at runtime)
 openwhisper_settings.json
