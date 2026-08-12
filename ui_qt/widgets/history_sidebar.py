@@ -28,6 +28,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
 )
+from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +365,7 @@ class HistorySidebar(QWidget):
     entry_copied = pyqtSignal(str)  # Emits entry_id when copy requested
     entry_deleted = pyqtSignal(str)  # Emits entry_id when delete requested
     retranscribe_requested = pyqtSignal(str)  # Emits audio_path
+    past_meeting_selected = pyqtSignal(str)  # Emits meeting_id
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
@@ -378,8 +380,10 @@ class HistorySidebar(QWidget):
         self._is_expanded = False
         self._current_width = self.COLLAPSED_WIDTH
         self._refresh_pending = True
+        self._meeting_mode = False
 
         self._setup_ui()
+        self._setup_meetings_ui()
         self._apply_style()
 
         # Start collapsed - animate min/max width together via sidebarWidth
@@ -477,10 +481,22 @@ class HistorySidebar(QWidget):
         self.animation.setEasingCurve(SECTION_COLLAPSE_EASING)
         self.animation.finished.connect(self._on_animation_finished)
 
+    def _setup_meetings_ui(self):
+        """Create the alternate Meeting Mode sidebar page."""
+        self.meetings_content_widget = PastMeetingsPanel(self)
+        self.meetings_content_widget.setFixedWidth(self.EXPANDED_WIDTH)
+        self.meetings_content_widget.meeting_selected.connect(
+            self.past_meeting_selected.emit
+        )
+        self.meetings_content_widget.hide()
+
     def resizeEvent(self, event):
-        """Pin the fixed-width content to the left edge at full height."""
+        """Pin both fixed-width pages to the left edge at full height."""
         super().resizeEvent(event)
-        self.content_widget.setGeometry(0, 0, self.EXPANDED_WIDTH, self.height())
+        geometry = (0, 0, self.EXPANDED_WIDTH, self.height())
+        self.content_widget.setGeometry(*geometry)
+        if hasattr(self, "meetings_content_widget"):
+            self.meetings_content_widget.setGeometry(*geometry)
 
     def _get_sidebar_width(self):
         """Get the current sidebar width."""
@@ -624,19 +640,38 @@ class HistorySidebar(QWidget):
         else:
             self.expand()
 
+    def set_meeting_mode(self, enabled: bool) -> None:
+        """Switch between recorder history and meeting history content.
+
+        Args:
+            enabled: True shows Past Meetings; False shows recorder History.
+        """
+        enabled = bool(enabled)
+        if enabled == self._meeting_mode:
+            return
+        self._meeting_mode = enabled
+        self.content_widget.setVisible(not enabled)
+        self.meetings_content_widget.setVisible(enabled)
+        self._refresh_pending = True
+        if self._is_expanded:
+            self.refresh()
+
     @property
     def is_expanded(self) -> bool:
         """Return whether sidebar is expanded."""
         return self._is_expanded
 
     def refresh(self):
-        """Refresh sidebar content (deferred while collapsed)."""
+        """Refresh the active sidebar page (deferred while collapsed)."""
         if not self._is_expanded:
             self._refresh_pending = True
             return
 
         self._refresh_pending = False
-        self._load_history()
+        if self._meeting_mode:
+            self.meetings_content_widget.refresh()
+        else:
+            self._load_history()
 
     @staticmethod
     def _clear_layout(layout: QVBoxLayout):
@@ -944,6 +979,7 @@ class HistoryEdgeTab(QPushButton):
         self.setMinimumHeight(80)
         self._is_expanded = False
         self._shortcut_hint = ""
+        self._panel_name = "History"
         self._update_icon()
         self._apply_style()
 
@@ -961,15 +997,20 @@ class HistoryEdgeTab(QPushButton):
         self._shortcut_hint = f" ({shortcut})" if shortcut else ""
         self._update_icon()
 
+    def set_panel_name(self, name: str) -> None:
+        """Set the contextual panel name used by the edge tooltip."""
+        self._panel_name = name
+        self._update_icon()
+
     def _update_icon(self):
         """Update the icon based on expanded state."""
         # Use arrow characters to indicate direction
         if self._is_expanded:
             self.setText("›")  # Arrow pointing right (to collapse)
-            self.setToolTip(f"Close History{self._shortcut_hint}")
+            self.setToolTip(f"Close {self._panel_name}{self._shortcut_hint}")
         else:
             self.setText("‹")  # Arrow pointing left (to expand)
-            self.setToolTip(f"Open History{self._shortcut_hint}")
+            self.setToolTip(f"Open {self._panel_name}{self._shortcut_hint}")
 
     def _apply_style(self):
         """Apply custom styling."""

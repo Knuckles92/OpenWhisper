@@ -201,9 +201,28 @@ class TestHostOnlyAuthz:
         r = tc.get("/api/meetings", params={"token": HOST_TOKEN})
         assert r.status_code == 200
         assert r.json()["meetings"][0]["id"] == "m_test"
+        assert r.json()["meetings"][0]["display_title"] == "Auth Test"
         # Tokens must not leak in public meeting payloads
         assert "host_token" not in r.json()["meetings"][0]
         assert "guest_token" not in r.json()["meetings"][0]
+
+    def test_meeting_list_uses_topic_when_no_title_was_set(self, client):
+        tc, _, repo = client
+        repo._meetings = [{
+            "id": "m_history",
+            "title": "",
+            "status": "ended",
+            "started_at": "2026-01-02T00:00:00",
+            "state_json": '{"topic":{"current":"Quarterly roadmap"}}',
+        }]
+
+        response = tc.get("/api/meetings", params={"token": HOST_TOKEN})
+
+        assert response.status_code == 200
+        meeting = response.json()["meetings"][0]
+        assert meeting["title"] == ""
+        assert meeting["display_title"] == "Quarterly roadmap"
+        assert "state_json" not in meeting
 
     def test_guest_cannot_end_meeting(self, client):
         tc, engine, _ = client

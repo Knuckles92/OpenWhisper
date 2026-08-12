@@ -75,11 +75,33 @@ def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
         raise HTTPException(status_code=400, detail="invalid transcript cursor") from exc
 
 
+def _meeting_display_title(meeting: Dict[str, Any]) -> str:
+    """Return the best persisted label available for a history row."""
+    title = str(meeting.get("title") or "").strip()
+    if title:
+        return title
+    try:
+        state = json.loads(meeting.get("state_json") or "{}")
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(state, dict):
+        return ""
+    state_title = str(state.get("title") or "").strip()
+    if state_title:
+        return state_title
+    topic = state.get("topic")
+    if isinstance(topic, dict):
+        return str(topic.get("current") or "").strip()
+    return ""
+
+
 def _public_meeting(meeting: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Strip a repository meeting dict down to client-safe fields."""
     if not meeting:
         return {}
-    return {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
+    public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
+    public["display_title"] = _meeting_display_title(meeting)
+    return public
 
 
 def _webui_dist_dir() -> str:

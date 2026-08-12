@@ -1128,7 +1128,10 @@ a {
 }
 
 .history-item-title {
-  font-weight: 500;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-item-meta {

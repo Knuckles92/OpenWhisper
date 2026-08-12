@@ -216,6 +216,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_open_dashboard = (
             self.meeting_runtime.open_dashboard
         )
+        self.ui_controller.on_meeting_open_past = (
+            self.meeting_runtime.open_past_meeting
+        )
         self.ui_controller.on_meeting_copy_guest_link = (
             self.meeting_runtime.copy_guest_link
         )

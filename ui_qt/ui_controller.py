@@ -79,6 +79,7 @@ class UIController(QObject):
         self.on_meeting_resume: Optional[Callable] = None
         self.on_meeting_cancel: Optional[Callable] = None
         self.on_meeting_open_dashboard: Optional[Callable] = None
+        self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
         self.on_meeting_copy_guest_link: Optional[Callable] = None
         self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
@@ -110,6 +111,9 @@ class UIController(QObject):
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
         self.main_window.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
+        )
+        self.main_window.past_meeting_requested.connect(
+            self._on_past_meeting_requested
         )
 
         # Meeting Mode tab signals
@@ -726,6 +730,11 @@ class UIController(QObject):
         if self.on_meeting_open_dashboard:
             self.on_meeting_open_dashboard()
 
+    def _on_past_meeting_requested(self, meeting_id: str) -> None:
+        """Open a persisted meeting selected from the Meeting Mode sidebar."""
+        if self.on_meeting_open_past:
+            self.on_meeting_open_past(meeting_id)
+
     def _on_tray_meeting_toggle(self):
         """Start or end a meeting from the system tray menu."""
         if self._meeting_active:
@@ -745,6 +754,12 @@ class UIController(QObject):
         if not isinstance(payload, dict):
             return
         self.main_window.meeting_mode_tab.set_meeting_state(payload)
+        if (
+            payload.get("active") is False
+            and str(payload.get("status") or "")
+            in {"ended", "failed", "needs_recovery", "canceled"}
+        ):
+            self.main_window.refresh_past_meetings()
         if "active" in payload:
             self._meeting_active = bool(payload["active"])
             self.tray_manager.set_meeting_active(self._meeting_active)

@@ -23,6 +23,7 @@ from ui_qt.widgets.history_sidebar import (
     HistoryEdgeTab,
     HistoryItemWidget,
 )
+from ui_qt.widgets.past_meetings_panel import PastMeetingItem, PastMeetingsPanel
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.model_row_widget import ModelRowWidget
@@ -53,6 +54,8 @@ __all__ = [
     "HistorySidebar",
     "HistoryEdgeTab",
     "HistoryItemWidget",
+    "PastMeetingItem",
+    "PastMeetingsPanel",
     "TranscriptionStatsWidget",
     "CollapsibleSectionToggle",
     "LocalEngineControls",

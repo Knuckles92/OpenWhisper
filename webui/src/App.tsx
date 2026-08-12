@@ -30,11 +30,16 @@ export interface DashboardProps {
 function MeetingDashboard({ token, role, guestName, initialSession }: DashboardProps) {
   const [ui, dispatch] = useReducer(meetingReducer, initialUiState);
   const socketRef = useRef<MeetingSocket | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const isHost = role === 'host';
+  const initialHistoryMeetingId = useMemo(
+    () => new URLSearchParams(location.search).get('history'),
+    [],
+  );
+  const [showHistory, setShowHistory] = useState(
+    isHost && Boolean(initialHistoryMeetingId),
+  );
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
-
-  const isHost = role === 'host';
 
   useEffect(() => {
     dispatch({
@@ -145,7 +150,11 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
 
       {showHistory && isHost ? (
         <div className="app-main full-bleed">
-          <HistoryPane token={token} onClose={() => setShowHistory(false)} />
+          <HistoryPane
+            token={token}
+            initialMeetingId={initialHistoryMeetingId}
+            onClose={() => setShowHistory(false)}
+          />
         </div>
       ) : (
         <div className="app-main">

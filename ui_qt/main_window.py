@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
     tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
     meeting_dashboard_requested = pyqtSignal()
+    past_meeting_requested = pyqtSignal(str)  # meeting_id
 
     def __init__(self):
         """Initialize the main window."""
@@ -441,6 +442,9 @@ class MainWindow(QMainWindow):
         self.history_sidebar.entry_copied.connect(self._on_history_entry_copied)
         self.history_sidebar.entry_deleted.connect(self._on_history_entry_deleted)
         self.history_sidebar.retranscribe_requested.connect(self._on_retranscribe_requested)
+        self.history_sidebar.past_meeting_selected.connect(
+            self.past_meeting_requested.emit
+        )
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         root_layout.addWidget(self.history_sidebar)
 
@@ -598,8 +602,13 @@ class MainWindow(QMainWindow):
 
         # View menu
         view_menu = menubar.addMenu("View")
-        history_action = view_menu.addAction("History", self.toggle_history)
-        history_action.setShortcut(QKeySequence(self.HISTORY_SHORTCUT))
+        sidebar_name = (
+            "Past Meetings"
+            if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE
+            else "History"
+        )
+        self.sidebar_action = view_menu.addAction(sidebar_name, self.toggle_history)
+        self.sidebar_action.setShortcut(QKeySequence(self.HISTORY_SHORTCUT))
         compact_action = view_menu.addAction("Compact Mode", self.toggle_compact_mode)
         compact_action.setShortcut(QKeySequence(self.COMPACT_SHORTCUT))
         view_menu.addSeparator()
@@ -637,6 +646,13 @@ class MainWindow(QMainWindow):
 
         if self._compact_mode and index != TabbedContentWidget.TAB_QUICK_RECORD:
             self.set_compact_mode(False)
+
+        meeting_mode = index == TabbedContentWidget.TAB_MEETING_MODE
+        self.history_sidebar.set_meeting_mode(meeting_mode)
+        panel_name = "Past Meetings" if meeting_mode else "History"
+        self.history_edge_tab.set_panel_name(panel_name)
+        if hasattr(self, "sidebar_action"):
+            self.sidebar_action.setText(panel_name)
 
         self._schedule_history_sidebar_refresh()
 
@@ -1084,8 +1100,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().quit()
 
     def toggle_history(self):
-        """Toggle the history sidebar visibility."""
-        logger.info("Toggling history sidebar")
+        """Toggle the sidebar for the currently selected workspace mode."""
+        logger.info("Toggling contextual sidebar")
 
         if self._compact_mode:
             self.set_compact_mode(False)
@@ -1158,8 +1174,13 @@ class MainWindow(QMainWindow):
         self._resize_animation.start()
 
     def refresh_history(self):
-        """Refresh the history sidebar content."""
+        """Refresh the currently active sidebar page."""
         self.history_sidebar.refresh()
+
+    def refresh_past_meetings(self) -> None:
+        """Refresh the currently visible Past Meetings page, when selected."""
+        if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:
+            self.history_sidebar.refresh()
 
     def _on_history_entry_selected(self, entry_id: str):
         """Open the history entry viewer dialog for the selected tile."""

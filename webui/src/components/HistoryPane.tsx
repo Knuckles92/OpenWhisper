@@ -8,12 +8,13 @@ import EvidenceChip from './EvidenceChip';
 
 interface HistoryPaneProps {
   token: string;
+  initialMeetingId?: string | null;
   onClose: () => void;
 }
 
-export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
+export default function HistoryPane({ token, initialMeetingId, onClose }: HistoryPaneProps) {
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialMeetingId ?? null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -223,7 +224,14 @@ export default function HistoryPane({ token, onClose }: HistoryPaneProps) {
                   className={`history-item${selectedId === m.id ? ' active' : ''}`}
                   onClick={() => setSelectedId(m.id)}
                 >
-                  <div className="history-item-title">{String(m.title ?? 'Untitled')}</div>
+                  {(m.display_title || m.title) && (
+                    <div
+                      className="history-item-title"
+                      title={String(m.display_title || m.title)}
+                    >
+                      {String(m.display_title || m.title)}
+                    </div>
+                  )}
                   <div className="history-item-meta">
                     {m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'} ·{' '}
                     {String(m.status ?? '')}

@@ -117,6 +117,7 @@ export interface Segment {
 export interface MeetingInfo {
   id: string;
   title: string;
+  display_title?: string;
   started_at: string | null;
   status: string;
   [key: string]: unknown;

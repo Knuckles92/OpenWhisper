@@ -67,6 +67,24 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         )
         self.assertFalse(hasattr(self.window, "meeting_panel"))
 
+    def test_sidebar_switches_to_past_meetings_for_meeting_mode(self):
+        """Meeting Mode replaces recorder history with Past Meetings."""
+        self.assertFalse(self.window.history_sidebar.content_widget.isHidden())
+        self.assertTrue(
+            self.window.history_sidebar.meetings_content_widget.isHidden()
+        )
+
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_MEETING_MODE
+        )
+
+        self.assertTrue(self.window.history_sidebar.content_widget.isHidden())
+        self.assertFalse(
+            self.window.history_sidebar.meetings_content_widget.isHidden()
+        )
+        self.assertEqual(self.window.sidebar_action.text(), "Past Meetings")
+        self.assertIn("Past Meetings", self.window.history_edge_tab.toolTip())
+
     def test_compact_mode_does_not_require_footer_meeting_strip(self):
         """Compact mode still works without a footer meeting strip."""
         self.window.set_compact_mode(True)

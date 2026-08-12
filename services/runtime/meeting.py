@@ -13,7 +13,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from config import config
 from services.components import meeting_agent_payload_dir, speaker_model_path
@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 #: final consolidation round-trip) and cleanup runs after the window and tray
 #: are gone, so a longer wait would only hang an invisible process.
 SHUTDOWN_JOIN_TIMEOUT_S = 5.0
+
+
+def _with_history_target(url: str, meeting_id: str) -> str:
+    """Add a past-meeting deep link without changing the capability path."""
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["history"] = meeting_id
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
 
 
 def redact_meeting_url(url: Optional[str]) -> str:
@@ -81,6 +91,8 @@ class MeetingRuntime:
         self._repo = None
         self._host_url: Optional[str] = None
         self._guest_url: Optional[str] = None
+        self._archive_dashboard = None
+        self._archive_starting = False
         # Claimed by start_meeting for the whole start attempt (including the
         # consent round-trip), before the engine exists to report itself.
         self._starting = False
@@ -266,6 +278,7 @@ class MeetingRuntime:
         try:
             from meeting.engine import MeetingEngine
 
+            self._shutdown_archive_dashboard()
             self._shutdown_engine()  # drop a previous (ended) session's server
             options = self._build_options(cloud)
             engine = MeetingEngine(options, repository=self._repository())
@@ -433,6 +446,102 @@ class MeetingRuntime:
         # host authority over the meeting.
         logger.info(f"Opening meeting dashboard: {redact_meeting_url(url)}")
         webbrowser.open(url)
+
+    def open_past_meeting(self, meeting_id: str) -> None:
+        """Open one persisted meeting in the host web dashboard.
+
+        Reuses the live/most-recent meeting server when available. After an
+        application restart, a lightweight archive dashboard server is started
+        without initializing capture, ASR, diarization, or meeting intelligence.
+
+        Args:
+            meeting_id: Persisted meeting session id selected in the sidebar.
+        """
+        target_id = str(meeting_id or "").strip()
+        if not target_id:
+            return
+        with self._lock:
+            if self._archive_starting:
+                self.controller.meeting_status_update.emit(
+                    "Opening a past meeting..."
+                )
+                return
+            self._archive_starting = True
+        threading.Thread(
+            target=self._open_past_meeting_worker,
+            args=(target_id,),
+            name="meeting-history-dashboard",
+            daemon=True,
+        ).start()
+
+    def _open_past_meeting_worker(self, meeting_id: str) -> None:
+        """Resolve or start a host dashboard server and open the history view."""
+        try:
+            repository = self._repository()
+            meeting = repository.get_meeting(meeting_id)
+            if meeting is None:
+                self.controller.meeting_error.emit("That meeting no longer exists")
+                return
+
+            url = self._host_url
+            archive = self._archive_dashboard
+            if not url and archive is not None and archive.is_running():
+                url = archive.host_url
+
+            if not url:
+                if self.is_active:
+                    self.controller.meeting_error.emit(
+                        "The live meeting dashboard is unavailable"
+                    )
+                    return
+                self._shutdown_engine()
+                self._shutdown_archive_dashboard()
+
+                from meeting.web.archive import ArchivedMeetingDashboard
+                from meeting.web.server import MeetingWebServer
+
+                settings = settings_manager.load_all_settings()
+                archive = ArchivedMeetingDashboard(
+                    repository,
+                    meeting,
+                    spool_root=config.MEETINGS_FOLDER,
+                    llm_provider=resolve_meeting_llm_provider(settings),
+                    llm_model=resolve_meeting_llm_model(settings),
+                    agent_core_kind=resolve_meeting_agent_core(settings),
+                    sidecar_payload_dir=meeting_agent_payload_dir(),
+                )
+                server = MeetingWebServer(
+                    archive,
+                    repository,
+                    bind=resolve_meeting_server_bind(settings),
+                    port=resolve_meeting_server_port(settings),
+                )
+                server.start()
+                archive.attach_server(server)
+                self._archive_dashboard = archive
+                url = server.host_url
+
+            if not url:
+                self.controller.meeting_error.emit(
+                    "Could not create a meeting dashboard link"
+                )
+                return
+
+            history_url = _with_history_target(url, meeting_id)
+            logger.info(
+                "Opening past meeting dashboard: %s",
+                redact_meeting_url(history_url),
+            )
+            self.controller.meeting_status_update.emit("Opening past meeting")
+            webbrowser.open(history_url)
+        except Exception as exc:
+            logger.error("Failed to open past meeting", exc_info=True)
+            self.controller.meeting_error.emit(
+                f"Could not open the past meeting: {exc}"
+            )
+        finally:
+            with self._lock:
+                self._archive_starting = False
 
     def copy_guest_link(self) -> None:
         """Announce the guest URL for clipboard copy (UI callback target).
@@ -630,6 +739,16 @@ class MeetingRuntime:
     # Teardown
     # ------------------------------------------------------------------
 
+    def _shutdown_archive_dashboard(self) -> None:
+        """Stop and discard the lightweight archived-meeting dashboard."""
+        archive, self._archive_dashboard = self._archive_dashboard, None
+        if archive is None:
+            return
+        try:
+            archive.shutdown()
+        except Exception as exc:
+            logger.debug("Error shutting down archive dashboard: %s", exc)
+
     def _shutdown_engine(self, timeout: Optional[float] = None) -> None:
         """Shut down and drop the current engine, if any.
 
@@ -683,5 +802,6 @@ class MeetingRuntime:
         for minutes. The wait is bounded instead — the meeting is already
         persisted, so only the tail of a consolidation pass is at risk.
         """
+        self._shutdown_archive_dashboard()
         self._shutdown_engine(timeout=SHUTDOWN_JOIN_TIMEOUT_S)
         self.controller.meeting_active = False
