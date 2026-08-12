@@ -79,6 +79,19 @@ export interface TopicState {
   history: TopicRevision[];
 }
 
+export type FinalizationStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'disabled'
+  | 'unavailable'
+  | 'failed';
+
+export interface FinalizationState {
+  status: FinalizationStatus;
+  message: string;
+}
+
 export interface MeetingStateDoc {
   meeting_id: string;
   seq: number;
@@ -98,6 +111,8 @@ export interface MeetingStateDoc {
   participants: Record<string, Participant>;
   cards: Record<CardKey, CardItem[]>;
   questions: Question[];
+  /** Optional post-meeting cloud consolidation outcome. */
+  finalization?: FinalizationState | null;
 }
 
 export interface Segment {
@@ -266,6 +281,7 @@ export interface StatusMsg {
   intelligence_online?: boolean;
   diarization_available?: boolean;
   capture?: MeetingStateDoc['capture'];
+  finalization?: FinalizationState | null;
 }
 
 export interface ActionResultMsg {

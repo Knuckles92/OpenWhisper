@@ -152,6 +152,16 @@ class MeetingStateStore:
             for key, value in fields.items():
                 if not hasattr(candidate, key):
                     raise AttributeError(key)
+                if key == "finalization":
+                    from meeting.state.schema import FinalizationState
+
+                    value = FinalizationState.coerce(
+                        value,
+                        cloud_enabled=candidate.cloud_enabled,
+                        meeting_status=(
+                            fields.get("status", candidate.status)
+                        ),
+                    )
                 setattr(candidate, key, value)
             if self._repository is not None:
                 try:

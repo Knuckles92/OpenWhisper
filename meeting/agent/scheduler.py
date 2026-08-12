@@ -15,11 +15,29 @@ import re
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from meeting.interfaces import AgentResult, CheckpointPayload
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConsolidationOutcome:
+    """Structured result of an end-of-meeting consolidation pass.
+
+    Attributes:
+        status: Terminal finalization status (``completed``, ``unavailable``,
+            or ``failed``). Never ``running``/``pending``.
+        message: Human-readable detail for persistent UI feedback.
+    """
+    status: str
+    message: str = ""
+
+    def to_dict(self) -> Dict[str, str]:
+        """Serialize for status payloads and tests."""
+        return {"status": self.status, "message": self.message}
 
 #: How often the worker loop re-evaluates its firing conditions.
 _TICK_S = 1.0
@@ -506,15 +524,34 @@ class CheckpointScheduler:
     # Consolidation
     # ------------------------------------------------------------------
 
-    def run_consolidation(self, timeout_s: float = 120.0) -> None:
+    def _revoke_agent_writes(self) -> None:
+        """Close the engine agent-write gate before a terminal consolidation."""
+        revoke = getattr(self._engine, "revoke_agent_writes", None)
+        if callable(revoke):
+            try:
+                revoke()
+            except Exception:
+                logger.exception("Engine revoke_agent_writes raised")
+
+    def run_consolidation(self, timeout_s: float = 120.0) -> ConsolidationOutcome:
         """Run the blocking end-of-meeting consolidation pass.
 
         Stops periodic firing, then runs one ``consolidate`` call with the
         complete transcript, bounded by ``timeout_s`` (the agent is canceled
-        on timeout).
+        on timeout). Deterministic state repair still runs whenever a
+        transcript is available, including agent failure paths; repair
+        failures never overwrite the primary consolidation outcome.
+
+        Agent write authority stays open only while the consolidation worker
+        is still the active writer. Every terminal skip/timeout/outcome path
+        revokes authority before returning so a late canceled worker cannot
+        mutate durable state afterward.
 
         Args:
             timeout_s: Maximum seconds to wait for the consolidation pass.
+
+        Returns:
+            Structured terminal outcome for UI/finalization persistence.
         """
         self._consolidating = True
         self.stop()
@@ -541,20 +578,43 @@ class CheckpointScheduler:
                     "Checkpoint worker did not stop; skipping the consolidation "
                     "pass to avoid two concurrent agent runs"
                 )
-                return
+                self._revoke_agent_writes()
+                return ConsolidationOutcome(
+                    status="failed",
+                    message=(
+                        "Final insights were skipped because a previous "
+                        "checkpoint was still running."
+                    ),
+                )
 
         if not self._agent.is_healthy():
             logger.warning("Agent core unhealthy; skipping consolidation pass")
-            return
+            self._revoke_agent_writes()
+            return ConsolidationOutcome(
+                status="unavailable",
+                message=(
+                    "Meeting intelligence is offline; final cloud insights "
+                    "could not run."
+                ),
+            )
+        segments: List[Dict[str, Any]] = []
         try:
             segments = self._engine.get_transcript()
-        except Exception:
+        except Exception as exc:
             logger.exception("Consolidation transcript fetch failed")
-            return
+            self._revoke_agent_writes()
+            return ConsolidationOutcome(
+                status="failed",
+                message=f"Could not load the transcript for final insights: {exc}",
+            )
         payload = self._build_payload(segments, is_consolidation=True)
         if payload is None:
             logger.warning("No state store available; skipping consolidation")
-            return
+            self._revoke_agent_writes()
+            return ConsolidationOutcome(
+                status="failed",
+                message="Meeting state was unavailable for final insights.",
+            )
 
         logger.info(
             "Running consolidation %s over %d segments (timeout %.0fs)",
@@ -578,6 +638,9 @@ class CheckpointScheduler:
             logger.warning(
                 "Consolidation timed out after %.0fs; canceling", timeout_s,
             )
+            # Revoke before cancel so a worker that ignores cancel cannot land
+            # late mutations after the timeout decision.
+            self._revoke_agent_writes()
             try:
                 self._agent.cancel()
             except Exception:
@@ -587,17 +650,37 @@ class CheckpointScheduler:
         result = result_box.get("result")
         if result is None:
             logger.warning("Consolidation produced no result (timed out)")
+            outcome = ConsolidationOutcome(
+                status="failed",
+                message=(
+                    f"Final insights timed out after {int(timeout_s)}s."
+                ),
+            )
         elif result.ok:
             applied = sum(1 for r in result.op_results if r.ok)
             logger.info(
                 "Consolidation done: %d/%d ops applied",
                 applied, len(result.op_results),
             )
+            outcome = ConsolidationOutcome(
+                status="completed",
+                message="Final cloud insights are ready.",
+            )
         else:
-            logger.warning("Consolidation failed: %s", result.error)
+            error = result.error or "consolidation failed"
+            logger.warning("Consolidation failed: %s", error)
+            outcome = ConsolidationOutcome(
+                status="failed",
+                message=f"Final cloud insights failed: {error}",
+            )
+
+        # Close the write gate before repair/return so only this pass's
+        # already-applied ops remain authoritative.
+        self._revoke_agent_writes()
 
         # Even when the agent fails or skips timeline, promote evidenced key
         # points (or sample the transcript) so the durable record has beats.
+        # Repair errors must not replace the primary consolidation outcome.
         try:
             from meeting.state.repair import repair_meeting_state
 
@@ -606,3 +689,4 @@ class CheckpointScheduler:
                 repair_meeting_state(store, segments)
         except Exception:
             logger.exception("State repair after consolidation failed")
+        return outcome

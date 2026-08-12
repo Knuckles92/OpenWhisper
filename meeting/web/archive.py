@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from meeting.interfaces import OpResult
-from meeting.state.schema import MeetingState
+from meeting.state.schema import FinalizationState, MeetingState
 from meeting.state.store import MeetingStateStore
 from meeting.web.auth import generate_token_pair
 
@@ -66,6 +66,12 @@ class ArchivedMeetingDashboard:
         payload["status"] = str(meeting.get("status") or payload.get("status") or "ended")
         payload["cloud_enabled"] = bool(meeting.get("cloud_enabled", False))
         payload.setdefault("seq", int(meeting.get("state_seq") or 0))
+        # Historical dashboards must never claim consolidation is still in flight.
+        payload["finalization"] = FinalizationState.normalize_historical(
+            payload.get("finalization"),
+            cloud_enabled=payload["cloud_enabled"],
+            meeting_status=payload["status"],
+        ).to_dict()
         return MeetingState.from_dict(payload)
 
     def attach_server(self, server: Any) -> None:

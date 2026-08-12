@@ -852,3 +852,102 @@ class TestPinnedSpeakerProtection:
         ])[0]
         assert corrected.ok
         assert repo.segments["sg_known"]["speaker_participant_id"] == dana.target_id
+
+
+class TestFinalizationState:
+    """Persisted finalization contract: statuses, legacy, and malformed data."""
+
+    def test_round_trip_every_status(self):
+        from meeting.state.schema import FINALIZATION_STATUSES, FinalizationState, MeetingState
+
+        for status in FINALIZATION_STATUSES:
+            state = MeetingState(
+                meeting_id="m_fin",
+                cloud_enabled=True,
+                finalization=FinalizationState(status=status, message=f"msg-{status}"),
+            )
+            rebuilt = MeetingState.from_dict(state.to_dict())
+            assert rebuilt.finalization.status == status
+            assert rebuilt.finalization.message == f"msg-{status}"
+
+    def test_legacy_payload_inference(self):
+        from meeting.state.schema import MeetingState
+
+        disabled = MeetingState.from_dict({
+            "meeting_id": "m1", "cloud_enabled": False, "status": "ended",
+        })
+        assert disabled.finalization.status == "disabled"
+
+        live = MeetingState.from_dict({
+            "meeting_id": "m2", "cloud_enabled": True, "status": "active",
+        })
+        assert live.finalization.status == "pending"
+
+        terminal = MeetingState.from_dict({
+            "meeting_id": "m3", "cloud_enabled": True, "status": "ended",
+        })
+        assert terminal.finalization.status == "unavailable"
+
+    def test_malformed_payload_falls_back(self):
+        from meeting.state.schema import MeetingState
+
+        bad_status = MeetingState.from_dict({
+            "meeting_id": "m4",
+            "cloud_enabled": True,
+            "status": "active",
+            "finalization": {"status": "nope", "message": "x"},
+        })
+        assert bad_status.finalization.status == "pending"
+
+        not_a_dict = MeetingState.from_dict({
+            "meeting_id": "m5",
+            "cloud_enabled": False,
+            "status": "ended",
+            "finalization": "broken",
+        })
+        assert not_a_dict.finalization.status == "disabled"
+
+    def test_normalize_historical_interrupted_terminal(self):
+        from meeting.state.schema import FinalizationState
+
+        running = FinalizationState.normalize_historical(
+            {"status": "running", "message": "Preparing…"},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert running.status == "failed"
+        assert "interrupted" in running.message.lower()
+
+        pending = FinalizationState.normalize_historical(
+            {"status": "pending", "message": ""},
+            cloud_enabled=True,
+            meeting_status="needs_recovery",
+        )
+        assert pending.status == "unavailable"
+        assert "not recorded" in pending.message.lower()
+
+        cloud_off = FinalizationState.normalize_historical(
+            {"status": "running", "message": "…"},
+            cloud_enabled=False,
+            meeting_status="ended",
+        )
+        assert cloud_off.status == "disabled"
+
+    def test_normalize_historical_preserves_live_and_terminal(self):
+        from meeting.state.schema import FinalizationState
+
+        live_running = FinalizationState.normalize_historical(
+            {"status": "running", "message": "Preparing…"},
+            cloud_enabled=True,
+            meeting_status="ending",
+        )
+        assert live_running.status == "running"
+        assert live_running.message == "Preparing…"
+
+        completed = FinalizationState.normalize_historical(
+            {"status": "completed", "message": "Done."},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert completed.status == "completed"
+        assert completed.message == "Done."

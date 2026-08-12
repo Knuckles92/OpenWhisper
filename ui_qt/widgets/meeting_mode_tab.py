@@ -2,9 +2,11 @@
 
 Idle state shows a Start Meeting control plus the cloud-intelligence toggle;
 during a meeting it becomes a status card with an elapsed timer and the
-pause/end/dashboard/guest-link controls. All user intent leaves through
-signals; state flows back in via ``set_meeting_state`` payload dicts (partial
-updates — absent keys leave the current state untouched).
+pause/end/dashboard/guest-link controls. After capture ends, a persistent
+finalization card reports running/completed/disabled/unavailable/failed cloud
+outcomes without blocking other tabs. All user intent leaves through signals;
+state flows back in via ``set_meeting_state`` payload dicts (partial updates —
+absent keys leave the current state untouched).
 """
 import logging
 import time
@@ -16,6 +18,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
@@ -46,13 +49,15 @@ class MeetingModeTab(QWidget):
         self._paused = False
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
+        self._finalization: Optional[Dict[str, str]] = None
+        self._has_dashboard = False
 
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._refresh_elapsed)
 
         self._setup_ui()
-        self._apply_active_state()
+        self._apply_layout_state()
 
     def _setup_ui(self):
         """Build the full-tab layout."""
@@ -160,6 +165,44 @@ class MeetingModeTab(QWidget):
 
         content_layout.addWidget(self.session_card)
 
+        # Post-meeting finalization / result card
+        self.finalization_card = Card()
+        self.finalization_card.setObjectName("meetingFinalizationCard")
+        self.finalization_card.setMinimumHeight(0)
+        self.finalization_card.setProperty("finalizationTone", "neutral")
+
+        self.finalization_title = QLabel("Final insights")
+        self.finalization_title.setObjectName("meetingFinalizationTitle")
+        self.finalization_title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        self.finalization_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.finalization_card.layout.addWidget(self.finalization_title)
+
+        self.finalization_message = QLabel("")
+        self.finalization_message.setObjectName("meetingFinalizationMessage")
+        self.finalization_message.setWordWrap(True)
+        self.finalization_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.finalization_card.layout.addWidget(self.finalization_message)
+
+        self.finalization_progress = QProgressBar()
+        self.finalization_progress.setObjectName("meetingFinalizationProgress")
+        self.finalization_progress.setTextVisible(False)
+        self.finalization_progress.setMaximumHeight(6)
+        self.finalization_progress.hide()
+        self.finalization_card.layout.addWidget(self.finalization_progress)
+
+        self.finalization_dashboard_button = Button("Open dashboard")
+        self.finalization_dashboard_button.setObjectName(
+            "meetingFinalizationDashboardButton"
+        )
+        self.finalization_dashboard_button.clicked.connect(
+            self.open_dashboard_requested
+        )
+        self.finalization_card.layout.addWidget(
+            self.finalization_dashboard_button,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        content_layout.addWidget(self.finalization_card)
+
         self.cloud_checkbox = QCheckBox("Cloud intelligence")
         self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
         self.cloud_checkbox.setChecked(
@@ -197,7 +240,9 @@ class MeetingModeTab(QWidget):
         Args:
             payload: Dict with any of ``active`` (bool), ``paused`` (bool),
                 ``status`` (str), ``cloud_enabled`` (bool), ``elapsed_s``
-                (float; resets the elapsed timer base).
+                (float; resets the elapsed timer base), ``finalization``
+                (``{status, message}`` or ``None`` to clear), and
+                ``dashboard_available`` (bool).
         """
         if not isinstance(payload, dict):
             return
@@ -219,10 +264,22 @@ class MeetingModeTab(QWidget):
             self._set_paused(bool(payload["paused"]))
 
         if "status" in payload:
-            self.set_status_text(str(payload["status"]).capitalize())
+            status = str(payload["status"])
+            self.set_status_text(status.capitalize())
+            # A new meeting start clears any previous finalization result.
+            if status == "starting":
+                self._finalization = None
+
+        if "dashboard_available" in payload:
+            self._has_dashboard = bool(payload["dashboard_available"])
+
+        if "finalization" in payload:
+            self._set_finalization(payload.get("finalization"))
 
         if "active" in payload:
             self._set_active(bool(payload["active"]))
+        else:
+            self._apply_layout_state()
 
     def set_status_text(self, text: str) -> None:
         """Update the status pill label.
@@ -233,12 +290,45 @@ class MeetingModeTab(QWidget):
         if text:
             self.status_pill.setText(text)
 
+    def set_dashboard_available(self, available: bool) -> None:
+        """Enable Open Dashboard when a retained URL exists.
+
+        Args:
+            available: True when the runtime still holds a dashboard URL.
+        """
+        self._has_dashboard = bool(available)
+        self._apply_layout_state()
+
+    def _set_finalization(self, value: Any) -> None:
+        """Store a finalization payload or clear it.
+
+        Args:
+            value: ``None`` clears the card; a mapping keeps ``status`` /
+                ``message`` for the persistent result view.
+        """
+        if value is None:
+            self._finalization = None
+            return
+        if not isinstance(value, dict):
+            return
+        status = str(value.get("status") or "").strip()
+        if not status:
+            self._finalization = None
+            return
+        self._finalization = {
+            "status": status,
+            "message": str(value.get("message") or ""),
+        }
+
     def _set_active(self, active: bool) -> None:
         """Switch between the idle and in-meeting layouts."""
         if active == self._active:
+            self._apply_layout_state()
             return
         self._active = active
         if active:
+            # Starting a live session replaces any prior finalization result.
+            self._finalization = None
             if self._running_since is None:
                 self._elapsed_base_s = 0.0
                 self._running_since = time.monotonic()
@@ -250,7 +340,7 @@ class MeetingModeTab(QWidget):
             self._running_since = None
             self.pause_button.setText("Pause")
             self.elapsed_label.setText("00:00")
-        self._apply_active_state()
+        self._apply_layout_state()
 
     def _set_paused(self, paused: bool) -> None:
         """Freeze or resume the elapsed timer to mirror the meeting clock."""
@@ -267,10 +357,78 @@ class MeetingModeTab(QWidget):
             self._running_since = now
             self.pause_button.setText("Pause")
 
-    def _apply_active_state(self) -> None:
-        """Show idle vs in-meeting controls."""
-        self.idle_card.setVisible(not self._active)
+    def _apply_layout_state(self) -> None:
+        """Show idle, in-meeting, and/or finalization controls."""
+        finalization = self._finalization
+        final_status = (finalization or {}).get("status") or ""
+        running_finalization = final_status == "running"
+        show_finalization = bool(finalization) and not self._active
+
         self.session_card.setVisible(self._active)
+        # Hide Start only while finalization is actively running; terminal
+        # outcomes restore Start so the user can begin another meeting.
+        self.idle_card.setVisible(not self._active and not running_finalization)
+        self.start_button.setVisible(not running_finalization)
+        self.finalization_card.setVisible(show_finalization)
+
+        if show_finalization and finalization is not None:
+            self._render_finalization(finalization)
+
+        dashboard_enabled = self._active or self._has_dashboard or show_finalization
+        self.dashboard_button.setEnabled(self._active or self._has_dashboard)
+        self.finalization_dashboard_button.setEnabled(
+            self._has_dashboard or self._active
+        )
+        self.finalization_dashboard_button.setVisible(dashboard_enabled)
+
+    def _render_finalization(self, finalization: Dict[str, str]) -> None:
+        """Update finalization card copy, tone, and progress visibility.
+
+        Args:
+            finalization: Mapping with ``status`` and ``message``.
+        """
+        status = finalization.get("status") or ""
+        message = (finalization.get("message") or "").strip()
+        titles = {
+            "running": "Preparing final insights",
+            "completed": "Final insights ready",
+            "disabled": "Cloud insights off",
+            "unavailable": "Final insights unavailable",
+            "failed": "Final insights incomplete",
+        }
+        defaults = {
+            "running": "Preparing final cloud insights…",
+            "completed": "Final cloud insights are ready.",
+            "disabled": "Cloud intelligence is off for this meeting.",
+            "unavailable": "Final cloud insights could not run.",
+            "failed": "Final cloud insights failed.",
+        }
+        self.finalization_title.setText(titles.get(status, "Final insights"))
+        self.finalization_message.setText(message or defaults.get(status, ""))
+
+        if status == "running":
+            tone = "neutral"
+            self.finalization_progress.show()
+            # Indeterminate only — no fabricated percentage.
+            self.finalization_progress.setRange(0, 0)
+        else:
+            self.finalization_progress.hide()
+            self.finalization_progress.setRange(0, 1)
+            self.finalization_progress.setValue(0)
+            if status == "completed":
+                tone = "success"
+            elif status in {"unavailable", "failed"}:
+                tone = "warning"
+            else:
+                tone = "info"
+
+        self.finalization_card.setProperty("finalizationTone", tone)
+        # Force QSS to re-evaluate dynamic properties.
+        style = self.finalization_card.style()
+        if style is not None:
+            style.unpolish(self.finalization_card)
+            style.polish(self.finalization_card)
+        self.finalization_card.update()
 
     def _refresh_elapsed(self) -> None:
         """Update the elapsed label from the local pause-aware timer."""
@@ -289,3 +447,10 @@ class MeetingModeTab(QWidget):
     def is_meeting_active(self) -> bool:
         """True while the tab shows the in-meeting layout."""
         return self._active
+
+    @property
+    def finalization_status(self) -> Optional[str]:
+        """Current finalization status, or None when no result is shown."""
+        if not self._finalization:
+            return None
+        return self._finalization.get("status")

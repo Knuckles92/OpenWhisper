@@ -154,6 +154,94 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.start_button.click()
         self.assertEqual(received, [True])
 
+    def test_running_finalization_hides_start_and_shows_indeterminate_bar(self):
+        """Running finalization keeps a result card with indeterminate progress."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "running",
+                "message": "Preparing final cloud insights…",
+            },
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertTrue(self.tab.session_card.isHidden())
+        self.assertFalse(self.tab.finalization_card.isHidden())
+        self.assertFalse(self.tab.finalization_progress.isHidden())
+        self.assertEqual(self.tab.finalization_progress.minimum(), 0)
+        self.assertEqual(self.tab.finalization_progress.maximum(), 0)
+        self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
+
+    def test_completed_and_disabled_restore_start(self):
+        """Terminal info outcomes keep the card and restore Start Meeting."""
+        for status, message in (
+            ("completed", "Final cloud insights are ready."),
+            ("disabled", "Cloud intelligence is off for this meeting."),
+        ):
+            with self.subTest(status=status):
+                self.tab.set_meeting_state({
+                    "active": False,
+                    "status": "ended",
+                    "finalization": {"status": status, "message": message},
+                    "dashboard_available": True,
+                })
+                self.app.processEvents()
+                self.assertFalse(self.tab.idle_card.isHidden())
+                self.assertFalse(self.tab.start_button.isHidden())
+                self.assertFalse(self.tab.finalization_card.isHidden())
+                self.assertTrue(self.tab.finalization_progress.isHidden())
+                self.assertIn(message, self.tab.finalization_message.text())
+
+    def test_unavailable_and_failed_use_warning_tone(self):
+        """Unavailable/failed stay persistent warnings without dialogs."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "failed",
+                "message": "Final cloud insights failed: boom",
+            },
+        })
+        self.app.processEvents()
+        self.assertEqual(
+            self.tab.finalization_card.property("finalizationTone"),
+            "warning",
+        )
+        self.assertFalse(self.tab.finalization_card.isHidden())
+        self.assertFalse(self.tab.start_button.isHidden())
+
+    def test_starting_clears_previous_finalization(self):
+        """A subsequent start payload clears the previous result card."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "completed",
+                "message": "done",
+            },
+        })
+        self.tab.set_meeting_state({"status": "starting", "active": True})
+        self.app.processEvents()
+        self.assertIsNone(self.tab.finalization_status)
+        self.assertTrue(self.tab.finalization_card.isHidden())
+
+    def test_dashboard_signal_available_after_inactive(self):
+        """Open dashboard remains wired after active=False."""
+        clicked = []
+        self.tab.open_dashboard_requested.connect(lambda: clicked.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "running", "message": "…"},
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+        self.tab.finalization_dashboard_button.click()
+        self.assertEqual(clicked, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

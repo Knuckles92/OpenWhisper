@@ -88,10 +88,14 @@ export default function HeaderBar({
     }
   };
 
+  const finalization = state.finalization ?? null;
+  const finalizationStatus = finalization?.status ?? null;
+  const finalizationMessage = (finalization?.message || '').trim();
   const showOfflineBanner =
     state.cloud_enabled &&
     !state.intelligence_online &&
-    (meetingLive || meetingEnding);
+    (meetingLive || meetingEnding) &&
+    finalizationStatus !== 'running';
   const showDiarizationBanner =
     !state.diarization_available && (meetingLive || meetingEnding);
   const meetingTitle = state.title || meeting?.title || 'Meeting';
@@ -212,7 +216,34 @@ export default function HeaderBar({
 
       {meetingEnding && (
         <div className="banner info" role="status">
-          Ending meeting — finishing transcription and insights…
+          Ending meeting — finishing transcription…
+        </div>
+      )}
+
+      {finalizationStatus === 'running' && (
+        <div className="banner info" role="status">
+          {finalizationMessage || 'Preparing final cloud insights…'}
+        </div>
+      )}
+
+      {finalizationStatus === 'completed' && (
+        <div className="banner info" role="status">
+          {finalizationMessage || 'Final cloud insights are ready.'}
+        </div>
+      )}
+
+      {finalizationStatus === 'disabled' && meetingEnded && (
+        <div className="banner info" role="status">
+          {finalizationMessage || 'Cloud intelligence is off for this meeting.'}
+        </div>
+      )}
+
+      {(finalizationStatus === 'unavailable' || finalizationStatus === 'failed') && (
+        <div className="banner warning" role="status">
+          {finalizationMessage ||
+            (finalizationStatus === 'failed'
+              ? 'Final cloud insights failed.'
+              : 'Final cloud insights could not run.')}
         </div>
       )}
 

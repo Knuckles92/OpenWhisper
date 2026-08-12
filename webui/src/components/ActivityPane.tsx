@@ -10,6 +10,8 @@ interface ActivityPaneProps {
   cloudEnabled: boolean;
   intelligenceOnline: boolean;
   meetingStatus: string;
+  finalizationStatus?: string | null;
+  finalizationMessage?: string | null;
 }
 
 const CARD_NAMES: Record<string, string> = {
@@ -90,6 +92,8 @@ export default function ActivityPane({
   cloudEnabled,
   intelligenceOnline,
   meetingStatus,
+  finalizationStatus = null,
+  finalizationMessage = null,
 }: ActivityPaneProps) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -152,11 +156,31 @@ export default function ActivityPane({
 
   let statusText = 'Watching the conversation';
   let statusTone = 'online';
-  if (meetingStatus === 'ended') {
-    statusText = 'Session review complete';
+  const finalMsg = (finalizationMessage || '').trim();
+  // Never infer review completion solely from meetingStatus === 'ended'.
+  if (finalizationStatus === 'running') {
+    statusText = finalMsg || 'Wrapping up final insights.';
+    statusTone = 'online';
+  } else if (finalizationStatus === 'completed') {
+    statusText = finalMsg || 'Session review complete.';
     statusTone = 'complete';
+  } else if (finalizationStatus === 'disabled') {
+    statusText = finalMsg || 'Cloud insights were off for this meeting.';
+    statusTone = 'paused';
+  } else if (finalizationStatus === 'unavailable' || finalizationStatus === 'failed') {
+    statusText =
+      finalMsg ||
+      (finalizationStatus === 'failed'
+        ? 'Final insights failed.'
+        : 'Final insights unavailable.');
+    statusTone = 'offline';
   } else if (meetingStatus === 'ending') {
-    statusText = 'Wrapping up final insights';
+    statusText = 'Finishing transcription…';
+  } else if (meetingStatus === 'ended' || meetingStatus === 'needs_recovery') {
+    statusText = cloudEnabled
+      ? 'Meeting ended — waiting for finalization status.'
+      : 'Meeting ended.';
+    statusTone = 'complete';
   } else if (!cloudEnabled) {
     statusText = 'Paused — cloud insights are off';
     statusTone = 'paused';

@@ -137,6 +137,10 @@ class MeetingEngine:
         self._server: Optional[Any] = None
         self._agent_core: Optional[Any] = None
         self._scheduler: Optional[Any] = None
+        # Agent tool writes are allowed for live checkpoints and the active
+        # final consolidation pass only. Late workers after timeout/cancel
+        # must not mutate durable state.
+        self._agent_writes_allowed = True
         # Latches once the diarizer stops labeling, so the dashboard banner is
         # corrected exactly once per meeting.
         self._degraded_diarization = False
@@ -193,10 +197,10 @@ class MeetingEngine:
         """Emit the current status to listeners and connected web clients."""
         if self.store is None:
             return
-        status, intel, diar, capture = self.store.with_state(
+        status, intel, diar, capture, finalization = self.store.with_state(
             lambda s: (
                 s.status, s.intelligence_online, s.diarization_available,
-                dict(s.capture),
+                dict(s.capture), s.finalization.to_dict(),
             )
         )
         payload = {
@@ -204,12 +208,108 @@ class MeetingEngine:
             "intelligence_online": intel,
             "diarization_available": diar,
             "capture": capture,
+            "finalization": dict(finalization),
         }
         listener_payload = dict(payload)
         if note:
             listener_payload["note"] = note
         self._emit("status", listener_payload)
         self._broadcast({"type": "status", **payload})
+
+    def allow_agent_writes(self) -> None:
+        """Permit agent tool-host mutations (live checkpoints / consolidation)."""
+        self._agent_writes_allowed = True
+
+    def revoke_agent_writes(self) -> None:
+        """Reject further agent tool-host mutations.
+
+        Called before terminal consolidation outcomes and on cancel/failure/
+        shutdown so a late worker cannot apply patches after authority ends.
+        """
+        self._agent_writes_allowed = False
+
+    def agent_writes_allowed(self) -> bool:
+        """True while agent tool-host methods may mutate meeting state."""
+        return bool(self._agent_writes_allowed)
+
+    def _set_finalization(
+        self,
+        status: str,
+        message: str = "",
+        *,
+        emit: bool = True,
+    ) -> bool:
+        """Persist and optionally broadcast a finalization outcome.
+
+        Persistence remains authoritative. When a terminal outcome cannot be
+        written, an ephemeral status override is still emitted so desktop and
+        browser clients unlock and warn without inventing durable success.
+
+        Args:
+            status: One of the ``FINALIZATION_STATUSES`` values.
+            message: Human-readable detail for the UI.
+            emit: When True, push the update through status listeners/WS.
+
+        Returns:
+            True when the finalization value was persisted successfully.
+        """
+        if self.store is None:
+            return False
+        from meeting.state.schema import FINALIZATION_STATUSES, FinalizationState
+
+        finalization = FinalizationState.coerce(
+            {"status": status, "message": message},
+            cloud_enabled=self.store.with_state(lambda s: s.cloud_enabled),
+            meeting_status=self.store.with_state(lambda s: s.status),
+        )
+        terminal = finalization.status in {
+            "completed", "disabled", "unavailable", "failed",
+        }
+        if finalization.status not in FINALIZATION_STATUSES:
+            return False
+        if not self.store.update_runtime_fields(finalization=finalization):
+            logger.warning(
+                "Could not persist finalization status=%s", finalization.status,
+            )
+            if emit and terminal:
+                # Ephemeral unlock/warn only — do not claim durable success.
+                self._emit_ephemeral_finalization(finalization)
+            return False
+        if emit:
+            self._emit_status()
+        return True
+
+    def _emit_ephemeral_finalization(self, finalization: Any) -> None:
+        """Broadcast a non-persisted finalization override for UI unlock.
+
+        Args:
+            finalization: ``FinalizationState`` or mapping with status/message.
+        """
+        if self.store is None:
+            return
+        try:
+            payload_fin = (
+                finalization.to_dict()
+                if hasattr(finalization, "to_dict")
+                else dict(finalization)
+            )
+            status, intel, diar, capture = self.store.with_state(
+                lambda s: (
+                    s.status, s.intelligence_online, s.diarization_available,
+                    dict(s.capture),
+                )
+            )
+            payload = {
+                "status": status,
+                "intelligence_online": intel,
+                "diarization_available": diar,
+                "capture": capture,
+                "finalization": dict(payload_fin),
+            }
+            self._emit("status", dict(payload))
+            self._broadcast({"type": "status", **payload})
+        except Exception:
+            logger.exception("Ephemeral finalization emit failed")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -273,10 +373,15 @@ class MeetingEngine:
             self.meeting_id = meeting_id
             self._spool_dir = spool_dir
 
+            from meeting.state.schema import FinalizationState
+
             state = MeetingState(
                 meeting_id=meeting_id,
                 cloud_enabled=self.options.cloud_enabled,
                 title=self.options.title,
+                finalization=FinalizationState.default_for_cloud(
+                    self.options.cloud_enabled
+                ),
             )
             self.store = MeetingStateStore(
                 state,
@@ -501,6 +606,49 @@ class MeetingEngine:
                 logger.exception("Failed to persist terminal meeting metadata")
                 raise
             self._stop_heartbeat()
+
+            # Select finalization before releasing ownership so the ended
+            # event and status broadcast already carry the post-end phase.
+            cloud_enabled = False
+            if self.store is not None:
+                cloud_enabled = bool(
+                    self.store.with_state(lambda s: s.cloud_enabled)
+                )
+            run_cloud = False
+            if not cloud_enabled:
+                self._set_finalization(
+                    "disabled",
+                    "Cloud intelligence is off for this meeting.",
+                    emit=False,
+                )
+            elif not complete:
+                self._set_finalization(
+                    "unavailable",
+                    (
+                        "Final cloud insights are unavailable until "
+                        "transcription recovery finishes."
+                    ),
+                    emit=False,
+                )
+            elif scheduler is None or not self._core_is_healthy():
+                self._set_finalization(
+                    "unavailable",
+                    (
+                        "Meeting intelligence is offline; final cloud "
+                        "insights could not run."
+                    ),
+                    emit=False,
+                )
+            else:
+                self._set_finalization(
+                    "running",
+                    "Preparing final cloud insights…",
+                    emit=False,
+                )
+                run_cloud = True
+
+            # Capture/transcript durability is complete: release exclusive
+            # ownership and announce ended before any bounded cloud pass.
             self._active = False
             self._broadcast({"type": "meeting_ended", "status": status})
             self._emit_status()
@@ -511,17 +659,33 @@ class MeetingEngine:
                 "unfinished_chunks": unfinished,
             })
 
-            # The user's end action is complete once capture and transcript
-            # persistence are complete. Final insight cleanup is useful, but
-            # it must not keep the UI or exclusive microphone mode stuck in
-            # "Ending" while a cloud model takes a minute to respond.
-            if scheduler is not None and complete:
+            # Final insight cleanup is useful, but it must not keep the UI or
+            # exclusive microphone mode stuck while a cloud model responds.
+            # The existing web server stays up so agent patches still stream.
+            if run_cloud and scheduler is not None:
                 try:
-                    scheduler.run_consolidation(
+                    # Consolidation is the only post-end agent writer path.
+                    self.allow_agent_writes()
+                    outcome = scheduler.run_consolidation(
                         timeout_s=CONSOLIDATION_TIMEOUT_S
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception("Post-end consolidation pass failed")
+                    self.revoke_agent_writes()
+                    self._set_finalization(
+                        "failed",
+                        f"Final cloud insights failed: {exc}",
+                    )
+                else:
+                    # Scheduler already revokes before returning; keep the gate
+                    # closed while persisting the terminal outcome.
+                    self.revoke_agent_writes()
+                    self._set_finalization(
+                        getattr(outcome, "status", "failed"),
+                        getattr(outcome, "message", "") or "",
+                    )
+            else:
+                self.revoke_agent_writes()
             if scheduler is not None:
                 try:
                     scheduler.stop()
@@ -532,6 +696,7 @@ class MeetingEngine:
         except Exception as exc:
             logger.exception("Meeting end failed")
             self._active = False
+            self.revoke_agent_writes()
             self._emit("error", {"code": "end_failed", "message": str(exc)})
             self._finish_failed_end(exc, terminal_persisted)
 
@@ -553,6 +718,7 @@ class MeetingEngine:
                 asr.stop()
             except Exception:
                 logger.exception("ASR stop failed after a failed end")
+        self.revoke_agent_writes()
         self._shutdown_agent_core()
         try:
             self.clock.pause()
@@ -572,6 +738,16 @@ class MeetingEngine:
                 self.store.update_runtime_fields(status=status)
             except Exception:
                 logger.exception("Failed to update state status after a failed end")
+            try:
+                self._set_finalization(
+                    "failed",
+                    f"Meeting end failed before final insights could finish: {exc}",
+                    emit=False,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist finalization after a failed end"
+                )
         self._broadcast({"type": "meeting_ended", "status": status})
         try:
             self._emit_status()
@@ -593,6 +769,8 @@ class MeetingEngine:
             if not self._active or self._end_thread is not None:
                 return
             self._active = False
+        # Stop agent mutations before teardown so in-flight tools cannot land.
+        self.revoke_agent_writes()
         self._stop_capture()
         scheduler = self._scheduler
         self._scheduler = None
@@ -626,9 +804,18 @@ class MeetingEngine:
             logger.exception("Failed to persist canceled status")
         if self.store is not None:
             self.store.update_runtime_fields(status="failed")
-        self._broadcast({"type": "meeting_ended"})
+            self._set_finalization(
+                "unavailable",
+                "Meeting was canceled before final insights could run.",
+                emit=False,
+            )
+        self._broadcast({"type": "meeting_ended", "status": "failed"})
         self._emit_status()
-        self._emit("ended", {"meeting_id": self.meeting_id, "canceled": True})
+        self._emit("ended", {
+            "meeting_id": self.meeting_id,
+            "canceled": True,
+            "status": "failed",
+        })
 
     def shutdown(self) -> None:
         """Full teardown for app exit, including the web server.
@@ -646,6 +833,9 @@ class MeetingEngine:
             thread.join(
                 timeout=SHUTDOWN_DRAIN_TIMEOUT_S + CONSOLIDATION_TIMEOUT_S + 60.0
             )
+        # Best-effort: never leave a durable finalization=running across exit.
+        self._interrupt_finalization_on_shutdown()
+        self.revoke_agent_writes()
         server = self._server
         self._server = None
         if server is not None:
@@ -656,9 +846,45 @@ class MeetingEngine:
         self._shutdown_agent_core()
         self._stop_heartbeat()
 
+    def _interrupt_finalization_on_shutdown(self) -> None:
+        """Persist a terminal interruption when shutdown cuts consolidation short."""
+        if self.store is None:
+            return
+        try:
+            fin = self.store.with_state(lambda s: s.finalization.to_dict())
+        except Exception:
+            logger.exception("Could not read finalization during shutdown")
+            return
+        status = str((fin or {}).get("status") or "")
+        if status not in {"running", "pending"}:
+            return
+        cloud_enabled = bool(
+            self.store.with_state(lambda s: s.cloud_enabled)
+        )
+        if not cloud_enabled:
+            self._set_finalization(
+                "disabled",
+                "Cloud intelligence is off for this meeting.",
+                emit=False,
+            )
+            return
+        if status == "running":
+            self._set_finalization(
+                "failed",
+                "Final cloud insights were interrupted by application shutdown.",
+                emit=False,
+            )
+        else:
+            self._set_finalization(
+                "unavailable",
+                "Final cloud insights did not run before shutdown.",
+                emit=False,
+            )
+
     def _abort_start(self) -> None:
         """Best-effort teardown after a failed ``start()``."""
         self._active = False
+        self.revoke_agent_writes()
         self._stop_capture()
         self._flush_spools()  # releases the spool writer threads
         if self._asr is not None:
@@ -691,6 +917,21 @@ class MeetingEngine:
                 )
             except Exception:
                 logger.exception("Failed to mark aborted meeting as failed")
+        if self.store is not None:
+            try:
+                self.store.update_runtime_fields(status="failed")
+            except Exception:
+                logger.exception("Failed to mark aborted store status")
+            try:
+                self._set_finalization(
+                    "unavailable",
+                    "Meeting failed to start before final insights could run.",
+                    emit=False,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist finalization after aborted start"
+                )
 
     def _shutdown_agent_core(self) -> None:
         core = self._agent_core
@@ -1472,7 +1713,10 @@ class MeetingEngine:
                 self._seed_scheduler_watermark(scheduler)
                 scheduler.start()
                 self._scheduler = scheduler
+            self.allow_agent_writes()
             self.store.update_runtime_fields(intelligence_online=True)
+            # Fresh/recovered intelligence is ready for a later consolidation.
+            self._set_finalization("pending", emit=False)
             self._emit("intelligence", {"online": True})
             self._emit_status()
         except Exception as exc:
@@ -1484,6 +1728,11 @@ class MeetingEngine:
                 except Exception:
                     logger.exception("Agent core cleanup failed")
             self.store.update_runtime_fields(intelligence_online=False)
+            self._set_finalization(
+                "unavailable",
+                f"Meeting intelligence failed to start: {exc}",
+                emit=False,
+            )
             self._emit("intelligence", {"online": False, "error": str(exc)})
             self._emit_status()
 
@@ -1517,6 +1766,7 @@ class MeetingEngine:
             self._shutdown_agent_core()
         if self.store is not None:
             self.store.update_runtime_fields(intelligence_online=False)
+        self._set_finalization("unavailable", reason, emit=False)
         self._emit("intelligence", {"online": False, "error": reason})
         self._emit_status(note=reason)
 
@@ -1532,9 +1782,19 @@ class MeetingEngine:
         if self.store is not None:
             self.store.update_runtime_fields(intelligence_online=online)
         payload: Dict[str, Any] = {"online": online}
-        if not online:
+        if online:
+            # Recovered checkpoints restore a pending consolidation path.
+            meeting_status = self.store.with_state(lambda s: s.status) if self.store else "active"
+            if meeting_status not in ("ending", "ended", "failed", "needs_recovery"):
+                self._set_finalization("pending", emit=False)
+        else:
             payload["error"] = ("Checkpoints failed repeatedly; continuing "
                                 "transcript-only.")
+            self._set_finalization(
+                "unavailable",
+                payload["error"],
+                emit=False,
+            )
         self._emit("intelligence", payload)
         self._emit_status()
 
@@ -1583,6 +1843,11 @@ class MeetingEngine:
         self._intelligence_restarted = True
         if self.store is not None:
             self.store.update_runtime_fields(intelligence_online=False)
+            self._set_finalization(
+                "disabled",
+                "Cloud intelligence is off for this meeting.",
+                emit=False,
+            )
         self._emit("intelligence", {"online": False})
         self._emit_status()
 
@@ -1594,9 +1859,26 @@ class MeetingEngine:
                 resuming from the current point in the transcript; False stops
                 checkpoints, cancels any in-flight request, and releases the
                 agent core so no process keeps holding the API key.
+
+        Raises:
+            RuntimeError: When end has already claimed or finished the session,
+                or when the store rejects the cloud op.
         """
         if self.store is None:
             return
+        with self._lifecycle_lock:
+            end_claimed = self._end_thread is not None or not self._active
+        if end_claimed:
+            raise RuntimeError(
+                "Cloud intelligence can only be changed while the meeting is "
+                "active or paused."
+            )
+        meeting_status = self.store.with_state(lambda s: s.status)
+        if meeting_status not in {"active", "paused"}:
+            raise RuntimeError(
+                "Cloud intelligence can only be changed while the meeting is "
+                "active or paused."
+            )
         results = self.store.apply("host", self._me_participant_id, [{
             "op": "set_cloud_enabled", "enabled": bool(enabled),
         }])
@@ -1605,6 +1887,8 @@ class MeetingEngine:
                 results[0].reason if results else "cloud state update failed"
             )
         if enabled:
+            self.allow_agent_writes()
+            self._set_finalization("pending", emit=False)
             self._maybe_start_intelligence()
         else:
             self._stop_intelligence()
@@ -1728,6 +2012,15 @@ class MeetingEngine:
                          reason="inactive")
                 for op in ops
             ]
+        if not self.agent_writes_allowed():
+            return [
+                OpResult(
+                    ok=False,
+                    op=op if isinstance(op, dict) else {"op": op},
+                    reason="agent_writes_revoked",
+                )
+                for op in ops
+            ]
         return self.store.apply("agent", "agent", list(ops))
 
     def ask_question(self, text: str, evidence: List[str]) -> OpResult:
@@ -1749,6 +2042,8 @@ class MeetingEngine:
     def _apply_single_agent_op(self, op: Dict[str, Any]) -> OpResult:
         if self.store is None:
             return OpResult(ok=False, op=op, reason="inactive")
+        if not self.agent_writes_allowed():
+            return OpResult(ok=False, op=op, reason="agent_writes_revoked")
         return self.store.apply("agent", "agent", [op])[0]
 
     # ------------------------------------------------------------------

@@ -32,6 +32,18 @@ QUESTION_STATUSES = ("open", "resolved", "dismissed")
 PARTICIPANT_KINDS = ("me", "others_cluster", "guest")
 NAME_SOURCES = ("default", "human", "agent_inferred")
 ACTOR_TYPES = ("agent", "user", "host", "system")
+#: Post-meeting cloud consolidation lifecycle (orthogonal to meeting status).
+FINALIZATION_STATUSES = (
+    "pending",
+    "running",
+    "completed",
+    "disabled",
+    "unavailable",
+    "failed",
+)
+_TERMINAL_MEETING_STATUSES = frozenset({
+    "ended", "failed", "needs_recovery",
+})
 
 
 def now_iso() -> str:
@@ -181,6 +193,166 @@ class TopicState:
 
 
 @dataclass
+class FinalizationState:
+    """Optional post-meeting cloud consolidation outcome.
+
+    Orthogonal to durable meeting status (``ended`` / ``needs_recovery``):
+    capture and transcript durability can complete while final insights are
+    still running, disabled, unavailable, or failed.
+    """
+    status: str = "pending"
+    message: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"status": self.status, "message": self.message}
+
+    @classmethod
+    def default_for_cloud(cls, cloud_enabled: bool) -> "FinalizationState":
+        """Initial finalization for a newly created meeting.
+
+        Args:
+            cloud_enabled: Whether cloud intelligence is on for the meeting.
+
+        Returns:
+            ``pending`` when cloud is enabled, otherwise ``disabled``.
+        """
+        if cloud_enabled:
+            return cls(status="pending", message="")
+        return cls(
+            status="disabled",
+            message="Cloud intelligence is off for this meeting.",
+        )
+
+    @classmethod
+    def infer_legacy(
+        cls,
+        *,
+        cloud_enabled: bool,
+        meeting_status: str,
+    ) -> "FinalizationState":
+        """Infer finalization for snapshots that predate this field.
+
+        Args:
+            cloud_enabled: Persisted cloud-intelligence flag.
+            meeting_status: Persisted meeting lifecycle status.
+
+        Returns:
+            A conservative finalization value that never claims historical
+            cloud success when the outcome was never recorded.
+        """
+        if not cloud_enabled:
+            return cls(
+                status="disabled",
+                message="Cloud intelligence is off for this meeting.",
+            )
+        if meeting_status in _TERMINAL_MEETING_STATUSES:
+            return cls(
+                status="unavailable",
+                message=(
+                    "Final cloud insights were not recorded for this meeting."
+                ),
+            )
+        return cls(status="pending", message="")
+
+    @classmethod
+    def coerce(
+        cls,
+        value: Any,
+        *,
+        cloud_enabled: bool = False,
+        meeting_status: str = "active",
+    ) -> "FinalizationState":
+        """Parse or fall back from a persisted/API finalization value.
+
+        Args:
+            value: ``None``, a ``FinalizationState``, or a ``{status, message}``
+                mapping. Unknown shapes and statuses fall back to legacy
+                inference so corrupt data never reaches the UI unchanged.
+            cloud_enabled: Meeting cloud flag used for legacy inference.
+            meeting_status: Meeting lifecycle status used for legacy inference.
+
+        Returns:
+            A validated ``FinalizationState``.
+        """
+        if isinstance(value, cls):
+            if value.status in FINALIZATION_STATUSES:
+                return cls(status=value.status, message=str(value.message or ""))
+            return cls.infer_legacy(
+                cloud_enabled=cloud_enabled, meeting_status=meeting_status,
+            )
+        if value is None:
+            return cls.infer_legacy(
+                cloud_enabled=cloud_enabled, meeting_status=meeting_status,
+            )
+        if not isinstance(value, dict):
+            return cls.infer_legacy(
+                cloud_enabled=cloud_enabled, meeting_status=meeting_status,
+            )
+        status = value.get("status")
+        if status not in FINALIZATION_STATUSES:
+            return cls.infer_legacy(
+                cloud_enabled=cloud_enabled, meeting_status=meeting_status,
+            )
+        message = value.get("message", "")
+        if message is None:
+            message = ""
+        return cls(status=str(status), message=str(message))
+
+    @classmethod
+    def normalize_historical(
+        cls,
+        value: Any,
+        *,
+        cloud_enabled: bool,
+        meeting_status: str,
+    ) -> "FinalizationState":
+        """Coerce finalization for archived/historical serving after restart.
+
+        Live meetings may legitimately expose ``status=ended`` with
+        ``finalization=running`` during the bounded consolidation pass. Once a
+        snapshot is only historical (archive dashboard / stored REST state),
+        an interrupted ``running``/``pending`` value must become a durable
+        terminal outcome so the UI never claims work is still in flight.
+
+        Args:
+            value: Persisted finalization payload or ``None``.
+            cloud_enabled: Meeting cloud-intelligence flag.
+            meeting_status: Persisted meeting lifecycle status.
+
+        Returns:
+            A finalization value safe to show for non-live history views.
+        """
+        fin = cls.coerce(
+            value,
+            cloud_enabled=cloud_enabled,
+            meeting_status=meeting_status,
+        )
+        if meeting_status not in _TERMINAL_MEETING_STATUSES:
+            return fin
+        if fin.status not in {"pending", "running"}:
+            return fin
+        if not cloud_enabled:
+            return cls(
+                status="disabled",
+                message="Cloud intelligence is off for this meeting.",
+            )
+        if fin.status == "running":
+            return cls(
+                status="failed",
+                message=(
+                    "Final cloud insights were interrupted before they "
+                    "finished."
+                ),
+            )
+        return cls(
+            status="unavailable",
+            message=(
+                "Final cloud insights were not recorded for this meeting."
+            ),
+        )
+
+
+@dataclass
 class MeetingState:
     """The complete dashboard document for one meeting."""
     meeting_id: str
@@ -203,6 +375,7 @@ class MeetingState:
         default_factory=lambda: {k: [] for k in CARD_KEYS}
     )
     questions: Dict[str, Question] = field(default_factory=dict)
+    finalization: FinalizationState = field(default_factory=FinalizationState)
 
     def find_item(self, item_id: str) -> Optional[CardItem]:
         """Locate a card item by id across all cards."""
@@ -234,15 +407,30 @@ class MeetingState:
                 for card, items in self.cards.items()
             },
             "questions": [q.to_dict() for q in self.questions.values()],
+            "finalization": self.finalization.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "MeetingState":
+        cloud_enabled = bool(d.get("cloud_enabled", False))
+        meeting_status = d.get("status", "active")
+        # Legacy snapshots omit finalization; infer rather than invent success.
+        if "finalization" in d:
+            finalization = FinalizationState.coerce(
+                d.get("finalization"),
+                cloud_enabled=cloud_enabled,
+                meeting_status=meeting_status,
+            )
+        else:
+            finalization = FinalizationState.infer_legacy(
+                cloud_enabled=cloud_enabled,
+                meeting_status=meeting_status,
+            )
         state = cls(
             meeting_id=d["meeting_id"],
             seq=int(d.get("seq", 0)),
-            status=d.get("status", "active"),
-            cloud_enabled=bool(d.get("cloud_enabled", False)),
+            status=meeting_status,
+            cloud_enabled=cloud_enabled,
             intelligence_online=bool(d.get("intelligence_online", False)),
             diarization_available=bool(d.get("diarization_available", False)),
             title=d.get("title", ""),
@@ -260,6 +448,7 @@ class MeetingState:
                 ),
                 "message": str((d.get("capture") or {}).get("message", "")),
             },
+            finalization=finalization,
         )
         for pid, pd in (d.get("participants") or {}).items():
             state.participants[pid] = Participant.from_dict(pd)

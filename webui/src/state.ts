@@ -243,6 +243,10 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
         case 'status':
           if (!state.state) return state;
           const status = msg.status ?? state.state.status;
+          const nextFinalization =
+            msg.finalization !== undefined
+              ? msg.finalization
+              : state.state.finalization;
           return {
             ...state,
             state: {
@@ -253,6 +257,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
               diarization_available:
                 msg.diarization_available ?? state.state.diarization_available,
               capture: msg.capture ?? state.state.capture,
+              finalization: nextFinalization ?? null,
             },
             meetingEnded: isTerminalStatus(status),
           };

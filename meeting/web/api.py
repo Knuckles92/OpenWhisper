@@ -30,7 +30,7 @@ from meeting.export.transcript_txt import export_transcript_txt
 from meeting.audio_playback import build_playback
 from meeting.reinsight import rerun_insights
 from meeting.persist.data_lifecycle import delete_meeting_data
-from meeting.state.schema import MeetingState
+from meeting.state.schema import FinalizationState, MeetingState
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
 
@@ -207,6 +207,15 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             raw.setdefault("meeting_id", meeting_id)
             raw.setdefault("title", str(meeting.get("title") or ""))
             raw.setdefault("status", str(meeting.get("status") or "ended"))
+            raw.setdefault(
+                "cloud_enabled", bool(meeting.get("cloud_enabled", False))
+            )
+            # Non-live REST snapshots must not expose interrupted in-flight work.
+            raw["finalization"] = FinalizationState.normalize_historical(
+                raw.get("finalization"),
+                cloud_enabled=bool(raw.get("cloud_enabled", False)),
+                meeting_status=str(raw.get("status") or "ended"),
+            ).to_dict()
             return MeetingState.from_dict(raw).to_dict()
         except (KeyError, TypeError, ValueError):
             logger.exception("Corrupt state_json for meeting %s", meeting_id)
@@ -591,11 +600,25 @@ function speakerName(sg){
   }
   return sg.channel === "mic" ? "Me" : "Others";
 }
+function finalizationLabel(){
+  if (!state || !state.finalization) return "";
+  var f = state.finalization;
+  var st = f.status || "";
+  var msg = (f.message || "").trim();
+  if (st === "running") return msg || "Preparing final insights";
+  if (st === "completed") return msg || "Final insights ready";
+  if (st === "disabled") return msg || "Cloud insights off";
+  if (st === "unavailable") return msg || "Final insights unavailable";
+  if (st === "failed") return msg || "Final insights failed";
+  return msg || st;
+}
 function renderHeader(){
   if (!state) return;
   var bits = [state.status || ""];
   bits.push(state.intelligence_online ? "AI online" : "AI offline");
   if (state.cloud_enabled) bits.push("cloud");
+  var fin = finalizationLabel();
+  if (fin) bits.push(fin);
   $("role-pill").textContent = (role || "") + " \\u00b7 " + bits.join(" \\u00b7 ");
   var t = state.title || (meeting && meeting.title) || "Meeting";
   $("title").textContent = t;
@@ -689,16 +712,33 @@ function handle(msg){
       renderState();
       break;
     case "status":
-      if (state){ state.status = msg.status; state.intelligence_online = msg.intelligence_online; }
+      if (state){
+        if (msg.status != null) state.status = msg.status;
+        if (msg.intelligence_online != null) state.intelligence_online = msg.intelligence_online;
+        if (msg.finalization !== undefined) state.finalization = msg.finalization;
+      }
       renderHeader();
+      if (state && state.finalization && state.finalization.status === "running"){
+        setStatus(finalizationLabel() || "preparing final insights");
+      } else if (state && state.finalization && state.finalization.status){
+        var fs = state.finalization.status;
+        if (fs === "completed" || fs === "disabled" || fs === "unavailable" || fs === "failed"){
+          setStatus(finalizationLabel() || fs);
+        }
+      }
       break;
     case "presence":
       if (msg.participant && state) state.participants[msg.participant.id] = msg.participant;
       if (msg.participant) setStatus(msg.participant.display_name + (msg.event === "joined" ? " joined" : " left"));
       break;
     case "meeting_ended":
-      if (state) state.status = "ended";
-      renderHeader(); setStatus("meeting ended");
+      if (state) state.status = msg.status || "ended";
+      renderHeader();
+      if (state && state.finalization && state.finalization.status === "running"){
+        setStatus(finalizationLabel() || "meeting ended — preparing final insights");
+      } else {
+        setStatus("meeting ended");
+      }
       break;
   }
 }

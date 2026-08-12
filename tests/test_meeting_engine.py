@@ -205,7 +205,13 @@ class FakeScheduler:
         pass
 
     def run_consolidation(self, timeout_s=120.0):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
         self.consolidations += 1
+        return ConsolidationOutcome(
+            status="completed",
+            message="Final cloud insights are ready.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +533,8 @@ class TestEndLifecycle:
 
     def test_end_event_precedes_slow_consolidation(
             self, make_engine, repo, fakes):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
         engine = make_engine(cloud_enabled=True)
         engine.start()
         scheduler = fakes.schedulers[0]
@@ -537,6 +545,10 @@ class TestEndLifecycle:
             scheduler.consolidations += 1
             consolidation_entered.set()
             consolidation_release.wait(timeout=5.0)
+            return ConsolidationOutcome(
+                status="completed",
+                message="Final cloud insights are ready.",
+            )
 
         scheduler.run_consolidation = slow_consolidation
         try:
@@ -547,9 +559,79 @@ class TestEndLifecycle:
             assert ended, "end must be published before final insight polish"
             assert engine.is_active() is False
             assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+            # running must be persisted/broadcast before the ended event while
+            # consolidation is still blocked.
+            fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+            assert fin["status"] == "running"
+            status_events = events_of(engine, "status")
+            assert any(
+                (e.get("finalization") or {}).get("status") == "running"
+                for e in status_events
+            )
         finally:
             consolidation_release.set()
             engine._end_thread.join(timeout=10.0)
+
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "completed"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+
+    def test_end_disabled_cloud_finalization(self, make_engine, repo):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "disabled"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+
+    def test_end_unhealthy_intelligence_finalization(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        fakes.cores[0].healthy = False
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "unavailable"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+
+    def test_end_needs_recovery_blocks_consolidation(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        def unfinished(_meeting_id):
+            return 2
+
+        engine.repository.count_unfinished_chunks = unfinished
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert fakes.schedulers[0].consolidations == 0
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "unavailable"
+        assert "recovery" in fin["message"].lower()
+        assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
+
+    def test_end_failed_consolidation_outcome(self, make_engine, repo, fakes):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        scheduler = fakes.schedulers[0]
+
+        def boom(timeout_s=120.0):
+            scheduler.consolidations += 1
+            return ConsolidationOutcome(
+                status="failed", message="Final cloud insights failed: boom",
+            )
+
+        scheduler.run_consolidation = boom
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "failed"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
     def test_end_racing_start_waits_for_the_pipeline(self, make_engine, fakes):
         entered = threading.Event()

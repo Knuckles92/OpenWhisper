@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from meeting.interfaces import SpooledChunk
-from meeting.state.schema import now_iso
+from meeting.state.schema import FinalizationState, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -276,13 +276,29 @@ def build_resume_options(meeting: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
-    """Mark a meeting ended, patching the stored state snapshot's status."""
+    """Mark a meeting ended, patching status and historical finalization.
+
+    Headless ASR finalize never runs the cloud consolidation pass, so any
+    interrupted ``pending``/``running`` finalization is normalized to a durable
+    terminal outcome before the snapshot is persisted.
+    """
     fields: Dict[str, Any] = {"status": "ended", "ended_at": now_iso()}
     state_json = meeting.get("state_json")
     if state_json:
         try:
             state = json.loads(state_json)
+            if not isinstance(state, dict):
+                raise ValueError("state snapshot is not an object")
             state["status"] = "ended"
+            cloud_enabled = bool(
+                meeting.get("cloud_enabled", state.get("cloud_enabled", False))
+            )
+            state["cloud_enabled"] = cloud_enabled
+            state["finalization"] = FinalizationState.normalize_historical(
+                state.get("finalization"),
+                cloud_enabled=cloud_enabled,
+                meeting_status="ended",
+            ).to_dict()
             fields["state_json"] = json.dumps(state, ensure_ascii=False)
         except (TypeError, ValueError):
             logger.warning("Unparseable state_json on meeting %s; "

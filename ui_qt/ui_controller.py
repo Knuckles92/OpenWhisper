@@ -749,11 +749,20 @@ class UIController(QObject):
         Args:
             payload: Partial meeting-state dict from MeetingRuntime
                 (``active``, ``paused``, ``status``, ``cloud_enabled``,
-                ``elapsed_s``).
+                ``elapsed_s``, ``finalization``). Dashboard URLs are retained
+                after capture ends so Open Dashboard stays available during
+                and after finalization.
         """
         if not isinstance(payload, dict):
             return
-        self.main_window.meeting_mode_tab.set_meeting_state(payload)
+        has_dashboard = bool(
+            self._meeting_urls.get("host_url") or self._meeting_urls.get("url")
+        )
+        # Always tell the tab whether Open Dashboard can work, including during
+        # post-meeting finalization when capture is already inactive.
+        tab_payload = dict(payload)
+        tab_payload.setdefault("dashboard_available", has_dashboard)
+        self.main_window.meeting_mode_tab.set_meeting_state(tab_payload)
         if (
             payload.get("active") is False
             and str(payload.get("status") or "")
@@ -762,17 +771,23 @@ class UIController(QObject):
             self.main_window.refresh_past_meetings()
         if "active" in payload:
             self._meeting_active = bool(payload["active"])
-            self.tray_manager.set_meeting_active(self._meeting_active)
+            self.tray_manager.set_meeting_active(
+                self._meeting_active, dashboard_available=has_dashboard
+            )
             if self._meeting_active:
                 self.switch_to_meeting_mode()
                 self.main_window.tabbed_content.set_recording_state(
                     True, TabbedContentWidget.TAB_MEETING_MODE
                 )
             else:
-                self._meeting_urls = {}
-                # Don't unlock if Quick Record is mid-recording.
+                # Unlock other tabs once capture ends; finalization stays on
+                # the Meeting Mode tab without blocking Quick Record.
                 if not self.main_window.is_recording:
                     self.main_window.tabbed_content.set_recording_state(False, -1)
+        elif has_dashboard:
+            self.tray_manager.set_meeting_active(
+                self._meeting_active, dashboard_available=True
+            )
 
     def set_meeting_status(self, status: str) -> None:
         """Update meeting status on the Meeting Mode tab and main status line.
@@ -805,6 +820,13 @@ class UIController(QObject):
         if not isinstance(result, dict):
             return
         self._meeting_urls = dict(result)
+        has_dashboard = bool(
+            self._meeting_urls.get("host_url") or self._meeting_urls.get("url")
+        )
+        self.tray_manager.set_meeting_active(
+            self._meeting_active, dashboard_available=has_dashboard
+        )
+        self.main_window.meeting_mode_tab.set_dashboard_available(has_dashboard)
         if self.on_meeting_open_dashboard:
             self.on_meeting_open_dashboard()
 

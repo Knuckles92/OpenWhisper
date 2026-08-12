@@ -1322,6 +1322,56 @@ QCheckBox#meetingCloudCheckbox:hover {
     color: #f5f5f7;
 }
 
+QWidget#meetingFinalizationCard {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 12px;
+}
+
+QWidget#meetingFinalizationCard[finalizationTone="success"] {
+    border: 1px solid #30d158;
+}
+
+QWidget#meetingFinalizationCard[finalizationTone="warning"] {
+    border: 1px solid #ff9f0a;
+}
+
+QWidget#meetingFinalizationCard[finalizationTone="info"],
+QWidget#meetingFinalizationCard[finalizationTone="neutral"] {
+    border: 1px solid #0a84ff;
+}
+
+QLabel#meetingFinalizationTitle {
+    color: #f5f5f7;
+    background-color: transparent;
+}
+
+QLabel#meetingFinalizationMessage {
+    color: #d1d1d6;
+    font-size: 13px;
+    background-color: transparent;
+}
+
+QProgressBar#meetingFinalizationProgress {
+    background-color: #3a3a3c;
+    border: none;
+    border-radius: 3px;
+    max-height: 6px;
+    min-height: 6px;
+}
+
+QProgressBar#meetingFinalizationProgress::chunk {
+    background-color: #0a84ff;
+    border-radius: 3px;
+}
+
+QPushButton#meetingFinalizationDashboardButton {
+    padding: 8px 16px;
+    font-size: 13px;
+    border-radius: 8px;
+    min-width: 180px;
+}
+
 QDialog#meetingConsentDialog,
 QDialog#meetingRecoveryDialog {
     background-color: #1c1c1e;

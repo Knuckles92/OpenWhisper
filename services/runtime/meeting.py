@@ -96,6 +96,10 @@ class MeetingRuntime:
         # Claimed by start_meeting for the whole start attempt (including the
         # consent round-trip), before the engine exists to report itself.
         self._starting = False
+        # True while post-meeting cloud finalization is still running. Blocks a
+        # second Meeting Mode session only — not Quick Record / dictation.
+        self._finalizing = False
+        self._finalization: Optional[Dict[str, Any]] = None
         # Consent round-trip state: what to do when the consent dialog
         # resolves ("start" continues start_meeting, "toggle" applies the
         # cloud toggle). Mirrors the hf_consent_requested request/continuation
@@ -158,9 +162,19 @@ class MeetingRuntime:
 
     @property
     def is_claimed(self) -> bool:
-        """True during consent/startup as well as an active meeting."""
+        """True during consent/startup as well as an active meeting.
+
+        Post-meeting finalization is intentionally excluded so Quick Record
+        and rule dictation unlock once capture ends.
+        """
         with self._lock:
             return self._starting or self.controller.meeting_active or self.is_active
+
+    @property
+    def is_finalizing(self) -> bool:
+        """True while optional post-meeting cloud finalization is running."""
+        with self._lock:
+            return self._finalizing
 
     def start_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
         """Start a meeting session (UI/tray callback target).
@@ -175,9 +189,15 @@ class MeetingRuntime:
         # round-trip. Without it a second launch would build a second engine —
         # second Whisper model, second web server — and leak the first.
         with self._lock:
+            finalizing = self._finalizing
             busy = self._starting or self.controller.meeting_active or self.is_active
-            if not busy:
+            if not busy and not finalizing:
                 self._starting = True
+        if finalizing:
+            self.controller.meeting_status_update.emit(
+                "Final insights are still being prepared."
+            )
+            return
         if busy:
             self.controller.meeting_status_update.emit(
                 "A meeting is already in progress"
@@ -262,10 +282,13 @@ class MeetingRuntime:
         with self._lock:
             # Exclusive mode now guards the start; release the claim.
             self._starting = False
+            # A new meeting replaces any retained post-meeting finalization.
+            self._finalizing = False
+            self._finalization = None
         self.controller.meeting_status_update.emit("Starting meeting...")
         self.controller.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "starting",
-             "cloud_enabled": cloud}
+             "cloud_enabled": cloud, "finalization": None}
         )
         threading.Thread(
             target=self._start_worker, args=(cloud,),
@@ -691,14 +714,38 @@ class MeetingRuntime:
         """Bridge one engine listener event to controller signals.
 
         Runs on engine worker threads; only thread-safe ``pyqtSignal.emit``
-        calls are allowed here.
+        calls are allowed here. Finalization outcomes are non-modal status
+        updates — never ``meeting_error``.
         """
         try:
             payload = payload or {}
             if kind == "status":
                 status = payload.get("status", "")
+                finalization = payload.get("finalization")
+                state_payload: Dict[str, Any] = {}
                 if status:
-                    self.controller.meeting_status_update.emit(str(status))
+                    state_payload["status"] = str(status)
+                    # Prefer human notes when present; otherwise keep the short
+                    # lifecycle status for the status line.
+                    note = payload.get("note")
+                    self.controller.meeting_status_update.emit(
+                        str(note or status)
+                    )
+                if isinstance(finalization, dict):
+                    self._apply_finalization(finalization, state_payload)
+                elif finalization is None and "finalization" in payload:
+                    with self._lock:
+                        self._finalizing = False
+                        self._finalization = None
+                    state_payload["finalization"] = None
+                if state_payload:
+                    # Capture ownership is engine-derived; status alone must not
+                    # flip active. Finalization rides along for the Meeting tab.
+                    if "active" not in state_payload and not self.is_active:
+                        # After end, keep active=False while finalization updates.
+                        if self.controller.meeting_active is False:
+                            state_payload.setdefault("active", False)
+                    self.controller.meeting_state_changed.emit(state_payload)
             elif kind == "server_started":
                 with self._lock:
                     self._host_url = payload.get("host_url") or self._host_url
@@ -710,14 +757,20 @@ class MeetingRuntime:
             elif kind == "ended":
                 self.controller.meeting_active = False
                 status = str(payload.get("status") or "ended")
-                message = (
-                    "Meeting ended — transcription recovery needed"
-                    if status == "needs_recovery" else "Meeting ended"
-                )
+                with self._lock:
+                    finalization = dict(self._finalization or {})
+                    finalizing = self._finalizing
+                if finalizing:
+                    message = "Meeting ended — preparing final insights…"
+                elif status == "needs_recovery":
+                    message = "Meeting ended — transcription recovery needed"
+                else:
+                    message = "Meeting ended"
                 self.controller.meeting_status_update.emit(message)
-                self.controller.meeting_state_changed.emit(
-                    {"active": False, "status": status}
-                )
+                state_payload = {"active": False, "status": status}
+                if finalization:
+                    state_payload["finalization"] = finalization
+                self.controller.meeting_state_changed.emit(state_payload)
             elif kind == "intelligence":
                 online = bool(
                     payload.get("online", payload.get("intelligence_online", False))
@@ -734,6 +787,35 @@ class MeetingRuntime:
                 logger.debug(f"Unhandled meeting engine event: {kind}")
         except Exception as exc:  # never propagate into engine threads
             logger.error(f"Error bridging meeting event '{kind}': {exc}")
+
+    def _apply_finalization(
+        self,
+        finalization: Dict[str, Any],
+        state_payload: Dict[str, Any],
+    ) -> None:
+        """Track finalization and attach it to a meeting-state payload.
+
+        Args:
+            finalization: ``{status, message}`` from the engine status event.
+            state_payload: Mutable payload being built for the UI.
+        """
+        status = str(finalization.get("status") or "")
+        message = str(finalization.get("message") or "")
+        normalized = {"status": status, "message": message}
+        terminal = status in {
+            "completed", "disabled", "unavailable", "failed",
+        }
+        with self._lock:
+            self._finalization = normalized
+            self._finalizing = status == "running"
+        state_payload["finalization"] = normalized
+        if status == "running":
+            self.controller.meeting_status_update.emit(
+                message or "Preparing final cloud insights…"
+            )
+        elif terminal and message:
+            # Persistent non-modal feedback; never a meeting_error dialog.
+            self.controller.meeting_status_update.emit(message)
 
     # ------------------------------------------------------------------
     # Teardown
@@ -759,8 +841,12 @@ class MeetingRuntime:
         """
         with self._lock:
             engine, self._engine = self._engine, None
+            # Drop retained dashboard URLs only when the engine itself is torn
+            # down (new meeting or app exit) — not merely when capture ends.
             self._host_url = None
             self._guest_url = None
+            self._finalizing = False
+            self._finalization = None
         if engine is None:
             return
 

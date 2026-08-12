@@ -149,15 +149,22 @@ class SystemTrayManager(QSystemTrayIcon):
         else:
             self.toggle_action.setText("Start Recording")
 
-    def set_meeting_active(self, active: bool):
+    def set_meeting_active(
+        self, active: bool, dashboard_available: Optional[bool] = None
+    ):
         """Update meeting menu labels for the current session state.
 
         Args:
-            active: True while a Meeting Mode session is running.
+            active: True while a Meeting Mode session is capturing.
+            dashboard_available: When provided, controls the Open Dashboard
+                action independently of capture activity so the link stays
+                available during post-meeting finalization.
         """
         self._meeting_active = bool(active)
         if self._meeting_active:
             self.meeting_toggle_action.setText("End Meeting")
         else:
             self.meeting_toggle_action.setText("Start Meeting")
-        self.meeting_dashboard_action.setEnabled(self._meeting_active)
+        if dashboard_available is None:
+            dashboard_available = self._meeting_active
+        self.meeting_dashboard_action.setEnabled(bool(dashboard_available))

@@ -13,7 +13,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.agent import scheduler as scheduler_mod
-from meeting.agent.scheduler import CheckpointScheduler, _content_words
+from meeting.agent.scheduler import (
+    CheckpointScheduler,
+    ConsolidationOutcome,
+    _content_words,
+)
 from meeting.interfaces import AgentResult, OpResult
 
 
@@ -346,9 +350,11 @@ class TestConsolidationRace:
         sched._thread = thread
         try:
             with patch.object(scheduler_mod, "_CONSOLIDATION_JOIN_S", 0.05):
-                sched.run_consolidation(timeout_s=1.0)
+                outcome = sched.run_consolidation(timeout_s=1.0)
             # Two agent runs sharing one core is worse than a missing pass.
             assert agent.calls == []
+            assert outcome.status == "failed"
+            assert "still running" in outcome.message.lower()
         finally:
             wedged.set()
             thread.join(timeout=5.0)
@@ -360,9 +366,71 @@ class TestConsolidationRace:
         agent = FakeAgent()
         sched = CheckpointScheduler(engine, agent)
         with patch.object(scheduler_mod, "_CONSOLIDATION_JOIN_S", 0.05):
-            sched.run_consolidation(timeout_s=5.0)
+            outcome = sched.run_consolidation(timeout_s=5.0)
         assert len(agent.calls) == 1
         assert agent.calls[0].is_consolidation is True
+        assert outcome == ConsolidationOutcome(
+            status="completed",
+            message="Final cloud insights are ready.",
+        )
+
+    def test_consolidation_unhealthy_agent(self):
+        class Unhealthy(FakeAgent):
+            def is_healthy(self):
+                return False
+
+        sched = CheckpointScheduler(FakeEngine(), Unhealthy())
+        outcome = sched.run_consolidation(timeout_s=1.0)
+        assert outcome.status == "unavailable"
+
+    def test_consolidation_transcript_failure(self):
+        class BoomEngine(FakeEngine):
+            def get_transcript(self, after_start_s=-1.0, limit=None):
+                raise RuntimeError("db locked")
+
+        outcome = CheckpointScheduler(BoomEngine(), FakeAgent()).run_consolidation()
+        assert outcome.status == "failed"
+        assert "transcript" in outcome.message.lower()
+
+    def test_consolidation_missing_store(self):
+        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        engine.store = None
+        outcome = CheckpointScheduler(engine, FakeAgent()).run_consolidation()
+        assert outcome.status == "failed"
+        assert "state" in outcome.message.lower()
+
+    def test_consolidation_timeout(self):
+        class HangingAgent(FakeAgent):
+            """Ignore cancel so consolidation truly produces no result."""
+
+            def __init__(self):
+                super().__init__()
+                self._hang = threading.Event()
+
+            def consolidate(self, payload):
+                self.calls.append(payload)
+                self._hang.wait(timeout=30.0)
+                return AgentResult(ok=True)
+
+            def cancel(self):
+                # Leave the worker blocked so result_box stays empty.
+                return
+
+        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        sched = CheckpointScheduler(engine, HangingAgent())
+        outcome = sched.run_consolidation(timeout_s=0.05)
+        assert outcome.status == "failed"
+        assert "timed out" in outcome.message.lower()
+
+    def test_consolidation_agent_failure(self):
+        class FailingAgent(FakeAgent):
+            def consolidate(self, payload):
+                return AgentResult(ok=False, error="model down")
+
+        engine = FakeEngine([{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "x"}])
+        outcome = CheckpointScheduler(engine, FailingAgent()).run_consolidation()
+        assert outcome.status == "failed"
+        assert "model down" in outcome.message
 
 
 class TestTopicShift:

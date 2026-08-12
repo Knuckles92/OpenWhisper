@@ -82,6 +82,41 @@ def test_archive_adapter_normalizes_persisted_lifecycle_and_transcript():
     ]
 
 
+def test_archive_adapter_normalizes_interrupted_finalization():
+    """Archived snapshots must not claim cloud consolidation is still running."""
+    state = MeetingState(
+        meeting_id="m_archive",
+        title="Interrupted finalize",
+        status="ended",
+        cloud_enabled=True,
+    )
+    payload = state.to_dict()
+    payload["finalization"] = {
+        "status": "running",
+        "message": "Preparing final cloud insights…",
+    }
+    meeting = {
+        "id": "m_archive",
+        "title": "Interrupted finalize",
+        "status": "ended",
+        "state_json": json.dumps(payload),
+        "state_seq": 7,
+        "cloud_enabled": True,
+        "agent_provider": "openrouter",
+        "agent_model": "test-model",
+    }
+
+    archive = ArchivedMeetingDashboard(
+        FakeRepository(),
+        meeting,
+        spool_root="meetings",
+    )
+
+    snapshot = archive.store.snapshot()
+    assert snapshot["finalization"]["status"] == "failed"
+    assert "interrupted" in snapshot["finalization"]["message"].lower()
+
+
 def test_archive_adapter_rotates_links_and_stops_server():
     repository = FakeRepository()
     archive = ArchivedMeetingDashboard(repository, _meeting(), spool_root="meetings")

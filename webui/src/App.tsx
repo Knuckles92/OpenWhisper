@@ -181,6 +181,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
               cloudEnabled={ui.state.cloud_enabled}
               intelligenceOnline={ui.state.intelligence_online}
               meetingStatus={ui.state.status}
+              finalizationStatus={ui.state.finalization?.status ?? null}
+              finalizationMessage={ui.state.finalization?.message ?? null}
             />
           )}
 
