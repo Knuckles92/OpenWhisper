@@ -690,3 +690,124 @@ class CheckpointScheduler:
         except Exception:
             logger.exception("State repair after consolidation failed")
         return outcome
+
+    def run_final_polish(self, timeout_s: float = 60.0) -> ConsolidationOutcome:
+        """Run a blocking transcript-text polish over the final segments.
+
+        Stops periodic firing first. Does not revoke agent writes so
+        :meth:`run_consolidation` can follow on the same end path.
+
+        Args:
+            timeout_s: Maximum seconds to wait for the polish pass.
+
+        Returns:
+            Structured outcome. ``completed`` means the agent returned ok
+            (including zero ops); failures are non-fatal for consolidation.
+        """
+        self._consolidating = True
+        self.stop()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=_CONSOLIDATION_JOIN_S)
+            if thread.is_alive():
+                try:
+                    self._agent.cancel()
+                except Exception:
+                    logger.exception("Agent cancel raised before final polish")
+                thread.join(timeout=_CONSOLIDATION_JOIN_S)
+            if thread.is_alive():
+                logger.error(
+                    "Checkpoint worker did not stop; skipping final polish"
+                )
+                return ConsolidationOutcome(
+                    status="failed",
+                    message=(
+                        "Transcript cleanup was skipped because a previous "
+                        "checkpoint was still running."
+                    ),
+                )
+
+        if not self._agent.is_healthy():
+            return ConsolidationOutcome(
+                status="unavailable",
+                message=(
+                    "Meeting intelligence is offline; transcript cleanup "
+                    "could not run."
+                ),
+            )
+        try:
+            segments = self._engine.get_transcript()
+        except Exception as exc:
+            logger.exception("Final polish transcript fetch failed")
+            return ConsolidationOutcome(
+                status="failed",
+                message=f"Could not load the transcript for cleanup: {exc}",
+            )
+        if not segments:
+            return ConsolidationOutcome(
+                status="completed",
+                message="No transcript text needed cleanup.",
+            )
+        if len(segments) > _POLISH_MAX_SEGMENTS:
+            step = max(1, _POLISH_MAX_SEGMENTS - 40)
+            blocks = [
+                segments[start:start + _POLISH_MAX_SEGMENTS]
+                for start in range(0, len(segments), step)
+            ]
+        else:
+            blocks = [segments]
+
+        last_error = ""
+        applied_any = False
+        for block in blocks:
+            payload = self._build_payload(
+                block, is_consolidation=False, is_polish=True,
+            )
+            if payload is None:
+                return ConsolidationOutcome(
+                    status="failed",
+                    message="Meeting state was unavailable for transcript cleanup.",
+                )
+            result_box: Dict[str, AgentResult] = {}
+
+            def _worker(bound_payload: CheckpointPayload = payload) -> None:
+                try:
+                    result_box["result"] = self._agent.checkpoint(bound_payload)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.exception("Agent final polish raised")
+                    result_box["result"] = AgentResult(ok=False, error=str(exc))
+
+            worker = threading.Thread(
+                target=_worker, name="meeting-final-polish", daemon=True,
+            )
+            worker.start()
+            worker.join(timeout=timeout_s)
+            if worker.is_alive():
+                logger.warning(
+                    "Final polish timed out after %.0fs; canceling", timeout_s,
+                )
+                try:
+                    self._agent.cancel()
+                except Exception:
+                    logger.exception("Agent cancel raised")
+                worker.join(timeout=5.0)
+                last_error = (
+                    f"Transcript cleanup timed out after {int(timeout_s)}s."
+                )
+                break
+            result = result_box.get("result")
+            if result is None:
+                last_error = "Transcript cleanup produced no result."
+                break
+            if not result.ok:
+                last_error = result.error or "transcript cleanup failed"
+                break
+            applied_any = True
+            self._last_polish_mono = time.monotonic()
+
+        if last_error and not applied_any:
+            return ConsolidationOutcome(status="failed", message=last_error)
+        return ConsolidationOutcome(
+            status="completed",
+            message="Transcript cleanup is ready.",
+        )

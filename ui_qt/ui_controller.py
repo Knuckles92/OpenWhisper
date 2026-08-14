@@ -74,6 +74,7 @@ class UIController(QObject):
 
         # Meeting Mode (assigned by ApplicationController)
         self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
+        self.on_meeting_start_demo: Optional[Callable] = None  # (cloud: Optional[bool])
         self.on_meeting_end: Optional[Callable] = None
         self.on_meeting_pause: Optional[Callable] = None
         self.on_meeting_resume: Optional[Callable] = None
@@ -119,6 +120,7 @@ class UIController(QObject):
         # Meeting Mode tab signals
         meeting_tab = self.main_window.meeting_mode_tab
         meeting_tab.start_requested.connect(self._on_meeting_start_requested)
+        meeting_tab.demo_requested.connect(self._on_meeting_demo_requested)
         meeting_tab.pause_requested.connect(
             lambda: self.on_meeting_pause and self.on_meeting_pause()
         )
@@ -541,6 +543,9 @@ class UIController(QObject):
             self.overlay.refresh_streaming_font_size()
             # Keep main-UI AI cleanup checkboxes in sync with Settings.
             self.refresh_cleanup_controls()
+            self.main_window.meeting_mode_tab.set_developer_mode(
+                bool(settings.get(SettingsKey.DEVELOPER_MODE, False))
+            )
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
@@ -719,6 +724,11 @@ class UIController(QObject):
         """Forward a panel Start Meeting request to the application runtime."""
         if self.on_meeting_start:
             self.on_meeting_start(cloud_enabled)
+
+    def _on_meeting_demo_requested(self, cloud_enabled: bool):
+        """Forward a developer-mode demo meeting request to the runtime."""
+        if self.on_meeting_start_demo:
+            self.on_meeting_start_demo(cloud_enabled)
 
     def _on_meeting_cloud_toggled(self, enabled: bool):
         """Forward the cloud-intelligence checkbox to the application runtime."""

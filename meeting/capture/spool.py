@@ -37,13 +37,14 @@ tests can drive them with synthetic arrays.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
 import threading
 import time
 import wave
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -96,6 +97,14 @@ _REGISTER_RETRY_DELAY_S = 0.1
 
 #: Gap/overlap corrections logged at INFO before falling back to DEBUG.
 _MAX_GAP_LOGS = 5
+
+#: Native-rate session PCM is resampled to 16 kHz in these windows at flush.
+#: Large enough to avoid the per-block FFT discontinuity, small enough to
+#: keep peak memory bounded on a long meeting.
+SESSION_RESAMPLE_WINDOW_S = 30.0
+
+#: How often the session JSON watermark is rewritten during capture.
+_SESSION_META_EVERY_SAMPLES = 16000 * 5
 
 #: Queue item that tells the writer thread to finalize and exit.
 _SENTINEL = object()
@@ -268,6 +277,228 @@ def find_cut_point(buffer: np.ndarray, sample_rate: int, target_sec: float,
     return scanner.cut_index()
 
 
+def session_pcm_path(spool_dir: str, channel: str) -> str:
+    """Native-rate session PCM path for one capture channel."""
+    return os.path.join(spool_dir, f"{channel}_session.pcm")
+
+
+def session_meta_path(spool_dir: str, channel: str) -> str:
+    """Sidecar metadata for the native-rate session PCM."""
+    return os.path.join(spool_dir, f"{channel}_session.json")
+
+
+def session_wav_path(spool_dir: str, channel: str) -> str:
+    """16 kHz session WAV path used by the offline ASR pass."""
+    return os.path.join(spool_dir, f"{channel}_session.wav")
+
+
+def write_session_meta(path: str, sample_rate: int, sample_count: int,
+                       origin_s: float) -> None:
+    """Atomically write session PCM watermark metadata.
+
+    Args:
+        path: Destination JSON path.
+        sample_rate: Native sample rate of the PCM file.
+        sample_count: Number of int16 samples written so far.
+        origin_s: Meeting-clock time of the first sample.
+    """
+    payload = {
+        "sample_rate": int(sample_rate),
+        "sample_count": int(sample_count),
+        "origin_s": float(origin_s),
+    }
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, separators=(",", ":"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+def load_session_meta(path: str) -> Optional[Dict[str, Any]]:
+    """Return session PCM metadata, or None when missing/corrupt."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return {
+            "sample_rate": int(data.get("sample_rate") or 0),
+            "sample_count": int(data.get("sample_count") or 0),
+            "origin_s": float(data.get("origin_s") or 0.0),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def resample_pcm_file_to_16k(
+    src_pcm: str,
+    src_rate: int,
+    dest_pcm: str,
+    *,
+    append: bool = False,
+    window_s: float = SESSION_RESAMPLE_WINDOW_S,
+) -> int:
+    """Streaming-resample a native PCM file into 16 kHz PCM.
+
+    Args:
+        src_pcm: Native-rate packed int16 PCM.
+        src_rate: Sample rate of ``src_pcm``.
+        dest_pcm: Destination 16 kHz packed int16 PCM.
+        append: When True, append to ``dest_pcm`` if it already exists.
+        window_s: FFT window size in seconds.
+
+    Returns:
+        Number of 16 kHz samples written.
+    """
+    rate = max(1, int(src_rate))
+    window_n = max(1, int(round(float(window_s) * rate)))
+    written = 0
+    mode = "ab" if append and os.path.isfile(dest_pcm) else "wb"
+    os.makedirs(os.path.dirname(os.path.abspath(dest_pcm)) or ".", exist_ok=True)
+    with open(src_pcm, "rb") as src, open(dest_pcm, mode) as dest:
+        while True:
+            raw = src.read(window_n * 2)
+            if not raw:
+                break
+            frames = np.frombuffer(raw, dtype="<i2")
+            if frames.size == 0:
+                break
+            out = resample_to_16k(frames, rate)
+            dest.write(np.ascontiguousarray(out, dtype=np.int16).tobytes())
+            written += int(out.size)
+    return written
+
+
+def pcm16k_to_wav(pcm_path: str, wav_path: str) -> None:
+    """Wrap packed 16 kHz int16 PCM as a mono WAV (atomic replace)."""
+    tmp_path = wav_path + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(wav_path)) or ".", exist_ok=True)
+    with wave.open(tmp_path, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(TARGET_RATE)
+        with open(pcm_path, "rb") as src:
+            while True:
+                raw = src.read(TARGET_RATE * 2 * 10)
+                if not raw:
+                    break
+                wav_file.writeframes(raw)
+    os.replace(tmp_path, wav_path)
+
+
+def concat_channel_chunks_to_wav(
+    chunks: Sequence[Dict[str, Any]],
+    channel: str,
+    output_path: str,
+) -> Optional[float]:
+    """Concatenate registered 16 kHz chunks for one channel into a WAV.
+
+    Gaps on the meeting clock are filled with silence so timestamps stay
+    aligned. Used when a session WAV is missing (crash / older meetings).
+
+    Args:
+        chunks: ``meeting_audio_chunks`` row dicts.
+        channel: ``mic`` or ``loopback``.
+        output_path: Destination 16 kHz mono WAV.
+
+    Returns:
+        Meeting-clock origin of sample 0, or None when nothing was written.
+    """
+    selected = [
+        chunk for chunk in chunks
+        if str(chunk.get("channel") or "") == channel
+        and chunk.get("file_path")
+    ]
+    selected.sort(
+        key=lambda chunk: (
+            float(chunk.get("start_s") or 0.0),
+            int(chunk.get("seq") or 0),
+        )
+    )
+    if not selected:
+        return None
+    origin_s = float(selected[0].get("start_s") or 0.0)
+    tmp_path = output_path + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+    cursor_s = origin_s
+    with wave.open(tmp_path, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(TARGET_RATE)
+        for chunk in selected:
+            start_s = float(chunk.get("start_s") or 0.0)
+            gap_s = start_s - cursor_s
+            if gap_s > 1.0 / TARGET_RATE:
+                zeros = np.zeros(int(round(gap_s * TARGET_RATE)), dtype=np.int16)
+                wav_file.writeframes(zeros.tobytes())
+                cursor_s += zeros.size / float(TARGET_RATE)
+            try:
+                with wave.open(str(chunk["file_path"]), "rb") as source:
+                    if (
+                        source.getnchannels() != 1
+                        or source.getsampwidth() != 2
+                        or source.getframerate() != TARGET_RATE
+                    ):
+                        logger.warning(
+                            "Skipping incompatible session-fallback chunk %s",
+                            chunk.get("id"),
+                        )
+                        continue
+                    frames = source.readframes(source.getnframes())
+            except (OSError, wave.Error):
+                logger.exception(
+                    "Failed to load chunk %s for session fallback",
+                    chunk.get("id"),
+                )
+                continue
+            wav_file.writeframes(frames)
+            cursor_s += (len(frames) // 2) / float(TARGET_RATE)
+    os.replace(tmp_path, output_path)
+    return origin_s
+
+
+def resolve_session_wav(
+    spool_dir: str,
+    channel: str,
+    chunks: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Optional[str]:
+    """Return a 16 kHz session WAV, stitching chunks when the file is missing.
+
+    Args:
+        spool_dir: Meeting spool directory.
+        channel: ``mic`` or ``loopback``.
+        chunks: Optional registered chunk rows for the fallback concat.
+
+    Returns:
+        Path to a readable session WAV, or None.
+    """
+    wav_path = session_wav_path(spool_dir, channel)
+    try:
+        if os.path.isfile(wav_path) and os.path.getsize(wav_path) > 44:
+            return wav_path
+    except OSError:
+        pass
+    if not chunks:
+        return None
+    try:
+        origin = concat_channel_chunks_to_wav(chunks, channel, wav_path)
+    except Exception:
+        logger.exception("Session-WAV chunk fallback failed for %s", channel)
+        return None
+    if origin is None:
+        return None
+    try:
+        if os.path.isfile(wav_path) and os.path.getsize(wav_path) > 44:
+            return wav_path
+    except OSError:
+        return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # SpoolWriter
 # ---------------------------------------------------------------------------
@@ -284,6 +515,7 @@ class SpoolWriter:
                  on_chunk: Callable[[SpooledChunk], None],
                  target_sec: float = DEFAULT_TARGET_SEC,
                  max_sec: float = DEFAULT_MAX_SEC,
+                 quiet_window_s: float = QUIET_WINDOW_S,
                  queue_size: int = QUEUE_MAX_BLOCKS,
                  initial_seq: int = 0) -> None:
         """Args:
@@ -298,6 +530,7 @@ class SpoolWriter:
                 ``SpooledChunk``.
             target_sec: Preferred chunk duration before quiet-cut scanning.
             max_sec: Hard maximum chunk duration.
+            quiet_window_s: Required quiet stretch before a cut.
             queue_size: Capture blocks buffered between the audio thread and
                 the writer thread before blocks are dropped.
             initial_seq: First per-channel sequence number, used after a
@@ -311,6 +544,7 @@ class SpoolWriter:
         self._on_chunk = on_chunk
         self._target_sec = float(target_sec)
         self._max_sec = float(max_sec)
+        self._quiet_window_s = float(quiet_window_s)
 
         self._queue: "queue.Queue" = queue.Queue(maxsize=max(1, int(queue_size)))
         self._flush_lock = threading.Lock()
@@ -329,6 +563,14 @@ class SpoolWriter:
         self._seq = max(0, int(initial_seq))
         self._gap_logs = 0
         self._final_chunk: Optional[SpooledChunk] = None
+        self._session_fp: Optional[Any] = None
+        self._session_samples = 0
+        self._session_rate: Optional[int] = None
+        self._session_origin_s = 0.0
+        self._session_meta_at = 0
+        self._session_16k_pcm = os.path.join(
+            spool_dir, f"{channel}_session.16k.pcm"
+        )
 
         os.makedirs(spool_dir, exist_ok=True)
 
@@ -445,6 +687,11 @@ class SpoolWriter:
         except Exception:
             logger.exception("Spool remainder finalization failed (%s)",
                              self._channel)
+        try:
+            self._finalize_session()
+        except Exception:
+            logger.exception("Session WAV finalization failed (%s)",
+                             self._channel)
 
     def _stream_end_s(self) -> float:
         """Meeting time just past the last buffered sample."""
@@ -458,7 +705,16 @@ class SpoolWriter:
         self._consumed = 0
         self._pending = 0
         self._blocks = []
-        self._scanner = _CutScanner(self._rate, self._target_sec, self._max_sec)
+        self._scanner = self._new_scanner(self._rate)
+
+    def _new_scanner(self, rate: int) -> _CutScanner:
+        """Build a cut scanner using this spool's live chunking profile."""
+        return _CutScanner(
+            rate,
+            self._target_sec,
+            self._max_sec,
+            quiet_window_s=self._quiet_window_s,
+        )
 
     def _process_block(self, frames: np.ndarray, t_meeting: float,
                        src_rate: int) -> None:
@@ -475,6 +731,7 @@ class SpoolWriter:
                            "cutting the pending chunk", self._channel,
                            self._rate, rate)
             self._finalize_remainder()
+            self._spill_session_pcm()
             self._reset_stream(rate, t_meeting)
 
         gap_s = t_meeting - self._stream_end_s()
@@ -512,6 +769,7 @@ class SpoolWriter:
         self._pending += int(frames.size)
         if self._scanner is not None:
             self._scanner.push(frames)
+        self._append_session(frames)
 
     def _cut_ready_chunks(self) -> None:
         """Finalize as many chunks as the pending buffer supports."""
@@ -527,7 +785,7 @@ class SpoolWriter:
             self._consumed += int(chunk.size)
             self._blocks = [rest] if rest.size else []
             self._pending = int(rest.size)
-            self._scanner = _CutScanner(rate, self._target_sec, self._max_sec)
+            self._scanner = self._new_scanner(rate)
             if rest.size:
                 self._scanner.push(rest)
             self._emit_chunk(chunk, start_s, rate)
@@ -552,12 +810,103 @@ class SpoolWriter:
         self._pending = 0
         start_s = self._origin_s + self._consumed / float(rate)
         self._consumed += int(buffered.size)
-        self._scanner = _CutScanner(rate, self._target_sec, self._max_sec)
+        self._scanner = self._new_scanner(rate)
         if buffered.size / float(rate) < MIN_FLUSH_S:
             logger.info("Dropping %.2fs sub-minimum spool remainder (%s)",
                         buffered.size / float(rate), self._channel)
             return
         self._emit_chunk(buffered, start_s, rate)
+
+    def _append_session(self, frames: np.ndarray) -> None:
+        """Append gap-filled native samples to the continuous session PCM."""
+        if frames.size == 0 or self._rate is None:
+            return
+        if self._session_fp is None:
+            pcm_path = session_pcm_path(self._spool_dir, self._channel)
+            self._session_fp = open(pcm_path, "wb")
+            self._session_rate = int(self._rate)
+            self._session_origin_s = float(self._origin_s)
+            self._session_samples = 0
+            self._session_meta_at = 0
+        payload = np.ascontiguousarray(frames, dtype=np.int16)
+        self._session_fp.write(payload.tobytes())
+        self._session_samples += int(payload.size)
+        if (
+            self._session_samples - self._session_meta_at
+            >= _SESSION_META_EVERY_SAMPLES
+        ):
+            self._write_session_meta()
+            self._session_meta_at = self._session_samples
+
+    def _write_session_meta(self) -> None:
+        """Flush the native PCM handle and rewrite its JSON watermark."""
+        if self._session_fp is not None:
+            try:
+                self._session_fp.flush()
+            except OSError:
+                logger.exception("Session PCM flush failed (%s)", self._channel)
+        if self._session_rate is None:
+            return
+        try:
+            write_session_meta(
+                session_meta_path(self._spool_dir, self._channel),
+                self._session_rate,
+                self._session_samples,
+                self._session_origin_s,
+            )
+        except Exception:
+            logger.exception("Session metadata write failed (%s)", self._channel)
+
+    def _close_session_pcm(self) -> Optional[str]:
+        """Close the native PCM handle and return its path when it has audio."""
+        handle = self._session_fp
+        self._session_fp = None
+        if handle is not None:
+            try:
+                handle.flush()
+                handle.close()
+            except OSError:
+                logger.exception("Session PCM close failed (%s)", self._channel)
+        self._write_session_meta()
+        pcm_path = session_pcm_path(self._spool_dir, self._channel)
+        if self._session_samples <= 0 or not os.path.isfile(pcm_path):
+            return None
+        return pcm_path
+
+    def _spill_session_pcm(self) -> None:
+        """Resample the current native PCM onto the accumulating 16 kHz PCM."""
+        pcm_path = self._close_session_pcm()
+        rate = self._session_rate
+        if pcm_path is None or rate is None:
+            self._session_samples = 0
+            return
+        try:
+            resample_pcm_file_to_16k(
+                pcm_path,
+                rate,
+                self._session_16k_pcm,
+                append=os.path.isfile(self._session_16k_pcm),
+            )
+        except Exception:
+            logger.exception("Session PCM resample failed (%s)", self._channel)
+        self._session_samples = 0
+        self._session_rate = None
+
+    def _finalize_session(self) -> None:
+        """Resample native PCM to the durable 16 kHz session WAV."""
+        self._spill_session_pcm()
+        wav_path = session_wav_path(self._spool_dir, self._channel)
+        if not os.path.isfile(self._session_16k_pcm):
+            return
+        try:
+            pcm16k_to_wav(self._session_16k_pcm, wav_path)
+        except Exception:
+            logger.exception("Session WAV wrap failed (%s)", self._channel)
+            return
+        try:
+            os.remove(self._session_16k_pcm)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # Chunk output (writer thread)

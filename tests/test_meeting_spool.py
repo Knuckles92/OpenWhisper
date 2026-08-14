@@ -404,4 +404,90 @@ class TestSpoolWriterContract:
 
         assert collector.chunks == []
         names = os.listdir(tmp_path)
-        assert names == ["mic_00000.wav.orphan"], names
+        assert "mic_00000.wav.orphan" in names
+        assert collector.chunks == []
+        session_names = {
+            name for name in names
+            if name.startswith("mic_session") or name.endswith(".16k.pcm")
+        }
+        assert session_names, names
+
+
+class TestSessionWav:
+    def test_flush_writes_16k_session_wav(self, tmp_path):
+        rate = 16000
+        repo = FakeRepo()
+        collector = Collector(repo)
+        clock, t0 = _start_clock()
+        writer = _make_writer(tmp_path, repo, collector, clock)
+        _feed_stream(writer, _signal(2.0, rate), rate, t0)
+        writer.flush()
+
+        wav_path = os.path.join(tmp_path, "mic_session.wav")
+        meta_path = os.path.join(tmp_path, "mic_session.json")
+        assert os.path.isfile(wav_path)
+        assert os.path.isfile(meta_path)
+        with wave.open(wav_path, "rb") as wav:
+            assert wav.getframerate() == TARGET_RATE
+            assert wav.getnchannels() == 1
+            nframes = wav.getnframes()
+        assert nframes == pytest.approx(int(2.0 * TARGET_RATE), abs=BLOCK)
+
+    def test_pause_does_not_create_session_files(self, tmp_path):
+        rate = 16000
+        repo = FakeRepo()
+        collector = Collector(repo)
+        clock, t0 = _start_clock()
+        writer = _make_writer(tmp_path, repo, collector, clock)
+        clock.pause()
+        _feed_stream(writer, _signal(3.0, rate), rate, t0)
+        writer.flush()
+        assert os.listdir(tmp_path) == []
+
+    def test_native_rate_session_matches_timeline(self, tmp_path):
+        rate = 44100
+        repo = FakeRepo()
+        collector = Collector(repo)
+        clock, t0 = _start_clock()
+        writer = _make_writer(tmp_path, repo, collector, clock)
+        _feed_stream(writer, _signal(3.0, rate), rate, t0)
+        writer.flush()
+        wav_path = os.path.join(tmp_path, "mic_session.wav")
+        with wave.open(wav_path, "rb") as wav:
+            duration = wav.getnframes() / float(wav.getframerate())
+        fed_s = (int(3.0 * rate) // BLOCK) * BLOCK / float(rate)
+        assert duration == pytest.approx(fed_s, abs=0.05)
+
+    def test_chunk_concat_fallback(self, tmp_path):
+        from meeting.capture.spool import concat_channel_chunks_to_wav
+
+        rate = TARGET_RATE
+        chunk_a = tmp_path / "loopback_00000.wav"
+        chunk_b = tmp_path / "loopback_00001.wav"
+        for path, samples in (
+            (chunk_a, _signal(0.5, rate)),
+            (chunk_b, _signal(0.5, rate)),
+        ):
+            with wave.open(str(path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(rate)
+                wav.writeframes(samples.tobytes())
+        out = tmp_path / "loopback_session.wav"
+        origin = concat_channel_chunks_to_wav(
+            [
+                {
+                    "channel": "loopback", "seq": 0, "file_path": str(chunk_a),
+                    "start_s": 0.0, "duration_s": 0.5,
+                },
+                {
+                    "channel": "loopback", "seq": 1, "file_path": str(chunk_b),
+                    "start_s": 0.5, "duration_s": 0.5,
+                },
+            ],
+            "loopback",
+            str(out),
+        )
+        assert origin == pytest.approx(0.0)
+        with wave.open(str(out), "rb") as wav:
+            assert wav.getnframes() == pytest.approx(rate, abs=2)

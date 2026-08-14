@@ -261,6 +261,10 @@ class TestMeetingSettings(unittest.TestCase):
             MeetingServerBind,
             SettingsKey,
             resolve_meeting_agent_core,
+            resolve_meeting_end_polish,
+            resolve_meeting_end_redecode,
+            resolve_meeting_end_report,
+            resolve_developer_mode,
             resolve_meeting_llm_model,
             resolve_meeting_llm_provider,
             resolve_meeting_language,
@@ -277,6 +281,10 @@ class TestMeetingSettings(unittest.TestCase):
         self.resolve_language = resolve_meeting_language
         self.resolve_llm_model = resolve_meeting_llm_model
         self.resolve_agent_core = resolve_meeting_agent_core
+        self.resolve_end_redecode = resolve_meeting_end_redecode
+        self.resolve_end_polish = resolve_meeting_end_polish
+        self.resolve_end_report = resolve_meeting_end_report
+        self.resolve_developer_mode = resolve_developer_mode
         self.resolve_bind = resolve_meeting_server_bind
         self.resolve_port = resolve_meeting_server_port
 
@@ -289,6 +297,10 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(config.MEETING_AGENT_CORE, self.agent_cores.PI)
         self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
         self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
+        self.assertEqual(self.resolve_end_redecode({}), config.MEETING_END_REDECODE)
+        self.assertTrue(self.resolve_end_polish({}))
+        self.assertTrue(self.resolve_end_report({}))
+        self.assertFalse(self.resolve_developer_mode({}))
 
     def test_saved_choices_round_trip(self):
         saved = {
@@ -299,6 +311,9 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
             self.keys.MEETING_SERVER_BIND: self.binds.LAN,
             self.keys.MEETING_SERVER_PORT: 8099,
+            self.keys.MEETING_END_REDECODE: True,
+            self.keys.MEETING_END_POLISH: False,
+            self.keys.MEETING_END_REPORT: False,
         }
         self.assertEqual(self.resolve_whisper_model(saved), "small.en")
         self.assertEqual(self.resolve_language(saved), "en")
@@ -307,6 +322,15 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_agent_core(saved), self.agent_cores.DIRECT)
         self.assertEqual(self.resolve_bind(saved), self.binds.LAN)
         self.assertEqual(self.resolve_port(saved), 8099)
+        self.assertTrue(self.resolve_end_redecode(saved))
+        self.assertFalse(self.resolve_end_polish(saved))
+        self.assertFalse(self.resolve_end_report(saved))
+        self.assertTrue(self.resolve_developer_mode(
+            {self.keys.DEVELOPER_MODE: True}
+        ))
+        self.assertFalse(self.resolve_developer_mode(
+            {self.keys.DEVELOPER_MODE: "yes"}
+        ))
 
     def test_unknown_values_fall_back_to_defaults(self):
         saved = {

@@ -22,6 +22,9 @@ try:
         MeetingAgentCore,
         SettingsKey,
         resolve_meeting_agent_core,
+        resolve_meeting_end_polish,
+        resolve_meeting_end_redecode,
+        resolve_meeting_end_report,
         resolve_meeting_llm_model,
         resolve_meeting_llm_provider,
         resolve_meeting_language,
@@ -183,6 +186,33 @@ class MeetingRuntime:
             cloud_enabled: Explicit cloud-intelligence choice, or None to use
                 the remembered per-meeting toggle.
         """
+        self._begin_start(cloud_enabled, demo=False)
+
+    def start_demo_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
+        """Start a developer-mode meeting with canned transcript data.
+
+        Skips microphone, system audio, and Whisper so End can be tested
+        against polish and the final report without a live recording.
+
+        Args:
+            cloud_enabled: Explicit cloud-intelligence choice, or None to use
+                the remembered per-meeting toggle.
+        """
+        self._begin_start(cloud_enabled, demo=True)
+
+    def _begin_start(
+        self,
+        cloud_enabled: Optional[bool],
+        *,
+        demo: bool,
+    ) -> None:
+        """Claim exclusive mode, resolve consent, and launch the engine.
+
+        Args:
+            cloud_enabled: Explicit cloud-intelligence choice, or None to use
+                the remembered per-meeting toggle.
+            demo: When True, seed a fake transcript instead of capturing audio.
+        """
         # ``is_active`` is engine-derived and stays False for the seconds
         # ``_start_worker`` takes, so the authoritative guard is the
         # controller's exclusive-mode flag plus a claim held across the consent
@@ -224,11 +254,11 @@ class MeetingRuntime:
             # One-time informed consent before any transcript leaves the
             # machine; the controller shows the dialog on the Qt main thread
             # and calls back into on_consent_result.
-            self._consent_pending_kind = "start"
+            self._consent_pending_kind = "start_demo" if demo else "start"
             self.controller.meeting_consent_requested.emit()
             return
 
-        self._launch(cloud)
+        self._launch(cloud, demo=demo)
 
     def on_consent_result(self, granted: bool) -> None:
         """Continue the pending action after the consent dialog resolves.
@@ -237,10 +267,10 @@ class MeetingRuntime:
             granted: True when the user enabled cloud intelligence.
         """
         kind, self._consent_pending_kind = self._consent_pending_kind, None
-        if kind == "start":
+        if kind in ("start", "start_demo"):
             # A declined consent still starts the meeting — transcript-only.
             # _launch releases the start claim taken by start_meeting.
-            self._launch(cloud=granted)
+            self._launch(cloud=granted, demo=(kind == "start_demo"))
             return
 
         # Nothing is waiting to start on this result; drop any stale claim so
@@ -264,12 +294,16 @@ class MeetingRuntime:
         else:
             logger.debug("Consent result received with no pending meeting action")
 
-    def _launch(self, cloud: bool) -> None:
+    def _launch(self, cloud: bool, *, demo: bool = False) -> None:
         """Kick off the meeting start on a dedicated thread.
 
         ``MeetingEngine.start()`` loads a Whisper model and boots the web
         server, so it must not run on the Qt main thread. ``meeting_active``
         is raised immediately so dictation is excluded during startup.
+
+        Args:
+            cloud: Whether cloud intelligence should start with the meeting.
+            demo: When True, seed canned transcript data instead of capturing.
         """
         try:
             settings_manager.save_setting(
@@ -285,17 +319,19 @@ class MeetingRuntime:
             # A new meeting replaces any retained post-meeting finalization.
             self._finalizing = False
             self._finalization = None
-        self.controller.meeting_status_update.emit("Starting meeting...")
+        self.controller.meeting_status_update.emit(
+            "Starting demo meeting..." if demo else "Starting meeting..."
+        )
         self.controller.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "starting",
              "cloud_enabled": cloud, "finalization": None}
         )
         threading.Thread(
-            target=self._start_worker, args=(cloud,),
+            target=self._start_worker, args=(cloud, demo),
             name="meeting-start", daemon=True,
         ).start()
 
-    def _start_worker(self, cloud: bool) -> None:
+    def _start_worker(self, cloud: bool, demo: bool = False) -> None:
         """Build and start the engine off the Qt thread; report via signals."""
         engine = None
         try:
@@ -303,7 +339,7 @@ class MeetingRuntime:
 
             self._shutdown_archive_dashboard()
             self._shutdown_engine()  # drop a previous (ended) session's server
-            options = self._build_options(cloud)
+            options = self._build_options(cloud, demo=demo)
             engine = MeetingEngine(options, repository=self._repository())
             engine.add_listener(self._on_engine_event)
             # Publish before starting: start() takes seconds to bring up
@@ -339,15 +375,32 @@ class MeetingRuntime:
         # No meeting_server_started emit here: the engine's own server_started
         # event already carried the URLs to the UI, and a second emit opens a
         # second dashboard tab.
-        self.controller.meeting_status_update.emit("Meeting in progress")
+        self.controller.meeting_status_update.emit(
+            "Demo meeting loaded — End to test cleanup and the report"
+            if demo else "Meeting in progress"
+        )
+        elapsed_s = 0.0
+        if demo:
+            try:
+                elapsed_s = float(engine.clock.now_s())
+            except Exception:
+                elapsed_s = 0.0
         self.controller.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active",
-             "cloud_enabled": cloud, "elapsed_s": 0.0}
+             "cloud_enabled": cloud, "elapsed_s": elapsed_s}
         )
-        logger.info(f"Meeting started: {result.get('meeting_id')}")
+        logger.info(
+            "Demo meeting started: %s" if demo else "Meeting started: %s",
+            result.get("meeting_id"),
+        )
 
-    def _build_options(self, cloud: bool):
-        """Compose ``MeetingEngineOptions`` from settings, config, and components."""
+    def _build_options(self, cloud: bool, *, demo: bool = False):
+        """Compose ``MeetingEngineOptions`` from settings, config, and components.
+
+        Args:
+            cloud: Whether cloud intelligence is enabled for this session.
+            demo: When True, skip live audio and seed canned transcript data.
+        """
         from meeting.engine import MeetingEngineOptions
 
         settings = settings_manager.load_all_settings()
@@ -361,7 +414,7 @@ class MeetingRuntime:
             agent_kind = MeetingAgentCore.DIRECT
 
         return MeetingEngineOptions(
-            title="",
+            title="Demo Planning Sync" if demo else "",
             cloud_enabled=cloud,
             mic_device_id=settings_manager.load_audio_input_device(),
             asr_model=resolve_meeting_whisper_model(settings),
@@ -374,6 +427,12 @@ class MeetingRuntime:
             server_bind=resolve_meeting_server_bind(settings),
             server_port=resolve_meeting_server_port(settings),
             spool_root=config.MEETINGS_FOLDER,
+            end_redecode=(
+                False if demo else resolve_meeting_end_redecode(settings)
+            ),
+            end_polish=resolve_meeting_end_polish(settings),
+            end_report=resolve_meeting_end_report(settings),
+            demo_mode=demo,
         )
 
     def pause_meeting(self) -> None:

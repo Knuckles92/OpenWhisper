@@ -55,8 +55,10 @@ whole-meeting alignment across overlapping speakers. Case and punctuation are
 ignored; fillers and spoken lexical content are retained.
 
 Both the initial live draft and the final rolling-revised transcript are
-scored. Runtime factor (wall-clock seconds / audio seconds) is recorded beside
-quality so an accuracy change cannot silently make Meeting Mode fall behind.
+scored. When `--offline-pass` is on (the default), a post-meeting clean
+re-decode of the continuous session audio is scored beside them. Runtime
+factor (wall-clock seconds / audio seconds) is recorded for the live path,
+the offline pass, and the combined end-of-meeting cost.
 The report also records the share of human reference words concurrent with a
 different speaker; these remain in strict WER, but expose the difficulty of
 recognizing overlapping voices from one mono mix.
@@ -77,3 +79,26 @@ context improved every meeting and reduced micro tcWER by 2.66 absolute points
 (8.44% relative) without a throughput penalty. Because 34.04% of manual
 reference words overlap another speaker, this is intentionally much harsher
 than clean single-speaker dictation.
+
+## Offline clean pass (not the product final)
+
+The same ten meetings with `--offline-pass` scored **33.66%** micro tcWER on
+the continuous-session re-decode versus **28.83%** live draft (+4.83 absolute,
++16.8% relative). Offline lost on every meeting; extra deletions were the
+main gap (25.13% vs 21.45%). Combined RTF was 0.114. The exceptional-quality
+gate fails for offline as the product final (micro above 30%, worst meeting
+39.89% on IN1007). Live draft remains the durable transcript. Session WAVs
+are still captured so a later cut/decode can be scored without changing the
+live path.
+
+ASR word error is not the product question. To compare the package a user
+keeps after End (topic, summary, cards, questions, readable transcript), run
+the sidecar on cached draft vs offline transcripts:
+
+```bash
+./venv/Scripts/python.exe -m benchmarks.meeting_mode.product_eval
+```
+
+Default slice is `IN1009,IN1005,IN1007` (short / best-draft / worst-offline).
+That needs the same OpenRouter key Meeting Mode uses. Results land under
+`results/.../product_eval/`.

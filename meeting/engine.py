@@ -46,10 +46,12 @@ END_DRAIN_TIMEOUT_S = 300.0
 END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
+#: Budget for the post-end transcript polish (LLM parse of the clean ASR).
+POLISH_TIMEOUT_S = 60.0
 #: Budget for the post-end consolidation pass. The durable meeting is marked
 #: ended before this optional polish starts, so it never holds the UI in the
 #: "Ending" state.
-CONSOLIDATION_TIMEOUT_S = 20.0
+CONSOLIDATION_TIMEOUT_S = 120.0
 #: How long end/cancel waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
@@ -79,6 +81,10 @@ class MeetingEngineOptions:
     server_bind: str = 'localhost'    # 'localhost' | 'lan'
     server_port: int = 0
     spool_root: str = ''              # parent dir for meeting spool dirs
+    end_redecode: bool = False
+    end_polish: bool = True
+    end_report: bool = True
+    demo_mode: bool = False
 
 
 class MeetingEngine:
@@ -325,6 +331,8 @@ class MeetingEngine:
         Degrades gracefully: a missing loopback device, ASR model, web
         stack, or intelligence backend logs and emits ``error``/``status``
         events but never prevents the rest of the meeting from running.
+        ``options.demo_mode`` skips capture, ASR, and diarization and seeds a
+        canned transcript so End can be tested without a live recording.
 
         Returns:
             ``{'meeting_id', 'url', 'host_url', 'guest_url'}`` — URL values
@@ -408,11 +416,14 @@ class MeetingEngine:
             self.clock.start()
             self._start_heartbeat()
 
-            # Consumers before producers: diarizer and ASR are in place
-            # before capture can finalize the first chunk.
-            self._start_diarizer()
-            self._start_asr()
-            capture_note = self._start_capture()
+            if self.options.demo_mode:
+                capture_note = self._seed_demo_meeting()
+            else:
+                # Consumers before producers: diarizer and ASR are in place
+                # before capture can finalize the first chunk.
+                self._start_diarizer()
+                self._start_asr()
+                capture_note = self._start_capture()
             url = self._start_server()
             self._maybe_start_intelligence()
             self._emit_status(note=capture_note)
@@ -432,6 +443,38 @@ class MeetingEngine:
                 self._starting = False
                 self._start_thread_id = None
             self._start_complete.set()
+
+    def _seed_demo_meeting(self) -> str:
+        """Load canned transcript/cards and skip live capture.
+
+        Returns:
+            User-facing status note for the dashboard banner.
+        """
+        from meeting.dev_fixture import DEMO_NOTE, seed_demo_meeting
+
+        if self.store is None or not self.meeting_id:
+            return DEMO_NOTE
+        self.store.update_runtime_fields(
+            capture={
+                "mic_available": False,
+                "loopback_available": False,
+                "message": DEMO_NOTE,
+            },
+            diarization_available=False,
+        )
+        seed_demo_meeting(
+            meeting_id=self.meeting_id,
+            me_participant_id=self._me_participant_id,
+            store=self.store,
+            repository=self.repository,
+            clock=self.clock,
+            title=self.options.title or None,
+        )
+        logger.info(
+            "Demo meeting seeded for %s (no capture or ASR)",
+            self.meeting_id,
+        )
+        return DEMO_NOTE
 
     def pause(self) -> None:
         """Freeze the meeting clock and mark the meeting paused."""
@@ -575,13 +618,14 @@ class MeetingEngine:
                 unfinished = 1
             complete = drained and unfinished == 0
             scheduler = self._scheduler
-            if self._asr is not None:
-                try:
-                    self._asr.stop()
-                except Exception:
-                    logger.exception("ASR stop failed")
-            # Make the durable dashboard useful immediately, even if the
-            # optional cloud consolidation below is slow or unavailable.
+            asr = self._asr
+            will_offline = bool(
+                self.options.end_redecode
+                and asr is not None
+                and callable(getattr(asr, "transcribe_offline_session", None))
+            )
+            # Immediate repair still uses the live draft so the dashboard is
+            # useful the moment capture ends; the offline pass may replace it.
             if self.store is not None:
                 try:
                     from meeting.state.repair import repair_meeting_state
@@ -607,15 +651,37 @@ class MeetingEngine:
                 raise
             self._stop_heartbeat()
 
-            # Select finalization before releasing ownership so the ended
-            # event and status broadcast already carry the post-end phase.
             cloud_enabled = False
             if self.store is not None:
                 cloud_enabled = bool(
                     self.store.with_state(lambda s: s.cloud_enabled)
                 )
+            want_polish = bool(self.options.end_polish)
+            want_report = bool(self.options.end_report)
             run_cloud = False
-            if not cloud_enabled:
+            if will_offline or (
+                cloud_enabled and complete and scheduler is not None
+                and self._core_is_healthy()
+                and (want_polish or want_report)
+            ):
+                if will_offline:
+                    end_message = "Re-transcribing meeting…"
+                elif want_polish:
+                    end_message = "Cleaning transcript…"
+                else:
+                    end_message = "Preparing final report…"
+                self._set_finalization(
+                    "running",
+                    end_message,
+                    emit=False,
+                )
+                run_cloud = bool(
+                    cloud_enabled
+                    and scheduler is not None
+                    and self._core_is_healthy()
+                    and (want_polish or want_report)
+                )
+            elif not cloud_enabled:
                 self._set_finalization(
                     "disabled",
                     "Cloud intelligence is off for this meeting.",
@@ -630,7 +696,7 @@ class MeetingEngine:
                     ),
                     emit=False,
                 )
-            elif scheduler is None or not self._core_is_healthy():
+            else:
                 self._set_finalization(
                     "unavailable",
                     (
@@ -639,16 +705,7 @@ class MeetingEngine:
                     ),
                     emit=False,
                 )
-            else:
-                self._set_finalization(
-                    "running",
-                    "Preparing final cloud insights…",
-                    emit=False,
-                )
-                run_cloud = True
 
-            # Capture/transcript durability is complete: release exclusive
-            # ownership and announce ended before any bounded cloud pass.
             self._active = False
             self._broadcast({"type": "meeting_ended", "status": status})
             self._emit_status()
@@ -659,16 +716,51 @@ class MeetingEngine:
                 "unfinished_chunks": unfinished,
             })
 
-            # Final insight cleanup is useful, but it must not keep the UI or
-            # exclusive microphone mode stuck while a cloud model responds.
-            # The existing web server stays up so agent patches still stream.
+            offline_ok = False
+            if will_offline:
+                try:
+                    offline_ok = bool(self._run_offline_final_pass())
+                except Exception:
+                    logger.exception("Offline clean ASR pass failed")
+                    offline_ok = False
+
+            if run_cloud and not complete and not offline_ok:
+                run_cloud = False
+                self._set_finalization(
+                    "unavailable",
+                    (
+                        "Final cloud insights are unavailable until "
+                        "transcription recovery finishes."
+                    ),
+                )
+
             if run_cloud and scheduler is not None:
                 try:
-                    # Consolidation is the only post-end agent writer path.
                     self.allow_agent_writes()
-                    outcome = scheduler.run_consolidation(
-                        timeout_s=CONSOLIDATION_TIMEOUT_S
-                    )
+                    if want_polish:
+                        self._set_finalization(
+                            "running",
+                            "Cleaning transcript…",
+                        )
+                        polish = getattr(scheduler, "run_final_polish", None)
+                        if callable(polish):
+                            try:
+                                polish(timeout_s=POLISH_TIMEOUT_S)
+                            except Exception:
+                                logger.exception("Post-end transcript polish failed")
+                    if want_report:
+                        self._set_finalization(
+                            "running",
+                            "Preparing final report…",
+                        )
+                        outcome = scheduler.run_consolidation(
+                            timeout_s=CONSOLIDATION_TIMEOUT_S
+                        )
+                        status = getattr(outcome, "status", "failed")
+                        message = getattr(outcome, "message", "") or ""
+                    else:
+                        status = "completed"
+                        message = "Transcript cleanup is ready."
                 except Exception as exc:
                     logger.exception("Post-end consolidation pass failed")
                     self.revoke_agent_writes()
@@ -677,21 +769,47 @@ class MeetingEngine:
                         f"Final cloud insights failed: {exc}",
                     )
                 else:
-                    # Scheduler already revokes before returning; keep the gate
-                    # closed while persisting the terminal outcome.
                     self.revoke_agent_writes()
-                    self._set_finalization(
-                        getattr(outcome, "status", "failed"),
-                        getattr(outcome, "message", "") or "",
-                    )
+                    self._set_finalization(status, message)
             else:
                 self.revoke_agent_writes()
+                if not cloud_enabled:
+                    self._set_finalization(
+                        "disabled",
+                        "Cloud intelligence is off for this meeting.",
+                    )
+                elif not complete and not offline_ok:
+                    self._set_finalization(
+                        "unavailable",
+                        (
+                            "Final cloud insights are unavailable until "
+                            "transcription recovery finishes."
+                        ),
+                    )
+                elif not want_polish and not want_report:
+                    self._set_finalization(
+                        "completed",
+                        "Post-meeting cleanup and report are off.",
+                    )
+                elif scheduler is None or not self._core_is_healthy():
+                    self._set_finalization(
+                        "unavailable",
+                        (
+                            "Meeting intelligence is offline; final cloud "
+                            "insights could not run."
+                        ),
+                    )
             if scheduler is not None:
                 try:
                     scheduler.stop()
                 except Exception:
                     logger.exception("Scheduler stop failed")
                 self._scheduler = None
+            if self._asr is not None:
+                try:
+                    self._asr.stop()
+                except Exception:
+                    logger.exception("ASR stop failed")
             self._shutdown_agent_core()
         except Exception as exc:
             logger.exception("Meeting end failed")
@@ -699,6 +817,175 @@ class MeetingEngine:
             self.revoke_agent_writes()
             self._emit("error", {"code": "end_failed", "message": str(exc)})
             self._finish_failed_end(exc, terminal_persisted)
+
+    def _run_offline_final_pass(self) -> bool:
+        """Re-decode session audio, replace the draft transcript, refresh UI.
+
+        Returns:
+            True when a non-empty offline transcript was committed.
+        """
+        asr = self._asr
+        if asr is None or not self.meeting_id:
+            return False
+        if not self.options.end_redecode:
+            return False
+        transcribe = getattr(asr, "transcribe_offline_session", None)
+        if not callable(transcribe):
+            return False
+        spool_dir = self._spool_dir or ""
+        try:
+            chunks = self.repository.get_audio_chunks(self.meeting_id)
+        except Exception:
+            logger.exception("Could not load audio chunks for offline ASR")
+            chunks = []
+        try:
+            decoded = list(transcribe(spool_dir, chunks) or [])
+        except Exception:
+            logger.exception("Offline session transcription failed")
+            return False
+        if not decoded:
+            return False
+        try:
+            existing = self.get_transcript()
+        except Exception:
+            existing = []
+        new_words = sum(len(seg.text.split()) for seg in decoded)
+        old_words = sum(
+            len(str(row.get("text") or "").split()) for row in existing
+        )
+        if old_words and new_words < 0.8 * old_words:
+            logger.warning(
+                "Keeping live draft transcript: offline pass has %d words vs "
+                "draft %d (AMI IN1009 guard: do not replace a sparser decode)",
+                new_words, old_words,
+            )
+            return False
+        try:
+            self._assign_speakers_from_session(decoded, spool_dir, chunks)
+        except Exception:
+            logger.exception("Offline speaker assignment failed")
+        replace = getattr(self.repository, "replace_final_transcript", None)
+        if not callable(replace):
+            return False
+        try:
+            rows, deleted, _id_map = replace(self.meeting_id, decoded)
+        except Exception:
+            logger.exception("Final transcript replace failed")
+            return False
+        mark_done = getattr(self.repository, "mark_chunks_done", None)
+        if callable(mark_done):
+            try:
+                mark_done(self.meeting_id)
+            except Exception:
+                logger.exception("Could not mark chunks done after offline ASR")
+        self._reload_store_from_repository()
+        self._strip_proposed_cards()
+        payload = {"items": rows, "removed_ids": deleted}
+        self._emit("segments", payload)
+        self._broadcast({"type": "segments", **payload})
+        logger.info(
+            "Offline ASR replaced transcript: %d segments (%d removed)",
+            len(rows), len(deleted),
+        )
+        return True
+
+    def _reload_store_from_repository(self) -> None:
+        """Reload live state after the repository rewrote evidence ids."""
+        if self.store is None or not self.meeting_id:
+            return
+        try:
+            meeting = self.repository.get_meeting(self.meeting_id)
+        except Exception:
+            logger.exception("Could not reload meeting after transcript replace")
+            return
+        raw = (meeting or {}).get("state_json") or ""
+        if not raw:
+            return
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            logger.warning("Corrupt state_json after transcript replace")
+            return
+        try:
+            self.store.replace_document(MeetingState.from_dict(data))
+        except Exception:
+            logger.exception("Could not replace live meeting state document")
+
+    def _strip_proposed_cards(self) -> None:
+        """Remove agent-only proposed cards so consolidation starts clean."""
+        if self.store is None:
+            return
+        from meeting.state.schema import CARD_KEYS
+
+        snapshot = self.store.snapshot()
+        ops: List[Dict[str, Any]] = []
+        cards = snapshot.get("cards") or {}
+        for key in CARD_KEYS:
+            if key == "user_notes":
+                continue
+            for item in cards.get(key) or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("status") != "proposed" or item.get("pinned"):
+                    continue
+                ops.append({
+                    "op": "remove_item",
+                    "id": item.get("id"),
+                    "base_revision": item.get("revision", 1),
+                })
+        if not ops:
+            return
+        try:
+            self.store.apply("system", "finalization", ops)
+        except Exception:
+            logger.exception("Could not strip proposed cards before report")
+
+    def _assign_speakers_from_session(
+        self,
+        segments: List[TranscriptSegment],
+        spool_dir: str,
+        chunks: List[Dict[str, Any]],
+    ) -> None:
+        """Assign Me/diarizer labels using session audio instead of chunks."""
+        try:
+            from meeting.asr.audio import prepare_for_whisper
+            from meeting.asr.offline import load_channel_session
+        except Exception:
+            logger.exception(
+                "Offline speaker helpers unavailable; skipping diarization"
+            )
+            return
+
+        by_channel: Dict[str, List[TranscriptSegment]] = {}
+        for seg in segments:
+            if seg.channel == CHANNEL_MIC:
+                seg.speaker_participant_id = self._me_participant_id
+                seg.speaker_source = "channel"
+            elif seg.channel == CHANNEL_LOOPBACK:
+                by_channel.setdefault(seg.channel, []).append(seg)
+        if not by_channel or self._diarizer is None:
+            return
+        for channel, channel_segments in by_channel.items():
+            frames, rate, origin = load_channel_session(spool_dir, channel, chunks)
+            if frames is None or frames.size == 0:
+                continue
+            for seg in channel_segments:
+                start = max(0, int(round((seg.start_s - origin) * rate)))
+                end = min(len(frames), int(round((seg.end_s - origin) * rate)))
+                if end <= start:
+                    continue
+                try:
+                    audio = prepare_for_whisper(frames[start:end], rate)
+                    participant_id = self._diarizer.assign(seg, audio, 16000)
+                except Exception:
+                    logger.exception(
+                        "Diarizer assignment failed for offline %s",
+                        seg.segment_id,
+                    )
+                    participant_id = None
+                if participant_id:
+                    seg.speaker_participant_id = participant_id
+                    seg.speaker_source = "diarizer"
 
     def _finish_failed_end(self, exc: Exception, ended_persisted: bool) -> None:
         """Unwind after ``_end_worker`` raised, still reporting ``ended``.
@@ -831,7 +1118,12 @@ class MeetingEngine:
                 thread = self._end_thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(
-                timeout=SHUTDOWN_DRAIN_TIMEOUT_S + CONSOLIDATION_TIMEOUT_S + 60.0
+                timeout=(
+                    SHUTDOWN_DRAIN_TIMEOUT_S
+                    + POLISH_TIMEOUT_S
+                    + CONSOLIDATION_TIMEOUT_S
+                    + 60.0
+                )
             )
         # Best-effort: never leave a durable finalization=running across exit.
         self._interrupt_finalization_on_shutdown()

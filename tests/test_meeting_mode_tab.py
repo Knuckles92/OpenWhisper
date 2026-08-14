@@ -132,6 +132,26 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.idle_card.isHidden())
         self.assertTrue(self.tab.session_card.isHidden())
         self.assertFalse(self.tab.is_meeting_active)
+        self.assertTrue(self.tab.demo_button.isHidden())
+        self.assertTrue(self.tab.demo_hint.isHidden())
+
+    def test_developer_mode_shows_demo_meeting_control(self):
+        """Developer mode reveals the demo loader on the idle Meeting tab."""
+        received = []
+        self.tab.demo_requested.connect(received.append)
+        self.tab.set_developer_mode(True)
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.demo_button.isHidden())
+        self.assertFalse(self.tab.demo_hint.isHidden())
+
+        self.tab.cloud_checkbox.setChecked(True)
+        self.tab.demo_button.click()
+        self.assertEqual(received, [True])
+
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.app.processEvents()
+        self.assertTrue(self.tab.demo_button.isHidden())
 
     def test_active_payload_switches_layout(self):
         """Active state payload swaps to the in-meeting session card."""

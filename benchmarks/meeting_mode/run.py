@@ -50,7 +50,7 @@ from meeting.interfaces import SpooledChunk  # noqa: E402
 from meeting.persist.repository import SqlMeetingRepository  # noqa: E402
 from services.database import DatabaseManager  # noqa: E402
 
-BENCHMARK_VERSION = 3
+BENCHMARK_VERSION = 4
 
 # A deliberately demanding release gate: at least a full workday of natural
 # meetings, strict WER (including overlap and fillers) below 30%, no individual
@@ -146,6 +146,7 @@ def decode_meeting(
     target_sec: float = DEFAULT_TARGET_SEC,
     max_sec: float = DEFAULT_MAX_SEC,
     draft_prompt_words: int = DRAFT_PROMPT_WORDS,
+    run_offline: bool = True,
 ) -> dict[str, Any]:
     """Decode one meeting using production chunking, ASR, and revision code."""
     pcm, source_rate = _load_pcm_wav(source_path)
@@ -154,6 +155,9 @@ def decode_meeting(
     engine.meeting_id = meeting_id
     engine._pending_revise.clear()
     engine._last_revised_frontier.clear()
+
+    session_wav = work_dir / "loopback_session.wav"
+    _write_chunk(session_wav, resample_to_16k(pcm, source_rate))
 
     draft_segments: list[dict[str, Any]] = []
     draft_context: list[str] = []
@@ -221,6 +225,32 @@ def decode_meeting(
     final_segments = repo.get_segments(meeting_id, after_start_s=-1.0)
     elapsed_s = time.perf_counter() - started
     duration_s = pcm.size / float(source_rate)
+    offline_segments: list[dict[str, Any]] = []
+    offline_elapsed_s = 0.0
+    if run_offline:
+        from meeting.asr.audio import load_wav_int16
+        from meeting.asr.offline import transcribe_session_audio
+
+        offline_started = time.perf_counter()
+        frames, rate = load_wav_int16(str(session_wav))
+        model = getattr(getattr(engine, "_backend", None), "model", None)
+        if model is not None:
+            decoded = transcribe_session_audio(
+                model,
+                frames,
+                rate,
+                meeting_id=meeting_id,
+                channel="loopback",
+                origin_s=0.0,
+                language=engine.language,
+            )
+            offline_segments = [_segment_dict(segment) for segment in decoded]
+        offline_elapsed_s = time.perf_counter() - offline_started
+        print(
+            f"  {spec.meeting_id}: offline {len(offline_segments)} segments, "
+            f"{offline_elapsed_s / 60.0:.1f} wall min",
+            flush=True,
+        )
     return {
         "meeting_id": spec.meeting_id,
         "description": spec.description,
@@ -233,8 +263,15 @@ def decode_meeting(
         "draft_prompt_words": draft_prompt_words,
         "elapsed_s": elapsed_s,
         "rtf": elapsed_s / duration_s if duration_s else 0.0,
+        "offline_elapsed_s": offline_elapsed_s,
+        "offline_rtf": offline_elapsed_s / duration_s if duration_s else 0.0,
+        "combined_rtf": (
+            (elapsed_s + offline_elapsed_s) / duration_s if duration_s else 0.0
+        ),
         "draft_segments": draft_segments,
         "final_segments": final_segments,
+        "offline_segments": offline_segments,
+        "run_offline": run_offline,
     }
 
 
@@ -248,6 +285,11 @@ def _score_result(result: dict[str, Any], annotations_dir: Path) -> dict[str, An
     }
     result["draft_score"] = score_timed_transcript(reference, result["draft_segments"])
     result["final_score"] = score_timed_transcript(reference, result["final_segments"])
+    offline_segments = result.get("offline_segments") or []
+    if offline_segments:
+        result["offline_score"] = score_timed_transcript(reference, offline_segments)
+    elif "offline_score" not in result:
+        result["offline_score"] = None
     return result
 
 
@@ -259,23 +301,37 @@ def _summary(
     target_sec: float,
     max_sec: float,
     draft_prompt_words: int,
+    run_offline: bool,
 ) -> dict[str, Any]:
     duration_s = sum(float(item["duration_s"]) for item in results)
     elapsed_s = sum(float(item["elapsed_s"]) for item in results)
+    offline_elapsed_s = sum(float(item.get("offline_elapsed_s") or 0.0) for item in results)
     audio_hours = duration_s / 3600.0
     rtf = elapsed_s / duration_s if duration_s else 0.0
+    offline_rtf = offline_elapsed_s / duration_s if duration_s else 0.0
+    combined_rtf = (
+        (elapsed_s + offline_elapsed_s) / duration_s if duration_s else 0.0
+    )
     draft = aggregate_scores(item["draft_score"] for item in results)
     final = aggregate_scores(item["final_score"] for item in results)
+    offline_items = [
+        item["offline_score"] for item in results if item.get("offline_score")
+    ]
+    offline = aggregate_scores(offline_items) if offline_items else None
+    product_scores = [
+        item.get("offline_score") or item["final_score"] for item in results
+    ]
+    product = aggregate_scores(product_scores)
     worst_meeting_wer = max(
-        (float(item["final_score"]["wer"]) for item in results),
+        (float(score["wer"]) for score in product_scores),
         default=1.0,
     )
     gate_checks = {
         "meeting_count": len(results) >= MIN_GATE_MEETINGS,
         "audio_hours": audio_hours >= MIN_GATE_AUDIO_HOURS,
-        "micro_tcwer": final["wer"] <= MAX_GATE_MICRO_WER,
+        "micro_tcwer": product["wer"] <= MAX_GATE_MICRO_WER,
         "worst_meeting_tcwer": worst_meeting_wer <= MAX_GATE_MEETING_WER,
-        "runtime_factor": rtf <= MAX_GATE_RTF,
+        "runtime_factor": combined_rtf <= MAX_GATE_RTF,
     }
     return {
         "benchmark_version": BENCHMARK_VERSION,
@@ -283,6 +339,7 @@ def _summary(
         "model": model_name,
         "language": language,
         "revisions_enabled": revisions_enabled,
+        "run_offline": run_offline,
         "target_sec": target_sec,
         "max_sec": max_sec,
         "draft_prompt_words": draft_prompt_words,
@@ -290,7 +347,10 @@ def _summary(
         "meetings": len(results),
         "audio_hours": audio_hours,
         "elapsed_hours": elapsed_s / 3600.0,
+        "offline_elapsed_hours": offline_elapsed_s / 3600.0,
         "rtf": rtf,
+        "offline_rtf": offline_rtf,
+        "combined_rtf": combined_rtf,
         "reference_overlap": {
             "reference_words": sum(
                 int(item["reference"]["reference_words"]) for item in results
@@ -302,8 +362,10 @@ def _summary(
         },
         "draft": draft,
         "final": final,
+        "offline": offline,
         "quality_gate": {
             "passed": all(gate_checks.values()),
+            "product": "offline" if run_offline else "final",
             "checks": gate_checks,
             "thresholds": {
                 "minimum_meetings": MIN_GATE_MEETINGS,
@@ -320,10 +382,19 @@ def _summary(
                 "duration_s": item["duration_s"],
                 "chunks": item["chunks"],
                 "rtf": item["rtf"],
+                "offline_rtf": item.get("offline_rtf", 0.0),
                 "draft_wer": item["draft_score"]["wer"],
                 "final_wer": item["final_score"]["wer"],
-                "deletion_rate": item["final_score"]["deletion_rate"],
-                "insertion_rate": item["final_score"]["insertion_rate"],
+                "offline_wer": (
+                    item["offline_score"]["wer"]
+                    if item.get("offline_score") else None
+                ),
+                "deletion_rate": (
+                    (item.get("offline_score") or item["final_score"])["deletion_rate"]
+                ),
+                "insertion_rate": (
+                    (item.get("offline_score") or item["final_score"])["insertion_rate"]
+                ),
             }
             for item in results
         ],
@@ -349,23 +420,47 @@ def _write_summary(path: Path, summary: dict[str, Any]) -> None:
         f"- Draft prompt context: `{summary['draft_prompt_words']}` words",
         f"- Meetings: {summary['meetings']}",
         f"- Audio: {summary['audio_hours']:.2f} hours",
-        f"- Runtime factor: {summary['rtf']:.3f}",
-        f"- Exceptional-quality gate: `{'PASS' if summary['quality_gate']['passed'] else 'FAIL'}`",
+        f"- Runtime factor (live draft): {summary['rtf']:.3f}",
+        f"- Runtime factor (offline pass): {summary.get('offline_rtf', 0.0):.3f}",
+        f"- Runtime factor (combined): {summary.get('combined_rtf', summary['rtf']):.3f}",
+        f"- Exceptional-quality gate ({summary['quality_gate'].get('product', 'final')}): "
+        f"`{'PASS' if summary['quality_gate']['passed'] else 'FAIL'}`",
         f"- Reference words overlapping another speaker: {overlap_rate:.2%}",
         f"- Draft tcWER: {summary['draft']['wer']:.2%}",
-        f"- Final tcWER: {summary['final']['wer']:.2%}",
-        f"- Final substitutions: {summary['final']['substitution_rate']:.2%}",
-        f"- Final deletions: {summary['final']['deletion_rate']:.2%}",
-        f"- Final insertions: {summary['final']['insertion_rate']:.2%}",
-        "",
-        "| Meeting | Minutes | Chunks | Draft WER | Final WER | RTF |",
-        "|---|---:|---:|---:|---:|---:|",
+        f"- Final (live/revise) tcWER: {summary['final']['wer']:.2%}",
     ]
+    offline = summary.get("offline")
+    if offline:
+        delta = offline["wer"] - summary["draft"]["wer"]
+        relative = (
+            delta / summary["draft"]["wer"] if summary["draft"]["wer"] else 0.0
+        )
+        lines.extend([
+            f"- Offline tcWER: {offline['wer']:.2%}",
+            f"- Offline vs draft: {delta:+.2%} absolute ({relative:+.2%} relative)",
+            f"- Offline substitutions: {offline['substitution_rate']:.2%}",
+            f"- Offline deletions: {offline['deletion_rate']:.2%}",
+            f"- Offline insertions: {offline['insertion_rate']:.2%}",
+        ])
+    else:
+        lines.extend([
+            f"- Final substitutions: {summary['final']['substitution_rate']:.2%}",
+            f"- Final deletions: {summary['final']['deletion_rate']:.2%}",
+            f"- Final insertions: {summary['final']['insertion_rate']:.2%}",
+        ])
+    lines.extend([
+        "",
+        "| Meeting | Minutes | Chunks | Draft WER | Final WER | Offline WER | Live RTF | Offline RTF |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ])
     for item in summary["per_meeting"]:
+        offline_wer = item.get("offline_wer")
+        offline_cell = f"{offline_wer:.2%}" if offline_wer is not None else "—"
         lines.append(
             f"| {item['meeting_id']} | {item['duration_s'] / 60.0:.1f} | "
             f"{item['chunks']} | {item['draft_wer']:.2%} | "
-            f"{item['final_wer']:.2%} | {item['rtf']:.3f} |"
+            f"{item['final_wer']:.2%} | {offline_cell} | "
+            f"{item['rtf']:.3f} | {item.get('offline_rtf', 0.0):.3f} |"
         )
     (path / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -418,6 +513,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--offline-pass",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Score the post-meeting clean re-decode against the live draft",
+    )
     return parser.parse_args(argv)
 
 
@@ -462,13 +563,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     revisions_enabled = args.enable_revisions and not args.skip_revisions
     revision_profile = "revised" if revisions_enabled else "draft-only"
+    offline_profile = "-offline" if args.offline_pass else ""
     chunk_profile = f"t{args.target_sec:g}-m{args.max_sec:g}"
     prompt_profile = (
         f"-p{args.draft_prompt_words}" if args.draft_prompt_words else ""
     )
     run_name = (
         f"{args.model.replace('/', '_')}-{language}-{revision_profile}-"
-        f"{chunk_profile}{prompt_profile}"
+        f"{chunk_profile}{prompt_profile}{offline_profile}"
     )
     run_dir = args.results_dir / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -524,6 +626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target_sec=args.target_sec,
                     max_sec=args.max_sec,
                     draft_prompt_words=args.draft_prompt_words,
+                    run_offline=args.offline_pass,
                 )
                 result = _score_result(result, annotations_dir)
                 result["benchmark_version"] = BENCHMARK_VERSION
@@ -531,9 +634,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
                 )
                 results.append(result)
+                offline_score = result.get("offline_score") or {}
+                offline_wer = offline_score.get("wer")
+                extra = (
+                    f", offline {offline_wer:.2%}" if offline_wer is not None else ""
+                )
                 print(
                     f"  done: draft {result['draft_score']['wer']:.2%}, "
-                    f"final {result['final_score']['wer']:.2%}, RTF {result['rtf']:.3f}"
+                    f"final {result['final_score']['wer']:.2%}{extra}, "
+                    f"RTF {result['rtf']:.3f}"
                 )
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
@@ -549,6 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         target_sec=args.target_sec,
         max_sec=args.max_sec,
         draft_prompt_words=args.draft_prompt_words,
+        run_offline=args.offline_pass,
     )
     _write_summary(run_dir, summary)
     print(json.dumps(summary, indent=2))

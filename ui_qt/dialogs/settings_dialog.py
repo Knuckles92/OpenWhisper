@@ -27,12 +27,16 @@ from services.settings import (
     TranscriptCleanupReasoning,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
+    resolve_meeting_end_polish,
+    resolve_meeting_end_redecode,
+    resolve_meeting_end_report,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
     resolve_meeting_language,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
     resolve_meeting_whisper_model,
+    resolve_developer_mode,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
@@ -778,6 +782,40 @@ class SettingsDialog(QDialog):
         meeting_intelligence_info.setWordWrap(True)
         layout.addWidget(meeting_intelligence_info)
 
+        layout.addSpacing(16)
+        after_title = QLabel("After the meeting")
+        after_title.setObjectName("sectionLabel")
+        layout.addWidget(after_title)
+
+        after_info = QLabel(
+            "Live captions stay on short chunks so text appears quickly. "
+            "These steps run after End, once you have time. Cloud "
+            "intelligence must be on for polish and the final report."
+        )
+        after_info.setObjectName("infoLabel")
+        after_info.setWordWrap(True)
+        layout.addWidget(after_info)
+
+        self.meeting_end_redecode_check = QCheckBox(
+            "Re-transcribe with longer pauses (full recording)"
+        )
+        self.meeting_end_redecode_check.setToolTip(
+            "After End, recut the continuous session audio on longer quiet "
+            "gaps and run Whisper again. Live capture is unchanged. This "
+            "can take a few minutes and did not beat live word error on AMI."
+        )
+        layout.addWidget(self.meeting_end_redecode_check)
+
+        self.meeting_end_polish_check = QCheckBox(
+            "Clean up the transcript with the LLM"
+        )
+        layout.addWidget(self.meeting_end_polish_check)
+
+        self.meeting_end_report_check = QCheckBox(
+            "Write the final report (topic, summary, cards)"
+        )
+        layout.addWidget(self.meeting_end_report_check)
+
         # Dashboard access (privacy control)
         layout.addSpacing(24)
         meeting_server_title = QLabel("Dashboard Access")
@@ -882,6 +920,20 @@ class SettingsDialog(QDialog):
         layout.addSpacing(12)
         self.logging_check = QCheckBox("Enable detailed logging")
         layout.addWidget(self.logging_check)
+
+        layout.addSpacing(16)
+        self.developer_mode_check = QCheckBox("Developer mode")
+        self.developer_mode_check.setObjectName("developerModeCheck")
+        layout.addWidget(self.developer_mode_check)
+        developer_info = QLabel(
+            "Unlocks a Load demo meeting control on the Meeting Mode tab. "
+            "The demo opens the dashboard with a fake transcript so you can "
+            "test end-of-meeting cleanup and the final report without "
+            "recording a real meeting."
+        )
+        developer_info.setObjectName("infoLabel")
+        developer_info.setWordWrap(True)
+        layout.addWidget(developer_info)
 
         # Hugging Face model download policy
         layout.addSpacing(16)
@@ -1306,6 +1358,15 @@ class SettingsDialog(QDialog):
         )
         self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
         self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
+        self.meeting_end_redecode_check.setChecked(
+            resolve_meeting_end_redecode(settings)
+        )
+        self.meeting_end_polish_check.setChecked(
+            resolve_meeting_end_polish(settings)
+        )
+        self.meeting_end_report_check.setChecked(
+            resolve_meeting_end_report(settings)
+        )
         self._update_meeting_bind_ui()
 
     def _populate_audio_devices(self):
@@ -1390,6 +1451,8 @@ class SettingsDialog(QDialog):
 
             self._load_meeting_settings(settings)
 
+            self.developer_mode_check.setChecked(resolve_developer_mode(settings))
+
             # Typed load performs legacy hf_hub_offline migration
             policy = settings_manager.load_hf_access_policy()
             policy_index = self.hf_policy_combo.findData(policy)
@@ -1429,6 +1492,7 @@ class SettingsDialog(QDialog):
             self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
             self._update_streaming_font_ui()
             self._load_meeting_settings({})
+            self.developer_mode_check.setChecked(config.DEVELOPER_MODE)
             self.hf_policy_combo.setCurrentIndex(
                 max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
             )
@@ -1510,6 +1574,18 @@ class SettingsDialog(QDialog):
             )
             settings[SettingsKey.MEETING_SERVER_PORT] = (
                 self.meeting_port_spinbox.value()
+            )
+            settings[SettingsKey.MEETING_END_REDECODE] = (
+                self.meeting_end_redecode_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_END_POLISH] = (
+                self.meeting_end_polish_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_END_REPORT] = (
+                self.meeting_end_report_check.isChecked()
+            )
+            settings[SettingsKey.DEVELOPER_MODE] = (
+                self.developer_mode_check.isChecked()
             )
 
             # Save audio input device (None for system default)

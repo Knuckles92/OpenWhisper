@@ -34,6 +34,7 @@ class MeetingModeTab(QWidget):
     """Full-page tab with Meeting Mode session controls."""
 
     start_requested = pyqtSignal(bool)  # cloud_enabled
+    demo_requested = pyqtSignal(bool)  # cloud_enabled
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
     end_requested = pyqtSignal()
@@ -51,12 +52,16 @@ class MeetingModeTab(QWidget):
         self._running_since: Optional[float] = None
         self._finalization: Optional[Dict[str, str]] = None
         self._has_dashboard = False
+        self._developer_mode = False
 
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._refresh_elapsed)
 
         self._setup_ui()
+        self.set_developer_mode(
+            bool(settings_manager.get(SettingsKey.DEVELOPER_MODE, False))
+        )
         self._apply_layout_state()
 
     def _setup_ui(self):
@@ -113,6 +118,28 @@ class MeetingModeTab(QWidget):
         self.start_button.setMaximumWidth(320)
         self.start_button.clicked.connect(self._on_start_clicked)
         idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.demo_button = Button("Load demo meeting")
+        self.demo_button.setObjectName("meetingDemoButton")
+        self.demo_button.setMaximumWidth(320)
+        self.demo_button.setToolTip(
+            "Open the dashboard with a fake transcript so you can test "
+            "end-of-meeting cleanup and the final report without recording."
+        )
+        self.demo_button.clicked.connect(self._on_demo_clicked)
+        idle_layout.addWidget(
+            self.demo_button, alignment=Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.demo_hint = QLabel(
+            "Loads a fake transcript and opens the dashboard. Turn on "
+            "Cloud intelligence, then End, to test cleanup and the report."
+        )
+        self.demo_hint.setObjectName("meetingDemoHint")
+        self.demo_hint.setWordWrap(True)
+        self.demo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.demo_hint.setFont(QFont("Segoe UI", 10))
+        idle_layout.addWidget(self.demo_hint)
 
         self.idle_card.layout.addWidget(idle_inner)
         content_layout.addWidget(self.idle_card)
@@ -223,6 +250,10 @@ class MeetingModeTab(QWidget):
         """Emit the start request with the current cloud choice."""
         self.start_requested.emit(self.cloud_checkbox.isChecked())
 
+    def _on_demo_clicked(self):
+        """Emit the developer-mode demo meeting request."""
+        self.demo_requested.emit(self.cloud_checkbox.isChecked())
+
     def _on_pause_clicked(self):
         """Route the pause/resume button to the matching signal."""
         if self._paused:
@@ -233,6 +264,15 @@ class MeetingModeTab(QWidget):
     # ------------------------------------------------------------------
     # State inflow
     # ------------------------------------------------------------------
+
+    def set_developer_mode(self, enabled: bool) -> None:
+        """Show or hide demo-meeting controls.
+
+        Args:
+            enabled: True when Settings → Advanced → Developer mode is on.
+        """
+        self._developer_mode = bool(enabled)
+        self._apply_layout_state()
 
     def set_meeting_state(self, payload: Dict[str, Any]) -> None:
         """Apply a (possibly partial) meeting-state payload.
@@ -369,6 +409,13 @@ class MeetingModeTab(QWidget):
         # outcomes restore Start so the user can begin another meeting.
         self.idle_card.setVisible(not self._active and not running_finalization)
         self.start_button.setVisible(not running_finalization)
+        show_demo = (
+            self._developer_mode
+            and not self._active
+            and not running_finalization
+        )
+        self.demo_button.setVisible(show_demo)
+        self.demo_hint.setVisible(show_demo)
         self.finalization_card.setVisible(show_finalization)
 
         if show_finalization and finalization is not None:

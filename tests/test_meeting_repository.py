@@ -356,3 +356,67 @@ class TestWriteThrough:
             participant = session.query(MeetingParticipant).one()
             assert participant.display_name == "Sam"
             assert participant.name_source == "agent_inferred"
+
+
+class TestReplaceFinalTranscript:
+    def test_keeps_pinned_speaker_and_remaps_evidence(self, repo):
+        meeting_id = make_meeting(repo)
+        live = [
+            make_segment(meeting_id, "sg_old1", start=0.0, end=2.0, text="draft one"),
+            make_segment(meeting_id, "sg_old2", start=2.0, end=4.0, text="draft two"),
+        ]
+        live[0].speaker_pinned = True
+        live[0].speaker_participant_id = "p_me"
+        live[0].speaker_source = "human"
+        repo.add_segments(live)
+        repo.update_meeting(meeting_id, state_json=json.dumps({
+            "meeting_id": meeting_id,
+            "cards": {
+                "key_points": [{
+                    "id": "it_human", "text": "kept", "status": "edited",
+                    "pinned": False, "evidence": ["sg_old1"],
+                }, {
+                    "id": "it_agent", "text": "stale", "status": "proposed",
+                    "evidence": ["sg_old2"],
+                }],
+                "user_notes": [], "decisions": [], "action_items": [],
+                "risks": [], "timeline": [],
+            },
+            "questions": [],
+            "rolling_summary_evidence": ["sg_old2"],
+        }))
+        cleaned = [
+            TranscriptSegment(
+                segment_id="sg_new1", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.1, end_s=2.1, text="clean one",
+            ),
+            TranscriptSegment(
+                segment_id="sg_new2", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=2.1, end_s=4.1, text="clean two",
+            ),
+        ]
+        rows, deleted, id_map = repo.replace_final_transcript(meeting_id, cleaned)
+        ids = {row["id"] for row in rows}
+        assert "sg_new1" in ids and "sg_new2" in ids
+        assert "sg_old2" in deleted
+        assert id_map["sg_old1"] == "sg_new1"
+        pinned = next(row for row in rows if row["id"] == "sg_new1")
+        assert pinned["speaker_pinned"] is True
+        assert pinned["speaker_participant_id"] == "p_me"
+        state = json.loads(repo.get_meeting(meeting_id)["state_json"])
+        human = state["cards"]["key_points"][0]
+        assert human["evidence"] == ["sg_new1"]
+        remaining_ids = {row["id"] for row in repo.get_segments(meeting_id)}
+        assert remaining_ids == {"sg_new1", "sg_new2"}
+
+    def test_mark_chunks_done(self, repo):
+        meeting_id = make_meeting(repo)
+        chunk_id = repo.register_chunk(
+            meeting_id=meeting_id, channel="mic", seq=0,
+            file_path="/tmp/a.wav", start_s=0.0, duration_s=1.0,
+            sample_rate=16000, asr_status="pending",
+        )
+        assert repo.mark_chunks_done(meeting_id) == 1
+        chunks = repo.get_audio_chunks(meeting_id)
+        assert chunks[0]["id"] == chunk_id
+        assert chunks[0]["asr_status"] == "done"

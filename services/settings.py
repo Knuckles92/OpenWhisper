@@ -46,6 +46,7 @@ class SettingsKey:
     # Legacy boolean replaced by HF_ACCESS_POLICY; kept for migration only.
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
+    DEVELOPER_MODE: Final[str] = "developer_mode"
     # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
@@ -56,6 +57,9 @@ class SettingsKey:
     MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
+    MEETING_END_POLISH: Final[str] = "meeting_end_polish"
+    MEETING_END_REPORT: Final[str] = "meeting_end_report"
     MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
     MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
@@ -770,6 +774,55 @@ def resolve_meeting_agent_core(
     if core in MeetingAgentCore.ALL:
         return core
     return config.MEETING_AGENT_CORE
+
+
+def _resolve_bool_setting(
+    settings: Optional[Dict[str, Any]],
+    key: str,
+    default: bool,
+) -> bool:
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    return default
+
+
+def resolve_developer_mode(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether developer tools (demo meeting, etc.) are unlocked."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.DEVELOPER_MODE, config.DEVELOPER_MODE,
+    )
+
+
+def resolve_meeting_end_redecode(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should re-decode session audio with longer pauses."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_REDECODE, config.MEETING_END_REDECODE,
+    )
+
+
+def resolve_meeting_end_polish(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should run the LLM transcript polish."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_POLISH, config.MEETING_END_POLISH,
+    )
+
+
+def resolve_meeting_end_report(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should run the sidecar final report."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_REPORT, config.MEETING_END_REPORT,
+    )
 
 
 def resolve_meeting_server_bind(

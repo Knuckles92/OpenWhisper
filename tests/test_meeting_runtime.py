@@ -67,6 +67,17 @@ def test_finalization_running_blocks_second_meeting_not_claim(runtime):
     assert controller.meeting_active is False
 
 
+def test_start_demo_meeting_blocked_while_finalizing(runtime):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+
+    rt._finalizing = True
+    rt.start_demo_meeting(cloud_enabled=True)
+    assert any("Final insights are still being prepared" in s for s in statuses)
+    assert controller.meeting_active is False
+
+
 def test_ended_unlocks_active_while_retaining_dashboard(runtime):
     rt, controller = runtime
     states = []

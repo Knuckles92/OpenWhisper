@@ -285,12 +285,18 @@ class AppConfig:
         'Example output: Always spell the user\'s name "Alex Rivera".'
     )
 
+    # Developer tools (Settings → Advanced). Off for normal use.
+    DEVELOPER_MODE: bool = False
+
     # Meeting Mode defaults
     MEETING_WHISPER_MODEL: str = "auto"  # dedicated meeting ASR model selection
     MEETING_LANGUAGE: str = "auto"  # auto-detect, or an ISO-639-1 Whisper code
     MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "deepseek/deepseek-v4-flash-0731"
     MEETING_AGENT_CORE: str = "pi"  # Direct is the fallback when no sidecar payload is present
+    MEETING_END_REDECODE: bool = False
+    MEETING_END_POLISH: bool = True
+    MEETING_END_REPORT: bool = True
     MEETING_SERVER_BIND: str = "localhost"  # "localhost" | "lan"
     MEETING_SERVER_PORT: int = 0  # 0 = ephemeral port
     MEETINGS_FOLDER: str = field(

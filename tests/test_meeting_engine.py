@@ -80,6 +80,8 @@ class FakeAsr:
         self.drains = 0
         self.stops = 0
         self.requeues = 0
+        self.offline_passes = 0
+        self.offline_segments = []
         FakeAsr.instances.append(self)
 
     def start(self, on_segments):
@@ -91,6 +93,10 @@ class FakeAsr:
     def drain(self, timeout_s):
         self.drains += 1
         return True
+
+    def transcribe_offline_session(self, spool_dir, chunks=None):
+        self.offline_passes += 1
+        return list(self.offline_segments)
 
     def stop(self):
         self.stops += 1
@@ -189,6 +195,7 @@ class FakeScheduler:
         self.started = False
         self.stopped = False
         self.consolidations = 0
+        self.polishes = 0
         self.seeded = None
         FakeScheduler.instances.append(self)
 
@@ -201,8 +208,20 @@ class FakeScheduler:
     def stop(self):
         self.stopped = True
 
+    def prepare_for_end(self):
+        return None
+
     def notify_segments(self, count):
         pass
+
+    def run_final_polish(self, timeout_s=60.0):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
+        self.polishes += 1
+        return ConsolidationOutcome(
+            status="completed",
+            message="Transcript cleanup is ready.",
+        )
 
     def run_consolidation(self, timeout_s=120.0):
         from meeting.agent.scheduler import ConsolidationOutcome
@@ -270,6 +289,7 @@ def fakes(monkeypatch):
     asr_engine.MeetingAsrEngine = FakeAsr
 
     asr_audio = types.ModuleType("meeting.asr.audio")
+    asr_audio.WHISPER_SAMPLE_RATE = 16000
     asr_audio.load_wav_int16 = lambda path: (
         np.zeros(16000 * 10, dtype=np.int16), 16000,
     )
@@ -633,6 +653,170 @@ class TestEndLifecycle:
         assert fin["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
+    def test_ended_precedes_slow_offline_pass(self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=False, end_redecode=True)
+        engine.start()
+        asr = fakes.asr[0]
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_offline(spool_dir, chunks=None):
+            asr.offline_passes += 1
+            entered.set()
+            release.wait(timeout=5.0)
+            return []
+
+        asr.transcribe_offline_session = slow_offline
+        try:
+            engine.end()
+            assert entered.wait(timeout=5.0)
+            ended = events_of(engine, "ended")
+            assert ended, "ended must fire before the offline re-decode"
+            assert engine.is_active() is False
+            assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+        finally:
+            release.set()
+            engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "disabled"
+
+    def test_cloud_off_keeps_draft_when_offline_commit_disabled(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        meeting_id = engine.meeting_id
+        repo.add_segments([
+            TranscriptSegment(
+                segment_id="sg_draft", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.0, text="draft",
+            )
+        ])
+        asr = fakes.asr[0]
+        asr.offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_clean", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.2, text="clean",
+            )
+        ]
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        ids = {row["id"] for row in repo.get_segments(meeting_id)}
+        assert "sg_draft" in ids
+        assert "sg_clean" not in ids
+        assert asr.offline_passes == 0
+        assert not fakes.schedulers
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "disabled"
+
+    def test_cloud_off_replaces_transcript_when_redecode_enabled(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=False, end_redecode=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        repo.add_segments([
+            TranscriptSegment(
+                segment_id="sg_draft", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.0, text="draft",
+            )
+        ])
+        asr = fakes.asr[0]
+        asr.offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_clean", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.2, text="clean",
+            )
+        ]
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        ids = {row["id"] for row in repo.get_segments(meeting_id)}
+        assert "sg_clean" in ids
+        assert "sg_draft" not in ids
+        assert not fakes.schedulers
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "disabled"
+
+    def test_cloud_on_polishes_draft_without_offline_replace(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        repo.add_segments([
+            TranscriptSegment(
+                segment_id="sg_draft", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=1.0, text="draft",
+            )
+        ])
+        asr = fakes.asr[0]
+        asr.offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_final", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=2.0, text="final",
+            )
+        ]
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert asr.offline_passes == 0
+        assert fakes.schedulers[0].polishes == 1
+        assert fakes.schedulers[0].consolidations == 1
+        ids = {row["id"] for row in repo.get_segments(meeting_id)}
+        assert "sg_draft" in ids
+        assert "sg_final" not in ids
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "completed"
+
+    def test_offline_redecode_runs_polish_then_consolidation(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True, end_redecode=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+        asr = fakes.asr[0]
+        asr.offline_segments = [
+            TranscriptSegment(
+                segment_id="sg_final", meeting_id=meeting_id, chunk_id=None,
+                channel="mic", start_s=0.0, end_s=2.0, text="final",
+            )
+        ]
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert asr.offline_passes == 1
+        assert fakes.schedulers[0].polishes == 1
+        assert fakes.schedulers[0].consolidations == 1
+        ids = {row["id"] for row in repo.get_segments(meeting_id)}
+        assert "sg_final" in ids
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "completed"
+
+    def test_end_skips_polish_when_disabled(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, end_polish=False, end_report=True)
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert fakes.schedulers[0].polishes == 0
+        assert fakes.schedulers[0].consolidations == 1
+
+    def test_end_skips_report_when_disabled(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, end_polish=True, end_report=False)
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert fakes.schedulers[0].polishes == 1
+        assert fakes.schedulers[0].consolidations == 0
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "completed"
+        assert "cleanup" in (fin.get("message") or "").lower()
+
+    def test_end_skips_llm_when_both_disabled(self, make_engine, fakes):
+        engine = make_engine(
+            cloud_enabled=True, end_polish=False, end_report=False,
+        )
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert fakes.schedulers[0].polishes == 0
+        assert fakes.schedulers[0].consolidations == 0
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "completed"
+
     def test_end_racing_start_waits_for_the_pipeline(self, make_engine, fakes):
         entered = threading.Event()
         release = threading.Event()
@@ -859,6 +1043,51 @@ class TestStoreWiring:
         )["speaker_participant_id"] == (
             participant["id"]
         )
+
+
+class TestDemoMeeting:
+    def test_demo_mode_skips_live_audio_and_seeds_transcript(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True, demo_mode=True)
+        result = engine.start()
+
+        assert result["meeting_id"]
+        assert engine.is_active()
+        assert engine.options.demo_mode is True
+        assert fakes.asr == []
+        assert engine._sources == []
+        assert engine._asr is None
+        assert engine._diarizer is None
+        assert fakes.schedulers and fakes.schedulers[0].started
+
+        segments = repo.get_segments(engine.meeting_id)
+        assert len(segments) >= 10
+        assert any("June" in (row.get("text") or "") for row in segments)
+
+        snapshot = engine.store.snapshot()
+        assert snapshot["title"]
+        assert snapshot["topic"]["current"]
+        assert snapshot["cards"]["key_points"]
+        assert snapshot["cards"]["decisions"]
+        assert snapshot["capture"]["mic_available"] is False
+        assert snapshot["capture"]["loopback_available"] is False
+
+    def test_demo_mode_end_runs_polish_and_report(
+            self, make_engine, repo, fakes):
+        engine = make_engine(cloud_enabled=True, demo_mode=True)
+        engine.start()
+        meeting_id = engine.meeting_id
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        assert events_of(engine, "ended")[-1]["status"] == "ended"
+        assert repo.get_meeting(meeting_id)["status"] == "ended"
+        assert fakes.schedulers[0].polishes == 1
+        assert fakes.schedulers[0].consolidations == 1
+        assert engine.store.with_state(
+            lambda s: s.finalization.status
+        ) == "completed"
 
 
 def test_engine_module_has_no_dead_recent_text_api():

@@ -209,6 +209,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_component_cancel = self.cancel_component_install
         self.ui_controller.on_component_remove = self.request_component_uninstall
         self.ui_controller.on_meeting_start = self.meeting_runtime.start_meeting
+        self.ui_controller.on_meeting_start_demo = (
+            self.meeting_runtime.start_demo_meeting
+        )
         self.ui_controller.on_meeting_end = self.meeting_runtime.end_meeting
         self.ui_controller.on_meeting_pause = self.meeting_runtime.pause_meeting
         self.ui_controller.on_meeting_resume = self.meeting_runtime.resume_meeting

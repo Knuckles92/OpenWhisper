@@ -177,6 +177,18 @@ class MeetingStateStore:
             self._state = candidate
             return True
 
+    def replace_document(self, state: MeetingState) -> None:
+        """Replace the in-memory document after an out-of-band persistence write.
+
+        Used when the repository rewrites evidence ids during a final
+        transcript replace so the live store matches SQLite.
+
+        Args:
+            state: The document already persisted for this meeting.
+        """
+        with self._lock:
+            self._state = state
+
     def undo(self, event_seq: int, actor_id: Optional[str]) -> List[OpResult]:
         """Host undo: apply the recorded inverse of a past event.
 

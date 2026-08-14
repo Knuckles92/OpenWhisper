@@ -10,10 +10,11 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import text as sql_text
 
+from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
 from meeting.interfaces import OpResult, TranscriptSegment
 from services.models import (
     MeetingAudioChunk,
@@ -100,6 +101,79 @@ def _state_evidence_ids(state_json: Optional[str]) -> Optional[set[str]]:
 
     visit(state)
     return evidence_ids
+
+
+def _best_evidence_match(
+    old_id: str,
+    old_items: Sequence[Dict[str, Any]],
+    new_items: Sequence[TranscriptSegment],
+    id_map: Dict[str, str],
+) -> Optional[str]:
+    """Map one evidence id onto a unique overlapping new segment."""
+    if old_id in id_map:
+        return id_map[old_id]
+    old = next((item for item in old_items if item["id"] == old_id), None)
+    if old is None:
+        return None
+    matches: List[Tuple[float, str]] = []
+    for new in new_items:
+        if old["channel"] != new.channel:
+            continue
+        score = interval_iou(old["start_s"], old["end_s"], new.start_s, new.end_s)
+        if score >= MIN_MATCH_IOU:
+            matches.append((score, new.segment_id))
+    if len(matches) != 1:
+        return None
+    return matches[0][1]
+
+
+def _remap_state_evidence(
+    state: Dict[str, Any],
+    id_map: Dict[str, str],
+    old_items: Sequence[Dict[str, Any]],
+    new_items: Sequence[TranscriptSegment],
+) -> None:
+    """Rewrite ``sg_`` evidence on protected cards/questions; drop ghosts."""
+    from meeting.state.schema import CARD_KEYS
+
+    def remap_list(values: Any) -> List[str]:
+        remapped: List[str] = []
+        seen: set = set()
+        if not isinstance(values, list):
+            return remapped
+        for item in values:
+            if not isinstance(item, str) or not item.startswith("sg_"):
+                continue
+            mapped = _best_evidence_match(item, old_items, new_items, id_map)
+            if mapped and mapped not in seen:
+                remapped.append(mapped)
+                seen.add(mapped)
+        return remapped
+
+    cards = state.get("cards") or {}
+    if isinstance(cards, dict):
+        for key in CARD_KEYS:
+            items = cards.get(key) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                protected = bool(item.get("pinned")) or item.get("status") in (
+                    "edited", "confirmed",
+                )
+                if not protected:
+                    continue
+                item["evidence"] = remap_list(item.get("evidence"))
+    questions = state.get("questions") or []
+    if isinstance(questions, list):
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            question["evidence"] = remap_list(question.get("evidence"))
+    state["rolling_summary_evidence"] = remap_list(
+        state.get("rolling_summary_evidence")
+    )
 
 
 class SqlMeetingRepository:
@@ -546,6 +620,153 @@ class SqlMeetingRepository:
                 if row is not None:
                     rows.append(_segment_to_dict(row))
             return rows, removed
+
+    def mark_chunks_done(self, meeting_id: str) -> int:
+        """Mark every audio chunk transcribed so recovery will not re-decode.
+
+        Used after a successful offline replace so unfinished live chunks
+        cannot resurrect the draft transcript.
+
+        Args:
+            meeting_id: Owning meeting id.
+
+        Returns:
+            Number of rows updated.
+        """
+        with self._db.get_session() as session:
+            rows = session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.meeting_id == meeting_id,
+                MeetingAudioChunk.asr_status != "done",
+            ).all()
+            for row in rows:
+                row.asr_status = "done"
+                row.asr_error = None
+            return len(rows)
+
+    def replace_final_transcript(
+        self,
+        meeting_id: str,
+        segments: List[TranscriptSegment],
+    ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, str]]:
+        """Replace the live draft with an offline transcript.
+
+        Unpinned live rows are deleted. Speaker-pinned rows keep their
+        participant assignment via time IoU onto the new rows, and unmatched
+        pinned rows are retained. Evidence ids on protected dashboard content
+        are remapped when a unique IoU match exists.
+
+        Args:
+            meeting_id: Owning meeting id.
+            segments: Offline-pass segments to insert.
+
+        Returns:
+            Stored new/kept rows, deleted ids, and ``old_id -> new_id`` map.
+        """
+        created = _now_iso()
+        with self._db.get_session() as session:
+            meeting = session.get(MeetingSession, meeting_id)
+            old_rows = session.query(MeetingSegment).filter(
+                MeetingSegment.meeting_id == meeting_id
+            ).all()
+            old_items = [
+                {
+                    "id": row.id,
+                    "start_s": float(row.start_s),
+                    "end_s": float(row.end_s),
+                    "pinned": bool(row.speaker_pinned),
+                    "speaker_participant_id": row.speaker_participant_id,
+                    "speaker_source": row.speaker_source,
+                    "channel": row.channel,
+                }
+                for row in old_rows
+            ]
+            new_items = list(segments)
+            pairs: List[Tuple[float, int, int]] = []
+            for oi, old in enumerate(old_items):
+                for ni, new in enumerate(new_items):
+                    if old["channel"] != new.channel:
+                        continue
+                    score = interval_iou(
+                        old["start_s"], old["end_s"], new.start_s, new.end_s,
+                    )
+                    if score >= MIN_MATCH_IOU:
+                        pairs.append((score, oi, ni))
+            pairs.sort(reverse=True)
+            used_old: set = set()
+            used_new: set = set()
+            id_map: Dict[str, str] = {}
+            for _score, oi, ni in pairs:
+                if oi in used_old or ni in used_new:
+                    continue
+                used_old.add(oi)
+                used_new.add(ni)
+                old = old_items[oi]
+                new = new_items[ni]
+                id_map[old["id"]] = new.segment_id
+                if old["pinned"] or old["speaker_participant_id"]:
+                    new.speaker_participant_id = old["speaker_participant_id"]
+                    new.speaker_source = (
+                        old["speaker_source"] if old["pinned"] else new.speaker_source
+                    )
+                    new.speaker_pinned = bool(old["pinned"])
+
+            deleted: List[str] = []
+            for oi, old in enumerate(old_items):
+                if old["pinned"] and oi not in used_old:
+                    continue
+                row = session.get(MeetingSegment, old["id"])
+                if row is None:
+                    continue
+                session.delete(row)
+                deleted.append(old["id"])
+
+            stored_ids: List[str] = []
+            for seg in new_items:
+                if seg.meeting_id != meeting_id:
+                    raise ValueError("segment does not belong to meeting")
+                existing = session.get(MeetingSegment, seg.segment_id)
+                if existing is not None and existing.meeting_id != meeting_id:
+                    raise ValueError("segment id already belongs to another meeting")
+                session.merge(MeetingSegment(
+                    id=seg.segment_id,
+                    meeting_id=seg.meeting_id,
+                    chunk_id=seg.chunk_id,
+                    channel=seg.channel,
+                    start_s=seg.start_s,
+                    end_s=seg.end_s,
+                    text=seg.text,
+                    speaker_participant_id=seg.speaker_participant_id,
+                    speaker_source=seg.speaker_source,
+                    speaker_pinned=bool(seg.speaker_pinned),
+                    embedding=seg.embedding,
+                    created_at=(
+                        existing.created_at if existing is not None else created
+                    ),
+                ))
+                stored_ids.append(seg.segment_id)
+
+            if meeting is not None and meeting.state_json:
+                try:
+                    state = json.loads(meeting.state_json)
+                except (TypeError, ValueError):
+                    state = None
+                if isinstance(state, dict):
+                    _remap_state_evidence(state, id_map, old_items, new_items)
+                    meeting.state_json = json.dumps(state, ensure_ascii=False)
+
+            session.flush()
+            rows = []
+            for seg_id in stored_ids:
+                row = session.get(MeetingSegment, seg_id)
+                if row is not None:
+                    rows.append(_segment_to_dict(row))
+            for oi, old in enumerate(old_items):
+                if old["pinned"] and oi not in used_old:
+                    row = session.get(MeetingSegment, old["id"])
+                    if row is not None:
+                        rows.append(_segment_to_dict(row))
+            rows.sort(key=lambda item: (item["start_s"], item["id"]))
+            return rows, deleted, id_map
 
     def get_segments_page(
         self,

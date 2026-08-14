@@ -208,6 +208,37 @@ class MeetingAsrEngine:
                 self._idle_cond.wait(remaining)
         return True
 
+    def transcribe_offline_session(
+        self,
+        spool_dir: str,
+        chunks: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[TranscriptSegment]:
+        """Re-decode the continuous session audio with offline silence cuts.
+
+        Uses the already-loaded Whisper model. Does not stop the live worker.
+
+        Args:
+            spool_dir: Meeting spool directory containing session WAVs.
+            chunks: Optional registered chunk rows for the concat fallback.
+
+        Returns:
+            Fresh segments for every channel that has session audio.
+        """
+        if self._backend is None or not self.is_available:
+            return []
+        from meeting.asr.offline import transcribe_meeting_sessions
+
+        model = getattr(self._backend, "model", None)
+        if model is None:
+            return []
+        return transcribe_meeting_sessions(
+            model,
+            spool_dir,
+            self.meeting_id,
+            chunks,
+            language=self.language,
+        )
+
     def stop(self) -> None:
         """Stop the worker and release the model."""
         self._stopping = True

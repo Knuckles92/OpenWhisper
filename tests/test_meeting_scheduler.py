@@ -433,6 +433,37 @@ class TestConsolidationRace:
         assert "model down" in outcome.message
 
 
+class TestFinalPolish:
+    def test_final_polish_uses_full_transcript_and_is_polish(self):
+        engine = FakeEngine([
+            {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "hello"},
+            {"id": "sg_2", "start_s": 5.0, "end_s": 10.0, "text": "world"},
+        ])
+        agent = FakeAgent()
+        sched = CheckpointScheduler(engine, agent)
+        outcome = sched.run_final_polish(timeout_s=5.0)
+        assert outcome.status == "completed"
+        assert len(agent.calls) == 1
+        assert agent.calls[0].is_polish is True
+        assert agent.calls[0].is_consolidation is False
+        assert [seg["id"] for seg in agent.calls[0].new_segments] == ["sg_1", "sg_2"]
+
+    def test_final_polish_then_consolidation_see_same_segments(self):
+        engine = FakeEngine([
+            {"id": "sg_final", "start_s": 1.0, "end_s": 2.0, "text": "clean"},
+        ])
+        agent = FakeAgent()
+        sched = CheckpointScheduler(engine, agent)
+        polish = sched.run_final_polish(timeout_s=5.0)
+        report = sched.run_consolidation(timeout_s=5.0)
+        assert polish.status == "completed"
+        assert report.status == "completed"
+        assert agent.calls[0].is_polish is True
+        assert agent.calls[1].is_consolidation is True
+        assert agent.calls[0].new_segments[0]["id"] == "sg_final"
+        assert agent.calls[1].new_segments[0]["id"] == "sg_final"
+
+
 class TestTopicShift:
     def test_content_words_filters_stopwords(self):
         words = _content_words(
