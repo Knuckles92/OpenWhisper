@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Final, Optional, Set, Tuple
 
 from _version import __version__
-from config import bundle_root, components_root, is_frozen
+from config import bundle_root, components_root, is_frozen, local_app_dir
 from services.format_utils import format_size_bytes
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,17 @@ MEETING_AGENT_COMPONENT_VERSION: Final[str] = "node22-pi1"
 
 # Version of the speaker-id payload (WeSpeaker-family ONNX embedding model).
 SPEAKER_ID_COMPONENT_VERSION: Final[str] = "wespeaker-v1"
+
+# Official WeSpeaker ResNet34-LM ONNX (~26.5 MB). Input is Kaldi 80-dim
+# fbank [1, T, 80] — the same tensor ``meeting.diarize.embedder`` builds.
+# SHA-256 pins the Hub file so a silent upstream replace cannot load.
+SPEAKER_MODEL_REPO: Final[str] = "Wespeaker/wespeaker-voxceleb-resnet34-LM"
+SPEAKER_MODEL_FILENAME: Final[str] = "voxceleb_resnet34_LM.onnx"
+SPEAKER_MODEL_REVISION: Final[str] = "main"
+SPEAKER_MODEL_SHA256: Final[str] = (
+    "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
+)
+_SPEAKER_MODEL_ENV: Final[str] = "OPENWHISPER_SPEAKER_MODEL"
 
 # TODO(meeting-mode): these archives are not published yet. URLs follow the
 # project's release-asset naming convention
@@ -436,24 +447,191 @@ def meeting_agent_payload_dir() -> Optional[str]:
     return _source_sidecar_payload_dir()
 
 
-def speaker_model_path() -> Optional[str]:
-    """Path to the installed speaker-embedding ONNX model, when installed.
-
-    Returns:
-        Absolute path to the first ``.onnx`` file inside the speaker-id
-        component tree, or None when the component (or the model file) is
-        missing.
-    """
-    if (not component_is_published(ComponentId.SPEAKER_ID)
-            or not is_installed(ComponentId.SPEAKER_ID)):
+def _first_onnx_file(root: str) -> Optional[str]:
+    """Return the first ``.onnx`` file under ``root``, or None."""
+    if not root or not os.path.isdir(root):
         return None
-    root = component_dir(ComponentId.SPEAKER_ID)
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in sorted(filenames):
             if name.lower().endswith(".onnx"):
                 return os.path.join(dirpath, name)
+    return None
+
+
+def speaker_model_cache_dir() -> str:
+    """Per-user directory for the downloaded speaker-embedding ONNX model."""
+    return os.path.join(local_app_dir(), "models", "speaker-id")
+
+
+def _env_speaker_model_path() -> Optional[str]:
+    """``OPENWHISPER_SPEAKER_MODEL`` when it points at an ONNX file or folder."""
+    raw = (os.environ.get(_SPEAKER_MODEL_ENV) or "").strip()
+    if not raw:
+        return None
+    if os.path.isfile(raw):
+        if not raw.lower().endswith(".onnx"):
+            logger.warning(
+                "%s must point at an .onnx file (got %s)", _SPEAKER_MODEL_ENV, raw
+            )
+            return None
+        return os.path.abspath(raw)
+    found = _first_onnx_file(raw)
+    if found:
+        return found
+    logger.warning(
+        "%s is set but no .onnx file was found at %s", _SPEAKER_MODEL_ENV, raw
+    )
+    return None
+
+
+def _installed_speaker_model_path() -> Optional[str]:
+    """ONNX inside a staged speaker-id component, even if unpublished."""
+    if not is_installed(ComponentId.SPEAKER_ID):
+        return None
+    found = _first_onnx_file(component_dir(ComponentId.SPEAKER_ID))
+    if found:
+        return found
     logger.warning("speaker-id component is installed but contains no .onnx model")
     return None
+
+
+def _source_speaker_model_path() -> Optional[str]:
+    """Repo ``models/speaker-id`` when running from source."""
+    if is_frozen():
+        return None
+    return _first_onnx_file(os.path.join(bundle_root(), "models", "speaker-id"))
+
+
+def speaker_model_path() -> Optional[str]:
+    """Path to a usable speaker-embedding ONNX model, if one is already local.
+
+    Resolution order:
+        1. ``OPENWHISPER_SPEAKER_MODEL`` (file or directory containing ``.onnx``)
+        2. Installed ``speaker-id`` component (usable even while unpublished,
+           matching :func:`meeting_agent_payload_dir`)
+        3. Per-user cache written by :func:`ensure_speaker_model`
+        4. Source-tree ``models/speaker-id`` when not frozen
+        5. ``None`` — callers download via :func:`ensure_speaker_model` or
+           fall back to channel-level Me/Others labels
+
+    Returns:
+        Absolute path to an ``.onnx`` file, or None when none is present.
+    """
+    return (
+        _env_speaker_model_path()
+        or _installed_speaker_model_path()
+        or _first_onnx_file(speaker_model_cache_dir())
+        or _source_speaker_model_path()
+    )
+
+
+def _speaker_model_download_allowed() -> bool:
+    """True when a missing speaker model may be fetched from Hugging Face."""
+    try:
+        from services.settings import (
+            HuggingFaceAccessPolicy,
+            is_hf_hub_offline_env_set,
+            settings_manager,
+        )
+    except Exception:
+        return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() not in (
+            "1", "true", "yes", "on",
+        )
+    if is_hf_hub_offline_env_set():
+        return False
+    return settings_manager.load_hf_access_policy() != HuggingFaceAccessPolicy.NEVER
+
+
+def _verify_speaker_model(path: str) -> None:
+    """Reject a speaker-model file whose SHA-256 does not match the pin.
+
+    Args:
+        path: Downloaded ONNX path.
+
+    Raises:
+        ComponentError: The file is missing, empty, or the digest mismatches.
+    """
+    if not os.path.isfile(path):
+        raise ComponentError("The speaker model download produced no file.")
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
+            digest.update(block)
+    actual = digest.hexdigest()
+    if actual != SPEAKER_MODEL_SHA256:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise ComponentError(
+            "The speaker model failed its integrity check and was discarded."
+        )
+
+
+def _download_speaker_model() -> str:
+    """Fetch the pinned WeSpeaker ONNX into the per-user cache.
+
+    Returns:
+        Absolute path to the verified ONNX file.
+
+    Raises:
+        ComponentError: huggingface_hub is missing or the download failed.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise ComponentError(
+            "huggingface_hub is required to download the speaker model."
+        ) from exc
+
+    cache_dir = speaker_model_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+    logger.info(
+        "Downloading speaker embedding model %s/%s",
+        SPEAKER_MODEL_REPO, SPEAKER_MODEL_FILENAME,
+    )
+    try:
+        path = hf_hub_download(
+            repo_id=SPEAKER_MODEL_REPO,
+            filename=SPEAKER_MODEL_FILENAME,
+            revision=SPEAKER_MODEL_REVISION,
+            local_dir=cache_dir,
+        )
+    except Exception as exc:
+        raise ComponentError(
+            f"Could not download the speaker embedding model: {exc}"
+        ) from exc
+
+    resolved = os.path.abspath(path)
+    _verify_speaker_model(resolved)
+    logger.info("Speaker embedding model ready: %s", resolved)
+    return resolved
+
+
+def ensure_speaker_model() -> Optional[str]:
+    """Return a local speaker-embedding model, downloading it when allowed.
+
+    Safe to call from a worker thread (meeting start). Never raises: a
+    failed or blocked download returns None so the meeting continues with
+    Me/Others channel labels.
+
+    Returns:
+        Absolute path to an ONNX model, or None when none is available.
+    """
+    existing = speaker_model_path()
+    if existing:
+        return existing
+    if not _speaker_model_download_allowed():
+        logger.info(
+            "Speaker embedding model is not installed and downloads are "
+            "disabled; Meeting Mode will use Me/Others channel labels"
+        )
+        return None
+    try:
+        return _download_speaker_model()
+    except Exception:
+        logger.exception("Failed to download the speaker embedding model")
+        return None
 
 
 def read_manifest(component_id: str) -> Optional[dict]:

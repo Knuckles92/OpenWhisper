@@ -26,7 +26,11 @@ def component_root(tmp_path, monkeypatch):
     """Point the component system at a temporary directory."""
     root = tmp_path / "components"
     root.mkdir()
+    speaker_cache = tmp_path / "speaker-models"
+    speaker_cache.mkdir()
     monkeypatch.setattr(components, "components_root", lambda: str(root))
+    monkeypatch.setattr(components, "speaker_model_cache_dir", lambda: str(speaker_cache))
+    monkeypatch.delenv("OPENWHISPER_SPEAKER_MODEL", raising=False)
     return root
 
 
@@ -202,7 +206,7 @@ def test_unpublished_meeting_payloads_are_never_offered(component_root):
     """Placeholder URLs/digests must stay unreachable until release artifacts exist."""
     with patch.object(components.sys, "platform", "win32"), patch.object(
         components, "_source_sidecar_payload_dir", return_value=None
-    ):
+    ), patch.object(components, "_source_speaker_model_path", return_value=None):
         assert components.component_is_published(ComponentId.MEETING_AGENT) is False
         assert components.component_is_published(ComponentId.SPEAKER_ID) is False
         assert ComponentId.MEETING_AGENT not in components.available_component_ids()
@@ -254,6 +258,92 @@ def test_source_sidecar_payload_ignored_when_frozen(component_root, tmp_path):
         components, "bundle_root", return_value=str(tmp_path)
     ):
         assert components.meeting_agent_payload_dir() is None
+
+
+def test_speaker_model_path_uses_unpublished_install(component_root):
+    """A staged speaker-id tree is usable even while the catalog is unpublished."""
+    target = _make_installed(
+        component_root,
+        ComponentId.SPEAKER_ID,
+        {"version": "wespeaker-v1", "component_api": 1, "platform": "win_amd64"},
+    )
+    model = target / "voxceleb_resnet34_LM.onnx"
+    model.write_bytes(b"onnx")
+    with patch.object(components, "_source_speaker_model_path", return_value=None):
+        assert components.speaker_model_path() == str(model)
+
+
+def test_speaker_model_path_honors_env_file(component_root, tmp_path, monkeypatch):
+    """OPENWHISPER_SPEAKER_MODEL pointing at a file wins over other sources."""
+    model = tmp_path / "custom.onnx"
+    model.write_bytes(b"onnx")
+    monkeypatch.setenv("OPENWHISPER_SPEAKER_MODEL", str(model))
+    assert components.speaker_model_path() == str(model)
+
+
+def test_speaker_model_path_honors_env_directory(component_root, tmp_path, monkeypatch):
+    """OPENWHISPER_SPEAKER_MODEL may be a directory containing the ONNX file."""
+    folder = tmp_path / "speaker"
+    folder.mkdir()
+    model = folder / "model.onnx"
+    model.write_bytes(b"onnx")
+    monkeypatch.setenv("OPENWHISPER_SPEAKER_MODEL", str(folder))
+    assert components.speaker_model_path() == str(model)
+
+
+def test_speaker_model_path_uses_cache_dir(component_root, tmp_path):
+    """A previously downloaded cache file is enough to enable diarization."""
+    cache = tmp_path / "speaker-models"
+    model = cache / "voxceleb_resnet34_LM.onnx"
+    model.write_bytes(b"onnx")
+    with patch.object(components, "_source_speaker_model_path", return_value=None):
+        assert components.speaker_model_path() == str(model)
+
+
+def test_speaker_model_path_falls_back_to_source_tree(component_root, tmp_path):
+    """From source, models/speaker-id/*.onnx is a valid development payload."""
+    models = tmp_path / "models" / "speaker-id"
+    models.mkdir(parents=True)
+    model = models / "voxceleb_resnet34_LM.onnx"
+    model.write_bytes(b"onnx")
+    with patch.object(components, "is_frozen", return_value=False), patch.object(
+        components, "bundle_root", return_value=str(tmp_path)
+    ):
+        assert components.speaker_model_path() == str(model)
+
+
+def test_ensure_speaker_model_returns_existing_without_download(component_root, tmp_path):
+    """ensure_speaker_model must not hit the network when a file is already local."""
+    cache = tmp_path / "speaker-models"
+    model = cache / "voxceleb_resnet34_LM.onnx"
+    model.write_bytes(b"onnx")
+    with patch.object(components, "_download_speaker_model") as download:
+        assert components.ensure_speaker_model() == str(model)
+        download.assert_not_called()
+
+
+def test_ensure_speaker_model_downloads_when_missing(component_root, tmp_path):
+    """First meeting start fetches the pinned WeSpeaker ONNX when allowed."""
+    cache = tmp_path / "speaker-models"
+    dest = cache / "voxceleb_resnet34_LM.onnx"
+
+    def _fake_download():
+        dest.write_bytes(b"onnx")
+        return str(dest)
+
+    with patch.object(components, "_source_speaker_model_path", return_value=None), \
+            patch.object(components, "_speaker_model_download_allowed", return_value=True), \
+            patch.object(components, "_download_speaker_model", side_effect=_fake_download):
+        assert components.ensure_speaker_model() == str(dest)
+
+
+def test_ensure_speaker_model_skips_download_when_blocked(component_root):
+    """HF_HUB_OFFLINE / policy=never must not start a speaker-model download."""
+    with patch.object(components, "_source_speaker_model_path", return_value=None), \
+            patch.object(components, "_speaker_model_download_allowed", return_value=False), \
+            patch.object(components, "_download_speaker_model") as download:
+        assert components.ensure_speaker_model() is None
+        download.assert_not_called()
 
 
 def test_gpu_runtime_probes_shared_objects_on_linux():

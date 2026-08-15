@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from config import config
-from services.components import meeting_agent_payload_dir, speaker_model_path
+from services.components import (
+    ensure_speaker_model,
+    meeting_agent_payload_dir,
+    speaker_model_path,
+)
 try:
     from services.settings import (
         MeetingAgentCore,
@@ -339,6 +343,10 @@ class MeetingRuntime:
 
             self._shutdown_archive_dashboard()
             self._shutdown_engine()  # drop a previous (ended) session's server
+            if not demo and speaker_model_path() is None:
+                self.controller.meeting_status_update.emit(
+                    "Downloading speaker identification model..."
+                )
             options = self._build_options(cloud, demo=demo)
             engine = MeetingEngine(options, repository=self._repository())
             engine.add_listener(self._on_engine_event)
@@ -423,7 +431,9 @@ class MeetingRuntime:
             llm_model=resolve_meeting_llm_model(settings),
             agent_core_kind=agent_kind,
             sidecar_payload_dir=payload_dir,
-            diarization_model_path=speaker_model_path(),
+            diarization_model_path=(
+                None if demo else ensure_speaker_model()
+            ),
             server_bind=resolve_meeting_server_bind(settings),
             server_port=resolve_meeting_server_port(settings),
             spool_root=config.MEETINGS_FOLDER,

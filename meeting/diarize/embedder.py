@@ -41,6 +41,8 @@ class SpeakerEmbedder:
         self.model_path = model_path
         self._session = None
         self._input_name: Optional[str] = None
+        self._length_name: Optional[str] = None
+        self._output_name: Optional[str] = None
         try:
             import onnxruntime  # imported lazily; optional dependency
 
@@ -52,7 +54,15 @@ class SpeakerEmbedder:
                 sess_options=options,
                 providers=["CPUExecutionProvider"],
             )
-            self._input_name = self._session.get_inputs()[0].name
+            inputs = self._session.get_inputs()
+            self._input_name = inputs[0].name
+            for extra in inputs[1:]:
+                if "len" in extra.name.lower():
+                    self._length_name = extra.name
+                    break
+            outputs = [item.name for item in self._session.get_outputs()]
+            if "embs" in outputs:
+                self._output_name = "embs"
         except Exception as exc:
             raise EmbedderUnavailable(
                 f"Failed to load speaker embedding model '{model_path}': {exc}"
@@ -95,8 +105,13 @@ class SpeakerEmbedder:
         feats = apply_cmn(feats)
         batch = feats[np.newaxis, :, :].astype(np.float32)  # [1, T, 80]
 
+        feeds = {self._input_name: batch}
+        if self._length_name:
+            feeds[self._length_name] = np.array([batch.shape[1]], dtype=np.int64)
+
         try:
-            outputs = self._session.run(None, {self._input_name: batch})
+            output_names = [self._output_name] if self._output_name else None
+            outputs = self._session.run(output_names, feeds)
         except Exception as exc:
             raise EmbedderUnavailable(
                 f"Speaker embedding inference failed: {exc}"
