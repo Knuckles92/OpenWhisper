@@ -1,0 +1,1147 @@
+{
+ "meeting_id": "IN1009",
+ "seq": 65,
+ "status": "active",
+ "cloud_enabled": true,
+ "intelligence_online": true,
+ "diarization_available": false,
+ "title": "",
+ "topic": {
+  "current": "Wrap-up logistics: the app is entirely MATLAB-based, but for online real-time use MATLAB isn't trusted so it has to be coded; idea to enter an email address so the app mails you the results (OCR may not be on this computer). Earlier: identity from voice features, calibration across environments, event granularity, first prototype on quantity of speech; then going to see Olivier.",
+  "history": [
+   {
+    "text": "From speaker location to identity: clustering, spectrum analysis, and pitch-based modeling",
+    "ts": "2026-08-15T23:39:15.165253",
+    "evidence": [
+     "sg_423bf643fe6e7febe81e",
+     "sg_a7f9c807ad3f0345e299",
+     "sg_90424821cba4f880e66c",
+     "sg_20bec5e5c167db661c8b"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "From location to identity: comparing extracted voice features (pitch, vocal tract, dynamics) against a stored model",
+    "ts": "2026-08-15T23:40:09.808342",
+    "evidence": [
+     "sg_49f9be89765fab5ffd4c",
+     "sg_2d826efe371c1c511092",
+     "sg_833b4095db97208bdace"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "From location to identity via extracted voice features (pitch, vocal tract, dynamics vs. stored model) \u2014 extended with semantic context from words and keyword-triggered events, closing with follow-up paper links on localization/detection and active-speaker decisions.",
+    "ts": "2026-08-15T23:54:21.185322",
+    "evidence": [
+     "sg_19e1adc31555dbd16225",
+     "sg_f437caf7ae73686d9480",
+     "sg_cc8832bde51a3c2bb881"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "From location to identity via extracted voice features (pitch, vocal tract, dynamics vs. stored model) \u2014 plus semantic context from words, keyword-triggered events, and wrap-up plans to share paper links.",
+    "ts": "2026-08-15T23:55:25.035818",
+    "evidence": [
+     "sg_19e1adc31555dbd16225",
+     "sg_f437caf7ae73686d9480",
+     "sg_7e7cc148c4e128fe3a3e"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "From location to identity via extracted voice features (pitch, vocal tract, dynamics vs. stored model); making the system work across environments (cafeteria, library) via calibration, clustering of locations over time, and wrap-up plans to share paper links.",
+    "ts": "2026-08-15T23:56:18.038558",
+    "evidence": [
+     "sg_768757ad4e6245a3c8d0",
+     "sg_5e1455fc541b5d214f95",
+     "sg_836a8d2ab09e0a868578",
+     "sg_9c782b41a3933c7b2c00",
+     "sg_cbc350898ef3b0a7be70",
+     "sg_b4e8b8e99fa59af20957"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "From location to identity via extracted voice features (pitch, vocal tract, dynamics vs. stored model); calibration across environments (cafeteria, library) and clustering of locations over time; event granularity \u2014 short spontaneous words like \"yes\" create many small events; first prototype focuses on quantity of speech; wrap-up: sharing paper links, then going to see Olivier.",
+    "ts": "2026-08-15T23:58:29.739549",
+    "evidence": [
+     "sg_96904a0b679af133f4a9",
+     "sg_c7e637758031c34708f0",
+     "sg_3461edc7ad88d3009cd8",
+     "sg_6ddcf01c87c4f64e0306",
+     "sg_5feede4b121906159795"
+    ],
+    "actor_type": "agent"
+   },
+   {
+    "text": "Wrap-up logistics: the app is entirely MATLAB-based, but for online real-time use MATLAB isn't trusted so it has to be coded; idea to enter an email address so the app mails you the results (OCR may not be on this computer). Earlier: identity from voice features, calibration across environments, event granularity, first prototype on quantity of speech; then going to see Olivier.",
+    "ts": "2026-08-15T23:59:23.614703",
+    "evidence": [
+     "sg_03f7662dfdf583a7af77",
+     "sg_9819a027c743df174ca1",
+     "sg_da4fb8183489e87fd65d",
+     "sg_c8035d5741e08924be43",
+     "sg_cdff2e1de32a3fb95985"
+    ],
+    "actor_type": "agent"
+   }
+  ]
+ },
+ "rolling_summary": "The speaker explained going from a separated voice signal to identity: extract pitch and vocal-tract features and compare them against a stored model; calibration across environments (cafeteria, library) and clustering of locations over time handle small spontaneous words. The first prototype focuses on quantity of speech. In the wrap-up they discussed event granularity, then logistics: the app is entirely MATLAB-based, but for online real-time use MATLAB is not trusted, so it has to be coded; they also discussed entering an email address so the app mails results (OCR may not be on this computer). The speaker will send paper links, and they plan to go see Olivier.",
+ "rolling_summary_evidence": [
+  "sg_03f7662dfdf583a7af77",
+  "sg_9819a027c743df174ca1",
+  "sg_da4fb8183489e87fd65d",
+  "sg_c8035d5741e08924be43",
+  "sg_cdff2e1de32a3fb95985"
+ ],
+ "capture": {
+  "mic_available": false,
+  "loopback_available": false,
+  "message": ""
+ },
+ "participants": {},
+ "cards": {
+  "key_points": [
+   {
+    "id": "it_87026e9695f9",
+    "card": "key_points",
+    "text": "Clustering of separated signals lets you track the same people moving and separate individuals.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_423bf643fe6e7febe81e",
+     "sg_739820d3bbbfb3233018"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_383b0d54d4aa",
+    "card": "key_points",
+    "text": "Going from location to identity is quite different from separation \u2014 you must use the separated signal for further analysis.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_a7f9c807ad3f0345e299",
+     "sg_cb8923f33e09303d772f",
+     "sg_492fa307f7f1cb588fa4"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_9dfe3e1c1412",
+    "card": "key_points",
+    "text": "From the magnitude spectrum you can transform the signal and build a model of the person.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_90424821cba4f880e66c",
+     "sg_0add722541fa634fcfb9"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_012a6023a032",
+    "card": "key_points",
+    "text": "Pitch (fundamental frequency) is a candidate identity feature, but it is not always enough on its own.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_20bec5e5c167db661c8b",
+     "sg_bd7a6f4bdf84a1ec957b"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_17388679e804",
+    "card": "key_points",
+    "text": "Pitch is the base frequency of vocal fold vibration, which is then transformed through the mouth.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_783a7fdaca683c426b3b"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_943446b1f494",
+    "card": "key_points",
+    "text": "Comparing extracted features against a stored model lets you identify which person it is.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_49f9be89765fab5ffd4c",
+     "sg_2d826efe371c1c511092"
+    ],
+    "created_at": "2026-08-15T23:40:09.808342",
+    "updated_at": "2026-08-15T23:40:09.808342"
+   },
+   {
+    "id": "it_b3e887e9bc98",
+    "card": "key_points",
+    "text": "The mouth/nose (vocal tract) transformation of pitch is quite personal \u2014 almost unique per person.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_6de9d1e52b8116d9eac6",
+     "sg_0c9527c36390b47fa0e3"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_dab614f61c7b",
+    "card": "key_points",
+    "text": "Voice dynamics and rate of speech are additional identity features; rate of speech varies over time.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_833b4095db97208bdace",
+     "sg_22fe29abd5addb30c83e"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_0b2714e0c6dc",
+    "card": "key_points",
+    "text": "The approach is not perfect but enough to use: take a voice sample and extract the identity information.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_7899a5df6a67ee013e60"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_83fc3fdda6b2",
+    "card": "key_points",
+    "text": "FFT is useful for this type of analysis.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_33dfcd4be0a7dc684dd1"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_ebbe8cbbfc50",
+    "card": "key_points",
+    "text": "The system must work in different conditions (cafeteria, library); a single fixed threshold value is a problem \u2014 currently using a kind of calibration.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_768757ad4e6245a3c8d0",
+     "sg_5e1455fc541b5d214f95",
+     "sg_836a8d2ab09e0a868578",
+     "sg_befe1bd9e77e4ed44e4a"
+    ],
+    "created_at": "2026-08-15T23:56:18.038558",
+    "updated_at": "2026-08-15T23:56:18.038558"
+   },
+   {
+    "id": "it_86d707d6527a",
+    "card": "key_points",
+    "text": "Calibration: each person speaks in front of the microphone, then you subtract the level kept in the other microphones.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_4ad6d0cbe7231f5c6d8a",
+     "sg_68e8f3b778c22baf5755"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_89ab9e5a644f",
+    "card": "key_points",
+    "text": "There is another paper on single-channel calibration, with code available online.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_9c782b41a3933c7b2c00",
+     "sg_b4af496edbcfc74b1e52"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_509a920a9c76",
+    "card": "key_points",
+    "text": "Clustering of the different locations over time yields small clusters of speech \u2014 important because in spontaneous speech the words are quite small.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_62a17901ea03b2155e4f",
+     "sg_cbc350898ef3b0a7be70",
+     "sg_255a9d8a4444f7949335",
+     "sg_33c656c24b3c5f14d430",
+     "sg_ae277296ab7b1f7ce09b"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_0897d3f62abc",
+    "card": "key_points",
+    "text": "A detected event is a sum of small parts; short spontaneous words like \"yes\" create many small events, so very small intervals must be considered when reprocessing.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_c7e637758031c34708f0",
+     "sg_bb5b015b1c3ca0328c9f",
+     "sg_c907255095d5ee9ab771",
+     "sg_4e81efcc320a83484408"
+    ],
+    "created_at": "2026-08-15T23:58:29.739549",
+    "updated_at": "2026-08-15T23:58:29.739549"
+   },
+   {
+    "id": "it_f1209f9eaec3",
+    "card": "key_points",
+    "text": "For the first prototype application, the focus is on quantity of speech (how long or how much someone speaks); finer participation details (e.g., \"yes yes yes\" showing engagement) come later.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_fd977da133bb1f790510",
+     "sg_3461edc7ad88d3009cd8",
+     "sg_07b290b974817fa81502"
+    ],
+    "created_at": "2026-08-15T23:58:29.739549",
+    "updated_at": "2026-08-15T23:58:29.739549"
+   },
+   {
+    "id": "it_b7ebec2de8ef",
+    "card": "key_points",
+    "text": "Saying \"yes\" from time to time shows participation; it makes a difference whether someone is talking at length vs. briefly replying.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_07b290b974817fa81502",
+     "sg_174ec3884b5b7618861b",
+     "sg_67154e4ada9ae801055b"
+    ],
+    "created_at": "2026-08-15T23:58:29.739549",
+    "updated_at": "2026-08-15T23:58:29.739549"
+   },
+   {
+    "id": "it_a290c00d3c4f",
+    "card": "key_points",
+    "text": "The application is entirely based on MATLAB \u2014 all the programming is done in MATLAB.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_da4fb8183489e87fd65d",
+     "sg_fbbe63f20cc4dd43f045"
+    ],
+    "created_at": "2026-08-15T23:59:23.614703",
+    "updated_at": "2026-08-15T23:59:23.614703"
+   },
+   {
+    "id": "it_b67affec6ae8",
+    "card": "key_points",
+    "text": "For online real-time use, MATLAB is not trusted \u2014 the code has to be written in another language.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_03f7662dfdf583a7af77",
+     "sg_9819a027c743df174ca1",
+     "sg_552139a96a82685736b9"
+    ],
+    "created_at": "2026-08-15T23:59:23.614703",
+    "updated_at": "2026-08-15T23:59:23.614703"
+   },
+   {
+    "id": "it_453ec65cf044",
+    "card": "key_points",
+    "text": "Idea: enter your email address in the app and it mails you the results; OCR may not be available on this computer.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_cdff2e1de32a3fb95985",
+     "sg_36c88acb3fd13c9120be",
+     "sg_c8035d5741e08924be43",
+     "sg_a6e8e8f2638ca5cbf5f5"
+    ],
+    "created_at": "2026-08-15T23:59:23.615702",
+    "updated_at": "2026-08-15T23:59:23.615702"
+   }
+  ],
+  "decisions": [],
+  "action_items": [
+   {
+    "id": "it_776d1303318d",
+    "card": "action_items",
+    "text": "Speaker: check PCM (audio coding/compression) and show it to the other participant afterwards.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_ce580bbd4cda5bfe466f"
+    ],
+    "created_at": "2026-08-15T23:41:59.203521",
+    "updated_at": "2026-08-15T23:41:59.203521"
+   },
+   {
+    "id": "it_f8ad392041f2",
+    "card": "action_items",
+    "text": "Send links to the papers (some are long \u2014 just briefly look), including the single-channel calibration paper with its online code.",
+    "data": {},
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 2,
+    "evidence": [
+     "sg_9c782b41a3933c7b2c00",
+     "sg_b4af496edbcfc74b1e52",
+     "sg_6ddcf01c87c4f64e0306",
+     "sg_e818c39e035891460944",
+     "sg_5feede4b121906159795"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:58:29.739549"
+   }
+  ],
+  "risks": [],
+  "timeline": [
+   {
+    "id": "it_ac5064b8b5c5",
+    "card": "timeline",
+    "text": "Returning to the first two questions: clustering tracks the same people moving and separates individuals.",
+    "data": {
+     "start_s": 40.6
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_49e4132985e877d98e9b",
+     "sg_423bf643fe6e7febe81e"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_6428443903dd",
+    "card": "timeline",
+    "text": "The remaining question: going from location to identity of the person.",
+    "data": {
+     "start_s": 55.6
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_97bd44598ee4da9dc5f9",
+     "sg_a7f9c807ad3f0345e299"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_6d4ec68c48d6",
+    "card": "timeline",
+    "text": "From the magnitude spectrum, build a model of the person.",
+    "data": {
+     "start_s": 80.5
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_90424821cba4f880e66c",
+     "sg_0add722541fa634fcfb9"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_2e67019b68ee",
+    "card": "timeline",
+    "text": "Pitch as an identity feature \u2014 known in theory but not always enough.",
+    "data": {
+     "start_s": 93.2
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_20bec5e5c167db661c8b"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_57f6b2d7a89d",
+    "card": "timeline",
+    "text": "Clarifying pitch: the base frequency of vocal fold vibration, transformed through the mouth.",
+    "data": {
+     "start_s": 105.5
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_bd7a6f4bdf84a1ec957b",
+     "sg_783a7fdaca683c426b3b"
+    ],
+    "created_at": "2026-08-15T23:39:15.165253",
+    "updated_at": "2026-08-15T23:39:15.165253"
+   },
+   {
+    "id": "it_f0e040de6fd0",
+    "card": "timeline",
+    "text": "Comparing features to a stored model identifies which person it is.",
+    "data": {
+     "start_s": 121.3
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_49f9be89765fab5ffd4c",
+     "sg_2d826efe371c1c511092"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_a0bfe2059800",
+    "card": "timeline",
+    "text": "The mouth/nose transformation makes the voice almost unique per person.",
+    "data": {
+     "start_s": 160.5
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_6de9d1e52b8116d9eac6",
+     "sg_0c9527c36390b47fa0e3"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_3f2a261188a2",
+    "card": "timeline",
+    "text": "Not perfect but enough to use; additional features include voice dynamics, rate of speech, and emotion detection.",
+    "data": {
+     "start_s": 203.8
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_7899a5df6a67ee013e60",
+     "sg_833b4095db97208bdace",
+     "sg_22fe29abd5addb30c83e",
+     "sg_2664077b8cf1594b1929"
+    ],
+    "created_at": "2026-08-15T23:40:09.809401",
+    "updated_at": "2026-08-15T23:40:09.809401"
+   },
+   {
+    "id": "it_81369cfe1279",
+    "card": "timeline",
+    "text": "Motivation for separation: voice recognition of needs, plus designing a sensitive table (mirroring) and a prototype to analyze conversations.",
+    "data": {
+     "start_s": 601.7
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_13151bc64c1c50d7910a",
+     "sg_aa57fb5f41fcd56b2281"
+    ],
+    "created_at": "2026-08-15T23:50:15.826316",
+    "updated_at": "2026-08-15T23:50:15.826316"
+   },
+   {
+    "id": "it_85962afe671f",
+    "card": "timeline",
+    "text": "If two people speak at once, voice recognition is not reliable on such a stream \u2014 you should separate them first; once you have locations the rest is not a big problem.",
+    "data": {
+     "start_s": 643.5
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_aa57fb5f41fcd56b2281"
+    ],
+    "created_at": "2026-08-15T23:50:15.826316",
+    "updated_at": "2026-08-15T23:50:15.826316"
+   },
+   {
+    "id": "it_04a2036e4efb",
+    "card": "timeline",
+    "text": "System must work in different conditions (cafeteria, library); a single fixed threshold is a problem \u2014 currently using a kind of calibration.",
+    "data": {
+     "start_s": 844.8
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_768757ad4e6245a3c8d0",
+     "sg_5e1455fc541b5d214f95",
+     "sg_836a8d2ab09e0a868578"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_e6bcc27b7e9b",
+    "card": "timeline",
+    "text": "Calibration: each person speaks in front of the mic; subtract the level kept in the other microphones.",
+    "data": {
+     "start_s": 891.0
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_4ad6d0cbe7231f5c6d8a",
+     "sg_68e8f3b778c22baf5755"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_1bd6736a8f10",
+    "card": "timeline",
+    "text": "Another paper on single-channel calibration with code online is offered.",
+    "data": {
+     "start_s": 904.5
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_9c782b41a3933c7b2c00",
+     "sg_b4af496edbcfc74b1e52"
+    ],
+    "created_at": "2026-08-15T23:56:18.039066",
+    "updated_at": "2026-08-15T23:56:18.039066"
+   },
+   {
+    "id": "it_94bad6d406c8",
+    "card": "timeline",
+    "text": "Clustering locations over time to get small clusters of speech \u2014 needed since spontaneous speech words are quite small.",
+    "data": {
+     "start_s": 924.4
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_62a17901ea03b2155e4f",
+     "sg_cbc350898ef3b0a7be70",
+     "sg_33c656c24b3c5f14d430"
+    ],
+    "created_at": "2026-08-15T23:56:18.039580",
+    "updated_at": "2026-08-15T23:56:18.039580"
+   },
+   {
+    "id": "it_4bf5102b5f99",
+    "card": "timeline",
+    "text": "Speaker wraps up the discussion (\"otherwise yeah i'm done\").",
+    "data": {
+     "start_s": 956.9
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_b4e8b8e99fa59af20957"
+    ],
+    "created_at": "2026-08-15T23:56:18.039580",
+    "updated_at": "2026-08-15T23:56:18.039580"
+   },
+   {
+    "id": "it_36669a91f7ea",
+    "card": "timeline",
+    "text": "Event granularity: a detected event is a sum of small parts; short words like \"yes\" create many small events, so very small intervals must be considered.",
+    "data": {
+     "start_s": 961.3
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_96904a0b679af133f4a9",
+     "sg_c7e637758031c34708f0",
+     "sg_c907255095d5ee9ab771"
+    ],
+    "created_at": "2026-08-15T23:58:29.739549",
+    "updated_at": "2026-08-15T23:58:29.739549"
+   },
+   {
+    "id": "it_28f8f50eec67",
+    "card": "timeline",
+    "text": "First prototype focuses on quantity of speech (how long/much someone speaks); participation details like \"yes yes yes\" come later.",
+    "data": {
+     "start_s": 1029.2
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_fd977da133bb1f790510",
+     "sg_3461edc7ad88d3009cd8",
+     "sg_07b290b974817fa81502"
+    ],
+    "created_at": "2026-08-15T23:58:29.741064",
+    "updated_at": "2026-08-15T23:58:29.741064"
+   },
+   {
+    "id": "it_160c449fd8b5",
+    "card": "timeline",
+    "text": "Wrap-up: speaker will send paper links (some long, just briefly look); plan to go see Olivier.",
+    "data": {
+     "start_s": 1064.2
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_6ddcf01c87c4f64e0306",
+     "sg_e818c39e035891460944",
+     "sg_5feede4b121906159795"
+    ],
+    "created_at": "2026-08-15T23:58:29.741064",
+    "updated_at": "2026-08-15T23:58:29.741064"
+   },
+   {
+    "id": "it_a754a6738d65",
+    "card": "timeline",
+    "text": "Discussing emailing results: entering an email address so the app mails you; OCR may not be available on this computer.",
+    "data": {
+     "start_s": 1085.6
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_cdff2e1de32a3fb95985",
+     "sg_36c88acb3fd13c9120be",
+     "sg_c8035d5741e08924be43"
+    ],
+    "created_at": "2026-08-15T23:59:23.615702",
+    "updated_at": "2026-08-15T23:59:23.615702"
+   },
+   {
+    "id": "it_5f5ffdee2d80",
+    "card": "timeline",
+    "text": "Everything is based on MATLAB; for online real-time use MATLAB isn't trusted, so it has to be coded.",
+    "data": {
+     "start_s": 1125.0
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_da4fb8183489e87fd65d",
+     "sg_03f7662dfdf583a7af77",
+     "sg_9819a027c743df174ca1",
+     "sg_552139a96a82685736b9"
+    ],
+    "created_at": "2026-08-15T23:59:23.615702",
+    "updated_at": "2026-08-15T23:59:23.615702"
+   }
+  ],
+  "live_notes": [
+   {
+    "id": "it_11bb0408ee4a",
+    "card": "live_notes",
+    "text": "These measures quantify involvement in the discussion and are not expensive to compute; the more expensive part is the final decision \u2014 identifying who is speaking or tracking a person who moved, the most complicated case being someone leaving and returning to a different seat. Statistical models of person identity would need to be built from these measures.",
+    "data": {
+     "heading": "Measures: cost and decision complexity",
+     "start_s": 245.2
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_e566d9e39d35d0d7bbb8",
+     "sg_b31d29c151ab15d9e200",
+     "sg_353ce3fbd6f223b7abb2",
+     "sg_1d0e4edd36948a6b81e9",
+     "sg_7afc463c03ee11d65917",
+     "sg_f72c06a74c9cb9dabd19",
+     "sg_e8d03ae809de5e54c35f",
+     "sg_da34ebdae1c3799edc5b"
+    ],
+    "created_at": "2026-08-15T23:45:09.330869",
+    "updated_at": "2026-08-15T23:45:09.330869"
+   },
+   {
+    "id": "it_ab9cd209278b",
+    "card": "live_notes",
+    "text": "Processing is done via FFT; these measures evaluate a person's identity. Location alone only extracts speech segments and clusters of where noise regularly comes from \u2014 it cannot tell that segments come from the same person. Location may suffice for short periods (e.g., 10 minutes) or a fixed setting like the current room, but the target deployment is a flexible place where people move, so more than location is needed.",
+    "data": {
+     "heading": "Location vs identity limits",
+     "start_s": 340.9
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_d03af11e62030efdc78d",
+     "sg_12d95b6b00014012869a",
+     "sg_6652b904ee4fd7c4f8da",
+     "sg_0a0034a01e3ffd40a5ee",
+     "sg_63bbe242514e972911ca",
+     "sg_162e6eeb42d115f5296c",
+     "sg_9d9de6a5f07f1363f93a",
+     "sg_9633b7a125188bec67a5",
+     "sg_060a86f647f0405f4850",
+     "sg_a93bba0466bfc9865de5"
+    ],
+    "created_at": "2026-08-15T23:45:09.330869",
+    "updated_at": "2026-08-15T23:45:09.330869"
+   },
+   {
+    "id": "it_9ea40d391ce5",
+    "card": "live_notes",
+    "text": "Debate on whether knowing which person is speaking matters: for a physical table, knowing which cone/position speech comes from may be enough, but identity is important for detecting patterns such as how much a person spoke over the last five minutes. The measures could be used simply online to give feedback, while another side of the project analyzes data offline.",
+    "data": {
+     "heading": "Identity value; online vs offline use",
+     "start_s": 411.6
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_018dda27aea47132066b",
+     "sg_fb5e608a99cb250e2517",
+     "sg_48624f8a2dd4c9136f09",
+     "sg_e88fe3622b44122cea7f",
+     "sg_925cddddff70178e7985",
+     "sg_1d131e12f5e9d0a74499",
+     "sg_2bc9496d7391d81c0725",
+     "sg_f212d4624efaeb117eaa"
+    ],
+    "created_at": "2026-08-15T23:45:09.330869",
+    "updated_at": "2026-08-15T23:45:09.330869"
+   },
+   {
+    "id": "it_16b826ac2d57",
+    "card": "live_notes",
+    "text": "Extracting the words spoken adds semantic context (e.g., detecting that someone is angry about a word). Keyword spotting could trigger events \u2014 for instance, a professor being alerted when people talk about him. Noted as a possible future direction, not part of the current project scope.",
+    "data": {
+     "heading": "Keyword spotting and semantic context",
+     "start_s": 739.3
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_5085e8afc179b7205411",
+     "sg_19e1adc31555dbd16225",
+     "sg_c16e01cd355aaa548f0b",
+     "sg_5d757b67185a782128aa",
+     "sg_06bba96347dc9e9a5a66",
+     "sg_04e4e679695684908039",
+     "sg_f437caf7ae73686d9480",
+     "sg_d20d86c340db787dd7d8",
+     "sg_3374f472de03b12e21c1"
+    ],
+    "created_at": "2026-08-15T23:57:17.146917",
+    "updated_at": "2026-08-15T23:57:17.146917"
+   },
+   {
+    "id": "it_7ea41f474386",
+    "card": "live_notes",
+    "text": "Presenter wrapping up; will share links to three papers: sector-based localization/detection, deciding whether somebody is active, and clustering of locations over time. A single fixed threshold is a problem across environments (cafeteria, library); current calibration has each person speak in front of the mic and subtracts the level kept in the other mics. A single-channel calibration paper with code online was offered.",
+    "data": {
+     "heading": "Wrap-up: paper links and calibration",
+     "start_s": 802.1
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_5d75b0cccaa9c41ccd2c",
+     "sg_cc8832bde51a3c2bb881",
+     "sg_7e7cc148c4e128fe3a3e",
+     "sg_8cc493fcac432a42aefc",
+     "sg_3d55e9db50c0b944a221",
+     "sg_768757ad4e6245a3c8d0",
+     "sg_5e1455fc541b5d214f95",
+     "sg_836a8d2ab09e0a868578",
+     "sg_befe1bd9e77e4ed44e4a",
+     "sg_1d5a2094bdfd1ee53cfc",
+     "sg_4ad6d0cbe7231f5c6d8a",
+     "sg_68e8f3b778c22baf5755",
+     "sg_9c782b41a3933c7b2c00",
+     "sg_b4af496edbcfc74b1e52"
+    ],
+    "created_at": "2026-08-15T23:57:17.146917",
+    "updated_at": "2026-08-15T23:57:17.146917"
+   },
+   {
+    "id": "it_d7237f29fbbd",
+    "card": "live_notes",
+    "text": "Clustering the different locations over time yields small clusters of speech; this matters because in spontaneous speech the words are quite small, so the clustering needs to be done adequately. Other ways exist, but this approach was recommended.",
+    "data": {
+     "heading": "Clustering locations over time",
+     "start_s": 924.4
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_897ee93397e9e1c1c4da",
+     "sg_62a17901ea03b2155e4f",
+     "sg_cbc350898ef3b0a7be70",
+     "sg_255a9d8a4444f7949335",
+     "sg_d61c293fa4f56c52e310",
+     "sg_33c656c24b3c5f14d430",
+     "sg_ae277296ab7b1f7ce09b",
+     "sg_b4e8b8e99fa59af20957"
+    ],
+    "created_at": "2026-08-15T23:57:17.146917",
+    "updated_at": "2026-08-15T23:57:17.146917"
+   },
+   {
+    "id": "it_1ad1c3328a5e",
+    "card": "live_notes",
+    "text": "Asked whether speaking one word every second would be detected as a single event; the detected event would be a sum of small parts, and very small intervals should be considered one intervention. The first prototype focuses on quantity of speech, but details like someone saying \"yes yes yes\" from time to time show participation, unlike someone replying without moving.",
+    "data": {
+     "heading": "Event granularity: small interventions",
+     "start_s": 961.3
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_96904a0b679af133f4a9",
+     "sg_54976fa3109655d42a72",
+     "sg_d2015e50603276ab7a31",
+     "sg_01ffbafa461c7c24323a",
+     "sg_c7e637758031c34708f0",
+     "sg_bb5b015b1c3ca0328c9f",
+     "sg_c907255095d5ee9ab771",
+     "sg_20dd4717cebffaaad745",
+     "sg_4e81efcc320a83484408",
+     "sg_fc409130fcaa5b3eae16",
+     "sg_fd977da133bb1f790510",
+     "sg_3461edc7ad88d3009cd8",
+     "sg_07b290b974817fa81502",
+     "sg_174ec3884b5b7618861b",
+     "sg_67154e4ada9ae801055b",
+     "sg_a243c92d3a433ebf2798"
+    ],
+    "created_at": "2026-08-16T00:00:05.280249",
+    "updated_at": "2026-08-16T00:00:05.280249"
+   },
+   {
+    "id": "it_b78df992300a",
+    "card": "live_notes",
+    "text": "Presenter will send paper links and they plan to go see Olivier. The idea to enter an email address so the app mails the results was well received, though OCR may not be installed on this computer. The application is entirely MATLAB-based; for online real-time use MATLAB is not trusted, so the most expensive part would need to be coded, possibly mixing MATLAB with other programming.",
+    "data": {
+     "heading": "Wrap-up: email results; MATLAB coding",
+     "start_s": 1085.6
+    },
+    "status": "proposed",
+    "author_type": "agent",
+    "author_id": "agent",
+    "pinned": false,
+    "revision": 1,
+    "evidence": [
+     "sg_6ddcf01c87c4f64e0306",
+     "sg_e818c39e035891460944",
+     "sg_5feede4b121906159795",
+     "sg_cdff2e1de32a3fb95985",
+     "sg_a6e8e8f2638ca5cbf5f5",
+     "sg_36c88acb3fd13c9120be",
+     "sg_c8035d5741e08924be43",
+     "sg_5bb6e027dca8c103e103",
+     "sg_da4fb8183489e87fd65d",
+     "sg_4f8c0e91b0667252d07c",
+     "sg_fbbe63f20cc4dd43f045",
+     "sg_03f7662dfdf583a7af77",
+     "sg_9819a027c743df174ca1",
+     "sg_552139a96a82685736b9"
+    ],
+    "created_at": "2026-08-16T00:00:05.280249",
+    "updated_at": "2026-08-16T00:00:05.280249"
+   }
+  ],
+  "user_notes": []
+ },
+ "questions": [
+  {
+   "id": "q_350bfe7122be",
+   "text": "Beyond pitch, which features are needed to reliably model a person's identity from the separated signal?",
+   "status": "open",
+   "suggested_answer": "The vocal tract (mouth/nose) transformation, which is almost unique per person, plus voice dynamics and rate of speech \u2014 though rate of speech varies over time.",
+   "suggested_confidence": 0.7,
+   "answer": null,
+   "answer_source": null,
+   "confidence": null,
+   "thread": [],
+   "evidence": [
+    "sg_20bec5e5c167db661c8b",
+    "sg_783a7fdaca683c426b3b"
+   ],
+   "asked_at": "2026-08-15T23:39:15.165253",
+   "resolved_at": null,
+   "resolved_by": null
+  }
+ ],
+ "finalization": {
+  "status": "pending",
+  "message": ""
+ }
+}

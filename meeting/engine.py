@@ -882,15 +882,23 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Could not mark chunks done after offline ASR")
         self._reload_store_from_repository()
-        # The re-decode replaced every segment id, so proposed items' evidence
-        # anchors are stale. live_notes is deliberately kept here: it provides
+        # The re-decode replaced every segment id; the repository remapped
+        # evidence anchors onto the new transcript where an overlap match
+        # exists. Proposed items that kept at least one live anchor stay on
+        # the dashboard — their content is grounded in the actual meeting and
+        # the final consolidation reconciles it. Only ghost-anchored items are
+        # stripped. live_notes is deliberately kept whole: it provides
         # structured context for the final consolidation pass (and preserves
         # meeting notes when final report is off).
         from meeting.state.schema import CARD_KEYS
 
-        self._strip_proposed_cards(cards=tuple(
-            key for key in CARD_KEYS if key not in ("user_notes", "live_notes")
-        ))
+        self._strip_proposed_cards(
+            cards=tuple(
+                key for key in CARD_KEYS
+                if key not in ("user_notes", "live_notes")
+            ),
+            keep_evidenced=True,
+        )
         payload = {"items": rows, "removed_ids": deleted}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -922,12 +930,21 @@ class MeetingEngine:
         except Exception:
             logger.exception("Could not replace live meeting state document")
 
-    def _strip_proposed_cards(self, cards: Optional[Iterable[str]] = None) -> None:
+    def _strip_proposed_cards(
+        self,
+        cards: Optional[Iterable[str]] = None,
+        keep_evidenced: bool = False,
+    ) -> None:
         """Remove agent-only proposed cards so consolidation starts clean.
 
         Args:
             cards: Card keys to strip; defaults to every card except the
                 human-only ``user_notes``.
+            keep_evidenced: Skip proposed items that still carry at least one
+                evidence anchor (used after the offline re-decode, where the
+                repository remapped surviving anchors onto the new transcript
+                and consolidation should reconcile grounded live items rather
+                than rebuild from scratch).
         """
         if self.store is None:
             return
@@ -944,6 +961,8 @@ class MeetingEngine:
                 if not isinstance(item, dict):
                     continue
                 if item.get("status") != "proposed" or item.get("pinned"):
+                    continue
+                if keep_evidenced and (item.get("evidence") or []):
                     continue
                 ops.append({
                     "op": "remove_item",
@@ -2331,6 +2350,18 @@ class MeetingEngine:
                 for op in ops
             ]
         return self.store.apply("agent", "agent", list(ops))
+
+    def segment_exists(self, segment_id: str) -> bool:
+        """Exact-match stored-segment lookup for agent evidence repair."""
+        repository = getattr(self, "repository", None)
+        meeting_id = getattr(self, "meeting_id", None)
+        if not meeting_id or not hasattr(repository, "segment_exists"):
+            return False
+        try:
+            return bool(repository.segment_exists(meeting_id, segment_id))
+        except Exception:
+            logger.exception("Segment existence probe failed")
+            return False
 
     def ask_question(self, text: str, evidence: List[str]) -> OpResult:
         """Add a question to the quiet inbox (agent tool)."""

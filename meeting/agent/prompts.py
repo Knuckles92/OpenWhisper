@@ -198,12 +198,19 @@ and the dashboard above contains the accumulated meeting notes (live_notes and
 any user_notes) taken throughout the discussion.
 Finalize the dashboard as the durable record, actively taking into account the
 meeting notes alongside the complete final transcript:
-1. Review every card. Merge duplicates and remove stale or superseded items you
-   authored (respect base_revision; leave human-touched items alone).
+1. Review every card. Items that survived a transcript re-decode still carry
+   live evidence anchors and are grounded in the actual discussion — treat
+   them as your accumulated knowledge of the meeting, reconcile and merge
+   them against the final transcript, and never rebuild a card from scratch
+   while evidenced items cover it. Merge duplicates and remove stale or
+   superseded items you authored (respect base_revision; leave human-touched
+   items alone).
 2. Synthesize the meeting notes and complete transcript into the final topic and
    rewrite the rolling summary as a complete summary of the whole meeting.
    Cover the opening framing/puzzle, major discussion points and examples,
-   decisions reached, and any closing discovery or thesis.
+   decisions reached, and any closing discovery or thesis. Quantities and
+   counts (papers to send, examples given, options listed) must match what
+   the transcript/notes actually state — count them before writing them.
 3. Make decisions and action items complete and precisely worded, cross-referencing
    commitments captured in the meeting notes and transcript; give every action item
    an owner (data.owner_participant_id) when the transcript or notes support one.
@@ -216,6 +223,9 @@ meeting notes alongside the complete final transcript:
    the transcript begins with one, (b) each major named example, case study, or
    substantive discussion point captured in the notes or transcript as its own
    item, and (c) any stated discovery, turning point, or key takeaway.
+   Never attribute a claim, role, or title (e.g. "Professor X", "the student")
+   to a person unless the name or role appears in the final transcript, the
+   notes, or an existing dashboard item — do not guess identities.
 5. Populate the timeline card with ordered story beats and data.start_s on
    EVERY timeline item (use segment t=…s values or note start_s values). A durable
    record without timeline beats is incomplete when the meeting has a clear progression.

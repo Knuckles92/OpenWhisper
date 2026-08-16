@@ -210,6 +210,27 @@ class TestItemOps:
         assert right.ok
         assert right.effect["item"]["revision"] == 2
 
+    def test_live_notes_update_preserves_heading_and_start_s(self):
+        store, _ = make_store()
+        [added] = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "live_notes",
+             "text": "The kickoff covered the roadmap.",
+             "data": {"heading": "Kickoff", "start_s": 12.0}},
+        ])
+        # A partial data dict (only start_s re-sent) must not drop the heading.
+        updated = store.apply("agent", "agent", [
+            {"op": "update_item", "id": added.target_id, "base_revision": 1,
+             "set": {"text": "The kickoff covered the roadmap and staffing.",
+                     "data": {"start_s": 12.0}}},
+        ])[0]
+        assert updated.ok
+        data = updated.effect["item"]["data"]
+        assert data["heading"] == "Kickoff"
+        assert data["start_s"] == 12.0
+        assert updated.effect["item"]["text"] == (
+            "The kickoff covered the roadmap and staffing."
+        )
+
     def test_human_edit_protects_item_from_agent(self):
         store, _ = make_store()
         [added] = store.apply("agent", "agent", [

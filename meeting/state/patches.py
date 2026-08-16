@@ -340,7 +340,16 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
     if "text" in changes:
         item.text = changes["text"].strip()
     if "data" in changes:
-        item.data = dict(changes["data"])
+        new_data = dict(changes["data"])
+        if item.card == NOTES_CARD and not force:
+            # A note block is defined by its heading and meeting-clock stamp;
+            # the note-taker prompt promises they persist across updates, so
+            # a partial data dict must not silently drop them. The system
+            # force path (undo) restores the exact prior data instead.
+            for key in ("heading", "start_s"):
+                if key not in new_data and key in item.data:
+                    new_data[key] = item.data[key]
+        item.data = new_data
     if force and isinstance(changes.get("evidence"), list):
         # Undo path: restore the exact prior anchor set.
         item.evidence = list(changes["evidence"])

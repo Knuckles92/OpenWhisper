@@ -4,8 +4,16 @@ Legacy (old End): live draft transcript + sidecar consolidation.
 Clean (new End): offline session re-decode + transcript polish + consolidation.
 
 Both packages are the dashboard a participant would actually keep: topic,
-summary, key points, decisions, actions, risks, timeline, questions, and the
-transcript itself. An LLM judge scores them against the AMI manual reference.
+summary, key points, decisions, actions, risks, timeline, questions, live
+notes, and the transcript itself. An LLM judge scores them against the AMI
+manual reference.
+
+Before either End runs, :func:`simulate_live_meeting` replays the meeting the
+way the product experiences it: rolling copilot checkpoints and the dedicated
+note-taker pass accumulate cards and live notes over time windows. The legacy
+and clean End paths then start from that same live meeting state, so the eval
+scores the full product behavior (accumulate live, then reconcile at End) —
+not just a consolidation built from an empty dashboard.
 """
 from __future__ import annotations
 
@@ -16,7 +24,7 @@ import sys
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from openai import OpenAI
 
@@ -28,7 +36,12 @@ from config import config  # noqa: E402
 from meeting.agent.base import create_agent_core, find_provider_api_key  # noqa: E402
 from meeting.agent.prompts import build_system_prompt, render_state_compact  # noqa: E402
 from meeting.agent.scheduler import ConsolidationOutcome  # noqa: E402
-from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult  # noqa: E402
+from meeting.interfaces import (  # noqa: E402
+    AgentConfig,
+    AgentResult,
+    CheckpointPayload,
+    OpResult,
+)
 from meeting.state.repair import repair_meeting_state  # noqa: E402
 from meeting.state.schema import CARD_KEYS, MeetingState  # noqa: E402
 from meeting.state.store import MeetingStateStore  # noqa: E402
@@ -234,23 +247,34 @@ def _render_package_for_judge(package: Dict[str, Any], max_transcript_chars: int
 class ProductEvalHost:
     """Minimal AgentToolHost + scheduler engine for an offline product pass."""
 
-    def __init__(self, meeting_id: str, segments: Sequence[Dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        meeting_id: str,
+        segments: Sequence[Dict[str, Any]],
+        *,
+        initial_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.meeting_id = meeting_id
         self._segments = {
             str(seg["id"]): deepcopy(seg)
             for seg in segments
             if seg.get("id")
         }
+        state = MeetingState(
+            meeting_id=meeting_id,
+            status="ended",
+            cloud_enabled=True,
+            intelligence_online=True,
+        )
         self.store = MeetingStateStore(
-            MeetingState(
-                meeting_id=meeting_id,
-                status="ended",
-                cloud_enabled=True,
-                intelligence_online=True,
-            ),
+            state,
             segment_handler=self._on_segment_op,
             segment_exists=lambda sid: sid in self._segments,
         )
+        if initial_state is not None:
+            # Resume from a simulated live meeting (cards, notes, topic) the
+            # way the engine's End path inherits the in-meeting state.
+            self.store.replace_document(MeetingState.from_dict(initial_state))
         self._agent_writes_allowed = False
 
     def allow_agent_writes(self) -> None:
@@ -261,6 +285,10 @@ class ProductEvalHost:
 
     def agent_writes_allowed(self) -> bool:
         return self._agent_writes_allowed
+
+    def segment_exists(self, segment_id: str) -> bool:
+        """Exact-match lookup for the agent cores' evidence repair."""
+        return segment_id in self._segments
 
     def get_transcript(
         self,
@@ -332,6 +360,283 @@ class ProductEvalHost:
         }
 
 
+def build_live_windows(
+    segments: Sequence[Dict[str, Any]],
+    window_s: float,
+) -> List[List[Dict[str, Any]]]:
+    """Group sorted segments into fixed meeting-time windows.
+
+    Mirrors the scheduler's rolling cadence at benchmark scale: each window is
+    one checkpoint's worth of "new transcript segments".
+    """
+    if window_s <= 0:
+        return [list(segments)]
+    windows: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    current_index = -1
+    for seg in sorted(
+        segments,
+        key=lambda row: float(row.get("start_s") or 0.0),
+    ):
+        index = int(float(seg.get("start_s") or 0.0) // window_s)
+        if index != current_index:
+            if current:
+                windows.append(current)
+            current = [seg]
+            current_index = index
+        else:
+            current.append(seg)
+    if current:
+        windows.append(current)
+    return windows
+
+
+def simulate_live_meeting(
+    meeting_id: str,
+    segments: Sequence[Dict[str, Any]],
+    *,
+    provider: str,
+    model: str,
+    api_key: str,
+    window_s: float = 120.0,
+    notes_every_n_checkpoints: int = 2,
+    checkpoint_timeout_s: float = 180.0,
+) -> Dict[str, Any]:
+    """Replay a meeting live: rolling checkpoints + note-taker passes.
+
+    Follows the product cadence at benchmark scale — a copilot checkpoint per
+    time window, then a dedicated note-taker pass (``is_notes`` persona) after
+    every ``notes_every_n_checkpoints`` successful checkpoints, with the notes
+    pass carrying every segment not yet covered by a successful notes pass.
+
+    Returns:
+        ``{"state": final live state snapshot, "stats": pass counters}``.
+    """
+    from meeting.agent import openrouter_direct as direct_mod
+
+    direct_mod._CHECKPOINT_TIMEOUT_S = max(
+        float(direct_mod._CHECKPOINT_TIMEOUT_S), checkpoint_timeout_s,
+    )
+    host = ProductEvalHost(meeting_id, segments)
+    host.store.replace_document(MeetingState.from_dict({
+        "meeting_id": meeting_id,
+        "status": "active",
+        "cloud_enabled": True,
+        "intelligence_online": True,
+    }))
+    agent = create_agent_core("direct")
+    agent.initialize(
+        AgentConfig(
+            meeting_id=meeting_id,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=build_system_prompt(),
+        ),
+        host,
+    )
+    if not agent.is_healthy():
+        raise RuntimeError("Meeting intelligence agent is offline (missing API key?)")
+
+    stats = {
+        "windows": 0,
+        "checkpoints_ok": 0,
+        "checkpoints_failed": 0,
+        "notes_passes_ok": 0,
+        "notes_passes_failed": 0,
+        "ops_applied": 0,
+        "notes_ops_applied": 0,
+    }
+    successful_checkpoints = 0
+    notes_checkpoint_mark = 0
+    pending: List[Dict[str, Any]] = []
+    notes_pending: List[Dict[str, Any]] = []
+
+    def _notes_due() -> bool:
+        return (
+            successful_checkpoints - notes_checkpoint_mark
+            >= notes_every_n_checkpoints
+        )
+
+    def _run_notes_pass() -> None:
+        nonlocal notes_pending, notes_checkpoint_mark
+        if not notes_pending:
+            return
+        payload = CheckpointPayload(
+            request_id=uuid.uuid4().hex,
+            state_snapshot=host.store.snapshot(),
+            new_segments=list(notes_pending),
+            is_notes=True,
+        )
+        try:
+            result = agent.checkpoint(payload)
+        except Exception as exc:
+            logger.exception("Notes pass raised")
+            result = AgentResult(ok=False, error=str(exc))
+        # Cadence bookkeeping advances on both outcomes (product behavior);
+        # only success marks the batch consumed.
+        notes_checkpoint_mark = successful_checkpoints
+        if result.ok:
+            stats["notes_passes_ok"] += 1
+            stats["notes_ops_applied"] += sum(
+                1 for r in result.op_results if r.ok
+            )
+            notes_pending = []
+        else:
+            stats["notes_passes_failed"] += 1
+            logger.warning(
+                "Notes pass failed: %s", result.error or "unknown",
+            )
+
+    host.allow_agent_writes()
+    try:
+        for window in build_live_windows(segments, window_s):
+            stats["windows"] += 1
+            pending.extend(window)
+            notes_pending.extend(window)
+            payload = CheckpointPayload(
+                request_id=uuid.uuid4().hex,
+                state_snapshot=host.store.snapshot(),
+                new_segments=list(pending),
+            )
+            try:
+                result = agent.checkpoint(payload)
+            except Exception as exc:
+                logger.exception("Live checkpoint raised")
+                result = AgentResult(ok=False, error=str(exc))
+            if result.ok:
+                stats["checkpoints_ok"] += 1
+                stats["ops_applied"] += sum(1 for r in result.op_results if r.ok)
+                pending = []
+                successful_checkpoints += 1
+                if _notes_due():
+                    _run_notes_pass()
+            else:
+                # Product behavior: a failed checkpoint's segments stay
+                # pending and rejoin the next fire.
+                stats["checkpoints_failed"] += 1
+                logger.warning(
+                    "Live checkpoint failed (retrying with next window): %s",
+                    result.error or "unknown",
+                )
+        if pending or notes_pending:
+            logger.warning(
+                "Live phase ended with undelivered segments "
+                "(cards=%d, notes=%d)", len(pending), len(notes_pending),
+            )
+    finally:
+        host.revoke_agent_writes()
+        try:
+            agent.shutdown()
+        except Exception:
+            logger.debug("Agent shutdown failed", exc_info=True)
+    snapshot = host.store.snapshot()
+    cards = snapshot.get("cards") or {}
+    stats["live_notes_blocks"] = len(
+        [i for i in (cards.get("live_notes") or [])
+         if isinstance(i, dict) and i.get("status") != "removed"],
+    )
+    logger.info(
+        "Live phase done: %s topic=%r notes_blocks=%d",
+        meeting_id,
+        ((snapshot.get("topic") or {}).get("current") or "")[:60],
+        stats["live_notes_blocks"],
+    )
+    return {"state": snapshot, "stats": stats}
+
+
+def build_redecode_id_map(
+    old_segments: Sequence[Dict[str, Any]],
+    new_segments: Sequence[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Greedy IoU ``old_id -> new_id`` map, like the repository's replace."""
+    from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
+
+    pairs: List[Tuple[float, str, str]] = []
+    for old in old_segments:
+        for new in new_segments:
+            if old.get("channel") != new.get("channel"):
+                continue
+            score = interval_iou(
+                float(old.get("start_s") or 0.0), float(old.get("end_s") or 0.0),
+                float(new.get("start_s") or 0.0), float(new.get("end_s") or 0.0),
+            )
+            if score >= MIN_MATCH_IOU:
+                pairs.append((score, str(old["id"]), str(new["id"])))
+    pairs.sort(reverse=True)
+    id_map: Dict[str, str] = {}
+    used_new: set = set()
+    for _score, old_id, new_id in pairs:
+        if old_id in id_map or new_id in used_new:
+            continue
+        id_map[old_id] = new_id
+        used_new.add(new_id)
+    return id_map
+
+
+def remap_state_evidence(
+    state: Dict[str, Any],
+    id_map: Dict[str, str],
+) -> None:
+    """Rewrite card/question evidence ids through the re-decode map."""
+    cards = state.get("cards") or {}
+    for items in (cards.values() if isinstance(cards, dict) else []):
+        for item in items or []:
+            if isinstance(item, dict):
+                item["evidence"] = [
+                    id_map[e] for e in (item.get("evidence") or [])
+                    if e in id_map
+                ]
+    for question in state.get("questions") or []:
+        if isinstance(question, dict):
+            question["evidence"] = [
+                id_map[e] for e in (question.get("evidence") or [])
+                if e in id_map
+            ]
+
+
+def strip_proposed_after_redecode(
+    host: ProductEvalHost,
+    old_segments: Optional[Sequence[Dict[str, Any]]] = None,
+    new_segments: Optional[Sequence[Dict[str, Any]]] = None,
+) -> int:
+    """Remove agent-proposed cards after a transcript re-decode.
+
+    Mirrors ``MeetingEngine._run_offline_final_pass`` plus the repository's
+    evidence remap: surviving evidence anchors are remapped onto the new
+    transcript first, then only proposed items whose anchors all died are
+    removed. ``live_notes`` is deliberately kept — consolidation reconciles
+    it against the new transcript.
+    """
+    snapshot = host.store.snapshot()
+    state: Dict[str, Any] = snapshot
+    if old_segments is not None and new_segments is not None:
+        remap_state_evidence(state, build_redecode_id_map(old_segments, new_segments))
+        host.store.replace_document(MeetingState.from_dict(state))
+        snapshot = state
+    ops: List[Dict[str, Any]] = []
+    cards = snapshot.get("cards") or {}
+    for key in CARD_KEYS:
+        if key in ("user_notes", "live_notes"):
+            continue
+        for item in cards.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("status") != "proposed" or item.get("pinned"):
+                continue
+            if item.get("evidence"):
+                continue
+            ops.append({
+                "op": "remove_item",
+                "id": item.get("id"),
+                "base_revision": item.get("revision", 1),
+            })
+    if not ops:
+        return 0
+    results = host.store.apply("system", "finalization", ops)
+    return sum(1 for r in results if r.ok)
+
+
 def run_product_pipeline(
     meeting_id: str,
     segments: Sequence[Dict[str, Any]],
@@ -342,11 +647,17 @@ def run_product_pipeline(
     api_key: str,
     polish_timeout_s: float = 180.0,
     consolidation_timeout_s: float = 360.0,
+    initial_state: Optional[Dict[str, Any]] = None,
+    strip_proposed: bool = False,
+    old_segments: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Run polish (optional) then consolidation on a frozen transcript.
 
     Calls the agent directly so a scheduler watchdog cannot cancel a slow but
-    successful report mid-flight.
+    successful report mid-flight. When ``initial_state`` is given the pipeline
+    starts from a simulated live meeting; ``strip_proposed`` mirrors the
+    engine's post-re-decode evidence remap + card strip for the clean End
+    path (``old_segments`` supplies the pre-re-decode evidence ids).
     """
     from meeting.agent import openrouter_direct as direct_mod
 
@@ -356,7 +667,16 @@ def run_product_pipeline(
     direct_mod._CONSOLIDATION_TIMEOUT_S = max(
         float(direct_mod._CONSOLIDATION_TIMEOUT_S), consolidation_timeout_s,
     )
-    host = ProductEvalHost(meeting_id, segments)
+    host = ProductEvalHost(meeting_id, segments, initial_state=initial_state)
+    stripped = (
+        strip_proposed_after_redecode(
+            host, old_segments=old_segments, new_segments=segments,
+        )
+        if strip_proposed
+        else 0
+    )
+    if stripped:
+        logger.info("Post-redecode strip removed %d proposed item(s)", stripped)
     agent = create_agent_core("direct")
     agent.initialize(
         AgentConfig(
@@ -372,10 +692,11 @@ def run_product_pipeline(
         raise RuntimeError("Meeting intelligence agent is offline (missing API key?)")
     host.allow_agent_writes()
     polish_outcome = None
+    op_stats: Dict[str, Dict[str, Dict[str, int]]] = {}
     try:
         if polish:
-            polish_outcome = _run_polish(agent, host)
-        consolidation = _run_consolidation(agent, host)
+            polish_outcome, op_stats["polish"] = _run_polish(agent, host)
+        consolidation, op_stats["consolidation"] = _run_consolidation(agent, host)
         try:
             repair_meeting_state(host.store, host.get_transcript())
         except Exception:
@@ -391,6 +712,7 @@ def run_product_pipeline(
         polish_outcome.to_dict() if polish_outcome is not None else None
     )
     package["consolidation"] = consolidation.to_dict()
+    package["op_stats"] = op_stats
     return package
 
 
@@ -405,12 +727,37 @@ def _payload(host: ProductEvalHost, segments: List[Dict[str, Any]], *,
     )
 
 
-def _run_polish(agent: Any, host: ProductEvalHost) -> ConsolidationOutcome:
+def _op_stats(op_results: Sequence[Any]) -> Dict[str, Any]:
+    """Applied/rejected op counts by op type and rejection reason."""
+    stats: Dict[str, Any] = {"applied": {}, "rejected": {}}
+    for item in op_results:
+        op = (getattr(item, "op", None) or {}).get("op") or "?"
+        bucket = stats["applied"] if getattr(item, "ok", False) else stats["rejected"]
+        if not getattr(item, "ok", False):
+            reason = getattr(item, "reason", None) or "?"
+            op = f"{op}:{reason}"
+        bucket[op] = bucket.get(op, 0) + 1
+    rejected_samples = [
+        {
+            "op": getattr(item, "op", None),
+            "reason": getattr(item, "reason", None),
+        }
+        for item in op_results
+        if not getattr(item, "ok", False)
+    ][:40]
+    if rejected_samples:
+        stats["rejected_samples"] = rejected_samples  # type: ignore[assignment]
+    return stats
+
+
+def _run_polish(
+    agent: Any, host: ProductEvalHost,
+) -> Tuple[ConsolidationOutcome, Dict[str, Dict[str, int]]]:
     segments = host.get_transcript()
     if not segments:
         return ConsolidationOutcome(
             status="completed", message="No transcript text needed cleanup.",
-        )
+        ), _op_stats([])
     max_segments = 400
     if len(segments) > max_segments:
         step = max(1, max_segments - 40)
@@ -422,23 +769,33 @@ def _run_polish(agent: Any, host: ProductEvalHost) -> ConsolidationOutcome:
         blocks = [segments]
     last_error = ""
     applied = False
+    all_results: List[Any] = []
     for block in blocks:
         result = agent.checkpoint(
             _payload(host, block, is_consolidation=False, is_polish=True)
         )
+        all_results.extend(result.op_results)
         if result.ok:
             applied = True
         else:
             last_error = result.error or "polish failed"
     if last_error and not applied:
-        return ConsolidationOutcome(status="failed", message=last_error)
-    return ConsolidationOutcome(
-        status="completed",
-        message="Transcript cleanup finished.",
+        return (
+            ConsolidationOutcome(status="failed", message=last_error),
+            _op_stats(all_results),
+        )
+    return (
+        ConsolidationOutcome(
+            status="completed",
+            message="Transcript cleanup finished.",
+        ),
+        _op_stats(all_results),
     )
 
 
-def _run_consolidation(agent: Any, host: ProductEvalHost) -> ConsolidationOutcome:
+def _run_consolidation(
+    agent: Any, host: ProductEvalHost,
+) -> Tuple[ConsolidationOutcome, Dict[str, Dict[str, int]]]:
     segments = host.get_transcript()
     result = agent.consolidate(
         _payload(host, segments, is_consolidation=True, is_polish=False)
@@ -446,7 +803,8 @@ def _run_consolidation(agent: Any, host: ProductEvalHost) -> ConsolidationOutcom
     if result is None:
         return ConsolidationOutcome(
             status="failed", message="Final insights produced no result.",
-        )
+        ), _op_stats([])
+    stats = _op_stats(result.op_results)
     if result.ok:
         applied = sum(1 for item in result.op_results if item.ok)
         logger.info(
@@ -456,11 +814,11 @@ def _run_consolidation(agent: Any, host: ProductEvalHost) -> ConsolidationOutcom
         return ConsolidationOutcome(
             status="completed",
             message="Final cloud insights are ready.",
-        )
+        ), stats
     return ConsolidationOutcome(
         status="failed",
         message=f"Final cloud insights failed: {result.error or 'consolidation failed'}",
-    )
+    ), stats
 
 
 def _load_result(path: Path) -> Dict[str, Any]:
@@ -536,6 +894,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--polish-timeout", type=float, default=180.0)
     parser.add_argument("--consolidation-timeout", type=float, default=360.0)
+    parser.add_argument(
+        "--live-window-s",
+        type=float,
+        default=120.0,
+        help=(
+            "Meeting-seconds per simulated live checkpoint "
+            "(0 = one checkpoint over the whole meeting)"
+        ),
+    )
+    parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help=(
+            "Skip the live phase; consolidation starts from an empty "
+            "dashboard (pre-notes-feature ablation)"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -570,12 +945,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         raw = _load_result(result_path)
         draft = raw.get("draft_segments") or []
         offline = raw.get("offline_segments") or draft
+        live = None
+        if not args.no_live:
+            print(
+                f"{spec.meeting_id}: simulating live meeting over "
+                f"{len(draft)} draft segments "
+                f"(window={args.live_window_s:.0f}s)"
+            )
+            live = simulate_live_meeting(
+                spec.meeting_id, draft,
+                provider=provider, model=model, api_key=api_key,
+                window_s=args.live_window_s,
+                checkpoint_timeout_s=args.polish_timeout,
+            )
+        initial_state = live["state"] if live else None
         print(f"{spec.meeting_id}: legacy consolidation on {len(draft)} draft segments")
         legacy = run_product_pipeline(
             spec.meeting_id, draft, polish=False,
             provider=provider, model=model, api_key=api_key,
             polish_timeout_s=args.polish_timeout,
             consolidation_timeout_s=args.consolidation_timeout,
+            initial_state=initial_state,
         )
         print(f"{spec.meeting_id}: clean polish+report on {len(offline)} offline segments")
         clean = run_product_pipeline(
@@ -583,7 +973,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=provider, model=model, api_key=api_key,
             polish_timeout_s=args.polish_timeout,
             consolidation_timeout_s=args.consolidation_timeout,
+            initial_state=initial_state,
+            strip_proposed=True,
+            old_segments=draft,
         )
+        if live is not None:
+            for package in (legacy, clean):
+                package["live"] = live["stats"]
         reference = format_reference(parse_reference_words(annotations_dir, spec.meeting_id))
         print(f"{spec.meeting_id}: judging packages against AMI reference")
         judgment = judge_packages(

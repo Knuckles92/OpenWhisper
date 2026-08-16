@@ -549,3 +549,46 @@ class TestEngineNotesStrip:
         assert self._statuses(snap, "key_points") == {
             "it_key_prop": "removed", "it_key_edit": "confirmed",
         }
+
+    def test_redecode_strip_keeps_evidenced_proposed_items(self):
+        from meeting.state.schema import CARD_KEYS, CardItem, MeetingState
+        from meeting.state.store import MeetingStateStore
+        from meeting.engine import MeetingEngine, MeetingEngineOptions
+
+        state = MeetingState(meeting_id="m_redecode")
+        state.cards["key_points"].extend([
+            CardItem(
+                id="it_key_alive", card="key_points", text="anchored",
+                evidence=["sg_new1"],
+            ),
+            CardItem(
+                id="it_key_ghost", card="key_points", text="ghost",
+                evidence=[],
+            ),
+            CardItem(
+                id="it_key_edit", card="key_points", text="edited",
+                status="edited", evidence=[],
+            ),
+        ])
+        state.cards["live_notes"].append(CardItem(
+            id="it_note_ghost", card="live_notes", text="note", evidence=[],
+        ))
+        engine = MeetingEngine(
+            MeetingEngineOptions(), repository=object(),
+        )
+        engine.store = MeetingStateStore(state)
+        engine._strip_proposed_cards(
+            cards=tuple(
+                key for key in CARD_KEYS
+                if key not in ("user_notes", "live_notes")
+            ),
+            keep_evidenced=True,
+        )
+        assert self._statuses(engine.store.snapshot(), "key_points") == {
+            "it_key_alive": "proposed",
+            "it_key_ghost": "removed",
+            "it_key_edit": "edited",
+        }
+        assert self._statuses(engine.store.snapshot(), "live_notes") == {
+            "it_note_ghost": "proposed",
+        }

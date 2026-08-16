@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - openai is an app dependency
 
 from config import config
 from meeting.agent.base import find_provider_api_key
+from meeting.agent.evidence import repair_evidence_ids
 from meeting.agent.prompts import (
     JSON_FALLBACK_INSTRUCTIONS,
     build_checkpoint_user_prompt,
@@ -250,6 +251,7 @@ class DirectOpenRouterAgent:
         self._polish_mode = False
         self._notes_mode = False
         self._notes_item_ids: Optional[frozenset] = None
+        self._citable_ids: List[str] = []
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
@@ -465,6 +467,11 @@ class DirectOpenRouterAgent:
         self._notes_item_ids = (
             live_note_ids(payload.state_snapshot) if is_notes else None
         )
+        self._citable_ids = [
+            str(seg.get("id"))
+            for seg in (payload.new_segments or [])
+            if isinstance(seg, dict) and seg.get("id")
+        ]
         try:
             if self._json_mode:
                 return self._run_json_mode(
@@ -477,6 +484,24 @@ class DirectOpenRouterAgent:
             self._polish_mode = False
             self._notes_mode = False
             self._notes_item_ids = None
+            self._citable_ids = []
+
+    def _repair_ops(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Repair truncated/typo'd evidence ids before exact-match validation."""
+        tools = self._tools
+        exists = getattr(tools, "segment_exists", None)
+        if not callable(exists) or not self._citable_ids:
+            return ops
+        repaired, count = repair_evidence_ids(ops, self._citable_ids, exists)
+        if count:
+            logger.info("Repaired %d mistyped evidence id(s)", count)
+        return repaired
+
+    def _repair_evidence_list(self, evidence: List[str]) -> List[str]:
+        """Repair a question tool's evidence list (same rules as ops).."""
+        ops, _count = self._repair_ops([{"op": "ask_question",
+                                         "evidence": evidence}])
+        return ops[0].get("evidence") or evidence
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
         """Route one model tool call to the tool host."""
@@ -493,6 +518,7 @@ class DirectOpenRouterAgent:
                 ]
             elif self._notes_mode:
                 ops = filter_notes_ops(ops, self._notes_item_ids)
+            ops = self._repair_ops(ops)
             return tools.apply_agent_ops(ops)
         if (
             self._polish_mode or self._notes_mode
@@ -501,14 +527,14 @@ class DirectOpenRouterAgent:
         if name == "ask_question":
             return [tools.ask_question(
                 str(args.get("text") or ""),
-                list(args.get("evidence") or []),
+                self._repair_evidence_list(list(args.get("evidence") or [])),
             )]
         if name == "resolve_question":
             return [tools.resolve_question(
                 str(args.get("question_id") or ""),
                 str(args.get("answer_text") or ""),
                 float(args.get("confidence") or 0.0),
-                list(args.get("evidence") or []),
+                self._repair_evidence_list(list(args.get("evidence") or [])),
             )]
         raise ValueError(f"unknown tool: {name}")
 
@@ -579,6 +605,19 @@ class DirectOpenRouterAgent:
                     results = self._dispatch_tool_call(call.function.name, args)
                     op_results.extend(results)
                     content = json.dumps(_op_results_payload(results))
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Tool call %s produced malformed JSON: %s",
+                        call.function.name, exc,
+                    )
+                    content = json.dumps({
+                        "error": (
+                            f"Your tool call was not valid JSON ({exc}). "
+                            "Re-emit the SAME operations as one valid JSON "
+                            "object, splitting into several smaller tool "
+                            "calls if the batch is long."
+                        ),
+                    })
                 except Exception as exc:
                     logger.warning(
                         "Tool call %s failed: %s", call.function.name, exc,
@@ -659,6 +698,7 @@ class DirectOpenRouterAgent:
                 ]
             elif self._notes_mode:
                 ops = filter_notes_ops(ops, self._notes_item_ids)
+            ops = self._repair_ops(ops)
             op_results = self._tools.apply_agent_ops(ops) if ops else []
             return AgentResult(ok=True, op_results=op_results, usage=usage)
 

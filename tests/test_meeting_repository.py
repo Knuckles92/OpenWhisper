@@ -406,6 +406,10 @@ class TestReplaceFinalTranscript:
         state = json.loads(repo.get_meeting(meeting_id)["state_json"])
         human = state["cards"]["key_points"][0]
         assert human["evidence"] == ["sg_new1"]
+        # Proposed agent items are remapped too, so grounded live content can
+        # survive a re-decode for the final consolidation to reconcile.
+        agent_item = state["cards"]["key_points"][1]
+        assert agent_item["evidence"] == ["sg_new2"]
         remaining_ids = {row["id"] for row in repo.get_segments(meeting_id)}
         assert remaining_ids == {"sg_new1", "sg_new2"}
 

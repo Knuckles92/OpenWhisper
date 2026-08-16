@@ -133,7 +133,14 @@ def _remap_state_evidence(
     old_items: Sequence[Dict[str, Any]],
     new_items: Sequence[TranscriptSegment],
 ) -> None:
-    """Rewrite ``sg_`` evidence on protected cards/questions; drop ghosts."""
+    """Rewrite ``sg_`` evidence on cards/questions onto the new transcript.
+
+    Proposed items are remapped too: their content is grounded in the live
+    meeting, and an anchor that survives the re-decode lets the final
+    consolidation reconcile the item instead of rebuilding (and hallucinating)
+    from scratch. Items whose anchors all die end up with empty evidence,
+    which the engine's post-redecode strip uses to drop them.
+    """
     from meeting.state.schema import CARD_KEYS
 
     def remap_list(values: Any) -> List[str]:
@@ -158,11 +165,6 @@ def _remap_state_evidence(
                 continue
             for item in items:
                 if not isinstance(item, dict):
-                    continue
-                protected = bool(item.get("pinned")) or item.get("status") in (
-                    "edited", "confirmed",
-                )
-                if not protected:
                     continue
                 item["evidence"] = remap_list(item.get("evidence"))
     questions = state.get("questions") or []

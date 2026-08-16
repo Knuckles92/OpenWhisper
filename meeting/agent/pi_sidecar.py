@@ -29,6 +29,7 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
+from meeting.agent.evidence import repair_evidence_ids
 from meeting.state.patches import filter_notes_ops, live_note_ids
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,9 @@ class PiSidecarAgent:
         #: arriving now belong to it), read on the single tool worker.
         self._notes_mode = False
         self._notes_item_ids: frozenset = frozenset()
+        #: Segment ids shown in the in-flight checkpoint's payload — the
+        #: citable universe for evidence-id repair in the tool bridge.
+        self._citable_ids: List[str] = []
 
     # ------------------------------------------------------------------
     # AgentCore lifecycle
@@ -282,6 +286,11 @@ class PiSidecarAgent:
             self._notes_item_ids = (
                 live_note_ids(payload.state_snapshot) if is_notes else frozenset()
             )
+            self._citable_ids = [
+                str(seg.get("id"))
+                for seg in (payload.new_segments or [])
+                if isinstance(seg, dict) and seg.get("id")
+            ]
         params: Dict[str, Any] = {
             "request_id": payload.request_id,
             "state": payload.state_snapshot,
@@ -307,6 +316,7 @@ class PiSidecarAgent:
                 self._active_request_ids.discard(payload.request_id)
                 self._notes_mode = False
                 self._notes_item_ids = frozenset()
+                self._citable_ids = []
 
         if not isinstance(result, dict):
             return AgentResult(ok=False, error="invalid checkpoint response")
@@ -756,6 +766,21 @@ class PiSidecarAgent:
             pending.result = msg.get("result")
         pending.event.set()
 
+    @staticmethod
+    def _repair_evidence(
+        ops: List[Dict[str, Any]],
+        tools: Any,
+        citable_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Repair truncated/typo'd evidence ids before exact-match validation."""
+        exists = getattr(tools, "segment_exists", None)
+        if not callable(exists) or not citable_ids:
+            return ops
+        repaired, count = repair_evidence_ids(ops, citable_ids, exists)
+        if count:
+            logger.info("Repaired %d mistyped evidence id(s)", count)
+        return repaired
+
     def _handle_tool_request(self, msg: Dict[str, Any],
                              generation: Optional[int] = None) -> None:
         """Serve an awaited tool-bridge request from the sidecar."""
@@ -774,6 +799,7 @@ class PiSidecarAgent:
             tools = self._tools
             notes_mode = self._notes_mode
             notes_item_ids = self._notes_item_ids
+            citable_ids = self._citable_ids
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
@@ -786,6 +812,7 @@ class PiSidecarAgent:
                     # Notes-pass backstop: regardless of what the bundle
                     # allowed, only live_notes item ops reach the host.
                     ops = filter_notes_ops(ops, notes_item_ids)
+                ops = self._repair_evidence(ops, tools, citable_ids)
                 results = tools.apply_agent_ops(ops)
                 payload: Dict[str, Any] = {
                     "results": [_serialize_op_result(r) for r in results],

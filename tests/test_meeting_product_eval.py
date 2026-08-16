@@ -7,8 +7,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from benchmarks.meeting_mode.product_eval import (
     ProductEvalHost,
     _render_package_for_judge,
+    build_live_windows,
     dashboard_package,
     format_reference,
+    strip_proposed_after_redecode,
 )
 from meeting.interfaces import OpResult
 
@@ -143,4 +145,97 @@ def test_render_package_for_judge_formats_notes_and_timeline():
     assert "- [45s] [FFT Analysis] The speaker discussed FFT performance." in rendered
     assert "- [resolved] What about memory? → 2GB" in rendered
     assert "[0s] Hello world" in rendered
+
+
+def test_build_live_windows_groups_by_meeting_time():
+    segments = [
+        {"id": "sg_1", "start_s": 0.0, "text": "a"},
+        {"id": "sg_2", "start_s": 10.0, "text": "b"},
+        {"id": "sg_3", "start_s": 130.0, "text": "c"},
+        {"id": "sg_4", "start_s": 250.0, "text": "d"},
+    ]
+    windows = build_live_windows(segments, 120.0)
+    assert [[seg["id"] for seg in w] for w in windows] == [
+        ["sg_1", "sg_2"], ["sg_3"], ["sg_4"],
+    ]
+    assert build_live_windows(segments, 0) == [list(segments)]
+
+
+def test_host_loads_initial_live_state():
+    host = ProductEvalHost(
+        "m1",
+        [{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "hi"}],
+    )
+    base = host.store.snapshot()
+    host.store.apply("agent", "agent", [{
+        "op": "add_item", "card": "live_notes",
+        "text": "The kickoff covered the roadmap.",
+        "data": {"heading": "Kickoff", "start_s": 0.0},
+        "evidence": ["sg_1"],
+    }])
+    live_state = host.store.snapshot()
+
+    resumed = ProductEvalHost(
+        "m1",
+        [{"id": "sg_1", "start_s": 0.0, "end_s": 1.0, "text": "hi"}],
+        initial_state=live_state,
+    )
+    snapshot = resumed.store.snapshot()
+    notes = snapshot["cards"]["live_notes"]
+    assert len(notes) == 1
+    assert notes[0]["text"] == "The kickoff covered the roadmap."
+    assert snapshot["seq"] == base["seq"] + 1
+
+
+def test_strip_proposed_after_redecode_keeps_evidenced_notes_and_touched_items():
+    host = ProductEvalHost(
+        "m1",
+        [
+            {"id": "sg_1", "start_s": 0.0, "end_s": 10.0, "text": "hi"},
+            {"id": "sg_2", "start_s": 100.0, "end_s": 110.0, "text": "later"},
+        ],
+    )
+    host.allow_agent_writes()
+    host.store.apply("agent", "agent", [
+        {"op": "add_item", "card": "key_points", "text": "Point",
+         "evidence": ["sg_1"]},
+        {"op": "add_item", "card": "live_notes", "text": "Note",
+         "data": {"heading": "H", "start_s": 0.0}, "evidence": ["sg_2"]},
+    ])
+    items = host.store.snapshot()["cards"]
+    key_point = items["key_points"][0]
+    host.store.apply("user", "u1", [{
+        "op": "update_item", "id": key_point["id"],
+        "base_revision": key_point["revision"], "set": {"text": "Edited"},
+    }])
+    host.store.apply("agent", "agent", [
+        {"op": "add_item", "card": "decisions", "text": "Decide",
+         "evidence": ["sg_2"]},
+    ])
+
+    # Re-decode covers 0-10s with a brand-new id; nothing covers 100-110s.
+    redecoded = ProductEvalHost(
+        "m1",
+        [{"id": "sg_new", "start_s": 0.0, "end_s": 10.0, "text": "hi"}],
+        initial_state=host.store.snapshot(),
+    )
+    removed = strip_proposed_after_redecode(
+        redecoded,
+        old_segments=[
+            {"id": "sg_1", "start_s": 0.0, "end_s": 10.0},
+            {"id": "sg_2", "start_s": 100.0, "end_s": 110.0},
+        ],
+        new_segments=[{"id": "sg_new", "start_s": 0.0, "end_s": 10.0}],
+    )
+    cards = redecoded.store.snapshot()["cards"]
+    assert removed == 1  # the decision whose only anchor died
+    assert cards["decisions"][0]["status"] == "removed"
+    # The key point's anchor was remapped onto the new transcript, so it
+    # survives for consolidation to reconcile.
+    assert cards["key_points"][0]["status"] != "removed"
+    assert cards["key_points"][0]["text"] == "Edited"
+    assert cards["key_points"][0]["evidence"] == ["sg_new"]
+    # live_notes are never stripped, even with dead anchors.
+    assert len(cards["live_notes"]) == 1
+    assert cards["live_notes"][0]["status"] != "removed"
 
