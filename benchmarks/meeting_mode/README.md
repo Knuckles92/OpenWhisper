@@ -92,8 +92,15 @@ are still captured so a later cut/decode can be scored without changing the
 live path.
 
 ASR word error is not the product question. To compare the package a user
-keeps after End (topic, summary, cards, questions, readable transcript), run
-the sidecar on cached draft vs offline transcripts:
+keeps after End (topic, summary, cards, live notes, questions, readable
+transcript), the product eval first *simulates the live meeting*: rolling
+copilot checkpoints and the dedicated note-taker pass replay the draft
+transcript over meeting-time windows, accumulating the dashboard exactly the
+way the product does. Both End paths then start from that same live state —
+legacy runs consolidation directly on the draft; clean swaps in the offline
+re-decode (remapping evidence anchors, stripping only items whose anchors
+died, mirroring the engine), polishes, and consolidates. An LLM judge scores
+both packages against the AMI reference:
 
 ```bash
 ./venv/Scripts/python.exe -m benchmarks.meeting_mode.product_eval
@@ -101,4 +108,9 @@ the sidecar on cached draft vs offline transcripts:
 
 Default slice is `IN1009,IN1005,IN1007` (short / best-draft / worst-offline).
 That needs the same OpenRouter key Meeting Mode uses. Results land under
-`results/.../product_eval/`.
+`results/.../product_eval/`. `--live-window-s` controls the simulated
+checkpoint cadence (default 120 meeting-seconds); `--no-live` reproduces the
+pre-notes ablation where consolidation starts from an empty dashboard. Judge
+scores are stochastic — single-meeting flips between runs are normal; look at
+the per-op `op_stats` in each result for the deterministic signals (applied
+vs rejected ops and their reasons).
