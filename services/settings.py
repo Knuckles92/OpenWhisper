@@ -60,6 +60,9 @@ class SettingsKey:
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
     MEETING_END_REPORT: Final[str] = "meeting_end_report"
+    MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
+    MEETING_REPORT_BRIEF: Final[str] = "meeting_report_brief"
+    MEETING_REPORT_SIGNAL: Final[str] = "meeting_report_signal"
     MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
     MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
@@ -823,6 +826,55 @@ def resolve_meeting_end_report(
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_END_REPORT, config.MEETING_END_REPORT,
     )
+
+
+DEFAULT_REPORT_VIEWS: Final[Tuple[str, ...]] = ("ribbon", "brief", "signal")
+
+
+def resolve_meeting_report_ribbon(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Ribbon report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON,
+    )
+
+
+def resolve_meeting_report_brief(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Brief report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF,
+    )
+
+
+def resolve_meeting_report_signal(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Signal report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL,
+    )
+
+
+def resolve_meeting_report_views(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return the enabled post-meeting report views, in display order.
+
+    Falls back to ``("ribbon",)`` when every view is off so a meeting never
+    ends with an empty report.
+    """
+    views = tuple(
+        name for name, key, default in (
+            ("ribbon", SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON),
+            ("brief", SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF),
+            ("signal", SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL),
+        )
+        if _resolve_bool_setting(settings, key, default)
+    )
+    return views or ("ribbon",)
 
 
 def resolve_meeting_server_bind(

@@ -21,7 +21,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.interfaces import (
@@ -84,6 +84,7 @@ class MeetingEngineOptions:
     end_redecode: bool = False
     end_polish: bool = True
     end_report: bool = True
+    report_views: Tuple[str, ...] = ('ribbon', 'brief', 'signal')
     demo_mode: bool = False
 
 
@@ -415,6 +416,7 @@ class MeetingEngine:
                 finalization=FinalizationState.default_for_cloud(
                     self.options.cloud_enabled
                 ),
+                report_views=list(self.options.report_views),
             )
             self.store = MeetingStateStore(
                 state,

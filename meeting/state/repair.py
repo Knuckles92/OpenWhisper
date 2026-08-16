@@ -553,12 +553,16 @@ def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
         logger.exception("State repair could not snapshot state")
         return 0
 
-    _apply(build_timeline_backfill_ops(snapshot, segments), "timeline")
-    try:
-        snapshot = store.snapshot()
-    except Exception:
-        logger.exception("State repair could not re-snapshot after timeline")
-        return applied
+    views = snapshot.get("report_views") or ["ribbon", "brief", "signal"]
+    want_ribbon = "ribbon" in views
+
+    if want_ribbon:
+        _apply(build_timeline_backfill_ops(snapshot, segments), "timeline")
+        try:
+            snapshot = store.snapshot()
+        except Exception:
+            logger.exception("State repair could not re-snapshot after timeline")
+            return applied
 
     _apply(build_keypoint_coverage_ops(snapshot, segments), "key_points")
     try:
@@ -567,10 +571,11 @@ def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
         logger.exception("State repair could not re-snapshot after key_points")
         return applied
 
-    _apply(
-        build_timeline_coverage_from_segments(snapshot, segments),
-        "timeline_coverage",
-    )
+    if want_ribbon:
+        _apply(
+            build_timeline_coverage_from_segments(snapshot, segments),
+            "timeline_coverage",
+        )
     try:
         snapshot = store.snapshot()
     except Exception:

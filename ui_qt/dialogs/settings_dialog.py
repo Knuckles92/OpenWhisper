@@ -30,6 +30,9 @@ from services.settings import (
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
     resolve_meeting_end_report,
+    resolve_meeting_report_brief,
+    resolve_meeting_report_ribbon,
+    resolve_meeting_report_signal,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
     resolve_meeting_language,
@@ -816,6 +819,54 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.meeting_end_report_check)
 
+        views_title = QLabel("Report views")
+        views_title.setObjectName("sectionLabel")
+        layout.addWidget(views_title)
+        self.meeting_report_views_title = views_title
+
+        views_info = QLabel(
+            "Each enabled view is generated at End. Turning Ribbon off "
+            "skips timeline beats and polished minutes, which is the "
+            "main token cost. Brief and Signal reuse the same cards."
+        )
+        views_info.setObjectName("infoLabel")
+        views_info.setWordWrap(True)
+        layout.addWidget(views_info)
+        self.meeting_report_views_info = views_info
+
+        self.meeting_report_ribbon_check = QCheckBox(
+            "Ribbon — timeline walk (adds timeline beats and polished minutes)"
+        )
+        layout.addWidget(self.meeting_report_ribbon_check)
+
+        self.meeting_report_brief_check = QCheckBox(
+            "Brief — one-page editorial summary"
+        )
+        layout.addWidget(self.meeting_report_brief_check)
+
+        self.meeting_report_signal_check = QCheckBox(
+            "Signal — one-screen glance"
+        )
+        layout.addWidget(self.meeting_report_signal_check)
+
+        self.meeting_report_views_hint = QLabel(
+            "At least one view is required. Ribbon stays on."
+        )
+        self.meeting_report_views_hint.setObjectName("infoLabel")
+        self.meeting_report_views_hint.setWordWrap(True)
+        self.meeting_report_views_hint.hide()
+        layout.addWidget(self.meeting_report_views_hint)
+
+        self.meeting_end_report_check.toggled.connect(
+            self._update_report_views_enabled
+        )
+        for check in (
+            self.meeting_report_ribbon_check,
+            self.meeting_report_brief_check,
+            self.meeting_report_signal_check,
+        ):
+            check.toggled.connect(self._guard_report_views)
+
         # Dashboard access (privacy control)
         layout.addSpacing(24)
         meeting_server_title = QLabel("Dashboard Access")
@@ -1334,6 +1385,34 @@ class SettingsDialog(QDialog):
         is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
         self.meeting_bind_warning.setVisible(is_lan)
 
+    def _report_view_checks(self):
+        """Return the three post-meeting report-view checkboxes."""
+        return (
+            self.meeting_report_ribbon_check,
+            self.meeting_report_brief_check,
+            self.meeting_report_signal_check,
+        )
+
+    def _update_report_views_enabled(self):
+        """Gray out report-view toggles when the final report is off."""
+        enabled = self.meeting_end_report_check.isChecked()
+        self.meeting_report_views_title.setEnabled(enabled)
+        self.meeting_report_views_info.setEnabled(enabled)
+        for check in self._report_view_checks():
+            check.setEnabled(enabled)
+        if not enabled:
+            self.meeting_report_views_hint.hide()
+
+    def _guard_report_views(self):
+        """Keep at least one report view checked; restore Ribbon if needed."""
+        if any(check.isChecked() for check in self._report_view_checks()):
+            self.meeting_report_views_hint.hide()
+            return
+        blocker = self.meeting_report_ribbon_check.blockSignals(True)
+        self.meeting_report_ribbon_check.setChecked(True)
+        self.meeting_report_ribbon_check.blockSignals(blocker)
+        self.meeting_report_views_hint.show()
+
     def _load_meeting_settings(self, settings: dict):
         """Apply the stored Meeting Mode settings to their controls.
 
@@ -1367,6 +1446,17 @@ class SettingsDialog(QDialog):
         self.meeting_end_report_check.setChecked(
             resolve_meeting_end_report(settings)
         )
+        self.meeting_report_ribbon_check.setChecked(
+            resolve_meeting_report_ribbon(settings)
+        )
+        self.meeting_report_brief_check.setChecked(
+            resolve_meeting_report_brief(settings)
+        )
+        self.meeting_report_signal_check.setChecked(
+            resolve_meeting_report_signal(settings)
+        )
+        self._guard_report_views()
+        self._update_report_views_enabled()
         self._update_meeting_bind_ui()
 
     def _populate_audio_devices(self):
@@ -1583,6 +1673,15 @@ class SettingsDialog(QDialog):
             )
             settings[SettingsKey.MEETING_END_REPORT] = (
                 self.meeting_end_report_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_REPORT_RIBBON] = (
+                self.meeting_report_ribbon_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_REPORT_BRIEF] = (
+                self.meeting_report_brief_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_REPORT_SIGNAL] = (
+                self.meeting_report_signal_check.isChecked()
             )
             settings[SettingsKey.DEVELOPER_MODE] = (
                 self.developer_mode_check.isChecked()

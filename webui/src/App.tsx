@@ -10,6 +10,7 @@ import NotesPane from './components/NotesPane';
 import ParticipantsPane from './components/ParticipantsPane';
 import QuestionInbox from './components/QuestionInbox';
 import SpotlightRow from './components/SpotlightRow';
+import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
 import { initialUiState, meetingReducer } from './state';
 import type { Op, Role, SessionResponse } from './types';
@@ -42,6 +43,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   );
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     dispatch({
@@ -122,6 +124,21 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     });
   }, [token, ui.segments, ui.state]);
 
+  const seekTo = useCallback((seconds: number) => {
+    const el = audioRef.current;
+    if (!el) return;
+    const apply = () => {
+      try {
+        el.currentTime = seconds;
+        void el.play();
+      } catch {
+        /* seeking may fail until metadata is ready */
+      }
+    };
+    if (el.readyState >= 1) apply();
+    else el.addEventListener('loadedmetadata', apply, { once: true });
+  }, []);
+
   if (!ui.state) {
     return <div className="loading-screen">Connecting…</div>;
   }
@@ -160,41 +177,53 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         </div>
       ) : (
         <div className="app-main">
-          <MeetingOverview
-            meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
-            status={ui.state.status}
-            topic={ui.state.topic.current}
-            topicEvidence={
-              ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
-            }
-            summary={ui.state.rolling_summary}
-            summaryEvidence={ui.state.rolling_summary_evidence}
-            cloudEnabled={ui.state.cloud_enabled}
-            intelligenceOnline={ui.state.intelligence_online}
-            onEvidenceClick={handleEvidenceClick}
-          />
+          {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
+            <ReportTabs
+              state={ui.state}
+              segments={ui.segments}
+              meeting={ui.meeting}
+              onEvidenceClick={handleEvidenceClick}
+              onSeek={seekTo}
+            />
+          ) : (
+            <>
+              <MeetingOverview
+                meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
+                status={ui.state.status}
+                topic={ui.state.topic.current}
+                topicEvidence={
+                  ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
+                }
+                summary={ui.state.rolling_summary}
+                summaryEvidence={ui.state.rolling_summary_evidence}
+                cloudEnabled={ui.state.cloud_enabled}
+                intelligenceOnline={ui.state.intelligence_online}
+                onEvidenceClick={handleEvidenceClick}
+              />
 
-          <SpotlightRow
-            cards={ui.state.cards}
-            status={ui.state.status}
-            cloudEnabled={ui.state.cloud_enabled}
-            intelligenceOnline={ui.state.intelligence_online}
-            onSendOp={sendOp}
-            onEvidenceClick={handleEvidenceClick}
-            onUndo={isHost ? sendUndo : undefined}
-            lastSeqByTarget={ui.lastSeqByTarget}
-          />
+              <SpotlightRow
+                cards={ui.state.cards}
+                status={ui.state.status}
+                cloudEnabled={ui.state.cloud_enabled}
+                intelligenceOnline={ui.state.intelligence_online}
+                onSendOp={sendOp}
+                onEvidenceClick={handleEvidenceClick}
+                onUndo={isHost ? sendUndo : undefined}
+                lastSeqByTarget={ui.lastSeqByTarget}
+              />
 
-          <NotesPane
-            notes={ui.state.cards.live_notes ?? []}
-            status={ui.state.status}
-            cloudEnabled={ui.state.cloud_enabled}
-            intelligenceOnline={ui.state.intelligence_online}
-            onSendOp={sendOp}
-            onEvidenceClick={handleEvidenceClick}
-            onUndo={isHost ? sendUndo : undefined}
-            lastSeqByTarget={ui.lastSeqByTarget}
-          />
+              <NotesPane
+                notes={ui.state.cards.live_notes ?? []}
+                status={ui.state.status}
+                cloudEnabled={ui.state.cloud_enabled}
+                intelligenceOnline={ui.state.intelligence_online}
+                onSendOp={sendOp}
+                onEvidenceClick={handleEvidenceClick}
+                onUndo={isHost ? sendUndo : undefined}
+                lastSeqByTarget={ui.lastSeqByTarget}
+              />
+            </>
+          )}
 
           {isHost && showActivity && (
             <ActivityPane
@@ -223,6 +252,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 headerExtra={
                   <div className="recording-inline">
                     <audio
+                      ref={audioRef}
                       key={`${ui.state.meeting_id}:${ui.state.status}`}
                       controls
                       preload="metadata"

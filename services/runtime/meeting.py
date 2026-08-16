@@ -29,6 +29,7 @@ try:
         resolve_meeting_end_polish,
         resolve_meeting_end_redecode,
         resolve_meeting_end_report,
+        resolve_meeting_report_views,
         resolve_meeting_llm_model,
         resolve_meeting_llm_provider,
         resolve_meeting_language,
@@ -442,6 +443,7 @@ class MeetingRuntime:
             ),
             end_polish=resolve_meeting_end_polish(settings),
             end_report=resolve_meeting_end_report(settings),
+            report_views=resolve_meeting_report_views(settings),
             demo_mode=demo,
         )
 

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { CARD_KEYS } from '../types';
 import type { ExportFormat, MeetingRow, MeetingStateDoc, SearchRow } from '../types';
 import type { Segment } from '../types';
 import TranscriptPane from './TranscriptPane';
-import EvidenceChip from './EvidenceChip';
+import ReportTabs from './report/ReportTabs';
 
 interface HistoryPaneProps {
   token: string;
@@ -26,6 +25,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [detailError, setDetailError] = useState<string | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [rerunNote, setRerunNote] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const loadMeetings = useCallback(async () => {
     setLoading(true);
@@ -158,13 +158,30 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     window.open(api.exportUrl(token, fmt, meetingId), '_blank');
   };
 
-  const cardCounts = detail
-    ? CARD_KEYS.map((key) => ({
-        key,
-        count: (detail.cards?.[key] ?? []).filter((item) => item.status !== 'removed')
-          .length,
-      })).filter((entry) => entry.count > 0)
-    : [];
+  const seekTo = useCallback((seconds: number) => {
+    const el = audioRef.current;
+    if (!el) return;
+    const apply = () => {
+      try {
+        el.currentTime = seconds;
+        void el.play();
+      } catch {
+        /* seeking may fail until metadata is ready */
+      }
+    };
+    if (el.readyState >= 1) apply();
+    else el.addEventListener('loadedmetadata', apply, { once: true });
+  }, []);
+
+  const handleEvidenceClick = useCallback((segmentId: string) => {
+    setHighlightSegmentId(segmentId);
+    requestAnimationFrame(() => {
+      document.getElementById(`seg-${segmentId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }, []);
 
   return (
     <section className="panel" style={{ minHeight: '70vh' }}>
@@ -291,118 +308,29 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </p>
                 )}
 
-                <div className="card-section">
-                  <h3 className="card-section-title">Insights</h3>
-                  {!detail ? (
-                    <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
-                      Loading…
-                    </p>
-                  ) : detail.topic?.current || detail.rolling_summary || cardCounts.length ? (
-                    <>
-                      {detail.topic?.current && (
-                        <>
-                          <p style={{ margin: '0 0 6px' }}>{detail.topic.current}</p>
-                          <div className="evidence-row">
-                            {(detail.topic.history[detail.topic.history.length - 1]?.evidence ?? [])
-                              .map((segmentId) => (
-                                <EvidenceChip
-                                  key={segmentId}
-                                  segmentId={segmentId}
-                                  onClick={setHighlightSegmentId}
-                                />
-                              ))}
-                          </div>
-                        </>
-                      )}
-                      {detail.rolling_summary && (
-                        <p
-                          style={{
-                            margin: '0 0 8px',
-                            color: 'var(--text-muted)',
-                            fontSize: 13,
-                            whiteSpace: 'pre-wrap',
-                          }}
-                        >
-                          {detail.rolling_summary}
-                        </p>
-                      )}
-                      <div className="evidence-row">
-                        {(detail.rolling_summary_evidence ?? []).map((segmentId) => (
-                          <EvidenceChip
-                            key={segmentId}
-                            segmentId={segmentId}
-                            onClick={setHighlightSegmentId}
-                          />
-                        ))}
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {cardCounts.map(({ key, count }) => (
-                          <span key={key} className="participant-kind">
-                            {key.replace(/_/g, ' ')} {count}
-                          </span>
-                        ))}
-                      </div>
-                      {CARD_KEYS.map((key) => (
-                        <div key={key} style={{ marginTop: 12 }}>
-                          {(detail.cards?.[key] ?? [])
-                            .filter((item) => item.status !== 'removed')
-                            .map((item) => (
-                              <article className="card-item" key={item.id}>
-                                <strong>{key.replace(/_/g, ' ')}</strong>
-                                <p>{item.text}</p>
-                                <div className="evidence-row">
-                                  {item.evidence.map((segmentId) => (
-                                    <EvidenceChip
-                                      key={segmentId}
-                                      segmentId={segmentId}
-                                      onClick={(id) => {
-                                        setHighlightSegmentId(id);
-                                        requestAnimationFrame(() => {
-                                          document.getElementById(`seg-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                        });
-                                      }}
-                                    />
-                                  ))}
-                                </div>
-                              </article>
-                            ))}
-                        </div>
-                      ))}
-                      {detail.questions.length > 0 && (
-                        <div style={{ marginTop: 12 }}>
-                          <strong>questions</strong>
-                          {detail.questions.map((question) => (
-                            <article className="question-item" key={question.id}>
-                              <p className="question-text">{question.text}</p>
-                              <span className="participant-kind">{question.status}</span>
-                              {(question.answer || question.suggested_answer) && (
-                                <p>{question.answer || question.suggested_answer}</p>
-                              )}
-                              <div className="evidence-row">
-                                {question.evidence.map((segmentId) => (
-                                  <EvidenceChip
-                                    key={segmentId}
-                                    segmentId={segmentId}
-                                    onClick={setHighlightSegmentId}
-                                  />
-                                ))}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
-                      No insights yet — re-run them from the stored transcript.
-                    </p>
-                  )}
-                </div>
+                {!detail ? (
+                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 16px' }}>
+                    Loading…
+                  </p>
+                ) : (
+                  <ReportTabs
+                    state={detail}
+                    segments={detailSegments}
+                    meeting={selected}
+                    onEvidenceClick={handleEvidenceClick}
+                    onSeek={seekTo}
+                  />
+                )}
 
                 <section className="panel" style={{ marginTop: 16 }}>
                   <div className="panel-header"><span>Recording</span></div>
                   <div className="panel-body">
-                    <audio controls preload="metadata" src={api.audioUrl(token, selected.id)} />
+                    <audio
+                      ref={audioRef}
+                      controls
+                      preload="metadata"
+                      src={api.audioUrl(token, selected.id)}
+                    />
                   </div>
                 </section>
 

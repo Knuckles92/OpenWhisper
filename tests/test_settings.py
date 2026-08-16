@@ -264,6 +264,10 @@ class TestMeetingSettings(unittest.TestCase):
             resolve_meeting_end_polish,
             resolve_meeting_end_redecode,
             resolve_meeting_end_report,
+            resolve_meeting_report_brief,
+            resolve_meeting_report_ribbon,
+            resolve_meeting_report_signal,
+            resolve_meeting_report_views,
             resolve_developer_mode,
             resolve_meeting_llm_model,
             resolve_meeting_llm_provider,
@@ -284,6 +288,10 @@ class TestMeetingSettings(unittest.TestCase):
         self.resolve_end_redecode = resolve_meeting_end_redecode
         self.resolve_end_polish = resolve_meeting_end_polish
         self.resolve_end_report = resolve_meeting_end_report
+        self.resolve_report_ribbon = resolve_meeting_report_ribbon
+        self.resolve_report_brief = resolve_meeting_report_brief
+        self.resolve_report_signal = resolve_meeting_report_signal
+        self.resolve_report_views = resolve_meeting_report_views
         self.resolve_developer_mode = resolve_developer_mode
         self.resolve_bind = resolve_meeting_server_bind
         self.resolve_port = resolve_meeting_server_port
@@ -300,6 +308,13 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_end_redecode({}), config.MEETING_END_REDECODE)
         self.assertTrue(self.resolve_end_polish({}))
         self.assertTrue(self.resolve_end_report({}))
+        self.assertTrue(self.resolve_report_ribbon({}))
+        self.assertTrue(self.resolve_report_brief({}))
+        self.assertTrue(self.resolve_report_signal({}))
+        self.assertEqual(
+            self.resolve_report_views({}),
+            ("ribbon", "brief", "signal"),
+        )
         self.assertFalse(self.resolve_developer_mode({}))
 
     def test_saved_choices_round_trip(self):
@@ -314,6 +329,9 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_END_REDECODE: True,
             self.keys.MEETING_END_POLISH: False,
             self.keys.MEETING_END_REPORT: False,
+            self.keys.MEETING_REPORT_RIBBON: True,
+            self.keys.MEETING_REPORT_BRIEF: False,
+            self.keys.MEETING_REPORT_SIGNAL: False,
         }
         self.assertEqual(self.resolve_whisper_model(saved), "small.en")
         self.assertEqual(self.resolve_language(saved), "en")
@@ -325,6 +343,24 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertTrue(self.resolve_end_redecode(saved))
         self.assertFalse(self.resolve_end_polish(saved))
         self.assertFalse(self.resolve_end_report(saved))
+        self.assertTrue(self.resolve_report_ribbon(saved))
+        self.assertFalse(self.resolve_report_brief(saved))
+        self.assertFalse(self.resolve_report_signal(saved))
+        self.assertEqual(self.resolve_report_views(saved), ("ribbon",))
+        self.assertEqual(
+            self.resolve_report_views({
+                self.keys.MEETING_REPORT_RIBBON: False,
+                self.keys.MEETING_REPORT_BRIEF: False,
+                self.keys.MEETING_REPORT_SIGNAL: False,
+            }),
+            ("ribbon",),
+        )
+        self.assertEqual(
+            self.resolve_report_views({
+                self.keys.MEETING_REPORT_RIBBON: "yes",
+            }),
+            ("ribbon", "brief", "signal"),
+        )
         self.assertTrue(self.resolve_developer_mode(
             {self.keys.DEVELOPER_MODE: True}
         ))

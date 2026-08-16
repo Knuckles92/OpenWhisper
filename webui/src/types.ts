@@ -136,6 +136,8 @@ export interface MeetingStateDoc {
   questions: Question[];
   /** Optional post-meeting cloud consolidation outcome. */
   finalization?: FinalizationState | null;
+  /** Enabled post-meeting report views. Legacy snapshots omit this. */
+  report_views?: string[];
 }
 
 export interface Segment {

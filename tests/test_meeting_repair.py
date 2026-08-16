@@ -249,6 +249,27 @@ def test_repair_meeting_state_fills_summary_only():
     assert snap["topic"]["current"]
 
 
+def test_repair_skips_timeline_when_ribbon_disabled():
+    state = MeetingState(
+        meeting_id="m_repair_noribbon",
+        report_views=["brief"],
+    )
+    store = MeetingStateStore(state)
+    segments = [
+        {"id": "sg_1", "start_s": 0.0, "text": "Let's start with the migration."},
+        {"id": "sg_2", "start_s": 25.0, "text": "The benchmarks held under peak load."},
+    ]
+    applied = repair_meeting_state(store, segments)
+    snap = store.snapshot()
+    live_timeline = [
+        item for item in snap["cards"]["timeline"]
+        if item.get("status") != "removed"
+    ]
+    assert live_timeline == []
+    assert applied >= 1
+    assert snap["rolling_summary"] or snap["topic"]["current"]
+
+
 def test_build_summary_ops_from_live_notes_when_key_points_empty():
     state = {
         "rolling_summary": "",

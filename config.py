@@ -297,6 +297,9 @@ class AppConfig:
     MEETING_END_REDECODE: bool = False
     MEETING_END_POLISH: bool = True
     MEETING_END_REPORT: bool = True
+    MEETING_REPORT_RIBBON: bool = True
+    MEETING_REPORT_BRIEF: bool = True
+    MEETING_REPORT_SIGNAL: bool = True
     MEETING_SERVER_BIND: str = "localhost"  # "localhost" | "lan"
     MEETING_SERVER_PORT: int = 0  # 0 = ephemeral port
     MEETINGS_FOLDER: str = field(

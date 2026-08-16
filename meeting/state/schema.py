@@ -418,6 +418,9 @@ class MeetingState:
     )
     questions: Dict[str, Question] = field(default_factory=dict)
     finalization: FinalizationState = field(default_factory=FinalizationState)
+    report_views: List[str] = field(
+        default_factory=lambda: ["ribbon", "brief", "signal"]
+    )
 
     def find_item(self, item_id: str) -> Optional[CardItem]:
         """Locate a card item by id across all cards."""
@@ -450,6 +453,7 @@ class MeetingState:
             },
             "questions": [q.to_dict() for q in self.questions.values()],
             "finalization": self.finalization.to_dict(),
+            "report_views": list(self.report_views),
         }
 
     @classmethod
@@ -491,6 +495,7 @@ class MeetingState:
                 "message": str((d.get("capture") or {}).get("message", "")),
             },
             finalization=finalization,
+            report_views=list(d.get("report_views") or ["ribbon", "brief", "signal"]),
         )
         for pid, pd in (d.get("participants") or {}).items():
             state.participants[pid] = Participant.from_dict(pd)

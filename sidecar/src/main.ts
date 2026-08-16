@@ -312,6 +312,10 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
       "must cite the same segment_id as evidence. Leave uncertain text unchanged.",
     );
   } else if (isConsolidation) {
+    const views: string[] = Array.isArray(params?.state?.report_views)
+      ? params.state.report_views
+      : ["ribbon", "brief", "signal"];
+    const wantRibbon = views.includes("ribbon");
     parts.push(
       "## Final consolidation pass",
       "The meeting has ended. The transcript below is the COMPLETE final transcript,",
@@ -324,15 +328,25 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
       "  examples, decisions, and closing thesis.",
       "- Capture concrete key points, decisions, and action items (with owners)",
       "  cross-referencing commitments in the notes and transcript.",
-      "- Populate the timeline with chronological story beats (using data.start_s)",
-      "  and capture blockers on the risks card.",
-      "- Reconcile the live_notes page against this COMPLETE final transcript:",
-      "  preserve accurate blocks, fix blocks that later discussion superseded,",
-      "  contradicted, or clarified; merge fragments; give every block a concise",
-      "  data.heading and chronological data.start_s; and remove redundant blocks.",
-      "  If live_notes is empty but the meeting had speech, write the full notes",
-      "  page from the complete transcript. Human-edited, confirmed, or pinned",
-      "  blocks stay exactly as written — put corrections in a new block beside them.",
+    );
+    if (wantRibbon) {
+      parts.push(
+        "- Populate the timeline with chronological story beats (using data.start_s).",
+      );
+    }
+    parts.push("- Capture blockers on the risks card.");
+    if (wantRibbon) {
+      parts.push(
+        "- Reconcile the live_notes page against this COMPLETE final transcript:",
+        "  preserve accurate blocks, fix blocks that later discussion superseded,",
+        "  contradicted, or clarified; merge fragments; give every block a concise",
+        "  data.heading and chronological data.start_s; and remove redundant blocks.",
+        "  If live_notes is empty but the meeting had speech, write the full notes",
+        "  page from the complete transcript. Human-edited, confirmed, or pinned",
+        "  blocks stay exactly as written — put corrections in a new block beside them.",
+      );
+    }
+    parts.push(
       "- Keep every evidence link valid (only reference segment ids that exist).",
     );
   } else {

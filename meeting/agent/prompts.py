@@ -10,7 +10,7 @@ with validation.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from meeting.agent.question_engine import build_question_guidance
 from meeting.state.patches import (
@@ -24,6 +24,7 @@ from meeting.state.schema import CARD_KEYS
 __all__ = [
     "build_system_prompt",
     "build_checkpoint_user_prompt",
+    "build_consolidation_instructions",
     "build_note_taker_system_prompt",
     "build_notes_user_prompt",
     "select_spotlight_items",
@@ -200,73 +201,122 @@ Your only job this round is cleaning ASR transcript text.
 5. Prefer polishing recent or obviously broken lines; skip clean text.
 If nothing needs fixing, emit no operations."""
 
-_CONSOLIDATION_INSTRUCTIONS = """\
+_CONSOLIDATION_HEADER = """\
 ## INSTRUCTIONS — FINAL CONSOLIDATION PASS
 The meeting has ended. The transcript above is the COMPLETE final transcript,
 and the dashboard above contains the accumulated meeting notes (live_notes and
 any user_notes) taken throughout the discussion.
 Finalize the dashboard as the durable record, actively taking into account the
 meeting notes alongside the complete final transcript:
-1. Review every card and the featured Top Insights. Items that survived a
-   transcript re-decode still carry live evidence anchors and are grounded in the
-   actual discussion — treat them as your accumulated knowledge of the meeting,
-   reconcile and merge them against the final transcript, and never rebuild a
-   card from scratch while evidenced items cover it. Merge duplicates across
-   all cards and remove stale or superseded items you authored (respect
-   base_revision; leave human-touched items alone). Ensure no duplicate or
-   redundant insights remain.
-2. Synthesize the meeting notes and complete transcript into the final topic and
-   rewrite the rolling summary as a complete summary of the whole meeting.
-   Cover the opening framing/puzzle, major discussion points and examples,
-   decisions reached, and any closing discovery or thesis. Quantities and
-   counts (papers to send, examples given, options listed) must match what
-   the transcript/notes actually state — count them before writing them.
-3. Make decisions and action items complete and precisely worded, cross-referencing
-   commitments captured in the meeting notes and transcript; give every action item
-   an owner (data.owner_participant_id) when the transcript or notes support one.
-   A decision requires explicit agreement language someone actually spoke
-   ("we'll go with X", "let's skip Y", "agreed", "sounds good", "I'll send it") —
-   a discussed option, a stated preference, an evaluation plan, or something
-   one speaker merely describes doing is NOT a decision; put those in
-   key_points instead. When the transcript shows no commitment language, leave
-   decisions and action_items empty — an empty card is the correct record for
-   a talk/monologue/discussion that decided nothing. But if the discussion
-   contains real agreements or follow-ups — parking a topic offline, skipping
-   a feature, checking with a named person — put those on
-   decisions/action_items, not only key_points.
-4. Ensure key_points include: (a) the opening framing question or puzzle when
-   the transcript begins with one, (b) each major named example, case study, or
-   substantive discussion point captured in the notes or transcript as its own
-   item, and (c) any stated discovery, turning point, or key takeaway.
-   Never attribute a claim, role, or title (e.g. "Professor X", "the student")
-   to a person unless the name or role appears in the final transcript, the
-   notes, or an existing dashboard item — do not guess identities.
-5. Populate the timeline card with ordered story beats and data.start_s on
-   EVERY timeline item (use segment t=…s values or note start_s values). A durable
-   record without timeline beats is incomplete when the meeting has a clear progression.
-6. Capture risks, blockers, and open concerns on the risks card (with data.severity
-   where applicable), reflecting issues raised during the meeting and noted in minutes.
-7. Finalize the live_notes card so it reads as clean, complete, professional minutes.
-   Compare every note block against this COMPLETE final transcript with the
-   benefit of full context: preserve accurate blocks, fix blocks that later
-   discussion superseded, contradicted, or clarified; merge fragments into
-   coherent blocks; give every block a concise data.heading and a chronological
-   data.start_s; and remove redundant or superseded blocks you authored (respect
-   base_revision). If live_notes is empty but the meeting had speech (for
-   example the page was reset after a transcript re-decode), write the full
-   notes page from the complete transcript. Human-edited, confirmed, or
-   pinned blocks stay exactly as written — put corrections in a new block
-   beside them.
-8. Resolve any open question the transcript or notes answer (resolve_question with
-   honest confidence). Questions you cannot resolve stay open for the host —
-   you cannot dismiss them.
-9. Keep every evidence link valid — cite only segment ids that appear in the
-   transcript above. Prefer citing the segments that actually support each claim.
-10. You may ask at most ONE new quiet-inbox question, and only when the
-    transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
-    claim that was teased but not yet answered). Otherwise ask none.
-11. Optionally emit revise_segment_text for remaining obvious ASR errors in the
-    final transcript (same rules as polish: no invented content)."""
+"""
+
+#: Each entry is ``(required_view_or_None, body)``. ``None`` means the step
+#: always runs. ``"ribbon"`` is omitted when that view is disabled.
+_CONSOLIDATION_STEPS: Tuple[Tuple[Optional[str], str], ...] = (
+    (None, """\
+Review every card and the featured Top Insights. Items that survived a
+transcript re-decode still carry live evidence anchors and are grounded in the
+actual discussion — treat them as your accumulated knowledge of the meeting,
+reconcile and merge them against the final transcript, and never rebuild a
+card from scratch while evidenced items cover it. Merge duplicates across
+all cards and remove stale or superseded items you authored (respect
+base_revision; leave human-touched items alone). Ensure no duplicate or
+redundant insights remain."""),
+    (None, """\
+Synthesize the meeting notes and complete transcript into the final topic and
+rewrite the rolling summary as a complete summary of the whole meeting.
+Cover the opening framing/puzzle, major discussion points and examples,
+decisions reached, and any closing discovery or thesis. Quantities and
+counts (papers to send, examples given, options listed) must match what
+the transcript/notes actually state — count them before writing them."""),
+    (None, """\
+Make decisions and action items complete and precisely worded, cross-referencing
+commitments captured in the meeting notes and transcript; give every action item
+an owner (data.owner_participant_id) when the transcript or notes support one.
+A decision requires explicit agreement language someone actually spoke
+("we'll go with X", "let's skip Y", "agreed", "sounds good", "I'll send it") —
+a discussed option, a stated preference, an evaluation plan, or something
+one speaker merely describes doing is NOT a decision; put those in
+key_points instead. When the transcript shows no commitment language, leave
+decisions and action_items empty — an empty card is the correct record for
+a talk/monologue/discussion that decided nothing. But if the discussion
+contains real agreements or follow-ups — parking a topic offline, skipping
+a feature, checking with a named person — put those on
+decisions/action_items, not only key_points."""),
+    (None, """\
+Ensure key_points include: (a) the opening framing question or puzzle when
+the transcript begins with one, (b) each major named example, case study, or
+substantive discussion point captured in the notes or transcript as its own
+item, and (c) any stated discovery, turning point, or key takeaway.
+Never attribute a claim, role, or title (e.g. "Professor X", "the student")
+to a person unless the name or role appears in the final transcript, the
+notes, or an existing dashboard item — do not guess identities."""),
+    ("ribbon", """\
+Populate the timeline card with ordered story beats and data.start_s on
+EVERY timeline item (use segment t=…s values or note start_s values). A durable
+record without timeline beats is incomplete when the meeting has a clear progression."""),
+    (None, """\
+Capture risks, blockers, and open concerns on the risks card (with data.severity
+where applicable), reflecting issues raised during the meeting and noted in minutes."""),
+    ("ribbon", """\
+Finalize the live_notes card so it reads as clean, complete, professional minutes.
+Compare every note block against this COMPLETE final transcript with the
+benefit of full context: preserve accurate blocks, fix blocks that later
+discussion superseded, contradicted, or clarified; merge fragments into
+coherent blocks; give every block a concise data.heading and a chronological
+data.start_s; and remove redundant or superseded blocks you authored (respect
+base_revision). If live_notes is empty but the meeting had speech (for
+example the page was reset after a transcript re-decode), write the full
+notes page from the complete transcript. Human-edited, confirmed, or
+pinned blocks stay exactly as written — put corrections in a new block
+beside them."""),
+    (None, """\
+Resolve any open question the transcript or notes answer (resolve_question with
+honest confidence). Questions you cannot resolve stay open for the host —
+you cannot dismiss them."""),
+    (None, """\
+Keep every evidence link valid — cite only segment ids that appear in the
+transcript above. Prefer citing the segments that actually support each claim."""),
+    (None, """\
+You may ask at most ONE new quiet-inbox question, and only when the
+transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
+claim that was teased but not yet answered). Otherwise ask none."""),
+    (None, """\
+Optionally emit revise_segment_text for remaining obvious ASR errors in the
+final transcript (same rules as polish: no invented content)."""),
+)
+
+
+def build_consolidation_instructions(
+    report_views: Optional[Iterable[str]] = None,
+) -> str:
+    """Build the final-pass instructions, omitting steps no enabled view needs.
+
+    Args:
+        report_views: Enabled post-meeting views. ``None`` or empty keeps
+            every step (legacy / all-views default).
+
+    Returns:
+        Numbered consolidation instructions with contiguous numbering.
+    """
+    views = {str(view) for view in (report_views or ())}
+    if not views:
+        views = {"ribbon", "brief", "signal"}
+    bodies: List[str] = []
+    for tag, body in _CONSOLIDATION_STEPS:
+        if tag is None or tag in views:
+            bodies.append(body.strip())
+    numbered: List[str] = []
+    for index, body in enumerate(bodies, 1):
+        indent = " " * (3 if index < 10 else 4)
+        lines = body.splitlines()
+        first = f"{index}. {lines[0]}"
+        rest = [
+            f"{indent}{line.lstrip()}" if line.strip() else line
+            for line in lines[1:]
+        ]
+        numbered.append("\n".join([first, *rest]))
+    return _CONSOLIDATION_HEADER + "\n".join(numbered)
 
 #: Appended to the user prompt by the direct agent's JSON-mode fallback (used
 #: when the provider/model does not support function tools).
@@ -714,7 +764,7 @@ def build_checkpoint_user_prompt(state: Dict[str, Any],
     if is_polish:
         parts.append(_POLISH_INSTRUCTIONS)
     elif is_consolidation:
-        parts.append(_CONSOLIDATION_INSTRUCTIONS)
+        parts.append(build_consolidation_instructions(state.get("report_views")))
     else:
         parts.append(_CHECKPOINT_INSTRUCTIONS)
     return "\n".join(parts)

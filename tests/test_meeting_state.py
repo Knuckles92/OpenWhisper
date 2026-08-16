@@ -744,6 +744,19 @@ class TestStoreMechanics:
         snapshot = store.snapshot()
         rebuilt = MeetingState.from_dict(snapshot)
         assert rebuilt.to_dict() == snapshot
+        assert snapshot["report_views"] == ["ribbon", "brief", "signal"]
+
+    def test_report_views_survive_apply_and_legacy_default(self):
+        store = MeetingStateStore(
+            MeetingState(meeting_id="m_views", report_views=["brief", "signal"]),
+        )
+        store.apply("agent", "agent", [
+            {"op": "set_topic", "text": "Q3 planning", "evidence": ["sg_known"]},
+        ])
+        assert store.snapshot()["report_views"] == ["brief", "signal"]
+
+        legacy = MeetingState.from_dict({"meeting_id": "m_legacy"})
+        assert legacy.report_views == ["ribbon", "brief", "signal"]
 
 
 class TestClientAbusePrevention:

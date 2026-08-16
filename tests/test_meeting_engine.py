@@ -422,6 +422,20 @@ class TestIntelligenceHealth:
         assert fakes.cores[0].shutdowns == 1
         assert engine._agent_core is None
 
+    def test_start_seeds_report_views(self, make_engine, fakes):
+        default_engine = make_engine(cloud_enabled=True)
+        default_engine.start()
+        assert default_engine.store.with_state(lambda s: s.report_views) == [
+            "ribbon", "brief", "signal",
+        ]
+
+        engine = make_engine(
+            cloud_enabled=True,
+            report_views=("ribbon",),
+        )
+        engine.start()
+        assert engine.store.with_state(lambda s: s.report_views) == ["ribbon"]
+
     def test_healthy_core_reports_online(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=True)
         engine.start()

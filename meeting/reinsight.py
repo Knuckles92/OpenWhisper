@@ -105,12 +105,18 @@ def _load_state(meeting: Dict[str, Any], meeting_id: str) -> MeetingState:
                 "Corrupt state_json for meeting %s; starting from a fresh state",
                 meeting_id,
             )
+    try:
+        from services.settings import resolve_meeting_report_views
+        report_views = list(resolve_meeting_report_views())
+    except Exception:
+        report_views = ["ribbon", "brief", "signal"]
     return MeetingState(
         meeting_id=meeting_id,
         title=meeting.get("title", ""),
         # Carried over so the store's write-through cannot flip the recorded
         # cloud flag on a meeting that simply never got a snapshot.
         cloud_enabled=bool(meeting.get("cloud_enabled")),
+        report_views=report_views,
     )
 
 
