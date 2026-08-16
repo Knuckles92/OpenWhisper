@@ -28,6 +28,34 @@ Update this file whenever a milestone completes or handoff is needed. Keep §Sta
 - Placeholder components are unreachable until real artifacts are explicitly published.
 - Full validation: 556 passed / 1 skipped / 36 subtests; React production build and sidecar type-check/build are green.
 
+### Product-package benchmark hardening (2026-08-15/16)
+
+The product eval now covers the note taker end-to-end: a simulated live phase
+(checkpoints every `--live-window-s` meeting-seconds + note-taker pass every 2
+successful checkpoints) accumulates cards and notes over the draft transcript;
+both End paths start from that state. The clean path mirrors the engine
+(re-decode id map via interval IoU, evidence remap, strip of only
+dead-anchor proposed items) before polish + consolidation; per-op
+`op_stats` record applied/rejected counts with reasons and samples.
+
+Findings driving program fixes (each verified by re-run):
+- **Re-decode strip discarded grounded live content.** Legacy (no re-decode)
+  won IN1009 run 1 because clean rebuilt every card from scratch and the
+  rebuild hallucinated ("Professor Dylan Blanc", wrong paper count). Fixed:
+  `_remap_state_evidence` now remaps proposed items too, and the engine strip
+  keeps proposed items with surviving anchors (`keep_evidenced=True`).
+  IN1009 run 2 flipped back to clean with notes/timeline 5/5 on both sides.
+- **Consolidation ops mass-rejected as `unknown_evidence` (stochastic).** The
+  flash model sometimes reconstructs 23-hex-char segment ids instead of
+  copying them; one run lost 28/29 consolidation ops. Fixed: shared
+  `meeting/agent/evidence.py` repairs truncated/typo'd ids to a unique citable
+  match (unique prefix/containment or fuzzy best with clear margin) in both
+  cores before exact-match validation; invented ids still reject honestly.
+- Note blocks could lose `heading`/`start_s` when the note taker re-sent a
+  partial `data` dict — the op layer now preserves them for `live_notes`.
+- Malformed tool-call JSON now gets instructive feedback (re-emit valid JSON,
+  split long batches) instead of a bare parser error.
+
 ### AI note taker (2026-08-15)
 
 Feature: a dedicated note-taker section on the dashboard — an agent pass that keeps
