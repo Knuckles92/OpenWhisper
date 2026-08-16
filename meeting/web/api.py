@@ -605,7 +605,12 @@ function finalizationLabel(){
   var f = state.finalization;
   var st = f.status || "";
   var msg = (f.message || "").trim();
-  if (st === "running") return msg || "Preparing final insights";
+  if (st === "running") {
+    if (f.total_steps && f.current_step) {
+      return "Step " + f.current_step + "/" + f.total_steps + ": " + (msg || "Preparing final insights");
+    }
+    return msg || "Preparing final insights";
+  }
   if (st === "completed") return msg || "Final insights ready";
   if (st === "disabled") return msg || "Cloud insights off";
   if (st === "unavailable") return msg || "Final insights unavailable";

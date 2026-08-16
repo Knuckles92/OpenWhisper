@@ -222,7 +222,19 @@ export default function HeaderBar({
 
       {finalizationStatus === 'running' && (
         <div className="banner info" role="status">
-          {finalizationMessage || 'Preparing final cloud insights…'}
+          {finalization?.total_steps && finalization?.current_step ? (
+            <span>
+              <strong>Step {finalization.current_step}/{finalization.total_steps}:</strong>{' '}
+              {finalizationMessage || 'Finalizing meeting…'}
+              {finalization.step_details && finalization.step_details !== finalizationMessage && (
+                <small style={{ display: 'block', opacity: 0.85, marginTop: 2 }}>
+                  {finalization.step_details}
+                </small>
+              )}
+            </span>
+          ) : (
+            finalizationMessage || 'Preparing final cloud insights…'
+          )}
         </div>
       )}
 

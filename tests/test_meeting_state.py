@@ -163,6 +163,26 @@ class TestItemOps:
         assert not near_dup.ok
         assert near_dup.reason == "duplicate_item"
 
+    def test_agent_cross_card_duplicate_item_rejected(self):
+        store, _ = make_store()
+        store.apply("agent", "agent", [
+            {"op": "add_item", "card": "key_points", "text": "Schedule follow up sync with team by Friday",
+             "evidence": ["sg_known"]},
+        ])
+        cross_dup = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "action_items", "text": "Schedule follow up sync with team by Friday",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert not cross_dup.ok
+        assert cross_dup.reason == "duplicate_item"
+
+        cross_decision_dup = store.apply("agent", "agent", [
+            {"op": "add_item", "card": "decisions", "text": "Schedule follow-up sync with the team by Friday",
+             "evidence": ["sg_known"]},
+        ])[0]
+        assert not cross_decision_dup.ok
+        assert cross_decision_dup.reason == "duplicate_item"
+
     def test_agent_timeline_requires_start_s(self):
         store, _ = make_store()
         missing = store.apply("agent", "agent", [
@@ -972,3 +992,44 @@ class TestFinalizationState:
         )
         assert completed.status == "completed"
         assert completed.message == "Done."
+
+    def test_step_progression_round_trip(self):
+        from meeting.state.schema import FinalizationState, MeetingState
+
+        steps = [
+            {"id": "redecode", "name": "Audio Re-transcription", "status": "completed", "detail": "Decoded 12 windows"},
+            {"id": "polish", "name": "Transcript Cleanup", "status": "running", "detail": "Polishing block 1/2"},
+            {"id": "consolidation", "name": "Summary & Action Items", "status": "pending", "detail": "Waiting"},
+        ]
+        stats = {
+            "duration_s": 142.5,
+            "segments": 35,
+            "words": 420,
+            "key_points": 4,
+            "action_items": 2,
+            "decisions": 1,
+        }
+        fin = FinalizationState(
+            status="running",
+            message="Cleaning transcript…",
+            stage="polish",
+            current_step=2,
+            total_steps=3,
+            step_details="Polishing block 1 of 2",
+            steps=steps,
+            summary_stats=stats,
+        )
+        state = MeetingState(
+            meeting_id="m_steps",
+            cloud_enabled=True,
+            finalization=fin,
+        )
+        rebuilt = MeetingState.from_dict(state.to_dict())
+        assert rebuilt.finalization.stage == "polish"
+        assert rebuilt.finalization.current_step == 2
+        assert rebuilt.finalization.total_steps == 3
+        assert rebuilt.finalization.step_details == "Polishing block 1 of 2"
+        assert len(rebuilt.finalization.steps) == 3
+        assert rebuilt.finalization.steps[0]["status"] == "completed"
+        assert rebuilt.finalization.summary_stats["segments"] == 35
+        assert rebuilt.finalization.summary_stats["key_points"] == 4

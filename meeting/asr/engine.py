@@ -212,6 +212,8 @@ class MeetingAsrEngine:
         self,
         spool_dir: str,
         chunks: Optional[List[Dict[str, Any]]] = None,
+        *,
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
     ) -> List[TranscriptSegment]:
         """Re-decode the continuous session audio with offline silence cuts.
 
@@ -220,6 +222,7 @@ class MeetingAsrEngine:
         Args:
             spool_dir: Meeting spool directory containing session WAVs.
             chunks: Optional registered chunk rows for the concat fallback.
+            progress_cb: Optional callback for window decoding progress.
 
         Returns:
             Fresh segments for every channel that has session audio.
@@ -237,6 +240,7 @@ class MeetingAsrEngine:
             self.meeting_id,
             chunks,
             language=self.language,
+            progress_cb=progress_cb,
         )
 
     def stop(self) -> None:

@@ -1344,11 +1344,89 @@ QWidget#meetingFinalizationCard[finalizationTone="neutral"] {
 QLabel#meetingFinalizationTitle {
     color: #f5f5f7;
     background-color: transparent;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#meetingFinalizationStepBadge {
+    color: #0a84ff;
+    background-color: rgba(10, 132, 255, 0.15);
+    border: 1px solid rgba(10, 132, 255, 0.35);
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#meetingFinalizationStepBadge[badgeTone="success"] {
+    color: #30d158;
+    background-color: rgba(48, 209, 88, 0.15);
+    border: 1px solid rgba(48, 209, 88, 0.35);
+}
+
+QLabel#meetingFinalizationStepBadge[badgeTone="warning"] {
+    color: #ff9f0a;
+    background-color: rgba(255, 159, 10, 0.15);
+    border: 1px solid rgba(255, 159, 10, 0.35);
+}
+
+QWidget#meetingFinalizationActiveBox {
+    background-color: rgba(0, 0, 0, 0.22);
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
 }
 
 QLabel#meetingFinalizationMessage {
-    color: #d1d1d6;
+    color: #f5f5f7;
     font-size: 13px;
+    font-weight: 500;
+    background-color: transparent;
+}
+
+QLabel#meetingFinalizationDetail {
+    color: #98989d;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+QWidget#meetingFinalizationStepsWidget {
+    background-color: rgba(0, 0, 0, 0.15);
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QWidget#meetingFinalizationStepRow {
+    background-color: transparent;
+}
+
+QLabel#meetingFinalizationStepName {
+    color: #d1d1d6;
+    background-color: transparent;
+}
+
+QLabel#meetingFinalizationStepDetail {
+    color: #8e8e93;
+    background-color: transparent;
+}
+
+QWidget#meetingFinalizationStatsWidget {
+    background-color: transparent;
+}
+
+QWidget#meetingFinalizationStatItem {
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+}
+
+QLabel#meetingFinalizationStatValue {
+    color: #f5f5f7;
+    background-color: transparent;
+}
+
+QLabel#meetingFinalizationStatLabel {
+    color: #8e8e93;
     background-color: transparent;
 }
 

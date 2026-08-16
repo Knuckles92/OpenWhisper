@@ -243,6 +243,12 @@ class MeetingEngine:
         status: str,
         message: str = "",
         *,
+        stage: str = "",
+        current_step: int = 0,
+        total_steps: int = 0,
+        step_details: str = "",
+        steps: Optional[List[Dict[str, Any]]] = None,
+        summary_stats: Optional[Dict[str, Any]] = None,
         emit: bool = True,
     ) -> bool:
         """Persist and optionally broadcast a finalization outcome.
@@ -254,6 +260,12 @@ class MeetingEngine:
         Args:
             status: One of the ``FINALIZATION_STATUSES`` values.
             message: Human-readable detail for the UI.
+            stage: Current processing stage identifier.
+            current_step: 1-based index of current step.
+            total_steps: Total count of active steps.
+            step_details: Detailed live progress information.
+            steps: List of step progress dictionary records.
+            summary_stats: Final meeting statistics summary dict.
             emit: When True, push the update through status listeners/WS.
 
         Returns:
@@ -263,8 +275,21 @@ class MeetingEngine:
             return False
         from meeting.state.schema import FINALIZATION_STATUSES, FinalizationState
 
+        payload = {
+            "status": status,
+            "message": message,
+            "stage": stage,
+            "current_step": current_step,
+            "total_steps": total_steps,
+            "step_details": step_details,
+        }
+        if steps is not None:
+            payload["steps"] = [dict(s) for s in steps]
+        if summary_stats is not None:
+            payload["summary_stats"] = dict(summary_stats)
+
         finalization = FinalizationState.coerce(
-            {"status": status, "message": message},
+            payload,
             cloud_enabled=self.store.with_state(lambda s: s.cloud_enabled),
             meeting_status=self.store.with_state(lambda s: s.status),
         )
@@ -658,29 +683,74 @@ class MeetingEngine:
                 )
             want_polish = bool(self.options.end_polish)
             want_report = bool(self.options.end_report)
-            run_cloud = False
-            if will_offline or (
-                cloud_enabled and complete and scheduler is not None
+            run_cloud = bool(
+                cloud_enabled
+                and complete
+                and scheduler is not None
                 and self._core_is_healthy()
                 and (want_polish or want_report)
-            ):
-                if will_offline:
-                    end_message = "Re-transcribing meeting…"
-                elif want_polish:
-                    end_message = "Cleaning transcript…"
-                else:
-                    end_message = "Preparing final report…"
+            )
+
+            # Build the pipeline of steps
+            steps: List[Dict[str, Any]] = []
+            if will_offline:
+                steps.append({
+                    "id": "redecode",
+                    "name": "Audio Re-transcription",
+                    "status": "pending",
+                    "detail": "High-accuracy full session Whisper decode",
+                })
+            if run_cloud:
+                if want_polish:
+                    steps.append({
+                        "id": "polish",
+                        "name": "Transcript Cleanup",
+                        "status": "pending",
+                        "detail": "AI grammar, punctuation, and speaker formatting",
+                    })
+                if want_report:
+                    steps.append({
+                        "id": "consolidation",
+                        "name": "Summary & Action Items",
+                        "status": "pending",
+                        "detail": "Synthesizing executive summary, key points, decisions, and action items",
+                    })
+            steps.append({
+                "id": "finalize",
+                "name": "State Finalization",
+                "status": "pending",
+                "detail": "Saving final transcript and consolidating meeting state",
+            })
+            total_steps = len(steps)
+
+            def _update_step(step_id: str, step_status: str, detail_msg: str = "", *, message: str = "", emit: bool = True) -> None:
+                curr_idx = 1
+                for idx, s in enumerate(steps, 1):
+                    if s["id"] == step_id:
+                        s["status"] = step_status
+                        if detail_msg:
+                            s["detail"] = detail_msg
+                        curr_idx = idx
+                        break
+                top_msg = message or (
+                    "Re-transcribing meeting…" if step_id == "redecode"
+                    else "Cleaning transcript…" if step_id == "polish"
+                    else "Preparing final report…" if step_id == "consolidation"
+                    else "Finalizing meeting state…"
+                )
                 self._set_finalization(
                     "running",
-                    end_message,
-                    emit=False,
+                    top_msg,
+                    stage=step_id,
+                    current_step=curr_idx,
+                    total_steps=total_steps,
+                    step_details=detail_msg,
+                    steps=steps,
+                    emit=emit,
                 )
-                run_cloud = bool(
-                    cloud_enabled
-                    and scheduler is not None
-                    and self._core_is_healthy()
-                    and (want_polish or want_report)
-                )
+
+            if will_offline or run_cloud:
+                _update_step(steps[0]["id"], "running", steps[0]["detail"], emit=False)
             elif not cloud_enabled:
                 self._set_finalization(
                     "disabled",
@@ -718,11 +788,29 @@ class MeetingEngine:
 
             offline_ok = False
             if will_offline:
+                _update_step(
+                    "redecode",
+                    "running",
+                    "Starting high-accuracy session audio re-decoding...",
+                    message="Re-transcribing meeting…",
+                )
+                def _offline_progress(detail: str, curr_win: int, total_win: int) -> None:
+                    _update_step(
+                        "redecode",
+                        "running",
+                        detail,
+                        message=f"Re-transcribing meeting (window {curr_win}/{total_win})…",
+                    )
                 try:
-                    offline_ok = bool(self._run_offline_final_pass())
+                    offline_ok = bool(self._run_offline_final_pass(progress_cb=_offline_progress))
                 except Exception:
                     logger.exception("Offline clean ASR pass failed")
                     offline_ok = False
+                _update_step(
+                    "redecode",
+                    "completed" if offline_ok else "failed",
+                    "High-accuracy re-decoding complete" if offline_ok else "Re-decoding failed; kept live transcript",
+                )
 
             if run_cloud and not complete and not offline_ok:
                 run_cloud = False
@@ -738,29 +826,65 @@ class MeetingEngine:
                 try:
                     self.allow_agent_writes()
                     if want_polish:
-                        self._set_finalization(
+                        _update_step(
+                            "polish",
                             "running",
-                            "Cleaning transcript…",
+                            "Starting AI transcript cleanup and formatting...",
+                            message="Cleaning transcript…",
                         )
+                        def _polish_progress(detail: str, curr_blk: int, total_blks: int) -> None:
+                            _update_step(
+                                "polish",
+                                "running",
+                                detail,
+                                message=f"Cleaning transcript (block {curr_blk}/{total_blks})…",
+                            )
                         polish = getattr(scheduler, "run_final_polish", None)
                         if callable(polish):
                             try:
+                                polish(timeout_s=POLISH_TIMEOUT_S, progress_cb=_polish_progress)
+                            except TypeError:
                                 polish(timeout_s=POLISH_TIMEOUT_S)
                             except Exception:
                                 logger.exception("Post-end transcript polish failed")
-                    if want_report:
-                        self._set_finalization(
-                            "running",
-                            "Preparing final report…",
+                        _update_step(
+                            "polish",
+                            "completed",
+                            "Transcript cleanup finished",
                         )
+                    if want_report:
+                        _update_step(
+                            "consolidation",
+                            "running",
+                            "Synthesizing executive summary, key points, decisions, and action items...",
+                            message="Preparing final report…",
+                        )
+                        def _consolidation_progress(detail: str) -> None:
+                            _update_step(
+                                "consolidation",
+                                "running",
+                                detail,
+                                message="Preparing final report…",
+                            )
                         # live_notes is preserved into consolidation so the
                         # final report pass can synthesize the meeting notes
                         # and reconcile them against the final transcript.
-                        outcome = scheduler.run_consolidation(
-                            timeout_s=CONSOLIDATION_TIMEOUT_S
-                        )
+                        try:
+                            outcome = scheduler.run_consolidation(
+                                timeout_s=CONSOLIDATION_TIMEOUT_S,
+                                progress_cb=_consolidation_progress,
+                            )
+                        except TypeError:
+                            outcome = scheduler.run_consolidation(
+                                timeout_s=CONSOLIDATION_TIMEOUT_S,
+                            )
                         status = getattr(outcome, "status", "failed")
                         message = getattr(outcome, "message", "") or ""
+                        _update_step(
+                            "consolidation",
+                            "completed" if status == "completed" else "failed",
+                            "Summary & action items ready" if status == "completed" else message,
+                        )
                     else:
                         status = "completed"
                         message = "Transcript cleanup is ready."
@@ -770,10 +894,85 @@ class MeetingEngine:
                     self._set_finalization(
                         "failed",
                         f"Final cloud insights failed: {exc}",
+                        stage="failed",
+                        current_step=total_steps,
+                        total_steps=total_steps,
+                        step_details=f"Final insights failed: {exc}",
+                        steps=steps,
                     )
                 else:
                     self.revoke_agent_writes()
-                    self._set_finalization(status, message)
+                    _update_step(
+                        "finalize",
+                        "running",
+                        "Saving final transcript and meeting state...",
+                        message="Finalizing meeting state…",
+                    )
+                    # Collect summary statistics
+                    summary_stats: Dict[str, Any] = {
+                        "segments": 0,
+                        "words": 0,
+                        "key_points": 0,
+                        "action_items": 0,
+                        "decisions": 0,
+                        "risks": 0,
+                        "questions": 0,
+                        "duration_s": 0.0,
+                    }
+                    try:
+                        summary_stats["duration_s"] = float(self.clock.elapsed_s())
+                    except Exception:
+                        pass
+                    if self.store is not None:
+                        try:
+                            cards = self.store.with_state(lambda s: dict(s.cards))
+                            questions = self.store.with_state(lambda s: list(s.questions))
+                            summary_stats["key_points"] = len(cards.get("key_points", []))
+                            summary_stats["action_items"] = len(cards.get("action_items", []))
+                            summary_stats["decisions"] = len(cards.get("decisions", []))
+                            summary_stats["risks"] = len(cards.get("risks", []))
+                            summary_stats["questions"] = len(questions)
+                        except Exception:
+                            pass
+                    try:
+                        transcript = self.get_transcript()
+                        summary_stats["segments"] = len(transcript)
+                        summary_stats["words"] = sum(len(str(seg.get("text") or "").split()) for seg in transcript)
+                    except Exception:
+                        pass
+
+                    _update_step(
+                        "finalize",
+                        "completed",
+                        f"Saved {summary_stats['segments']} segments ({summary_stats['words']} words)",
+                    )
+
+                    if status == "completed":
+                        if not want_report:
+                            final_msg = message
+                        else:
+                            parts = [f"{summary_stats['segments']} segments"]
+                            if summary_stats["key_points"]:
+                                parts.append(f"{summary_stats['key_points']} key points")
+                            if summary_stats["action_items"]:
+                                parts.append(f"{summary_stats['action_items']} action items")
+                            if summary_stats["decisions"]:
+                                parts.append(f"{summary_stats['decisions']} decisions")
+                            summary_line = ", ".join(parts)
+                            final_msg = f"Final insights ready — {summary_line}." if summary_line else "Final cloud insights are ready."
+                    else:
+                        final_msg = message
+
+                    self._set_finalization(
+                        status,
+                        final_msg,
+                        stage="complete" if status == "completed" else status,
+                        current_step=total_steps,
+                        total_steps=total_steps,
+                        step_details=final_msg,
+                        steps=steps,
+                        summary_stats=summary_stats,
+                    )
             else:
                 self.revoke_agent_writes()
                 if not cloud_enabled:
@@ -821,7 +1020,11 @@ class MeetingEngine:
             self._emit("error", {"code": "end_failed", "message": str(exc)})
             self._finish_failed_end(exc, terminal_persisted)
 
-    def _run_offline_final_pass(self) -> bool:
+    def _run_offline_final_pass(
+        self,
+        *,
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    ) -> bool:
         """Re-decode session audio, replace the draft transcript, refresh UI.
 
         Returns:
@@ -842,7 +1045,10 @@ class MeetingEngine:
             logger.exception("Could not load audio chunks for offline ASR")
             chunks = []
         try:
-            decoded = list(transcribe(spool_dir, chunks) or [])
+            try:
+                decoded = list(transcribe(spool_dir, chunks, progress_cb=progress_cb) or [])
+            except TypeError:
+                decoded = list(transcribe(spool_dir, chunks) or [])
         except Exception:
             logger.exception("Offline session transcription failed")
             return False

@@ -37,6 +37,30 @@ def test_one_char_typo_repaired_by_fuzzy_match():
     assert ops[0]["evidence"] == ["sg_025f2c0b2c30e3e8dcb3"]
 
 
+def test_reconstructed_id_with_several_wrong_chars_repaired():
+    # Observed failure mode (IN1009 consolidation): the model rebuilds an id
+    # from memory with 4-6 wrong characters mid-string — similarity ~0.74
+    # against the intended id while every other id sits below 0.4, so the
+    # margin guard still identifies it unambiguously.
+    ops, count = repair_evidence_ids(
+        [{"op": "set_topic", "evidence": ["sg_97bd44598ee4f6c7091f"]}],
+        KNOWN + ["sg_97bd44598ee4da9dc5f9"], _exists,
+    )
+    assert count == 1
+    assert ops[0]["evidence"] == ["sg_97bd44598ee4da9dc5f9"]
+
+
+def test_ambiguous_mid_string_corruption_left_alone():
+    # When two citable ids differ only in their tail, a corrupted id that
+    # lands between them must not be guessed onto either.
+    ops, count = repair_evidence_ids(
+        [{"op": "set_topic", "evidence": ["sg_5f2c921de38ac0af2321"]}],
+        KNOWN, _exists,
+    )
+    assert count == 0
+    assert ops[0]["evidence"] == ["sg_5f2c921de38ac0af2321"]
+
+
 def test_ambiguous_prefix_left_alone():
     # Both sg_5f2c... ids share the truncated prefix — must not guess.
     ops, count = repair_evidence_ids(

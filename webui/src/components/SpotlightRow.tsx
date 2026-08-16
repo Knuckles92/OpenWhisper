@@ -10,6 +10,10 @@ interface SpotlightRowProps {
   intelligenceOnline: boolean;
   onSendOp: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
+  /** Host-only: revert the event at `seq`. Omitted for guests. */
+  onUndo?: (seq: number) => void;
+  /** Newest event seq per item id, from the reducer. */
+  lastSeqByTarget?: Record<string, number>;
 }
 
 const SPOTLIGHT_LIMIT = 3;
@@ -39,10 +43,14 @@ function SpotlightCard({
   item,
   onSendOp,
   onEvidenceClick,
+  onUndo,
+  undoSeq,
 }: {
   item: CardItem;
   onSendOp: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
+  onUndo?: (seq: number) => void;
+  undoSeq?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -51,6 +59,7 @@ function SpotlightCard({
     if (!editing) setDraft(item.text);
   }, [item.text, editing]);
 
+  const canUndo = onUndo !== undefined && undoSeq !== undefined;
   const tag = CAPTURE_TAGS[item.card as CardKey] ?? item.card;
   const statusClass =
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';
@@ -75,6 +84,10 @@ function SpotlightCard({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={saveEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setEditing(false);
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveEdit();
+          }}
           autoFocus
         />
       ) : (
@@ -96,11 +109,8 @@ function SpotlightCard({
           {relativeTime(item.updated_at)}
         </span>
         <div className="spotlight-actions">
-          <button
-            type="button"
-            onClick={() => onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
-          >
-            {item.pinned ? 'Unpin' : 'Pin'}
+          <button type="button" onClick={() => setEditing(true)}>
+            Edit
           </button>
           {item.status !== 'confirmed' && (
             <button type="button" onClick={() => onSendOp(ops.confirmItem(item.id))}>
@@ -109,11 +119,27 @@ function SpotlightCard({
           )}
           <button
             type="button"
+            onClick={() => onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
+          >
+            {item.pinned ? 'Unpin' : 'Pin'}
+          </button>
+          <button
+            type="button"
             className="danger"
             onClick={() => onSendOp(ops.removeItem(item.id))}
           >
             Remove
           </button>
+          {canUndo && (
+            <button
+              type="button"
+              className="ghost"
+              title="Undo the last change to this item"
+              onClick={() => onUndo?.(undoSeq as number)}
+            >
+              Undo
+            </button>
+          )}
         </div>
       </div>
     </article>
@@ -135,6 +161,8 @@ export default function SpotlightRow({
   intelligenceOnline,
   onSendOp,
   onEvidenceClick,
+  onUndo,
+  lastSeqByTarget,
 }: SpotlightRowProps) {
   const picks = selectSpotlightItems(cards, SPOTLIGHT_LIMIT);
   const ghosts = SPOTLIGHT_LIMIT - picks.length;
@@ -156,6 +184,8 @@ export default function SpotlightRow({
           item={item}
           onSendOp={onSendOp}
           onEvidenceClick={onEvidenceClick}
+          onUndo={onUndo}
+          undoSeq={lastSeqByTarget?.[item.id]}
         />
       ))}
       {Array.from({ length: ghosts }).map((_, i) => (

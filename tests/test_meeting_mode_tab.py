@@ -293,6 +293,82 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.tab.finalization_retry_button.isHidden())
 
+    def test_multi_step_progress_rendering(self):
+        """Multi-step finalization renders step badge, determinate progress, details, and step rows."""
+        steps = [
+            {"id": "redecode", "name": "Audio Re-transcription", "status": "completed", "detail": "Re-decoded 8 windows"},
+            {"id": "polish", "name": "Transcript Cleanup", "status": "running", "detail": "Polishing block 1 of 2"},
+            {"id": "consolidation", "name": "Summary & Action Items", "status": "pending", "detail": "Queued"},
+            {"id": "finalize", "name": "State Finalization", "status": "pending", "detail": "Queued"},
+        ]
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "running",
+                "message": "Cleaning transcript…",
+                "stage": "polish",
+                "current_step": 2,
+                "total_steps": 4,
+                "step_details": "Polishing block 1 of 2 (40 segments)...",
+                "steps": steps,
+            },
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.finalization_card.isHidden())
+        self.assertFalse(self.tab.finalization_progress.isHidden())
+        self.assertEqual(self.tab.finalization_progress.minimum(), 0)
+        self.assertEqual(self.tab.finalization_progress.maximum(), 100)
+        self.assertGreater(self.tab.finalization_progress.value(), 0)
+        self.assertEqual(self.tab.finalization_step_badge.text(), "Step 2 of 4")
+        self.assertFalse(self.tab.finalization_step_badge.isHidden())
+        self.assertFalse(self.tab.finalization_detail.isHidden())
+        self.assertEqual(self.tab.finalization_detail.text(), "Polishing block 1 of 2 (40 segments)...")
+        self.assertFalse(self.tab.finalization_steps_widget.isHidden())
+        self.assertEqual(self.tab.finalization_steps_layout.count(), 4)
+
+    def test_completed_summary_stats_rendering(self):
+        """Completed finalization displays step badge, summary stats grid, and completed checklist."""
+        steps = [
+            {"id": "redecode", "name": "Audio Re-transcription", "status": "completed", "detail": "Done"},
+            {"id": "consolidation", "name": "Summary & Action Items", "status": "completed", "detail": "Done"},
+            {"id": "finalize", "name": "State Finalization", "status": "completed", "detail": "Done"},
+        ]
+        stats = {
+            "duration_s": 150.0,
+            "segments": 32,
+            "words": 520,
+            "key_points": 4,
+            "action_items": 2,
+            "decisions": 1,
+        }
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "completed",
+                "message": "Final insights ready — 32 segments, 4 key points, 2 action items, 1 decisions.",
+                "stage": "complete",
+                "current_step": 3,
+                "total_steps": 3,
+                "step_details": "All finalization passes completed successfully.",
+                "steps": steps,
+                "summary_stats": stats,
+            },
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.finalization_card.isHidden())
+        self.assertTrue(self.tab.finalization_progress.isHidden())
+        self.assertEqual(self.tab.finalization_step_badge.text(), "Complete")
+        self.assertFalse(self.tab.finalization_stats_widget.isHidden())
+        self.assertGreaterEqual(self.tab.finalization_stats_layout.count(), 5)
+        self.assertFalse(self.tab.finalization_steps_widget.isHidden())
+        self.assertEqual(self.tab.finalization_steps_layout.count(), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

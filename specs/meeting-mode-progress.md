@@ -44,17 +44,36 @@ Findings driving program fixes (each verified by re-run):
   rebuild hallucinated ("Professor Dylan Blanc", wrong paper count). Fixed:
   `_remap_state_evidence` now remaps proposed items too, and the engine strip
   keeps proposed items with surviving anchors (`keep_evidenced=True`).
-  IN1009 run 2 flipped back to clean with notes/timeline 5/5 on both sides.
+  Run 2 (clean 1 / tie 2 / legacy 0) with 4-5 scores across the board.
 - **Consolidation ops mass-rejected as `unknown_evidence` (stochastic).** The
   flash model sometimes reconstructs 23-hex-char segment ids instead of
   copying them; one run lost 28/29 consolidation ops. Fixed: shared
   `meeting/agent/evidence.py` repairs truncated/typo'd ids to a unique citable
-  match (unique prefix/containment or fuzzy best with clear margin) in both
-  cores before exact-match validation; invented ids still reject honestly.
+  match (unique prefix/containment or fuzzy best — floor 0.60, margin 0.10;
+  observed reconstructed ids land at ~0.74 vs <0.4 for everything else) in
+  both cores before exact-match validation; invented ids still reject
+  honestly. Cached-state consolidation iterations after the fix: rejections
+  fell from 17-20 (mostly duplicate_item) to 6 with zero unrepairable ids.
+- **Cross-card duplicate rejection was paraphrase-level and blocked a third
+  of consolidation content** (a decision rejected because a key point said
+  something similar). Dedup is now tiered: within-card keeps the loose
+  thresholds, cross-card requires near-identical text (0.75/0.90).
 - Note blocks could lose `heading`/`start_s` when the note taker re-sent a
   partial `data` dict — the op layer now preserves them for `live_notes`.
 - Malformed tool-call JSON now gets instructive feedback (re-emit valid JSON,
-  split long batches) instead of a bare parser error.
+  split long batches) instead of a bare parser error; the system prompt asks
+  for ≤~10-op batches after repeated giant-call parse failures.
+- **Consolidation invented decisions on talk-like meetings.** Run 3 lost
+  IN1005 solely on `decisions_actions_precision` (2 vs 5): the pass inferred
+  "agreement" from a discussed evaluation plan. The instruction now demands
+  explicit spoken agreement language for a decision, with discussed options
+  routed to key_points. Run 4 (IN1005 only) flipped to clean, whose record
+  then carried exactly the one decision the reference supports.
+- Run 3 (evidence repair + tiered dedup active): clean 2 / legacy 1 / tie 0 —
+  IN1007 scored 5/5 on every dimension; 169 mistyped evidence ids were
+  repaired in-run (each a guaranteed `unknown_evidence` rejection before);
+  clean's post-redecode strip removed 7-9 items versus 85 in run 1, so the
+  remap is preserving the grounded live dashboard across the re-decode.
 
 ### AI note taker (2026-08-15)
 

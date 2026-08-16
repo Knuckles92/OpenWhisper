@@ -154,6 +154,7 @@ def transcribe_session_audio(
     target_sec: float = OFFLINE_TARGET_SEC,
     max_sec: float = OFFLINE_MAX_SEC,
     overlap_s: float = OFFLINE_OVERLAP_S,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[TranscriptSegment]:
     """Silence-split ``frames`` and decode sequentially with prior-text context.
 
@@ -169,6 +170,7 @@ def transcribe_session_audio(
         target_sec: Quiet-cut target duration.
         max_sec: Hard maximum window.
         overlap_s: Cross-window overlap in seconds.
+        progress_cb: Optional callback ``cb(detail_msg, current_win, total_win)``.
 
     Returns:
         Meeting-clock timestamped segments covering the session.
@@ -189,13 +191,28 @@ def transcribe_session_audio(
     prompt_words: List[str] = []
     collected: List[TranscriptSegment] = []
     keep_from_s = float(origin_s)
-    for start, end in ranges:
+    total_windows = len(ranges)
+    channel_display = "Microphone" if channel == "mic" else "System Audio" if channel == "loopback" else channel.capitalize()
+
+    for idx, (start, end) in enumerate(ranges, 1):
         window = frames[start:end]
         audio = prepare_for_whisper(window, sample_rate)
         if audio.size == 0:
             continue
         window_origin = float(origin_s) + start / float(sample_rate)
         prompt = " ".join(prompt_words[-DRAFT_PROMPT_WORDS:]).strip() or None
+
+        if progress_cb is not None:
+            win_dur_s = (end - start) / float(sample_rate)
+            detail = (
+                f"{channel_display}: decoding window {idx}/{total_windows} "
+                f"({window_origin:.1f}s - {window_origin + win_dur_s:.1f}s)"
+            )
+            try:
+                progress_cb(detail, idx, total_windows)
+            except Exception:
+                logger.exception("Offline ASR progress callback failed")
+
         try:
             whisper_segments, _info = model.transcribe(
                 audio,
@@ -289,6 +306,7 @@ def transcribe_meeting_sessions(
     language: Optional[str] = None,
     channels: Iterable[str] = CHANNELS,
     transcribe_fn: Optional[TranscribeFn] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[TranscriptSegment]:
     """Run the offline pass over every capture channel and merge by time.
 
@@ -301,6 +319,7 @@ def transcribe_meeting_sessions(
         channels: Channels to decode.
         transcribe_fn: Injectable decoder (tests); defaults to
             :func:`transcribe_session_audio`.
+        progress_cb: Optional window progress callback.
 
     Returns:
         All channels' segments sorted by ``start_s``.
@@ -314,15 +333,28 @@ def transcribe_meeting_sessions(
         if frames is None or frames.size == 0:
             logger.info("No session audio for offline ASR on channel %s", channel)
             continue
-        decoded = decoder(
-            model,
-            frames,
-            rate,
-            meeting_id=meeting_id,
-            channel=channel,
-            origin_s=origin,
-            language=language,
-        )
+        try:
+            decoded = decoder(
+                model,
+                frames,
+                rate,
+                meeting_id=meeting_id,
+                channel=channel,
+                origin_s=origin,
+                language=language,
+                progress_cb=progress_cb,
+            )
+        except TypeError:
+            # Fallback if custom transcribe_fn in tests doesn't accept progress_cb
+            decoded = decoder(
+                model,
+                frames,
+                rate,
+                meeting_id=meeting_id,
+                channel=channel,
+                origin_s=origin,
+                language=language,
+            )
         merged.extend(decoded)
         logger.info(
             "Offline ASR %s: %d segments from %.1fs of audio",

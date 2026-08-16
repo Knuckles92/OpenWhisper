@@ -648,7 +648,12 @@ class CheckpointScheduler:
             except Exception:
                 logger.exception("Engine revoke_agent_writes raised")
 
-    def run_consolidation(self, timeout_s: float = 180.0) -> ConsolidationOutcome:
+    def run_consolidation(
+        self,
+        timeout_s: float = 180.0,
+        *,
+        progress_cb: Optional[Callable[[str], None]] = None,
+    ) -> ConsolidationOutcome:
         """Run the blocking end-of-meeting consolidation pass.
 
         Stops periodic firing, then runs one ``consolidate`` call with the
@@ -664,6 +669,7 @@ class CheckpointScheduler:
 
         Args:
             timeout_s: Maximum seconds to wait for the consolidation pass.
+            progress_cb: Optional callback for status messages.
 
         Returns:
             Structured terminal outcome for UI/finalization persistence.
@@ -730,6 +736,14 @@ class CheckpointScheduler:
                 status="failed",
                 message="Meeting state was unavailable for final insights.",
             )
+
+        if progress_cb is not None:
+            try:
+                progress_cb(
+                    f"Synthesizing executive summary, key decisions, and action items over {len(segments)} segments..."
+                )
+            except Exception:
+                logger.exception("Consolidation progress callback failed")
 
         logger.info(
             "Running consolidation %s over %d segments (timeout %.0fs)",
@@ -806,7 +820,12 @@ class CheckpointScheduler:
             logger.exception("State repair after consolidation failed")
         return outcome
 
-    def run_final_polish(self, timeout_s: float = 60.0) -> ConsolidationOutcome:
+    def run_final_polish(
+        self,
+        timeout_s: float = 60.0,
+        *,
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    ) -> ConsolidationOutcome:
         """Run a blocking transcript-text polish over the final segments.
 
         Stops periodic firing first. Does not revoke agent writes so
@@ -814,6 +833,7 @@ class CheckpointScheduler:
 
         Args:
             timeout_s: Maximum seconds to wait for the polish pass.
+            progress_cb: Optional callback ``cb(detail_msg, current_block, total_blocks)``.
 
         Returns:
             Structured outcome. ``completed`` means the agent returned ok
@@ -874,7 +894,18 @@ class CheckpointScheduler:
 
         last_error = ""
         applied_any = False
-        for block in blocks:
+        total_blocks = len(blocks)
+        for idx, block in enumerate(blocks, 1):
+            if progress_cb is not None:
+                try:
+                    progress_cb(
+                        f"Cleaning transcript formatting and grammar (block {idx}/{total_blocks}, {len(block)} segments)...",
+                        idx,
+                        total_blocks,
+                    )
+                except Exception:
+                    logger.exception("Final polish progress callback failed")
+
             payload = self._build_payload(
                 block, is_consolidation=False, is_polish=True,
             )

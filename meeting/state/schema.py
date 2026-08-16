@@ -205,9 +205,24 @@ class FinalizationState:
     """
     status: str = "pending"
     message: str = ""
+    stage: str = ""
+    current_step: int = 0
+    total_steps: int = 0
+    step_details: str = ""
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    summary_stats: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"status": self.status, "message": self.message}
+        return {
+            "status": self.status,
+            "message": self.message,
+            "stage": self.stage,
+            "current_step": self.current_step,
+            "total_steps": self.total_steps,
+            "step_details": self.step_details,
+            "steps": [dict(s) for s in self.steps],
+            "summary_stats": dict(self.summary_stats),
+        }
 
     @classmethod
     def default_for_cloud(cls, cloud_enabled: bool) -> "FinalizationState":
@@ -279,7 +294,16 @@ class FinalizationState:
         """
         if isinstance(value, cls):
             if value.status in FINALIZATION_STATUSES:
-                return cls(status=value.status, message=str(value.message or ""))
+                return cls(
+                    status=value.status,
+                    message=str(value.message or ""),
+                    stage=str(value.stage or ""),
+                    current_step=int(value.current_step or 0),
+                    total_steps=int(value.total_steps or 0),
+                    step_details=str(value.step_details or ""),
+                    steps=list(value.steps or []),
+                    summary_stats=dict(value.summary_stats or {}),
+                )
             return cls.infer_legacy(
                 cloud_enabled=cloud_enabled, meeting_status=meeting_status,
             )
@@ -299,7 +323,20 @@ class FinalizationState:
         message = value.get("message", "")
         if message is None:
             message = ""
-        return cls(status=str(status), message=str(message))
+        steps_val = value.get("steps")
+        steps_list = [dict(s) for s in steps_val] if isinstance(steps_val, (list, tuple)) else []
+        stats_val = value.get("summary_stats")
+        stats_dict = dict(stats_val) if isinstance(stats_val, dict) else {}
+        return cls(
+            status=str(status),
+            message=str(message),
+            stage=str(value.get("stage") or ""),
+            current_step=int(value.get("current_step") or 0),
+            total_steps=int(value.get("total_steps") or 0),
+            step_details=str(value.get("step_details") or ""),
+            steps=steps_list,
+            summary_stats=stats_dict,
+        )
 
     @classmethod
     def normalize_historical(
@@ -338,6 +375,7 @@ class FinalizationState:
             return cls(
                 status="disabled",
                 message="Cloud intelligence is off for this meeting.",
+                summary_stats=fin.summary_stats,
             )
         if fin.status == "running":
             return cls(
@@ -346,6 +384,7 @@ class FinalizationState:
                     "Final cloud insights were interrupted before they "
                     "finished."
                 ),
+                summary_stats=fin.summary_stats,
             )
         return cls(
             status="unavailable",

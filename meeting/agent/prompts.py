@@ -9,7 +9,8 @@ with validation.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional, Set
 
 from meeting.agent.question_engine import build_question_guidance
 from meeting.state.patches import (
@@ -25,6 +26,7 @@ __all__ = [
     "build_checkpoint_user_prompt",
     "build_note_taker_system_prompt",
     "build_notes_user_prompt",
+    "select_spotlight_items",
     "render_state_compact",
     "render_notes_page",
     "format_segment_line",
@@ -51,6 +53,9 @@ OPERATIONS
   revision as shown in the state.
 - remove_item(id, base_revision, evidence): mark one of your items removed (wrong,
   duplicated, or superseded).
+Batch ops into several patch_state calls of at most ~10 operations each rather
+than one giant call — very large tool calls are more likely to arrive
+malformed and be dropped.
 - set_topic(text, evidence): update the current main topic when discussion moves on.
   Prefer the speakers' own framing (the opening puzzle, decision under debate, or
   named theme) over a vague generic label.
@@ -149,11 +154,14 @@ adapt in your next round or checkpoint instead of repeating the same op.
 
 STYLE
 Be concise and concrete; write in the language of the meeting. Stay faithful to
-what was said — never fabricate. Prefer updating your own existing items over
-adding near-duplicates. When the dashboard already covers the new speech and
-nothing meaningful changed, emit no operations. An empty topic, empty rolling
-summary, or empty key_points card with new speech content is NEVER "nothing
-changed" — seed them immediately. Use American spelling.
+what was said — never fabricate. The dashboard prominently features the Top Insights
+shown in the state snapshot. You MUST NOT repeat, paraphrase, or add duplicate
+claims that overlap with existing top insights or items on other cards. Before
+adding any item, check existing items and call update_item (with base_revision)
+to refine or extend them instead of creating redundant entries. When the dashboard
+already covers the new speech and nothing meaningful changed, emit no operations.
+An empty topic, empty rolling summary, or empty key_points card with new speech
+content is NEVER "nothing changed" — seed them immediately. Use American spelling.
 """
 
 _CHECKPOINT_INSTRUCTIONS = """\
@@ -167,8 +175,9 @@ watching this live — do not wait for the meeting to end.
 3. If key_points is empty and the new speech has a concrete claim, example, or
    plan, you MUST add at least one key_point. Also add new distinct key points,
    decisions, action items, risks, and timeline beats (timeline items need
-   data.start_s) when warranted. Do not duplicate existing items — update or
-   remove your own items (with the correct base_revision) instead. Skip
+   data.start_s) when warranted. Review the Top Insights and existing cards: do
+   NOT duplicate or rephrase existing claims across cards — update or remove
+   your own items (with the correct base_revision) instead. Skip
    decisions/action_items unless the transcript shows a real decision or
    commitment.
 4. Cite evidence segment ids on every operation.
@@ -198,13 +207,14 @@ and the dashboard above contains the accumulated meeting notes (live_notes and
 any user_notes) taken throughout the discussion.
 Finalize the dashboard as the durable record, actively taking into account the
 meeting notes alongside the complete final transcript:
-1. Review every card. Items that survived a transcript re-decode still carry
-   live evidence anchors and are grounded in the actual discussion — treat
-   them as your accumulated knowledge of the meeting, reconcile and merge
-   them against the final transcript, and never rebuild a card from scratch
-   while evidenced items cover it. Merge duplicates and remove stale or
-   superseded items you authored (respect base_revision; leave human-touched
-   items alone).
+1. Review every card and the featured Top Insights. Items that survived a
+   transcript re-decode still carry live evidence anchors and are grounded in the
+   actual discussion — treat them as your accumulated knowledge of the meeting,
+   reconcile and merge them against the final transcript, and never rebuild a
+   card from scratch while evidenced items cover it. Merge duplicates across
+   all cards and remove stale or superseded items you authored (respect
+   base_revision; leave human-touched items alone). Ensure no duplicate or
+   redundant insights remain.
 2. Synthesize the meeting notes and complete transcript into the final topic and
    rewrite the rolling summary as a complete summary of the whole meeting.
    Cover the opening framing/puzzle, major discussion points and examples,
@@ -214,10 +224,15 @@ meeting notes alongside the complete final transcript:
 3. Make decisions and action items complete and precisely worded, cross-referencing
    commitments captured in the meeting notes and transcript; give every action item
    an owner (data.owner_participant_id) when the transcript or notes support one.
-   If the audio is purely a talk/monologue/interview/debate with no commitment
-   language, leave decisions and action_items empty — do not invent them. But if
-   the discussion contains real agreements or follow-ups — parking a topic offline,
-   skipping a feature, checking with a named person — put those on
+   A decision requires explicit agreement language someone actually spoke
+   ("we'll go with X", "let's skip Y", "agreed", "sounds good", "I'll send it") —
+   a discussed option, a stated preference, an evaluation plan, or something
+   one speaker merely describes doing is NOT a decision; put those in
+   key_points instead. When the transcript shows no commitment language, leave
+   decisions and action_items empty — an empty card is the correct record for
+   a talk/monologue/discussion that decided nothing. But if the discussion
+   contains real agreements or follow-ups — parking a topic offline, skipping
+   a feature, checking with a named person — put those on
    decisions/action_items, not only key_points.
 4. Ensure key_points include: (a) the opening framing question or puzzle when
    the transcript begins with one, (b) each major named example, case study, or
@@ -407,6 +422,90 @@ def _render_item(item: Dict[str, Any], card: Optional[str] = None) -> str:
     return f"- [{item.get('id')} {' '.join(flags)}]{extra_txt} {text}"
 
 
+_ITEM_TEXT_NORM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def select_spotlight_items(
+    cards: Dict[str, Any], limit: int = 3
+) -> List[Dict[str, Any]]:
+    """Select the top items featured in the prominent spotlight row.
+
+    Matches frontend spotlight ranking:
+    1. Pinned items first
+    2. Human-touched (edited/confirmed) items next
+    3. Most recently updated items
+    Prefers distinct categories and deduplicates by text similarity so
+    no duplicate or near-duplicate claims appear in the spotlight row.
+    """
+    ranked: List[Dict[str, Any]] = []
+    for key, items in (cards or {}).items():
+        if key in ("live_notes", "user_notes"):
+            continue
+        for item in items or []:
+            if not isinstance(item, dict) or item.get("status") == "removed":
+                continue
+            ranked.append({**item, "card": key})
+
+    def _sort_key(it: Dict[str, Any]) -> tuple:
+        pinned = 1 if it.get("pinned") else 0
+        touched = 1 if it.get("status") in ("edited", "confirmed") else 0
+        updated = str(it.get("updated_at") or it.get("created_at") or "")
+        return (pinned, touched, updated)
+
+    ranked.sort(key=_sort_key, reverse=True)
+
+    picks: List[Dict[str, Any]] = []
+    used_categories: Set[str] = set()
+    used_ids: Set[str] = set()
+
+    def _is_duplicate_text(text: str) -> bool:
+        norm = _ITEM_TEXT_NORM_RE.sub(" ", (text or "").lower()).strip()
+        if not norm:
+            return False
+        for p in picks:
+            p_norm = _ITEM_TEXT_NORM_RE.sub(" ", (p.get("text") or "").lower()).strip()
+            if not p_norm:
+                continue
+            if norm == p_norm:
+                return True
+            ta, tb = set(norm.split()), set(p_norm.split())
+            if ta and tb:
+                intersection = len(ta & tb)
+                if intersection / len(ta | tb) >= 0.60:
+                    return True
+                if min(len(ta), len(tb)) >= 4 and intersection / min(len(ta), len(tb)) >= 0.75:
+                    return True
+        return False
+
+    # Pass 1: One per category
+    for it in ranked:
+        if len(picks) >= limit:
+            break
+        item_id = str(it.get("id") or "")
+        cat = str(it.get("card") or "")
+        if cat in used_categories or item_id in used_ids:
+            continue
+        if _is_duplicate_text(it.get("text") or ""):
+            continue
+        picks.append(it)
+        used_categories.add(cat)
+        used_ids.add(item_id)
+
+    # Pass 2: Fill leftovers
+    for it in ranked:
+        if len(picks) >= limit:
+            break
+        item_id = str(it.get("id") or "")
+        if item_id in used_ids:
+            continue
+        if _is_duplicate_text(it.get("text") or ""):
+            continue
+        picks.append(it)
+        used_ids.add(item_id)
+
+    return picks
+
+
 def render_state_compact(state: Dict[str, Any]) -> str:
     """Render a state snapshot compactly for the checkpoint user prompt.
 
@@ -426,6 +525,19 @@ def render_state_compact(state: Dict[str, Any]) -> str:
     summary = state.get("rolling_summary") or "(not set)"
     lines.append(f"Rolling summary: {summary}")
 
+    cards = state.get("cards") or {}
+    spotlight = select_spotlight_items(cards, limit=3)
+    lines.append("")
+    lines.append(f"Top Insights (Dashboard Spotlight - {len(spotlight)} active):")
+    if spotlight:
+        for it in spotlight:
+            card_name = it.get("card", "")
+            lines.append(
+                f"- [{it.get('id')} {it.get('status', 'proposed')}] [{card_name}] {it.get('text', '')}"
+            )
+    else:
+        lines.append("- (none yet)")
+
     lines.append("")
     lines.append("Participants:")
     participants = state.get("participants") or {}
@@ -443,7 +555,6 @@ def render_state_compact(state: Dict[str, Any]) -> str:
     else:
         lines.append("- (none yet)")
 
-    cards = state.get("cards") or {}
     for card in CARD_KEYS:
         items = [
             item for item in (cards.get(card) or [])

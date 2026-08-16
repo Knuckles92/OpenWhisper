@@ -19,9 +19,12 @@ import difflib
 from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 #: Minimum similarity for a fuzzy repair, and the margin the best candidate
-#: must hold over the runner-up (hex ids are high-entropy, so the intended
-#: match sits far above everything else even with a typo or two).
-_FUZZY_MIN_RATIO = 0.80
+#: must hold over the runner-up. Segment ids are high-entropy hex: a random
+#: pair of ids scores far below these floors, while a model-reconstructed id
+#: still lands near its intended target even with 5-6 wrong characters
+#: (observed ratios ~0.74-0.78). The margin requirement is the real guard
+#: against guessing when two citable ids are legitimately similar.
+_FUZZY_MIN_RATIO = 0.60
 _FUZZY_MARGIN = 0.10
 
 

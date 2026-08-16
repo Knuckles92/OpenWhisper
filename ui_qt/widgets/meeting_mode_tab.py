@@ -10,7 +10,7 @@ absent keys leave the current state untouched).
 """
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -199,18 +199,27 @@ class MeetingModeTab(QWidget):
         self.finalization_card.setMinimumHeight(0)
         self.finalization_card.setProperty("finalizationTone", "neutral")
 
+        # Header row with title and step badge
+        fin_header_layout = QHBoxLayout()
+        fin_header_layout.setContentsMargins(0, 0, 0, 0)
+        fin_header_layout.setSpacing(8)
+
         self.finalization_title = QLabel("Final insights")
         self.finalization_title.setObjectName("meetingFinalizationTitle")
         self.finalization_title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        self.finalization_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.finalization_card.layout.addWidget(self.finalization_title)
+        fin_header_layout.addWidget(self.finalization_title)
 
-        self.finalization_message = QLabel("")
-        self.finalization_message.setObjectName("meetingFinalizationMessage")
-        self.finalization_message.setWordWrap(True)
-        self.finalization_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.finalization_card.layout.addWidget(self.finalization_message)
+        fin_header_layout.addStretch()
 
+        self.finalization_step_badge = QLabel("")
+        self.finalization_step_badge.setObjectName("meetingFinalizationStepBadge")
+        self.finalization_step_badge.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.finalization_step_badge.setProperty("badgeTone", "neutral")
+        self.finalization_step_badge.hide()
+        fin_header_layout.addWidget(self.finalization_step_badge)
+        self.finalization_card.layout.addLayout(fin_header_layout)
+
+        # Progress bar
         self.finalization_progress = QProgressBar()
         self.finalization_progress.setObjectName("meetingFinalizationProgress")
         self.finalization_progress.setTextVisible(False)
@@ -218,6 +227,43 @@ class MeetingModeTab(QWidget):
         self.finalization_progress.hide()
         self.finalization_card.layout.addWidget(self.finalization_progress)
 
+        # Active status / details highlight container
+        self.finalization_active_box = QWidget()
+        self.finalization_active_box.setObjectName("meetingFinalizationActiveBox")
+        active_box_layout = QVBoxLayout(self.finalization_active_box)
+        active_box_layout.setContentsMargins(10, 8, 10, 8)
+        active_box_layout.setSpacing(4)
+
+        self.finalization_message = QLabel("")
+        self.finalization_message.setObjectName("meetingFinalizationMessage")
+        self.finalization_message.setWordWrap(True)
+        active_box_layout.addWidget(self.finalization_message)
+
+        self.finalization_detail = QLabel("")
+        self.finalization_detail.setObjectName("meetingFinalizationDetail")
+        self.finalization_detail.setWordWrap(True)
+        active_box_layout.addWidget(self.finalization_detail)
+        self.finalization_card.layout.addWidget(self.finalization_active_box)
+
+        # Multi-step pipeline / checklist container
+        self.finalization_steps_widget = QWidget()
+        self.finalization_steps_widget.setObjectName("meetingFinalizationStepsWidget")
+        self.finalization_steps_layout = QVBoxLayout(self.finalization_steps_widget)
+        self.finalization_steps_layout.setContentsMargins(0, 4, 0, 4)
+        self.finalization_steps_layout.setSpacing(6)
+        self.finalization_steps_widget.hide()
+        self.finalization_card.layout.addWidget(self.finalization_steps_widget)
+
+        # Summary statistics container (shown on complete)
+        self.finalization_stats_widget = QWidget()
+        self.finalization_stats_widget.setObjectName("meetingFinalizationStatsWidget")
+        self.finalization_stats_layout = QHBoxLayout(self.finalization_stats_widget)
+        self.finalization_stats_layout.setContentsMargins(0, 6, 0, 6)
+        self.finalization_stats_layout.setSpacing(8)
+        self.finalization_stats_widget.hide()
+        self.finalization_card.layout.addWidget(self.finalization_stats_widget)
+
+        # Buttons row
         fin_buttons_row = QHBoxLayout()
         fin_buttons_row.setSpacing(10)
 
@@ -356,7 +402,8 @@ class MeetingModeTab(QWidget):
 
         Args:
             value: ``None`` clears the card; a mapping keeps ``status`` /
-                ``message`` for the persistent result view.
+                ``message`` and multi-step progression fields for the persistent
+                result view.
         """
         if value is None:
             self._finalization = None
@@ -370,6 +417,12 @@ class MeetingModeTab(QWidget):
         self._finalization = {
             "status": status,
             "message": str(value.get("message") or ""),
+            "stage": str(value.get("stage") or ""),
+            "current_step": int(value.get("current_step") or 0),
+            "total_steps": int(value.get("total_steps") or 0),
+            "step_details": str(value.get("step_details") or ""),
+            "steps": list(value.get("steps") or []),
+            "summary_stats": dict(value.get("summary_stats") or {}),
         }
 
     def _set_active(self, active: bool) -> None:
@@ -440,20 +493,26 @@ class MeetingModeTab(QWidget):
         )
         self.finalization_dashboard_button.setVisible(dashboard_enabled)
 
-    def _render_finalization(self, finalization: Dict[str, str]) -> None:
-        """Update finalization card copy, tone, and progress visibility.
+    def _render_finalization(self, finalization: Dict[str, Any]) -> None:
+        """Update finalization card copy, tone, steps, and stats visibility.
 
         Args:
-            finalization: Mapping with ``status`` and ``message``.
+            finalization: Mapping with status, message, steps, and stats.
         """
-        status = finalization.get("status") or ""
-        message = (finalization.get("message") or "").strip()
+        status = str(finalization.get("status") or "")
+        message = str(finalization.get("message") or "").strip()
+        current_step = int(finalization.get("current_step") or 0)
+        total_steps = int(finalization.get("total_steps") or 0)
+        step_details = str(finalization.get("step_details") or "").strip()
+        steps = list(finalization.get("steps") or [])
+        summary_stats = dict(finalization.get("summary_stats") or {})
+
         titles = {
-            "running": "Preparing final insights",
-            "completed": "Final insights ready",
-            "disabled": "Cloud insights off",
-            "unavailable": "Final insights unavailable",
-            "failed": "Final insights incomplete",
+            "running": "Finalizing Meeting",
+            "completed": "Final Insights Ready",
+            "disabled": "Cloud Insights Off",
+            "unavailable": "Final Insights Unavailable",
+            "failed": "Final Insights Incomplete",
         }
         defaults = {
             "running": "Preparing final cloud insights…",
@@ -469,30 +528,243 @@ class MeetingModeTab(QWidget):
             tone = "neutral"
             self.finalization_progress.show()
             self.finalization_retry_button.hide()
-            # Indeterminate only — no fabricated percentage.
-            self.finalization_progress.setRange(0, 0)
+
+            if total_steps > 0:
+                self.finalization_step_badge.setText(f"Step {current_step} of {total_steps}")
+                self.finalization_step_badge.setProperty("badgeTone", "info")
+                self.finalization_step_badge.show()
+                # Progress calculation
+                pct = int(max(5, min(95, ((current_step - 0.5) / total_steps) * 100)))
+                self.finalization_progress.setRange(0, 100)
+                self.finalization_progress.setValue(pct)
+            else:
+                self.finalization_step_badge.setText("In Progress")
+                self.finalization_step_badge.setProperty("badgeTone", "info")
+                self.finalization_step_badge.show()
+                # Indeterminate only when steps not configured
+                self.finalization_progress.setRange(0, 0)
+
+            if step_details and step_details != message:
+                self.finalization_detail.setText(step_details)
+                self.finalization_detail.show()
+            else:
+                self.finalization_detail.hide()
+
+            if steps:
+                self._populate_steps(steps, current_step)
+                self.finalization_steps_widget.show()
+            else:
+                self.finalization_steps_widget.hide()
+
+            self.finalization_stats_widget.hide()
+
         else:
             self.finalization_progress.hide()
             self.finalization_progress.setRange(0, 1)
             self.finalization_progress.setValue(0)
+
             if status == "completed":
                 tone = "success"
+                self.finalization_step_badge.setText("Complete")
+                self.finalization_step_badge.setProperty("badgeTone", "success")
+                self.finalization_step_badge.show()
                 self.finalization_retry_button.hide()
+
+                if step_details and step_details != message:
+                    self.finalization_detail.setText(step_details)
+                    self.finalization_detail.show()
+                else:
+                    self.finalization_detail.hide()
+
+                if steps:
+                    self._populate_steps(steps, current_step=len(steps))
+                    self.finalization_steps_widget.show()
+                else:
+                    self.finalization_steps_widget.hide()
+
+                if summary_stats:
+                    self._populate_stats(summary_stats)
+                    self.finalization_stats_widget.show()
+                else:
+                    self.finalization_stats_widget.hide()
+
             elif status in {"unavailable", "failed"}:
                 tone = "warning"
+                badge_text = "Failed" if status == "failed" else "Unavailable"
+                self.finalization_step_badge.setText(badge_text)
+                self.finalization_step_badge.setProperty("badgeTone", "warning")
+                self.finalization_step_badge.show()
                 self.finalization_retry_button.show()
                 self.finalization_retry_button.setEnabled(True)
+
+                if step_details and step_details != message:
+                    self.finalization_detail.setText(step_details)
+                    self.finalization_detail.show()
+                else:
+                    self.finalization_detail.hide()
+
+                if steps:
+                    self._populate_steps(steps, current_step)
+                    self.finalization_steps_widget.show()
+                else:
+                    self.finalization_steps_widget.hide()
+
+                self.finalization_stats_widget.hide()
+
             else:
                 tone = "info"
+                self.finalization_step_badge.setText("Off")
+                self.finalization_step_badge.setProperty("badgeTone", "neutral")
+                self.finalization_step_badge.show()
+                self.finalization_detail.hide()
+                self.finalization_steps_widget.hide()
+                self.finalization_stats_widget.hide()
                 self.finalization_retry_button.hide()
 
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.
-        style = self.finalization_card.style()
-        if style is not None:
-            style.unpolish(self.finalization_card)
-            style.polish(self.finalization_card)
+        for widget in (self.finalization_card, self.finalization_step_badge):
+            style = widget.style()
+            if style is not None:
+                style.unpolish(widget)
+                style.polish(widget)
         self.finalization_card.update()
+
+    def _populate_steps(self, steps: List[Dict[str, Any]], current_step: int) -> None:
+        """Render the step pipeline rows.
+
+        Args:
+            steps: List of step dicts with id, name, status, detail.
+            current_step: 1-based index of current step.
+        """
+        while self.finalization_steps_layout.count():
+            item = self.finalization_steps_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        for idx, s in enumerate(steps, 1):
+            row = QWidget()
+            row.setObjectName("meetingFinalizationStepRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(8)
+
+            step_status = s.get("status", "pending")
+            if step_status == "completed":
+                icon_text = "✓"
+                icon_color = "#30d158"
+            elif step_status == "running":
+                icon_text = "●"
+                icon_color = "#0a84ff"
+            elif step_status == "failed":
+                icon_text = "✗"
+                icon_color = "#ff453a"
+            elif step_status == "skipped":
+                icon_text = "–"
+                icon_color = "#636366"
+            else:
+                icon_text = "○"
+                icon_color = "#636366"
+
+            icon_label = QLabel(icon_text)
+            icon_label.setObjectName("meetingFinalizationStepIcon")
+            icon_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+            icon_label.setStyleSheet(f"color: {icon_color};")
+            icon_label.setFixedWidth(16)
+            row_layout.addWidget(icon_label)
+
+            name_label = QLabel(s.get("name", f"Step {idx}"))
+            name_label.setObjectName("meetingFinalizationStepName")
+            name_font = QFont("Segoe UI", 11)
+            if step_status == "running":
+                name_font.setWeight(QFont.Weight.DemiBold)
+            name_label.setFont(name_font)
+            row_layout.addWidget(name_label)
+
+            row_layout.addStretch()
+
+            detail_text = s.get("detail", "")
+            if detail_text and step_status == "running":
+                detail_label = QLabel("In progress")
+            elif step_status == "completed":
+                detail_label = QLabel("Done")
+            elif step_status == "failed":
+                detail_label = QLabel("Failed")
+            elif step_status == "skipped":
+                detail_label = QLabel("Skipped")
+            else:
+                detail_label = QLabel("Queued")
+            detail_label.setObjectName("meetingFinalizationStepDetail")
+            detail_label.setFont(QFont("Segoe UI", 10))
+            row_layout.addWidget(detail_label)
+
+            self.finalization_steps_layout.addWidget(row)
+
+    def _populate_stats(self, stats: Dict[str, Any]) -> None:
+        """Render summary metric cards upon meeting completion.
+
+        Args:
+            stats: Summary metrics dict.
+        """
+        while self.finalization_stats_layout.count():
+            item = self.finalization_stats_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        items_to_show = []
+
+        dur_s = float(stats.get("duration_s") or 0.0)
+        if dur_s > 0:
+            mins, secs = divmod(int(dur_s), 60)
+            dur_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+            items_to_show.append(("Duration", dur_str))
+
+        segs = int(stats.get("segments") or 0)
+        if segs > 0:
+            items_to_show.append(("Segments", f"{segs}"))
+
+        words = int(stats.get("words") or 0)
+        if words > 0:
+            items_to_show.append(("Words", f"{words:,}"))
+
+        kp = int(stats.get("key_points") or 0)
+        if kp > 0:
+            items_to_show.append(("Key Points", f"{kp}"))
+
+        dec = int(stats.get("decisions") or 0)
+        if dec > 0:
+            items_to_show.append(("Decisions", f"{dec}"))
+
+        ai = int(stats.get("action_items") or 0)
+        if ai > 0:
+            items_to_show.append(("Action Items", f"{ai}"))
+
+        if not items_to_show:
+            return
+
+        for label, val in items_to_show:
+            card = QWidget()
+            card.setObjectName("meetingFinalizationStatItem")
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(6, 4, 6, 4)
+            c_layout.setSpacing(2)
+            c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            val_label = QLabel(val)
+            val_label.setObjectName("meetingFinalizationStatValue")
+            val_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+            val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            c_layout.addWidget(val_label)
+
+            lbl_label = QLabel(label)
+            lbl_label.setObjectName("meetingFinalizationStatLabel")
+            lbl_label.setFont(QFont("Segoe UI", 9))
+            lbl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            c_layout.addWidget(lbl_label)
+
+            self.finalization_stats_layout.addWidget(card)
 
     def _refresh_elapsed(self) -> None:
         """Update the elapsed label from the local pause-aware timer."""

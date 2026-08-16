@@ -181,6 +181,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             intelligenceOnline={ui.state.intelligence_online}
             onSendOp={sendOp}
             onEvidenceClick={handleEvidenceClick}
+            onUndo={isHost ? sendUndo : undefined}
+            lastSeqByTarget={ui.lastSeqByTarget}
           />
 
           <NotesPane

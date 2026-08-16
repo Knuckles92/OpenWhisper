@@ -370,16 +370,43 @@ export interface SpotlightPick {
   item: CardItem;
 }
 
+function normalizeSpotlightText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isDuplicateSpotlightText(text: string, picks: SpotlightPick[]): boolean {
+  const norm = normalizeSpotlightText(text);
+  if (!norm) return false;
+  const words = new Set(norm.split(' ').filter(Boolean));
+  for (const pick of picks) {
+    const pickNorm = normalizeSpotlightText(pick.item.text);
+    if (!pickNorm) continue;
+    if (norm === pickNorm) return true;
+    const pickWords = new Set(pickNorm.split(' ').filter(Boolean));
+    if (words.size === 0 || pickWords.size === 0) continue;
+    let intersection = 0;
+    for (const w of words) {
+      if (pickWords.has(w)) intersection++;
+    }
+    const unionSize = new Set([...words, ...pickWords]).size;
+    if (unionSize > 0 && intersection / unionSize >= 0.6) return true;
+    const minSize = Math.min(words.size, pickWords.size);
+    if (minSize >= 4 && intersection / minSize >= 0.75) return true;
+  }
+  return false;
+}
+
 /**
  * The up-to-three card items shown in the prominent spotlight row.
  * Ranked pinned → human-touched (edited/confirmed) → most recently updated,
- * preferring one item per card category; repeats only fill leftover slots.
+ * preferring one item per card category and deduplicating by text similarity;
+ * repeats only fill leftover slots when distinct.
  * Note-taker blocks are excluded — they live in the dedicated NotesPane.
  */
 export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3): SpotlightPick[] {
   const ranked: SpotlightPick[] = [];
   for (const key of Object.keys(cards) as CardKey[]) {
-    if (key === 'live_notes') continue;
+    if (key === 'live_notes' || key === 'user_notes') continue;
     for (const item of cards[key] ?? []) {
       if (item.status !== 'removed') ranked.push({ key, item });
     }
@@ -398,6 +425,7 @@ export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3)
   for (const pick of ranked) {
     if (picks.length >= limit) break;
     if (usedCategories.has(pick.key) || usedIds.has(pick.item.id)) continue;
+    if (isDuplicateSpotlightText(pick.item.text, picks)) continue;
     picks.push(pick);
     usedCategories.add(pick.key);
     usedIds.add(pick.item.id);
@@ -405,6 +433,7 @@ export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3)
   for (const pick of ranked) {
     if (picks.length >= limit) break;
     if (usedIds.has(pick.item.id)) continue;
+    if (isDuplicateSpotlightText(pick.item.text, picks)) continue;
     picks.push(pick);
     usedIds.add(pick.item.id);
   }

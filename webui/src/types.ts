@@ -97,9 +97,22 @@ export type FinalizationStatus =
   | 'unavailable'
   | 'failed';
 
+export interface FinalizationStep {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  detail: string;
+}
+
 export interface FinalizationState {
   status: FinalizationStatus;
   message: string;
+  stage?: string;
+  current_step?: number;
+  total_steps?: number;
+  step_details?: string;
+  steps?: FinalizationStep[];
+  summary_stats?: Record<string, unknown>;
 }
 
 export interface MeetingStateDoc {

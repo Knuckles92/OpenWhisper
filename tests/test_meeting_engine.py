@@ -284,6 +284,12 @@ def fakes(monkeypatch):
 
     spool = types.ModuleType("meeting.capture.spool")
     spool.SpoolWriter = FakeSpool
+    spool.QUIET_RMS = 300.0
+    spool.QUIET_WINDOW_S = 0.4
+    spool.find_cut_point = lambda *args, **kwargs: None
+    spool.load_session_meta = lambda *args, **kwargs: None
+    spool.resolve_session_wav = lambda *args, **kwargs: None
+    spool.session_meta_path = lambda *args, **kwargs: ""
 
     asr_engine = types.ModuleType("meeting.asr.engine")
     asr_engine.MeetingAsrEngine = FakeAsr

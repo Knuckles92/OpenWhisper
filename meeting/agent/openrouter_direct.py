@@ -499,8 +499,8 @@ class DirectOpenRouterAgent:
 
     def _repair_evidence_list(self, evidence: List[str]) -> List[str]:
         """Repair a question tool's evidence list (same rules as ops).."""
-        ops, _count = self._repair_ops([{"op": "ask_question",
-                                         "evidence": evidence}])
+        ops = self._repair_ops([{"op": "ask_question",
+                                 "evidence": evidence}])
         return ops[0].get("evidence") or evidence
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:

@@ -63,6 +63,7 @@ sidecar/dist/
 .cursor/worktrees.json
 .pi/
 .codex/
+.shots/
 
 # Agent instruction files (kept local by preference)
 CLAUDE.md

@@ -205,9 +205,15 @@ def _normalize_item_text(text: str) -> str:
     return _ITEM_TEXT_NORM_RE.sub(" ", (text or "").lower()).strip()
 
 
+#: Cross-card duplicate detection requires near-identical text: distinct cards
+#: legitimately restate one another, so only a verbatim-level match across
+#: cards is treated as a duplicate.
+_CROSS_CARD_DUP_THRESHOLDS = (0.75, 0.90)
+
+
 def _item_text_too_similar(left: str, right: str,
-                           jaccard_threshold: float = 0.68,
-                           containment_threshold: float = 0.9) -> bool:
+                           jaccard_threshold: float = 0.60,
+                           containment_threshold: float = 0.75) -> bool:
     """True when normalized texts match or are near-paraphrases.
 
     Uses Jaccard on token sets, plus a containment check on longer claims
@@ -229,7 +235,7 @@ def _item_text_too_similar(left: str, right: str,
         return True
     # Containment is only meaningful once both sides have enough tokens;
     # otherwise "Budget approved" would collide with every budget sentence.
-    if min(len(ta), len(tb)) >= 8:
+    if min(len(ta), len(tb)) >= 4:
         containment = intersection / min(len(ta), len(tb))
         if containment >= containment_threshold:
             return True
@@ -277,11 +283,26 @@ def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpR
     if len(state.cards[card]) >= MAX_CARD_ITEMS:
         return _reject(op, "card_full")
     if ctx.is_agent:
-        for existing in state.cards[card]:
-            if existing.status == "removed":
+        # Same-card duplicates are near-paraphrases; cross-card matches must
+        # be near-identical, because distinct cards legitimately restate one
+        # another (a decision that confirms a key point, minutes prose that
+        # retells a discussion beat). Benchmark runs showed paraphrase-level
+        # cross-card rejection blocked a third of consolidation content.
+        for c, card_items in state.cards.items():
+            if c in HUMAN_ONLY_CARDS:
                 continue
-            if _item_text_too_similar(existing.text, op["text"]):
-                return _reject(op, "duplicate_item")
+            if c == card:
+                jac, cont = 0.60, 0.75
+            else:
+                jac, cont = _CROSS_CARD_DUP_THRESHOLDS
+            for existing in card_items:
+                if existing.status == "removed":
+                    continue
+                if _item_text_too_similar(
+                    existing.text, op["text"],
+                    jaccard_threshold=jac, containment_threshold=cont,
+                ):
+                    return _reject(op, "duplicate_item")
 
     item = CardItem(
         id=new_id("it"),

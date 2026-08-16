@@ -986,12 +986,21 @@ class MeetingRuntime:
         """Track finalization and attach it to a meeting-state payload.
 
         Args:
-            finalization: ``{status, message}`` from the engine status event.
+            finalization: Mapping from the engine status event.
             state_payload: Mutable payload being built for the UI.
         """
         status = str(finalization.get("status") or "")
         message = str(finalization.get("message") or "")
-        normalized = {"status": status, "message": message}
+        normalized = {
+            "status": status,
+            "message": message,
+            "stage": str(finalization.get("stage") or ""),
+            "current_step": int(finalization.get("current_step") or 0),
+            "total_steps": int(finalization.get("total_steps") or 0),
+            "step_details": str(finalization.get("step_details") or ""),
+            "steps": list(finalization.get("steps") or []),
+            "summary_stats": dict(finalization.get("summary_stats") or {}),
+        }
         terminal = status in {
             "completed", "disabled", "unavailable", "failed",
         }

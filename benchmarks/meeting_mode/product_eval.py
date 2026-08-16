@@ -866,9 +866,25 @@ def judge_packages(
     )
     content = (response.choices[0].message.content or "").strip()
     try:
-        return json.loads(content)
+        judgment = json.loads(content)
     except json.JSONDecodeError:
         return {"winner": "tie", "rationale": content, "parse_error": True}
+    return _normalize_judgment(judgment)
+
+
+def _normalize_judgment(judgment: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce common judge-schema deviations onto the expected shape."""
+    for side in ("legacy", "clean"):
+        scores = judgment.get(side)
+        if isinstance(scores, dict):
+            if "overall_record" not in scores and "overall_record_quality" in scores:
+                scores["overall_record"] = scores["overall_record_quality"]
+    if not any(
+        isinstance(judgment.get(side), dict)
+        for side in ("legacy", "clean")
+    ):
+        judgment.setdefault("parse_error", True)
+    return judgment
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
