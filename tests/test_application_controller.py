@@ -685,6 +685,11 @@ class TestApplicationController(unittest.TestCase):
             "services.runtime.hotkeys",
             "services.runtime.streaming",
             "services.runtime.transcription",
+            # Without this, a collection-time import by another test file (e.g.
+            # test_meeting_runtime) leaves MeetingRuntime bound to the REAL
+            # settings_manager, so the developer's own consent grant leaks in
+            # and consent-dependent tests flip depending on the local machine.
+            "services.runtime.meeting",
             "services.application_controller",
         ]:
             sys.modules.pop(module_name, None)

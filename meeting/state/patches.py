@@ -53,6 +53,45 @@ MAX_PARTICIPANTS = 200
 #: Pi tool schema is open-ended, so the rule is enforced here as well.
 HUMAN_ONLY_CARDS = frozenset({"user_notes"})
 
+#: The AI note taker's card, and the only ops a note-taker pass may emit.
+NOTES_CARD = "live_notes"
+NOTES_ONLY_OPS = frozenset({"add_item", "update_item", "remove_item"})
+
+
+def filter_notes_ops(ops: List[Any],
+                     known_note_ids: Optional[frozenset]) -> List[Any]:
+    """Keep only ``live_notes`` item ops for a note-taker pass.
+
+    Structural defense on top of the prompt, shared by every agent core:
+    the note taker has one job, so anything else the model emits (other
+    cards, topic, participants, transcript edits) is dropped before it
+    reaches the tool host. ``update_item``/``remove_item`` carry no
+    ``card`` field, so they are gated by resolving their ids against the
+    pass's live_notes snapshot. Python-side op validation remains the
+    authority for everything that passes.
+    """
+    known_ids = known_note_ids or frozenset()
+    kept: List[Any] = []
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") not in NOTES_ONLY_OPS:
+            continue
+        if op.get("op") == "add_item":
+            if op.get("card") == NOTES_CARD:
+                kept.append(op)
+        elif op.get("id") in known_ids:
+            kept.append(op)
+    return kept
+
+
+def live_note_ids(state_snapshot: Dict[str, Any]) -> frozenset:
+    """Ids of the live_notes blocks in a ``MeetingState.to_dict()`` snapshot."""
+    cards = (state_snapshot or {}).get("cards") or {}
+    return frozenset(
+        str(item.get("id"))
+        for item in (cards.get(NOTES_CARD) or [])
+        if isinstance(item, dict) and item.get("id")
+    )
+
 #: The only participant kind the agent may mint; ``me`` and ``guest`` identities
 #: are established by the app and by humans joining, never inferred.
 AGENT_PARTICIPANT_KIND = "others_cluster"

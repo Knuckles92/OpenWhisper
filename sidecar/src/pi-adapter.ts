@@ -300,6 +300,9 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
       aborting = false;
       lastUsage = {};
       try {
+        if ((session as any)?.agent?.state?.messages) {
+          (session as any).agent.state.messages = [];
+        }
         await (session as any).prompt(userMessage);
       } catch (err) {
         if (aborting) {

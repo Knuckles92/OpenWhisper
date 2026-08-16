@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
-import { sortedCardItems } from '../state';
+import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
+import { CAPTURE_TAGS, CARD_LABELS, sortedCardItems } from '../state';
 import EvidenceChip from './EvidenceChip';
 
 interface CardsPaneProps {
@@ -13,19 +13,6 @@ interface CardsPaneProps {
   lastSeqByTarget: Record<string, number>;
   /** When true, omit the outer panel chrome (embedded in Captured rail). */
   embedded?: boolean;
-}
-
-const CAPTURE_TAGS: Record<CardKey, string> = {
-  key_points: 'Key point',
-  decisions: 'Decision',
-  action_items: 'Action',
-  risks: 'Risk',
-  timeline: 'Timeline',
-  user_notes: 'Note',
-};
-
-function captureTag(cardKey: CardKey): string {
-  return CAPTURE_TAGS[cardKey];
 }
 
 function CardItemRow({
@@ -141,10 +128,14 @@ function CardSection({
   onUndo?: (seq: number) => void;
   lastSeqByTarget: Record<string, number>;
 }) {
-  const tag = captureTag(cardKey);
+  const tag = CAPTURE_TAGS[cardKey];
 
   return (
     <div className="card-section">
+      <h4 className="card-section-title">
+        {CARD_LABELS[cardKey]}
+        <span className="card-section-count">{items.length}</span>
+      </h4>
       {sortedCardItems(items).map((item) => (
         <CardItemRow
           key={item.id}
@@ -178,7 +169,7 @@ function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
         onChange={(e) => setCardKey(e.target.value as CardKey)}
         aria-label="Capture type"
       >
-        {CARD_KEYS.map((key) => (
+        {GENERIC_CARD_KEYS.map((key) => (
           <option key={key} value={key}>
             {CAPTURE_TAGS[key]}
           </option>
@@ -210,7 +201,7 @@ export default function CardsPane({
 }: CardsPaneProps) {
   const body = (
     <>
-      {CARD_KEYS.map((key) => {
+      {GENERIC_CARD_KEYS.map((key) => {
         const items = cards[key] ?? [];
         if (items.length === 0) return null;
         return (

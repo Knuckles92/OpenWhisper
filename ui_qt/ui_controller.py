@@ -83,6 +83,7 @@ class UIController(QObject):
         self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
         self.on_meeting_copy_guest_link: Optional[Callable] = None
         self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
+        self.on_meeting_retry_insights: Optional[Callable] = None
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
         self._meeting_active = False
         self._meeting_urls: dict = {}
@@ -135,6 +136,9 @@ class UIController(QObject):
             lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
         )
         meeting_tab.cloud_toggled.connect(self._on_meeting_cloud_toggled)
+        meeting_tab.retry_insights_requested.connect(
+            self._on_meeting_retry_insights
+        )
 
         # Set up the copied animation callback
         self.main_window.on_show_copied_animation = self.show_copied_animation
@@ -739,6 +743,11 @@ class UIController(QObject):
         """Open the host meeting dashboard in the browser."""
         if self.on_meeting_open_dashboard:
             self.on_meeting_open_dashboard()
+
+    def _on_meeting_retry_insights(self):
+        """Forward a retry final insights request to the application runtime."""
+        if self.on_meeting_retry_insights:
+            self.on_meeting_retry_insights()
 
     def _on_past_meeting_requested(self, meeting_id: str) -> None:
         """Open a persisted meeting selected from the Meeting Mode sidebar."""

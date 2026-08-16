@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Set
 
 from meeting.agent.base import find_provider_api_key
+from meeting.agent.prompts import build_note_taker_system_prompt
 from meeting.interfaces import (
     AgentConfig,
     AgentResult,
@@ -28,6 +29,7 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
+from meeting.state.patches import filter_notes_ops, live_note_ids
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ _PROTOCOL_VERSION = 1
 
 _HELLO_TIMEOUT_S = 10.0
 _CHECKPOINT_TIMEOUT_S = 60.0
-_CONSOLIDATION_TIMEOUT_S = 120.0
+_CONSOLIDATION_TIMEOUT_S = 180.0
 _RPC_DEFAULT_TIMEOUT_S = 30.0
 _PING_INTERVAL_S = 10.0
 _PING_TIMEOUT_S = 5.0
@@ -105,7 +107,18 @@ def _coerce_count(value: Any) -> int:
 
 
 class PiSidecarAgent:
-    """``AgentCore`` implementation that drives the Node Pi sidecar over stdio."""
+    """``AgentCore`` implementation that drives the Node Pi sidecar over stdio.
+
+    Attributes:
+        supports_notes_pass: This core runs the dedicated note-taker pass.
+            Notes checkpoints carry the note-taker system prompt to the
+            bundle, and their tool calls are filtered to ``live_notes`` ops
+            both here (tool bridge) and in the bundle — so even a bundle
+            that predates ``is_notes`` cannot mutate anything but the notes
+            page during a notes pass.
+    """
+
+    supports_notes_pass = True
 
     def __init__(self, payload_dir: str) -> None:
         """Args:
@@ -147,6 +160,11 @@ class PiSidecarAgent:
         self._restart_times: Deque[float] = deque()
         self._restart_generation = 0
         self._initialized = False
+        #: Notes-pass state for the tool bridge: set while a notes checkpoint
+        #: RPC is in flight (the bundle serializes checkpoints, so tool calls
+        #: arriving now belong to it), read on the single tool worker.
+        self._notes_mode = False
+        self._notes_item_ids: frozenset = frozenset()
 
     # ------------------------------------------------------------------
     # AgentCore lifecycle
@@ -259,18 +277,26 @@ class PiSidecarAgent:
 
         with self._lock:
             self._active_request_ids.add(payload.request_id)
-        try:
-            result = self._rpc(
-                "checkpoint",
-                {
-                    "request_id": payload.request_id,
-                    "state": payload.state_snapshot,
-                    "new_segments": payload.new_segments,
-                    "is_consolidation": payload.is_consolidation,
-                    "is_polish": bool(getattr(payload, "is_polish", False)),
-                },
-                timeout_s=timeout_s,
+            is_notes = bool(getattr(payload, "is_notes", False))
+            self._notes_mode = is_notes
+            self._notes_item_ids = (
+                live_note_ids(payload.state_snapshot) if is_notes else frozenset()
             )
+        params: Dict[str, Any] = {
+            "request_id": payload.request_id,
+            "state": payload.state_snapshot,
+            "new_segments": payload.new_segments,
+            "is_consolidation": payload.is_consolidation,
+            "is_polish": bool(getattr(payload, "is_polish", False)),
+            "is_notes": is_notes,
+        }
+        if is_notes:
+            # The note-taker persona replaces the copilot charter for this
+            # pass. Bundles that predate is_notes ignore the extra fields;
+            # the tool-bridge filter below still keeps them notes-only.
+            params["system_prompt"] = build_note_taker_system_prompt()
+        try:
+            result = self._rpc("checkpoint", params, timeout_s=timeout_s)
         except Exception as exc:
             logger.warning("Sidecar checkpoint RPC failed: %s", exc)
             if not self._shut_down and not self._fatal:
@@ -279,6 +305,8 @@ class PiSidecarAgent:
         finally:
             with self._lock:
                 self._active_request_ids.discard(payload.request_id)
+                self._notes_mode = False
+                self._notes_item_ids = frozenset()
 
         if not isinstance(result, dict):
             return AgentResult(ok=False, error="invalid checkpoint response")
@@ -744,6 +772,8 @@ class PiSidecarAgent:
                         and generation != self._restart_generation)):
                 return
             tools = self._tools
+            notes_mode = self._notes_mode
+            notes_item_ids = self._notes_item_ids
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
@@ -752,24 +782,33 @@ class PiSidecarAgent:
                 ops = params.get("ops")
                 if not isinstance(ops, list):
                     raise ValueError("'ops' must be a list")
+                if notes_mode:
+                    # Notes-pass backstop: regardless of what the bundle
+                    # allowed, only live_notes item ops reach the host.
+                    ops = filter_notes_ops(ops, notes_item_ids)
                 results = tools.apply_agent_ops(ops)
                 payload: Dict[str, Any] = {
                     "results": [_serialize_op_result(r) for r in results],
                 }
-            elif method == "tool.ask_question":
-                result = tools.ask_question(
-                    str(params.get("text") or ""),
-                    list(params.get("evidence") or []),
-                )
-                payload = _serialize_op_result(result)
-            elif method == "tool.resolve_question":
-                result = tools.resolve_question(
-                    str(params.get("question_id") or ""),
-                    str(params.get("answer_text") or ""),
-                    float(params.get("confidence") or 0.0),
-                    list(params.get("evidence") or []),
-                )
-                payload = _serialize_op_result(result)
+            elif method in ("tool.ask_question", "tool.resolve_question"):
+                if notes_mode:
+                    payload = _serialize_op_result(
+                        OpResult(ok=False, op={"op": method}, reason="notes_only")
+                    )
+                elif method == "tool.ask_question":
+                    result = tools.ask_question(
+                        str(params.get("text") or ""),
+                        list(params.get("evidence") or []),
+                    )
+                    payload = _serialize_op_result(result)
+                else:
+                    result = tools.resolve_question(
+                        str(params.get("question_id") or ""),
+                        str(params.get("answer_text") or ""),
+                        float(params.get("confidence") or 0.0),
+                        list(params.get("evidence") or []),
+                    )
+                    payload = _serialize_op_result(result)
             else:
                 self._write_error(
                     req_id, -32601, f"method not found: {method}",

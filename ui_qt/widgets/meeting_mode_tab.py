@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.settings import SettingsKey, settings_manager
-from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
+from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
 from ui_qt.widgets.cards import Card
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ class MeetingModeTab(QWidget):
     open_dashboard_requested = pyqtSignal()
     copy_guest_link_requested = pyqtSignal()
     cloud_toggled = pyqtSignal(bool)
+    retry_insights_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -217,6 +218,19 @@ class MeetingModeTab(QWidget):
         self.finalization_progress.hide()
         self.finalization_card.layout.addWidget(self.finalization_progress)
 
+        fin_buttons_row = QHBoxLayout()
+        fin_buttons_row.setSpacing(10)
+
+        self.finalization_retry_button = PrimaryButton("Retry insights")
+        self.finalization_retry_button.setObjectName(
+            "meetingFinalizationRetryButton"
+        )
+        self.finalization_retry_button.clicked.connect(
+            self.retry_insights_requested.emit
+        )
+        self.finalization_retry_button.hide()
+        fin_buttons_row.addWidget(self.finalization_retry_button)
+
         self.finalization_dashboard_button = Button("Open dashboard")
         self.finalization_dashboard_button.setObjectName(
             "meetingFinalizationDashboardButton"
@@ -224,10 +238,8 @@ class MeetingModeTab(QWidget):
         self.finalization_dashboard_button.clicked.connect(
             self.open_dashboard_requested
         )
-        self.finalization_card.layout.addWidget(
-            self.finalization_dashboard_button,
-            alignment=Qt.AlignmentFlag.AlignCenter,
-        )
+        fin_buttons_row.addWidget(self.finalization_dashboard_button)
+        self.finalization_card.layout.addLayout(fin_buttons_row)
         content_layout.addWidget(self.finalization_card)
 
         self.cloud_checkbox = QCheckBox("Cloud intelligence")
@@ -456,6 +468,7 @@ class MeetingModeTab(QWidget):
         if status == "running":
             tone = "neutral"
             self.finalization_progress.show()
+            self.finalization_retry_button.hide()
             # Indeterminate only — no fabricated percentage.
             self.finalization_progress.setRange(0, 0)
         else:
@@ -464,10 +477,14 @@ class MeetingModeTab(QWidget):
             self.finalization_progress.setValue(0)
             if status == "completed":
                 tone = "success"
+                self.finalization_retry_button.hide()
             elif status in {"unavailable", "failed"}:
                 tone = "warning"
+                self.finalization_retry_button.show()
+                self.finalization_retry_button.setEnabled(True)
             else:
                 tone = "info"
+                self.finalization_retry_button.hide()
 
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.

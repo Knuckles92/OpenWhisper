@@ -21,7 +21,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from meeting.clock import MeetingClock
 from meeting.interfaces import (
@@ -51,7 +51,7 @@ POLISH_TIMEOUT_S = 60.0
 #: Budget for the post-end consolidation pass. The durable meeting is marked
 #: ended before this optional polish starts, so it never holds the UI in the
 #: "Ending" state.
-CONSOLIDATION_TIMEOUT_S = 120.0
+CONSOLIDATION_TIMEOUT_S = 180.0
 #: How long end/cancel waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
@@ -753,6 +753,9 @@ class MeetingEngine:
                             "running",
                             "Preparing final report…",
                         )
+                        # live_notes is preserved into consolidation so the
+                        # final report pass can synthesize the meeting notes
+                        # and reconcile them against the final transcript.
                         outcome = scheduler.run_consolidation(
                             timeout_s=CONSOLIDATION_TIMEOUT_S
                         )
@@ -879,7 +882,15 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Could not mark chunks done after offline ASR")
         self._reload_store_from_repository()
-        self._strip_proposed_cards()
+        # The re-decode replaced every segment id, so proposed items' evidence
+        # anchors are stale. live_notes is deliberately kept here: it provides
+        # structured context for the final consolidation pass (and preserves
+        # meeting notes when final report is off).
+        from meeting.state.schema import CARD_KEYS
+
+        self._strip_proposed_cards(cards=tuple(
+            key for key in CARD_KEYS if key not in ("user_notes", "live_notes")
+        ))
         payload = {"items": rows, "removed_ids": deleted}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -911,19 +922,25 @@ class MeetingEngine:
         except Exception:
             logger.exception("Could not replace live meeting state document")
 
-    def _strip_proposed_cards(self) -> None:
-        """Remove agent-only proposed cards so consolidation starts clean."""
+    def _strip_proposed_cards(self, cards: Optional[Iterable[str]] = None) -> None:
+        """Remove agent-only proposed cards so consolidation starts clean.
+
+        Args:
+            cards: Card keys to strip; defaults to every card except the
+                human-only ``user_notes``.
+        """
         if self.store is None:
             return
         from meeting.state.schema import CARD_KEYS
 
+        keys = tuple(cards) if cards is not None else CARD_KEYS
         snapshot = self.store.snapshot()
         ops: List[Dict[str, Any]] = []
-        cards = snapshot.get("cards") or {}
-        for key in CARD_KEYS:
+        cards_snapshot = snapshot.get("cards") or {}
+        for key in keys:
             if key == "user_notes":
                 continue
-            for item in cards.get(key) or []:
+            for item in cards_snapshot.get(key) or []:
                 if not isinstance(item, dict):
                     continue
                 if item.get("status") != "proposed" or item.get("pinned"):

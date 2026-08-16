@@ -486,6 +486,144 @@ a {
   margin-top: 12px;
 }
 
+/* Spotlight — the prominent, always-evolving insight trio under the hero */
+
+.spotlight-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.spotlight-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 18px 20px 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--line) 74%, white);
+  background: color-mix(in srgb, var(--paper) 82%, white);
+  backdrop-filter: blur(6px);
+  animation: spotlight-in 480ms ease both;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.spotlight-card:hover {
+  border-color: color-mix(in srgb, var(--leaf) 28%, var(--line));
+  box-shadow: 0 12px 32px -20px rgba(26, 36, 32, 0.4);
+}
+
+.spotlight-card.pinned {
+  border-color: color-mix(in srgb, var(--leaf) 55%, var(--line));
+}
+
+@keyframes spotlight-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.spotlight-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.spotlight-card-top .capture-tag {
+  margin: 0;
+}
+
+.spotlight-card.proposed .spotlight-card-top .capture-tag::after {
+  content: ' · proposed';
+  font-weight: 600;
+  color: var(--soft);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.spotlight-pin {
+  flex: none;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--leaf);
+  background: var(--confirmed);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.spotlight-text {
+  margin: 0;
+  font-size: 1.06rem;
+  line-height: 1.42;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  cursor: default;
+}
+
+.spotlight-card.pinned .spotlight-text {
+  font-weight: 600;
+}
+
+.spotlight-edit {
+  font-size: 1.02rem;
+}
+
+.spotlight-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-meta {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--soft);
+}
+
+.spotlight-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.spotlight-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.spotlight-ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 148px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px dashed color-mix(in srgb, var(--line) 85%, transparent);
+  color: var(--soft);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .spotlight-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Pi activity — a quiet, collapsible session log */
 
 .agent-activity {
@@ -867,6 +1005,13 @@ a {
   margin: 12px 0 4px;
 }
 
+.card-section-count {
+  margin-left: 7px;
+  font-weight: 500;
+  color: var(--soft);
+  letter-spacing: 0;
+}
+
 .card-item {
   padding: 14px 0;
   border-radius: 0;
@@ -915,8 +1060,9 @@ a {
 
 .card-item-text {
   margin: 0 0 8px;
+  font-size: 0.95rem;
   white-space: pre-wrap;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .card-item-text textarea {
@@ -957,6 +1103,150 @@ a {
   flex: 0 0 auto;
   width: auto;
   min-width: 7.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * AI note taker — the running minutes page
+ * ------------------------------------------------------------------------ */
+
+.notes-pane .panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.notes-flow {
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.note-block {
+  padding: 14px 8px;
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.notes-flow .note-block:first-child {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.note-block-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+.note-time {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--soft);
+  flex: none;
+}
+
+.note-heading {
+  font-family: var(--font-display);
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.25;
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.note-heading.empty {
+  color: var(--soft);
+  font-style: italic;
+}
+
+.note-pin {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--leaf);
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.note-heading-edit {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+}
+
+.note-body {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-body-edit {
+  width: 100%;
+  min-height: 72px;
+  margin: 0 0 8px;
+  resize: vertical;
+}
+
+.note-block.pinned .note-body {
+  font-weight: 500;
+}
+
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-status {
+  font-size: 11px;
+  color: var(--soft);
+}
+
+.note-block.proposed .note-status::after {
+  content: ' · provisional';
+}
+
+.note-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.note-action-buttons button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.note-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.note-composer textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+.note-composer .primary {
+  align-self: flex-end;
 }
 
 .question-item {

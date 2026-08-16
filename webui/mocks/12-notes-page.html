@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>12 · Notes Page</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1a2420;
+      --soft: #5b6b63;
+      --leaf: #2f6b4f;
+      --leaf-2: #3f8a66;
+      --wash: #e8f0ea;
+      --paper: #f7faf8;
+      --line: #c9d5cd;
+      --confirmed: rgba(63, 138, 102, 0.12);
+      --danger: #8a3d36;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 50% -20%, #d5e8db 0%, transparent 60%),
+        linear-gradient(165deg, #f3f7f4 0%, #e4ece7 45%, #f7faf8 100%);
+      background-attachment: fixed;
+    }
+    .frame {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.35rem;
+      letter-spacing: -0.01em;
+    }
+    .brand em { color: var(--leaf); font-style: italic; }
+    .live {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--soft);
+    }
+    .live::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--leaf-2);
+      animation: pulse 2.2s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(63, 138, 102, 0.45); }
+      55% { box-shadow: 0 0 0 7px rgba(63, 138, 102, 0); }
+    }
+    .hero { text-align: center; }
+    .hero h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 2.3rem;
+      font-weight: 400;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin: 0 0 14px;
+    }
+    .hero p {
+      margin: 0 auto;
+      max-width: 52ch;
+      color: var(--soft);
+      font-size: 1.05rem;
+      line-height: 1.55;
+    }
+
+    /* Notes page — the AI note taker's running minutes */
+    .panel {
+      border: 1px solid color-mix(in srgb, var(--line) 74%, white);
+      border-radius: 22px;
+      background: color-mix(in srgb, var(--paper) 82%, white);
+      backdrop-filter: blur(6px);
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 24px 0;
+    }
+    .panel-header h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+    .panel-header .meta {
+      font-size: 0.78rem;
+      color: var(--soft);
+    }
+    .panel-header .meta strong { color: var(--leaf); font-weight: 700; }
+    .notes-flow {
+      max-height: 430px;
+      overflow-y: auto;
+      padding: 12px 24px 6px;
+      display: flex;
+      flex-direction: column;
+    }
+    .note-block {
+      padding: 16px 10px;
+      border-top: 1px solid color-mix(in srgb, var(--line) 70%, white);
+      animation: note-in 420ms ease both;
+    }
+    .notes-flow .note-block:first-child { border-top: none; }
+    @keyframes note-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+    .note-block-top {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 5px;
+    }
+    .note-time {
+      flex: none;
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--soft);
+    }
+    .note-heading {
+      margin: 0;
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.18rem;
+      font-weight: 500;
+      line-height: 1.25;
+    }
+    .note-pin {
+      flex: none;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      background: var(--wash);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 9px;
+    }
+    .note-body {
+      margin: 0 0 10px;
+      font-size: 0.97rem;
+      line-height: 1.55;
+      max-width: 78ch;
+    }
+    .note-block.confirmed .note-body { color: var(--ink); }
+    .evidence-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .chip {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--leaf);
+      background: var(--wash);
+      border: 1px solid color-mix(in srgb, var(--line) 80%, white);
+      border-radius: 999px;
+      padding: 2px 10px;
+      cursor: pointer;
+    }
+    .note-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .note-status { font-size: 0.74rem; color: var(--soft); }
+    .note-block.proposed .note-status::after {
+      content: " · provisional";
+    }
+    .note-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+    .note-buttons button {
+      font: inherit;
+      font-size: 0.8rem;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--line) 85%, white);
+      background: white;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .note-buttons button:hover { border-color: var(--leaf); color: var(--leaf); }
+    .note-buttons button.danger { color: var(--danger); }
+    .note-buttons button.danger:hover { border-color: var(--danger); }
+    .note-composer {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 14px 24px 18px;
+      border-top: 1px solid color-mix(in srgb, var(--line) 70%, white);
+    }
+    .note-composer input,
+    .note-composer textarea {
+      font: inherit;
+      border: 1px solid color-mix(in srgb, var(--line) 85%, white);
+      border-radius: 12px;
+      background: white;
+      padding: 10px 14px;
+      color: var(--ink);
+    }
+    .note-composer input {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.02rem;
+    }
+    .note-composer textarea { min-height: 58px; resize: vertical; }
+    .note-composer .row {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .note-composer button {
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: white;
+      background: var(--leaf);
+      border: none;
+      border-radius: 999px;
+      padding: 8px 18px;
+      cursor: pointer;
+    }
+    .note-composer button:hover { background: var(--leaf-2); }
+
+    footer {
+      text-align: center;
+      color: var(--soft);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <nav>
+      <span class="brand">Open<em>Whisper</em> · Meeting</span>
+      <span class="live">Note taker taking notes</span>
+    </nav>
+
+    <header class="hero">
+      <h1>Onboarding funnel review</h1>
+      <p>The dashboard's shared record, updated live. Below the spotlight row, the AI note
+        taker keeps a clean page of running minutes — timestamped, evidence-linked, editable.</p>
+    </header>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Meeting Notes</h2>
+        <span class="meta"><strong>AI note taker</strong> · 4 blocks</span>
+      </div>
+      <div class="notes-flow">
+        <article class="note-block confirmed">
+          <div class="note-block-top">
+            <time class="note-time">2:34</time>
+            <h4 class="note-heading">Funnel numbers</h4>
+            <span class="note-pin">Pinned</span>
+          </div>
+          <p class="note-body">
+            Maria walked through the current funnel: 40 percent of signups reach activation,
+            down five points from last quarter. Email verification delays are the largest
+            single drop-off in the measured window.
+          </p>
+          <div class="evidence-row">
+            <span class="chip">sg_1041</span>
+            <span class="chip">sg_1042</span>
+          </div>
+          <div class="note-actions">
+            <span class="note-status">Confirmed</span>
+            <div class="note-buttons">
+              <button type="button">Edit</button>
+              <button type="button">Unpin</button>
+              <button type="button" class="danger">Remove</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="note-block proposed">
+          <div class="note-block-top">
+            <time class="note-time">7:02</time>
+            <h4 class="note-heading">Verification delay cause</h4>
+          </div>
+          <p class="note-body">
+            Dev traced the delay to the third-party email provider queueing during peak
+            hours; p95 verification latency doubled on weekdays between 2 and 4 pm.
+          </p>
+          <div class="evidence-row">
+            <span class="chip">sg_1108</span>
+          </div>
+          <div class="note-actions">
+            <span class="note-status">AI note</span>
+            <div class="note-buttons">
+              <button type="button">Edit</button>
+              <button type="button">Confirm</button>
+              <button type="button">Pin</button>
+              <button type="button" class="danger">Remove</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="note-block proposed">
+          <div class="note-block-top">
+            <time class="note-time">11:47</time>
+            <h4 class="note-heading">OAuth login trial</h4>
+          </div>
+          <p class="note-body">
+            The team agreed to trial OAuth login for four weeks behind a feature flag, with
+            a checkpoint at the next sync. Sam owns the rollout plan.
+          </p>
+          <div class="evidence-row">
+            <span class="chip">sg_1187</span>
+            <span class="chip">sg_1190</span>
+          </div>
+          <div class="note-actions">
+            <span class="note-status">AI note</span>
+            <div class="note-buttons">
+              <button type="button">Edit</button>
+              <button type="button">Confirm</button>
+              <button type="button">Pin</button>
+              <button type="button" class="danger">Remove</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="note-block proposed">
+          <div class="note-block-top">
+            <time class="note-time">14:20</time>
+            <h4 class="note-heading">Metric to watch</h4>
+          </div>
+          <p class="note-body">
+            Activation rate stays the headline metric; Maria will circulate a weekly digest
+            from the cohort dashboard rather than a one-off report.
+          </p>
+          <div class="evidence-row">
+            <span class="chip">sg_1233</span>
+          </div>
+          <div class="note-actions">
+            <span class="note-status">AI note</span>
+            <div class="note-buttons">
+              <button type="button">Edit</button>
+              <button type="button">Confirm</button>
+              <button type="button">Pin</button>
+              <button type="button" class="danger">Remove</button>
+            </div>
+          </div>
+        </article>
+      </div>
+      <div class="note-composer">
+        <input type="text" placeholder="Heading (optional)" aria-label="Note heading" />
+        <textarea placeholder="Add your own note…" aria-label="Note text"></textarea>
+        <div class="row">
+          <button type="button">Add note</button>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Mock 12 · Notes Page — the note-taker pane under the spotlight row. Every block is a
+      card item: proposed until a human touches it, then protected.
+    </footer>
+  </div>
+</body>
+</html>

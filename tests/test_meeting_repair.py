@@ -247,3 +247,110 @@ def test_repair_meeting_state_fills_summary_only():
     snap = store.snapshot()
     assert "A finding" in snap["rolling_summary"]
     assert snap["topic"]["current"]
+
+
+def test_build_summary_ops_from_live_notes_when_key_points_empty():
+    state = {
+        "rolling_summary": "",
+        "cards": {
+            "key_points": [],
+            "live_notes": [
+                {
+                    "text": "Team reviewed Q3 metrics and conversion rates.",
+                    "status": "proposed",
+                    "data": {"heading": "Funnel metrics", "start_s": 12.0},
+                    "evidence": ["sg_1"],
+                },
+                {
+                    "text": "Agreed to migrate OAuth provider by next sprint.",
+                    "status": "proposed",
+                    "data": {"heading": "OAuth Migration", "start_s": 45.0},
+                    "evidence": ["sg_2"],
+                },
+            ],
+        },
+    }
+    ops = build_summary_backfill_ops(state, [])
+    assert len(ops) == 1
+    assert ops[0]["op"] == "set_rolling_summary"
+    assert "Q3 metrics" in ops[0]["text"]
+    assert "OAuth provider" in ops[0]["text"]
+
+
+def test_build_topic_ops_from_live_notes_when_key_points_empty():
+    state = {
+        "topic": {"current": ""},
+        "cards": {
+            "key_points": [],
+            "live_notes": [
+                {
+                    "text": "Maria walked through the quarterly revenue numbers.",
+                    "status": "proposed",
+                    "data": {"heading": "Quarterly Revenue Review", "start_s": 5.0},
+                    "evidence": ["sg_1"],
+                },
+            ],
+        },
+    }
+    ops = build_topic_backfill_ops(state, [])
+    assert len(ops) == 1
+    assert ops[0]["op"] == "set_topic"
+    assert ops[0]["text"] == "Quarterly Revenue Review"
+
+
+def test_build_timeline_ops_from_live_notes_when_key_points_empty():
+    state = {
+        "cards": {
+            "key_points": [],
+            "timeline": [],
+            "live_notes": [
+                {
+                    "text": "Introduced new deployment strategy.",
+                    "status": "proposed",
+                    "data": {"heading": "Deployment overview", "start_s": 10.0},
+                    "evidence": ["sg_1"],
+                },
+                {
+                    "text": "Discussed rollbacks and canary releases.",
+                    "status": "proposed",
+                    "data": {"heading": "Canary & Rollback", "start_s": 60.0},
+                    "evidence": ["sg_2"],
+                },
+            ],
+        },
+    }
+    segments = [
+        {"id": "sg_1", "start_s": 10.0, "text": "Deployment strategy"},
+        {"id": "sg_2", "start_s": 60.0, "text": "Canary testing"},
+    ]
+    ops = build_timeline_backfill_ops(state, segments)
+    assert len(ops) >= 2
+    assert [op["data"]["start_s"] for op in ops if op["data"]["start_s"] >= 10.0] == [10.0, 60.0]
+    texts = " ".join(op["text"] for op in ops)
+    assert "Deployment" in texts
+    assert "Canary" in texts
+
+
+def test_build_keypoint_coverage_from_live_notes():
+    from meeting.state.repair import build_keypoint_coverage_ops
+
+    state = {
+        "rolling_summary": "Discussed infrastructure upgrades.",
+        "topic": {"current": "Infrastructure"},
+        "cards": {
+            "key_points": [],
+            "timeline": [],
+            "live_notes": [
+                {
+                    "text": "Database read replicas reduced latency by forty percent.",
+                    "status": "proposed",
+                    "data": {"heading": "Database Latency", "start_s": 30.0},
+                    "evidence": ["sg_3"],
+                },
+            ],
+        },
+    }
+    ops = build_keypoint_coverage_ops(state, [])
+    assert len(ops) >= 1
+    assert any("Database Latency" in op["text"] or "latency" in op["text"] for op in ops)
+

@@ -587,7 +587,7 @@ _FALLBACK_PAGE = """<!doctype html>
 <script>
 "use strict";
 var token = decodeURIComponent(location.pathname.split("/").pop());
-var CARD_KEYS = ["key_points","decisions","action_items","risks","timeline","user_notes"];
+var CARD_KEYS = ["live_notes","key_points","decisions","action_items","risks","timeline","user_notes"];
 var state = null, meeting = null, role = null, segs = {}, ws = null, pingTimer = null;
 function $(id){ return document.getElementById(id); }
 function esc(s){ var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; }
@@ -652,10 +652,20 @@ function renderState(){
     var key = CARD_KEYS[i];
     var live = ((state.cards || {})[key] || []).filter(function(it){ return it.status !== "removed"; });
     if (!live.length) continue;
-    html += '<div class="card"><h3>' + esc(key.replace(/_/g, " ")) + '</h3><ul>';
+    var label = key === "live_notes" ? "Meeting Notes" : key.replace(/_/g, " ");
+    html += '<div class="card"><h3>' + esc(label) + '</h3><ul>';
     for (var j = 0; j < live.length; j++){
       var it = live[j];
-      html += '<li>' + esc(it.text) + '<span class="badge">' + esc(it.status)
+      var body = "";
+      if (key === "live_notes"){
+        var d = it.data || {};
+        var head = String(d.heading || "").trim();
+        var stamp = typeof d.start_s === "number" ? fmtT(d.start_s) : "";
+        var bits = (stamp ? [stamp] : []).concat(head ? [head] : []);
+        if (bits.length) body += "<strong>" + esc(bits.join(" \\u2014 ")) + "</strong> ";
+      }
+      body += esc(it.text);
+      html += '<li>' + body + '<span class="badge">' + esc(it.status)
             + (it.pinned ? " \\u00b7 pinned" : "") + '</span></li>';
     }
     html += '</ul></div>';

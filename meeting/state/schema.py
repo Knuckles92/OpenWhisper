@@ -17,13 +17,16 @@ from typing import Any, Dict, List, Optional
 
 #: Cards rendered on the dashboard. ``timeline`` items use ``data.start_s``;
 #: ``action_items`` use ``data.owner_participant_id``; ``risks`` may carry
-#: ``data.severity``.
+#: ``data.severity``. ``live_notes`` blocks are the AI note taker's record:
+#: ``data.heading`` carries the short section label and ``data.start_s`` the
+#: meeting-clock stamp of the passage the note covers.
 CARD_KEYS = (
     "key_points",
     "decisions",
     "action_items",
     "risks",
     "timeline",
+    "live_notes",
     "user_notes",
 )
 

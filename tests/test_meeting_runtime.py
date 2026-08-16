@@ -145,3 +145,46 @@ def test_failed_finalization_is_non_modal(runtime):
     assert errors == []
     assert rt._finalization["status"] == "failed"
     assert rt.is_finalizing is False
+
+
+def test_retry_insights_blocked_when_active(runtime):
+    rt, controller = runtime
+    controller.meeting_active = True
+    rt.retry_insights()
+    assert rt.is_finalizing is False
+
+
+def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
+    import time
+    rt, controller = runtime
+    controller.meeting_active = False
+
+    fake_engine = MagicMock()
+    fake_engine.is_active.return_value = False
+    fake_engine.meeting_id = "m_test_123"
+    fake_engine.store = MagicMock()
+    rt._engine = fake_engine
+
+    called = []
+
+    def fake_rerun(*args, **kwargs):
+        called.append(kwargs)
+        return {"ok": True, "applied": 5, "error": None}
+
+    monkeypatch.setattr("meeting.reinsight.rerun_insights", fake_rerun)
+
+    rt.retry_insights()
+
+    # Wait briefly for daemon thread to complete
+    for _ in range(50):
+        if not rt.is_finalizing:
+            break
+        time.sleep(0.02)
+
+    assert called
+    assert rt._finalization["status"] == "completed"
+    assert "ready" in rt._finalization["message"]
+    fake_engine._set_finalization.assert_called_with(
+        "completed", "Final cloud insights are ready."
+    )
+

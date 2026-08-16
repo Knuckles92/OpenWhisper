@@ -25,8 +25,11 @@ from meeting.export.transcript_txt import (
 
 logger = logging.getLogger(__name__)
 
-#: Card keys in render order with their section headings.
+#: Card keys in render order with their section headings. The note taker's
+#: running minutes come first among the cards: they read as the narrative
+#: record the structured cards then back up.
 _CARD_SECTIONS = (
+    ("live_notes", "Meeting Notes"),
     ("key_points", "Key Points"),
     ("decisions", "Decisions"),
     ("action_items", "Action Items"),
@@ -71,6 +74,8 @@ def export_markdown(meeting: Dict[str, Any], state: Dict[str, Any],
             out.extend(_timeline_lines(items))
         elif card == "key_points":
             out.extend(_key_point_lines(items, segments))
+        elif card == "live_notes":
+            out.extend(_live_note_lines(items))
         else:
             out.extend(f"- {item['text'].strip()}" for item in items)
 
@@ -230,6 +235,30 @@ def _timeline_lines(items: List[Dict[str, Any]]) -> List[str]:
             lines.append(f"- [{format_mmss(float(start_s))}] {text}")
         else:
             lines.append(f"- {text}")
+    return lines
+
+
+def _live_note_lines(items: List[Dict[str, Any]]) -> List[str]:
+    """Note-taker blocks in page order: ``**[mm:ss] heading** — body``.
+
+    Heading and stamp come from ``data.heading`` / ``data.start_s``; either
+    may be absent, in which case the bullet degrades gracefully.
+    """
+    lines: List[str] = []
+    for item in items:
+        text = " ".join(item["text"].split())
+        data = item.get("data") or {}
+        heading = str(data.get("heading") or "").strip()
+        start_s = data.get("start_s")
+        stamp = (
+            format_mmss(float(start_s))
+            if isinstance(start_s, (int, float))
+            and not isinstance(start_s, bool)
+            else ""
+        )
+        prefix_parts = [part for part in (stamp, heading) if part]
+        prefix = f"**{' '.join(prefix_parts)}** — " if prefix_parts else ""
+        lines.append(f"- {prefix}{text}")
     return lines
 
 

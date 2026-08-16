@@ -226,6 +226,9 @@ class ApplicationController(QObject):
             self.meeting_runtime.copy_guest_link
         )
         self.ui_controller.on_meeting_toggle_cloud = self.meeting_runtime.toggle_cloud
+        self.ui_controller.on_meeting_retry_insights = (
+            self.meeting_runtime.retry_insights
+        )
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.

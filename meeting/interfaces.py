@@ -132,12 +132,15 @@ class CheckpointPayload:
         is_consolidation: True for the end-of-meeting full pass.
         is_polish: True for a transcript-text cleanup pass (``revise_segment_text``
             only; does not advance the card-checkpoint cursor).
+        is_notes: True for a note-taker pass (``live_notes`` card ops only;
+            does not advance the card-checkpoint cursor).
     """
     request_id: str
     state_snapshot: Dict[str, Any]
     new_segments: List[Dict[str, Any]]
     is_consolidation: bool = False
     is_polish: bool = False
+    is_notes: bool = False
 
 
 @dataclass

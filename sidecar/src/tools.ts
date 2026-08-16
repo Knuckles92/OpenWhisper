@@ -27,12 +27,17 @@ export interface OpCounters {
 /** Mutable policy for the currently serialized checkpoint. */
 export interface ToolPolicy {
   polishOnly: boolean;
+  /** Notes pass: only live_notes item ops may pass (add_item with
+   *  card=live_notes, or update/remove targeting a known note block). */
+  notesOnly: boolean;
+  /** live_notes block ids visible in the current pass's state snapshot. */
+  noteIds: ReadonlySet<string>;
 }
 
 const PATCH_STATE_DESCRIPTION = `Apply targeted state-patch operations to the live meeting state document. Every op is validated by the host; results are returned per-op (ok, reason, target_id, seq, current_revision) so a rejected op never blocks the rest of the batch.
 
 Allowed ops (each op is an object with an "op" key):
-- {"op":"add_item","card":C,"text":T,"data":{},"evidence":[...]} — C is one of key_points | decisions | action_items | risks | timeline. timeline items use data.start_s; action_items use data.owner_participant_id; risks may carry data.severity. user_notes is human-only.
+- {"op":"add_item","card":C,"text":T,"data":{},"evidence":[...]} — C is one of key_points | decisions | action_items | risks | timeline | live_notes. timeline items use data.start_s; action_items use data.owner_participant_id; risks may carry data.severity; live_notes blocks carry data.heading and data.start_s. user_notes is human-only.
 - {"op":"update_item","id":I,"base_revision":R,"set":{"text":...,"data":...},"evidence":[...]} — base_revision MUST equal the item's current revision from the state snapshot; mismatches are rejected with the current revision echoed back.
 - {"op":"remove_item","id":I,"base_revision":R,"evidence":[...]}
 - {"op":"set_topic","text":T,"evidence":[...]}
@@ -98,14 +103,26 @@ export function createMeetingTools(
     },
     execute: async (params) => {
       const requestedOps: any[] = Array.isArray(params.ops) ? params.ops : [];
-      const allowedOps = policy.polishOnly
-        ? requestedOps.filter((op) => op?.op === "revise_segment_text")
-        : requestedOps;
-      const policyRejectedResults = policy.polishOnly
-        ? requestedOps
-            .filter((op) => op?.op !== "revise_segment_text")
-            .map(() => ({ ok: false, reason: "polish_only" }))
-        : [];
+      const notesAllowed = (op: any): boolean =>
+        op?.op === "add_item" && op?.card === "live_notes";
+      const notesTargetsKnown = (op: any): boolean =>
+        (op?.op === "update_item" || op?.op === "remove_item") &&
+        policy.noteIds.has(String(op?.id ?? ""));
+      let allowedOps = requestedOps;
+      let policyRejectedResults: Array<{ ok: false; reason: string }> = [];
+      if (policy.polishOnly) {
+        allowedOps = requestedOps.filter((op) => op?.op === "revise_segment_text");
+        policyRejectedResults = requestedOps
+          .filter((op) => op?.op !== "revise_segment_text")
+          .map(() => ({ ok: false, reason: "polish_only" }));
+      } else if (policy.notesOnly) {
+        allowedOps = requestedOps.filter(
+          (op) => notesAllowed(op) || notesTargetsKnown(op),
+        );
+        policyRejectedResults = requestedOps
+          .filter((op) => !(notesAllowed(op) || notesTargetsKnown(op)))
+          .map(() => ({ ok: false, reason: "notes_only" }));
+      }
       const policyRejected = policyRejectedResults.length;
       if (policyRejected) counters.rejected += policyRejected;
       try {
@@ -167,6 +184,10 @@ export function createMeetingTools(
         counters.rejected += 1;
         return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
       }
+      if (policy.notesOnly) {
+        counters.rejected += 1;
+        return { text: "Rejected: notes_only", details: { reason: "notes_only" } };
+      }
       return bridgeSingle(rpc, counters, "tool.ask_question", {
         text: params.text ?? "",
         evidence: params.evidence ?? [],
@@ -201,6 +222,10 @@ export function createMeetingTools(
       if (policy.polishOnly) {
         counters.rejected += 1;
         return { text: "Rejected: polish_only", details: { reason: "polish_only" } };
+      }
+      if (policy.notesOnly) {
+        counters.rejected += 1;
+        return { text: "Rejected: notes_only", details: { reason: "notes_only" } };
       }
       return bridgeSingle(rpc, counters, "tool.resolve_question", {
         question_id: params.question_id ?? "",

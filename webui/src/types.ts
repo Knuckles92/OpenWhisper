@@ -15,6 +15,7 @@ export type CardKey =
   | 'action_items'
   | 'risks'
   | 'timeline'
+  | 'live_notes'
   | 'user_notes';
 
 export const CARD_KEYS: CardKey[] = [
@@ -23,8 +24,17 @@ export const CARD_KEYS: CardKey[] = [
   'action_items',
   'risks',
   'timeline',
+  'live_notes',
   'user_notes',
 ];
+
+/**
+ * Cards rendered by the generic Captured list / composer / spotlight.
+ * `live_notes` is excluded: the dedicated NotesPane owns that card.
+ */
+export const GENERIC_CARD_KEYS: CardKey[] = CARD_KEYS.filter(
+  (key) => key !== 'live_notes',
+);
 
 export interface CardItem {
   id: string;

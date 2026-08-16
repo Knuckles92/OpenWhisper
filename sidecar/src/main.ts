@@ -6,7 +6,8 @@
  *      {"token":<OPENWHISPER_SIDECAR_TOKEN>,"protocol":1,"pi_version":"..."}}
  *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt}
  *      | checkpoint {request_id, state, new_segments, is_consolidation,
- *                    is_polish}
+ *                    is_polish, is_notes, system_prompt?}  (a notes
+ *                    checkpoint carries the note-taker system_prompt)
  *      | cancel {request_id} | ping {} | shutdown {}
  *  - Outbound tool-bridge requests: tool.patch_state / tool.ask_question /
  *      tool.resolve_question (see tools.ts).
@@ -54,7 +55,11 @@ function main(): void {
   let checkpointChain: Promise<unknown> = Promise.resolve();
   const canceledRequests = new Set<string>();
   const counters: OpCounters = { applied: 0, rejected: 0 };
-  const toolPolicy: ToolPolicy = { polishOnly: false };
+  const toolPolicy: ToolPolicy = {
+    polishOnly: false,
+    notesOnly: false,
+    noteIds: new Set<string>(),
+  };
 
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
@@ -104,10 +109,13 @@ function main(): void {
     counters.rejected = 0;
     const isConsolidation = Boolean(params?.is_consolidation);
     const isPolish = Boolean(params?.is_polish);
+    const isNotes = Boolean(params?.is_notes);
     toolPolicy.polishOnly = isPolish;
+    toolPolicy.notesOnly = isNotes;
+    toolPolicy.noteIds = liveNoteIds(params?.state);
     rpc.log(
       "info",
-      `${isConsolidation ? "consolidation" : isPolish ? "polish" : "checkpoint"} ` +
+      `${isConsolidation ? "consolidation" : isPolish ? "polish" : isNotes ? "note-taker" : "checkpoint"} ` +
         `${requestId} started ` +
         `(${Array.isArray(params?.new_segments) ? params.new_segments.length : 0} new segments)`,
     );
@@ -127,6 +135,8 @@ function main(): void {
       return response;
     } finally {
       toolPolicy.polishOnly = false;
+      toolPolicy.notesOnly = false;
+      toolPolicy.noteIds = new Set<string>();
       activeRequestId = null;
     }
   }
@@ -229,21 +239,68 @@ function projectStateForPrompt(state: any): any {
 }
 
 /**
+ * live_notes block ids visible in a state snapshot (notes-pass op gate).
+ */
+function liveNoteIds(state: any): Set<string> {
+  const ids = new Set<string>();
+  const blocks = state?.cards?.live_notes;
+  if (Array.isArray(blocks)) {
+    for (const item of blocks) {
+      if (item?.status !== "removed" && typeof item?.id === "string") {
+        ids.add(item.id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Bounded projection for note-taker passes: only the notes page matters.
+ *
+ * @param state The raw `MeetingState.to_dict()` snapshot from the host.
+ * @returns topic, rolling summary, and the non-removed live_notes blocks.
+ */
+function notesPageProjection(state: any): any {
+  const cards = state?.cards ?? {};
+  const blocks = Array.isArray(cards.live_notes)
+    ? cards.live_notes.filter((item: any) => item?.status !== "removed")
+    : [];
+  return {
+    topic: state?.topic ?? {},
+    rolling_summary: state?.rolling_summary ?? "",
+    live_notes: blocks,
+  };
+}
+
+/**
  * Compose the user message for one checkpoint run.
  *
  * The system prompt from `initialize` is prepended to the checkpoint content
  * (state snapshot, new transcript segments, consolidation flag) as a single
- * user message; the session's tool calls do the actual state mutation.
+ * user message; the session's tool calls do the actual state mutation. Notes
+ * passes carry their own note-taker system prompt from the host, which
+ * replaces the copilot charter for that run.
  */
 function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   const isConsolidation = Boolean(params?.is_consolidation);
   const isPolish = Boolean(params?.is_polish);
+  const isNotes = Boolean(params?.is_notes);
+  const effectiveSystem =
+    isNotes &&
+    typeof params?.system_prompt === "string" &&
+    params.system_prompt.trim()
+      ? params.system_prompt
+      : systemPrompt;
+  if (isNotes) {
+    return buildNotesPrompt(effectiveSystem, params);
+  }
+
   const state = projectStateForPrompt(params?.state ?? {});
   const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
 
   const parts: string[] = [];
-  if (systemPrompt) {
-    parts.push(systemPrompt, "");
+  if (effectiveSystem) {
+    parts.push(effectiveSystem, "");
   }
   if (isPolish) {
     parts.push(
@@ -257,11 +314,26 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   } else if (isConsolidation) {
     parts.push(
       "## Final consolidation pass",
-      "The meeting has ended. The transcript below is the COMPLETE final transcript.",
-      "Review the entire meeting state for accuracy and completeness: fix wrong or",
-      "stale items, fill gaps, finish the rolling summary, and resolve what the",
-      "audio actually answered — using your tools. Keep every evidence link valid",
-      "(only reference segment ids that exist).",
+      "The meeting has ended. The transcript below is the COMPLETE final transcript,",
+      "and the dashboard state above includes the meeting notes (live_notes and",
+      "user_notes) taken throughout the discussion.",
+      "Finalize the dashboard as the durable record, actively taking into account",
+      "the meeting notes alongside the complete final transcript:",
+      "- Synthesize the meeting notes and transcript into the final topic and",
+      "  a comprehensive rolling summary covering framing, major discussion points,",
+      "  examples, decisions, and closing thesis.",
+      "- Capture concrete key points, decisions, and action items (with owners)",
+      "  cross-referencing commitments in the notes and transcript.",
+      "- Populate the timeline with chronological story beats (using data.start_s)",
+      "  and capture blockers on the risks card.",
+      "- Reconcile the live_notes page against this COMPLETE final transcript:",
+      "  preserve accurate blocks, fix blocks that later discussion superseded,",
+      "  contradicted, or clarified; merge fragments; give every block a concise",
+      "  data.heading and chronological data.start_s; and remove redundant blocks.",
+      "  If live_notes is empty but the meeting had speech, write the full notes",
+      "  page from the complete transcript. Human-edited, confirmed, or pinned",
+      "  blocks stay exactly as written — put corrections in a new block beside them.",
+      "- Keep every evidence link valid (only reference segment ids that exist).",
     );
   } else {
     parts.push(
@@ -297,6 +369,49 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
     "Make all state changes through your tools now. Rejected ops return a reason",
     "(e.g. revision_mismatch with the current revision, human_edited) — correct",
     "and retry within this run when it makes sense. When you are done, reply",
+    "with one short plain-text sentence summarizing what changed.",
+  );
+  return parts.join("\n");
+}
+
+/**
+ * Compose the user message for one note-taker pass: the notes page, the new
+ * transcript segments, and the pass instructions.
+ */
+function buildNotesPrompt(systemPrompt: string, params: any): string {
+  const page = notesPageProjection(params?.state ?? {});
+  const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
+
+  const parts: string[] = [];
+  if (systemPrompt) {
+    parts.push(systemPrompt, "");
+  }
+  parts.push(
+    "## NOTE-TAKER PASS",
+    "Extend the notes page from the new transcript segments:",
+    "- If the newest block is still about the same subject, extend or refine it",
+    "  with update_item (correct base_revision; keep its data.heading and",
+    "  data.start_s).",
+    "- Otherwise add a new block: fresh data.heading, data.start_s from the",
+    "  earliest covering segment, and a concise professional body.",
+    "- Cite evidence segment ids (sg_...) on every operation.",
+    "- Never rewrite or remove human-touched blocks (edited, confirmed, pinned).",
+    "A pass with meaningful new speech and zero operations is a failure — the",
+    "notes page must keep up with the meeting.",
+    "",
+    "### Current notes page (JSON)",
+    "```json",
+    JSON.stringify(page, null, 2),
+    "```",
+    "",
+    "### New transcript segments (JSON)",
+    "```json",
+    JSON.stringify(segments, null, 2),
+    "```",
+    "",
+    "Make all changes through your tools now. Rejected ops return a reason —",
+    "duplicate_item means you should have updated the existing block instead;",
+    "human_edited means start a fresh block beside it. When you are done, reply",
     "with one short plain-text sentence summarizing what changed.",
   );
   return parts.join("\n");

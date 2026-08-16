@@ -23,7 +23,10 @@ from meeting.state.schema import CARD_KEYS
 __all__ = [
     "build_system_prompt",
     "build_checkpoint_user_prompt",
+    "build_note_taker_system_prompt",
+    "build_notes_user_prompt",
     "render_state_compact",
+    "render_notes_page",
     "format_segment_line",
     "JSON_FALLBACK_INSTRUCTIONS",
 ]
@@ -99,6 +102,11 @@ CARDS
   examples, turning point, conclusion). Each beat MUST set data.start_s to
   the meeting-seconds timestamp where that beat began (copy from the
   segment's t=…s value). Prefer 3–8 beats over leaving the card empty.
+- live_notes: the AI note taker's running minutes (block label in
+  data.heading, meeting-clock stamp in data.start_s). A dedicated
+  note-taker pass owns this card during the meeting — do NOT add, update,
+  or remove live_notes on normal checkpoints. You own it again during the
+  final consolidation pass.
 - user_notes: HUMAN-ONLY. Never add, update, or remove anything on this card.
 
 EVIDENCE DISCIPLINE
@@ -185,40 +193,55 @@ If nothing needs fixing, emit no operations."""
 
 _CONSOLIDATION_INSTRUCTIONS = """\
 ## INSTRUCTIONS — FINAL CONSOLIDATION PASS
-The meeting has ended. The transcript above is the COMPLETE final transcript.
-Finalize the dashboard as the durable record:
+The meeting has ended. The transcript above is the COMPLETE final transcript,
+and the dashboard above contains the accumulated meeting notes (live_notes and
+any user_notes) taken throughout the discussion.
+Finalize the dashboard as the durable record, actively taking into account the
+meeting notes alongside the complete final transcript:
 1. Review every card. Merge duplicates and remove stale or superseded items you
    authored (respect base_revision; leave human-touched items alone).
-2. Make decisions and action items complete and precisely worded; give every
-   action item an owner (data.owner_participant_id) when the transcript
-   supports one. If the audio is purely a talk/monologue/interview/debate
-   with no commitment language, leave decisions and action_items empty —
-   do not invent them. But if the transcript (including meeting footage
-   inside a coaching video) contains real agreements or follow-ups —
-   parking a topic offline, skipping a feature, checking with a named
-   person — put those on decisions/action_items, not only key_points.
-   Do not classify the whole clip as a "talk" just because a narrator
-   frames it.
-3. Set the final topic and rewrite the rolling summary as a complete summary of
-   the whole meeting. Cover the opening framing, major examples, and any
-   closing discovery or thesis — not only the middle examples.
-4. Populate the timeline card with ordered story beats and data.start_s on
-   EVERY timeline item (use segment t=…s values). A durable record without
-   timeline beats is incomplete when the talk has a clear arc.
-5. Ensure key_points include: (a) the opening framing question or puzzle when
-   the transcript begins with one, (b) each major named example or case study
-   as its own item (do not leave a named example only in the summary), and
-   (c) any stated discovery/turning point.
-6. Resolve any open question the transcript answers (resolve_question with
+2. Synthesize the meeting notes and complete transcript into the final topic and
+   rewrite the rolling summary as a complete summary of the whole meeting.
+   Cover the opening framing/puzzle, major discussion points and examples,
+   decisions reached, and any closing discovery or thesis.
+3. Make decisions and action items complete and precisely worded, cross-referencing
+   commitments captured in the meeting notes and transcript; give every action item
+   an owner (data.owner_participant_id) when the transcript or notes support one.
+   If the audio is purely a talk/monologue/interview/debate with no commitment
+   language, leave decisions and action_items empty — do not invent them. But if
+   the discussion contains real agreements or follow-ups — parking a topic offline,
+   skipping a feature, checking with a named person — put those on
+   decisions/action_items, not only key_points.
+4. Ensure key_points include: (a) the opening framing question or puzzle when
+   the transcript begins with one, (b) each major named example, case study, or
+   substantive discussion point captured in the notes or transcript as its own
+   item, and (c) any stated discovery, turning point, or key takeaway.
+5. Populate the timeline card with ordered story beats and data.start_s on
+   EVERY timeline item (use segment t=…s values or note start_s values). A durable
+   record without timeline beats is incomplete when the meeting has a clear progression.
+6. Capture risks, blockers, and open concerns on the risks card (with data.severity
+   where applicable), reflecting issues raised during the meeting and noted in minutes.
+7. Finalize the live_notes card so it reads as clean, complete, professional minutes.
+   Compare every note block against this COMPLETE final transcript with the
+   benefit of full context: preserve accurate blocks, fix blocks that later
+   discussion superseded, contradicted, or clarified; merge fragments into
+   coherent blocks; give every block a concise data.heading and a chronological
+   data.start_s; and remove redundant or superseded blocks you authored (respect
+   base_revision). If live_notes is empty but the meeting had speech (for
+   example the page was reset after a transcript re-decode), write the full
+   notes page from the complete transcript. Human-edited, confirmed, or
+   pinned blocks stay exactly as written — put corrections in a new block
+   beside them.
+8. Resolve any open question the transcript or notes answer (resolve_question with
    honest confidence). Questions you cannot resolve stay open for the host —
    you cannot dismiss them.
-7. Keep every evidence link valid — cite only segment ids that appear in the
+9. Keep every evidence link valid — cite only segment ids that appear in the
    transcript above. Prefer citing the segments that actually support each claim.
-8. You may ask at most ONE new quiet-inbox question, and only when the
-   transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
-   claim that was teased but not yet answered). Otherwise ask none.
-9. Optionally emit revise_segment_text for remaining obvious ASR errors in the
-   final transcript (same rules as polish: no invented content)."""
+10. You may ask at most ONE new quiet-inbox question, and only when the
+    transcript ends on a clear unresolved hook (e.g. a discovery, decision, or
+    claim that was teased but not yet answered). Otherwise ask none.
+11. Optionally emit revise_segment_text for remaining obvious ASR errors in the
+    final transcript (same rules as polish: no invented content)."""
 
 #: Appended to the user prompt by the direct agent's JSON-mode fallback (used
 #: when the provider/model does not support function tools).
@@ -227,6 +250,8 @@ Respond ONLY with a single JSON object of the form {"ops": [...]} — no prose,
 no code fences. Each element of "ops" is one operation object with an "op"
 field, for example:
 {"op": "add_item", "card": "decisions", "text": "...", "evidence": ["sg_..."]}
+{"op": "add_item", "card": "live_notes", "text": "...",
+ "data": {"heading": "...", "start_s": 123.4}, "evidence": ["sg_..."]}
 {"op": "update_item", "id": "it_...", "base_revision": 2,
  "set": {"text": "..."}, "evidence": ["sg_..."]}
 {"op": "set_topic", "text": "...", "evidence": ["sg_..."]}
@@ -254,13 +279,105 @@ def build_system_prompt() -> str:
     )
 
 
-def _render_item(item: Dict[str, Any]) -> str:
+_NOTE_TAKER_SYSTEM_PROMPT_TEMPLATE = """\
+You are the AI note taker inside OpenWhisper's Meeting Mode — a professional
+minute-taker who sits in on the meeting and keeps a clean, running notes page
+that participants read and trust in real time.
+
+You receive periodic passes: the current notes page (with ids, revisions, and
+statuses), the meeting's topic and rolling summary for context, and recent
+transcript segments. You act ONLY by emitting operations through the tools you
+are given; you never write prose directly to the user.
+
+YOUR ONE JOB
+Maintain the live_notes card. Every pass with meaningful new speech should
+leave the notes better than it found them. Unlike the copilot checkpoints,
+you are expected to write on nearly every pass — a silent note taker is a
+failed note taker.
+
+OPERATIONS (live_notes ONLY)
+- add_item(card="live_notes", text, data, evidence): start a new note block
+  when the discussion moves to a new subject or a fresh development deserves
+  its own entry.
+- update_item(id, base_revision, set, evidence): extend or refine the CURRENT
+  (most recent) note block while it is still about the same subject.
+  base_revision MUST equal the block's current revision as shown on the page.
+- remove_item(id, base_revision, evidence): mark one of your own blocks
+  removed when it is wrong or fully superseded.
+
+NOTE ANATOMY
+- text: 1-4 tight sentences of concrete prose — what was discussed, stated
+  numbers, who took which stance. Write like professional minutes, not
+  bullets. Stay faithful to what was said; never fabricate.
+- data.heading: a short label for the block (at most ~8 words), e.g.
+  "Onboarding funnel review". Set it on add_item; keep it stable when
+  updating.
+- data.start_s: the meeting-seconds stamp (copied from a segment's t=…s
+  value) of the EARLIEST segment the note covers. Set it on every add_item.
+- evidence: the segment ids (sg_...) that back the note, copied EXACTLY from
+  transcript lines you were given in this conversation. Cite at most
+  {max_evidence}.
+
+CADENCE AND STYLE
+- One subject = one block. While the same subject continues, extend the
+  current block with update_item instead of stacking near-duplicate blocks
+  (a duplicate add is rejected as duplicate_item — that is your signal to
+  update instead).
+- A new subject, decision, or development starts a new block.
+- Write in the language of the meeting, third person, American spelling.
+- Keep each block under roughly 600 characters; when a block outgrows that
+  and the discussion continues, let a new block carry the continuation.
+
+PROVISIONAL CONTENT AND PROTECTION
+Everything you write appears as "proposed" until a human touches it. Blocks
+whose status is "edited" or "confirmed", or which are pinned, are protected:
+your updates and removals against them are rejected with reason
+human_edited — never retry those targets; start a fresh block beside them
+instead. update_item and remove_item also require the current
+base_revision; on revision_mismatch the current revision is echoed back —
+re-read the page and re-emit only if the change is still warranted.
+
+REJECTION HANDLING
+Each op returns ok or a rejection reason (duplicate_item, human_edited,
+revision_mismatch, unknown_item, unknown_evidence, ...). Rejections are
+normal: adapt on this or the next pass instead of repeating the same op.
+"""
+
+_NOTES_INSTRUCTIONS = """\
+## INSTRUCTIONS — NOTE-TAKER PASS
+Extend the notes page from the new transcript segments:
+1. If the newest block is still about the same subject, extend or refine it
+   with update_item (with the correct base_revision and its existing
+   data.heading/data.start_s kept).
+2. Otherwise add a new block: fresh data.heading, data.start_s from the
+   earliest covering segment's t=…s value, and a concise professional body.
+3. Cite evidence segment ids on every operation.
+4. Never rewrite or remove human-touched blocks.
+A pass with meaningful new speech and zero operations is a failure — the
+notes page must keep up with the meeting."""
+
+
+def build_note_taker_system_prompt() -> str:
+    """Build the standing system prompt for the dedicated note-taker pass.
+
+    Returns:
+        The note-taker persona prompt, with the evidence limit taken from
+        the state-patch validation layer.
+    """
+    return _NOTE_TAKER_SYSTEM_PROMPT_TEMPLATE.format(
+        max_evidence=MAX_EVIDENCE_REFS,
+    )
+
+
+def _render_item(item: Dict[str, Any], card: Optional[str] = None) -> str:
     """Render one card item as a compact single line with targeting metadata."""
     flags = [f"rev={item.get('revision', 1)}", str(item.get("status", "proposed"))]
     if item.get("pinned"):
         flags.append("pinned")
     data = item.get("data") or {}
     extras = []
+    if data.get("heading"):
+        extras.append(f"heading={data['heading']}")
     if data.get("owner_participant_id"):
         extras.append(f"owner={data['owner_participant_id']}")
     if data.get("start_s") is not None:
@@ -269,8 +386,14 @@ def _render_item(item: Dict[str, Any]) -> str:
         extras.append(f"severity={data['severity']}")
     extra_txt = f" ({', '.join(extras)})" if extras else ""
     text = (item.get("text") or "").replace("\n", " ").strip()
-    if len(text) > _MAX_ITEM_TEXT_CHARS:
-        text = text[: _MAX_ITEM_TEXT_CHARS - 3] + "..."
+    card_name = card or item.get("card") or ""
+    max_len = (
+        _MAX_NOTE_TEXT_CHARS
+        if card_name in ("live_notes", "user_notes") or data.get("heading")
+        else _MAX_ITEM_TEXT_CHARS
+    )
+    if len(text) > max_len:
+        text = text[: max_len - 3] + "..."
     return f"- [{item.get('id')} {' '.join(flags)}]{extra_txt} {text}"
 
 
@@ -320,7 +443,7 @@ def render_state_compact(state: Dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"Card {label} ({len(items)} items):")
         if items:
-            lines.extend(_render_item(item) for item in items)
+            lines.extend(_render_item(item, card=card) for item in items)
         else:
             lines.append("- (empty)")
 
@@ -350,6 +473,87 @@ def format_segment_line(segment: Dict[str, Any],
     start_s = float(segment.get("start_s") or 0.0)
     text = (segment.get("text") or "").replace("\n", " ").strip()
     return f"[{segment.get('id')}] [t={start_s:.1f}s] [{speaker}]: {text}"
+
+
+_MAX_NOTE_TEXT_CHARS = 600
+
+
+def _render_note_item(item: Dict[str, Any]) -> str:
+    """Render one live_notes block with the metadata the note taker targets."""
+    flags = [f"rev={item.get('revision', 1)}", str(item.get("status", "proposed"))]
+    if item.get("pinned"):
+        flags.append("pinned")
+    data = item.get("data") or {}
+    extras = []
+    if data.get("heading"):
+        extras.append(f"heading={data['heading']}")
+    if data.get("start_s") is not None:
+        extras.append(f"start_s={data['start_s']}")
+    extra_txt = f" ({', '.join(extras)})" if extras else ""
+    text = (item.get("text") or "").replace("\n", " ").strip()
+    if len(text) > _MAX_NOTE_TEXT_CHARS:
+        text = text[: _MAX_NOTE_TEXT_CHARS - 3] + "..."
+    return f"- [{item.get('id')} {' '.join(flags)}]{extra_txt} {text}"
+
+
+def render_notes_page(state: Dict[str, Any]) -> str:
+    """Render the notes page compactly for the note-taker user prompt.
+
+    Includes ids, revisions, statuses, and pin flags so the note taker can
+    target updates precisely and knows which blocks are protected.
+
+    Args:
+        state: A ``MeetingState.to_dict()`` snapshot.
+
+    Returns:
+        A multi-line rendering of the topic, summary, and live_notes blocks.
+    """
+    lines: List[str] = []
+    topic = (state.get("topic") or {}).get("current") or "(not set)"
+    lines.append(f"Current topic: {topic}")
+    summary = state.get("rolling_summary") or "(not set)"
+    lines.append(f"Rolling summary: {summary}")
+    blocks = [
+        item for item in ((state.get("cards") or {}).get("live_notes") or [])
+        if item.get("status") != "removed"
+    ]
+    lines.append("")
+    lines.append(f"Notes blocks ({len(blocks)}):")
+    if blocks:
+        lines.extend(_render_note_item(item) for item in blocks)
+    else:
+        lines.append("- (page is empty — the first note starts it)")
+    return "\n".join(lines)
+
+
+def build_notes_user_prompt(state: Dict[str, Any],
+                            new_segments: List[Dict[str, Any]]) -> str:
+    """Build the user prompt for one note-taker pass.
+
+    Args:
+        state: A ``MeetingState.to_dict()`` snapshot (the rolling context).
+        new_segments: Recent transcript segments for this pass.
+
+    Returns:
+        The complete user prompt: the notes page, recent transcript lines,
+        then the note-taker instructions.
+    """
+    participants = state.get("participants") or {}
+    parts: List[str] = []
+    parts.append("## CURRENT NOTES PAGE")
+    parts.append(render_notes_page(state))
+    parts.append("")
+    parts.append("## NEW TRANSCRIPT SEGMENTS")
+    if new_segments:
+        parts.extend(
+            format_segment_line(segment, participants)
+            for segment in new_segments
+        )
+    else:
+        parts.append("(no new segments)")
+    parts.append("")
+    parts.append(_NOTES_INSTRUCTIONS)
+    return "\n".join(parts)
 
 
 def build_checkpoint_user_prompt(state: Dict[str, Any],

@@ -56,8 +56,14 @@ def _patch_subprocess_for_windows():
     subprocess.Popen = _NoConsolePopen
 
 
-# Apply the subprocess patch immediately on import (before whisper is loaded)
-_patch_subprocess_for_windows()
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Add project root to path (go up one level from tests folder)
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -174,84 +180,109 @@ class AudioGenerator:
                 self._tts_available = False
         return self._tts_available
 
+    def _find_ami_audio(self) -> Optional[str]:
+        """Find an existing real speech audio file in the repository."""
+        ami_dir = os.path.join(project_root, "benchmarks", "meeting_mode", "data", "ami", "audio")
+        if os.path.isdir(ami_dir):
+            for fname in ["IN1009.Mix-Headset.wav", "IN1001.Mix-Headset.wav"]:
+                candidate = os.path.join(ami_dir, fname)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+    def _check_audio_available(self) -> bool:
+        """Check if TTS or real speech corpus audio is available."""
+        return self._check_tts_available() or (self._find_ami_audio() is not None)
+
     def generate_tts_audio(self, duration_seconds: float, output_filename: str) -> Optional[Tuple[str, str]]:
         """
-        Generate speech audio using gTTS.
+        Generate speech audio using gTTS or slice from the local speech corpus.
 
         Args:
             duration_seconds: Target duration in seconds
             output_filename: Name for the output file
 
         Returns:
-            Tuple of (path to generated audio file, expected text), or None if failed
+            Tuple of (path to generated audio file, expected text description), or None if failed
         """
-        if not self._check_tts_available():
-            return None  # Silent return - fallback will be used
-
-        try:
-            from gtts import gTTS  # type: ignore
-            from pydub import AudioSegment  # type: ignore
-        except ImportError:
-            return None
-
-        # Text content for TTS - this is what will be spoken and transcribed
-        # We use a standard paragraph that contains natural speech patterns
-        base_text = (
-            "This is a test audio file for benchmarking transcription models. "
-            "We are measuring how long it takes each model to transcribe audio of different lengths. "
-            "The transcription system needs to accurately convert speech to text while maintaining "
-            "good performance. This test will help us understand which model works best for different "
-            "use cases and audio durations. The audio contains natural speech patterns and common words "
-            "that transcription systems should be able to handle effectively."
-        )
-
-        # Repeat the text to reach the target duration
-        # Average speech rate is ~150 words per minute, base_text is ~50 words (~20 seconds)
-        # We repeat it to fill the required duration
-        repetitions = max(1, int(duration_seconds / 20))
-        full_text = (base_text + " ") * repetitions
-
-        print(f"  Text to be spoken: {len(full_text.split())} words (~{duration_seconds}s)")
-
         output_path = os.path.join(self.temp_dir, output_filename)
 
-        try:
-            # Generate TTS audio
-            print(f"  Generating {duration_seconds}s audio with gTTS...")
-            tts = gTTS(text=full_text, lang='en', slow=False)
-
-            # Save to temp MP3 first
-            temp_mp3 = os.path.join(self.temp_dir, "temp.mp3")
-            tts.save(temp_mp3)
-
-            # Convert to WAV
-            audio = AudioSegment.from_mp3(temp_mp3)
-
-            # Trim or pad to exact duration
-            target_ms = int(duration_seconds * 1000)
-            if len(audio) < target_ms:
-                # Pad with silence
-                silence = AudioSegment.silent(duration=target_ms - len(audio))
-                audio = audio + silence
-            else:
-                # Trim to exact duration
-                audio = audio[:target_ms]
-
-            audio.export(output_path, format="wav")
-
-            # Cleanup temp MP3
+        # 1. Try gTTS if available
+        if self._check_tts_available():
             try:
-                os.remove(temp_mp3)
-            except Exception:
-                pass
+                from gtts import gTTS  # type: ignore
+                from pydub import AudioSegment  # type: ignore
 
-            actual_duration = len(audio) / 1000.0
-            print(f"  ✅ Generated: {output_path} ({actual_duration:.1f}s)")
-            return (output_path, full_text.strip())
+                base_text = (
+                    "This is a test audio file for benchmarking transcription models. "
+                    "We are measuring how long it takes each model to transcribe audio of different lengths. "
+                    "The transcription system needs to accurately convert speech to text while maintaining "
+                    "good performance. This test will help us understand which model works best for different "
+                    "use cases and audio durations. The audio contains natural speech patterns and common words "
+                    "that transcription systems should be able to handle effectively."
+                )
 
-        except Exception as e:
-            logger.error(f"Failed to generate TTS audio: {e}")
-            return None
+                repetitions = max(1, int(duration_seconds / 20))
+                full_text = (base_text + " ") * repetitions
+
+                print(f"  Text to be spoken: {len(full_text.split())} words (~{duration_seconds}s)")
+                print(f"  Generating {duration_seconds}s audio with gTTS...")
+                tts = gTTS(text=full_text, lang='en', slow=False)
+
+                temp_mp3 = os.path.join(self.temp_dir, "temp.mp3")
+                tts.save(temp_mp3)
+
+                audio = AudioSegment.from_mp3(temp_mp3)
+                target_ms = int(duration_seconds * 1000)
+                if len(audio) < target_ms:
+                    silence = AudioSegment.silent(duration=target_ms - len(audio))
+                    audio = audio + silence
+                else:
+                    audio = audio[:target_ms]
+
+                audio.export(output_path, format="wav")
+
+                try:
+                    os.remove(temp_mp3)
+                except Exception:
+                    pass
+
+                actual_duration = len(audio) / 1000.0
+                print(f"  ✅ Generated TTS audio: {output_path} ({actual_duration:.1f}s)")
+                return (output_path, full_text.strip())
+            except Exception as e:
+                logger.debug(f"gTTS generation failed, attempting corpus slice fallback: {e}")
+
+        # 2. Fallback: slice real speech audio from AMI corpus
+        ami_audio = self._find_ami_audio()
+        if ami_audio:
+            try:
+                import wave
+                print(f"  Extracting {duration_seconds}s speech slice from {os.path.basename(ami_audio)}...")
+                with wave.open(ami_audio, "rb") as src:
+                    rate = src.getframerate()
+                    channels = src.getnchannels()
+                    sampwidth = src.getsampwidth()
+                    total_frames = src.getnframes()
+                    # Start at 30 seconds into the recording to skip intro silence
+                    start_frame = min(total_frames - 1, int(30.0 * rate))
+                    src.setpos(start_frame)
+                    frames_to_read = min(total_frames - start_frame, int(duration_seconds * rate))
+                    frames = src.readframes(frames_to_read)
+
+                with wave.open(output_path, "wb") as dst:
+                    dst.setnchannels(channels)
+                    dst.setsampwidth(sampwidth)
+                    dst.setframerate(rate)
+                    dst.writeframes(frames)
+
+                actual_duration = len(frames) / (channels * sampwidth * rate)
+                print(f"  ✅ Extracted speech sample: {output_path} ({actual_duration:.1f}s)")
+                return (output_path, f"AMI speech slice ({duration_seconds}s)")
+            except Exception as e:
+                logger.error(f"Failed to slice corpus audio: {e}")
+
+        return None
 
 
     def cleanup(self):
@@ -273,33 +304,56 @@ class AudioGenerator:
 class ModelBenchmark:
     """Benchmark all transcription models."""
 
-    def __init__(self):
-        """Initialize the benchmark."""
+    def __init__(
+        self,
+        local_models: Optional[List[str]] = None,
+        device: Optional[str] = None,
+        compute_type: Optional[str] = None,
+        skip_api: bool = False,
+    ):
+        """Initialize the benchmark.
+
+        Args:
+            local_models: List of local faster-whisper model names to test.
+            device: Override device ("cuda" or "cpu").
+            compute_type: Override compute type ("float16", "int8", etc.).
+            skip_api: When True, do not probe or benchmark OpenAI API backends.
+        """
         self.audio_generator = AudioGenerator()
         self.results: List[TestResult] = []
+        self.device = None if device == "auto" else device
+        self.compute_type = None if compute_type == "auto" else compute_type
 
         # Store list of local models to test (will be initialized one at a time)
-        # NOTE: turbo is placed LAST because its cleanup can crash (ctranslate2 destructor bug)
-        # By putting it last, we don't need to clean it up before loading another model
-        self.local_models_to_test = ['base', 'base.en', 'tiny', 'tiny.en', 'turbo']
+        if local_models is not None:
+            models = list(local_models)
+        else:
+            models = ['base', 'base.en', 'tiny', 'tiny.en', 'turbo']
+
+        # Ensure 'turbo' is tested last if present to prevent destructor issues
+        if 'turbo' in models:
+            models.remove('turbo')
+            models.append('turbo')
+        self.local_models_to_test = models
 
         # Initialize API backends (lightweight, can stay loaded)
         self.backends: Dict[str, any] = {}
 
-        print("Initializing OpenAI backends...")
-        for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
-            try:
-                backend = OpenAIBackend(backend_name)
-                if backend.is_available():
-                    self.backends[backend_name] = backend
-                    print(f"✅ {backend_name} backend initialized")
-                else:
-                    print(f"⚠️  {backend_name} backend not available (missing API key?)")
-            except Exception as e:
-                error_msg = str(e)
-                if len(error_msg) > 150:
-                    error_msg = error_msg[:147] + "..."
-                print(f"⚠️  Failed to initialize {backend_name}: {error_msg}")
+        if not skip_api:
+            print("Initializing OpenAI backends...")
+            for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
+                try:
+                    backend = OpenAIBackend(backend_name)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        print(f"✅ {backend_name} backend initialized")
+                    else:
+                        print(f"⚠️  {backend_name} backend not available (missing API key?)")
+                except Exception as e:
+                    error_msg = str(e)
+                    if len(error_msg) > 150:
+                        error_msg = error_msg[:147] + "..."
+                    print(f"⚠️  Failed to initialize {backend_name}: {error_msg}")
 
     def test_model(self, backend_name: str, backend: any, audio_file: str, duration: float) -> TestResult:
         """
@@ -426,13 +480,11 @@ class ModelBenchmark:
         print("\n📁 Generating test audio files...")
         audio_files = {}
 
-        # Check if TTS is available - required for meaningful transcription tests
-        if not self.audio_generator._check_tts_available():
-            print("\n❌ ERROR: gTTS and pydub are required for transcription benchmarking")
-            print("   Synthetic audio (sine waves) cannot be meaningfully transcribed.")
-            print("   Install with: pip install gtts pydub")
-            print("\n   These dependencies are needed to generate actual speech audio")
-            print("   that transcription models can transcribe to real words.")
+        # Check if audio source is available (either TTS or speech corpus)
+        if not self.audio_generator._check_audio_available():
+            print("\n❌ ERROR: No speech audio generator available")
+            print("   Please either install gTTS (pip install gtts pydub) or ensure")
+            print("   AMI benchmark audio exists under benchmarks/meeting_mode/data/ami/audio/")
             return
 
         for duration in durations:
@@ -459,8 +511,6 @@ class ModelBenchmark:
         print("   Each model will be tested with all durations, then unloaded before the next.\n")
 
         config_printed = False
-        # Models that should use CUDA with float16
-        cuda_models = ['base', 'base.en', 'turbo']
 
         for model_idx, model_name in enumerate(self.local_models_to_test):
             is_last_model = (model_idx == len(self.local_models_to_test) - 1)
@@ -468,19 +518,14 @@ class ModelBenchmark:
             backend = None
 
             try:
-                # For base, base.en, and turbo: use CUDA/float16 directly
-                if model_name in cuda_models:
-                    print(f"\n{'='*80}")
-                    print(f"Loading {backend_key} (CUDA/float16)...")
-                    print('='*80)
-                    # Pass device and compute_type directly to the constructor
-                    backend = LocalWhisperBackend(model_name=model_name, device='cuda', compute_type='float16')
-                else:
-                    print(f"\n{'='*80}")
-                    print(f"Loading {backend_key}...")
-                    print('='*80)
-                    # Use default settings for other models
-                    backend = LocalWhisperBackend(model_name=model_name)
+                print(f"\n{'='*80}")
+                print(f"Loading {backend_key}...")
+                print('='*80)
+                backend = LocalWhisperBackend(
+                    model_name=model_name,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
 
                 if not backend.is_available():
                     print(f"⚠️  {backend_key} backend not available - skipping")
@@ -692,22 +737,66 @@ class ModelBenchmark:
                 logger.debug(f"Error cleaning up {backend_name}: {e}")
 
 
-def main():
+def main(argv: Optional[List[str]] = None):
     """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Model Speed & Throughput Benchmark")
+    parser.add_argument(
+        "--durations",
+        type=str,
+        default="10,30,120",
+        help="Comma-separated audio durations in seconds to test (default: 10,30,120)",
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="base,base.en,tiny,tiny.en,turbo",
+        help="Comma-separated local model names to test (default: base,base.en,tiny,tiny.en,turbo)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Hardware device to use (default: auto)",
+    )
+    parser.add_argument(
+        "--compute-type",
+        type=str,
+        default="auto",
+        help="Compute type (float16, int8, float32, auto)",
+    )
+    parser.add_argument(
+        "--skip-api",
+        action="store_true",
+        help="Skip testing OpenAI API models",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        durations = [float(d.strip()) for d in args.durations.split(",") if d.strip()]
+    except ValueError:
+        print("❌ Invalid durations specified. Must be comma-separated numbers.")
+        return 2
+
+    local_models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else []
+
     benchmark = None
 
     try:
-        benchmark = ModelBenchmark()
+        benchmark = ModelBenchmark(
+            local_models=local_models,
+            device=args.device,
+            compute_type=args.compute_type,
+            skip_api=args.skip_api,
+        )
 
-        if not benchmark.backends:
-            print("\n❌ No transcription backends available!")
-            print("   Please check:")
-            print("   - Local Whisper: Ensure faster-whisper is installed")
-            print("   - API models: Set OPENAI_API_KEY environment variable")
-            return
+        if not benchmark.backends and not benchmark.local_models_to_test:
+            print("\n❌ No transcription models or backends configured!")
+            return 2
 
-        # Run benchmark with default durations: 10s, 30s, 2min
-        benchmark.run_benchmark(durations=[10.0, 30.0, 120.0])
+        benchmark.run_benchmark(durations=durations)
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Benchmark interrupted by user")

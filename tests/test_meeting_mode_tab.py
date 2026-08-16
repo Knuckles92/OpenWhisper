@@ -262,6 +262,37 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.finalization_dashboard_button.click()
         self.assertEqual(clicked, [True])
 
+    def test_failed_finalization_shows_retry_button_and_emits_signal(self):
+        """Failed finalization shows Retry insights button and clicking emits signal."""
+        clicked = []
+        self.tab.retry_insights_requested.connect(lambda: clicked.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "failed",
+                "message": "Final cloud insights failed: RPC timeout",
+            },
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+        self.assertFalse(self.tab.finalization_retry_button.isHidden())
+        self.assertTrue(self.tab.finalization_retry_button.isEnabled())
+        self.tab.finalization_retry_button.click()
+        self.assertEqual(clicked, [True])
+
+        # Switching to running hides the retry button
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "running",
+                "message": "Re-running final cloud insights…",
+            },
+        })
+        self.app.processEvents()
+        self.assertTrue(self.tab.finalization_retry_button.isHidden())
+
 
 if __name__ == "__main__":
     unittest.main()

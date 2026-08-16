@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from benchmarks.meeting_mode.product_eval import (
     ProductEvalHost,
+    _render_package_for_judge,
     dashboard_package,
     format_reference,
 )
@@ -101,3 +102,45 @@ def test_segment_handler_returns_inverse_for_undo():
     ))
     assert inverse["text"] == "old"
     assert host._segments["sg_1"]["text"] == "new"
+
+
+def test_render_package_for_judge_formats_notes_and_timeline():
+    package = {
+        "topic": "Transforms",
+        "summary": "Comparing Fourier and Wavelet transforms.",
+        "cards": {
+            "key_points": [{"text": "Point 1", "data": {}}],
+            "decisions": [],
+            "action_items": [
+                {"text": "Ship feature", "data": {"owner_participant_id": "p_alice"}},
+            ],
+            "risks": [
+                {"text": "High latency", "data": {"severity": "high"}},
+            ],
+            "timeline": [
+                {"text": "Opening discussion", "data": {"start_s": 12.5}},
+            ],
+            "live_notes": [
+                {
+                    "text": "The speaker discussed FFT performance.",
+                    "data": {"heading": "FFT Analysis", "start_s": 45.0},
+                },
+            ],
+        },
+        "questions": [
+            {"text": "What about memory?", "status": "resolved", "answer_text": "2GB"},
+        ],
+        "transcript": [
+            {"id": "sg_1", "start_s": 0.0, "end_s": 2.0, "text": "Hello world"},
+        ],
+    }
+    rendered = _render_package_for_judge(package)
+    assert "Topic: Transforms" in rendered
+    assert "- Point 1" in rendered
+    assert "- [p_alice] Ship feature" in rendered
+    assert "- [high] High latency" in rendered
+    assert "- [12s] Opening discussion" in rendered
+    assert "- [45s] [FFT Analysis] The speaker discussed FFT performance." in rendered
+    assert "- [resolved] What about memory? → 2GB" in rendered
+    assert "[0s] Hello world" in rendered
+

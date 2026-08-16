@@ -154,6 +154,7 @@ def _consolidate(core: Any, payload: CheckpointPayload,
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
                    model: str, agent_core_kind: str = "pi",
                    sidecar_payload_dir: Optional[str] = None,
+                   store: Optional[MeetingStateStore] = None,
                    timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
     """Regenerate a past meeting's insights from its stored transcript.
 
@@ -168,6 +169,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
         model: Model id for the agent core.
         agent_core_kind: ``pi`` for the bundled sidecar, ``direct`` otherwise.
         sidecar_payload_dir: Directory holding the Pi sidecar payload.
+        store: Optional existing ``MeetingStateStore`` (e.g. from an active engine).
         timeout_s: Budget for the consolidation pass.
 
     Returns:
@@ -185,13 +187,14 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
     if not segments:
         raise ValueError("meeting has no transcript")
 
-    store = MeetingStateStore(
-        _load_state(meeting, meeting_id),
-        repository=repository,
-        segment_exists=lambda segment_id: repository.segment_exists(
-            meeting_id, segment_id
-        ),
-    )
+    if store is None:
+        store = MeetingStateStore(
+            _load_state(meeting, meeting_id),
+            repository=repository,
+            segment_exists=lambda segment_id: repository.segment_exists(
+                meeting_id, segment_id
+            ),
+        )
     tools = _OfflineToolHost(store)
 
     try:

@@ -6,8 +6,10 @@ import HistoryPane from './components/HistoryPane';
 import ActivityPane from './components/ActivityPane';
 import JoinGate from './components/JoinGate';
 import MeetingOverview from './components/MeetingOverview';
+import NotesPane from './components/NotesPane';
 import ParticipantsPane from './components/ParticipantsPane';
 import QuestionInbox from './components/QuestionInbox';
+import SpotlightRow from './components/SpotlightRow';
 import TranscriptPane from './components/TranscriptPane';
 import { initialUiState, meetingReducer } from './state';
 import type { Op, Role, SessionResponse } from './types';
@@ -170,6 +172,26 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             cloudEnabled={ui.state.cloud_enabled}
             intelligenceOnline={ui.state.intelligence_online}
             onEvidenceClick={handleEvidenceClick}
+          />
+
+          <SpotlightRow
+            cards={ui.state.cards}
+            status={ui.state.status}
+            cloudEnabled={ui.state.cloud_enabled}
+            intelligenceOnline={ui.state.intelligence_online}
+            onSendOp={sendOp}
+            onEvidenceClick={handleEvidenceClick}
+          />
+
+          <NotesPane
+            notes={ui.state.cards.live_notes ?? []}
+            status={ui.state.status}
+            cloudEnabled={ui.state.cloud_enabled}
+            intelligenceOnline={ui.state.intelligence_online}
+            onSendOp={sendOp}
+            onEvidenceClick={handleEvidenceClick}
+            onUndo={isHost ? sendUndo : undefined}
+            lastSeqByTarget={ui.lastSeqByTarget}
           />
 
           {isHost && showActivity && (

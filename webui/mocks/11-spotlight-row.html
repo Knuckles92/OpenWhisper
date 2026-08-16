@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>11 · Spotlight Row</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1a2420;
+      --soft: #5b6b63;
+      --leaf: #2f6b4f;
+      --leaf-2: #3f8a66;
+      --wash: #e8f0ea;
+      --paper: #f7faf8;
+      --line: #c9d5cd;
+      --confirmed: rgba(63, 138, 102, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 50% -20%, #d5e8db 0%, transparent 60%),
+        linear-gradient(165deg, #f3f7f4 0%, #e4ece7 45%, #f7faf8 100%);
+      background-attachment: fixed;
+    }
+    .frame {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.55rem;
+      letter-spacing: -0.02em;
+    }
+    .brand span { color: var(--leaf); font-style: italic; }
+    .nav-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, white 70%, transparent);
+      color: var(--ink);
+      padding: 8px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--leaf); border-color: var(--leaf); color: white; }
+    button.small { font-size: 12px; padding: 4px 10px; }
+    button.danger { background: transparent; border-color: #c98a84; color: #8a3d36; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      max-width: 720px;
+      margin: 4px auto 0;
+      animation: rise 700ms ease both;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: none; }
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      margin-bottom: 14px;
+    }
+    .eyebrow i {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--leaf);
+      box-shadow: 0 0 0 0 rgba(47,107,79,.5);
+      animation: ping 1.8s infinite;
+    }
+    @keyframes ping { 70%, 100% { box-shadow: 0 0 0 10px transparent; } }
+    .hero h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      font-weight: 400;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin: 0 0 14px;
+    }
+    .hero p {
+      margin: 0 auto;
+      max-width: 48ch;
+      color: var(--soft);
+      font-size: 1.05rem;
+      line-height: 1.55;
+    }
+
+    /* Spotlight row — the prominent, always-evolving insight trio */
+    .spotlight-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .spotlight-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      padding: 18px 20px 16px;
+      border-radius: 18px;
+      border: 1px solid color-mix(in srgb, var(--line) 74%, white);
+      background: color-mix(in srgb, var(--paper) 82%, white);
+      backdrop-filter: blur(6px);
+      animation: spotlight-in 480ms ease both;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+    .spotlight-card:hover {
+      border-color: color-mix(in srgb, var(--leaf) 28%, var(--line));
+      box-shadow: 0 12px 32px -20px rgba(26, 36, 32, 0.4);
+    }
+    .spotlight-card.pinned { border-color: color-mix(in srgb, var(--leaf) 55%, var(--line)); }
+    @keyframes spotlight-in {
+      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      to { opacity: 1; transform: none; }
+    }
+    .spotlight-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .capture-tag {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      margin: 0;
+    }
+    .spotlight-card.proposed .capture-tag::after {
+      content: ' · proposed';
+      font-weight: 600;
+      color: var(--soft);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .spotlight-pin {
+      flex: none;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      background: var(--confirmed);
+      border-radius: 999px;
+      padding: 3px 9px;
+    }
+    .spotlight-text {
+      margin: 0;
+      font-size: 1.06rem;
+      line-height: 1.42;
+      color: var(--ink);
+      white-space: pre-wrap;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+      overflow: hidden;
+    }
+    .spotlight-card.pinned .spotlight-text { font-weight: 600; }
+    .spotlight-foot {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .spotlight-meta { font-size: 0.74rem; font-weight: 500; color: var(--soft); }
+    .spotlight-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .spotlight-ghost {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 148px;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px dashed color-mix(in srgb, var(--line) 85%, transparent);
+      color: var(--soft);
+      font-size: 0.9rem;
+      text-align: center;
+    }
+    .evidence-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+    .evidence-chip {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--wash);
+      border: 1px solid var(--line);
+      color: var(--leaf);
+      font-weight: 600;
+    }
+
+    /* Quiet activity strip */
+    .activity {
+      width: min(760px, 100%);
+      margin: -6px auto 0;
+      border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--paper) 68%, transparent);
+      color: var(--soft);
+      padding: 10px 14px;
+      font-size: 0.82rem;
+    }
+    .activity b { color: var(--ink); font-weight: 650; }
+    .activity .dot {
+      display: inline-block;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--leaf-2);
+      margin-right: 8px;
+      animation: breathe 2.8s ease-in-out infinite;
+    }
+    @keyframes breathe { 50% { opacity: 0.55; } }
+
+    /* Stage */
+    .stage { display: grid; grid-template-columns: 1.3fr 0.9fr; gap: 22px; align-items: start; }
+    .panel {
+      background: color-mix(in srgb, var(--paper) 82%, white);
+      border: 1px solid color-mix(in srgb, var(--line) 70%, white);
+      border-radius: 22px;
+      overflow: hidden;
+      backdrop-filter: blur(6px);
+    }
+    .panel h3 {
+      margin: 0;
+      padding: 18px 20px 0;
+      font-size: 0.8rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--soft);
+      font-weight: 600;
+    }
+    .panel-body { padding: 8px 20px 20px; }
+    .segment {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 12px;
+      padding: 14px 8px;
+      border-radius: 14px;
+    }
+    .segment:hover { background: var(--wash); }
+    .segment-time { color: var(--soft); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    .segment-meta { font-size: 0.85rem; font-weight: 600; margin-bottom: 2px; }
+    .segment-text { margin: 0; line-height: 1.45; color: #24302b; }
+
+    /* Captured rail with section headings */
+    .rail { display: flex; flex-direction: column; gap: 14px; }
+    .card-section-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--leaf);
+      margin: 12px 0 4px;
+    }
+    .card-section-count { margin-left: 7px; font-weight: 500; color: var(--soft); letter-spacing: 0; }
+    .card-item { padding: 14px 0; border-top: 1px solid var(--line); }
+    .card-section .card-item:first-of-type { border-top: none; padding-top: 8px; }
+    .card-item .capture-tag { margin: 0 0 4px; }
+    .card-item.proposed .capture-tag::after {
+      content: ' · proposed';
+      font-weight: 600;
+      color: var(--soft);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .card-item-text { margin: 0 0 8px; font-size: 0.95rem; line-height: 1.45; }
+    .card-item.pinned .card-item-text { font-weight: 600; }
+    .card-item .evidence-row { margin-top: 6px; }
+    .card-item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .question-item { padding: 14px 0; border-top: 1px solid var(--line); }
+    .question-text { font-weight: 500; margin: 0 0 8px; }
+    .suggested-answer {
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: var(--wash);
+      color: var(--soft);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .people { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 20px 18px; }
+    .chip {
+      background: var(--wash);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+    }
+
+    /* States reference under the fold */
+    .states { margin-top: 8px; }
+    .states h2 {
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--soft);
+      margin: 28px 0 10px;
+    }
+    .states .spotlight-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    @media (max-width: 900px) {
+      .stage { grid-template-columns: 1fr; }
+      .spotlight-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <nav>
+      <div class="brand">open<span>whisper</span></div>
+      <div class="nav-actions">
+        <button>History</button>
+        <button>Pi activity</button>
+        <button class="primary">End meeting</button>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="eyebrow"><i></i>Live · Product sync</div>
+      <h1>Quarterly roadmap alignment</h1>
+      <p>The team aligned on Q3 scope: native app launch leads, the pricing change slips to Q4, and Ana owns the partner memo. Risks around legal review remain open.</p>
+    </section>
+
+    <section class="spotlight-row" aria-label="Top insights">
+      <article class="spotlight-card pinned">
+        <div class="spotlight-card-top">
+          <span class="capture-tag">Key point</span>
+          <span class="spotlight-pin">Pinned</span>
+        </div>
+        <p class="spotlight-text">Native app launch is the top Q3 priority — marketing budget shifts to support it.</p>
+        <div class="evidence-row"><span class="evidence-chip">10:04</span><span class="evidence-chip">10:11</span></div>
+        <div class="spotlight-foot">
+          <span class="spotlight-meta">Confirmed · 2m ago</span>
+          <div class="spotlight-actions">
+            <button class="small">Unpin</button>
+            <button class="small danger">Remove</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="spotlight-card confirmed">
+        <div class="spotlight-card-top">
+          <span class="capture-tag">Decision</span>
+        </div>
+        <p class="spotlight-text">Ship v2 on September 12, contingent on QA sign-off by September 5.</p>
+        <div class="evidence-row"><span class="evidence-chip">10:22</span></div>
+        <div class="spotlight-foot">
+          <span class="spotlight-meta">Confirmed · 6m ago</span>
+          <div class="spotlight-actions">
+            <button class="small">Pin</button>
+            <button class="small danger">Remove</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="spotlight-card proposed">
+        <div class="spotlight-card-top">
+          <span class="capture-tag">Action</span>
+        </div>
+        <p class="spotlight-text">Ana will draft the pricing rollback memo and circulate it to partners by Friday.</p>
+        <div class="evidence-row"><span class="evidence-chip">10:31</span><span class="evidence-chip">10:32</span></div>
+        <div class="spotlight-foot">
+          <span class="spotlight-meta">AI suggested · just now</span>
+          <div class="spotlight-actions">
+            <button class="small">Pin</button>
+            <button class="small">Confirm</button>
+            <button class="small danger">Remove</button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <div class="activity"><span class="dot"></span><b>Pi is capturing</b> · added an action item · updated the rolling summary</div>
+
+    <div class="stage">
+      <section class="panel">
+        <h3>Transcript</h3>
+        <div class="panel-body">
+          <div class="segment">
+            <span class="segment-time">10:04</span>
+            <div>
+              <div class="segment-meta">Sarah</div>
+              <p class="segment-text">So for Q3, the native app launch has to lead. Everything else feeds it.</p>
+            </div>
+          </div>
+          <div class="segment">
+            <span class="segment-time">10:22</span>
+            <div>
+              <div class="segment-meta">Miguel</div>
+              <p class="segment-text">Then let's lock September 12 for v2, as long as QA signs off by the fifth.</p>
+            </div>
+          </div>
+          <div class="segment">
+            <span class="segment-time">10:31</span>
+            <div>
+              <div class="segment-meta">Ana</div>
+              <p class="segment-text">I can take the pricing rollback memo — partners will need a heads-up before Friday.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="rail">
+        <section class="panel">
+          <h3>Captured</h3>
+          <div class="panel-body">
+            <div class="card-section">
+              <h4 class="card-section-title">Key Points <span class="card-section-count">2</span></h4>
+              <div class="card-item pinned">
+                <div class="capture-tag">Key point</div>
+                <p class="card-item-text">Native app launch is the top Q3 priority — marketing budget shifts to support it.</p>
+                <div class="card-item-actions">
+                  <button class="small">Edit</button><button class="small">Unpin</button><button class="small danger">Remove</button>
+                </div>
+              </div>
+              <div class="card-item proposed">
+                <div class="capture-tag">Key point</div>
+                <p class="card-item-text">Partner communications should reference the Q4 pricing change, not Q3.</p>
+                <div class="card-item-actions">
+                  <button class="small">Edit</button><button class="small">Confirm</button><button class="small">Pin</button><button class="small danger">Remove</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-section">
+              <h4 class="card-section-title">Decisions <span class="card-section-count">1</span></h4>
+              <div class="card-item">
+                <div class="capture-tag">Decision</div>
+                <p class="card-item-text">Ship v2 on September 12, contingent on QA sign-off by September 5.</p>
+                <div class="card-item-actions">
+                  <button class="small">Edit</button><button class="small">Pin</button><button class="small danger">Remove</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-section">
+              <h4 class="card-section-title">Action Items <span class="card-section-count">1</span></h4>
+              <div class="card-item proposed">
+                <div class="capture-tag">Action</div>
+                <p class="card-item-text">Ana will draft the pricing rollback memo and circulate it to partners by Friday.</p>
+                <div class="card-item-actions">
+                  <button class="small">Edit</button><button class="small">Confirm</button><button class="small">Pin</button><button class="small danger">Remove</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-section">
+              <h4 class="card-section-title">Questions <span class="card-section-count">1</span></h4>
+              <div class="question-item">
+                <p class="question-text">Who owns the QA sign-off checklist?</p>
+                <div class="suggested-answer">Suggested from the transcript: Miguel — “I'll run the QA gate myself.” (high confidence)</div>
+                <div class="card-item-actions">
+                  <button class="small">Accept</button><button class="small">Dismiss</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>Participants</h3>
+          <div class="people">
+            <span class="chip">You (host)</span>
+            <span class="chip">Sarah</span>
+            <span class="chip">Miguel</span>
+            <span class="chip">Ana</span>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <section class="states">
+      <h2>Empty-slot state</h2>
+      <div class="spotlight-row">
+        <div class="spotlight-ghost">Listening for insights…</div>
+        <div class="spotlight-ghost">Enable cloud insights to generate live insights.</div>
+        <div class="spotlight-ghost">Wrapping up insights…</div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

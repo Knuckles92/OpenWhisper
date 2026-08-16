@@ -21,7 +21,12 @@ except ImportError:  # pragma: no cover - openai is an app dependency
 
 from config import config
 from meeting.agent.base import find_provider_api_key
-from meeting.agent.prompts import JSON_FALLBACK_INSTRUCTIONS, build_checkpoint_user_prompt
+from meeting.agent.prompts import (
+    JSON_FALLBACK_INSTRUCTIONS,
+    build_checkpoint_user_prompt,
+    build_note_taker_system_prompt,
+    build_notes_user_prompt,
+)
 from meeting.interfaces import (
     AgentConfig,
     AgentResult,
@@ -29,12 +34,13 @@ from meeting.interfaces import (
     CheckpointPayload,
     OpResult,
 )
+from meeting.state.patches import filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS
 
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_TIMEOUT_S = 60.0
-_CONSOLIDATION_TIMEOUT_S = 120.0
+_CONSOLIDATION_TIMEOUT_S = 180.0
 _PROBE_TIMEOUT_S = 10.0
 #: Consolidation often needs an extra round to add timeline/questions after
 #: the first patch_state batch; rolling checkpoints stay at two rounds.
@@ -220,7 +226,16 @@ def _op_results_payload(results: List[OpResult]) -> Dict[str, Any]:
 
 
 class DirectOpenRouterAgent:
-    """``AgentCore`` implementation calling OpenRouter/OpenAI directly."""
+    """``AgentCore`` implementation calling OpenRouter/OpenAI directly.
+
+    Attributes:
+        supports_notes_pass: The direct core runs the dedicated note-taker
+            pass (its own persona prompt, ``live_notes`` ops only). The
+            scheduler probes this flag before firing a notes pass, so agent
+            cores without note-taker support simply never see one.
+    """
+
+    supports_notes_pass = True
 
     def __init__(self) -> None:
         self._cfg: Optional[AgentConfig] = None
@@ -233,6 +248,8 @@ class DirectOpenRouterAgent:
         self._model: str = ""
         self._json_mode = False
         self._polish_mode = False
+        self._notes_mode = False
+        self._notes_item_ids: Optional[frozenset] = None
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
@@ -424,18 +441,30 @@ class DirectOpenRouterAgent:
         if client is None:
             return AgentResult(ok=False, error="client_unavailable")
 
-        system_prompt = self._cfg.system_prompt or ""
-        user_prompt = build_checkpoint_user_prompt(
-            payload.state_snapshot,
-            payload.new_segments,
-            payload.is_consolidation,
-            is_polish=bool(getattr(payload, "is_polish", False)),
-        )
+        is_notes = bool(getattr(payload, "is_notes", False))
+        if is_notes:
+            system_prompt = build_note_taker_system_prompt()
+            user_prompt = build_notes_user_prompt(
+                payload.state_snapshot,
+                payload.new_segments,
+            )
+        else:
+            system_prompt = self._cfg.system_prompt or ""
+            user_prompt = build_checkpoint_user_prompt(
+                payload.state_snapshot,
+                payload.new_segments,
+                payload.is_consolidation,
+                is_polish=bool(getattr(payload, "is_polish", False)),
+            )
         max_rounds = (
             _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
             else _MAX_TOOL_ROUNDS
         )
         self._polish_mode = bool(getattr(payload, "is_polish", False))
+        self._notes_mode = is_notes
+        self._notes_item_ids = (
+            live_note_ids(payload.state_snapshot) if is_notes else None
+        )
         try:
             if self._json_mode:
                 return self._run_json_mode(
@@ -446,6 +475,8 @@ class DirectOpenRouterAgent:
             )
         finally:
             self._polish_mode = False
+            self._notes_mode = False
+            self._notes_item_ids = None
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
         """Route one model tool call to the tool host."""
@@ -460,8 +491,12 @@ class DirectOpenRouterAgent:
                     op for op in ops
                     if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
                 ]
+            elif self._notes_mode:
+                ops = filter_notes_ops(ops, self._notes_item_ids)
             return tools.apply_agent_ops(ops)
-        if self._polish_mode and name in ("ask_question", "resolve_question"):
+        if (
+            self._polish_mode or self._notes_mode
+        ) and name in ("ask_question", "resolve_question"):
             return []
         if name == "ask_question":
             return [tools.ask_question(
@@ -622,6 +657,8 @@ class DirectOpenRouterAgent:
                     op for op in ops
                     if isinstance(op, dict) and op.get("op") in _POLISH_ONLY_OPS
                 ]
+            elif self._notes_mode:
+                ops = filter_notes_ops(ops, self._notes_item_ids)
             op_results = self._tools.apply_agent_ops(ops) if ops else []
             return AgentResult(ok=True, op_results=op_results, usage=usage)
 

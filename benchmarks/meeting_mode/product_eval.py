@@ -71,13 +71,14 @@ Score each package 1-5 on:
 - topic_accuracy: is the subject what the reference shows?
 - key_points_fidelity: important claims present, grounded, not invented
 - decisions_actions_precision: real decisions/actions only; empty if none
+- notes_and_timeline_quality: structured minutes (live_notes) and narrative progression (timeline) faithful and clear
 - overall_record: which package would you keep as the meeting record?
 
 Return:
 {{
   "legacy": {{"transcript_usefulness": n, "topic_accuracy": n,
              "key_points_fidelity": n, "decisions_actions_precision": n,
-             "overall_record": n}},
+             "notes_and_timeline_quality": n, "overall_record": n}},
   "clean": {{...same keys...}},
   "winner": "legacy" | "clean" | "tie",
   "rationale": "short paragraph"
@@ -182,7 +183,31 @@ def _render_package_for_judge(package: Dict[str, Any], max_transcript_chars: int
             lines.append("- (empty)")
         else:
             for item in items:
-                lines.append(f"- {item.get('text') or ''}")
+                data = item.get("data") or {}
+                text = (item.get("text") or "").strip()
+                prefix = ""
+                if key == "live_notes":
+                    heading = data.get("heading")
+                    start_s = data.get("start_s")
+                    if heading and start_s is not None:
+                        prefix = f"[{float(start_s):.0f}s] [{heading}] "
+                    elif heading:
+                        prefix = f"[{heading}] "
+                    elif start_s is not None:
+                        prefix = f"[{float(start_s):.0f}s] "
+                elif key == "timeline":
+                    start_s = data.get("start_s")
+                    if start_s is not None:
+                        prefix = f"[{float(start_s):.0f}s] "
+                elif key == "action_items":
+                    owner = data.get("owner_participant_id")
+                    if owner:
+                        prefix = f"[{owner}] "
+                elif key == "risks":
+                    severity = data.get("severity")
+                    if severity:
+                        prefix = f"[{severity}] "
+                lines.append(f"- {prefix}{text}")
         lines.append("")
     questions = package.get("questions") or []
     lines.append("questions:")

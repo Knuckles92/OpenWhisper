@@ -330,11 +330,83 @@ export function sortedCardItems(items: CardItem[]): CardItem[] {
   });
 }
 
+/**
+ * Note-taker blocks in page order: by data.start_s when stamped, falling
+ * back to created_at, oldest first — the notes page reads chronologically.
+ */
+export function sortedNoteItems(items: CardItem[]): CardItem[] {
+  const stamp = (item: CardItem): number => {
+    const startS = (item.data as { start_s?: unknown }).start_s;
+    if (typeof startS === 'number' && Number.isFinite(startS)) return startS;
+    const created = Date.parse(item.created_at);
+    return Number.isNaN(created) ? 0 : created / 1000;
+  };
+  return [...items].sort((a, b) => stamp(a) - stamp(b));
+}
+
 export const CARD_LABELS: Record<CardKey, string> = {
   key_points: 'Key Points',
   decisions: 'Decisions',
   action_items: 'Action Items',
   risks: 'Risks & Disagreements',
   timeline: 'Timeline',
+  live_notes: 'Meeting Notes',
   user_notes: 'Notes',
 };
+
+/** Singular card labels for per-item tags. */
+export const CAPTURE_TAGS: Record<CardKey, string> = {
+  key_points: 'Key point',
+  decisions: 'Decision',
+  action_items: 'Action',
+  risks: 'Risk',
+  timeline: 'Timeline',
+  live_notes: 'Note',
+  user_notes: 'Note',
+};
+
+export interface SpotlightPick {
+  key: CardKey;
+  item: CardItem;
+}
+
+/**
+ * The up-to-three card items shown in the prominent spotlight row.
+ * Ranked pinned → human-touched (edited/confirmed) → most recently updated,
+ * preferring one item per card category; repeats only fill leftover slots.
+ * Note-taker blocks are excluded — they live in the dedicated NotesPane.
+ */
+export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3): SpotlightPick[] {
+  const ranked: SpotlightPick[] = [];
+  for (const key of Object.keys(cards) as CardKey[]) {
+    if (key === 'live_notes') continue;
+    for (const item of cards[key] ?? []) {
+      if (item.status !== 'removed') ranked.push({ key, item });
+    }
+  }
+  ranked.sort((a, b) => {
+    if (a.item.pinned !== b.item.pinned) return a.item.pinned ? -1 : 1;
+    const aTouched = a.item.status === 'edited' || a.item.status === 'confirmed';
+    const bTouched = b.item.status === 'edited' || b.item.status === 'confirmed';
+    if (aTouched !== bTouched) return aTouched ? -1 : 1;
+    return b.item.updated_at.localeCompare(a.item.updated_at);
+  });
+
+  const picks: SpotlightPick[] = [];
+  const usedCategories = new Set<CardKey>();
+  const usedIds = new Set<string>();
+  for (const pick of ranked) {
+    if (picks.length >= limit) break;
+    if (usedCategories.has(pick.key) || usedIds.has(pick.item.id)) continue;
+    picks.push(pick);
+    usedCategories.add(pick.key);
+    usedIds.add(pick.item.id);
+  }
+  for (const pick of ranked) {
+    if (picks.length >= limit) break;
+    if (usedIds.has(pick.item.id)) continue;
+    picks.push(pick);
+    usedIds.add(pick.item.id);
+  }
+  return picks;
+}

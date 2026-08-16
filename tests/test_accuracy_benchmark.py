@@ -47,7 +47,14 @@ def _patch_subprocess_for_windows():
     subprocess.Popen = _NoConsolePopen
 
 
-_patch_subprocess_for_windows()
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -240,41 +247,83 @@ class AudioGenerator:
                 self._tts_available = False
         return self._tts_available
 
-    def generate_audio(self, text: str, filename: str) -> Optional[str]:
+    def _find_ami_corpus(self) -> Optional[Tuple[str, str]]:
+        ami_audio = os.path.join(project_root, "benchmarks", "meeting_mode", "data", "ami", "audio", "IN1009.Mix-Headset.wav")
+        ami_annot = os.path.join(project_root, "benchmarks", "meeting_mode", "data", "ami", "annotations")
+        if os.path.exists(ami_audio) and os.path.isdir(ami_annot):
+            return ami_audio, ami_annot
+        return None
+
+    def _check_audio_available(self) -> bool:
+        return self._check_tts_available() or (self._find_ami_corpus() is not None)
+
+    def generate_audio(self, text: str, filename: str, sample_idx: int = 0) -> Tuple[Optional[str], Optional[str]]:
         """
-        Generate speech audio from text.
+        Generate speech audio from text (using gTTS) or slice from AMI corpus with reference words.
 
-        Returns path to generated WAV file, or None if failed.
+        Returns:
+            Tuple of (audio_path, expected_text), or (None, None) if failed.
         """
-        if not self._check_tts_available():
-            return None
-
-        try:
-            from gtts import gTTS
-            from pydub import AudioSegment
-        except ImportError:
-            return None
-
         output_path = os.path.join(self.temp_dir, filename)
 
-        try:
-            tts = gTTS(text=text, lang='en', slow=False)
-            temp_mp3 = os.path.join(self.temp_dir, f"temp_{filename}.mp3")
-            tts.save(temp_mp3)
-
-            audio = AudioSegment.from_mp3(temp_mp3)
-            audio.export(output_path, format="wav")
-
+        # 1. Try gTTS if available
+        if self._check_tts_available():
             try:
-                os.remove(temp_mp3)
-            except Exception:
-                pass
+                from gtts import gTTS
+                from pydub import AudioSegment
 
-            return output_path
+                tts = gTTS(text=text, lang='en', slow=False)
+                temp_mp3 = os.path.join(self.temp_dir, f"temp_{filename}.mp3")
+                tts.save(temp_mp3)
 
-        except Exception as e:
-            logger.error(f"Failed to generate audio: {e}")
-            return None
+                audio = AudioSegment.from_mp3(temp_mp3)
+                audio.export(output_path, format="wav")
+
+                try:
+                    os.remove(temp_mp3)
+                except Exception:
+                    pass
+
+                return output_path, text
+            except Exception as e:
+                logger.debug(f"gTTS failed, attempting corpus fallback: {e}")
+
+        # 2. Fallback: slice from AMI reference meeting IN1009
+        corpus = self._find_ami_corpus()
+        if corpus:
+            ami_audio_path, ami_annot_dir = corpus
+            try:
+                import wave
+                from benchmarks.meeting_mode.ami import parse_reference_words
+                from pathlib import Path
+
+                # Window: 15 seconds per sample starting at 30s + idx * 18s
+                start_s = 30.0 + (sample_idx * 18.0)
+                duration_s = 15.0
+                end_s = start_s + duration_s
+
+                with wave.open(ami_audio_path, "rb") as src:
+                    rate = src.getframerate()
+                    channels = src.getnchannels()
+                    sampwidth = src.getsampwidth()
+                    src.setpos(min(src.getnframes() - 1, int(start_s * rate)))
+                    frames = src.readframes(int(duration_s * rate))
+
+                with wave.open(output_path, "wb") as dst:
+                    dst.setnchannels(channels)
+                    dst.setsampwidth(sampwidth)
+                    dst.setframerate(rate)
+                    dst.writeframes(frames)
+
+                all_words = parse_reference_words(Path(ami_annot_dir), "IN1009")
+                slice_words = [w.text for w in all_words if w.start_s >= start_s and w.end_s <= end_s]
+                corpus_text = " ".join(slice_words) if slice_words else text
+
+                return output_path, corpus_text
+            except Exception as e:
+                logger.error(f"Corpus slice fallback failed: {e}")
+
+        return None, None
 
     def cleanup(self, filenames: List[str]):
         """Clean up generated audio files."""
@@ -290,38 +339,56 @@ class AudioGenerator:
 class AccuracyBenchmark:
     """Benchmark transcription accuracy across models."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        local_models: Optional[List[str]] = None,
+        device: Optional[str] = None,
+        compute_type: Optional[str] = None,
+        skip_api: bool = False,
+        sample_keys: Optional[List[str]] = None,
+    ):
         self.audio_generator = AudioGenerator()
         self.results: List[AccuracyResult] = []
         self.backends: Dict[str, any] = {}
         self.generated_files: List[str] = []
+        self.sample_keys = sample_keys or list(TEST_SAMPLES.keys())
+        override_device = None if device == "auto" else device
+        override_compute = None if compute_type == "auto" else compute_type
 
         # Initialize backends
         print("Initializing transcription backends...")
         print("-" * 60)
 
-        # Local Whisper
-        try:
-            self.backends['local_whisper'] = LocalWhisperBackend()
-            if self.backends['local_whisper'].is_available():
-                print("  ✅ local_whisper")
-            else:
-                print("  ⚠️  local_whisper (not available)")
-                del self.backends['local_whisper']
-        except Exception as e:
-            print(f"  ❌ local_whisper: {str(e)[:60]}...")
+        # Local Whisper models
+        models_to_test = local_models if local_models is not None else ["auto"]
+        for model_name in models_to_test:
+            backend_key = f"local_whisper_{model_name}" if len(models_to_test) > 1 or model_name != "auto" else "local_whisper"
+            try:
+                backend = LocalWhisperBackend(
+                    model_name=model_name,
+                    device=override_device,
+                    compute_type=override_compute,
+                )
+                if backend.is_available():
+                    self.backends[backend_key] = backend
+                    print(f"  ✅ {backend_key} ({backend.device_info})")
+                else:
+                    print(f"  ⚠️  {backend_key} (not available / not downloaded)")
+            except Exception as e:
+                print(f"  ❌ {backend_key}: {str(e)[:60]}...")
 
         # OpenAI backends
-        for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
-            try:
-                backend = OpenAIBackend(backend_name)
-                if backend.is_available():
-                    self.backends[backend_name] = backend
-                    print(f"  ✅ {backend_name}")
-                else:
-                    print(f"  ⚠️  {backend_name} (missing API key?)")
-            except Exception as e:
-                print(f"  ❌ {backend_name}: {str(e)[:60]}...")
+        if not skip_api:
+            for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
+                try:
+                    backend = OpenAIBackend(backend_name)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        print(f"  ✅ {backend_name}")
+                    else:
+                        print(f"  ⚠️  {backend_name} (missing API key?)")
+                except Exception as e:
+                    print(f"  ❌ {backend_name}: {str(e)[:60]}...")
 
         print("-" * 60)
         print(f"Initialized {len(self.backends)} backend(s)\n")
@@ -400,14 +467,16 @@ class AccuracyBenchmark:
         print("=" * 80)
         print("Model Accuracy Benchmark")
         print("=" * 80)
-        print(f"\nTesting {len(self.backends)} model(s) with {len(TEST_SAMPLES)} sample(s)")
+        samples_to_run = {k: v for k, v in TEST_SAMPLES.items() if k in self.sample_keys}
+        print(f"\nTesting {len(self.backends)} model(s) with {len(samples_to_run)} sample(s)")
         print(f"Models: {', '.join(self.backends.keys())}")
-        print(f"Samples: {', '.join(TEST_SAMPLES.keys())}")
+        print(f"Samples: {', '.join(samples_to_run.keys())}")
 
-        # Check TTS availability
-        if not self.audio_generator._check_tts_available():
-            print("\n❌ ERROR: gTTS and pydub are required for accuracy benchmarking")
-            print("   Install with: pip install gtts pydub")
+        # Check if audio source is available (TTS or corpus)
+        if not self.audio_generator._check_audio_available():
+            print("\n❌ ERROR: No speech audio generator available")
+            print("   Please either install gTTS (pip install gtts pydub) or ensure")
+            print("   AMI benchmark audio exists under benchmarks/meeting_mode/data/ami/audio/")
             return
 
         # Generate audio files for all samples
@@ -416,15 +485,19 @@ class AccuracyBenchmark:
         print("=" * 80)
 
         audio_files: Dict[str, str] = {}
+        sample_texts: Dict[str, str] = {}
 
-        for sample_id, sample in TEST_SAMPLES.items():
+        for idx, (sample_id, sample) in enumerate(samples_to_run.items()):
             print(f"\n📝 {sample['name']}: {sample['description']}")
             filename = f"accuracy_test_{sample_id}.wav"
 
-            audio_path = self.audio_generator.generate_audio(sample["text"], filename)
+            audio_path, expected_text = self.audio_generator.generate_audio(
+                sample["text"], filename, sample_idx=idx
+            )
 
-            if audio_path:
+            if audio_path and expected_text:
                 audio_files[sample_id] = audio_path
+                sample_texts[sample_id] = expected_text
                 self.generated_files.append(filename)
                 print(f"   ✅ Generated: {filename}")
             else:
@@ -440,7 +513,8 @@ class AccuracyBenchmark:
         print("=" * 80)
 
         for sample_id, audio_file in audio_files.items():
-            sample = TEST_SAMPLES[sample_id]
+            sample = dict(TEST_SAMPLES[sample_id])
+            sample["text"] = sample_texts.get(sample_id, sample["text"])
             print(f"\n🎤 Testing: {sample['name']}")
             print(f"   {sample['description']}")
             print("-" * 60)
@@ -588,19 +662,63 @@ class AccuracyBenchmark:
                 pass
 
 
-def main():
+def main(argv: Optional[List[str]] = None):
     """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Model Accuracy Benchmark")
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="auto",
+        help="Comma-separated local model names to test (default: auto)",
+    )
+    parser.add_argument(
+        "--samples",
+        type=str,
+        default="",
+        help="Comma-separated sample keys to test (default: all)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Hardware device to use (default: auto)",
+    )
+    parser.add_argument(
+        "--compute-type",
+        type=str,
+        default="auto",
+        help="Compute type (float16, int8, float32, auto)",
+    )
+    parser.add_argument(
+        "--skip-api",
+        action="store_true",
+        help="Skip testing OpenAI API models",
+    )
+    args = parser.parse_args(argv)
+
+    local_models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else ["auto"]
+    sample_keys = [s.strip() for s in args.samples.split(",") if s.strip()] if args.samples else None
+
     benchmark = None
 
     try:
-        benchmark = AccuracyBenchmark()
+        benchmark = AccuracyBenchmark(
+            local_models=local_models,
+            device=args.device,
+            compute_type=args.compute_type,
+            skip_api=args.skip_api,
+            sample_keys=sample_keys,
+        )
 
         if not benchmark.backends:
             print("\n❌ No transcription backends available!")
             print("   Please check:")
             print("   - Local Whisper: Ensure faster-whisper is installed")
             print("   - API models: Set OPENAI_API_KEY environment variable")
-            return
+            return 2
 
         benchmark.run_benchmark()
 

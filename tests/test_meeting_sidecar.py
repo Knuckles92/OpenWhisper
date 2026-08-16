@@ -70,13 +70,81 @@ for line in sys.stdin:
         break
     elif method == "checkpoint":
         params = msg.get("params") or {}
-        sys.stdout.write(json.dumps({
-            "jsonrpc": "2.0", "id": req_id,
-            "result": {"applied": 7 if params.get("is_polish") else 3,
-                       "rejected": 2,
-                       "usage": {"totalTokens": 42}},
-        }) + "\n")
-        sys.stdout.flush()
+        if mode == "notes_tools" and params.get("is_notes"):
+            # Notes-mode tool storm: mixed patch_state ops plus a question.
+            # The host's tool bridge must filter to live_notes ops only and
+            # reject the question with notes_only.
+            tool_req = {
+                "jsonrpc": "2.0", "id": 999, "method": "tool.patch_state",
+                "params": {"ops": [
+                    {"op": "add_item", "card": "key_points",
+                     "text": "must not apply", "evidence": ["sg_1"]},
+                    {"op": "add_item", "card": "live_notes",
+                     "text": "new note block",
+                     "data": {"heading": "H", "start_s": 1.0},
+                     "evidence": ["sg_1"]},
+                    {"op": "update_item", "id": "it_note9",
+                     "base_revision": 1, "set": {"text": "extend"},
+                     "evidence": ["sg_1"]},
+                    {"op": "update_item", "id": "it_key1",
+                     "base_revision": 1, "set": {"text": "must not apply"},
+                     "evidence": ["sg_1"]},
+                    {"op": "set_topic", "text": "must not apply",
+                     "evidence": ["sg_1"]},
+                ]},
+            }
+            sys.stdout.write(json.dumps(tool_req) + "\n")
+            sys.stdout.flush()
+            tool_resp = None
+            for inner in sys.stdin:
+                inner_msg = json.loads(inner.strip())
+                if inner_msg.get("id") == 999:
+                    tool_resp = inner_msg
+                    break
+            q_req = {
+                "jsonrpc": "2.0", "id": 998, "method": "tool.ask_question",
+                "params": {"text": "must not ask", "evidence": ["sg_1"]},
+            }
+            sys.stdout.write(json.dumps(q_req) + "\n")
+            sys.stdout.flush()
+            q_resp = None
+            for inner in sys.stdin:
+                inner_msg = json.loads(inner.strip())
+                if inner_msg.get("id") == 998:
+                    q_resp = inner_msg
+                    break
+            results = ((tool_resp or {}).get("result") or {}).get("results") or []
+            applied_count = sum(1 for r in results if r.get("ok"))
+            q_rejected = bool(
+                ((q_resp or {}).get("result") or {}).get("reason") == "notes_only"
+            )
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": applied_count,
+                           "rejected": 1 if q_rejected else 0,
+                           "usage": {"filtered": applied_count,
+                                     "q_rejected": q_rejected}},
+            }) + "\n")
+            sys.stdout.flush()
+        elif mode == "notes_flag":
+            is_notes = bool(params.get("is_notes"))
+            has_prompt = is_notes and bool(params.get("system_prompt"))
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": 9 if has_prompt else 3,
+                           "rejected": 2,
+                           "usage": {"is_notes": is_notes,
+                                     "notes_prompt": has_prompt}},
+            }) + "\n")
+            sys.stdout.flush()
+        else:
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": 7 if params.get("is_polish") else 3,
+                           "rejected": 2,
+                           "usage": {"totalTokens": 42}},
+            }) + "\n")
+            sys.stdout.flush()
     else:
         sys.stdout.write(json.dumps({
             "jsonrpc": "2.0", "id": req_id,
@@ -340,3 +408,100 @@ class TestSidecarRestartBudget:
 
             assert agent._fatal or len(agent._restart_times) >= 3
             agent.shutdown()
+
+
+class _RecordingTools(FakeTools):
+    """FakeTools that records every op/submit that reaches the host."""
+
+    def __init__(self):
+        self.ops = []
+        self.questions = []
+
+    def apply_agent_ops(self, ops):
+        self.ops.extend(ops)
+        return super().apply_agent_ops(ops)
+
+    def ask_question(self, text, evidence):
+        self.questions.append(text)
+        return super().ask_question(text, evidence)
+
+
+_NOTES_STATE = {
+    "meeting_id": "m_notes",
+    "seq": 3,
+    "cards": {
+        "live_notes": [
+            {"id": "it_note9", "card": "live_notes", "text": "existing block",
+             "data": {"heading": "Funnel", "start_s": 12.0},
+             "status": "proposed", "revision": 1, "pinned": False},
+        ],
+        "key_points": [
+            {"id": "it_key1", "card": "key_points", "text": "a key point",
+             "status": "proposed", "revision": 1, "pinned": False},
+        ],
+    },
+    "participants": {},
+}
+
+
+class TestNotesPass:
+    def test_sidecar_declares_notes_support(self):
+        assert PiSidecarAgent.supports_notes_pass is True
+
+    def test_notes_flag_and_persona_prompt_reach_the_sidecar(self, stub_dir):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "notes_flag"})
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(_cfg(), FakeTools())
+            try:
+                notes = agent.checkpoint(CheckpointPayload(
+                    request_id="req-notes",
+                    state_snapshot=dict(_NOTES_STATE),
+                    new_segments=[],
+                    is_notes=True,
+                ))
+                plain = agent.checkpoint(CheckpointPayload(
+                    request_id="req-plain",
+                    state_snapshot=dict(_NOTES_STATE),
+                    new_segments=[],
+                ))
+            finally:
+                agent.shutdown()
+        assert notes.ok
+        assert notes.usage["is_notes"] is True
+        assert notes.usage["notes_prompt"] is True
+        assert sum(1 for r in notes.op_results if r.ok) == 9
+        # A plain checkpoint carries neither the flag nor the override.
+        assert plain.ok
+        assert plain.usage["is_notes"] is False
+        assert plain.usage["notes_prompt"] is False
+
+    def test_notes_tool_bridge_filters_to_live_notes_ops(self, stub_dir):
+        """Even a bundle that ignores is_notes cannot escape the notes gate."""
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "notes_tools"})
+        tools = _RecordingTools()
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(_cfg(), tools)
+            try:
+                result = agent.checkpoint(CheckpointPayload(
+                    request_id="req-notes-tools",
+                    state_snapshot=dict(_NOTES_STATE),
+                    new_segments=[],
+                    is_notes=True,
+                ))
+            finally:
+                agent.shutdown()
+
+        assert result.ok
+        # Only the two live_notes ops (add + known-id update) reached the host.
+        assert [
+            (op["op"], op.get("card", op.get("id"))) for op in tools.ops
+        ] == [("add_item", "live_notes"), ("update_item", "it_note9")]
+        assert tools.questions == []
+        # The mixed storm: 2 kept + 3 filtered patch ops, and the question
+        # answered with a notes_only rejection.
+        assert result.usage["filtered"] == 2
+        assert result.usage["q_rejected"] is True

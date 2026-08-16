@@ -114,6 +114,37 @@ def build_timeline_backfill_ops(
         key=lambda seg: float(seg.get("start_s") or 0.0),
     )
 
+    if not ops:
+        for item in _live_items(state, "live_notes"):
+            data = item.get("data") or {}
+            start_s = data.get("start_s")
+            evidence = list(item.get("evidence") or [])
+            if start_s is None or isinstance(start_s, bool):
+                start_s = _earliest_start(evidence, by_id)
+            if start_s is None:
+                continue
+            heading = str(data.get("heading") or "").strip()
+            item_text = (item.get("text") or "").strip()
+            beat_text = (
+                f"{heading}: {item_text}"
+                if heading and not item_text.startswith(heading)
+                else (heading or item_text)
+            )
+            text = _clip_text(beat_text)
+            if not text:
+                continue
+            ops.append({
+                "op": "add_item",
+                "card": "timeline",
+                "text": text,
+                "data": {"start_s": float(start_s)},
+                "evidence": evidence[:20] if evidence else (
+                    [ordered[0]["id"]] if ordered else []
+                ),
+            })
+            if len(ops) >= _MAX_TIMELINE_BEATS:
+                break
+
     if ops:
         ops.sort(key=lambda op: float(op["data"]["start_s"]))
         ops = _ensure_opening_beat(ops, ordered)
@@ -255,6 +286,10 @@ def build_keypoint_coverage_ops(
         ((state.get("topic") or {}).get("current") or ""),
         " ".join(item.get("text") or "" for item in timeline),
         " ".join(item.get("text") or "" for item in key_points),
+        " ".join(
+            f"{str((item.get('data') or {}).get('heading') or '')} {item.get('text') or ''}"
+            for item in _live_items(state, "live_notes")
+        ),
     ])
     wanted = _entities_in_text(summary_blob)
     # Always harvest entities from example-framing transcript segments.
@@ -286,6 +321,20 @@ def build_keypoint_coverage_ops(
         _append(beat.get("text") or "", list(beat.get("evidence") or []))
         if len(ops) >= 4:
             break
+
+    if len(ops) < 4:
+        for note in _live_items(state, "live_notes"):
+            data = note.get("data") or {}
+            heading = str(data.get("heading") or "").strip()
+            note_text = (note.get("text") or "").strip()
+            text = (
+                f"{heading}: {note_text}"
+                if heading and not note_text.startswith(heading)
+                else (heading or note_text)
+            )
+            _append(text, list(note.get("evidence") or []))
+            if len(ops) >= 4:
+                break
     return ops
 
 
@@ -359,8 +408,9 @@ def build_topic_backfill_ops(
 ) -> List[Dict[str, Any]]:
     """Build a ``set_topic`` op when the agent left the topic blank.
 
-    Prefers the first live key point (often the opening framing); falls back
-    to the first transcript segment. Never overwrites a non-empty topic.
+    Prefers the first live key point (often the opening framing), then the
+    first live note block's heading/text; falls back to the first transcript
+    segment. Never overwrites a non-empty topic.
 
     Args:
         state: ``MeetingState.to_dict()`` snapshot.
@@ -374,9 +424,16 @@ def build_topic_backfill_ops(
         return []
 
     key_points = _live_items(state, "key_points")
+    live_notes = _live_items(state, "live_notes")
     if key_points:
         text = _clip_text(key_points[0].get("text") or "")
         evidence = list(key_points[0].get("evidence") or [])
+    elif live_notes:
+        first_note = live_notes[0]
+        data = first_note.get("data") or {}
+        heading = str(data.get("heading") or "").strip()
+        text = _clip_text(heading or (first_note.get("text") or ""))
+        evidence = list(first_note.get("evidence") or [])
     else:
         ordered = sorted(
             (seg for seg in segments if (seg.get("text") or "").strip()),
@@ -401,9 +458,9 @@ def build_summary_backfill_ops(
 ) -> List[Dict[str, Any]]:
     """Build a ``set_rolling_summary`` op when the summary was left empty.
 
-    Composes a short summary from live key points when available; otherwise
-    joins the first few transcript segments. Never overwrites a non-empty
-    summary.
+    Composes a short summary from live key points or live meeting notes when
+    available; otherwise joins the first few transcript segments. Never
+    overwrites a non-empty summary.
 
     Args:
         state: ``MeetingState.to_dict()`` snapshot.
@@ -416,10 +473,20 @@ def build_summary_backfill_ops(
         return []
 
     key_points = _live_items(state, "key_points")
+    live_notes = _live_items(state, "live_notes")
     evidence: List[str] = []
     if key_points:
         sentences = []
         for item in key_points[:6]:
+            text = (item.get("text") or "").strip()
+            if not text:
+                continue
+            sentences.append(text.rstrip(".") + ".")
+            evidence.extend(item.get("evidence") or [])
+        summary = " ".join(sentences).strip()
+    elif live_notes:
+        sentences = []
+        for item in live_notes[:6]:
             text = (item.get("text") or "").strip()
             if not text:
                 continue

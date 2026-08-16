@@ -526,6 +526,127 @@ class MeetingRuntime:
                 {"active": False, "status": "canceled"}
             )
 
+    def retry_insights(self) -> None:
+        """Re-run cloud insights/consolidation for the last meeting.
+
+        Called when the user clicks 'Retry insights' on the finalization card.
+        """
+        with self._lock:
+            if (
+                self._starting
+                or self.controller.meeting_active
+                or self.is_active
+                or self._finalizing
+            ):
+                logger.warning(
+                    "Cannot retry insights: meeting is active, starting, or already finalizing"
+                )
+                return
+            engine = self._engine
+            meeting_id = getattr(engine, "meeting_id", None)
+            if not meeting_id:
+                repo = self._repository()
+                recent = repo.list_meetings(limit=1)
+                if recent:
+                    meeting_id = recent[0].get("id")
+            if not meeting_id:
+                logger.warning("Cannot retry insights: no meeting found")
+                return
+
+            self._finalizing = True
+            self._finalization = {
+                "status": "running",
+                "message": "Re-running final cloud insights…",
+            }
+
+        # Update finalization state to running
+        if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            try:
+                engine.allow_agent_writes()
+                engine._set_finalization(
+                    "running",
+                    "Re-running final cloud insights…",
+                )
+            except Exception:
+                logger.exception("Could not set running finalization on engine")
+        else:
+            self.controller.meeting_state_changed.emit({
+                "active": False,
+                "finalization": {
+                    "status": "running",
+                    "message": "Re-running final cloud insights…",
+                },
+            })
+        self.controller.meeting_status_update.emit("Re-running final cloud insights…")
+
+        def _worker():
+            try:
+                from meeting.reinsight import rerun_insights
+
+                repo = self._repository()
+                settings = settings_manager.load_all_settings()
+                provider = resolve_meeting_llm_provider(settings)
+                model = resolve_meeting_llm_model(settings)
+                agent_core_kind = resolve_meeting_agent_core(settings)
+                payload_dir = meeting_agent_payload_dir()
+
+                store = None
+                if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+                    store = getattr(engine, "store", None)
+
+                result = rerun_insights(
+                    repo,
+                    meeting_id,
+                    provider=provider,
+                    model=model,
+                    agent_core_kind=agent_core_kind,
+                    sidecar_payload_dir=payload_dir,
+                    store=store,
+                    timeout_s=180.0,
+                )
+                ok = bool(result.get("ok", False))
+                error = result.get("error")
+                if ok:
+                    status = "completed"
+                    message = "Final cloud insights are ready."
+                else:
+                    status = "failed"
+                    message = f"Final cloud insights failed: {error or 'consolidation failed'}"
+            except Exception as exc:
+                logger.exception("Retry insights worker raised for meeting %s", meeting_id)
+                status = "failed"
+                message = f"Final cloud insights failed: {exc}"
+            finally:
+                if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+                    try:
+                        engine.revoke_agent_writes()
+                    except Exception:
+                        pass
+
+            with self._lock:
+                self._finalizing = False
+                self._finalization = {"status": status, "message": message}
+
+            if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+                try:
+                    engine._set_finalization(status, message)
+                except Exception:
+                    logger.exception("Could not set finalization outcome on engine")
+            else:
+                self.controller.meeting_state_changed.emit({
+                    "active": False,
+                    "finalization": {"status": status, "message": message},
+                })
+            self.controller.meeting_status_update.emit(message)
+            try:
+                self.controller.ui_controller.main_window.refresh_past_meetings()
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_worker, name="meeting-retry-insights", daemon=True
+        ).start()
+
     def open_dashboard(self) -> None:
         """Open the host dashboard in the default browser (UI callback target)."""
         url = self._host_url

@@ -71,6 +71,16 @@ _POLISH_MIN_INTERVAL_S = 300.0
 #: How much recent transcript to prefer in a polish payload (full digest still
 #: included via get_transcript; this caps enormous meetings for the prompt).
 _POLISH_MAX_SEGMENTS = 400
+#: Fire the dedicated note-taker pass after this many successful card
+#: checkpoints (when the agent core supports it). Notes are the note taker's
+#: only job, so its cadence is denser than polish.
+_NOTES_EVERY_N_CHECKPOINTS = 2
+#: Minimum spacing between note-taker passes: the notes page should feel
+#: live without doubling agent traffic on busy meetings.
+_NOTES_MIN_INTERVAL_S = 45.0
+#: How much recent transcript a notes payload may carry; earlier narrative
+#: lives in the existing note blocks shipped in the state snapshot.
+_NOTES_MAX_SEGMENTS = 300
 
 _WORD_RE = re.compile(r"[a-z']+")
 
@@ -153,6 +163,10 @@ class CheckpointScheduler:
         self._consolidating = False
         self._successful_checkpoints = 0
         self._last_polish_mono = 0.0
+        self._last_notes_mono = 0.0
+        self._notes_checkpoint_mark = 0
+        self._notes_sent_starts: Dict[str, float] = {}
+        self._notes_max_sent_start_s = -1.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -294,7 +308,8 @@ class CheckpointScheduler:
 
     def _build_payload(self, segments: List[Dict[str, Any]],
                        is_consolidation: bool,
-                       is_polish: bool = False) -> Optional[CheckpointPayload]:
+                       is_polish: bool = False,
+                       is_notes: bool = False) -> Optional[CheckpointPayload]:
         store = getattr(self._engine, "store", None)
         if store is None:
             return None
@@ -304,6 +319,7 @@ class CheckpointScheduler:
             new_segments=segments,
             is_consolidation=is_consolidation,
             is_polish=is_polish,
+            is_notes=is_notes,
         )
 
     def _fetch_cursor_s(self) -> float:
@@ -388,6 +404,7 @@ class CheckpointScheduler:
                 payload.request_id, applied, len(result.op_results),
             )
             self._successful_checkpoints += 1
+            self._maybe_fire_notes()
             self._maybe_fire_polish()
         else:
             self._record_failure(claimed, result.error or "checkpoint failed")
@@ -487,6 +504,104 @@ class CheckpointScheduler:
                 payload.request_id, result.error or "unknown",
             )
 
+    def _maybe_fire_notes(self) -> None:
+        """Run the dedicated note-taker pass when due.
+
+        Only agent cores that declare ``supports_notes_pass`` see notes
+        payloads (both shipped cores implement it: the direct core in
+        process, the Pi sidecar via its bundle). Failures are logged and
+        never counted toward checkpoint health — the notes page simply
+        catches up on the next pass, because a failed batch's segments are
+        not marked as consumed.
+        """
+        if self._consolidating or self._stop_event.is_set():
+            return
+        if not getattr(self._agent, "supports_notes_pass", False):
+            return
+        since_mark = self._successful_checkpoints - self._notes_checkpoint_mark
+        due_by_count = since_mark >= _NOTES_EVERY_N_CHECKPOINTS
+        due_by_time = (
+            self._last_notes_mono > 0.0
+            and (time.monotonic() - self._last_notes_mono)
+            >= _NOTES_MIN_INTERVAL_S
+            and since_mark >= 1
+        )
+        if not (due_by_count or due_by_time):
+            return
+        if not self._agent.is_healthy():
+            return
+        # Same late-arrival window logic as card checkpoints: re-read a
+        # window behind the newest consumed segment, drop already-sent ids.
+        if self._notes_max_sent_start_s >= 0.0:
+            cursor = max(
+                -1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S
+            )
+        else:
+            cursor = -1.0
+        try:
+            fetched = self._engine.get_transcript(after_start_s=cursor)
+        except Exception:
+            logger.exception("Notes transcript fetch failed")
+            return
+        segments = [
+            seg for seg in fetched
+            if str(seg.get("id") or "") not in self._notes_sent_starts
+        ]
+        if not segments:
+            return
+        segments = segments[-_NOTES_MAX_SEGMENTS:]
+        payload = self._build_payload(
+            segments, is_consolidation=False, is_notes=True,
+        )
+        if payload is None:
+            return
+        logger.info(
+            "Firing note-taker pass %s over %d segments",
+            payload.request_id, len(segments),
+        )
+        try:
+            result = self._agent.checkpoint(payload)
+        except Exception as exc:
+            logger.exception("Agent note-taker pass raised")
+            result = AgentResult(ok=False, error=str(exc))
+        # Advance the cadence bookkeeping whether or not the pass succeeded
+        # so a failing core cannot hot-loop notes calls; only a success
+        # marks the batch consumed, leaving failures to be re-covered.
+        self._last_notes_mono = time.monotonic()
+        self._notes_checkpoint_mark = self._successful_checkpoints
+        if result.ok:
+            applied = sum(1 for r in result.op_results if r.ok)
+            logger.info(
+                "Note-taker pass %s done: %d/%d ops applied",
+                payload.request_id, applied, len(result.op_results),
+            )
+            for seg in segments:
+                seg_id = seg.get("id")
+                if seg_id:
+                    self._notes_sent_starts[str(seg_id)] = float(
+                        seg.get("start_s") or 0.0
+                    )
+            newest = max(
+                (float(seg.get("start_s") or 0.0) for seg in segments),
+                default=-1.0,
+            )
+            self._notes_max_sent_start_s = max(
+                self._notes_max_sent_start_s, newest
+            )
+            prune_cursor = max(
+                -1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S
+            )
+            self._notes_sent_starts = {
+                seg_id: start_s
+                for seg_id, start_s in self._notes_sent_starts.items()
+                if start_s > prune_cursor
+            }
+        else:
+            logger.warning(
+                "Note-taker pass %s failed: %s",
+                payload.request_id, result.error or "unknown",
+            )
+
     def _record_failure(self, claimed: int, error: str) -> None:
         """Restore claimed work and schedule a bounded health retry."""
         with self._lock:
@@ -533,7 +648,7 @@ class CheckpointScheduler:
             except Exception:
                 logger.exception("Engine revoke_agent_writes raised")
 
-    def run_consolidation(self, timeout_s: float = 120.0) -> ConsolidationOutcome:
+    def run_consolidation(self, timeout_s: float = 180.0) -> ConsolidationOutcome:
         """Run the blocking end-of-meeting consolidation pass.
 
         Stops periodic firing, then runs one ``consolidate`` call with the
