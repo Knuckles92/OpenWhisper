@@ -3,6 +3,9 @@ import { api } from '../api';
 import type { MeetingInfo, MeetingStateDoc, Op } from '../types';
 import { ops } from '../types';
 import type { SocketStatus } from '../ws';
+import { enabledReportViews, type ReportViewId } from '../report';
+import ReportDownload from './report/ReportDownload';
+import ReportViewSelect from './report/ReportViewSelect';
 
 interface HeaderBarProps {
   token: string;
@@ -19,6 +22,9 @@ interface HeaderBarProps {
   showHistory: boolean;
   onToggleActivity: () => void;
   showActivity: boolean;
+  transcriptComplete?: boolean;
+  reportView?: ReportViewId;
+  onReportViewChange?: (view: ReportViewId) => void;
 }
 
 export default function HeaderBar({
@@ -36,6 +42,9 @@ export default function HeaderBar({
   showHistory,
   onToggleActivity,
   showActivity,
+  transcriptComplete = false,
+  reportView,
+  onReportViewChange,
 }: HeaderBarProps) {
   const [titleDraft, setTitleDraft] = useState(state.title);
   const [copied, setCopied] = useState(false);
@@ -99,6 +108,12 @@ export default function HeaderBar({
   const showDiarizationBanner =
     !state.diarization_available && (meetingLive || meetingEnding);
   const meetingTitle = state.title || meeting?.title || 'Meeting';
+  const reportsReady =
+    state.status === 'ended' || state.finalization?.status === 'completed';
+  const showReportActions = reportsReady && !showHistory;
+  const reportViews = enabledReportViews(state);
+  const activeReportView =
+    reportView && reportViews.includes(reportView) ? reportView : reportViews[0];
 
   return (
     <header className="header-bar">
@@ -113,8 +128,28 @@ export default function HeaderBar({
           </span>
         )}
         {!state.cloud_enabled && <span className="status-chip">Transcript only</span>}
+        {showReportActions && (
+          <>
+            <ReportViewSelect
+              views={reportViews}
+              active={activeReportView}
+              onSelect={(view) => onReportViewChange?.(view)}
+            />
+            <ReportDownload
+              state={state}
+              meeting={meeting}
+              transcriptComplete={transcriptComplete}
+              activeView={activeReportView}
+            />
+          </>
+        )}
         {isHost && (
           <>
+            {fullGuestUrl && (
+              <button type="button" className="primary" onClick={copyGuestLink}>
+                {copied ? 'Copied' : 'Copy guest link'}
+              </button>
+            )}
             <button type="button" className={showHistory ? 'primary' : 'ghost'} onClick={onToggleHistory}>
               {showHistory ? 'Live view' : 'History'}
             </button>
@@ -134,11 +169,6 @@ export default function HeaderBar({
               </button>
             )}
             {meetingEnding && <span className="status-chip">Ending…</span>}
-            {fullGuestUrl && (
-              <button type="button" className="primary" onClick={copyGuestLink}>
-                {copied ? 'Copied' : 'Invite'}
-              </button>
-            )}
             {!meetingEnded && !meetingEnding && (
               <button
                 type="button"
@@ -270,15 +300,6 @@ export default function HeaderBar({
           {lastError}
           <button type="button" className="ghost" style={{ marginLeft: 8 }} onClick={onClearError}>
             Dismiss
-          </button>
-        </div>
-      )}
-
-      {isHost && fullGuestUrl && (
-        <div className="guest-link-row">
-          <input readOnly value={fullGuestUrl} aria-label="Guest link" />
-          <button type="button" onClick={copyGuestLink}>
-            {copied ? 'Copied' : 'Copy guest link'}
           </button>
         </div>
       )}

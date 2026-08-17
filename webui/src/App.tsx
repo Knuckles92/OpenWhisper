@@ -11,6 +11,12 @@ import ParticipantsPane from './components/ParticipantsPane';
 import SpotlightRow from './components/SpotlightRow';
 import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
+import {
+  enabledReportViews,
+  resolveReportView,
+  writeStoredReportView,
+  type ReportViewId,
+} from './report';
 import { initialUiState, meetingReducer } from './state';
 import type { Op, Role, SessionResponse } from './types';
 import { MeetingSocket } from './ws';
@@ -43,6 +49,9 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
   const [transcriptComplete, setTranscriptComplete] = useState(false);
+  const [reportView, setReportView] = useState<ReportViewId>(() =>
+    resolveReportView(['ribbon', 'brief', 'signal']),
+  );
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -98,6 +107,22 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
       cancelled = true;
     };
   }, [token]);
+
+  const reportViews = useMemo(
+    () => (ui.state ? enabledReportViews(ui.state) : ['ribbon' as const]),
+    [ui.state],
+  );
+
+  useEffect(() => {
+    if (!reportViews.includes(reportView)) {
+      setReportView(resolveReportView(reportViews));
+    }
+  }, [reportView, reportViews]);
+
+  const selectReportView = useCallback((view: ReportViewId) => {
+    setReportView(view);
+    writeStoredReportView(view);
+  }, []);
 
   const sendOp = useCallback((op: Op) => {
     socketRef.current?.sendAction(op);
@@ -169,6 +194,9 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           setShowHistory(false);
         }}
         showActivity={showActivity}
+        transcriptComplete={transcriptComplete}
+        reportView={reportView}
+        onReportViewChange={selectReportView}
       />
 
       {showHistory && isHost ? (
@@ -233,6 +261,10 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 onEvidenceClick={handleEvidenceClick}
                 onSeek={seekTo}
                 transcriptComplete={transcriptComplete}
+                showDownload={false}
+                showSwitcher={false}
+                activeView={reportView}
+                onViewChange={selectReportView}
               />
             ) : (
               <>

@@ -1,46 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { printDocumentTitle, printMeeting } from '../../print';
-import { enabledReportViews, segmentMap, type ReportViewId } from '../../report';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  enabledReportViews,
+  resolveReportView,
+  segmentMap,
+  writeStoredReportView,
+  type ReportViewId,
+} from '../../report';
 import type { MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import BriefReport from './BriefReport';
 import FullMeetingDocument from './FullMeetingDocument';
+import ReportDownload from './ReportDownload';
+import ReportViewSelect from './ReportViewSelect';
 import RibbonReport from './RibbonReport';
 import SignalReport from './SignalReport';
-
-const STORAGE_KEY = 'ow_report_view';
-
-const TAB_META: Record<ReportViewId, { label: string; note: string }> = {
-  ribbon: {
-    label: 'Ribbon',
-    note: 'The meeting against its own clock. Walk it in order; the minimap shows where the conversation actually happened.',
-  },
-  brief: {
-    label: 'Brief',
-    note: 'One editorial page, one column, no boxes. Prints and pastes cleanly.',
-  },
-  signal: {
-    label: 'Signal',
-    note: 'One screen, plus the clips worth hearing. Best for forty seconds before the next call.',
-  },
-};
-
-function readStoredView(): ReportViewId | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === 'ribbon' || raw === 'brief' || raw === 'signal') return raw;
-  } catch {
-    /* private mode / blocked storage */
-  }
-  return null;
-}
-
-function writeStoredView(view: ReportViewId): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, view);
-  } catch {
-    /* ignore */
-  }
-}
 
 interface ReportTabsProps {
   state: MeetingStateDoc;
@@ -50,6 +22,12 @@ interface ReportTabsProps {
   onSeek?: (seconds: number) => void;
   /** When false, Full download stays disabled so a partial transcript is never printed. */
   transcriptComplete?: boolean;
+  /** Hide the in-toolbar download when the header already owns it. */
+  showDownload?: boolean;
+  /** Hide the in-page switcher when the header already owns it. */
+  showSwitcher?: boolean;
+  activeView?: ReportViewId;
+  onViewChange?: (view: ReportViewId) => void;
 }
 
 export default function ReportTabs({
@@ -59,77 +37,52 @@ export default function ReportTabs({
   onEvidenceClick,
   onSeek,
   transcriptComplete = false,
+  showDownload = true,
+  showSwitcher = true,
+  activeView,
+  onViewChange,
 }: ReportTabsProps) {
   const views = enabledReportViews(state);
   const segs = useMemo(() => segmentMap(segments), [segments]);
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-  const [active, setActive] = useState<ReportViewId>(() => {
-    const stored = readStoredView();
-    if (stored && views.includes(stored)) return stored;
-    return views.includes('ribbon') ? 'ribbon' : views[0];
-  });
+  const [internalView, setInternalView] = useState<ReportViewId>(() =>
+    activeView && views.includes(activeView) ? activeView : resolveReportView(views),
+  );
+  const active = activeView && views.includes(activeView) ? activeView : internalView;
 
   useEffect(() => {
-    if (!views.includes(active)) {
-      const next = views.includes('ribbon') ? 'ribbon' : views[0];
-      setActive(next);
+    if (!views.includes(internalView)) {
+      setInternalView(resolveReportView(views));
     }
-  }, [active, views]);
+  }, [internalView, views]);
 
   const select = (view: ReportViewId) => {
-    setActive(view);
-    writeStoredView(view);
-  };
-
-  const meetingTitle = state.title || meeting?.display_title || meeting?.title || 'Meeting';
-
-  const download = (scope: 'summary' | 'full') => {
-    detailsRef.current?.removeAttribute('open');
-    printMeeting(
-      scope,
-      printDocumentTitle(String(meetingTitle), scope, TAB_META[active]?.label),
-    );
+    if (onViewChange) onViewChange(view);
+    else {
+      setInternalView(view);
+      writeStoredReportView(view);
+    }
   };
 
   const shared = { state, segments, segs, meeting, onEvidenceClick, onSeek };
+  const showToolbar = showSwitcher || showDownload;
 
   return (
     <section className="report-stage">
-      <div className="report-toolbar">
-        <div className="report-tabs tab-row">
-          {views.map((view) => (
-            <button
-              key={view}
-              type="button"
-              className={`tab${active === view ? ' active' : ''}`}
-              onClick={() => select(view)}
-            >
-              {TAB_META[view].label}
-            </button>
-          ))}
+      {showToolbar && (
+        <div className="report-toolbar">
+          {showSwitcher && (
+            <ReportViewSelect views={views} active={active} onSelect={select} />
+          )}
+          {showDownload && (
+            <ReportDownload
+              state={state}
+              meeting={meeting}
+              transcriptComplete={transcriptComplete}
+              activeView={active}
+            />
+          )}
         </div>
-        <details ref={detailsRef} className="report-download">
-          <summary>Download</summary>
-          <div className="report-download-menu">
-            <button type="button" onClick={() => download('summary')}>
-              Summary — {TAB_META[active]?.label}
-            </button>
-            <button
-              type="button"
-              disabled={!transcriptComplete}
-              title={
-                transcriptComplete
-                  ? 'Report plus notes, captured items, questions, people, and the full transcript'
-                  : 'Waiting for the full transcript to load'
-              }
-              onClick={() => download('full')}
-            >
-              {transcriptComplete ? 'Full meeting' : 'Full meeting (loading transcript…)'}
-            </button>
-          </div>
-        </details>
-      </div>
-      <p className="report-tab-note">{TAB_META[active]?.note}</p>
+      )}
       <div className="report-sheet">
         {active === 'ribbon' && <RibbonReport {...shared} />}
         {active === 'brief' && <BriefReport {...shared} />}

@@ -447,19 +447,9 @@ a {
   width: auto;
 }
 
-.guest-link-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  order: 5;
-  margin-top: 4px;
-}
-
-.guest-link-row input {
-  flex: 1;
-  font-size: 12px;
-  font-family: ui-monospace, monospace;
+.header-actions .report-download,
+.header-actions .report-view-select {
+  margin-bottom: 0;
 }
 
 /* Topic hero */
@@ -1644,9 +1634,10 @@ a {
 
 .report-toolbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
 }
 
 .report-tabs.tab-row {
@@ -1654,6 +1645,93 @@ a {
   gap: 4px;
   flex: 1;
   min-width: 0;
+}
+
+.report-view-select {
+  position: relative;
+  flex: none;
+}
+
+.report-view-select summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, white 70%, transparent);
+  font-weight: 600;
+}
+
+.report-view-select summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-view-select summary:hover,
+.report-view-select[open] summary {
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--leaf) 35%, var(--line));
+}
+
+.report-view-caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--soft);
+}
+
+.report-view-select[open] .report-view-caret {
+  transform: translateY(-1px) rotate(180deg);
+}
+
+.report-view-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 12;
+  min-width: 248px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px -16px rgba(26, 36, 32, 0.35);
+}
+
+.report-view-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  border-radius: 10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.report-view-menu button:hover:not(:disabled) {
+  background: var(--wash);
+}
+
+.report-view-menu button.active {
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--leaf) 25%, var(--line));
+}
+
+.report-view-menu button strong {
+  font-size: 13px;
+}
+
+.report-view-menu button span {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--soft);
+  line-height: 1.35;
 }
 
 .report-download {
@@ -2334,6 +2412,7 @@ a {
   .report-tabs,
   .report-tab-note,
   .report-download,
+  .report-view-select,
   .stage,
   .workspace-conversation,
   .workspace-rail,

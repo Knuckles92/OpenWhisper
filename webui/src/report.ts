@@ -4,6 +4,52 @@ import type { CardItem, MeetingStateDoc, Participant, Segment } from './types';
 export const DEFAULT_REPORT_VIEWS = ['ribbon', 'brief', 'signal'] as const;
 export type ReportViewId = (typeof DEFAULT_REPORT_VIEWS)[number];
 
+export const REPORT_VIEW_STORAGE_KEY = 'ow_report_view';
+
+export const REPORT_VIEW_META: Record<ReportViewId, { label: string; hint: string; note: string }> = {
+  ribbon: {
+    label: 'Ribbon',
+    hint: 'Timeline and minutes in order',
+    note: 'The meeting against its own clock. Walk it in order; the minimap shows where the conversation actually happened.',
+  },
+  brief: {
+    label: 'Brief',
+    hint: 'One editorial page',
+    note: 'One editorial page, one column, no boxes. Prints and pastes cleanly.',
+  },
+  signal: {
+    label: 'Signal',
+    hint: 'Headline plus the clips worth hearing',
+    note: 'One screen, plus the clips worth hearing. Best for forty seconds before the next call.',
+  },
+};
+
+/** Last report tab the user picked, if it is still a known view. */
+export function readStoredReportView(): ReportViewId | null {
+  try {
+    const raw = localStorage.getItem(REPORT_VIEW_STORAGE_KEY);
+    if (raw === 'ribbon' || raw === 'brief' || raw === 'signal') return raw;
+  } catch {
+    /* private mode / blocked storage */
+  }
+  return null;
+}
+
+export function writeStoredReportView(view: ReportViewId): void {
+  try {
+    localStorage.setItem(REPORT_VIEW_STORAGE_KEY, view);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Active report tab: stored preference if still enabled, else Ribbon, else first. */
+export function resolveReportView(views: ReportViewId[]): ReportViewId {
+  const stored = readStoredReportView();
+  if (stored && views.includes(stored)) return stored;
+  return views.includes('ribbon') ? 'ribbon' : views[0];
+}
+
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 const SPEAKER_PALETTE = ['#2f6b4f', '#a2603c', '#4a6b8a', '#8a7340', '#6b4a7a', '#3c6b6b'];
 
