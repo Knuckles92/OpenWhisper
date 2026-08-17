@@ -270,6 +270,48 @@ export interface ActionResultItem {
   effect: Effect | null;
 }
 
+/**
+ * Kind of live agent tick. `update` is the host's fallback; the trailing
+ * `string` keeps a kind added later on the Python side from breaking the
+ * union, so rendering degrades to the default tone instead of failing.
+ */
+export type AgentActivityKind =
+  | 'thinking'
+  | 'writing'
+  | 'tool'
+  | 'turn'
+  | 'retry'
+  | 'compaction'
+  | 'start'
+  | 'settled'
+  | 'update'
+  | (string & {});
+
+/** Agent pass that produced a tick; `''` when the host has no pass in flight. */
+export type AgentActivityPassKind =
+  | 'cards'
+  | 'notes'
+  | 'polish'
+  | 'consolidation'
+  | '';
+
+/**
+ * One ephemeral Pi activity tick. Never persisted, host sockets only.
+ * `tool` and `pass_kind` are always present and are `''` rather than null.
+ */
+export interface AgentActivityRecord {
+  kind: AgentActivityKind;
+  /** Ready-to-display sentence — render as-is, do not rebuild from `kind`. */
+  label: string;
+  tool: string;
+  pass_kind: AgentActivityPassKind;
+  ts: string;
+}
+
+export interface AgentActivityMsg extends AgentActivityRecord {
+  type: 'agent_activity';
+}
+
 export interface HelloMsg {
   type: 'hello';
   role: Role;
@@ -279,6 +321,8 @@ export interface HelloMsg {
   segments: Segment[];
   urls: { guest?: string };
   meeting: MeetingInfo;
+  /** Recent agent ticks, oldest first. Host sockets only; absent for guests. */
+  agent_activity?: AgentActivityRecord[];
 }
 
 export interface PatchMsg {
@@ -337,6 +381,7 @@ export type ServerMessage =
   | PresenceMsg
   | StatusMsg
   | ActionResultMsg
+  | AgentActivityMsg
   | ErrorMsg
   | MeetingEndedMsg
   | PongMsg;

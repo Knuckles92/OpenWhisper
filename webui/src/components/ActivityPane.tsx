@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import type { AuditEvent } from '../types';
+import type { AgentActivityRecord, AuditEvent } from '../types';
 
 interface ActivityPaneProps {
   token: string;
@@ -12,7 +12,15 @@ interface ActivityPaneProps {
   meetingStatus: string;
   finalizationStatus?: string | null;
   finalizationMessage?: string | null;
+  /** Live agent ticks, newest first. Never persisted — see the audit list below. */
+  agentActivity?: AgentActivityRecord[];
 }
+
+/** Ticks shown under the current one. */
+const LIVE_SCROLLBACK = 7;
+
+/** How often relative tick times are refreshed while the strip is visible. */
+const LIVE_CLOCK_MS = 10_000;
 
 const CARD_NAMES: Record<string, string> = {
   key_points: 'key point',
@@ -84,6 +92,53 @@ function relativeTime(value: string): string {
   return new Date(value).toLocaleDateString();
 }
 
+/** Live ticks land seconds apart, so they need finer grain than relativeTime. */
+function tickTime(value: string): string {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 5) return 'now';
+  if (seconds < 60) return `${seconds}s ago`;
+  return relativeTime(value);
+}
+
+/** Tick kinds that read as a warning or a wrap-up rather than work in flight. */
+const TICK_TONES: Record<string, string> = {
+  retry: 'offline',
+  settled: 'complete',
+};
+
+const PASS_LABELS: Record<string, string> = {
+  cards: 'insights pass',
+  notes: 'notes pass',
+  polish: 'polish pass',
+  consolidation: 'final report',
+};
+
+/**
+ * Stable key for a tick. Host timestamps carry microseconds, so two ticks
+ * never share one, and the key survives newer ticks arriving above it.
+ */
+function tickKey(tick: AgentActivityRecord): string {
+  return `${tick.ts}|${tick.kind}|${tick.tool}`;
+}
+
+/** True while an agent could still be working, so an empty strip is expected. */
+function isLiveMeeting(status: string): boolean {
+  return status === 'active' || status === 'paused' || status === 'ending';
+}
+
+/**
+ * Dot tone for the newest tick, reusing the `.agent-status-dot` vocabulary.
+ * Only a live meeting gets the breathing "online" dot — replaying ticks after
+ * the meeting ends must not look like a model still at work.
+ */
+function liveDotTone(tick: AgentActivityRecord | undefined, meetingStatus: string): string {
+  if (!tick) return 'paused';
+  if (!isLiveMeeting(meetingStatus)) return 'complete';
+  return TICK_TONES[tick.kind] ?? 'online';
+}
+
 export default function ActivityPane({
   token,
   onUndo,
@@ -94,6 +149,7 @@ export default function ActivityPane({
   meetingStatus,
   finalizationStatus = null,
   finalizationMessage = null,
+  agentActivity = [],
 }: ActivityPaneProps) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -101,6 +157,7 @@ export default function ActivityPane({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [, setClock] = useState(0);
 
   const mergeEvents = useCallback((rows: AuditEvent[], reset: boolean) => {
     setEvents((current) => {
@@ -153,6 +210,23 @@ export default function ActivityPane({
   );
   const visibleEvents = showAll ? events : agentEvents;
   const latestAgentEvent = agentEvents[0];
+
+  const latestTick = agentActivity[0];
+  const scrollback = agentActivity.slice(1, 1 + LIVE_SCROLLBACK);
+  // The archive dashboard has no live agent: an empty strip there would read as
+  // a stalled model rather than as history.
+  const showLiveStrip = agentActivity.length > 0 || isLiveMeeting(meetingStatus);
+  const liveTone = liveDotTone(latestTick, meetingStatus);
+  const passLabel = latestTick ? PASS_LABELS[latestTick.pass_kind] : undefined;
+
+  // Ticks arrive seconds apart, but a quiet agent would otherwise leave "now"
+  // frozen on screen, so the relative times get their own slow clock.
+  const runClock = expanded && showLiveStrip && agentActivity.length > 0;
+  useEffect(() => {
+    if (!runClock) return undefined;
+    const timer = window.setInterval(() => setClock((n) => n + 1), LIVE_CLOCK_MS);
+    return () => window.clearInterval(timer);
+  }, [runClock]);
 
   let statusText = 'Watching the conversation';
   let statusTone = 'online';
@@ -207,6 +281,11 @@ export default function ActivityPane({
               </span>
             </span>
             <span className="agent-activity-status">{statusText}</span>
+            {!expanded && latestTick && (
+              <span className={`agent-activity-live ${liveTone}`} title={latestTick.label}>
+                {latestTick.label}
+              </span>
+            )}
             {!expanded && latestAgentEvent && (
               <span className="agent-activity-latest">
                 Latest: {eventDescription(latestAgentEvent)}
@@ -228,6 +307,50 @@ export default function ActivityPane({
 
       {expanded && (
         <div className="agent-activity-body">
+          {showLiveStrip && (
+            <div
+              className={`agent-live${latestTick ? '' : ' idle'}`}
+              aria-label="Live model activity"
+            >
+              <div className="agent-live-now">
+                <span className={`agent-status-dot ${liveTone}`} aria-hidden="true" />
+                <span className="agent-live-label" title={latestTick?.label}>
+                  {latestTick ? latestTick.label : 'No model activity yet.'}
+                </span>
+                {passLabel && <span className="agent-live-pass">{passLabel}</span>}
+                {latestTick?.tool && <span className="agent-live-tool">{latestTick.tool}</span>}
+                {latestTick && (
+                  <span
+                    className="agent-live-time"
+                    title={new Date(latestTick.ts).toLocaleTimeString()}
+                  >
+                    {tickTime(latestTick.ts)}
+                  </span>
+                )}
+              </div>
+
+              {scrollback.length > 0 && (
+                <ol className="agent-live-log">
+                  {scrollback.map((tick) => (
+                    <li className="agent-live-tick" key={tickKey(tick)}>
+                      <span className="agent-live-tick-mark" aria-hidden="true" />
+                      <span className="agent-live-tick-label" title={tick.label}>
+                        {tick.label}
+                      </span>
+                      {tick.tool && <span className="agent-live-tool">{tick.tool}</span>}
+                      <span
+                        className="agent-live-time"
+                        title={new Date(tick.ts).toLocaleTimeString()}
+                      >
+                        {tickTime(tick.ts)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+
           <div className="agent-activity-toolbar">
             <div className="activity-filter" role="group" aria-label="Activity filter">
               <button

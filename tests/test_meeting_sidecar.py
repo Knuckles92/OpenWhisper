@@ -393,6 +393,138 @@ class TestCheckpointResults:
         assert seen == ["Model is thinking through the transcript…"]
 
 
+def _track_pass(agent, payload):
+    """Mirror ``_run_checkpoint`` pass-kind bookkeeping without an RPC."""
+    with agent._lock:
+        agent._pass_kind = pi_mod._pass_kind_for(payload)
+        agent._pass_kinds[payload.request_id] = agent._pass_kind
+
+
+class TestAgentActivity:
+    """Structured activity ticks for the host-only dashboard strip."""
+
+    def test_progress_activity_carries_tool_and_pass_kind(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        progress = []
+        activity = []
+        agent.set_progress_callback(progress.append)
+        agent.set_activity_callback(activity.append)
+        payload = CheckpointPayload(
+            request_id="req-consol",
+            state_snapshot={},
+            new_segments=[],
+            is_consolidation=True,
+        )
+        _track_pass(agent, payload)
+        agent._handle_notification("progress", {
+            "event": "message_update",
+            "delta": "thinking_delta",
+            "tool": "patch_state",
+            "request_id": payload.request_id,
+            "streaming": True,
+        })
+        assert progress == ["Model is thinking through the transcript…"]
+        assert len(activity) == 1
+        tick = activity[0]
+        assert isinstance(tick, pi_mod.AgentActivity)
+        assert tick.kind == "thinking"
+        assert tick.label == "Model is thinking through the transcript…"
+        assert tick.tool == "patch_state"
+        assert tick.pass_kind == "consolidation"
+        assert tick.ts
+        assert "+00:00" in tick.ts or tick.ts.endswith("Z")
+
+    def test_progress_callback_strings_stay_exact_with_activity(self, tmp_path):
+        """Activity must not change the consolidation-card progress copy."""
+        agent = PiSidecarAgent(str(tmp_path))
+        progress = []
+        agent.set_progress_callback(progress.append)
+        agent.set_activity_callback(lambda _tick: None)
+        agent._handle_notification("progress", {
+            "event": "message_update",
+            "delta": "thinking_delta",
+            "streaming": True,
+        })
+        agent._handle_notification("progress", {
+            "event": "message_update",
+            "delta": "thinking_start",
+        })
+        assert progress == [
+            "Model is thinking through the transcript…",
+            "Model is thinking through the transcript…",
+        ]
+
+    def test_cards_pass_fallback_is_not_final_report(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        progress = []
+        activity = []
+        agent.set_progress_callback(progress.append)
+        agent.set_activity_callback(activity.append)
+        payload = CheckpointPayload(
+            request_id="req-cards",
+            state_snapshot={},
+            new_segments=[],
+        )
+        _track_pass(agent, payload)
+        assert agent._pass_kind == "cards"
+        agent._handle_notification("progress", {
+            "request_id": payload.request_id,
+        })
+        assert progress == ["Reviewing the last few minutes…"]
+        assert "final report" not in progress[0].lower()
+        assert len(activity) == 1
+        assert activity[0].pass_kind == "cards"
+        assert activity[0].label == "Reviewing the last few minutes…"
+        assert activity[0].tool == ""
+
+    def test_tool_bridge_activity_uses_real_method_name(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        agent._tools = FakeTools()
+        agent._initialized = True
+        agent._ensure_tool_executor()
+        payload = CheckpointPayload(
+            request_id="req-tools",
+            state_snapshot={},
+            new_segments=[],
+            is_consolidation=True,
+        )
+        _track_pass(agent, payload)
+        activity = []
+        agent.set_activity_callback(activity.append)
+        writes = []
+        wrote = threading.Event()
+
+        def fake_write(msg):
+            writes.append(msg)
+            wrote.set()
+
+        agent._write_msg = fake_write
+        requests = (
+            ("tool.patch_state", {"ops": [{"op": "add_item"}]}),
+            ("tool.ask_question", {"text": "why?", "evidence": []}),
+            ("tool.resolve_question", {
+                "question_id": "q1", "answer_text": "yes",
+                "confidence": 0.5, "evidence": [],
+            }),
+        )
+        try:
+            for index, (method, params) in enumerate(requests):
+                wrote.clear()
+                agent._dispatch_inbound({
+                    "jsonrpc": "2.0", "id": f"sc-{index}",
+                    "method": method, "params": params,
+                })
+                assert wrote.wait(5.0)
+        finally:
+            agent.shutdown()
+        assert [tick.tool for tick in activity] == [
+            "patch_state", "ask_question", "resolve_question",
+        ]
+        assert all(tick.kind == "tool" for tick in activity)
+        assert all(tick.pass_kind == "consolidation" for tick in activity)
+        assert all(tick.tool is not None for tick in activity)
+
+
 class TestToolBridgeThreading:
     """Tool-bridge work must never run on the stdout reader thread."""
 

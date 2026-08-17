@@ -20,8 +20,10 @@ import os
 import secrets
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
 from meeting.interfaces import (
@@ -57,6 +59,11 @@ CONSOLIDATION_TIMEOUT_S = 900.0
 START_WAIT_TIMEOUT_S = 120.0
 #: Guest display names are clamped to this length.
 MAX_GUEST_NAME_LEN = 80
+#: Agent activity ticks kept for a host that opens the dashboard mid-meeting.
+AGENT_ACTIVITY_HISTORY = 50
+#: Minimum spacing between broadcasts of the same activity kind + tool, so a
+#: long think or a burst of tool calls cannot flood the socket.
+AGENT_ACTIVITY_MIN_INTERVAL_S = 1.0
 CAPTURE_WATCHDOG_INTERVAL_S = 2.0
 CAPTURE_RETRY_INTERVAL_S = 10.0
 
@@ -159,6 +166,15 @@ class MeetingEngine:
         self._chunk_index: Dict[int, SpooledChunk] = {}
         self._enqueued_chunk_ids: set = set()
 
+        # Ephemeral agent activity: never persisted, never part of the state
+        # store. Written from the agent core's reader thread, read from the
+        # web server's event loop when a host connects.
+        self._activity_lock = threading.Lock()
+        self._agent_activity: Deque[Dict[str, str]] = deque(
+            maxlen=AGENT_ACTIVITY_HISTORY
+        )
+        self._agent_activity_last: Dict[Tuple[str, str], float] = {}
+
         self._hb_stop: Optional[threading.Event] = None
         self._hb_thread: Optional[threading.Thread] = None
 
@@ -191,12 +207,30 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting listener raised for %s event", kind)
 
-    def _broadcast(self, message: Dict[str, Any]) -> None:
+    def _broadcast(self, message: Dict[str, Any], *,
+                   host_only: bool = False) -> None:
+        """Push a message to dashboard clients, optionally to hosts only.
+
+        Args:
+            message: JSON-serializable payload.
+            host_only: When True, only host-authenticated sockets receive it.
+                A transport that predates the keyword drops the message rather
+                than leaking host-only content to guests.
+        """
         server = self._server
         if server is None:
             return
         try:
-            server.broadcast(message)
+            if host_only:
+                server.broadcast(message, host_only=True)
+            else:
+                server.broadcast(message)
+        except TypeError:
+            if host_only:
+                logger.debug("Transport has no host-only broadcast; dropped %r",
+                             message.get("type"))
+                return
+            logger.exception("Meeting web broadcast failed")
         except Exception:
             logger.exception("Meeting web broadcast failed")
 
@@ -1470,6 +1504,15 @@ class MeetingEngine:
         core = self._agent_core
         self._agent_core = None
         if core is not None:
+            # Detached first: a dying core's reader thread must not push
+            # activity ticks after intelligence was turned off.
+            setter = getattr(core, "set_activity_callback", None)
+            if callable(setter):
+                try:
+                    setter(None)
+                except Exception:
+                    logger.debug("Detaching agent activity callback failed",
+                                 exc_info=True)
             try:
                 core.shutdown()
             except Exception:
@@ -2234,6 +2277,11 @@ class MeetingEngine:
                     self,
                 )
                 self._agent_core = created_core
+                # Duck-typed: cores without session events (the direct
+                # OpenRouter core) simply publish no activity.
+                setter = getattr(created_core, "set_activity_callback", None)
+                if callable(setter):
+                    setter(self._on_agent_activity)
             if not self._core_is_healthy():
                 # Locked degradation path: an unusable backend (no API key,
                 # missing SDK, dead sidecar) never blocks the meeting.
@@ -2268,6 +2316,46 @@ class MeetingEngine:
             )
             self._emit("intelligence", {"online": False, "error": str(exc)})
             self._emit_status()
+
+    def _on_agent_activity(self, activity: Any) -> None:
+        """Publish one ephemeral agent activity tick to host dashboards.
+
+        Called from the agent core's reader thread (and its tool worker), so
+        the ring buffer is guarded and the broadcast goes through the
+        thread-safe web transport. Ticks are dropped when the same kind and
+        tool were already published less than
+        :data:`AGENT_ACTIVITY_MIN_INTERVAL_S` ago.
+
+        Args:
+            activity: An ``AgentActivity``-shaped record from the agent core.
+        """
+        record = {
+            "kind": str(getattr(activity, "kind", "") or "update"),
+            "label": str(getattr(activity, "label", "") or ""),
+            "tool": str(getattr(activity, "tool", "") or ""),
+            "pass_kind": str(getattr(activity, "pass_kind", "") or ""),
+            "ts": str(getattr(activity, "ts", "")
+                      or datetime.now(timezone.utc).isoformat()),
+        }
+        key = (record["kind"], record["tool"])
+        now = time.monotonic()
+        with self._activity_lock:
+            last = self._agent_activity_last.get(key)
+            if last is not None and (now - last) < AGENT_ACTIVITY_MIN_INTERVAL_S:
+                return
+            self._agent_activity_last[key] = now
+            self._agent_activity.append(record)
+        self._broadcast({"type": "agent_activity", **record}, host_only=True)
+
+    def recent_agent_activity(self) -> List[Dict[str, str]]:
+        """Recent agent activity ticks, oldest first, for a host snapshot.
+
+        Returns:
+            Up to :data:`AGENT_ACTIVITY_HISTORY` activity records without a
+            message ``type``, safe to embed in the WebSocket ``hello``.
+        """
+        with self._activity_lock:
+            return [dict(record) for record in self._agent_activity]
 
     def _core_is_healthy(self) -> bool:
         """Whether the agent core can actually accept checkpoints."""

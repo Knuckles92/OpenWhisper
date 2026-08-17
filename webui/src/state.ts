@@ -1,18 +1,24 @@
-import type {
-  ActionResultItem,
-  CardItem,
-  CardKey,
-  Effect,
-  HelloMsg,
-  MeetingInfo,
-  MeetingStateDoc,
-  Participant,
-  PatchMsg,
-  Role,
-  Segment,
-  ServerMessage,
+import {
+  GENERIC_CARD_KEYS,
+  type ActionResultItem,
+  type AgentActivityRecord,
+  type CardItem,
+  type CardKey,
+  type Effect,
+  type HelloMsg,
+  type MeetingInfo,
+  type MeetingStateDoc,
+  type Participant,
+  type PatchMsg,
+  type Question,
+  type Role,
+  type Segment,
+  type ServerMessage,
 } from './types';
 import type { SocketStatus } from './ws';
+
+/** Retained live agent ticks, matching the engine's ring buffer size. */
+export const AGENT_ACTIVITY_CAP = 50;
 
 export interface MeetingUiState {
   role: Role | null;
@@ -29,6 +35,8 @@ export interface MeetingUiState {
   onlineIds: Set<string>;
   /** Newest event seq seen per target id — the handle host undo acts on. */
   lastSeqByTarget: Record<string, number>;
+  /** Ephemeral Pi activity ticks, newest first, host sockets only. */
+  agentActivity: AgentActivityRecord[];
 }
 
 export const initialUiState: MeetingUiState = {
@@ -44,6 +52,7 @@ export const initialUiState: MeetingUiState = {
   actionResults: {},
   onlineIds: new Set(),
   lastSeqByTarget: {},
+  agentActivity: [],
 };
 
 /** Apply a single server effect into a MeetingStateDoc copy. */
@@ -138,6 +147,14 @@ function mergeSegments(existing: Segment[], incoming: Segment[]): Segment[] {
   return [...map.values()].sort((a, b) => a.start_s - b.start_s);
 }
 
+/**
+ * Turn the chronological hello snapshot into the newest-first list the panel
+ * renders. The host already caps its buffer; the slice guards a larger one.
+ */
+function seedAgentActivity(snapshot: AgentActivityRecord[]): AgentActivityRecord[] {
+  return [...snapshot].reverse().slice(0, AGENT_ACTIVITY_CAP);
+}
+
 function isTerminalStatus(status: string): boolean {
   return ['ended', 'failed', 'needs_recovery'].includes(status);
 }
@@ -189,6 +206,11 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             meetingEnded: isTerminalStatus(h.state.status),
             lastError: null,
             lastSeqByTarget: {},
+            // Guest hellos omit the key entirely; keeping what we hold means a
+            // reconnect never blanks the strip on a snapshot that never had it.
+            agentActivity: h.agent_activity
+              ? seedAgentActivity(h.agent_activity)
+              : state.agentActivity,
           };
         }
         case 'patch': {
@@ -298,6 +320,19 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
           }
           return next;
         }
+        case 'agent_activity': {
+          const record: AgentActivityRecord = {
+            kind: msg.kind,
+            label: msg.label,
+            tool: msg.tool,
+            pass_kind: msg.pass_kind,
+            ts: msg.ts,
+          };
+          return {
+            ...state,
+            agentActivity: [record, ...state.agentActivity].slice(0, AGENT_ACTIVITY_CAP),
+          };
+        }
         case 'error':
           return { ...state, lastError: msg.message || msg.code };
         case 'meeting_ended':
@@ -327,6 +362,50 @@ export function sortedCardItems(items: CardItem[]): CardItem[] {
   return [...items].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     return b.updated_at.localeCompare(a.updated_at);
+  });
+}
+
+/** Generic Captured cards (excludes live_notes, which live in NotesPane). */
+export function flattenCapturedItems(cards: MeetingStateDoc['cards']): CardItem[] {
+  const items: CardItem[] = [];
+  for (const key of GENERIC_CARD_KEYS) {
+    items.push(...(cards[key] ?? []));
+  }
+  return items;
+}
+
+export type CapturedFeedEntry =
+  | { kind: 'item'; item: CardItem }
+  | { kind: 'question'; question: Question };
+
+function feedTimestamp(entry: CapturedFeedEntry): string {
+  if (entry.kind === 'item') return entry.item.created_at || entry.item.updated_at;
+  return entry.question.asked_at || '';
+}
+
+function feedId(entry: CapturedFeedEntry): string {
+  return entry.kind === 'item' ? entry.item.id : entry.question.id;
+}
+
+/**
+ * Live Captured rail: pinned cards first, then newest capture / question
+ * at the top so the side column matches Conversation.
+ */
+export function capturedFeedEntries(
+  cards: MeetingStateDoc['cards'],
+  questions: Question[] = [],
+): CapturedFeedEntry[] {
+  const entries: CapturedFeedEntry[] = [
+    ...flattenCapturedItems(cards).map((item) => ({ kind: 'item' as const, item })),
+    ...questions.map((question) => ({ kind: 'question' as const, question })),
+  ];
+  return entries.sort((a, b) => {
+    const aPinned = a.kind === 'item' && a.item.pinned;
+    const bPinned = b.kind === 'item' && b.item.pinned;
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    const byTime = feedTimestamp(b).localeCompare(feedTimestamp(a));
+    if (byTime !== 0) return byTime;
+    return feedId(b).localeCompare(feedId(a));
   });
 }
 

@@ -154,10 +154,10 @@ a {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  max-width: 1180px;
+  max-width: min(1680px, 100%);
   width: 100%;
   margin: 0 auto;
-  padding: 28px 24px 48px;
+  padding: 28px 24px 24px;
 }
 
 .app-main {
@@ -172,40 +172,87 @@ a {
   display: block;
 }
 
-.stage {
+.app-main.workspace {
+  --workspace-rail-top: 24px;
+  --workspace-rail-max: calc(100vh - 48px);
   display: grid;
-  grid-template-columns: 1.3fr 0.9fr;
+  grid-template-columns: minmax(240px, 0.2fr) minmax(480px, 0.6fr) minmax(240px, 0.2fr);
+  grid-template-areas: "conversation center rail";
   gap: 22px;
-  align-items: start;
+  min-height: auto;
 }
 
-.stage-conversation {
+.workspace-conversation,
+.workspace-center,
+.workspace-rail {
+  min-width: 0;
+}
+
+.workspace-conversation,
+.workspace-rail {
+  /* height: 0 keeps sides out of row sizing so the center sets page length.
+     min() caps the stretch at the viewport so a long report doesn't leave empty columns. */
+  height: 0;
+  min-height: min(100%, var(--workspace-rail-max));
+  max-height: var(--workspace-rail-max);
+  overflow: auto;
+  position: sticky;
+  top: var(--workspace-rail-top);
+}
+
+.workspace-conversation {
+  grid-area: conversation;
   display: flex;
   flex-direction: column;
   gap: 0;
-  min-width: 0;
 }
 
-.stage-conversation > .panel {
-  min-height: 0;
+.workspace-conversation > .panel {
+  flex: 1 0 auto;
 }
 
-.stage-conversation > .panel > .panel-body {
-  max-height: min(60vh, 560px);
+.workspace-conversation > .panel > .panel-body,
+.workspace-center .panel-body,
+.workspace-rail .panel-body {
+  overflow: visible;
+  max-height: none;
 }
 
-.stage-rail {
+.workspace-center {
+  grid-area: center;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow: visible;
+}
+
+.workspace-rail {
+  grid-area: rail;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-width: 0;
+}
+
+@media (max-width: 1200px) {
+  .app-main.workspace {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "center"
+      "conversation"
+      "rail";
+  }
+
+  .workspace-conversation,
+  .workspace-rail {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    position: static;
+  }
 }
 
 @media (max-width: 900px) {
-  .stage {
-    grid-template-columns: 1fr;
-  }
-
   .app-shell {
     padding: 20px 16px 40px;
   }
@@ -634,8 +681,8 @@ a {
 /* Pi activity — a quiet, collapsible session log */
 
 .agent-activity {
-  width: min(760px, 100%);
-  margin: -4px auto 0;
+  width: 100%;
+  margin: 0;
   border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
   border-radius: 16px;
   background: color-mix(in srgb, var(--paper) 68%, transparent);
@@ -729,7 +776,8 @@ a {
 }
 
 .agent-activity-status,
-.agent-activity-latest {
+.agent-activity-latest,
+.agent-activity-live {
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.78rem;
@@ -739,6 +787,39 @@ a {
   content: '·';
   margin-right: 8px;
   color: var(--line);
+}
+
+.agent-activity-live {
+  color: var(--leaf);
+}
+
+.agent-activity-live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--leaf-2);
+}
+
+.agent-activity-live.online::before {
+  animation: agent-breathe 2.8s ease-in-out infinite;
+}
+
+.agent-activity-live.paused,
+.agent-activity-live.complete {
+  color: var(--soft);
+}
+
+.agent-activity-live.paused::before,
+.agent-activity-live.complete::before {
+  background: var(--soft);
+  opacity: 0.6;
+}
+
+.agent-activity-live.offline::before {
+  background: var(--warning);
 }
 
 .agent-activity-chevron {
@@ -763,6 +844,105 @@ a {
 .agent-activity-body {
   border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   padding: 12px 14px 14px;
+}
+
+/* Live model ticks — ephemeral, unlike the applied-op list below */
+
+.agent-live {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--leaf) 16%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--wash) 46%, transparent);
+}
+
+.agent-live-now {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.agent-live-now .agent-status-dot {
+  flex: none;
+}
+
+.agent-live-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.agent-live.idle .agent-live-label {
+  color: var(--soft);
+  font-weight: 500;
+}
+
+.agent-live-pass,
+.agent-live-tool {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--leaf) 9%, transparent);
+  color: var(--leaf);
+  font-size: 0.68rem;
+}
+
+.agent-live-pass {
+  font-weight: 600;
+}
+
+.agent-live-tool {
+  font-family: var(--font-mono);
+}
+
+.agent-live-time {
+  flex: none;
+  color: var(--soft);
+  font-size: 0.7rem;
+}
+
+.agent-live-log {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 7px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  max-height: 112px;
+  overflow-y: auto;
+}
+
+.agent-live-tick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--soft);
+  font-size: 0.76rem;
+}
+
+.agent-live-tick-mark {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--soft);
+  opacity: 0.45;
+}
+
+.agent-live-tick-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-activity-toolbar {
@@ -911,6 +1091,11 @@ a {
 
   .agent-activity-latest {
     display: none;
+  }
+
+  .agent-activity-live {
+    display: block;
+    max-width: 100%;
   }
 }
 
@@ -1125,8 +1310,6 @@ a {
 .notes-flow {
   display: flex;
   flex-direction: column;
-  max-height: 360px;
-  overflow-y: auto;
   padding-right: 6px;
 }
 
@@ -2152,6 +2335,8 @@ a {
   .report-tab-note,
   .report-download,
   .stage,
+  .workspace-conversation,
+  .workspace-rail,
   .agent-activity,
   .no-print {
     display: none !important;
@@ -2159,9 +2344,12 @@ a {
 
   .app-shell {
     max-width: none;
+    height: auto;
+    max-height: none;
     min-height: 0;
     padding: 0;
     margin: 0;
+    overflow: visible;
   }
 
   .app-main,
@@ -2176,7 +2364,8 @@ a {
 
   .panel-body,
   .notes-flow,
-  .stage-conversation > .panel > .panel-body {
+  .stage-conversation > .panel > .panel-body,
+  .workspace-conversation > .panel > .panel-body {
     max-height: none !important;
     overflow: visible !important;
   }

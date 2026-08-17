@@ -215,12 +215,17 @@ class MeetingWebServer:
     # Broadcast
     # ------------------------------------------------------------------
 
-    def broadcast(self, message: Dict[str, Any]) -> None:
-        """Push a JSON-serializable message to all connected dashboard clients.
+    def broadcast(self, message: Dict[str, Any], *,
+                  host_only: bool = False) -> None:
+        """Push a JSON-serializable message to connected dashboard clients.
 
         Thread-safe: marshals into the server's event loop via the hub.
+
+        Args:
+            message: JSON-serializable payload.
+            host_only: When True, only host-authenticated sockets receive it.
         """
-        self._hub.schedule_broadcast(dict(message))
+        self._hub.schedule_broadcast(dict(message), host_only=host_only)
 
     def invalidate_connections(self) -> None:
         """Close sockets authenticated with the previous token pair."""

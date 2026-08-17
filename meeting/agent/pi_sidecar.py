@@ -18,6 +18,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional, Set
 
 from meeting.agent.base import (
@@ -78,13 +79,159 @@ _PROGRESS_DETAILS = {
 }
 
 
-def _progress_detail(event: str, delta: str = "") -> str:
-    """Human-readable status for a documented Pi ``AgentSessionEvent``."""
+#: Pass kinds a checkpoint can run as, in the order they are checked.
+PASS_CARDS = "cards"
+PASS_NOTES = "notes"
+PASS_POLISH = "polish"
+PASS_CONSOLIDATION = "consolidation"
+
+#: Copy for events whose default wording is consolidation-specific. Only the
+#: entries that would otherwise say "final report" during a rolling pass are
+#: overridden; everything else falls back to ``_PROGRESS_DETAILS``.
+_PASS_PROGRESS_DETAILS: Dict[str, Dict[str, str]] = {
+    PASS_CARDS: {
+        "text_delta": "Model is writing dashboard updates…",
+        "agent_start": "Reviewing the last few minutes…",
+        "agent_end": "Checkpoint is wrapping up…",
+        "agent_settled": "Checkpoint is wrapping up…",
+    },
+    PASS_NOTES: {
+        "text_delta": "Model is writing the meeting notes…",
+        "agent_start": "Updating the meeting notes…",
+        "agent_end": "Notes pass is wrapping up…",
+        "agent_settled": "Notes pass is wrapping up…",
+        "tool_execution_start": "Updating the meeting notes…",
+        "tool_execution_end": "Updating the meeting notes…",
+    },
+    PASS_POLISH: {
+        "text_delta": "Model is cleaning up the transcript…",
+        "agent_start": "Cleaning up the transcript…",
+        "agent_end": "Transcript cleanup is wrapping up…",
+        "agent_settled": "Transcript cleanup is wrapping up…",
+        "tool_execution_start": "Applying transcript fixes…",
+        "tool_execution_end": "Applying transcript fixes…",
+    },
+}
+
+#: Detail used when an event/delta has no copy of its own, per pass.
+_PASS_FALLBACK_DETAILS: Dict[str, str] = {
+    PASS_CARDS: "Reviewing the last few minutes…",
+    PASS_NOTES: "Updating the meeting notes…",
+    PASS_POLISH: "Cleaning up the transcript…",
+    PASS_CONSOLIDATION: "Preparing final report…",
+}
+
+_DEFAULT_FALLBACK_DETAIL = "Preparing final report…"
+
+#: Stable activity categories the dashboard activity strip renders. ``update``
+#: is the catch-all for an event this host does not classify.
+ACTIVITY_KINDS = frozenset({
+    "thinking", "writing", "tool", "turn", "retry", "compaction",
+    "start", "settled", "update",
+})
+
+#: ``assistantMessageEvent.type`` (the ``delta`` field) -> activity kind.
+_DELTA_ACTIVITY_KINDS = {
+    "thinking_start": "thinking",
+    "thinking_delta": "thinking",
+    "thinking_end": "thinking",
+    "text_delta": "writing",
+    "toolcall_start": "tool",
+    "toolcall_delta": "tool",
+}
+
+#: ``AgentSessionEvent.type`` -> activity kind.
+_EVENT_ACTIVITY_KINDS = {
+    "tool_execution_start": "tool",
+    "tool_execution_update": "tool",
+    "tool_execution_end": "tool",
+    "turn_start": "turn",
+    "turn_end": "turn",
+    "agent_start": "start",
+    "agent_end": "settled",
+    "agent_settled": "settled",
+    "auto_retry_start": "retry",
+    "auto_retry_end": "retry",
+    "compaction_start": "compaction",
+    "compaction_end": "compaction",
+    "auto_compaction_start": "compaction",
+    "auto_compaction_end": "compaction",
+}
+
+
+def _progress_detail(event: str, delta: str = "", pass_kind: str = "") -> str:
+    """Human-readable status for a documented Pi ``AgentSessionEvent``.
+
+    Args:
+        event: The ``AgentSessionEvent.type`` reported by the sidecar.
+        delta: The ``assistantMessageEvent.type`` for ``message_update``.
+        pass_kind: Which pass is in flight (``cards``, ``notes``, ``polish``,
+            ``consolidation``, or empty when unknown). Without it a rolling
+            checkpoint would claim it is preparing the final report.
+
+    Returns:
+        A sentence suitable for the finalization card and activity strip.
+    """
+    overrides = _PASS_PROGRESS_DETAILS.get(pass_kind, {})
+    fallback = _PASS_FALLBACK_DETAILS.get(pass_kind, _DEFAULT_FALLBACK_DETAIL)
     if delta:
-        return _PROGRESS_DETAILS.get(delta, "Preparing final report…")
+        return overrides.get(delta) or _PROGRESS_DETAILS.get(delta, fallback)
     if "tool" in event:
-        return "Updating the dashboard…"
-    return _PROGRESS_DETAILS.get(event, "Preparing final report…")
+        return overrides.get(event) or _PROGRESS_DETAILS["tool_execution_start"]
+    return overrides.get(event) or _PROGRESS_DETAILS.get(event, fallback)
+
+
+def _activity_kind(event: str, delta: str = "") -> str:
+    """Classify a Pi session event into one of :data:`ACTIVITY_KINDS`."""
+    kind = _DELTA_ACTIVITY_KINDS.get(delta) or _EVENT_ACTIVITY_KINDS.get(event)
+    if kind is None and "tool" in event:
+        kind = "tool"
+    return kind if kind in ACTIVITY_KINDS else "update"
+
+
+def _utc_now_iso() -> str:
+    """Current time as an ISO-8601 string with an explicit UTC offset."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _pass_kind_for(payload: CheckpointPayload) -> str:
+    """Which pass ``payload`` represents, for activity/progress labeling."""
+    if payload.is_consolidation:
+        return PASS_CONSOLIDATION
+    if bool(getattr(payload, "is_polish", False)):
+        return PASS_POLISH
+    if bool(getattr(payload, "is_notes", False)):
+        return PASS_NOTES
+    return PASS_CARDS
+
+
+@dataclass(frozen=True)
+class AgentActivity:
+    """One ephemeral agent activity tick for the host-only dashboard strip.
+
+    Attributes:
+        kind: A stable category from :data:`ACTIVITY_KINDS`.
+        label: Human-readable sentence describing what the agent is doing.
+        tool: Tool name for tool activity, else an empty string.
+        pass_kind: The pass in flight, or an empty string when unknown.
+        ts: ISO-8601 UTC timestamp of the tick.
+    """
+
+    kind: str
+    label: str
+    tool: str = ""
+    pass_kind: str = ""
+    ts: str = ""
+
+    def to_dict(self) -> Dict[str, str]:
+        """Wire record for the dashboard, without a message ``type``."""
+        return {
+            "kind": self.kind,
+            "label": self.label,
+            "tool": self.tool,
+            "pass_kind": self.pass_kind,
+            "ts": self.ts,
+        }
 
 
 @dataclass
@@ -204,6 +351,15 @@ class PiSidecarAgent:
         self._citable_ids: List[str] = []
         self._last_progress_mono = 0.0
         self._progress_cb: Optional[Any] = None
+        #: Long-lived activity sink for the dashboard strip. Distinct from
+        #: ``_progress_cb``, which is installed around one consolidation only.
+        self._activity_cb: Optional[Any] = None
+        #: In-flight ``request_id`` -> pass kind. A consolidation can overlap a
+        #: rolling checkpoint, so the pass is resolved per request rather than
+        #: from a single slot; ``_pass_kind`` is the newest one, used when a
+        #: notification carries no request id (and by the tool bridge).
+        self._pass_kinds: Dict[str, str] = {}
+        self._pass_kind = ""
 
     # ------------------------------------------------------------------
     # AgentCore lifecycle
@@ -246,6 +402,21 @@ class PiSidecarAgent:
     def set_progress_callback(self, callback: Optional[Any]) -> None:
         """Receive human-readable progress while a checkpoint is in flight."""
         self._progress_cb = callback
+
+    def set_activity_callback(self, callback: Optional[Any]) -> None:
+        """Receive an :class:`AgentActivity` for every Pi session event.
+
+        Unlike :meth:`set_progress_callback` — installed around a single
+        consolidation and feeding the finalization card — this callback lives
+        for the whole meeting, so rolling, notes, and polish passes are
+        covered too.
+
+        Args:
+            callback: ``cb(activity)`` invoked on the sidecar reader thread
+                (and the tool worker), or None to detach.
+        """
+        with self._lock:
+            self._activity_cb = callback
 
     def checkpoint(self, payload: CheckpointPayload) -> AgentResult:
         """Run one rolling checkpoint. Blocking; called from a worker thread."""
@@ -320,6 +491,29 @@ class PiSidecarAgent:
             except Exception:
                 logger.debug("Checkpoint progress callback failed", exc_info=True)
 
+    def _current_pass_kind(self, request_id: Any = None) -> str:
+        """Pass kind for ``request_id``, falling back to the newest pass."""
+        with self._lock:
+            if isinstance(request_id, str) and request_id in self._pass_kinds:
+                return self._pass_kinds[request_id]
+            return self._pass_kind
+
+    def _emit_activity(self, kind: str, label: str, tool: str,
+                       pass_kind: str) -> None:
+        """Hand one activity tick to the long-lived activity callback."""
+        with self._lock:
+            callback = self._activity_cb
+        if not callable(callback):
+            return
+        activity = AgentActivity(
+            kind=kind, label=label, tool=tool, pass_kind=pass_kind,
+            ts=_utc_now_iso(),
+        )
+        try:
+            callback(activity)
+        except Exception:
+            logger.debug("Agent activity callback failed", exc_info=True)
+
     def _run_checkpoint(self, payload: CheckpointPayload,
                         timeout_s: float,
                         stall_s: Optional[float] = None) -> AgentResult:
@@ -334,6 +528,8 @@ class PiSidecarAgent:
 
         with self._lock:
             self._active_request_ids.add(payload.request_id)
+            self._pass_kind = _pass_kind_for(payload)
+            self._pass_kinds[payload.request_id] = self._pass_kind
             is_notes = bool(getattr(payload, "is_notes", False))
             self._notes_mode = is_notes
             self._notes_item_ids = (
@@ -376,6 +572,11 @@ class PiSidecarAgent:
         finally:
             with self._lock:
                 self._active_request_ids.discard(payload.request_id)
+                self._pass_kinds.pop(payload.request_id, None)
+                # An overlapping pass keeps naming itself; only the last one
+                # out clears the fallback.
+                remaining = list(self._pass_kinds.values())
+                self._pass_kind = remaining[-1] if remaining else ""
                 self._notes_mode = False
                 self._notes_item_ids = frozenset()
                 self._citable_ids = []
@@ -836,7 +1037,13 @@ class PiSidecarAgent:
         if method == "progress":
             event = str(params.get("event") or "update")
             delta = str(params.get("delta") or "")
-            self._note_progress(_progress_detail(event, delta))
+            tool = str(params.get("tool") or "")
+            pass_kind = self._current_pass_kind(params.get("request_id"))
+            detail = _progress_detail(event, delta, pass_kind)
+            self._note_progress(detail)
+            self._emit_activity(
+                _activity_kind(event, delta), detail, tool, pass_kind,
+            )
             return
         logger.debug("Ignoring unknown sidecar notification %r", method)
 
@@ -900,10 +1107,14 @@ class PiSidecarAgent:
             notes_mode = self._notes_mode
             notes_item_ids = self._notes_item_ids
             citable_ids = self._citable_ids
+            pass_kind = self._pass_kind
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
-        self._note_progress("Updating the dashboard…")
+        tool_name = method.split(".", 1)[-1] if isinstance(method, str) else ""
+        detail = _progress_detail("tool_execution_start", pass_kind=pass_kind)
+        self._note_progress(detail)
+        self._emit_activity("tool", detail, tool_name, pass_kind)
         try:
             if method == "tool.patch_state":
                 ops = params.get("ops")

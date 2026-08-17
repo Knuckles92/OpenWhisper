@@ -15,7 +15,7 @@ interface QuestionInboxProps {
 const SUGGEST_HIGH = 0.8;
 const SUGGEST_MEDIUM = 0.4;
 
-function QuestionRow({
+export function QuestionRow({
   q,
   onSendOp,
   onEvidenceClick,

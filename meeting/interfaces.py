@@ -348,8 +348,19 @@ class TransportServer(Protocol):
     def stop(self) -> None:
         ...
 
-    def broadcast(self, message: Dict[str, Any]) -> None:
-        """Push a JSON-serializable message to all connected clients."""
+    def broadcast(self, message: Dict[str, Any], *,
+                  host_only: bool = False) -> None:
+        """Push a JSON-serializable message to connected clients.
+
+        Args:
+            message: JSON-serializable payload.
+            host_only: When True, deliver only to host-authenticated clients
+                (used for ephemeral agent activity). Optional: this protocol
+                is ``runtime_checkable``, which only checks method presence,
+                so a transport predating the keyword still satisfies it — the
+                engine drops host-only messages such a transport cannot
+                target.
+        """
         ...
 
 

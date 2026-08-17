@@ -12,6 +12,8 @@ interface TranscriptPaneProps {
   headerExtra?: ReactNode;
   /** Prefix element ids so a print copy does not collide with the live list. */
   segmentIdPrefix?: string;
+  /** Live rail: newest speech at the top. Print / history stay chronological. */
+  newestFirst?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -37,10 +39,14 @@ export default function TranscriptPane({
   readOnly = false,
   headerExtra,
   segmentIdPrefix = '',
+  newestFirst = false,
 }: TranscriptPaneProps) {
   const sorted = useMemo(
-    () => [...segments].sort((a, b) => a.start_s - b.start_s),
-    [segments],
+    () =>
+      [...segments].sort((a, b) =>
+        newestFirst ? b.start_s - a.start_s : a.start_s - b.start_s,
+      ),
+    [segments, newestFirst],
   );
   const highlightedAvailable = Boolean(
     highlightSegmentId && sorted.some((segment) => segment.id === highlightSegmentId),

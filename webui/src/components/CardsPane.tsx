@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
-import { CAPTURE_TAGS, CARD_LABELS, sortedCardItems } from '../state';
+import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op, type Question } from '../types';
+import { CAPTURE_TAGS, CARD_LABELS, capturedFeedEntries, sortedCardItems } from '../state';
 import EvidenceChip from './EvidenceChip';
+import { QuestionRow } from './QuestionInbox';
 
 interface CardsPaneProps {
   cards: MeetingStateDoc['cards'];
@@ -15,6 +16,10 @@ interface CardsPaneProps {
   embedded?: boolean;
   /** Hide composer and edit actions; skip removed items (print / archive). */
   readOnly?: boolean;
+  /** Live rail: one newest-first stream instead of type-grouped sections. */
+  newestFirst?: boolean;
+  /** Interleaved into the newest-first feed when `newestFirst` is set. */
+  questions?: Question[];
 }
 
 function CardItemRow({
@@ -210,8 +215,16 @@ export default function CardsPane({
   lastSeqByTarget,
   embedded = false,
   readOnly = false,
+  newestFirst = false,
+  questions = [],
 }: CardsPaneProps) {
-  const body = (
+  const feed = newestFirst
+    ? capturedFeedEntries(cards, questions).filter((entry) =>
+        entry.kind === 'item' ? !readOnly || entry.item.status !== 'removed' : true,
+      )
+    : [];
+
+  const grouped = (
     <>
       {GENERIC_CARD_KEYS.map((key) => {
         const items = cards[key] ?? [];
@@ -229,6 +242,39 @@ export default function CardsPane({
           />
         );
       })}
+    </>
+  );
+
+  const stream = (
+    <>
+      {feed.map((entry) =>
+        entry.kind === 'item' ? (
+          <CardItemRow
+            key={entry.item.id}
+            item={entry.item}
+            tag={CAPTURE_TAGS[entry.item.card]}
+            onSendOp={onSendOp}
+            onEvidenceClick={onEvidenceClick}
+            onUndo={onUndo}
+            undoSeq={lastSeqByTarget[entry.item.id]}
+            readOnly={readOnly}
+          />
+        ) : (
+          <QuestionRow
+            key={entry.question.id}
+            q={entry.question}
+            onSendOp={onSendOp}
+            onEvidenceClick={onEvidenceClick}
+            readOnly={readOnly}
+          />
+        ),
+      )}
+    </>
+  );
+
+  const body = (
+    <>
+      {newestFirst ? stream : grouped}
       {!readOnly && onSendOp && <CaptureComposer onSendOp={onSendOp} />}
     </>
   );

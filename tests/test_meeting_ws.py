@@ -3,6 +3,7 @@ Tests for meeting WebSocket hub: hello snapshot, action -> action_result,
 guest authorization on the WS action path, reconnect identity, and hostile
 input handling.
 """
+import asyncio
 import copy
 import os
 import sys
@@ -108,12 +109,26 @@ class FakeStore:
             cb(self._state["seq"], [result])
 
 
+_ACTIVITY_TICK = {
+    "kind": "thinking",
+    "label": "Model is thinking through the transcript…",
+    "tool": "",
+    "pass_kind": "consolidation",
+    "ts": "2026-08-16T12:00:00+00:00",
+}
+
+
 class FakeEngine:
     def __init__(self):
         self.meeting_id = "m_ws"
         self.store = FakeStore()
         self.actions = []
         self.add_guest_calls = 0
+        self.activity = []
+        self.hub = None
+
+    def recent_agent_activity(self):
+        return [dict(record) for record in self.activity]
 
     def apply_client_action(self, actor_type, actor_id, op):
         self.actions.append((actor_type, actor_id, op))
@@ -146,6 +161,7 @@ def ws_app():
     repo = FakeRepo()
     hub = WsHub(engine, repo)
     hub.get_guest_url = lambda: "http://127.0.0.1:9/m/" + GUEST_TOKEN
+    engine.hub = hub
     app = create_app(engine, repo, hub)
     return TestClient(app), engine, repo
 
@@ -235,6 +251,86 @@ class TestWsHello:
         assert patch["type"] == "patch"
         assert patch["results"][0]["effect"]["item"]["text"] == "LOST"
         assert patch["seq"] == 4
+
+
+class TestAgentActivityWs:
+    """Host-only ``agent_activity`` fan-out and hello snapshot."""
+
+    def test_host_receives_agent_activity_guest_does_not(self, ws_app):
+        client, engine, _ = ws_app
+        tick = {"type": "agent_activity", **_ACTIVITY_TICK}
+        with client.websocket_connect(f"/ws?token={HOST_TOKEN}") as host_ws:
+            recv_until(host_ws, "hello")
+            with client.websocket_connect(
+                f"/ws?token={GUEST_TOKEN}&name=Sam"
+            ) as guest_ws:
+                recv_until(guest_ws, "hello")
+                # Join is broadcast to every ready socket, including this guest.
+                assert recv_until(guest_ws, "presence")["event"] == "joined"
+                assert recv_until(host_ws, "presence")["event"] == "joined"
+                future = asyncio.run_coroutine_threadsafe(
+                    engine.hub.broadcast_json(tick, host_only=True),
+                    engine.hub._loop,
+                )
+                future.result(timeout=2.0)
+                host_msg = recv_until(host_ws, "agent_activity")
+                assert host_msg["type"] == "agent_activity"
+                assert host_msg["kind"] == "thinking"
+                assert host_msg["label"] == _ACTIVITY_TICK["label"]
+                assert host_msg["tool"] == ""
+                assert host_msg["pass_kind"] == "consolidation"
+                assert host_msg["ts"] == _ACTIVITY_TICK["ts"]
+                assert host_msg["tool"] is not None
+                assert host_msg["pass_kind"] is not None
+                guest_ws.send_json({"type": "ping"})
+                guest_msg = guest_ws.receive_json()
+                assert guest_msg["type"] == "pong"
+
+    def test_host_hello_carries_recent_ticks(self, ws_app):
+        client, engine, _ = ws_app
+        older = dict(_ACTIVITY_TICK)
+        newer = {
+            "kind": "tool",
+            "label": "Updating the dashboard…",
+            "tool": "patch_state",
+            "pass_kind": "cards",
+            "ts": "2026-08-16T12:00:01+00:00",
+        }
+        engine.activity = [older, newer]
+        with client.websocket_connect(f"/ws?token={HOST_TOKEN}") as ws:
+            hello = ws.receive_json()
+        assert hello["type"] == "hello"
+        assert hello["role"] == "host"
+        assert hello["agent_activity"] == [older, newer]
+        assert "type" not in hello["agent_activity"][0]
+        assert hello["agent_activity"][0]["tool"] == ""
+        assert hello["agent_activity"][1]["tool"] == "patch_state"
+
+    def test_guest_hello_omits_agent_activity_key(self, ws_app):
+        client, engine, _ = ws_app
+        engine.activity = [dict(_ACTIVITY_TICK)]
+        with client.websocket_connect(
+            f"/ws?token={GUEST_TOKEN}&name=Sam"
+        ) as ws:
+            hello = ws.receive_json()
+        assert hello["type"] == "hello"
+        assert hello["role"] == "guest"
+        assert "agent_activity" not in hello
+
+    def test_host_only_tick_skips_not_ready_host(self):
+        """Host-only ticks are ephemeral: not-ready hosts are not buffered."""
+        pytest.importorskip("fastapi")
+        from meeting.web.ws import WsHub, _Connection
+
+        hub = WsHub(FakeEngine(), FakeRepo())
+        conn = _Connection(role="host", name="Host")
+        hub._connections[object()] = conn
+        asyncio.run(hub.broadcast_json(
+            {"type": "agent_activity", **_ACTIVITY_TICK},
+            host_only=True,
+        ))
+        assert list(conn.pending) == []
+        assert conn.ready is False
 
 
 class TestWsActionRoundTrip:

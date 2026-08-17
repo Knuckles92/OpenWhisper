@@ -44,6 +44,9 @@ WS_CLOSE_TOO_MANY = 4429
 #: Number of trailing transcript segments included in the ``hello`` message.
 HELLO_SEGMENT_COUNT = 200
 
+#: Trailing agent activity ticks included in a host's ``hello`` message.
+HELLO_ACTIVITY_COUNT = 50
+
 #: Largest inbound text frame accepted, in characters. Anything bigger is
 #: rejected before ``json.loads`` ever sees it.
 MAX_MESSAGE_CHARS = 64 * 1024
@@ -229,18 +232,23 @@ class WsHub:
         }
         self.schedule_broadcast(message)
 
-    def schedule_broadcast(self, message: Dict[str, Any]) -> None:
+    def schedule_broadcast(self, message: Dict[str, Any], *,
+                           host_only: bool = False) -> None:
         """Thread-safe entry point: queue ``message`` for broadcast.
 
         Safe to call from any thread; a no-op when the server loop is not
         running (before startup / after shutdown).
+
+        Args:
+            message: JSON-serializable payload.
+            host_only: When True, only host-authenticated sockets receive it.
         """
         loop = self._loop
         if loop is None or loop.is_closed():
             return
         try:
             future = asyncio.run_coroutine_threadsafe(
-                self.broadcast_json(message), loop
+                self.broadcast_json(message, host_only=host_only), loop
             )
         except RuntimeError:
             logger.debug("Broadcast dropped: server loop unavailable")
@@ -271,21 +279,31 @@ class WsHub:
             return_exceptions=True,
         )
 
-    async def broadcast_json(self, message: Dict[str, Any]) -> None:
-        """Send ``message`` to every connected client.
+    async def broadcast_json(self, message: Dict[str, Any], *,
+                             host_only: bool = False) -> None:
+        """Send ``message`` to connected clients.
 
         Sockets still assembling their ``hello`` buffer the payload instead;
         live sockets are written concurrently so one stalled peer cannot
         block the fan-out.
+
+        Args:
+            message: JSON-serializable payload.
+            host_only: When True, guests are skipped and sockets that are not
+                ready yet are skipped too rather than buffered — host-only
+                traffic is ephemeral agent activity, and replaying a stale
+                tick after ``hello`` is noise.
         """
         if not self._connections:
             return
         text = json.dumps(message, ensure_ascii=False, default=str)
         live: List[WebSocket] = []
         for websocket, conn in list(self._connections.items()):
+            if host_only and conn.role != "host":
+                continue
             if conn.ready:
                 live.append(websocket)
-            elif conn.overflowed:
+            elif host_only or conn.overflowed:
                 continue
             elif len(conn.pending) >= MAX_PENDING_MESSAGES:
                 conn.overflowed = True
@@ -443,7 +461,7 @@ class WsHub:
             segments = []
         guest_url = await asyncio.to_thread(self._guest_url, meeting)
 
-        await self._send(websocket, {
+        payload: Dict[str, Any] = {
             "type": "hello",
             "role": conn.role,
             "participant_id": conn.participant_id,
@@ -457,7 +475,32 @@ class WsHub:
                 "started_at": meeting.get("started_at"),
                 "status": state.get("status") or meeting.get("status"),
             },
-        })
+        }
+        if conn.role == "host":
+            # Host-only, like the live fan-out: a guest never learns what the
+            # agent is doing. Omitted entirely for guests, not sent empty.
+            payload["agent_activity"] = self._recent_agent_activity()
+        await self._send(websocket, payload)
+
+    def _recent_agent_activity(self) -> List[Dict[str, Any]]:
+        """Recent agent activity ticks for a host ``hello`` (oldest first).
+
+        Non-blocking: the engine copies an in-memory ring buffer, so this runs
+        on the event loop instead of a worker thread.
+
+        Returns:
+            At most :data:`HELLO_ACTIVITY_COUNT` records, or an empty list for
+            an engine that publishes no activity (the archive dashboard).
+        """
+        getter = getattr(self._engine, "recent_agent_activity", None)
+        if not callable(getter):
+            return []
+        try:
+            records = list(getter() or [])
+        except Exception:
+            logger.exception("Failed to read recent agent activity")
+            return []
+        return records[-HELLO_ACTIVITY_COUNT:]
 
     async def _flush_pending(self, websocket: WebSocket,
                              conn: _Connection) -> bool:
