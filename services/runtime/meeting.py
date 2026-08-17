@@ -583,7 +583,7 @@ class MeetingRuntime:
 
         def _worker():
             try:
-                from meeting.reinsight import rerun_insights
+                from meeting.reinsight import DEFAULT_TIMEOUT_S, rerun_insights
 
                 repo = self._repository()
                 settings = settings_manager.load_all_settings()
@@ -604,7 +604,7 @@ class MeetingRuntime:
                     agent_core_kind=agent_core_kind,
                     sidecar_payload_dir=payload_dir,
                     store=store,
-                    timeout_s=180.0,
+                    timeout_s=DEFAULT_TIMEOUT_S,
                 )
                 ok = bool(result.get("ok", False))
                 error = result.get("error")

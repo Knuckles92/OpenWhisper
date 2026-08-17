@@ -25,10 +25,20 @@ _ENV_KEYS = {
     "openai": "OPENAI_API_KEY",
 }
 
+#: How long a consolidation pass may stay silent (no Pi events, no tool
+#: calls) before we treat it as hung. Flash-class reasoning can sit this
+#: long before the first token; progress notifications reset the clock.
+CONSOLIDATION_STALL_S = 300.0
+#: Hard wall even when the agent keeps reporting progress, so a runaway
+#: tool loop cannot block finalization forever.
+CONSOLIDATION_TIMEOUT_CAP_S = 900.0
+
 __all__ = [
     "AgentCore",
     "AgentToolHost",
     "SIDECAR_BUNDLE_NAME",
+    "CONSOLIDATION_STALL_S",
+    "CONSOLIDATION_TIMEOUT_CAP_S",
     "create_agent_core",
     "find_provider_api_key",
 ]

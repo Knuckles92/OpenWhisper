@@ -30,9 +30,9 @@ from meeting.state.store import MeetingStateStore
 
 logger = logging.getLogger(__name__)
 
-#: Budget for one re-run consolidation pass. Generous: it covers a whole
-#: meeting's transcript, not a rolling checkpoint window.
-DEFAULT_TIMEOUT_S = 180.0
+#: Hard wall for one re-run consolidation pass. The sidecar also stalls
+#: after ``CONSOLIDATION_STALL_S`` of silence (no Pi events / tool calls).
+DEFAULT_TIMEOUT_S = 900.0
 
 __all__ = ["rerun_insights", "DEFAULT_TIMEOUT_S"]
 

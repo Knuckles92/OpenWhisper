@@ -41,7 +41,7 @@ from meeting.state.schema import CARD_KEYS
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_TIMEOUT_S = 60.0
-_CONSOLIDATION_TIMEOUT_S = 180.0
+_CONSOLIDATION_TIMEOUT_S = 300.0
 _PROBE_TIMEOUT_S = 10.0
 #: Consolidation often needs an extra round to add timeline/questions after
 #: the first patch_state batch; rolling checkpoints stay at two rounds.

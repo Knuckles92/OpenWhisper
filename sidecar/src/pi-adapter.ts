@@ -68,6 +68,8 @@ export interface TurnResult {
 export interface PiSession {
   /** Send one user message and run the agentic loop until it settles. */
   runTurn(userMessage: string): Promise<TurnResult>;
+  /** True while Pi is in an agent run (including provider thinking). */
+  isBusy(): boolean;
   /** Abort the in-flight run, if any. */
   abort(): Promise<void>;
   /** Release the session and its temp agent directory. */
@@ -84,6 +86,66 @@ export interface CreateSessionOptions {
   /** The ONLY tools the session gets; built-ins are disabled structurally. */
   tools: MeetingToolDef[];
   log: (level: "debug" | "info" | "warning" | "error", msg: string) => void;
+  /**
+   * ``AgentSession.subscribe`` listener, matching the official SDK
+   * (docs/sdk.md and examples/sdk). Hosts use these events as liveness,
+   * not ``isStreaming`` alone — that stays true until the run settles,
+   * including a hung provider stream (pi-agent-core#2381).
+   */
+  onEvent?: (info: SessionProgress) => void;
+}
+
+/** Compact view of a documented ``AgentSessionEvent`` for the host. */
+export interface SessionProgress {
+  type: string;
+  /** ``assistantMessageEvent.type`` on ``message_update`` (text_delta, thinking_delta, …). */
+  delta?: string;
+  toolName?: string;
+}
+
+/**
+ * Map a Pi ``AgentSessionEvent`` to the documented progress kinds.
+ *
+ * Official hosts (examples/sdk, RPC mode) switch on ``event.type`` and, for
+ * ``message_update``, on ``event.assistantMessageEvent.type``. ``thinking_delta``
+ * is the liveness signal while a reasoning model is still thinking and has
+ * not produced text or tool calls yet.
+ */
+function describeSessionEvent(event: any): SessionProgress | null {
+  const type = event?.type;
+  if (typeof type !== "string") return null;
+  if (type === "message_update") {
+    const delta = event.assistantMessageEvent?.type;
+    return typeof delta === "string" ? { type, delta } : { type };
+  }
+  if (
+    type === "tool_execution_start" ||
+    type === "tool_execution_update" ||
+    type === "tool_execution_end"
+  ) {
+    return {
+      type,
+      toolName: typeof event.toolName === "string" ? event.toolName : undefined,
+    };
+  }
+  if (
+    type === "agent_start" ||
+    type === "agent_end" ||
+    type === "agent_settled" ||
+    type === "turn_start" ||
+    type === "turn_end" ||
+    type === "message_start" ||
+    type === "message_end" ||
+    type === "auto_retry_start" ||
+    type === "auto_retry_end" ||
+    type === "compaction_start" ||
+    type === "compaction_end" ||
+    type === "auto_compaction_start" ||
+    type === "auto_compaction_end"
+  ) {
+    return { type };
+  }
+  return null;
 }
 
 /** Version string reported in the hello handshake. */
@@ -149,24 +211,54 @@ function providerKeyEnv(provider: string): string {
   return PROVIDER_KEY_ENVS[provider] ?? PROVIDER_KEY_ENVS.openrouter;
 }
 
+/**
+ * Provider/model compat so Pi actually streams thinking tokens.
+ *
+ * Official hosts (Pi RPC, OpenClaw ``subscribeEmbeddedPiSession``) get
+ * liveness from ``message_update.assistantMessageEvent.thinking_delta``.
+ * That event is only emitted when the completions stream contains
+ * ``reasoning`` / ``reasoning_content``. Pi's openai-completions layer
+ * requests those tokens only when ``model.reasoning`` is true *and* the
+ * provider ``compat.thinkingFormat`` matches the API (``openrouter`` sends
+ * ``reasoning: { effort }``). Custom OpenRouter DeepSeek presets that omit
+ * this fail the same way (pi#5106): long silent thinks, then tool-call
+ * 400s because ``reasoning_content`` was never captured to replay.
+ */
+function modelCompat(provider: string, modelId: string): Record<string, unknown> {
+  const compat: Record<string, unknown> = {};
+  if (provider === "openrouter") {
+    compat.thinkingFormat = "openrouter";
+    compat.supportsDeveloperRole = false;
+  }
+  if (/deepseek-v4/i.test(modelId)) {
+    compat.requiresReasoningContentOnAssistantMessages = true;
+  }
+  return compat;
+}
+
 async function writeAgentDir(provider: string, modelId: string): Promise<string> {
   const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openwhisper-pi-"));
+  const deepseek = /deepseek/i.test(modelId);
   const modelsJson = {
     providers: {
       [provider]: {
         baseUrl: providerBaseUrl(provider),
         apiKey: `$${providerKeyEnv(provider)}`,
         api: "openai-completions",
+        compat: modelCompat(provider, modelId),
         models: [
           {
             id: modelId,
             name: modelId,
-            reasoning: false,
+            // Meeting models think; ``false`` hides thinking_delta from subscribe.
+            reasoning: true,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             // Conservative defaults; OpenRouter enforces real limits server-side.
             contextWindow: 131072,
             maxTokens: 16384,
+            // DeepSeek V4 cannot turn thinking off; do not send effort:"none".
+            ...(deepseek ? { thinkingLevelMap: { off: null } } : {}),
           },
         ],
       },
@@ -276,8 +368,16 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
     modelRuntime,
     customTools,
     noTools: "builtin",
+    // Official SDK option; without it OpenRouter gets effort:"none" and
+    // thinking tokens are excluded from the stream (no thinking_delta).
+    thinkingLevel: "medium",
     sessionManager: (SessionManager as any).inMemory(),
   });
+  try {
+    (session as any).setThinkingLevel?.("medium");
+  } catch {
+    /* older SDKs omit the setter; createAgentSession option is enough */
+  }
 
   let aborting = false;
   let lastUsage: Record<string, unknown> = {};
@@ -290,12 +390,22 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
       if (usage && typeof usage === "object") {
         lastUsage = usage as Record<string, unknown>;
       }
+      const info = describeSessionEvent(event);
+      if (info) opts.onEvent?.(info);
     });
   } catch (err) {
     opts.log("warning", `usage subscription unavailable: ${String(err)}`);
   }
 
   return {
+    isBusy(): boolean {
+      try {
+        return Boolean((session as any).isStreaming);
+      } catch {
+        return false;
+      }
+    },
+
     async runTurn(userMessage: string): Promise<TurnResult> {
       aborting = false;
       lastUsage = {};

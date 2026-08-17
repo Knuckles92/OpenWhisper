@@ -650,7 +650,7 @@ class CheckpointScheduler:
 
     def run_consolidation(
         self,
-        timeout_s: float = 180.0,
+        timeout_s: Optional[float] = None,
         *,
         progress_cb: Optional[Callable[[str], None]] = None,
     ) -> ConsolidationOutcome:
@@ -668,8 +668,12 @@ class CheckpointScheduler:
         mutate durable state afterward.
 
         Args:
-            timeout_s: Maximum seconds to wait for the consolidation pass.
-            progress_cb: Optional callback for status messages.
+            timeout_s: Hard wall for the worker join. Defaults to
+                ``CONSOLIDATION_TIMEOUT_CAP_S``. The sidecar also fails
+                earlier after ``CONSOLIDATION_STALL_S`` of silence (no Pi
+                ``subscribe`` events or tool-bridge calls).
+            progress_cb: Optional callback for status messages from those
+                session events (``thinking_delta``, tool starts, …).
 
         Returns:
             Structured terminal outcome for UI/finalization persistence.
@@ -737,6 +741,13 @@ class CheckpointScheduler:
                 message="Meeting state was unavailable for final insights.",
             )
 
+        if timeout_s is None:
+            from meeting.agent.base import CONSOLIDATION_TIMEOUT_CAP_S
+
+            timeout_s = CONSOLIDATION_TIMEOUT_CAP_S
+        setter = getattr(self._agent, "set_progress_callback", None)
+        if callable(setter):
+            setter(progress_cb)
         if progress_cb is not None:
             try:
                 progress_cb(
@@ -762,7 +773,11 @@ class CheckpointScheduler:
             target=_worker, name="meeting-consolidation", daemon=True,
         )
         worker.start()
-        worker.join(timeout_s)
+        try:
+            worker.join(timeout_s)
+        finally:
+            if callable(setter):
+                setter(None)
         if worker.is_alive():
             logger.warning(
                 "Consolidation timed out after %.0fs; canceling", timeout_s,

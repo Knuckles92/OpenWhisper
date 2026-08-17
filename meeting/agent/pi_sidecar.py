@@ -20,7 +20,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Set
 
-from meeting.agent.base import find_provider_api_key
+from meeting.agent.base import (
+    CONSOLIDATION_STALL_S,
+    CONSOLIDATION_TIMEOUT_CAP_S,
+    find_provider_api_key,
+)
 from meeting.agent.prompts import build_note_taker_system_prompt
 from meeting.interfaces import (
     AgentConfig,
@@ -39,7 +43,8 @@ _PROTOCOL_VERSION = 1
 
 _HELLO_TIMEOUT_S = 10.0
 _CHECKPOINT_TIMEOUT_S = 60.0
-_CONSOLIDATION_TIMEOUT_S = 180.0
+_CONSOLIDATION_TIMEOUT_S = CONSOLIDATION_TIMEOUT_CAP_S
+_CONSOLIDATION_STALL_S = CONSOLIDATION_STALL_S
 _RPC_DEFAULT_TIMEOUT_S = 30.0
 _PING_INTERVAL_S = 10.0
 _PING_TIMEOUT_S = 5.0
@@ -52,6 +57,34 @@ _TERMINATE_WAIT_S = 1.5
 
 _BUNDLE_NAME = "bundle.cjs"
 _NODE_EXE_NAME = "node.exe"
+
+_PROGRESS_DETAILS = {
+    "thinking_start": "Model is thinking through the transcript…",
+    "thinking_delta": "Model is thinking through the transcript…",
+    "thinking_end": "Model finished thinking…",
+    "text_delta": "Model is writing the final report…",
+    "toolcall_start": "Preparing a dashboard update…",
+    "toolcall_delta": "Preparing a dashboard update…",
+    "tool_execution_start": "Updating the dashboard…",
+    "tool_execution_end": "Updating the dashboard…",
+    "turn_start": "Starting the next model turn…",
+    "turn_end": "Model finished a turn…",
+    "agent_start": "Preparing final report…",
+    "agent_end": "Final insights pass is wrapping up…",
+    "agent_settled": "Final insights pass is wrapping up…",
+    "auto_retry_start": "Retrying a dropped model request…",
+    "compaction_start": "Compressing long context…",
+    "auto_compaction_start": "Compressing long context…",
+}
+
+
+def _progress_detail(event: str, delta: str = "") -> str:
+    """Human-readable status for a documented Pi ``AgentSessionEvent``."""
+    if delta:
+        return _PROGRESS_DETAILS.get(delta, "Preparing final report…")
+    if "tool" in event:
+        return "Updating the dashboard…"
+    return _PROGRESS_DETAILS.get(event, "Preparing final report…")
 
 
 @dataclass
@@ -169,6 +202,8 @@ class PiSidecarAgent:
         #: Segment ids shown in the in-flight checkpoint's payload — the
         #: citable universe for evidence-id repair in the tool bridge.
         self._citable_ids: List[str] = []
+        self._last_progress_mono = 0.0
+        self._progress_cb: Optional[Any] = None
 
     # ------------------------------------------------------------------
     # AgentCore lifecycle
@@ -208,17 +243,23 @@ class PiSidecarAgent:
             cfg.provider, cfg.model, self._pi_version,
         )
 
+    def set_progress_callback(self, callback: Optional[Any]) -> None:
+        """Receive human-readable progress while a checkpoint is in flight."""
+        self._progress_cb = callback
+
     def checkpoint(self, payload: CheckpointPayload) -> AgentResult:
         """Run one rolling checkpoint. Blocking; called from a worker thread."""
-        timeout = (
-            _CONSOLIDATION_TIMEOUT_S if payload.is_consolidation
-            else _CHECKPOINT_TIMEOUT_S
-        )
-        return self._run_checkpoint(payload, timeout)
+        if payload.is_consolidation:
+            return self.consolidate(payload)
+        return self._run_checkpoint(payload, _CHECKPOINT_TIMEOUT_S)
 
     def consolidate(self, payload: CheckpointPayload) -> AgentResult:
         """Run the end-of-meeting full pass. Blocking."""
-        return self._run_checkpoint(payload, _CONSOLIDATION_TIMEOUT_S)
+        return self._run_checkpoint(
+            payload,
+            max(_CONSOLIDATION_TIMEOUT_S, CONSOLIDATION_TIMEOUT_CAP_S),
+            stall_s=_CONSOLIDATION_STALL_S,
+        )
 
     def cancel(self) -> None:
         """Cancel every in-flight checkpoint by its ``request_id``."""
@@ -268,8 +309,20 @@ class PiSidecarAgent:
     # Checkpoint execution
     # ------------------------------------------------------------------
 
+    def _note_progress(self, detail: str = "") -> None:
+        """Mark the in-flight checkpoint as alive; optionally update the UI."""
+        with self._lock:
+            self._last_progress_mono = time.monotonic()
+            callback = self._progress_cb
+        if detail and callable(callback):
+            try:
+                callback(detail)
+            except Exception:
+                logger.debug("Checkpoint progress callback failed", exc_info=True)
+
     def _run_checkpoint(self, payload: CheckpointPayload,
-                        timeout_s: float) -> AgentResult:
+                        timeout_s: float,
+                        stall_s: Optional[float] = None) -> AgentResult:
         if self._shut_down or self._fatal:
             return AgentResult(ok=False, error="agent_unavailable")
         if self._cfg is None or self._tools is None or not self._initialized:
@@ -305,10 +358,19 @@ class PiSidecarAgent:
             # the tool-bridge filter below still keeps them notes-only.
             params["system_prompt"] = build_note_taker_system_prompt()
         try:
-            result = self._rpc("checkpoint", params, timeout_s=timeout_s)
+            result = self._rpc(
+                "checkpoint", params, timeout_s=timeout_s, stall_s=stall_s,
+            )
         except Exception as exc:
             logger.warning("Sidecar checkpoint RPC failed: %s", exc)
-            if not self._shut_down and not self._fatal:
+            # A timeout means the model is still working, not that the sidecar
+            # is dead. Restarting here kills in-flight work that may be about
+            # to settle (observed 138–178s successes against a 180s budget).
+            if (
+                not self._shut_down
+                and not self._fatal
+                and not isinstance(exc, TimeoutError)
+            ):
                 self._try_recover(f"checkpoint failure: {exc}")
             return AgentResult(ok=False, error=str(exc))
         finally:
@@ -535,8 +597,41 @@ class PiSidecarAgent:
             proc.stdin.write(line)
             proc.stdin.flush()
 
+    def _await_pending(self, pending: _Pending, timeout_s: float,
+                       stall_s: Optional[float], method: str) -> None:
+        """Wait for an RPC reply, optionally failing after a silent stall.
+
+        Args:
+            pending: The in-flight host RPC.
+            timeout_s: Absolute wall-clock budget.
+            stall_s: If set, fail when this many seconds pass with no
+                ``progress`` notification or tool-bridge call.
+            method: RPC method name for the timeout error.
+        """
+        if stall_s is None:
+            if not pending.event.wait(timeout_s):
+                raise TimeoutError(
+                    f"RPC '{method}' timed out after {timeout_s:.0f}s"
+                )
+            return
+        self._note_progress()
+        deadline = time.monotonic() + timeout_s
+        while not pending.event.is_set():
+            now = time.monotonic()
+            if now >= deadline:
+                raise TimeoutError(
+                    f"RPC '{method}' timed out after {timeout_s:.0f}s"
+                )
+            silent = now - self._last_progress_mono
+            if silent >= stall_s:
+                raise TimeoutError(
+                    f"RPC '{method}' stalled after {stall_s:.0f}s without "
+                    "agent progress"
+                )
+            pending.event.wait(min(1.0, deadline - now, stall_s - silent))
+
     def _rpc(self, method: str, params: Dict[str, Any],
-             timeout_s: float) -> Any:
+             timeout_s: float, stall_s: Optional[float] = None) -> Any:
         """Send a JSON-RPC request and wait for the correlated response."""
         req_id = self._alloc_id()
         pending = _Pending()
@@ -551,12 +646,12 @@ class PiSidecarAgent:
                 "method": method,
                 "params": params,
             })
-            if not pending.event.wait(timeout_s):
+            try:
+                self._await_pending(pending, timeout_s, stall_s, method)
+            except TimeoutError:
                 with self._lock:
                     self._pending.pop(req_id, None)
-                raise TimeoutError(
-                    f"RPC '{method}' timed out after {timeout_s:.0f}s"
-                )
+                raise
             if pending.error is not None:
                 raise pending.error
             return pending.result
@@ -738,6 +833,11 @@ class PiSidecarAgent:
             else:
                 logger.info("sidecar: %s", text)
             return
+        if method == "progress":
+            event = str(params.get("event") or "update")
+            delta = str(params.get("delta") or "")
+            self._note_progress(_progress_detail(event, delta))
+            return
         logger.debug("Ignoring unknown sidecar notification %r", method)
 
     def _handle_response(self, msg: Dict[str, Any]) -> None:
@@ -803,6 +903,7 @@ class PiSidecarAgent:
         if tools is None:
             self._write_error(req_id, -32603, "tool host not initialized")
             return
+        self._note_progress("Updating the dashboard…")
         try:
             if method == "tool.patch_state":
                 ops = params.get("ops")

@@ -60,11 +60,15 @@ Diagnostics go out as `log` notifications (or stderr).
 - **Python → sidecar requests:** `initialize {meeting_id, provider, model,
   system_prompt}` · `checkpoint {request_id, state, new_segments,
   is_consolidation, is_polish}` → `{"applied":N,"rejected":N,"usage":{}}` ·
-  `cancel {request_id}` · `ping {}` · `shutdown {}`
+  `cancel {request_id}` · `ping {}` · `status {}` · `shutdown {}`
 - **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
   {ops}` · `tool.ask_question {text, evidence}` · `tool.resolve_question
   {question_id, answer_text, confidence, evidence}`
-- **Sidecar → Python notifications:** `log {level, msg}`
+- **Sidecar → Python notifications:** `log {level, msg}` · `progress
+  {request_id, event, delta, tool, streaming}` from Pi
+  `session.subscribe` (the official SDK hook; `thinking_delta` means the
+  model is still thinking). Custom models.json sets `reasoning: true` and
+  OpenRouter `thinkingFormat` so those thinking events actually arrive.
 
 `initialize` creates one Pi session per meeting (in-memory, private temp agent
 dir so user-global `~/.pi` extensions can't inject tools). Each `checkpoint`

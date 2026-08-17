@@ -8,10 +8,11 @@
  *      | checkpoint {request_id, state, new_segments, is_consolidation,
  *                    is_polish, is_notes, system_prompt?}  (a notes
  *                    checkpoint carries the note-taker system_prompt)
- *      | cancel {request_id} | ping {} | shutdown {}
+ *      | cancel {request_id} | ping {} | status {} | shutdown {}
  *  - Outbound tool-bridge requests: tool.patch_state / tool.ask_question /
  *      tool.resolve_question (see tools.ts).
- *  - Outbound notifications: log {level, msg}.
+ *  - Outbound notifications: log {level, msg} | progress {request_id, event,
+ *      streaming} (Pi session hooks; host uses these to reset a stall timer).
  *
  * Checkpoints run one at a time; a checkpoint that arrives while another is
  * active waits its turn (the Python scheduler coalesces, so the queue stays
@@ -60,6 +61,25 @@ function main(): void {
     notesOnly: false,
     noteIds: new Set<string>(),
   };
+  let lastProgressAt = 0;
+
+  function emitProgress(info: { type: string; delta?: string; toolName?: string }): void {
+    const now = Date.now();
+    const frequent =
+      info.delta === "thinking_delta" ||
+      info.delta === "text_delta" ||
+      info.delta === "toolcall_delta" ||
+      info.type === "tool_execution_update";
+    if (frequent && now - lastProgressAt < 2000) return;
+    lastProgressAt = now;
+    rpc.notify("progress", {
+      request_id: activeRequestId,
+      event: info.type,
+      delta: info.delta,
+      tool: info.toolName,
+      streaming: Boolean(session?.isBusy()),
+    });
+  }
 
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
@@ -78,6 +98,7 @@ function main(): void {
       apiKey,
       tools: createMeetingTools(rpc, counters, toolPolicy),
       log: (level, msg) => rpc.log(level, msg),
+      onEvent: emitProgress,
     });
     rpc.log(
       "info",
@@ -153,6 +174,12 @@ function main(): void {
   });
 
   rpc.onRequest("ping", () => ({ ok: true }));
+
+  rpc.onRequest("status", () => ({
+    ok: true,
+    streaming: Boolean(session?.isBusy()),
+    request_id: activeRequestId,
+  }));
 
   rpc.onRequest("shutdown", () => {
     // Respond first, then tear down and exit once the response has flushed.

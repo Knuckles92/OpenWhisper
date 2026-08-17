@@ -296,6 +296,102 @@ class TestCheckpointResults:
         agent.cancel()
         assert [p["request_id"] for _, p in calls] == ["r1", "r2"]
 
+    def test_checkpoint_timeout_does_not_restart_sidecar(self, tmp_path):
+        """A slow model turn is not a dead sidecar; do not kill in-flight work."""
+        agent = PiSidecarAgent(str(tmp_path))
+        agent._cfg = _cfg()
+        agent._tools = FakeTools()
+        agent._initialized = True
+        agent._proc = type("Proc", (), {"poll": staticmethod(lambda: None)})()
+        recover_calls = []
+        agent._try_recover = lambda reason: recover_calls.append(reason) or False
+        agent._rpc = lambda method, params, timeout_s, stall_s=None: (
+            (_ for _ in ()).throw(
+                TimeoutError(f"RPC '{method}' timed out after {timeout_s:.0f}s")
+            )
+        )
+        result = agent.consolidate(CheckpointPayload(
+            request_id="req-slow",
+            state_snapshot={},
+            new_segments=[],
+            is_consolidation=True,
+        ))
+        assert result.ok is False
+        assert "timed out" in (result.error or "")
+        assert recover_calls == []
+
+    def test_checkpoint_transport_error_still_restarts(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        agent._cfg = _cfg()
+        agent._tools = FakeTools()
+        agent._initialized = True
+        agent._proc = type("Proc", (), {"poll": staticmethod(lambda: None)})()
+        recover_calls = []
+        agent._try_recover = lambda reason: recover_calls.append(reason) or False
+        agent._rpc = lambda method, params, timeout_s, stall_s=None: (
+            (_ for _ in ()).throw(RuntimeError("sidecar process exited"))
+        )
+        result = agent.checkpoint(CheckpointPayload(
+            request_id="req-dead", state_snapshot={}, new_segments=[],
+        ))
+        assert result.ok is False
+        assert recover_calls and "sidecar process exited" in recover_calls[0]
+
+    def test_await_pending_stalls_without_progress(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        pending = pi_mod._Pending()
+        pending.event.wait = lambda timeout=None: False
+        times = iter([100.0, 100.0, 101.0, 106.0])
+        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=lambda: next(times)):
+            with pytest.raises(TimeoutError, match="stalled"):
+                agent._await_pending(pending, timeout_s=30.0, stall_s=5.0, method="checkpoint")
+
+    def test_await_pending_progress_resets_stall(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        pending = pi_mod._Pending()
+        ticks = {"n": 0}
+
+        def wait(timeout=None):
+            ticks["n"] += 1
+            if ticks["n"] == 2:
+                agent._note_progress("thinking")
+            if ticks["n"] >= 4:
+                pending.event.set()
+            return pending.event.is_set()
+
+        pending.event.wait = wait
+        now = {"t": 100.0}
+
+        def mono():
+            now["t"] += 1.0
+            return now["t"]
+
+        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=mono):
+            agent._await_pending(pending, timeout_s=30.0, stall_s=5.0, method="checkpoint")
+        assert pending.event.is_set()
+
+    def test_progress_notification_uses_thinking_delta(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        seen = []
+        agent.set_progress_callback(seen.append)
+        agent._handle_notification("progress", {
+            "event": "message_update",
+            "delta": "thinking_delta",
+            "streaming": True,
+        })
+        assert seen == ["Model is thinking through the transcript…"]
+        assert agent._last_progress_mono > 0
+
+    def test_progress_notification_uses_thinking_start(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        seen = []
+        agent.set_progress_callback(seen.append)
+        agent._handle_notification("progress", {
+            "event": "message_update",
+            "delta": "thinking_start",
+        })
+        assert seen == ["Model is thinking through the transcript…"]
+
 
 class TestToolBridgeThreading:
     """Tool-bridge work must never run on the stdout reader thread."""

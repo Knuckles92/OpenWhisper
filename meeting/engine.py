@@ -48,10 +48,10 @@ END_REVISE_TIMEOUT_S = 20.0
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 #: Budget for the post-end transcript polish (LLM parse of the clean ASR).
 POLISH_TIMEOUT_S = 60.0
-#: Budget for the post-end consolidation pass. The durable meeting is marked
-#: ended before this optional polish starts, so it never holds the UI in the
-#: "Ending" state.
-CONSOLIDATION_TIMEOUT_S = 180.0
+#: Worst-case wait for the post-end consolidation pass (hard wall). The
+#: sidecar fails earlier if Pi emits no ``subscribe`` progress for
+#: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
+CONSOLIDATION_TIMEOUT_S = 900.0
 #: How long end/cancel waits for an in-flight ``start()`` to finish before
 #: unwinding a partially built pipeline anyway.
 START_WAIT_TIMEOUT_S = 120.0
@@ -873,13 +873,10 @@ class MeetingEngine:
                         # and reconcile them against the final transcript.
                         try:
                             outcome = scheduler.run_consolidation(
-                                timeout_s=CONSOLIDATION_TIMEOUT_S,
                                 progress_cb=_consolidation_progress,
                             )
                         except TypeError:
-                            outcome = scheduler.run_consolidation(
-                                timeout_s=CONSOLIDATION_TIMEOUT_S,
-                            )
+                            outcome = scheduler.run_consolidation()
                         status = getattr(outcome, "status", "failed")
                         message = getattr(outcome, "message", "") or ""
                         _update_step(
