@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
 from ui_qt.widgets.cards import Card
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,9 @@ class MeetingModeTab(QWidget):
     copy_guest_link_requested = pyqtSignal()
     cloud_toggled = pyqtSignal(bool)
     retry_insights_requested = pyqtSignal()
+    #: Emitted whenever the visible controls change, so the window can keep
+    #: enough height for the finalization checklist and summary stats.
+    content_height_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +69,22 @@ class MeetingModeTab(QWidget):
             bool(settings_manager.get(SettingsKey.DEVELOPER_MODE, False))
         )
         self._apply_layout_state()
+
+    @staticmethod
+    def _keep_natural_height(widget: QWidget) -> None:
+        """Stop a container from being compressed below its content height.
+
+        The finalization boxes hold fixed-height rows, so the default shrinkable
+        policy lets a short window squeeze them into overlapping text instead of
+        reporting how much room they need.
+
+        Args:
+            widget: Container whose height should never drop below its hint.
+        """
+        widget.setSizePolicy(
+            widget.sizePolicy().horizontalPolicy(),
+            QSizePolicy.Policy.Minimum,
+        )
 
     def _setup_ui(self):
         """Build the full-tab layout."""
@@ -93,12 +114,11 @@ class MeetingModeTab(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro_card.layout.addWidget(title)
 
-        subtitle = QLabel(
+        subtitle = WrappedLabel(
             "Capture a live meeting with mic and system audio, then follow "
             "the transcript and insights in the browser dashboard."
         )
         subtitle.setObjectName("meetingModeSubtitle")
-        subtitle.setWordWrap(True)
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setFont(QFont("Segoe UI", 11))
         intro_card.layout.addWidget(subtitle)
@@ -132,12 +152,11 @@ class MeetingModeTab(QWidget):
             self.demo_button, alignment=Qt.AlignmentFlag.AlignCenter
         )
 
-        self.demo_hint = QLabel(
+        self.demo_hint = WrappedLabel(
             "Loads a fake transcript and opens the dashboard. Turn on "
             "Cloud intelligence, then End, to test cleanup and the report."
         )
         self.demo_hint.setObjectName("meetingDemoHint")
-        self.demo_hint.setWordWrap(True)
         self.demo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.demo_hint.setFont(QFont("Segoe UI", 10))
         idle_layout.addWidget(self.demo_hint)
@@ -197,6 +216,7 @@ class MeetingModeTab(QWidget):
         self.finalization_card = Card()
         self.finalization_card.setObjectName("meetingFinalizationCard")
         self.finalization_card.setMinimumHeight(0)
+        self._keep_natural_height(self.finalization_card)
         self.finalization_card.setProperty("finalizationTone", "neutral")
 
         # Header row with title and step badge
@@ -234,14 +254,12 @@ class MeetingModeTab(QWidget):
         active_box_layout.setContentsMargins(10, 8, 10, 8)
         active_box_layout.setSpacing(4)
 
-        self.finalization_message = QLabel("")
+        self.finalization_message = WrappedLabel("")
         self.finalization_message.setObjectName("meetingFinalizationMessage")
-        self.finalization_message.setWordWrap(True)
         active_box_layout.addWidget(self.finalization_message)
 
-        self.finalization_detail = QLabel("")
+        self.finalization_detail = WrappedLabel("")
         self.finalization_detail.setObjectName("meetingFinalizationDetail")
-        self.finalization_detail.setWordWrap(True)
         active_box_layout.addWidget(self.finalization_detail)
         self.finalization_card.layout.addWidget(self.finalization_active_box)
 
@@ -249,9 +267,12 @@ class MeetingModeTab(QWidget):
         self.finalization_steps_widget = QWidget()
         self.finalization_steps_widget.setObjectName("meetingFinalizationStepsWidget")
         self.finalization_steps_layout = QVBoxLayout(self.finalization_steps_widget)
-        self.finalization_steps_layout.setContentsMargins(0, 4, 0, 4)
+        # Matches the active box's inner padding so both inset the same amount
+        # from the card. QSS padding does not inset a plain widget's layout.
+        self.finalization_steps_layout.setContentsMargins(10, 8, 10, 8)
         self.finalization_steps_layout.setSpacing(6)
         self.finalization_steps_widget.hide()
+        self._keep_natural_height(self.finalization_steps_widget)
         self.finalization_card.layout.addWidget(self.finalization_steps_widget)
 
         # Summary statistics container (shown on complete)
@@ -261,6 +282,7 @@ class MeetingModeTab(QWidget):
         self.finalization_stats_layout.setContentsMargins(0, 6, 0, 6)
         self.finalization_stats_layout.setSpacing(8)
         self.finalization_stats_widget.hide()
+        self._keep_natural_height(self.finalization_stats_widget)
         self.finalization_card.layout.addWidget(self.finalization_stats_widget)
 
         # Buttons row
@@ -493,6 +515,8 @@ class MeetingModeTab(QWidget):
         )
         self.finalization_dashboard_button.setVisible(dashboard_enabled)
 
+        self.content_height_changed.emit()
+
     def _render_finalization(self, finalization: Dict[str, Any]) -> None:
         """Update finalization card copy, tone, steps, and stats visibility.
 
@@ -647,7 +671,7 @@ class MeetingModeTab(QWidget):
             row = QWidget()
             row.setObjectName("meetingFinalizationStepRow")
             row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setContentsMargins(0, 3, 0, 3)
             row_layout.setSpacing(8)
 
             step_status = s.get("status", "pending")

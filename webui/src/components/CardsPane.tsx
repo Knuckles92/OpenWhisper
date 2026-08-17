@@ -5,7 +5,7 @@ import EvidenceChip from './EvidenceChip';
 
 interface CardsPaneProps {
   cards: MeetingStateDoc['cards'];
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   /** Host-only: revert the event at `seq`. Omitted for guests. */
   onUndo?: (seq: number) => void;
@@ -13,6 +13,8 @@ interface CardsPaneProps {
   lastSeqByTarget: Record<string, number>;
   /** When true, omit the outer panel chrome (embedded in Captured rail). */
   embedded?: boolean;
+  /** Hide composer and edit actions; skip removed items (print / archive). */
+  readOnly?: boolean;
 }
 
 function CardItemRow({
@@ -22,13 +24,15 @@ function CardItemRow({
   onEvidenceClick,
   onUndo,
   undoSeq,
+  readOnly = false,
 }: {
   item: CardItem;
   tag: string;
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   onUndo?: (seq: number) => void;
   undoSeq?: number;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -41,7 +45,7 @@ function CardItemRow({
   const saveEdit = () => {
     const trimmed = draft.trim();
     if (trimmed && trimmed !== item.text) {
-      onSendOp(ops.updateItem(item.id, { text: trimmed }));
+      onSendOp?.(ops.updateItem(item.id, { text: trimmed }));
     }
     setEditing(false);
   };
@@ -66,7 +70,7 @@ function CardItemRow({
           autoFocus
         />
       ) : (
-        <p className="card-item-text" onDoubleClick={() => setEditing(true)}>
+        <p className="card-item-text" onDoubleClick={() => { if (!readOnly) setEditing(true); }}>
           {item.text}
         </p>
       )}
@@ -77,38 +81,40 @@ function CardItemRow({
           ))}
         </div>
       )}
-      <div className="card-item-actions">
-        <button type="button" onClick={() => setEditing(true)}>
-          Edit
-        </button>
-        {item.status !== 'confirmed' && (
-          <button type="button" onClick={() => onSendOp(ops.confirmItem(item.id))}>
-            Confirm
+      {!readOnly && (
+        <div className="card-item-actions no-print">
+          <button type="button" onClick={() => setEditing(true)}>
+            Edit
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
-        >
-          {item.pinned ? 'Unpin' : 'Pin'}
-        </button>
-        <button type="button" className="danger" onClick={() => onSendOp(ops.removeItem(item.id))}>
-          Remove
-        </button>
-        {canUndo && (
+          {item.status !== 'confirmed' && (
+            <button type="button" onClick={() => onSendOp?.(ops.confirmItem(item.id))}>
+              Confirm
+            </button>
+          )}
           <button
             type="button"
-            className="ghost"
-            title="Undo the last change to this item"
-            onClick={() => onUndo?.(undoSeq as number)}
+            onClick={() => onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
           >
-            Undo
+            {item.pinned ? 'Unpin' : 'Pin'}
           </button>
-        )}
-        {item.status === 'proposed' && (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>AI suggested</span>
-        )}
-      </div>
+          <button type="button" className="danger" onClick={() => onSendOp?.(ops.removeItem(item.id))}>
+            Remove
+          </button>
+          {canUndo && (
+            <button
+              type="button"
+              className="ghost"
+              title="Undo the last change to this item"
+              onClick={() => onUndo?.(undoSeq as number)}
+            >
+              Undo
+            </button>
+          )}
+          {item.status === 'proposed' && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>AI suggested</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -120,23 +126,27 @@ function CardSection({
   onEvidenceClick,
   onUndo,
   lastSeqByTarget,
+  readOnly = false,
 }: {
   cardKey: CardKey;
   items: CardItem[];
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   onUndo?: (seq: number) => void;
   lastSeqByTarget: Record<string, number>;
+  readOnly?: boolean;
 }) {
   const tag = CAPTURE_TAGS[cardKey];
+  const visible = readOnly ? items.filter((item) => item.status !== 'removed') : items;
+  if (visible.length === 0) return null;
 
   return (
     <div className="card-section">
       <h4 className="card-section-title">
         {CARD_LABELS[cardKey]}
-        <span className="card-section-count">{items.length}</span>
+        <span className="card-section-count">{visible.length}</span>
       </h4>
-      {sortedCardItems(items).map((item) => (
+      {sortedCardItems(visible).map((item) => (
         <CardItemRow
           key={item.id}
           item={item}
@@ -145,6 +155,7 @@ function CardSection({
           onEvidenceClick={onEvidenceClick}
           onUndo={onUndo}
           undoSeq={lastSeqByTarget[item.id]}
+          readOnly={readOnly}
         />
       ))}
     </div>
@@ -163,7 +174,7 @@ function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
   };
 
   return (
-    <div className="card-add-row">
+    <div className="card-add-row no-print">
       <select
         value={cardKey}
         onChange={(e) => setCardKey(e.target.value as CardKey)}
@@ -198,6 +209,7 @@ export default function CardsPane({
   onUndo,
   lastSeqByTarget,
   embedded = false,
+  readOnly = false,
 }: CardsPaneProps) {
   const body = (
     <>
@@ -213,10 +225,11 @@ export default function CardsPane({
             onEvidenceClick={onEvidenceClick}
             onUndo={onUndo}
             lastSeqByTarget={lastSeqByTarget}
+            readOnly={readOnly}
           />
         );
       })}
-      <CaptureComposer onSendOp={onSendOp} />
+      {!readOnly && onSendOp && <CaptureComposer onSendOp={onSendOp} />}
     </>
   );
 

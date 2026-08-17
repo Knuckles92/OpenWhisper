@@ -4,7 +4,8 @@ import type { Participant } from '../types';
 interface ParticipantsPaneProps {
   participants: Participant[];
   onlineIds: Set<string>;
-  onRename: (participantId: string, displayName: string) => void;
+  onRename?: (participantId: string, displayName: string) => void;
+  readOnly?: boolean;
 }
 
 const KIND_LABELS: Record<Participant['kind'], string> = {
@@ -13,7 +14,12 @@ const KIND_LABELS: Record<Participant['kind'], string> = {
   guest: 'Guest',
 };
 
-export default function ParticipantsPane({ participants, onlineIds, onRename }: ParticipantsPaneProps) {
+export default function ParticipantsPane({
+  participants,
+  onlineIds,
+  onRename,
+  readOnly = false,
+}: ParticipantsPaneProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
 
@@ -24,13 +30,14 @@ export default function ParticipantsPane({ participants, onlineIds, onRename }: 
   });
 
   const startEdit = (p: Participant) => {
+    if (readOnly || !onRename) return;
     setEditingId(p.id);
     setDraft(p.display_name);
   };
 
   const commitEdit = (participantId: string) => {
     const trimmed = draft.trim();
-    if (trimmed) onRename(participantId, trimmed);
+    if (trimmed) onRename?.(participantId, trimmed);
     setEditingId(null);
   };
 
@@ -73,14 +80,16 @@ export default function ParticipantsPane({ participants, onlineIds, onRename }: 
                     {p.display_name}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => startEdit(p)}
-                  aria-label={`Rename ${p.display_name}`}
-                >
-                  Rename
-                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="ghost no-print"
+                    onClick={() => startEdit(p)}
+                    aria-label={`Rename ${p.display_name}`}
+                  >
+                    Rename
+                  </button>
+                )}
               </span>
             );
           })}

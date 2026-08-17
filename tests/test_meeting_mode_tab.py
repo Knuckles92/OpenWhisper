@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
 from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
@@ -99,6 +100,138 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             self.window.tabbed_content.current_index(),
             TabbedContentWidget.TAB_MEETING_MODE,
         )
+
+
+class TestMeetingModeWindowHeight(unittest.TestCase):
+    """The window must grow rather than squeeze the finalization checklist."""
+
+    FINALIZATION = {
+        "status": "running",
+        "message": "Preparing final report...",
+        "current_step": 3,
+        "total_steps": 4,
+        "step_details": (
+            "Synthesizing executive summary, key decisions, and action "
+            "items over 6 segments..."
+        ),
+        "steps": [
+            {"id": "redecode", "name": "Audio Re-transcription", "status": "completed"},
+            {"id": "polish", "name": "Transcript Cleanup", "status": "completed"},
+            {"id": "consolidation", "name": "Summary & Action Items", "status": "running"},
+            {"id": "finalize", "name": "State Finalization", "status": "pending"},
+        ],
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        """Create the shared Qt application."""
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        """Show a main window on the Meeting Mode tab with isolated settings."""
+        self.load_settings = patch.object(
+            settings_manager, "load_all_settings", return_value={}
+        )
+        self.get_setting = patch.object(
+            settings_manager,
+            "get",
+            side_effect=lambda key, default=None: default,
+        )
+        self.save_setting = patch.object(settings_manager, "save_setting")
+        self.load_settings.start()
+        self.get_setting.start()
+        self.save_setting.start()
+
+        self.window = MainWindow()
+        self.window.show()
+        self.window.resize(
+            config.MAIN_WINDOW_DEFAULT_WIDTH, config.MAIN_WINDOW_DEFAULT_HEIGHT
+        )
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_MEETING_MODE
+        )
+        # The offscreen screen is shorter than a real desktop, and the floor is
+        # capped to the screen; pretend there is room for the full page.
+        self.window._max_usable_height = lambda: 2000
+        self._settle()
+
+    def tearDown(self):
+        """Close the window and restore settings methods."""
+        self.window._force_quit = True
+        self.window.close()
+        self.app.processEvents()
+        self.save_setting.stop()
+        self.get_setting.stop()
+        self.load_settings.stop()
+
+    def _settle(self):
+        """Let deferred layout and height-sync work complete."""
+        for _ in range(10):
+            self.app.processEvents()
+
+    def _step_rows(self):
+        """Return the rendered step row widgets."""
+        layout = self.window.meeting_mode_tab.finalization_steps_layout
+        return [layout.itemAt(i).widget() for i in range(layout.count())]
+
+    def test_finalization_steps_are_not_squeezed(self):
+        """Every step row keeps its full height once the pipeline reports steps."""
+        start_height = self.window.height()
+        self.window.meeting_mode_tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": self.FINALIZATION,
+            "dashboard_available": True,
+        })
+        self._settle()
+
+        self.assertGreater(self.window.height(), start_height)
+        steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
+        self.assertGreaterEqual(
+            steps_widget.height(), steps_widget.minimumSizeHint().height()
+        )
+        for row in self._step_rows():
+            self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
+
+    def test_borrowed_height_is_returned_when_the_card_clears(self):
+        """Ending finalization gives the extra window height back."""
+        start_height = self.window.height()
+        self.window.meeting_mode_tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": self.FINALIZATION,
+        })
+        self._settle()
+        self.assertGreater(self.window.height(), start_height)
+
+        floor_with_card = self.window.minimumHeight()
+
+        self.window.meeting_mode_tab.set_meeting_state({
+            "status": "starting",
+            "active": True,
+        })
+        self._settle()
+
+        self.assertLess(self.window.minimumHeight(), floor_with_card)
+        self.assertEqual(self.window._meeting_height_growth, 0)
+        # The shrink itself is animated; check where it is headed.
+        self.assertEqual(
+            self.window._resize_animation.endValue().height(), start_height
+        )
+
+    def test_step_rows_are_inset_from_the_list_edges(self):
+        """Step rows keep padding on both sides instead of touching the border."""
+        self.window.meeting_mode_tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": self.FINALIZATION,
+        })
+        self._settle()
+
+        steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
+        for row in self._step_rows():
+            self.assertGreater(row.x(), 0)
+            self.assertLess(row.x() + row.width(), steps_widget.width())
 
 
 class TestMeetingModeTabState(unittest.TestCase):

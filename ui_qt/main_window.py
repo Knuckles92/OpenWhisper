@@ -307,6 +307,13 @@ class MainWindow(QMainWindow):
         # Same tracking for the Engine Settings panel (independent of transcription).
         self._engine_collapse_freed_height = 0
 
+        # Height borrowed to fit the Meeting Mode page, returned once that
+        # content shrinks again (see _sync_meeting_mode_height).
+        self._meeting_height_growth = 0
+        self._meeting_height_timer = QTimer(self)
+        self._meeting_height_timer.setSingleShot(True)
+        self._meeting_height_timer.timeout.connect(self._sync_meeting_mode_height)
+
         # Edge resize support for frameless window
         self._resize_margin = 8  # Pixels from edge to trigger resize
         self._resizing = False
@@ -385,6 +392,9 @@ class MainWindow(QMainWindow):
         self.tabbed_content.add_tab(self.upload_file_tab, "Upload File")
 
         self.meeting_mode_tab = MeetingModeTab()
+        self.meeting_mode_tab.content_height_changed.connect(
+            self._schedule_meeting_mode_height_sync
+        )
         self.tabbed_content.add_tab(self.meeting_mode_tab, "Meeting Mode")
 
         # All transcription tabs; used to fan out shared state (model
@@ -655,6 +665,7 @@ class MainWindow(QMainWindow):
             self.sidebar_action.setText(panel_name)
 
         self._schedule_history_sidebar_refresh()
+        self._schedule_meeting_mode_height_sync()
 
         # Emit signal for external listeners
         self.tab_changed.emit(index)
@@ -894,6 +905,90 @@ class MainWindow(QMainWindow):
             elif delta > 0:
                 self._animate_resize(self.width(), current_height + delta)
 
+    def _schedule_meeting_mode_height_sync(self) -> None:
+        """Queue a Meeting Mode height check for the next event-loop pass.
+
+        Deferring keeps the check off the state-update path and coalesces the
+        bursts of updates the finalization pipeline sends.
+        """
+        self._meeting_height_timer.start(0)
+
+    def _sync_meeting_mode_height(self) -> None:
+        """Hold the window tall enough for the Meeting Mode page.
+
+        Its finalization card grows as the pipeline reports step rows and
+        summary stats. The window keeps a deliberately low explicit minimum
+        height so the collapsed recorder layout can shrink, and that same
+        minimum lets Qt squeeze the step rows together instead of honoring the
+        page's own minimum. While Meeting Mode is selected the window floor
+        tracks that minimum; height borrowed for it is given back once the
+        content shrinks or another tab is selected.
+        """
+        if self._compact_mode or not self.isVisible():
+            return
+
+        from PyQt6.QtWidgets import QApplication
+
+        # A widget that was just hidden still counts toward the layout minimum
+        # until its layout request is delivered.
+        QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+
+        floor = config.MAIN_WINDOW_MIN_HEIGHT
+        if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:
+            # Everything the window spends outside the page: title bar, tab
+            # bar, and footer. Unaffected by the borrowing below.
+            chrome = self.height() - self.tabbed_content.stack.height()
+            page_height = self._meeting_mode_page_min_height()
+            if chrome > 0 and page_height > 0:
+                floor = max(
+                    floor, min(chrome + page_height, self._max_usable_height())
+                )
+
+        height_before = self.height()
+        # Qt grows a window that is shorter than its new minimum.
+        self.setMinimumHeight(floor)
+        borrowed = self.height() - height_before
+        if borrowed > 0:
+            self._meeting_height_growth += borrowed
+            return
+
+        if self._meeting_height_growth <= 0 or self._resizing:
+            return
+
+        target = max(floor, self.height() - self._meeting_height_growth)
+        returned = self.height() - target
+        if returned <= 0:
+            return
+
+        self._meeting_height_growth -= returned
+        self._animate_resize(self.width(), target)
+
+    def _meeting_mode_page_min_height(self) -> int:
+        """Return the shortest height that fits the Meeting Mode page.
+
+        A width-dependent minimum wins when the page reports one, since text
+        that rewraps needs more height than a single-line estimate.
+        """
+        page = self.meeting_mode_tab
+        needed = page.minimumSizeHint().height()
+
+        layout = page.layout()
+        if layout is not None and layout.hasHeightForWidth() and page.width() > 0:
+            needed = max(needed, layout.minimumHeightForWidth(page.width()))
+        return needed
+
+    def _max_usable_height(self) -> int:
+        """Return the tallest window height that still fits on screen."""
+        from PyQt6.QtWidgets import QApplication
+
+        screen = (
+            QApplication.screenAt(self.geometry().center())
+            or QApplication.primaryScreen()
+        )
+        if screen is None:
+            return UNLIMITED_HEIGHT
+        return screen.availableGeometry().height()
+
     def _on_stats_visibility_changed(self, visible: bool):
         """Handle stats widget visibility change and adjust window height.
 
@@ -1017,6 +1112,8 @@ class MainWindow(QMainWindow):
                 self.setGeometry(self._full_geometry)
             else:
                 self._restore_window_geometry()
+
+            self._schedule_meeting_mode_height_sync()
 
         if persist:
             try:
@@ -1532,6 +1629,10 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         """Handle resize event to save geometry."""
         super().resizeEvent(event)
+        # A narrower window rewraps the Meeting Mode text, changing how much
+        # height that page needs. Height-only changes cannot alter the wrap.
+        if event.oldSize().width() != event.size().width():
+            self._schedule_meeting_mode_height_sync()
         if not self._resizing:  # Don't save during active drag resize (already handled)
             self._schedule_geometry_save()
 
@@ -1548,6 +1649,7 @@ class MainWindow(QMainWindow):
         # This prevents interference with Qt's initial layout calculation
         if not self._initial_show_complete:
             self._initial_show_complete = True
+            self._schedule_meeting_mode_height_sync()
             return
 
         # Re-apply saved geometry when restoring from tray (subsequent shows)
@@ -1556,6 +1658,8 @@ class MainWindow(QMainWindow):
                 self._restore_compact_geometry()
             else:
                 self._restore_window_geometry()
+
+        self._schedule_meeting_mode_height_sync()
 
     def eventFilter(self, obj, event):
         """Filter events to update resize cursor when hovering near edges."""

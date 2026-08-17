@@ -1393,7 +1393,6 @@ QWidget#meetingFinalizationStepsWidget {
     background-color: rgba(0, 0, 0, 0.15);
     border: 1px solid #3a3a3c;
     border-radius: 8px;
-    padding: 4px;
 }
 
 QWidget#meetingFinalizationStepRow {

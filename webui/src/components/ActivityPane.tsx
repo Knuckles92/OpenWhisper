@@ -190,7 +190,7 @@ export default function ActivityPane({
   }
 
   return (
-    <section className={`agent-activity ${expanded ? 'expanded' : 'collapsed'}`} aria-label="Pi agent activity">
+    <section className={`agent-activity no-print ${expanded ? 'expanded' : 'collapsed'}`} aria-label="Pi agent activity">
       <div className="agent-activity-summary">
         <button
           type="button"

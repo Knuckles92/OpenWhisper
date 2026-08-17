@@ -1459,9 +1459,79 @@ a {
   gap: 0;
 }
 
+.report-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .report-tabs.tab-row {
   padding: 0;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.report-download {
+  position: relative;
+  flex: none;
+  margin-bottom: 2px;
+}
+
+.report-download summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  font-weight: 600;
+}
+
+.report-download summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-download summary:hover {
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--leaf) 35%, var(--line));
+}
+
+.report-download-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 8;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px -16px rgba(26, 36, 32, 0.35);
+}
+
+.report-download-menu button {
+  text-align: left;
+  border-radius: 10px;
+}
+
+.full-meeting-document {
+  display: none;
+}
+
+.print-topic-current {
+  margin: 8px 0 12px;
+  font-size: 1.05rem;
+}
+
+.print-topic-history {
+  margin: 0 0 8px;
+  padding-left: 1.2em;
+  color: var(--soft);
 }
 
 .report-tab-note {
@@ -2068,19 +2138,87 @@ a {
 }
 
 @media print {
-  .header-bar, .report-tabs, .report-tab-note, .stage { display: none !important; }
-  .report-sheet {
-    border: 0;
-    box-shadow: none;
+  html,
+  body {
+    height: auto;
     background: #fff;
-    border-radius: 0;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
-  .brief { padding: 0; max-width: none; }
-  .brief-inner { padding: 0; }
-  .t { color: #555; border: 0; }
-  .rb-row { break-inside: avoid; }
-  .br-owed li, .br-open li { break-inside: avoid; }
-  .br-h { break-after: avoid; }
+
+  .header-bar,
+  .report-toolbar,
+  .report-tabs,
+  .report-tab-note,
+  .report-download,
+  .stage,
+  .agent-activity,
+  .no-print {
+    display: none !important;
+  }
+
+  .app-shell {
+    max-width: none;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  .app-main,
+  .app-main.full-bleed {
+    display: block;
+    min-height: 0;
+  }
+
+  .history-detail-grid {
+    display: block !important;
+  }
+
+  .panel-body,
+  .notes-flow,
+  .stage-conversation > .panel > .panel-body {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .report-sheet {
+    overflow: visible;
+    break-inside: auto;
+  }
+
+  .full-meeting-document {
+    display: none;
+  }
+
+  body[data-print-scope="full"] .full-meeting-document {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-top: 22px;
+  }
+
+  body[data-print-scope="full"] .full-meeting-document .notes-flow,
+  body[data-print-scope="full"] .full-meeting-document .panel-body {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .rb-row,
+  .note-block,
+  .card-item,
+  .question-item,
+  .segment {
+    break-inside: avoid;
+  }
+
+  .br-owed li,
+  .br-open li {
+    break-inside: avoid;
+  }
+
+  .br-h {
+    break-after: avoid;
+  }
 }
 
 /* Join gate */

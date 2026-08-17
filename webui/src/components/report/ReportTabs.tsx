@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { printDocumentTitle, printMeeting } from '../../print';
 import { enabledReportViews, segmentMap, type ReportViewId } from '../../report';
 import type { MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import BriefReport from './BriefReport';
+import FullMeetingDocument from './FullMeetingDocument';
 import RibbonReport from './RibbonReport';
 import SignalReport from './SignalReport';
 
@@ -46,6 +48,8 @@ interface ReportTabsProps {
   meeting?: MeetingInfo | null;
   onEvidenceClick?: (segmentId: string) => void;
   onSeek?: (seconds: number) => void;
+  /** When false, Full download stays disabled so a partial transcript is never printed. */
+  transcriptComplete?: boolean;
 }
 
 export default function ReportTabs({
@@ -54,9 +58,11 @@ export default function ReportTabs({
   meeting,
   onEvidenceClick,
   onSeek,
+  transcriptComplete = false,
 }: ReportTabsProps) {
   const views = enabledReportViews(state);
   const segs = useMemo(() => segmentMap(segments), [segments]);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const [active, setActive] = useState<ReportViewId>(() => {
     const stored = readStoredView();
     if (stored && views.includes(stored)) return stored;
@@ -75,21 +81,53 @@ export default function ReportTabs({
     writeStoredView(view);
   };
 
+  const meetingTitle = state.title || meeting?.display_title || meeting?.title || 'Meeting';
+
+  const download = (scope: 'summary' | 'full') => {
+    detailsRef.current?.removeAttribute('open');
+    printMeeting(
+      scope,
+      printDocumentTitle(String(meetingTitle), scope, TAB_META[active]?.label),
+    );
+  };
+
   const shared = { state, segments, segs, meeting, onEvidenceClick, onSeek };
 
   return (
     <section className="report-stage">
-      <div className="report-tabs tab-row">
-        {views.map((view) => (
-          <button
-            key={view}
-            type="button"
-            className={`tab${active === view ? ' active' : ''}`}
-            onClick={() => select(view)}
-          >
-            {TAB_META[view].label}
-          </button>
-        ))}
+      <div className="report-toolbar">
+        <div className="report-tabs tab-row">
+          {views.map((view) => (
+            <button
+              key={view}
+              type="button"
+              className={`tab${active === view ? ' active' : ''}`}
+              onClick={() => select(view)}
+            >
+              {TAB_META[view].label}
+            </button>
+          ))}
+        </div>
+        <details ref={detailsRef} className="report-download">
+          <summary>Download</summary>
+          <div className="report-download-menu">
+            <button type="button" onClick={() => download('summary')}>
+              Summary — {TAB_META[active]?.label}
+            </button>
+            <button
+              type="button"
+              disabled={!transcriptComplete}
+              title={
+                transcriptComplete
+                  ? 'Report plus notes, captured items, questions, people, and the full transcript'
+                  : 'Waiting for the full transcript to load'
+              }
+              onClick={() => download('full')}
+            >
+              {transcriptComplete ? 'Full meeting' : 'Full meeting (loading transcript…)'}
+            </button>
+          </div>
+        </details>
       </div>
       <p className="report-tab-note">{TAB_META[active]?.note}</p>
       <div className="report-sheet">
@@ -97,6 +135,7 @@ export default function ReportTabs({
         {active === 'brief' && <BriefReport {...shared} />}
         {active === 'signal' && <SignalReport {...shared} />}
       </div>
+      <FullMeetingDocument state={state} segments={segments} />
     </section>
   );
 }

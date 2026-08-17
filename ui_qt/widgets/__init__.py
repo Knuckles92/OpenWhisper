@@ -36,6 +36,7 @@ from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
 from ui_qt.widgets.compact_record_controller import CompactRecordController
 from ui_qt.widgets.no_wheel import NoWheelComboBox, NoWheelSpinBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 __all__ = [
     "Button",
@@ -69,4 +70,5 @@ __all__ = [
     "NoWheelComboBox",
     "NoWheelSpinBox",
     "SearchableComboBox",
+    "WrappedLabel",
 ]

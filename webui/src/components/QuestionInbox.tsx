@@ -4,10 +4,12 @@ import EvidenceChip from './EvidenceChip';
 
 interface QuestionInboxProps {
   questions: Question[];
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   /** When true, omit the outer panel chrome (embedded in Captured rail). */
   embedded?: boolean;
+  /** Hide answer / dismiss actions (print / archive). */
+  readOnly?: boolean;
 }
 
 const SUGGEST_HIGH = 0.8;
@@ -17,10 +19,12 @@ function QuestionRow({
   q,
   onSendOp,
   onEvidenceClick,
+  readOnly = false,
 }: {
   q: Question;
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
+  readOnly?: boolean;
 }) {
   const [answerDraft, setAnswerDraft] = useState(q.answer ?? '');
 
@@ -33,19 +37,19 @@ function QuestionRow({
   const submitAnswer = () => {
     const trimmed = answerDraft.trim();
     if (!trimmed) return;
-    onSendOp(ops.answerQuestion(q.id, trimmed));
+    onSendOp?.(ops.answerQuestion(q.id, trimmed));
   };
 
   const useSuggestion = () => {
     if (q.suggested_answer) {
       setAnswerDraft(q.suggested_answer);
-      onSendOp(ops.answerQuestion(q.id, q.suggested_answer));
+      onSendOp?.(ops.answerQuestion(q.id, q.suggested_answer));
     }
   };
 
   const addToNotes = () => {
     const text = q.answer || q.suggested_answer || q.text;
-    if (text) onSendOp(ops.addItem('user_notes', text, undefined, q.evidence));
+    if (text) onSendOp?.(ops.addItem('user_notes', text, undefined, q.evidence));
   };
 
   return (
@@ -83,7 +87,7 @@ function QuestionRow({
         </div>
       )}
 
-      {q.status === 'open' && (
+      {!readOnly && q.status === 'open' && (
         <>
           <textarea
             placeholder="Your answer…"
@@ -91,7 +95,7 @@ function QuestionRow({
             onChange={(e) => setAnswerDraft(e.target.value)}
             rows={2}
           />
-          <div className="question-actions">
+          <div className="question-actions no-print">
             <button type="button" className="primary" onClick={submitAnswer}>
               Answer
             </button>
@@ -100,7 +104,7 @@ function QuestionRow({
                 Use suggestion
               </button>
             )}
-            <button type="button" onClick={() => onSendOp(ops.dismissQuestion(q.id))}>
+            <button type="button" onClick={() => onSendOp?.(ops.dismissQuestion(q.id))}>
               Dismiss
             </button>
             <button type="button" className="ghost" onClick={addToNotes}>
@@ -110,9 +114,9 @@ function QuestionRow({
         </>
       )}
 
-      {q.status === 'dismissed' && (
-        <div className="question-actions">
-          <button type="button" onClick={() => onSendOp(ops.reopenQuestion(q.id))}>
+      {!readOnly && q.status === 'dismissed' && (
+        <div className="question-actions no-print">
+          <button type="button" onClick={() => onSendOp?.(ops.reopenQuestion(q.id))}>
             Reopen
           </button>
         </div>
@@ -126,6 +130,7 @@ export default function QuestionInbox({
   onSendOp,
   onEvidenceClick,
   embedded = false,
+  readOnly = false,
 }: QuestionInboxProps) {
   const open = questions.filter((q) => q.status === 'open');
   const rest = questions.filter((q) => q.status !== 'open');
@@ -137,7 +142,13 @@ export default function QuestionInbox({
       ) : (
         <>
           {open.map((q) => (
-            <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
+            <QuestionRow
+              key={q.id}
+              q={q}
+              onSendOp={onSendOp}
+              onEvidenceClick={onEvidenceClick}
+              readOnly={readOnly}
+            />
           ))}
           {rest.length > 0 && (
             <>
@@ -145,7 +156,13 @@ export default function QuestionInbox({
                 Resolved / dismissed
               </h3>
               {rest.map((q) => (
-                <QuestionRow key={q.id} q={q} onSendOp={onSendOp} onEvidenceClick={onEvidenceClick} />
+                <QuestionRow
+                  key={q.id}
+                  q={q}
+                  onSendOp={onSendOp}
+                  onEvidenceClick={onEvidenceClick}
+                  readOnly={readOnly}
+                />
               ))}
             </>
           )}

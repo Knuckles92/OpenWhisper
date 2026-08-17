@@ -43,6 +43,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   );
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
+  const [transcriptComplete, setTranscriptComplete] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -79,17 +80,21 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   useEffect(() => {
     let cancelled = false;
     const hydrate = async () => {
-      let cursor: string | undefined;
-      do {
-        const page = await api.transcriptPage(token, cursor);
-        if (cancelled) return;
-        dispatch({ type: 'hydrate_segments', segments: page.items });
-        cursor = page.next_cursor ?? undefined;
-      } while (cursor);
+      setTranscriptComplete(false);
+      try {
+        let cursor: string | undefined;
+        do {
+          const page = await api.transcriptPage(token, cursor);
+          if (cancelled) return;
+          dispatch({ type: 'hydrate_segments', segments: page.items });
+          cursor = page.next_cursor ?? undefined;
+        } while (cursor);
+      } catch {
+        /* live WebSocket remains usable when background history hydration fails */
+      }
+      if (!cancelled) setTranscriptComplete(true);
     };
-    hydrate().catch(() => {
-      /* live WebSocket remains usable when background history hydration fails */
-    });
+    hydrate();
     return () => {
       cancelled = true;
     };
@@ -184,6 +189,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
               meeting={ui.meeting}
               onEvidenceClick={handleEvidenceClick}
               onSeek={seekTo}
+              transcriptComplete={transcriptComplete}
             />
           ) : (
             <>

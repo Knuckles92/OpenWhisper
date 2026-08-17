@@ -8,12 +8,14 @@ interface NotesPaneProps {
   status: string;
   cloudEnabled: boolean;
   intelligenceOnline: boolean;
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   /** Host-only: revert the event at `seq`. Omitted for guests. */
   onUndo?: (seq: number) => void;
   /** Newest event seq per item id, from the reducer. */
   lastSeqByTarget: Record<string, number>;
+  /** Hide composer and edit actions (print / archive). */
+  readOnly?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -45,12 +47,14 @@ function NoteBlock({
   onEvidenceClick,
   onUndo,
   undoSeq,
+  readOnly = false,
 }: {
   item: CardItem;
-  onSendOp: (op: Op) => void;
+  onSendOp?: (op: Op) => void;
   onEvidenceClick: (segmentId: string) => void;
   onUndo?: (seq: number) => void;
   undoSeq?: number;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [headingDraft, setHeadingDraft] = useState(noteHeading(item));
@@ -74,9 +78,13 @@ function NoteBlock({
       const data = { ...item.data };
       if (headingDraft.trim()) data.heading = headingDraft.trim();
       else delete data.heading;
-      onSendOp(ops.updateItem(item.id, { text: body, data }));
+      onSendOp?.(ops.updateItem(item.id, { text: body, data }));
     }
     setEditing(false);
+  };
+
+  const beginEdit = () => {
+    if (!readOnly) setEditing(true);
   };
 
   return (
@@ -94,7 +102,7 @@ function NoteBlock({
         ) : (
           <h4
             className={`note-heading${noteHeading(item) ? '' : ' empty'}`}
-            onDoubleClick={() => setEditing(true)}
+            onDoubleClick={beginEdit}
           >
             {noteHeading(item) || 'Untitled note'}
           </h4>
@@ -113,7 +121,7 @@ function NoteBlock({
           autoFocus
         />
       ) : (
-        <p className="note-body" onDoubleClick={() => setEditing(true)}>
+        <p className="note-body" onDoubleClick={beginEdit}>
           {item.text}
         </p>
       )}
@@ -124,38 +132,40 @@ function NoteBlock({
           ))}
         </div>
       )}
-      <div className="note-actions">
-        <span className="note-status">{statusLabel(item)}</span>
-        <div className="note-action-buttons">
-          <button type="button" onClick={() => setEditing(true)}>
-            Edit
-          </button>
-          {item.status !== 'confirmed' && (
-            <button type="button" onClick={() => onSendOp(ops.confirmItem(item.id))}>
-              Confirm
+      {!readOnly && (
+        <div className="note-actions no-print">
+          <span className="note-status">{statusLabel(item)}</span>
+          <div className="note-action-buttons">
+            <button type="button" onClick={() => setEditing(true)}>
+              Edit
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
-          >
-            {item.pinned ? 'Unpin' : 'Pin'}
-          </button>
-          <button type="button" className="danger" onClick={() => onSendOp(ops.removeItem(item.id))}>
-            Remove
-          </button>
-          {canUndo && (
+            {item.status !== 'confirmed' && (
+              <button type="button" onClick={() => onSendOp?.(ops.confirmItem(item.id))}>
+                Confirm
+              </button>
+            )}
             <button
               type="button"
-              className="ghost"
-              title="Undo the last change to this note"
-              onClick={() => onUndo?.(undoSeq as number)}
+              onClick={() => onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
             >
-              Undo
+              {item.pinned ? 'Unpin' : 'Pin'}
             </button>
-          )}
+            <button type="button" className="danger" onClick={() => onSendOp?.(ops.removeItem(item.id))}>
+              Remove
+            </button>
+            {canUndo && (
+              <button
+                type="button"
+                className="ghost"
+                title="Undo the last change to this note"
+                onClick={() => onUndo?.(undoSeq as number)}
+              >
+                Undo
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </article>
   );
 }
@@ -173,7 +183,7 @@ function NoteComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
   };
 
   return (
-    <div className="note-composer">
+    <div className="note-composer no-print">
       <input
         type="text"
         placeholder="Heading (optional)"
@@ -214,6 +224,7 @@ export default function NotesPane({
   onEvidenceClick,
   onUndo,
   lastSeqByTarget,
+  readOnly = false,
 }: NotesPaneProps) {
   const flowRef = useRef<HTMLDivElement | null>(null);
   const stickToLatest = useRef(true);
@@ -260,11 +271,12 @@ export default function NotesPane({
                 onEvidenceClick={onEvidenceClick}
                 onUndo={onUndo}
                 undoSeq={lastSeqByTarget[item.id]}
+                readOnly={readOnly}
               />
             ))
           )}
         </div>
-        <NoteComposer onSendOp={onSendOp} />
+        {!readOnly && onSendOp && <NoteComposer onSendOp={onSendOp} />}
       </div>
     </section>
   );

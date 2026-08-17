@@ -10,6 +10,8 @@ interface TranscriptPaneProps {
   readOnly?: boolean;
   /** Optional control rendered under the Conversation header (e.g. audio). */
   headerExtra?: ReactNode;
+  /** Prefix element ids so a print copy does not collide with the live list. */
+  segmentIdPrefix?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -34,6 +36,7 @@ export default function TranscriptPane({
   onReassignSpeaker,
   readOnly = false,
   headerExtra,
+  segmentIdPrefix = '',
 }: TranscriptPaneProps) {
   const sorted = useMemo(
     () => [...segments].sort((a, b) => a.start_s - b.start_s),
@@ -61,7 +64,7 @@ export default function TranscriptPane({
         <span>Conversation</span>
         <span className="meta">{sorted.length} segments</span>
       </div>
-      {headerExtra}
+      {headerExtra && <div className="no-print">{headerExtra}</div>}
       <div className="panel-body">
         {sorted.length === 0 ? (
           <p className="empty-state">Waiting for speech…</p>
@@ -72,7 +75,7 @@ export default function TranscriptPane({
               return (
                 <article
                   key={seg.id}
-                  id={`seg-${seg.id}`}
+                  id={`${segmentIdPrefix}seg-${seg.id}`}
                   className={`segment${highlighted ? ' highlight' : ''}`}
                 >
                   <time className="segment-time">{formatTime(seg.start_s)}</time>

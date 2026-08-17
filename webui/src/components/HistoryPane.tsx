@@ -25,6 +25,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [detailError, setDetailError] = useState<string | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [rerunNote, setRerunNote] = useState<string | null>(null);
+  const [transcriptComplete, setTranscriptComplete] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const loadMeetings = useCallback(async () => {
@@ -49,6 +50,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     setDetailSegments([]);
     setDetailError(null);
     setRerunNote(null);
+    setTranscriptComplete(false);
     if (!selectedId) return;
     let cancelled = false;
     api
@@ -67,6 +69,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
           setDetailSegments(segments);
           cursor = page.next_cursor ?? undefined;
         }
+        if (!cancelled) setTranscriptComplete(true);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -185,7 +188,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
 
   return (
     <section className="panel" style={{ minHeight: '70vh' }}>
-      <div className="panel-header">
+      <div className="panel-header no-print">
         <span>Meeting history</span>
         <button type="button" className="ghost" onClick={onClose}>
           Back to live
@@ -193,12 +196,12 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
       </div>
       <div className="panel-body">
         {error && (
-          <div className="banner warning" role="alert">
+          <div className="banner warning no-print" role="alert">
             {error}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <div className="history-search no-print" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           <input
             type="search"
             placeholder="Search transcripts…"
@@ -214,7 +217,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
         </div>
 
         {searchResults.length > 0 && (
-          <div className="search-results">
+          <div className="search-results no-print">
             <h3 className="card-section-title">Search results</h3>
             {searchResults.map((row, i) => (
               <button key={i} type="button" className="search-hit" onClick={() => selectSearchResult(row)}>
@@ -233,8 +236,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
         ) : meetings.length === 0 ? (
           <p className="empty-state">No past meetings.</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16 }}>
-            <ul className="history-list">
+          <div className="history-detail-grid" style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16 }}>
+            <ul className="history-list no-print">
               {meetings.map((m) => (
                 <li
                   key={m.id}
@@ -259,8 +262,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
 
             {selected && (
               <div>
-                <h3 style={{ marginTop: 0 }}>Details</h3>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <h3 className="no-print" style={{ marginTop: 0 }}>Details</h3>
+                <div className="no-print" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <input
                     value={renameDraft}
                     onChange={(e) => setRenameDraft(e.target.value)}
@@ -270,7 +273,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     Rename
                   </button>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                <div className="history-actions no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                   <button type="button" onClick={() => exportMeeting('md', selected.id)}>
                     Export Markdown
                   </button>
@@ -293,17 +296,17 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                 </div>
 
                 {rerunning && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
+                  <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
                     Re-analyzing the transcript — this can take a minute.
                   </p>
                 )}
                 {rerunNote && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
+                  <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
                     Insights updated · {rerunNote}
                   </p>
                 )}
                 {detailError && (
-                  <p style={{ color: 'var(--danger)', fontSize: 13, margin: '0 0 12px' }}>
+                  <p className="no-print" style={{ color: 'var(--danger)', fontSize: 13, margin: '0 0 12px' }}>
                     {detailError}
                   </p>
                 )}
@@ -319,10 +322,11 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     meeting={selected}
                     onEvidenceClick={handleEvidenceClick}
                     onSeek={seekTo}
+                    transcriptComplete={transcriptComplete}
                   />
                 )}
 
-                <section className="panel" style={{ marginTop: 16 }}>
+                <section className="panel no-print" style={{ marginTop: 16 }}>
                   <div className="panel-header"><span>Recording</span></div>
                   <div className="panel-body">
                     <audio
@@ -334,16 +338,18 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 </section>
 
-                <TranscriptPane
-                  segments={detailSegments}
-                  participants={detail ? Object.values(detail.participants) : []}
-                  highlightSegmentId={highlightSegmentId}
-                  onHighlightClear={() => setHighlightSegmentId(null)}
-                  onReassignSpeaker={() => undefined}
-                  readOnly
-                />
+                <div className="no-print">
+                  <TranscriptPane
+                    segments={detailSegments}
+                    participants={detail ? Object.values(detail.participants) : []}
+                    highlightSegmentId={highlightSegmentId}
+                    onHighlightClear={() => setHighlightSegmentId(null)}
+                    onReassignSpeaker={() => undefined}
+                    readOnly
+                  />
+                </div>
 
-                <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
                   ID: {selected.id}
                 </p>
               </div>
