@@ -1110,6 +1110,69 @@ class TestDemoMeeting:
         ) == "completed"
 
 
+class TestCloudSpeakerStep:
+    def test_local_backend_omits_speaker_step(self, make_engine):
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        ids = [step["id"] for step in fin.get("steps") or []]
+        assert "speaker_id" not in ids
+        assert fin["status"] == "disabled"
+
+    def test_openai_without_consent_skips_honestly(self, make_engine):
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=False,
+        )
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        steps = {step["id"]: step for step in fin.get("steps") or []}
+        assert "speaker_id" in steps
+        assert steps["speaker_id"]["status"] == "completed"
+        assert "consent" in (steps["speaker_id"].get("detail") or "").lower()
+
+    def test_openai_pass_success(self, make_engine):
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=True,
+        )
+        engine._run_cloud_speaker_pass = lambda **_kw: {
+            "ok": True, "skipped": False, "applied": 3, "error": None,
+        }
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        steps = {step["id"]: step for step in fin.get("steps") or []}
+        assert steps["speaker_id"]["status"] == "completed"
+        assert fin["status"] == "completed"
+
+    def test_openai_pass_failure_does_not_break_end(self, make_engine, repo):
+        engine = make_engine(
+            cloud_enabled=False,
+            speaker_id_backend="openai",
+            speaker_id_audio_consent=True,
+        )
+
+        def boom(**_kw):
+            raise RuntimeError("api down")
+
+        engine._run_cloud_speaker_pass = boom
+        engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        steps = {step["id"]: step for step in fin.get("steps") or []}
+        assert steps["speaker_id"]["status"] == "failed"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+
+
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""
     from meeting.engine import MeetingEngine

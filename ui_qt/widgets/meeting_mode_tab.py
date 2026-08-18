@@ -44,6 +44,7 @@ class MeetingModeTab(QWidget):
     copy_guest_link_requested = pyqtSignal()
     cloud_toggled = pyqtSignal(bool)
     retry_insights_requested = pyqtSignal()
+    retry_speakers_requested = pyqtSignal()
     #: Emitted whenever the visible controls change, so the window can keep
     #: enough height for the finalization checklist and summary stats.
     content_height_changed = pyqtSignal()
@@ -299,6 +300,16 @@ class MeetingModeTab(QWidget):
         self.finalization_retry_button.hide()
         fin_buttons_row.addWidget(self.finalization_retry_button)
 
+        self.finalization_retry_speakers_button = Button("Re-run speakers")
+        self.finalization_retry_speakers_button.setObjectName(
+            "meetingFinalizationRetrySpeakersButton"
+        )
+        self.finalization_retry_speakers_button.clicked.connect(
+            self.retry_speakers_requested.emit
+        )
+        self.finalization_retry_speakers_button.hide()
+        fin_buttons_row.addWidget(self.finalization_retry_speakers_button)
+
         self.finalization_dashboard_button = Button("Open dashboard")
         self.finalization_dashboard_button.setObjectName(
             "meetingFinalizationDashboardButton"
@@ -552,6 +563,7 @@ class MeetingModeTab(QWidget):
             tone = "neutral"
             self.finalization_progress.show()
             self.finalization_retry_button.hide()
+            self.finalization_retry_speakers_button.hide()
 
             if total_steps > 0:
                 self.finalization_step_badge.setText(f"Step {current_step} of {total_steps}")
@@ -593,6 +605,8 @@ class MeetingModeTab(QWidget):
                 self.finalization_step_badge.setProperty("badgeTone", "success")
                 self.finalization_step_badge.show()
                 self.finalization_retry_button.hide()
+                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setEnabled(True)
 
                 if step_details and step_details != message:
                     self.finalization_detail.setText(step_details)
@@ -620,6 +634,8 @@ class MeetingModeTab(QWidget):
                 self.finalization_step_badge.show()
                 self.finalization_retry_button.show()
                 self.finalization_retry_button.setEnabled(True)
+                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setEnabled(True)
 
                 if step_details and step_details != message:
                     self.finalization_detail.setText(step_details)
@@ -644,6 +660,8 @@ class MeetingModeTab(QWidget):
                 self.finalization_steps_widget.hide()
                 self.finalization_stats_widget.hide()
                 self.finalization_retry_button.hide()
+                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setEnabled(True)
 
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.

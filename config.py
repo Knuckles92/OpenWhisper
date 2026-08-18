@@ -294,6 +294,7 @@ class AppConfig:
     MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "deepseek/deepseek-v4-flash-0731"
     MEETING_AGENT_CORE: str = "pi"  # Direct is the fallback when no sidecar payload is present
+    MEETING_SPEAKER_ID_BACKEND: str = "local"  # "local" | "openai"
     MEETING_END_REDECODE: bool = False
     MEETING_END_POLISH: bool = True
     MEETING_END_REPORT: bool = True

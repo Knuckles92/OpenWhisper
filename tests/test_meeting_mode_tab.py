@@ -411,6 +411,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(self.tab.finalization_retry_button.isHidden())
         self.assertTrue(self.tab.finalization_retry_button.isEnabled())
+        self.assertFalse(self.tab.finalization_retry_speakers_button.isHidden())
         self.tab.finalization_retry_button.click()
         self.assertEqual(clicked, [True])
 

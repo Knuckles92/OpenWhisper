@@ -36,6 +36,7 @@ from meeting.interfaces import (
     TranscriptSegment,
 )
 from meeting.state.schema import MeetingState, new_id, now_iso
+from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,8 @@ class MeetingEngineOptions:
     agent_core_kind: str = 'pi'   # 'pi' | 'direct'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
+    speaker_id_backend: str = 'local'  # 'local' | 'openai'
+    speaker_id_audio_consent: bool = False
     server_bind: str = 'localhost'    # 'localhost' | 'lan'
     server_port: int = 0
     spool_root: str = ''              # parent dir for meeting spool dirs
@@ -455,7 +458,9 @@ class MeetingEngine:
             self.store = MeetingStateStore(
                 state,
                 repository=self.repository,
-                segment_handler=self._handle_segment_op,
+                segment_handler=make_segment_handler(
+                    self.repository, meeting_id
+                ),
                 segment_exists=lambda sg_id: self.repository.segment_exists(
                     meeting_id, sg_id
                 ),
@@ -685,6 +690,10 @@ class MeetingEngine:
                 and asr is not None
                 and callable(getattr(asr, "transcribe_offline_session", None))
             )
+            will_speaker_id = bool(
+                not self.options.demo_mode
+                and self.options.speaker_id_backend == "openai"
+            )
             # Immediate repair still uses the live draft so the dashboard is
             # useful the moment capture ends; the offline pass may replace it.
             if self.store is not None:
@@ -736,6 +745,13 @@ class MeetingEngine:
                     "status": "pending",
                     "detail": "High-accuracy full session Whisper decode",
                 })
+            if will_speaker_id:
+                steps.append({
+                    "id": "speaker_id",
+                    "name": "Speaker Identification",
+                    "status": "pending",
+                    "detail": "OpenAI labels on the system-audio recording",
+                })
             if run_cloud:
                 if want_polish:
                     steps.append({
@@ -770,6 +786,7 @@ class MeetingEngine:
                         break
                 top_msg = message or (
                     "Re-transcribing meeting…" if step_id == "redecode"
+                    else "Identifying speakers…" if step_id == "speaker_id"
                     else "Cleaning transcript…" if step_id == "polish"
                     else "Preparing final report…" if step_id == "consolidation"
                     else "Finalizing meeting state…"
@@ -785,7 +802,7 @@ class MeetingEngine:
                     emit=emit,
                 )
 
-            if will_offline or run_cloud:
+            if will_offline or will_speaker_id or run_cloud:
                 _update_step(steps[0]["id"], "running", steps[0]["detail"], emit=False)
             elif not cloud_enabled:
                 self._set_finalization(
@@ -847,6 +864,55 @@ class MeetingEngine:
                     "completed" if offline_ok else "failed",
                     "High-accuracy re-decoding complete" if offline_ok else "Re-decoding failed; kept live transcript",
                 )
+
+            speaker_ok = False
+            speaker_skipped = False
+            speaker_error = ""
+            if will_speaker_id:
+                _update_step(
+                    "speaker_id",
+                    "running",
+                    "Uploading system audio for speaker labels…",
+                    message="Identifying speakers…",
+                )
+
+                def _speaker_progress(detail: str, curr: int, total: int) -> None:
+                    _update_step(
+                        "speaker_id",
+                        "running",
+                        detail,
+                        message=(
+                            f"Identifying speakers (window {curr}/{total})…"
+                        ),
+                    )
+
+                try:
+                    speaker_result = self._run_cloud_speaker_pass(
+                        progress_cb=_speaker_progress,
+                    )
+                except Exception:
+                    logger.exception("Cloud speaker identification failed")
+                    speaker_result = {
+                        "ok": False, "skipped": False,
+                        "error": "Speaker identification failed.",
+                    }
+                speaker_ok = bool(speaker_result.get("ok"))
+                speaker_skipped = bool(speaker_result.get("skipped"))
+                speaker_error = str(speaker_result.get("error") or "")
+                if speaker_ok:
+                    applied = int(speaker_result.get("applied") or 0)
+                    detail = (
+                        f"Updated {applied} speaker label"
+                        f"{'' if applied == 1 else 's'}"
+                    )
+                    step_status = "completed"
+                elif speaker_skipped:
+                    detail = speaker_error or "Speaker identification skipped."
+                    step_status = "completed"
+                else:
+                    detail = speaker_error or "Speaker identification failed."
+                    step_status = "failed"
+                _update_step("speaker_id", step_status, detail)
 
             if run_cloud and not complete and not offline_ok:
                 run_cloud = False
@@ -1008,7 +1074,43 @@ class MeetingEngine:
                     )
             else:
                 self.revoke_agent_writes()
-                if not cloud_enabled:
+                if will_speaker_id:
+                    _update_step(
+                        "finalize",
+                        "completed",
+                        "Saved meeting state after speaker identification.",
+                    )
+                    if speaker_ok:
+                        final_status = "completed"
+                        final_msg = (
+                            "Speaker identification finished."
+                            if cloud_enabled else
+                            "Speaker identification finished. "
+                            "Cloud intelligence is off for this meeting."
+                        )
+                    elif speaker_skipped:
+                        final_status = "completed"
+                        final_msg = speaker_error or (
+                            "Speaker identification skipped."
+                        )
+                    else:
+                        final_status = "failed"
+                        final_msg = speaker_error or (
+                            "Speaker identification failed."
+                        )
+                    self._set_finalization(
+                        final_status,
+                        final_msg,
+                        stage=(
+                            "complete" if final_status == "completed"
+                            else final_status
+                        ),
+                        current_step=total_steps,
+                        total_steps=total_steps,
+                        step_details=final_msg,
+                        steps=steps,
+                    )
+                elif not cloud_enabled:
                     self._set_finalization(
                         "disabled",
                         "Cloud intelligence is off for this meeting.",
@@ -1052,6 +1154,75 @@ class MeetingEngine:
             self.revoke_agent_writes()
             self._emit("error", {"code": "end_failed", "message": str(exc)})
             self._finish_failed_end(exc, terminal_persisted)
+
+    def _run_cloud_speaker_pass(
+        self,
+        *,
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
+        transcribe_fn: Optional[Callable[..., Any]] = None,
+    ) -> Dict[str, Any]:
+        """Upload loopback audio and relabel speakers. Never raises.
+
+        Returns:
+            ``{ok, skipped, applied, error}``. ``skipped`` is True when the
+            backend, consent, or API key is missing.
+        """
+        if self.options.speaker_id_backend != "openai":
+            return {
+                "ok": False, "skipped": True, "applied": 0,
+                "error": "Speaker identification is set to on-device.",
+            }
+        if not self.options.speaker_id_audio_consent:
+            return {
+                "ok": False, "skipped": True, "applied": 0,
+                "error": "Audio-upload consent has not been given.",
+            }
+        if not self.meeting_id or self.store is None:
+            return {
+                "ok": False, "skipped": False, "applied": 0,
+                "error": "Meeting is not ready for speaker identification.",
+            }
+        api_key = ""
+        if transcribe_fn is None:
+            try:
+                from services.transcript_cleanup import find_api_key
+
+                api_key = find_api_key("openai") or ""
+            except Exception:
+                logger.exception("Could not resolve the OpenAI API key")
+                api_key = ""
+            if not api_key:
+                return {
+                    "ok": False, "skipped": True, "applied": 0,
+                    "error": "No OpenAI API key is configured.",
+                }
+        try:
+            from meeting.diarize.cloud_pass import run_cloud_speaker_pass
+        except Exception as exc:
+            logger.exception("Cloud speaker pass unavailable")
+            return {
+                "ok": False, "skipped": False, "applied": 0, "error": str(exc),
+            }
+        spool_dir = self._spool_dir or ""
+        try:
+            result = run_cloud_speaker_pass(
+                self.repository, self.meeting_id, self.store, spool_dir,
+                api_key=api_key,
+                transcribe_fn=transcribe_fn,
+                progress_cb=progress_cb,
+            )
+        except Exception as exc:
+            logger.exception("Cloud speaker pass raised")
+            return {
+                "ok": False, "skipped": False, "applied": 0, "error": str(exc),
+            }
+        return {
+            "ok": bool(result.get("ok")),
+            "skipped": False,
+            "applied": int(result.get("applied") or 0),
+            "created": int(result.get("created") or 0),
+            "error": result.get("error"),
+        }
 
     def _run_offline_final_pass(
         self,
@@ -2157,59 +2328,6 @@ class MeetingEngine:
             self.store.apply("system", "diarizer", ops)
         except Exception:
             logger.exception("Diarizer relabel batch failed")
-
-    def _handle_segment_op(self, result: OpResult) -> Optional[Dict[str, Any]]:
-        """Store segment handler: persist speaker or text mutations.
-
-        Args:
-            result: A validated segment-log op result (``reassign_segment_speaker``
-                or ``revise_segment_text``).
-
-        Returns:
-            The inverse op dict restoring the prior row fields, or None when
-            the segment had no prior row.
-        """
-        effect = result.effect or {}
-        op_name = (result.op or {}).get("op")
-        segment_id = effect.get("segment_id")
-        prior = None
-        try:
-            prior = self.repository.get_segment(self.meeting_id, segment_id)
-        except Exception:
-            logger.exception("Failed to read prior segment %s", segment_id)
-        if prior is None:
-            return None
-
-        if op_name == "revise_segment_text":
-            # Persistence is via on_ops_applied/_mirror_effect; enrich the
-            # broadcast effect with the full post-apply segment shape.
-            new_text = effect.get("text") or ""
-            updated = dict(prior)
-            updated["text"] = new_text
-            result.effect = {
-                "entity": "segment_text",
-                "segment_id": segment_id,
-                "text": new_text,
-                "segment": updated,
-            }
-            return {
-                "op": "revise_segment_text",
-                "segment_id": segment_id,
-                "text": prior.get("text") or "",
-                "evidence": [segment_id],
-            }
-
-        participant_id = effect.get("participant_id")
-        source = effect.get("source", "human")
-        pinned = bool(effect.get("pinned"))
-        return {
-            "op": "reassign_segment_speaker",
-            "segment_id": segment_id,
-            "participant_id": prior.get("speaker_participant_id"),
-            "_source": prior.get("speaker_source", "channel"),
-            "_pinned": bool(prior.get("speaker_pinned")),
-            "force": True,
-        }
 
     # ------------------------------------------------------------------
     # Web server

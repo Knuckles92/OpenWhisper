@@ -7,6 +7,7 @@ import type {
   AuditEvent,
   RegenerateTokensResponse,
   RerunInsightsResponse,
+  RerunSpeakersResponse,
   SearchRow,
   Segment,
   SessionResponse,
@@ -111,6 +112,14 @@ export const api = {
   rerunInsights(token: string, meetingId: string): Promise<RerunInsightsResponse> {
     return request<RerunInsightsResponse>(
       `/api/meetings/${encodeURIComponent(meetingId)}/reinsights?${qs({ token })}`,
+      { method: 'POST' },
+    );
+  },
+
+  /** Re-run OpenAI speaker identification on a past meeting (host only). */
+  rerunSpeakers(token: string, meetingId: string): Promise<RerunSpeakersResponse> {
+    return request<RerunSpeakersResponse>(
+      `/api/meetings/${encodeURIComponent(meetingId)}/respeakers?${qs({ token })}`,
       { method: 'POST' },
     );
   },

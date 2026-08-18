@@ -259,8 +259,10 @@ class TestMeetingSettings(unittest.TestCase):
             MeetingAgentCore,
             MeetingLanguage,
             MeetingServerBind,
+            MeetingSpeakerIdBackend,
             SettingsKey,
             resolve_meeting_agent_core,
+            resolve_meeting_audio_upload_consent,
             resolve_meeting_end_polish,
             resolve_meeting_end_redecode,
             resolve_meeting_end_report,
@@ -274,10 +276,12 @@ class TestMeetingSettings(unittest.TestCase):
             resolve_meeting_language,
             resolve_meeting_server_bind,
             resolve_meeting_server_port,
+            resolve_meeting_speaker_id_backend,
             resolve_meeting_whisper_model,
         )
         self.keys = SettingsKey
         self.agent_cores = MeetingAgentCore
+        self.speaker_backends = MeetingSpeakerIdBackend
         self.languages = MeetingLanguage
         self.binds = MeetingServerBind
         self.resolve_whisper_model = resolve_meeting_whisper_model
@@ -285,6 +289,8 @@ class TestMeetingSettings(unittest.TestCase):
         self.resolve_language = resolve_meeting_language
         self.resolve_llm_model = resolve_meeting_llm_model
         self.resolve_agent_core = resolve_meeting_agent_core
+        self.resolve_speaker_id = resolve_meeting_speaker_id_backend
+        self.resolve_audio_consent = resolve_meeting_audio_upload_consent
         self.resolve_end_redecode = resolve_meeting_end_redecode
         self.resolve_end_polish = resolve_meeting_end_polish
         self.resolve_end_report = resolve_meeting_end_report
@@ -303,6 +309,9 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_llm_model({}), config.MEETING_LLM_MODEL)
         self.assertEqual(self.resolve_agent_core({}), config.MEETING_AGENT_CORE)
         self.assertEqual(config.MEETING_AGENT_CORE, self.agent_cores.PI)
+        self.assertEqual(self.resolve_speaker_id({}), config.MEETING_SPEAKER_ID_BACKEND)
+        self.assertEqual(config.MEETING_SPEAKER_ID_BACKEND, self.speaker_backends.LOCAL)
+        self.assertFalse(self.resolve_audio_consent({}))
         self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
         self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
         self.assertEqual(self.resolve_end_redecode({}), config.MEETING_END_REDECODE)
@@ -324,6 +333,8 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_LLM_PROVIDER: "openai",
             self.keys.MEETING_LLM_MODEL: "  gpt-4o-mini  ",
             self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
+            self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
+            self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
             self.keys.MEETING_SERVER_BIND: self.binds.LAN,
             self.keys.MEETING_SERVER_PORT: 8099,
             self.keys.MEETING_END_REDECODE: True,
@@ -338,6 +349,8 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_provider(saved), "openai")
         self.assertEqual(self.resolve_llm_model(saved), "gpt-4o-mini")
         self.assertEqual(self.resolve_agent_core(saved), self.agent_cores.DIRECT)
+        self.assertEqual(self.resolve_speaker_id(saved), self.speaker_backends.OPENAI)
+        self.assertTrue(self.resolve_audio_consent(saved))
         self.assertEqual(self.resolve_bind(saved), self.binds.LAN)
         self.assertEqual(self.resolve_port(saved), 8099)
         self.assertTrue(self.resolve_end_redecode(saved))
@@ -375,6 +388,7 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_LLM_PROVIDER: "not-a-provider",
             self.keys.MEETING_LLM_MODEL: "   ",
             self.keys.MEETING_AGENT_CORE: "not-a-core",
+            self.keys.MEETING_SPEAKER_ID_BACKEND: "not-a-backend",
             self.keys.MEETING_SERVER_BIND: "everywhere",
         }
         self.assertEqual(self.resolve_whisper_model(saved), config.MEETING_WHISPER_MODEL)
@@ -382,6 +396,7 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_provider(saved), config.MEETING_LLM_PROVIDER)
         self.assertEqual(self.resolve_llm_model(saved), config.MEETING_LLM_MODEL)
         self.assertEqual(self.resolve_agent_core(saved), config.MEETING_AGENT_CORE)
+        self.assertEqual(self.resolve_speaker_id(saved), config.MEETING_SPEAKER_ID_BACKEND)
         self.assertEqual(self.resolve_bind(saved), config.MEETING_SERVER_BIND)
 
     def test_port_is_clamped_and_tolerates_junk(self):

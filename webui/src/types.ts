@@ -439,6 +439,15 @@ export interface RerunInsightsResponse {
   error: string | null;
 }
 
+export interface RerunSpeakersResponse {
+  ok: boolean;
+  state: MeetingStateDoc;
+  applied: number;
+  created?: number;
+  windows?: number;
+  error: string | null;
+}
+
 export type SearchRow = Record<string, unknown>;
 
 export type ExportFormat = 'md' | 'json' | 'txt';

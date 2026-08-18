@@ -29,6 +29,7 @@ from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
 from meeting.audio_playback import build_playback
 from meeting.reinsight import rerun_insights
+from meeting.respeaker import rerun_speakers
 from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.schema import FinalizationState, MeetingState
 from meeting.web.auth import resolve_role
@@ -415,6 +416,67 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                     provider=provider, model=model,
                     agent_core_kind=getattr(options, "agent_core_kind", "pi"),
                     sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            insights_running.discard(meeting_id)
+
+    @app.post("/api/meetings/{meeting_id}/respeakers")
+    async def api_rerun_speakers(meeting_id: str,
+                                 token: str = "") -> Dict[str, Any]:
+        """Re-run OpenAI speaker identification on a past meeting."""
+        await _require(token, host_only=True)
+        if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
+            raise HTTPException(
+                status_code=409,
+                detail="cannot re-run speakers on the active meeting",
+            )
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        try:
+            from services.settings import (
+                resolve_meeting_audio_upload_consent,
+                resolve_meeting_speaker_id_backend,
+            )
+            from services.transcript_cleanup import find_api_key
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if resolve_meeting_speaker_id_backend() != "openai":
+            raise HTTPException(
+                status_code=400,
+                detail="speaker identification is set to on-device",
+            )
+        if not resolve_meeting_audio_upload_consent():
+            raise HTTPException(
+                status_code=400,
+                detail="audio-upload consent has not been given",
+            )
+        api_key = find_api_key("openai") or ""
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="no OpenAI API key is configured",
+            )
+        if meeting_id in insights_running:
+            raise HTTPException(
+                status_code=409,
+                detail="a post-meeting pass is already running for this meeting",
+            )
+        insights_running.add(meeting_id)
+        store = None
+        if getattr(engine, "meeting_id", None) == meeting_id:
+            store = getattr(engine, "store", None)
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                insights_executor,
+                functools.partial(
+                    rerun_speakers, repository, meeting_id,
+                    api_key=api_key, store=store,
+                    spool_dir=meeting.get("spool_dir"),
                 ),
             )
         except ValueError as exc:

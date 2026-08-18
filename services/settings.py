@@ -65,6 +65,10 @@ class SettingsKey:
     MEETING_REPORT_SIGNAL: Final[str] = "meeting_report_signal"
     MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
     MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
+    MEETING_SPEAKER_ID_BACKEND: Final[str] = "meeting_speaker_id_backend"
+    MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: Final[str] = (
+        "meeting_audio_upload_consent_given"
+    )
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
 
@@ -134,6 +138,14 @@ class MeetingAgentCore:
     DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
 
     ALL: Final[Tuple[str, ...]] = (PI, DIRECT)
+
+
+class MeetingSpeakerIdBackend:
+    """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
+    LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
+    OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize
+
+    ALL: Final[Tuple[str, ...]] = (LOCAL, OPENAI)
 
 
 class MeetingLanguage:
@@ -777,6 +789,36 @@ def resolve_meeting_agent_core(
     if core in MeetingAgentCore.ALL:
         return core
     return config.MEETING_AGENT_CORE
+
+
+def resolve_meeting_speaker_id_backend(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated post-meeting speaker-identification backend.
+
+    Args:
+        settings: Optional loaded settings dict. Loads from disk when omitted.
+
+    Returns:
+        A ``MeetingSpeakerIdBackend`` value, falling back to the config
+        default when the stored value is missing or unknown.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    backend = settings.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND)
+    if backend in MeetingSpeakerIdBackend.ALL:
+        return backend
+    return config.MEETING_SPEAKER_ID_BACKEND
+
+
+def resolve_meeting_audio_upload_consent(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the user has approved uploading meeting audio."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, False,
+    )
 
 
 def _resolve_bool_setting(

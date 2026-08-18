@@ -24,6 +24,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [rerunning, setRerunning] = useState(false);
+  const [rerunningSpeakers, setRerunningSpeakers] = useState(false);
   const [rerunNote, setRerunNote] = useState<string | null>(null);
   const [transcriptComplete, setTranscriptComplete] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -157,6 +158,32 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     }
   };
 
+  const rerunSpeakers = async (meetingId: string) => {
+    setRerunningSpeakers(true);
+    setDetailError(null);
+    setRerunNote(null);
+    try {
+      const res = await api.rerunSpeakers(token, meetingId);
+      setDetail(res.state);
+      const page = await api.meeting(token, meetingId);
+      setDetail(page.state);
+      setDetailSegments(page.segments);
+      if (res.ok) {
+        setRerunNote(
+          res.applied === 1
+            ? '1 speaker label updated.'
+            : `${res.applied} speaker labels updated.`,
+        );
+      } else {
+        setDetailError(res.error ?? 'Speaker re-run failed');
+      }
+    } catch (err) {
+      setDetailError(err instanceof Error ? err.message : 'Speaker re-run failed');
+    } finally {
+      setRerunningSpeakers(false);
+    }
+  };
+
   const exportMeeting = (fmt: ExportFormat, meetingId: string) => {
     window.open(api.exportUrl(token, fmt, meetingId), '_blank');
   };
@@ -286,23 +313,34 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   <button
                     type="button"
                     onClick={() => rerunInsights(selected.id)}
-                    disabled={rerunning}
+                    disabled={rerunning || rerunningSpeakers}
                   >
                     {rerunning ? 'Re-running insights…' : 'Re-run insights'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rerunSpeakers(selected.id)}
+                    disabled={rerunning || rerunningSpeakers}
+                  >
+                    {rerunningSpeakers
+                      ? 'Re-running speakers…'
+                      : 'Re-run speaker identification'}
                   </button>
                   <button type="button" className="danger" onClick={() => deleteMeeting(selected.id)}>
                     Delete
                   </button>
                 </div>
 
-                {rerunning && (
+                {(rerunning || rerunningSpeakers) && (
                   <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
-                    Re-analyzing the transcript — this can take a minute.
+                    {rerunningSpeakers
+                      ? 'Relabeling speakers — this can take a minute.'
+                      : 'Re-analyzing the transcript — this can take a minute.'}
                   </p>
                 )}
                 {rerunNote && (
                   <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
-                    Insights updated · {rerunNote}
+                    {rerunNote}
                   </p>
                 )}
                 {detailError && (

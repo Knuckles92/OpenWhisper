@@ -26,6 +26,7 @@ from meeting.agent.prompts import build_system_prompt
 from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
 from meeting.state.repair import repair_meeting_state
 from meeting.state.schema import MeetingState
+from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,9 @@ class _OfflineToolHost:
     """``AgentToolHost`` for a stored meeting: state patches, nothing else.
 
     Mirrors ``MeetingEngine``'s tool-host implementation op-for-op so the
-    validation layer behaves identically to a live checkpoint. Speaker
-    reassignment is deliberately unavailable — consolidation never touches the
-    segment log — so the store is built without a segment handler and such ops
-    are rejected with ``segments_unavailable``.
+    validation layer behaves identically to a live checkpoint. The store is
+    built with a segment handler so system/diarizer speaker ops can persist;
+    the agent still cannot emit ``reassign_segment_speaker`` (agent_forbidden).
 
     Attributes:
         applied: Running count of ops the store actually applied.
@@ -197,8 +197,14 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
         store = MeetingStateStore(
             _load_state(meeting, meeting_id),
             repository=repository,
+            segment_handler=make_segment_handler(repository, meeting_id),
             segment_exists=lambda segment_id: repository.segment_exists(
                 meeting_id, segment_id
+            ),
+            segment_pinned=lambda segment_id: bool(
+                (repository.get_segment(meeting_id, segment_id) or {}).get(
+                    "speaker_pinned"
+                )
             ),
         )
     tools = _OfflineToolHost(store)

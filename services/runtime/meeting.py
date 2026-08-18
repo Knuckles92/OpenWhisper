@@ -26,6 +26,7 @@ try:
         MeetingAgentCore,
         SettingsKey,
         resolve_meeting_agent_core,
+        resolve_meeting_audio_upload_consent,
         resolve_meeting_end_polish,
         resolve_meeting_end_redecode,
         resolve_meeting_end_report,
@@ -35,6 +36,7 @@ try:
         resolve_meeting_language,
         resolve_meeting_server_bind,
         resolve_meeting_server_port,
+        resolve_meeting_speaker_id_backend,
         resolve_meeting_whisper_model,
         settings_manager,
     )
@@ -435,6 +437,14 @@ class MeetingRuntime:
             diarization_model_path=(
                 None if demo else ensure_speaker_model()
             ),
+            speaker_id_backend=(
+                "local" if demo
+                else resolve_meeting_speaker_id_backend(settings)
+            ),
+            speaker_id_audio_consent=(
+                False if demo
+                else resolve_meeting_audio_upload_consent(settings)
+            ),
             server_bind=resolve_meeting_server_bind(settings),
             server_port=resolve_meeting_server_port(settings),
             spool_root=config.MEETINGS_FOLDER,
@@ -548,7 +558,7 @@ class MeetingRuntime:
             meeting_id = getattr(engine, "meeting_id", None)
             if not meeting_id:
                 repo = self._repository()
-                recent = repo.list_meetings(limit=1)
+                recent = repo.list_meetings()
                 if recent:
                     meeting_id = recent[0].get("id")
             if not meeting_id:
@@ -647,6 +657,135 @@ class MeetingRuntime:
 
         threading.Thread(
             target=_worker, name="meeting-retry-insights", daemon=True
+        ).start()
+
+    def retry_speakers(self) -> None:
+        """Re-run OpenAI speaker identification for the last meeting."""
+        with self._lock:
+            if (
+                self._starting
+                or self.controller.meeting_active
+                or self.is_active
+                or self._finalizing
+            ):
+                logger.warning(
+                    "Cannot retry speakers: meeting is active, starting, or already finalizing"
+                )
+                return
+            engine = self._engine
+            meeting_id = getattr(engine, "meeting_id", None)
+            if not meeting_id:
+                repo = self._repository()
+                recent = repo.list_meetings()
+                if recent:
+                    meeting_id = recent[0].get("id")
+            if not meeting_id:
+                logger.warning("Cannot retry speakers: no meeting found")
+                return
+
+            self._finalizing = True
+            self._finalization = {
+                "status": "running",
+                "message": "Re-running speaker identification…",
+            }
+
+        if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            try:
+                engine._set_finalization(
+                    "running",
+                    "Re-running speaker identification…",
+                )
+            except Exception:
+                logger.exception("Could not set running speaker pass on engine")
+        else:
+            self.controller.meeting_state_changed.emit({
+                "active": False,
+                "finalization": {
+                    "status": "running",
+                    "message": "Re-running speaker identification…",
+                },
+            })
+        self.controller.meeting_status_update.emit(
+            "Re-running speaker identification…"
+        )
+
+        def _worker():
+            status = "failed"
+            message = "Speaker identification failed."
+            try:
+                from meeting.respeaker import rerun_speakers
+                from services.settings import (
+                    resolve_meeting_audio_upload_consent,
+                    resolve_meeting_speaker_id_backend,
+                )
+                from services.transcript_cleanup import find_api_key
+
+                if resolve_meeting_speaker_id_backend() != "openai":
+                    status = "failed"
+                    message = "Speaker identification is set to on-device."
+                    raise RuntimeError(message)
+                if not resolve_meeting_audio_upload_consent():
+                    status = "failed"
+                    message = "Audio-upload consent has not been given."
+                    raise RuntimeError(message)
+                api_key = find_api_key("openai") or ""
+                if not api_key:
+                    status = "failed"
+                    message = "No OpenAI API key is configured."
+                    raise RuntimeError(message)
+
+                repo = self._repository()
+                store = None
+                spool_dir = None
+                if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+                    store = getattr(engine, "store", None)
+                    spool_dir = getattr(engine, "_spool_dir", None)
+                result = rerun_speakers(
+                    repo, meeting_id, api_key=api_key,
+                    store=store, spool_dir=spool_dir,
+                )
+                if result.get("ok"):
+                    applied = int(result.get("applied") or 0)
+                    status = "completed"
+                    message = (
+                        f"Speaker identification finished "
+                        f"({applied} label{'s' if applied != 1 else ''} updated)."
+                    )
+                else:
+                    status = "failed"
+                    message = (
+                        result.get("error")
+                        or "Speaker identification failed."
+                    )
+            except Exception as exc:
+                logger.exception(
+                    "Retry speakers worker raised for meeting %s", meeting_id
+                )
+                status = "failed"
+                message = f"Speaker identification failed: {exc}"
+
+            with self._lock:
+                self._finalizing = False
+                self._finalization = {"status": status, "message": message}
+
+            if engine is not None and getattr(engine, "meeting_id", None) == meeting_id:
+                try:
+                    engine._set_finalization(status, message)
+                except Exception:
+                    logger.exception("Could not set speaker-pass outcome on engine")
+            else:
+                self.controller.meeting_state_changed.emit({
+                    "active": False,
+                    "finalization": {"status": status, "message": message},
+                })
+            self.controller.meeting_status_update.emit(message)
+            try:
+                self.controller.ui_controller.main_window.refresh_past_meetings()
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_worker, name="meeting-retry-speakers", daemon=True
         ).start()
 
     def open_dashboard(self) -> None:

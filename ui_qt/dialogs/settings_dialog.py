@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QLabel, QCheckBox, QPushButton,
     QSlider, QFrame, QScrollArea, QTextEdit,
-    QLineEdit, QListWidget, QStackedWidget,
+    QLineEdit, QListWidget, QStackedWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -22,11 +22,13 @@ from services.settings import (
     MeetingAgentCore,
     MeetingLanguage,
     MeetingServerBind,
+    MeetingSpeakerIdBackend,
     RecordingRetentionMode,
     SettingsKey,
     TranscriptCleanupReasoning,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
+    resolve_meeting_audio_upload_consent,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
     resolve_meeting_end_report,
@@ -38,6 +40,7 @@ from services.settings import (
     resolve_meeting_language,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
+    resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
     resolve_developer_mode,
     resolve_streaming_overlay_font_size,
@@ -148,6 +151,18 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(button_layout)
 
+    def _add_scrollable_tab(self, inner: QWidget, title: str) -> None:
+        """Host a settings page in a scroll area so labels never overlap."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum
+        )
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, title)
+
     def _create_general_tab(self):
         """Create general settings tab."""
         tab = QWidget()
@@ -163,15 +178,19 @@ class SettingsDialog(QDialog):
         # Auto-paste checkbox
         layout.addSpacing(12)
         self.auto_paste_check = QCheckBox("Auto-paste transcription to active window")
-        layout.addWidget(self.auto_paste_check)
-
-        # Copy to clipboard checkbox
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
-        layout.addWidget(self.copy_clipboard_check)
-
-        # Minimize to tray checkbox
-        layout.addSpacing(12)
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
+        for box in (
+            self.auto_paste_check,
+            self.copy_clipboard_check,
+            self.minimize_tray_check,
+        ):
+            box.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
+        layout.addWidget(self.auto_paste_check)
+        layout.addWidget(self.copy_clipboard_check)
+        layout.addSpacing(12)
         layout.addWidget(self.minimize_tray_check)
 
         # Saved recordings retention
@@ -254,7 +273,7 @@ class SettingsDialog(QDialog):
         self._update_streaming_font_ui()
 
         layout.addStretch()
-        self.tabs.addTab(tab, "General")
+        self._add_scrollable_tab(tab, "General")
 
     def _create_audio_tab(self):
         """Create audio settings tab."""
@@ -777,9 +796,9 @@ class SettingsDialog(QDialog):
             "component) and falls back to Direct when no payload is "
             "available. Meeting insights use the chat model chosen in Model "
             "Manager → Meeting. Transcript text and meeting state are sent "
-            "to the provider — audio never leaves this computer, and "
-            "nothing is sent until you enable cloud intelligence for a "
-            "meeting."
+            "to the provider — cloud intelligence does not upload audio, "
+            "and nothing is sent until you enable it for a meeting. "
+            "Speaker identification is a separate setting below."
         )
         meeting_intelligence_info.setObjectName("infoLabel")
         meeting_intelligence_info.setWordWrap(True)
@@ -798,6 +817,35 @@ class SettingsDialog(QDialog):
         after_info.setObjectName("infoLabel")
         after_info.setWordWrap(True)
         layout.addWidget(after_info)
+
+        speaker_id_label = QLabel("Speaker identification:")
+        layout.addWidget(speaker_id_label)
+
+        self.meeting_speaker_id_combo = NoWheelComboBox()
+        self.meeting_speaker_id_combo.setObjectName("meetingSpeakerIdCombo")
+        self.meeting_speaker_id_combo.addItem(
+            "On-device (Speaker 1, Speaker 2, …)",
+            MeetingSpeakerIdBackend.LOCAL,
+        )
+        self.meeting_speaker_id_combo.addItem(
+            "OpenAI (upload system audio after the meeting)",
+            MeetingSpeakerIdBackend.OPENAI,
+        )
+        self.meeting_speaker_id_combo.setMinimumHeight(36)
+        self.meeting_speaker_id_combo.currentIndexChanged.connect(
+            self._on_speaker_id_backend_changed
+        )
+        layout.addWidget(self.meeting_speaker_id_combo)
+
+        speaker_id_info = QLabel(
+            "OpenAI sends the system-audio recording (other participants' "
+            "voices) after End and relabels speakers on the local "
+            "transcript. Requires an OpenAI API key. Microphone audio "
+            "stays on this computer."
+        )
+        speaker_id_info.setObjectName("infoLabel")
+        speaker_id_info.setWordWrap(True)
+        layout.addWidget(speaker_id_info)
 
         self.meeting_end_redecode_check = QCheckBox(
             "Re-transcribe with longer pauses (full recording)"
@@ -1413,6 +1461,32 @@ class SettingsDialog(QDialog):
         self.meeting_report_ribbon_check.blockSignals(blocker)
         self.meeting_report_views_hint.show()
 
+    def _on_speaker_id_backend_changed(self, _index: int = 0) -> None:
+        """Ask for audio-upload consent when the user picks OpenAI."""
+        backend = self.meeting_speaker_id_combo.currentData()
+        if backend != MeetingSpeakerIdBackend.OPENAI:
+            return
+        if resolve_meeting_audio_upload_consent():
+            return
+        from ui_qt.dialogs.meeting_audio_consent_dialog import (
+            MeetingAudioConsentDialog,
+        )
+
+        dialog = MeetingAudioConsentDialog(self)
+        dialog.exec()
+        granted = dialog.result_action == MeetingAudioConsentDialog.RESULT_ENABLE
+        if granted:
+            settings_manager.save_setting(
+                SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, True,
+            )
+            return
+        local_index = self.meeting_speaker_id_combo.findData(
+            MeetingSpeakerIdBackend.LOCAL
+        )
+        blocker = self.meeting_speaker_id_combo.blockSignals(True)
+        self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
+        self.meeting_speaker_id_combo.blockSignals(blocker)
+
     def _load_meeting_settings(self, settings: dict):
         """Apply the stored Meeting Mode settings to their controls.
 
@@ -1437,6 +1511,12 @@ class SettingsDialog(QDialog):
         )
         self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
         self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
+        backend_index = self.meeting_speaker_id_combo.findData(
+            resolve_meeting_speaker_id_backend(settings)
+        )
+        blocker = self.meeting_speaker_id_combo.blockSignals(True)
+        self.meeting_speaker_id_combo.setCurrentIndex(max(0, backend_index))
+        self.meeting_speaker_id_combo.blockSignals(blocker)
         self.meeting_end_redecode_check.setChecked(
             resolve_meeting_end_redecode(settings)
         )
@@ -1665,6 +1745,17 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.MEETING_SERVER_PORT] = (
                 self.meeting_port_spinbox.value()
             )
+            speaker_backend = self.meeting_speaker_id_combo.currentData()
+            if (
+                speaker_backend == MeetingSpeakerIdBackend.OPENAI
+                and not resolve_meeting_audio_upload_consent()
+            ):
+                speaker_backend = MeetingSpeakerIdBackend.LOCAL
+                local_index = self.meeting_speaker_id_combo.findData(
+                    MeetingSpeakerIdBackend.LOCAL
+                )
+                self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
+            settings[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = speaker_backend
             settings[SettingsKey.MEETING_END_REDECODE] = (
                 self.meeting_end_redecode_check.isChecked()
             )

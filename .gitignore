@@ -29,6 +29,7 @@ meetings.json.bak
 
 # Environment files
 *.env
+!.env.example
 
 # Virtual environments
 venv/

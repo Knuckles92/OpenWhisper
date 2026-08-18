@@ -54,9 +54,10 @@ class MeetingConsentDialog(QDialog):
             "To do this, the meeting transcript text and the dashboard state "
             "are sent to OpenRouter (openrouter.ai), using the model chosen "
             "in Settings.\n\n"
-            "Your audio never leaves this computer. Recording and "
-            "transcription always run locally, with or without cloud "
-            "intelligence."
+            "Cloud intelligence does not upload audio. Recording and "
+            "transcription stay local. Speaker identification is a "
+            "separate setting and, if enabled, uploads the system-audio "
+            "recording after the meeting."
         )
         body.setObjectName("consentBodyLabel")
         body.setWordWrap(True)

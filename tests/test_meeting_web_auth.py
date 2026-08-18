@@ -346,6 +346,18 @@ class TestHostOnlyAuthz:
         assert blocked.status_code == 403
 
 
+class TestRerunSpeakers:
+    def test_guest_cannot_rerun(self, client):
+        tc, _, _ = client
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": GUEST_TOKEN})
+        assert r.status_code == 403
+
+    def test_active_meeting_conflicts(self, client):
+        tc, _, _ = client
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 409
+
+
 class TestRerunInsights:
     def test_guest_cannot_rerun(self, client):
         tc, _, _ = client
