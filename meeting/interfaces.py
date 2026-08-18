@@ -278,6 +278,15 @@ class AgentToolHost(Protocol):
         """Answer an open question from audio evidence (thresholded)."""
         ...
 
+    def search_past_meetings(
+        self,
+        query: str = "",
+        meeting_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated recall of earlier meeting transcripts."""
+        ...
+
 
 @runtime_checkable
 class AgentCore(Protocol):
@@ -440,4 +449,8 @@ class MeetingRepository(Protocol):
                     limit: int = 100) -> List[Dict[str, Any]]: ...
 
     # -- search --
-    def search_transcripts(self, query: str) -> List[Dict[str, Any]]: ...
+    def search_transcripts(
+        self, query: str, *,
+        exclude_meeting_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]: ...

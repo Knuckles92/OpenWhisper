@@ -47,3 +47,4 @@ class TestCloudConsentCopy(_QtTestCase):
         text = body.text() if body is not None else ""
         self.assertNotIn("Your audio never leaves this computer", text)
         self.assertIn("does not upload audio", text)
+        self.assertIn("Past-meeting recall", text)

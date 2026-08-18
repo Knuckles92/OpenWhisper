@@ -263,6 +263,7 @@ class TestMeetingSettings(unittest.TestCase):
             SettingsKey,
             resolve_meeting_agent_core,
             resolve_meeting_audio_upload_consent,
+            resolve_meeting_past_recall_enabled,
             resolve_meeting_end_polish,
             resolve_meeting_end_redecode,
             resolve_meeting_end_report,
@@ -291,6 +292,7 @@ class TestMeetingSettings(unittest.TestCase):
         self.resolve_agent_core = resolve_meeting_agent_core
         self.resolve_speaker_id = resolve_meeting_speaker_id_backend
         self.resolve_audio_consent = resolve_meeting_audio_upload_consent
+        self.resolve_past_recall = resolve_meeting_past_recall_enabled
         self.resolve_end_redecode = resolve_meeting_end_redecode
         self.resolve_end_polish = resolve_meeting_end_polish
         self.resolve_end_report = resolve_meeting_end_report
@@ -312,6 +314,7 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_speaker_id({}), config.MEETING_SPEAKER_ID_BACKEND)
         self.assertEqual(config.MEETING_SPEAKER_ID_BACKEND, self.speaker_backends.LOCAL)
         self.assertFalse(self.resolve_audio_consent({}))
+        self.assertFalse(self.resolve_past_recall({}))
         self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
         self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
         self.assertEqual(self.resolve_end_redecode({}), config.MEETING_END_REDECODE)
@@ -335,6 +338,7 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
             self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
             self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
+            self.keys.MEETING_PAST_RECALL_ENABLED: True,
             self.keys.MEETING_SERVER_BIND: self.binds.LAN,
             self.keys.MEETING_SERVER_PORT: 8099,
             self.keys.MEETING_END_REDECODE: True,
@@ -351,6 +355,7 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_agent_core(saved), self.agent_cores.DIRECT)
         self.assertEqual(self.resolve_speaker_id(saved), self.speaker_backends.OPENAI)
         self.assertTrue(self.resolve_audio_consent(saved))
+        self.assertTrue(self.resolve_past_recall(saved))
         self.assertEqual(self.resolve_bind(saved), self.binds.LAN)
         self.assertEqual(self.resolve_port(saved), 8099)
         self.assertTrue(self.resolve_end_redecode(saved))

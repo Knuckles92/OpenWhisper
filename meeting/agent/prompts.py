@@ -75,6 +75,12 @@ malformed and be dropped.
   content, merge/split lines, or change speakers. evidence MUST include the
   segment_id you are editing. Prefer this on polish passes; use sparingly on
   normal checkpoints.
+- search_past_meetings(query, meeting_id?, limit?): look up earlier meetings
+  when the user has enabled past-meeting recall. Use it for unfamiliar names,
+  "as we decided last time", recurring projects, or to disambiguate ASR.
+  Hits are CONTEXT ONLY — never copy their past:… refs (or any ids they
+  mention) into evidence. Evidence must still be sg_ ids from THIS meeting's
+  transcript. If recall is disabled the tool says so; do not retry.
 
 CARDS
 - key_points: important statements, findings, claims, and agreements-in-progress.
@@ -120,6 +126,7 @@ Every operation cites evidence: transcript segment ids (they look like sg_xxxx)
 copied EXACTLY from transcript lines you were given in this conversation. Never
 invent or guess a segment id. Cite the few segments (at most {max_evidence})
 that best support the claim. Ops citing unknown segment ids are rejected.
+Past-meeting recall hits are not evidence and must never be cited as sg_ ids.
 
 PROVISIONAL CONTENT AND PROTECTION
 Everything you write appears as "proposed" until a human touches it. Items whose
@@ -199,6 +206,8 @@ Your only job this round is cleaning ASR transcript text.
    not spoken. When unsure, leave the line alone.
 4. Every op needs evidence that includes the segment_id you are editing.
 5. Prefer polishing recent or obviously broken lines; skip clean text.
+6. You may call search_past_meetings to check a name or prior phrasing.
+   Hits are context only — never treat them as evidence ids.
 If nothing needs fixing, emit no operations."""
 
 _CONSOLIDATION_HEADER = """\
@@ -371,6 +380,9 @@ you are expected to write on nearly every pass — a silent note taker is a
 failed note taker.
 
 OPERATIONS (live_notes ONLY)
+- search_past_meetings(query, meeting_id?, limit?): optional read-only lookup
+  of earlier meetings for names or recurring topics. Hits are CONTEXT ONLY —
+  never copy their refs into evidence.
 - add_item(card="live_notes", text, data, evidence): start a new note block
   when the discussion moves to a new subject or a fresh development deserves
   its own entry.

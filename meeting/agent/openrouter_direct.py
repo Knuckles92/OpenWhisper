@@ -47,6 +47,9 @@ _PROBE_TIMEOUT_S = 10.0
 #: the first patch_state batch; rolling checkpoints stay at two rounds.
 _MAX_TOOL_ROUNDS = 2
 _MAX_CONSOLIDATION_TOOL_ROUNDS = 3
+#: Recall spends a round searching before the model can write; give it one
+#: extra hop when past-meeting recall is enabled.
+_MAX_TOOL_ROUNDS_WITH_RECALL = 3
 #: Low temperature keeps dashboard ops stable across checkpoints; consolidation
 #: especially benefits from less paraphrase drift between runs.
 _TEMPERATURE = 0.0
@@ -198,7 +201,45 @@ _RESOLVE_QUESTION_TOOL = {
     },
 }
 
-_TOOLS = [_PATCH_STATE_TOOL, _ASK_QUESTION_TOOL, _RESOLVE_QUESTION_TOOL]
+_SEARCH_PAST_MEETINGS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_past_meetings",
+        "description": (
+            "Search earlier OpenWhisper meetings for names, decisions, or "
+            "phrasing that help the current pass. Read-only. Hits are "
+            "context only — never copy their past:… refs into evidence. "
+            "Evidence must still be sg_… ids from THIS meeting. If recall "
+            "is disabled the tool says so; do not retry."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keywords to find in earlier transcripts.",
+                },
+                "meeting_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional past meeting id for a short transcript slice."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum hits (default 10, max 20).",
+                },
+            },
+        },
+    },
+}
+
+_READ_TOOLS = frozenset({"search_past_meetings"})
+
+_TOOLS = [
+    _PATCH_STATE_TOOL, _ASK_QUESTION_TOOL, _RESOLVE_QUESTION_TOOL,
+    _SEARCH_PAST_MEETINGS_TOOL,
+]
 
 _NOOP_TOOL = {
     "type": "function",
@@ -208,6 +249,16 @@ _NOOP_TOOL = {
         "parameters": {"type": "object", "properties": {}},
     },
 }
+
+
+def _past_recall_enabled() -> bool:
+    """True when the user has opted in to past-meeting recall."""
+    try:
+        from services.settings import resolve_meeting_past_recall_enabled
+
+        return bool(resolve_meeting_past_recall_enabled())
+    except Exception:
+        return False
 
 
 def _op_results_payload(results: List[OpResult]) -> Dict[str, Any]:
@@ -462,6 +513,8 @@ class DirectOpenRouterAgent:
             _MAX_CONSOLIDATION_TOOL_ROUNDS if payload.is_consolidation
             else _MAX_TOOL_ROUNDS
         )
+        if _past_recall_enabled() and max_rounds < _MAX_TOOL_ROUNDS_WITH_RECALL:
+            max_rounds = _MAX_TOOL_ROUNDS_WITH_RECALL
         self._polish_mode = bool(getattr(payload, "is_polish", False))
         self._notes_mode = is_notes
         self._notes_item_ids = (
@@ -502,6 +555,28 @@ class DirectOpenRouterAgent:
         ops = self._repair_ops([{"op": "ask_question",
                                  "evidence": evidence}])
         return ops[0].get("evidence") or evidence
+
+    def _dispatch_read_tool(self, name: str, args: Dict[str, Any]) -> str:
+        """Run a read-only tool and return the text the model should see."""
+        if name == "search_past_meetings":
+            search = getattr(self._tools, "search_past_meetings", None)
+            if not callable(search):
+                return json.dumps({
+                    "ok": False,
+                    "disabled": True,
+                    "text": "Past-meeting recall is not available.",
+                    "hits": [],
+                })
+            meeting_id = str(args.get("meeting_id") or "").strip() or None
+            result = search(
+                query=str(args.get("query") or ""),
+                meeting_id=meeting_id,
+                limit=args.get("limit", 10),
+            )
+            if isinstance(result, dict):
+                return str(result.get("text") or json.dumps(result))
+            return str(result or "")
+        raise ValueError(f"unknown read tool: {name}")
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
         """Route one model tool call to the tool host."""
@@ -602,9 +677,16 @@ class DirectOpenRouterAgent:
                     args = json.loads(call.function.arguments or "{}")
                     if not isinstance(args, dict):
                         raise ValueError("tool arguments must be a JSON object")
-                    results = self._dispatch_tool_call(call.function.name, args)
-                    op_results.extend(results)
-                    content = json.dumps(_op_results_payload(results))
+                    if call.function.name in _READ_TOOLS:
+                        content = self._dispatch_read_tool(
+                            call.function.name, args,
+                        )
+                    else:
+                        results = self._dispatch_tool_call(
+                            call.function.name, args,
+                        )
+                        op_results.extend(results)
+                        content = json.dumps(_op_results_payload(results))
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "Tool call %s produced malformed JSON: %s",

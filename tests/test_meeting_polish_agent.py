@@ -44,6 +44,7 @@ def test_polish_prompt_limits_the_agent_to_transcript_text():
     assert "TRANSCRIPT POLISH PASS" in prompt
     assert "ONLY revise_segment_text" in prompt
     assert "## FULL MEETING TRANSCRIPT" in prompt
+    assert "search_past_meetings" in prompt
 
 
 def test_direct_polish_mode_filters_state_and_question_tools():
@@ -75,3 +76,23 @@ def test_direct_polish_mode_filters_state_and_question_tools():
     assert len(results) == 1
     assert question_results == []
     assert tools.question_calls == 0
+
+
+def test_direct_read_tool_returns_text_without_ops():
+    tools = _Tools()
+    tools.searches = []
+
+    def search_past_meetings(query="", meeting_id=None, limit=10):
+        tools.searches.append(query)
+        return {"ok": True, "text": "past:m_old:1 excerpt", "hits": []}
+
+    tools.search_past_meetings = search_past_meetings
+    agent = DirectOpenRouterAgent()
+    agent._tools = tools
+    agent._polish_mode = True
+    content = agent._dispatch_read_tool(
+        "search_past_meetings", {"query": "budget"},
+    )
+    assert content == "past:m_old:1 excerpt"
+    assert tools.ops == []
+    assert tools.searches == ["budget"]

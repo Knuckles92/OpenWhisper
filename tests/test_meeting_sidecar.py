@@ -126,6 +126,28 @@ for line in sys.stdin:
                                      "q_rejected": q_rejected}},
             }) + "\n")
             sys.stdout.flush()
+        elif mode == "recall_polish" and params.get("is_polish"):
+            tool_req = {
+                "jsonrpc": "2.0", "id": 997,
+                "method": "tool.search_past_meetings",
+                "params": {"query": "budget", "limit": 5},
+            }
+            sys.stdout.write(json.dumps(tool_req) + "\n")
+            sys.stdout.flush()
+            tool_resp = None
+            for inner in sys.stdin:
+                inner_msg = json.loads(inner.strip())
+                if inner_msg.get("id") == 997:
+                    tool_resp = inner_msg
+                    break
+            recalled = (tool_resp or {}).get("result") or {}
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": 0, "rejected": 0,
+                           "usage": {"recall_ok": recalled.get("ok"),
+                                     "recall_text": recalled.get("text")}},
+            }) + "\n")
+            sys.stdout.flush()
         elif mode == "notes_flag":
             is_notes = bool(params.get("is_notes"))
             has_prompt = is_notes and bool(params.get("system_prompt"))
@@ -163,6 +185,13 @@ class FakeTools:
 
     def resolve_question(self, question_id, answer_text, confidence, evidence):
         return OpResult(ok=True, op={"op": "resolve_question"}, seq=1)
+
+    def search_past_meetings(self, query="", meeting_id=None, limit=10):
+        return {
+            "ok": True,
+            "text": "past:m_old:1  \"Prior\" (2026-01-01) t=1s — match",
+            "hits": [{"ref": "past:m_old:1", "meeting_id": "m_old"}],
+        }
 
 
 @pytest.fixture
@@ -644,6 +673,7 @@ class _RecordingTools(FakeTools):
     def __init__(self):
         self.ops = []
         self.questions = []
+        self.searches = []
 
     def apply_agent_ops(self, ops):
         self.ops.extend(ops)
@@ -652,6 +682,12 @@ class _RecordingTools(FakeTools):
     def ask_question(self, text, evidence):
         self.questions.append(text)
         return super().ask_question(text, evidence)
+
+    def search_past_meetings(self, query="", meeting_id=None, limit=10):
+        self.searches.append({
+            "query": query, "meeting_id": meeting_id, "limit": limit,
+        })
+        return super().search_past_meetings(query, meeting_id, limit)
 
 
 _NOTES_STATE = {
@@ -733,3 +769,33 @@ class TestNotesPass:
         # answered with a notes_only rejection.
         assert result.usage["filtered"] == 2
         assert result.usage["q_rejected"] is True
+
+
+class TestRecallPolish:
+    def test_search_is_allowed_during_polish_and_does_not_tally_writes(
+        self, stub_dir,
+    ):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "recall_polish"})
+        tools = _RecordingTools()
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(_cfg(), tools)
+            try:
+                result = agent.checkpoint(CheckpointPayload(
+                    request_id="req-recall-polish",
+                    state_snapshot={"meeting_id": "m_live"},
+                    new_segments=[],
+                    is_polish=True,
+                ))
+            finally:
+                agent.shutdown()
+
+        assert result.ok
+        assert tools.searches == [
+            {"query": "budget", "meeting_id": None, "limit": 5},
+        ]
+        assert tools.ops == []
+        assert result.usage["recall_ok"] is True
+        assert "past:m_old:1" in result.usage["recall_text"]
+        assert sum(1 for r in result.op_results if r.ok) == 0

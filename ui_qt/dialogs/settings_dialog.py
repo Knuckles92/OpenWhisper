@@ -29,6 +29,7 @@ from services.settings import (
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
     resolve_meeting_audio_upload_consent,
+    resolve_meeting_past_recall_enabled,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
     resolve_meeting_end_report,
@@ -804,6 +805,24 @@ class SettingsDialog(QDialog):
         meeting_intelligence_info.setWordWrap(True)
         layout.addWidget(meeting_intelligence_info)
 
+        self.meeting_past_recall_check = QCheckBox(
+            "Let the meeting agent search past transcripts"
+        )
+        self.meeting_past_recall_check.setObjectName("meetingPastRecallCheck")
+        self.meeting_past_recall_check.setToolTip(
+            "When enabled, cloud intelligence may send excerpts from earlier "
+            "meetings to the model. Off by default."
+        )
+        layout.addWidget(self.meeting_past_recall_check)
+        past_recall_info = QLabel(
+            "Off by default. The agent can then look up names and prior "
+            "decisions from stored meetings. Excerpts leave this machine "
+            "the same way the current transcript does."
+        )
+        past_recall_info.setObjectName("infoLabel")
+        past_recall_info.setWordWrap(True)
+        layout.addWidget(past_recall_info)
+
         layout.addSpacing(16)
         after_title = QLabel("After the meeting")
         after_title.setObjectName("sectionLabel")
@@ -1517,6 +1536,9 @@ class SettingsDialog(QDialog):
         blocker = self.meeting_speaker_id_combo.blockSignals(True)
         self.meeting_speaker_id_combo.setCurrentIndex(max(0, backend_index))
         self.meeting_speaker_id_combo.blockSignals(blocker)
+        self.meeting_past_recall_check.setChecked(
+            resolve_meeting_past_recall_enabled(settings)
+        )
         self.meeting_end_redecode_check.setChecked(
             resolve_meeting_end_redecode(settings)
         )
@@ -1756,6 +1778,9 @@ class SettingsDialog(QDialog):
                 )
                 self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
             settings[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = speaker_backend
+            settings[SettingsKey.MEETING_PAST_RECALL_ENABLED] = (
+                self.meeting_past_recall_check.isChecked()
+            )
             settings[SettingsKey.MEETING_END_REDECODE] = (
                 self.meeting_end_redecode_check.isChecked()
             )

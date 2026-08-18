@@ -279,6 +279,27 @@ class TestSearchAndDelete:
         # The FTS index must not serve orphaned rows after deletion
         assert repo.search_transcripts("budget") == []
 
+    def test_fts_search_excludes_meeting_and_honors_limit(self, repo):
+        make_meeting(repo, "m_live")
+        make_meeting(repo, "m_past")
+        repo.add_segments([
+            make_segment("m_live", "sg_live", 0.0, 2.0,
+                         "the quarterly budget review"),
+            make_segment("m_past", "sg_past_a", 0.0, 2.0,
+                         "budget planning for next quarter"),
+            make_segment("m_past", "sg_past_b", 2.0, 4.0,
+                         "another budget follow-up"),
+        ])
+        hits = repo.search_transcripts(
+            "budget", exclude_meeting_id="m_live", limit=1,
+        )
+        assert len(hits) == 1
+        assert hits[0]["meeting_id"] == "m_past"
+        assert all(hit["meeting_id"] != "m_live" for hit in hits)
+        more = repo.search_transcripts("budget", exclude_meeting_id="m_live")
+        assert len(more) == 2
+        assert {hit["meeting_id"] for hit in more} == {"m_past"}
+
 
 class TestWriteThrough:
     def test_ops_applied_mirrors_and_audit(self, repo, db):

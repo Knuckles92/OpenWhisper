@@ -69,6 +69,7 @@ class SettingsKey:
     MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: Final[str] = (
         "meeting_audio_upload_consent_given"
     )
+    MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
 
@@ -818,6 +819,20 @@ def resolve_meeting_audio_upload_consent(
     """Return whether the user has approved uploading meeting audio."""
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, False,
+    )
+
+
+def resolve_meeting_past_recall_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether meeting agents may search past transcripts.
+
+    Off by default. When enabled, cloud intelligence may send excerpts from
+    earlier meetings to the model. Distinct from cloud-intelligence consent,
+    which covers only the current meeting.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_PAST_RECALL_ENABLED, False,
     )
 
 

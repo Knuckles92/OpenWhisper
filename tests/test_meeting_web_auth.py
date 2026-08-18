@@ -55,7 +55,7 @@ class FakeRepo:
     def delete_meeting(self, meeting_id):
         self.deleted.append(meeting_id)
 
-    def search_transcripts(self, q):
+    def search_transcripts(self, q, *, exclude_meeting_id=None, limit=200):
         self.search_calls.append(q)
         return []
 

@@ -39,7 +39,7 @@ __all__ = ["rerun_insights", "DEFAULT_TIMEOUT_S"]
 
 
 class _OfflineToolHost:
-    """``AgentToolHost`` for a stored meeting: state patches, nothing else.
+    """``AgentToolHost`` for a stored meeting: state patches plus recall.
 
     Mirrors ``MeetingEngine``'s tool-host implementation op-for-op so the
     validation layer behaves identically to a live checkpoint. The store is
@@ -50,11 +50,18 @@ class _OfflineToolHost:
         applied: Running count of ops the store actually applied.
     """
 
-    def __init__(self, store: MeetingStateStore) -> None:
+    def __init__(self, store: MeetingStateStore,
+                 repository: Any = None) -> None:
         """Args:
             store: The store owning the meeting's state document.
+            repository: Optional ``MeetingRepository`` for past-meeting recall.
+                Falls back to the store's repository when omitted.
         """
         self._store = store
+        self._repository = (
+            repository if repository is not None
+            else getattr(store, "_repository", None)
+        )
         self.applied = 0
 
     def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
@@ -76,6 +83,28 @@ class _OfflineToolHost:
             "answer_text": answer_text, "confidence": confidence,
             "evidence": list(evidence or []),
         })
+
+    def search_past_meetings(
+        self,
+        query: str = "",
+        meeting_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated recall of earlier meeting transcripts."""
+        from meeting.recall import search_past_meetings as recall
+
+        current_id = ""
+        try:
+            current_id = self._store.meeting_id
+        except Exception:
+            current_id = ""
+        return recall(
+            self._repository,
+            query=query,
+            current_meeting_id=current_id,
+            meeting_id=meeting_id,
+            limit=limit,
+        )
 
     def _apply_single(self, op: Dict[str, Any]) -> OpResult:
         return self._record(self._store.apply("agent", "agent", [op]))[0]
@@ -207,7 +236,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
                 )
             ),
         )
-    tools = _OfflineToolHost(store)
+    tools = _OfflineToolHost(store, repository)
 
     try:
         core = create_agent_core(agent_core_kind, sidecar_payload_dir)

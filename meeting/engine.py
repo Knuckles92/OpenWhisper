@@ -2790,6 +2790,23 @@ class MeetingEngine:
             "evidence": list(evidence or []),
         })
 
+    def search_past_meetings(
+        self,
+        query: str = "",
+        meeting_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated recall of earlier meeting transcripts."""
+        from meeting.recall import search_past_meetings as recall
+
+        return recall(
+            getattr(self, "repository", None),
+            query=query,
+            current_meeting_id=getattr(self, "meeting_id", None) or "",
+            meeting_id=meeting_id,
+            limit=limit,
+        )
+
     def _apply_single_agent_op(self, op: Dict[str, Any]) -> OpResult:
         if self.store is None:
             return OpResult(ok=False, op=op, reason="inactive")

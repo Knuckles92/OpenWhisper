@@ -10,7 +10,7 @@
  *                    checkpoint carries the note-taker system_prompt)
  *      | cancel {request_id} | ping {} | status {} | shutdown {}
  *  - Outbound tool-bridge requests: tool.patch_state / tool.ask_question /
- *      tool.resolve_question (see tools.ts).
+ *      tool.resolve_question / tool.search_past_meetings (see tools.ts).
  *  - Outbound notifications: log {level, msg} | progress {request_id, event,
  *      streaming} (Pi session hooks; host uses these to reset a stall timer).
  *

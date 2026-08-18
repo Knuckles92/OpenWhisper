@@ -1009,20 +1009,34 @@ class SqlMeetingRepository:
     # Search
     # ------------------------------------------------------------------
 
-    def search_transcripts(self, query: str) -> List[Dict[str, Any]]:
+    def search_transcripts(self, query: str, *,
+                           exclude_meeting_id: Optional[str] = None,
+                           limit: int = 200) -> List[Dict[str, Any]]:
         """Full-text search across all meeting transcripts.
 
         Returns segment matches with meeting metadata, newest meetings first.
         Degrades to an empty list when the FTS index is unavailable.
+
+        Args:
+            query: Free-text search terms. FTS operators in the input are
+                quoted so they cannot change the match expression.
+            exclude_meeting_id: Optional meeting id to omit (the live meeting).
+            limit: Maximum rows to return. Capped at 200.
         """
         query = (query or "").strip()
         if not query:
             return []
+        try:
+            row_limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            row_limit = 200
         # Quote each term to keep FTS5 operators from leaking in from user input.
         match_expr = " ".join(
             '"{}"'.format(term.replace('"', '""')) for term in query.split()
         )
-        stmt = sql_text("""
+        exclude = (exclude_meeting_id or "").strip()
+        exclude_clause = "AND s.id != :exclude" if exclude else ""
+        stmt = sql_text(f"""
             SELECT ms.id AS segment_id, ms.meeting_id, ms.start_s, ms.end_s,
                    ms.text, s.title, s.started_at,
                    snippet(meeting_segments_fts, 0, '[', ']', ' … ', 12) AS snippet
@@ -1030,12 +1044,16 @@ class SqlMeetingRepository:
             JOIN meeting_segments ms ON ms.rowid = meeting_segments_fts.rowid
             JOIN meeting_sessions s ON s.id = ms.meeting_id
             WHERE meeting_segments_fts MATCH :q
+            {exclude_clause}
             ORDER BY s.started_at DESC, ms.start_s
-            LIMIT 200
+            LIMIT :limit
         """)
+        params: Dict[str, Any] = {"q": match_expr, "limit": row_limit}
+        if exclude:
+            params["exclude"] = exclude
         try:
             with self._db.engine.connect() as conn:
-                rows = conn.execute(stmt, {"q": match_expr}).mappings().all()
+                rows = conn.execute(stmt, params).mappings().all()
                 return [dict(r) for r in rows]
         except Exception:
             logger.exception("Meeting transcript search failed")

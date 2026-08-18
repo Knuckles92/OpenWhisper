@@ -57,7 +57,10 @@ class MeetingConsentDialog(QDialog):
             "Cloud intelligence does not upload audio. Recording and "
             "transcription stay local. Speaker identification is a "
             "separate setting and, if enabled, uploads the system-audio "
-            "recording after the meeting."
+            "recording after the meeting.\n\n"
+            "Past-meeting recall is also off by default. If you later "
+            "enable it in Settings, excerpts from earlier meetings may "
+            "be sent so the agent can recall prior names and decisions."
         )
         body.setObjectName("consentBodyLabel")
         body.setWordWrap(True)

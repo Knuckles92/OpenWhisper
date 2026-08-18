@@ -1129,6 +1129,33 @@ class PiSidecarAgent:
                 payload: Dict[str, Any] = {
                     "results": [_serialize_op_result(r) for r in results],
                 }
+            elif method == "tool.search_past_meetings":
+                search = getattr(tools, "search_past_meetings", None)
+                if not callable(search):
+                    payload = {
+                        "ok": False,
+                        "disabled": True,
+                        "text": "Past-meeting recall is not available.",
+                        "hits": [],
+                    }
+                else:
+                    raw_limit = params.get("limit", 10)
+                    try:
+                        limit = int(raw_limit)
+                    except (TypeError, ValueError):
+                        limit = 10
+                    meeting_id = str(params.get("meeting_id") or "").strip() or None
+                    payload = search(
+                        query=str(params.get("query") or ""),
+                        meeting_id=meeting_id,
+                        limit=limit,
+                    )
+                    if not isinstance(payload, dict):
+                        payload = {
+                            "ok": True,
+                            "text": str(payload or ""),
+                            "hits": [],
+                        }
             elif method in ("tool.ask_question", "tool.resolve_question"):
                 if notes_mode:
                     payload = _serialize_op_result(

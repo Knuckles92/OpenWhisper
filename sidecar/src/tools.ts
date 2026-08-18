@@ -1,5 +1,6 @@
 /**
- * The three Pi custom tools: patch_state, ask_question, resolve_question.
+ * The Pi custom tools: patch_state, ask_question, resolve_question,
+ * and the read-only search_past_meetings.
  *
  * Each tool forwards its call over JSON-RPC to the Python host
  * (tool.patch_state / tool.ask_question / tool.resolve_question), awaits the
@@ -51,6 +52,12 @@ Evidence is a list of transcript segment ids (sg_...) that support the claim; un
 const ASK_QUESTION_DESCRIPTION = `Add a question to the meeting's quiet question inbox (it never interrupts anyone; participants answer or dismiss it when they choose). Use it for genuine open points the meeting has not settled — missing owners, unresolved decisions, ambiguous commitments. At most 7 questions may be open at once; extras are rejected with reason "question_limit".`;
 
 const RESOLVE_QUESTION_DESCRIPTION = `Resolve an open inbox question from transcript evidence. confidence >= 0.8 marks it resolved with an "answered from audio" badge; 0.4 to 0.8 records a greyed suggested answer instead; below 0.4 is rejected with reason "low_confidence". evidence must list the transcript segment ids (sg_...) containing the answer.`;
+
+const SEARCH_PAST_MEETINGS_DESCRIPTION = `Search earlier OpenWhisper meetings for names, decisions, or phrasing that help the current pass. Read-only: it never changes the dashboard or transcript.
+
+Use it for unfamiliar names, "as we decided last time", recurring projects, or to disambiguate ASR during polish. Hits are CONTEXT ONLY — never copy their past:… refs or any ids they mention into evidence. Evidence must still be sg_… ids from THIS meeting's transcript.
+
+Parameters: query (keywords), optional meeting_id (return a short slice of one past meeting), optional limit (default 10). If the user has not enabled past-meeting recall the tool says so; do not retry.`;
 
 function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): string {
   const applied = results.filter((r) => r && r.ok).length;
@@ -195,6 +202,58 @@ export function createMeetingTools(
     },
   };
 
+  const searchPastMeetings: MeetingToolDef = {
+    name: "search_past_meetings",
+    label: "Search past meetings",
+    description: SEARCH_PAST_MEETINGS_DESCRIPTION,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keywords to find in earlier meeting transcripts.",
+        },
+        meeting_id: {
+          type: "string",
+          description: "Optional past meeting id to fetch a short transcript slice.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum hits to return (default 10, max 20).",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    execute: async (params) => {
+      // Read-only: allowed on polish and notes passes. Do not tally
+      // applied/rejected — those counters feed the checkpoint write score.
+      try {
+        const response = await rpc.request(
+          "tool.search_past_meetings",
+          {
+            query: params.query ?? "",
+            meeting_id: params.meeting_id ?? "",
+            limit: params.limit ?? 10,
+          },
+          TOOL_RPC_TIMEOUT_MS,
+        );
+        const text =
+          typeof response?.text === "string" && response.text
+            ? response.text
+            : JSON.stringify(response ?? {});
+        return { text, details: response };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        rpc.log("error", `search_past_meetings bridge failed: ${message}`);
+        return {
+          text: `Tool bridge error: ${message}`,
+          details: { error: message },
+        };
+      }
+    },
+  };
+
   const resolveQuestion: MeetingToolDef = {
     name: "resolve_question",
     label: "Resolve a question",
@@ -236,7 +295,7 @@ export function createMeetingTools(
     },
   };
 
-  return [patchState, askQuestion, resolveQuestion];
+  return [patchState, askQuestion, resolveQuestion, searchPastMeetings];
 }
 
 /** Forward a single-result tool call and tally its outcome. */

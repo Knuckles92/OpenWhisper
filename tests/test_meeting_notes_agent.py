@@ -67,6 +67,8 @@ class TestNoteTakerPrompts:
         prompt = build_system_prompt()
         assert "live_notes" in prompt
         assert "note-taker pass" in prompt
+        assert "search_past_meetings" in prompt
+        assert "CONTEXT ONLY" in prompt
 
     def test_consolidation_instructions_finalize_notes(self):
         prompt = build_checkpoint_user_prompt(
