@@ -45,6 +45,7 @@ def test_polish_prompt_limits_the_agent_to_transcript_text():
     assert "ONLY revise_segment_text" in prompt
     assert "## FULL MEETING TRANSCRIPT" in prompt
     assert "search_past_meetings" in prompt
+    assert "search_context_files" in prompt
 
 
 def test_direct_polish_mode_filters_state_and_question_tools():
@@ -87,12 +88,25 @@ def test_direct_read_tool_returns_text_without_ops():
         return {"ok": True, "text": "past:m_old:1 excerpt", "hits": []}
 
     tools.search_past_meetings = search_past_meetings
+
+    def search_context_files(query="", relative_path=None, limit=10):
+        tools.folder_searches.append((query, relative_path, limit))
+        return {"ok": True, "text": "file:plan.md:1 excerpt", "hits": []}
+
+    tools.folder_searches = []
+    tools.search_context_files = search_context_files
     agent = DirectOpenRouterAgent()
     agent._tools = tools
     agent._polish_mode = True
     content = agent._dispatch_read_tool(
         "search_past_meetings", {"query": "budget"},
     )
+    folder = agent._dispatch_read_tool(
+        "search_context_files",
+        {"query": "roadmap", "relative_path": "plan.md"},
+    )
     assert content == "past:m_old:1 excerpt"
+    assert folder == "file:plan.md:1 excerpt"
     assert tools.ops == []
     assert tools.searches == ["budget"]
+    assert tools.folder_searches == [("roadmap", "plan.md", 10)]

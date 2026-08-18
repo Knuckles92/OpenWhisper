@@ -70,6 +70,10 @@ class SettingsKey:
         "meeting_audio_upload_consent_given"
     )
     MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
+    MEETING_CONTEXT_FOLDER_ENABLED: Final[str] = (
+        "meeting_context_folder_enabled"
+    )
+    MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
 
@@ -834,6 +838,42 @@ def resolve_meeting_past_recall_enabled(
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_PAST_RECALL_ENABLED, False,
     )
+
+
+def resolve_meeting_context_folder_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether meeting agents may search a local knowledge folder.
+
+    Off by default. When enabled, cloud intelligence may send excerpts from
+    files in the configured folder to the model. Distinct from both
+    cloud-intelligence consent and past-meeting recall.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, False,
+    )
+
+
+def resolve_meeting_context_folder_path(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the normalized knowledge-folder path, or empty when unset.
+
+    Expands ``~`` and makes the path absolute. Does not require the folder
+    to exist; the search module treats a missing directory as unavailable.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, "")
+    if not isinstance(raw, str):
+        return ""
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+    expanded = os.path.expanduser(cleaned)
+    if not os.path.isabs(expanded):
+        expanded = os.path.abspath(expanded)
+    return os.path.normpath(expanded)
 
 
 def _resolve_bool_setting(

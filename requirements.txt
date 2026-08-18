@@ -18,6 +18,11 @@ python-dotenv>=1.0.0
 PyQt6>=6.0.0
 sqlalchemy>=2.0.0
 
+# Meeting Mode: knowledge-folder document extractors (PDF / Office)
+pypdf>=5.0.0
+python-docx>=1.1.0
+python-pptx>=1.0.0
+openpyxl>=3.1.0
 # Meeting Mode: dashboard web server (FastAPI + WebSocket over uvicorn)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0

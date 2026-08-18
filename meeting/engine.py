@@ -2807,6 +2807,21 @@ class MeetingEngine:
             limit=limit,
         )
 
+    def search_context_files(
+        self,
+        query: str = "",
+        relative_path: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated search of the configured knowledge folder."""
+        from meeting.context_folder import search_context_files as search
+
+        return search(
+            query=query,
+            relative_path=relative_path,
+            limit=limit,
+        )
+
     def _apply_single_agent_op(self, op: Dict[str, Any]) -> OpResult:
         if self.store is None:
             return OpResult(ok=False, op=op, reason="inactive")

@@ -287,6 +287,15 @@ class AgentToolHost(Protocol):
         """Bounded, consent-gated recall of earlier meeting transcripts."""
         ...
 
+    def search_context_files(
+        self,
+        query: str = "",
+        relative_path: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated search of the knowledge folder."""
+        ...
+
 
 @runtime_checkable
 class AgentCore(Protocol):

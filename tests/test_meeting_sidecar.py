@@ -126,6 +126,29 @@ for line in sys.stdin:
                                      "q_rejected": q_rejected}},
             }) + "\n")
             sys.stdout.flush()
+        elif mode == "folder_polish" and params.get("is_polish"):
+            tool_req = {
+                "jsonrpc": "2.0", "id": 996,
+                "method": "tool.search_context_files",
+                "params": {"query": "roadmap", "relative_path": "plan.md",
+                           "limit": 5},
+            }
+            sys.stdout.write(json.dumps(tool_req) + "\n")
+            sys.stdout.flush()
+            tool_resp = None
+            for inner in sys.stdin:
+                inner_msg = json.loads(inner.strip())
+                if inner_msg.get("id") == 996:
+                    tool_resp = inner_msg
+                    break
+            recalled = (tool_resp or {}).get("result") or {}
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": 0, "rejected": 0,
+                           "usage": {"folder_ok": recalled.get("ok"),
+                                     "folder_text": recalled.get("text")}},
+            }) + "\n")
+            sys.stdout.flush()
         elif mode == "recall_polish" and params.get("is_polish"):
             tool_req = {
                 "jsonrpc": "2.0", "id": 997,
@@ -191,6 +214,13 @@ class FakeTools:
             "ok": True,
             "text": "past:m_old:1  \"Prior\" (2026-01-01) t=1s — match",
             "hits": [{"ref": "past:m_old:1", "meeting_id": "m_old"}],
+        }
+
+    def search_context_files(self, query="", relative_path=None, limit=10):
+        return {
+            "ok": True,
+            "text": "file:plan.md:1  plan.md — roadmap excerpt",
+            "hits": [{"ref": "file:plan.md:1", "path": "plan.md"}],
         }
 
 
@@ -674,6 +704,7 @@ class _RecordingTools(FakeTools):
         self.ops = []
         self.questions = []
         self.searches = []
+        self.folder_searches = []
 
     def apply_agent_ops(self, ops):
         self.ops.extend(ops)
@@ -688,6 +719,14 @@ class _RecordingTools(FakeTools):
             "query": query, "meeting_id": meeting_id, "limit": limit,
         })
         return super().search_past_meetings(query, meeting_id, limit)
+
+    def search_context_files(self, query="", relative_path=None, limit=10):
+        self.folder_searches.append({
+            "query": query, "relative_path": relative_path, "limit": limit,
+        })
+        return super().search_context_files(
+            query, relative_path=relative_path, limit=limit,
+        )
 
 
 _NOTES_STATE = {
@@ -798,4 +837,34 @@ class TestRecallPolish:
         assert tools.ops == []
         assert result.usage["recall_ok"] is True
         assert "past:m_old:1" in result.usage["recall_text"]
+        assert sum(1 for r in result.op_results if r.ok) == 0
+
+
+class TestContextFolderPolish:
+    def test_search_is_allowed_during_polish_and_does_not_tally_writes(
+        self, stub_dir,
+    ):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "folder_polish"})
+        tools = _RecordingTools()
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(_cfg(), tools)
+            try:
+                result = agent.checkpoint(CheckpointPayload(
+                    request_id="req-folder-polish",
+                    state_snapshot={"meeting_id": "m_live"},
+                    new_segments=[],
+                    is_polish=True,
+                ))
+            finally:
+                agent.shutdown()
+
+        assert result.ok
+        assert tools.folder_searches == [
+            {"query": "roadmap", "relative_path": "plan.md", "limit": 5},
+        ]
+        assert tools.ops == []
+        assert result.usage["folder_ok"] is True
+        assert "file:plan.md:1" in result.usage["folder_text"]
         assert sum(1 for r in result.op_results if r.ok) == 0

@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QCheckBox, QPushButton,
     QSlider, QFrame, QScrollArea, QTextEdit,
     QLineEdit, QListWidget, QStackedWidget, QSizePolicy,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -29,6 +30,8 @@ from services.settings import (
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
     resolve_meeting_audio_upload_consent,
+    resolve_meeting_context_folder_enabled,
+    resolve_meeting_context_folder_path,
     resolve_meeting_past_recall_enabled,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
@@ -823,6 +826,48 @@ class SettingsDialog(QDialog):
         past_recall_info.setWordWrap(True)
         layout.addWidget(past_recall_info)
 
+        self.meeting_context_folder_check = QCheckBox(
+            "Let the meeting agent search a knowledge folder"
+        )
+        self.meeting_context_folder_check.setObjectName(
+            "meetingContextFolderCheck"
+        )
+        self.meeting_context_folder_check.setToolTip(
+            "When enabled, cloud intelligence may send excerpts from files "
+            "in the selected folder to the model. Off by default."
+        )
+        layout.addWidget(self.meeting_context_folder_check)
+
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
+        self.meeting_context_folder_path = QLineEdit()
+        self.meeting_context_folder_path.setObjectName(
+            "meetingContextFolderPath"
+        )
+        self.meeting_context_folder_path.setPlaceholderText(
+            "No folder selected"
+        )
+        folder_row.addWidget(self.meeting_context_folder_path, 1)
+        browse_btn = Button("Browse…")
+        browse_btn.setObjectName("meetingContextFolderBrowse")
+        browse_btn.clicked.connect(self._browse_context_folder)
+        folder_row.addWidget(browse_btn)
+        clear_btn = Button("Clear")
+        clear_btn.setObjectName("meetingContextFolderClear")
+        clear_btn.clicked.connect(self._clear_context_folder)
+        folder_row.addWidget(clear_btn)
+        layout.addLayout(folder_row)
+
+        context_folder_info = QLabel(
+            "Off by default. Choose a local folder (for example an Obsidian "
+            "vault). The agent can search files there for names and project "
+            "context. Matched excerpts leave this machine the same way the "
+            "current transcript does. Images, audio, and video are not read."
+        )
+        context_folder_info.setObjectName("infoLabel")
+        context_folder_info.setWordWrap(True)
+        layout.addWidget(context_folder_info)
+
         layout.addSpacing(16)
         after_title = QLabel("After the meeting")
         after_title.setObjectName("sectionLabel")
@@ -1506,6 +1551,23 @@ class SettingsDialog(QDialog):
         self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
         self.meeting_speaker_id_combo.blockSignals(blocker)
 
+    def _browse_context_folder(self):
+        """Choose a local folder for meeting-agent knowledge search."""
+        current = self.meeting_context_folder_path.text().strip()
+        start = current if os.path.isdir(current) else os.path.expanduser("~")
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Select knowledge folder", start,
+        )
+        if not chosen:
+            return
+        self.meeting_context_folder_path.setText(os.path.normpath(chosen))
+        self.meeting_context_folder_check.setChecked(True)
+
+    def _clear_context_folder(self):
+        """Remove the configured knowledge folder and disable search."""
+        self.meeting_context_folder_path.clear()
+        self.meeting_context_folder_check.setChecked(False)
+
     def _load_meeting_settings(self, settings: dict):
         """Apply the stored Meeting Mode settings to their controls.
 
@@ -1538,6 +1600,12 @@ class SettingsDialog(QDialog):
         self.meeting_speaker_id_combo.blockSignals(blocker)
         self.meeting_past_recall_check.setChecked(
             resolve_meeting_past_recall_enabled(settings)
+        )
+        self.meeting_context_folder_check.setChecked(
+            resolve_meeting_context_folder_enabled(settings)
+        )
+        self.meeting_context_folder_path.setText(
+            resolve_meeting_context_folder_path(settings)
         )
         self.meeting_end_redecode_check.setChecked(
             resolve_meeting_end_redecode(settings)
@@ -1780,6 +1848,16 @@ class SettingsDialog(QDialog):
             settings[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = speaker_backend
             settings[SettingsKey.MEETING_PAST_RECALL_ENABLED] = (
                 self.meeting_past_recall_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED] = (
+                self.meeting_context_folder_check.isChecked()
+            )
+            settings[SettingsKey.MEETING_CONTEXT_FOLDER_PATH] = (
+                resolve_meeting_context_folder_path({
+                    SettingsKey.MEETING_CONTEXT_FOLDER_PATH: (
+                        self.meeting_context_folder_path.text()
+                    ),
+                })
             )
             settings[SettingsKey.MEETING_END_REDECODE] = (
                 self.meeting_end_redecode_check.isChecked()

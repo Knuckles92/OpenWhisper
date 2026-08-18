@@ -39,7 +39,7 @@ __all__ = ["rerun_insights", "DEFAULT_TIMEOUT_S"]
 
 
 class _OfflineToolHost:
-    """``AgentToolHost`` for a stored meeting: state patches plus recall.
+    """``AgentToolHost`` for a stored meeting: state patches plus read tools.
 
     Mirrors ``MeetingEngine``'s tool-host implementation op-for-op so the
     validation layer behaves identically to a live checkpoint. The store is
@@ -103,6 +103,21 @@ class _OfflineToolHost:
             query=query,
             current_meeting_id=current_id,
             meeting_id=meeting_id,
+            limit=limit,
+        )
+
+    def search_context_files(
+        self,
+        query: str = "",
+        relative_path: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Bounded, consent-gated search of the configured knowledge folder."""
+        from meeting.context_folder import search_context_files as search
+
+        return search(
+            query=query,
+            relative_path=relative_path,
             limit=limit,
         )
 

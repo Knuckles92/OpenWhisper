@@ -236,3 +236,31 @@ class TestFailure:
         assert result["ok"] is False
         assert "no core" in result["error"]
         assert result["applied"] == 0
+
+
+class TestReadTools:
+    def test_offline_host_exposes_context_folder_search(
+        self, repo, monkeypatch,
+    ):
+        make_meeting(repo)
+        add_transcript(repo, "m_rerun")
+        seen = {}
+
+        class Core(FakeAgentCore):
+            def consolidate(self, payload):
+                seen.update(self.tools.search_context_files(query="budget"))
+                return super().consolidate(payload)
+
+        install_core(monkeypatch, Core())
+        with monkeypatch.context() as patched:
+            patched.setattr(
+                "services.settings.resolve_meeting_context_folder_enabled",
+                lambda settings=None: False,
+            )
+            result = rerun_insights(
+                repo, "m_rerun", provider="openrouter", model="m",
+            )
+
+        assert result["ok"] is True
+        assert seen.get("disabled") is True
+        assert seen.get("hits") == []

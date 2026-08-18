@@ -1156,6 +1156,35 @@ class PiSidecarAgent:
                             "text": str(payload or ""),
                             "hits": [],
                         }
+            elif method == "tool.search_context_files":
+                search = getattr(tools, "search_context_files", None)
+                if not callable(search):
+                    payload = {
+                        "ok": False,
+                        "disabled": True,
+                        "text": "Knowledge-folder search is not available.",
+                        "hits": [],
+                    }
+                else:
+                    raw_limit = params.get("limit", 10)
+                    try:
+                        limit = int(raw_limit)
+                    except (TypeError, ValueError):
+                        limit = 10
+                    relative_path = (
+                        str(params.get("relative_path") or "").strip() or None
+                    )
+                    payload = search(
+                        query=str(params.get("query") or ""),
+                        relative_path=relative_path,
+                        limit=limit,
+                    )
+                    if not isinstance(payload, dict):
+                        payload = {
+                            "ok": True,
+                            "text": str(payload or ""),
+                            "hits": [],
+                        }
             elif method in ("tool.ask_question", "tool.resolve_question"):
                 if notes_mode:
                     payload = _serialize_op_result(

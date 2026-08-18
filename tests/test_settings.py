@@ -263,6 +263,8 @@ class TestMeetingSettings(unittest.TestCase):
             SettingsKey,
             resolve_meeting_agent_core,
             resolve_meeting_audio_upload_consent,
+            resolve_meeting_context_folder_enabled,
+            resolve_meeting_context_folder_path,
             resolve_meeting_past_recall_enabled,
             resolve_meeting_end_polish,
             resolve_meeting_end_redecode,
@@ -293,6 +295,8 @@ class TestMeetingSettings(unittest.TestCase):
         self.resolve_speaker_id = resolve_meeting_speaker_id_backend
         self.resolve_audio_consent = resolve_meeting_audio_upload_consent
         self.resolve_past_recall = resolve_meeting_past_recall_enabled
+        self.resolve_context_folder = resolve_meeting_context_folder_enabled
+        self.resolve_context_folder_path = resolve_meeting_context_folder_path
         self.resolve_end_redecode = resolve_meeting_end_redecode
         self.resolve_end_polish = resolve_meeting_end_polish
         self.resolve_end_report = resolve_meeting_end_report
@@ -315,6 +319,8 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(config.MEETING_SPEAKER_ID_BACKEND, self.speaker_backends.LOCAL)
         self.assertFalse(self.resolve_audio_consent({}))
         self.assertFalse(self.resolve_past_recall({}))
+        self.assertFalse(self.resolve_context_folder({}))
+        self.assertEqual(self.resolve_context_folder_path({}), "")
         self.assertEqual(self.resolve_bind({}), config.MEETING_SERVER_BIND)
         self.assertEqual(self.resolve_port({}), config.MEETING_SERVER_PORT)
         self.assertEqual(self.resolve_end_redecode({}), config.MEETING_END_REDECODE)
@@ -339,6 +345,8 @@ class TestMeetingSettings(unittest.TestCase):
             self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
             self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
             self.keys.MEETING_PAST_RECALL_ENABLED: True,
+            self.keys.MEETING_CONTEXT_FOLDER_ENABLED: True,
+            self.keys.MEETING_CONTEXT_FOLDER_PATH: "  ~/Notes  ",
             self.keys.MEETING_SERVER_BIND: self.binds.LAN,
             self.keys.MEETING_SERVER_PORT: 8099,
             self.keys.MEETING_END_REDECODE: True,
@@ -356,6 +364,11 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_speaker_id(saved), self.speaker_backends.OPENAI)
         self.assertTrue(self.resolve_audio_consent(saved))
         self.assertTrue(self.resolve_past_recall(saved))
+        self.assertTrue(self.resolve_context_folder(saved))
+        self.assertEqual(
+            self.resolve_context_folder_path(saved),
+            os.path.normpath(os.path.expanduser("~/Notes")),
+        )
         self.assertEqual(self.resolve_bind(saved), self.binds.LAN)
         self.assertEqual(self.resolve_port(saved), 8099)
         self.assertTrue(self.resolve_end_redecode(saved))
@@ -403,6 +416,15 @@ class TestMeetingSettings(unittest.TestCase):
         self.assertEqual(self.resolve_agent_core(saved), config.MEETING_AGENT_CORE)
         self.assertEqual(self.resolve_speaker_id(saved), config.MEETING_SPEAKER_ID_BACKEND)
         self.assertEqual(self.resolve_bind(saved), config.MEETING_SERVER_BIND)
+        self.assertFalse(self.resolve_context_folder(
+            {self.keys.MEETING_CONTEXT_FOLDER_ENABLED: "yes"}
+        ))
+        self.assertEqual(
+            self.resolve_context_folder_path(
+                {self.keys.MEETING_CONTEXT_FOLDER_PATH: 12}
+            ),
+            "",
+        )
 
     def test_port_is_clamped_and_tolerates_junk(self):
         self.assertEqual(self.resolve_port({self.keys.MEETING_SERVER_PORT: -5}), 0)

@@ -43,6 +43,12 @@ hiddenimports = [
     "services.models",
     # Imported inside function bodies in services/hf_access.py.
     "huggingface_hub",
+    # Knowledge-folder extractors (imported lazily from meeting/context_folder).
+    "pypdf",
+    "docx",
+    "pptx",
+    "openpyxl",
+    "lxml",
 ]
 
 # ---------------------------------------------------------------------------
@@ -58,7 +64,7 @@ hiddenimports = [
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
 # ---------------------------------------------------------------------------
 for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
-                "tokenizers", "sounddevice"):
+                "tokenizers", "sounddevice", "lxml"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries

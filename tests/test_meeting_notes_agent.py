@@ -62,13 +62,17 @@ class TestNoteTakerPrompts:
         assert "data.heading" in prompt
         assert "data.start_s" in prompt
         assert "human_edited" in prompt
+        assert "search_context_files" in prompt
+        assert "untrusted" in prompt
 
     def test_copilot_system_prompt_delegates_live_notes(self):
         prompt = build_system_prompt()
         assert "live_notes" in prompt
         assert "note-taker pass" in prompt
         assert "search_past_meetings" in prompt
+        assert "search_context_files" in prompt
         assert "CONTEXT ONLY" in prompt
+        assert "untrusted" in prompt
 
     def test_consolidation_instructions_finalize_notes(self):
         prompt = build_checkpoint_user_prompt(
