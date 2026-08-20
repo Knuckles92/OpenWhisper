@@ -111,3 +111,26 @@ def test_panel_shows_insights_pills():
 
     panel.deleteLater()
     app.processEvents()
+
+
+def test_failed_and_empty_meetings_are_labeled_honestly():
+    app = QApplication.instance() or QApplication([])
+    failed = _meeting("m_failed", status="failed", title="")
+    failed["content_summary"] = {
+        "is_empty": True,
+        "has_audio": False,
+        "has_transcript": False,
+    }
+    panel = PastMeetingsPanel(meeting_provider=lambda: [failed])
+
+    panel.refresh()
+    card = panel.findChild(PastMeetingItem)
+
+    assert card is not None
+    assert card.title_label.text() == "Failed meeting"
+    assert card.content_label.text() == "Meeting failed to start"
+    assert "Failed" in card.detail_label.text()
+    assert card.insights_pill.text() == "Failed start"
+
+    panel.deleteLater()
+    app.processEvents()

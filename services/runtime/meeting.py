@@ -232,6 +232,9 @@ class MeetingRuntime:
         if fin.status in {"pending"} and not fin.steps:
             return False
         payload = fin.to_dict()
+        payload["content_summary"] = self._meeting_content_summary(
+            meeting_id, meeting=meeting
+        )
         with self._lock:
             self._card_meeting_id = meeting_id
             self._finalization = payload
@@ -966,6 +969,7 @@ class MeetingRuntime:
     ) -> None:
         """Persist-aware UI/engine broadcast for a finalization snapshot."""
         payload = dict(finalization or {})
+        payload["content_summary"] = self._meeting_content_summary(meeting_id)
         if (
             engine is not None
             and getattr(engine, "meeting_id", None) == meeting_id
@@ -1356,6 +1360,7 @@ class MeetingRuntime:
         """
         status = str(finalization.get("status") or "")
         message = str(finalization.get("message") or "")
+        meeting_id = getattr(self._engine, "meeting_id", None)
         normalized = {
             "status": status,
             "message": message,
@@ -1366,11 +1371,14 @@ class MeetingRuntime:
             "steps": list(finalization.get("steps") or []),
             "summary_stats": dict(finalization.get("summary_stats") or {}),
             "card_deferred": bool(finalization.get("card_deferred", False)),
+            "content_summary": dict(
+                finalization.get("content_summary")
+                or self._meeting_content_summary(meeting_id)
+            ),
         }
         terminal = status in {
             "completed", "disabled", "unavailable", "failed",
         }
-        meeting_id = getattr(self._engine, "meeting_id", None)
         with self._lock:
             self._finalization = normalized
             self._finalizing = status == "running"
@@ -1445,6 +1453,29 @@ class MeetingRuntime:
 
             self._repo = SqlMeetingRepository()
         return self._repo
+
+    def _meeting_content_summary(
+        self,
+        meeting_id: Optional[str],
+        *,
+        meeting: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Derive durable audio/transcript capabilities for desktop cards."""
+        if not meeting_id:
+            return {}
+        from meeting.content import summarize_meeting_content
+
+        summary = summarize_meeting_content(self._repository(), meeting_id)
+        row = meeting
+        if row is None:
+            try:
+                row = self._repository().get_meeting(meeting_id)
+            except Exception:
+                logger.exception(
+                    "Could not read meeting status for content summary"
+                )
+        summary["meeting_status"] = str((row or {}).get("status") or "")
+        return summary
 
     def cleanup(self) -> None:
         """Release the meeting engine on application shutdown.

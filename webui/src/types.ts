@@ -157,6 +157,16 @@ export interface Segment {
 
 export type InsightsPillTone = 'warning' | 'success' | 'neutral';
 
+export interface MeetingContentSummary {
+  has_audio: boolean;
+  has_loopback_audio: boolean;
+  has_transcript: boolean;
+  is_empty: boolean;
+  audio_chunks: number;
+  transcript_segments: number;
+  can_rerun_speakers: boolean;
+}
+
 export interface MeetingInfo {
   id: string;
   title: string;
@@ -167,6 +177,10 @@ export interface MeetingInfo {
   finalization_deferred?: boolean;
   insights_pill?: string;
   insights_tone?: InsightsPillTone | string;
+  content_summary?: MeetingContentSummary;
+  has_audio?: boolean;
+  has_transcript?: boolean;
+  can_rerun_speakers?: boolean;
   [key: string]: unknown;
 }
 

@@ -62,9 +62,10 @@ class MeetingModeTab(QWidget):
         self._paused = False
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
-        self._finalization: Optional[Dict[str, str]] = None
+        self._finalization: Optional[Dict[str, Any]] = None
         self._meeting_id: Optional[str] = None
         self._has_dashboard = False
+        self._can_rerun_speakers = False
         self._developer_mode = False
 
         self._elapsed_timer = QTimer(self)
@@ -534,6 +535,8 @@ class MeetingModeTab(QWidget):
             "total_steps": int(value.get("total_steps") or 0),
             "step_details": str(value.get("step_details") or ""),
             "steps": list(value.get("steps") or []),
+            "summary_stats": dict(value.get("summary_stats") or {}),
+            "content_summary": dict(value.get("content_summary") or {}),
         }
 
     def _set_active(self, active: bool) -> None:
@@ -627,6 +630,19 @@ class MeetingModeTab(QWidget):
         total_steps = int(finalization.get("total_steps") or 0)
         step_details = str(finalization.get("step_details") or "").strip()
         steps = list(finalization.get("steps") or [])
+        content = dict(finalization.get("content_summary") or {})
+        meeting_failed = str(content.get("meeting_status") or "") == "failed"
+        empty_meeting = bool(content.get("is_empty", False))
+        self._can_rerun_speakers = bool(
+            content.get("can_rerun_speakers", False)
+        )
+        if empty_meeting:
+            message = (
+                "No audio or transcript was captured. The meeting failed "
+                "before it could start, so no dashboard was created."
+                if meeting_failed
+                else "No audio or transcript was captured for this meeting."
+            )
 
         titles = {
             "running": "Finalizing Meeting",
@@ -657,8 +673,26 @@ class MeetingModeTab(QWidget):
                 message
                 or "Some post-meeting steps failed. The recording was kept."
             )
-        self.finalization_title.setText(titles.get(display_status, "Final insights"))
+        self.finalization_title.setText(
+            "Meeting Failed"
+            if meeting_failed and empty_meeting
+            else "Empty Meeting"
+            if empty_meeting
+            else titles.get(display_status, "Final insights")
+        )
         self.finalization_message.setText(message or defaults.get(display_status, ""))
+        self.finalization_keep_hint.setText(
+            "This failed start has no audio or transcript."
+            if empty_meeting
+            else "This meeting, transcript, and audio stay in Past Meetings. "
+                 "Nothing is deleted."
+        )
+        speaker_tip = (
+            "Re-run speaker identification"
+            if self._can_rerun_speakers
+            else "No system-audio recording is available for speaker identification"
+        )
+        self.finalization_retry_speakers_button.setToolTip(speaker_tip)
 
         if status == "running":
             tone = "neutral"
@@ -712,11 +746,13 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_speakers_button.setVisible(
                     not has_speaker_step
                 )
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(False)
                 # Header + checklist already cover a successful finish; the
                 # stats recap lives on the dashboard instead.
-                self.finalization_active_box.hide()
+                self.finalization_active_box.setVisible(empty_meeting)
                 self.finalization_detail.hide()
 
                 if steps:
@@ -739,7 +775,9 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_speakers_button.setVisible(
                     not has_speaker_step
                 )
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(True)
                 self.finalization_active_box.show()
 
@@ -765,7 +803,9 @@ class MeetingModeTab(QWidget):
                 self.finalization_steps_widget.hide()
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.show()
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(False)
 
         self.finalization_card.setProperty("finalizationTone", tone)
@@ -872,6 +912,12 @@ class MeetingModeTab(QWidget):
                         self.retry_step_requested.emit(sid)
                     )
                 )
+                if step_id == "speaker_id" and not self._can_rerun_speakers:
+                    action.setEnabled(False)
+                    action.setToolTip(
+                        "No system-audio recording is available for speaker "
+                        "identification"
+                    )
                 row_layout.addWidget(action)
 
             self.finalization_steps_layout.addWidget(row)

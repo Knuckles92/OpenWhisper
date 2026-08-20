@@ -366,6 +366,36 @@ class TestMeetingModeTabState(unittest.TestCase):
                     status == "completed",
                 )
 
+    def test_empty_meeting_stays_visible_and_disables_speaker_rerun(self):
+        """A zero-content result cannot look successful or rerun speakers."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "failed",
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+                "content_summary": {
+                    "meeting_status": "failed",
+                    "is_empty": True,
+                    "has_audio": False,
+                    "has_transcript": False,
+                    "can_rerun_speakers": False,
+                },
+            },
+        })
+        self.app.processEvents()
+
+        self.assertEqual(self.tab.finalization_title.text(), "Meeting Failed")
+        self.assertFalse(self.tab.finalization_active_box.isHidden())
+        self.assertIn("No audio or transcript", self.tab.finalization_message.text())
+        self.assertFalse(
+            self.tab.finalization_retry_speakers_button.isEnabled()
+        )
+        self.assertIn(
+            "No system-audio",
+            self.tab.finalization_retry_speakers_button.toolTip(),
+        )
+
     def test_unavailable_and_failed_use_warning_tone(self):
         """Unavailable/failed stay persistent warnings without dialogs."""
         self.tab.set_meeting_state({

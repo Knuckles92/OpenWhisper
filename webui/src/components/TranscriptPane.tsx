@@ -72,7 +72,9 @@ export default function TranscriptPane({
       {headerExtra && <div className="no-print">{headerExtra}</div>}
       <div className="panel-body">
         {sorted.length === 0 ? (
-          <p className="empty-state">Waiting for speech…</p>
+          <p className="empty-state">
+            {readOnly ? 'No transcript was captured.' : 'Waiting for speech…'}
+          </p>
         ) : (
           <div className="segment-list">
             {sorted.map((seg) => {

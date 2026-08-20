@@ -43,6 +43,13 @@ class FakeRepo:
         self.deleted = []
         self.search_calls = []
         self._segments = []
+        self._chunks = [{
+            "id": 1,
+            "meeting_id": "m_test",
+            "channel": "loopback",
+            "duration_s": 1.0,
+            "file_path": "/tmp/loopback.wav",
+        }]
 
     def get_meeting(self, meeting_id):
         if self._meeting and self._meeting["id"] == meeting_id:
@@ -66,6 +73,12 @@ class FakeRepo:
             and float(row["start_s"]) > float(after_start_s)
         ]
         return rows[:limit] if limit else rows
+
+    def get_audio_chunks(self, meeting_id):
+        return [
+            dict(row) for row in self._chunks
+            if row["meeting_id"] == meeting_id
+        ]
 
     def get_segments_page(self, meeting_id, cursor_start_s=None,
                           cursor_id=None, limit=500):
@@ -202,6 +215,8 @@ class TestHostOnlyAuthz:
         assert r.status_code == 200
         assert r.json()["meetings"][0]["id"] == "m_test"
         assert r.json()["meetings"][0]["display_title"] == "Auth Test"
+        assert r.json()["meetings"][0]["has_audio"] is True
+        assert r.json()["meetings"][0]["can_rerun_speakers"] is True
         # Tokens must not leak in public meeting payloads
         assert "host_token" not in r.json()["meetings"][0]
         assert "guest_token" not in r.json()["meetings"][0]
@@ -437,6 +452,19 @@ class TestRerunSpeakers:
         tc = self._ended(client)
         r = tc.post("/api/meetings/m_gone/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 404
+
+    def test_meeting_without_system_audio_is_400(self, client):
+        tc, engine, repo = client
+        engine.ended = True
+        repo._chunks = []
+
+        r = tc.post(
+            "/api/meetings/m_test/respeakers",
+            params={"token": HOST_TOKEN},
+        )
+
+        assert r.status_code == 400
+        assert "no system-audio recording" in r.json()["detail"]
 
     def test_host_rerun_calls_respeakers(self, client, monkeypatch):
         tc, engine, repo = client

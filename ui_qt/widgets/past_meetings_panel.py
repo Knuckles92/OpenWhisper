@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
+from meeting.content import summarize_meeting_content
 from meeting.state.schema import finalization_from_meeting_row
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -60,6 +61,10 @@ def _format_duration(meeting: Dict[str, Any]) -> str:
 
 def _insights_pill(meeting: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     """Return the compact insights pill for a past-meeting row."""
+    if str(meeting.get("status") or "").lower() == "failed":
+        return ("Failed start", "warning")
+    if bool((meeting.get("content_summary") or {}).get("is_empty", False)):
+        return ("Empty", "warning")
     try:
         fin = finalization_from_meeting_row(meeting)
     except Exception:
@@ -84,7 +89,10 @@ class PastMeetingItem(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(7)
 
-        title = str(meeting.get("title") or "").strip() or "Untitled meeting"
+        status = str(meeting.get("status") or "").lower()
+        title = str(meeting.get("title") or "").strip()
+        if not title:
+            title = "Failed meeting" if status == "failed" else "Untitled meeting"
         self.title_label = QLabel(title)
         self.title_label.setObjectName("pastMeetingTitle")
         self.title_label.setWordWrap(True)
@@ -95,11 +103,30 @@ class PastMeetingItem(QFrame):
         self.date_label.setObjectName("pastMeetingMeta")
         layout.addWidget(self.date_label)
 
+        content = dict(meeting.get("content_summary") or {})
+        content_note = ""
+        if status == "failed":
+            content_note = "Meeting failed to start"
+        elif content.get("is_empty") is True:
+            content_note = "No audio or transcript captured"
+        elif content.get("has_transcript") is False:
+            content_note = "No transcript captured"
+        elif content.get("has_audio") is False:
+            content_note = "No audio captured"
+        self.content_label = QLabel(content_note)
+        self.content_label.setObjectName("pastMeetingContentWarning")
+        self.content_label.setWordWrap(True)
+        self.content_label.setVisible(bool(content_note))
+        layout.addWidget(self.content_label)
+
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 2, 0, 0)
         footer.setSpacing(8)
 
         duration = _format_duration(meeting)
+        if status not in {"", "ended"}:
+            lifecycle = "Failed" if status == "failed" else status.replace("_", " ").title()
+            duration = f"{duration} · {lifecycle}" if duration else lifecycle
         self.detail_label = QLabel(duration)
         self.detail_label.setObjectName("pastMeetingMeta")
         footer.addWidget(self.detail_label)
@@ -216,11 +243,20 @@ class PastMeetingsPanel(QWidget):
 
                 self._repository = SqlMeetingRepository()
             rows = self._repository.list_meetings()
-        return [
-            dict(row)
-            for row in rows
-            if str(row.get("status") or "").lower() not in _NON_HISTORICAL_STATUSES
-        ]
+        meetings = []
+        for row in rows:
+            meeting = dict(row)
+            if (
+                str(meeting.get("status") or "").lower()
+                in _NON_HISTORICAL_STATUSES
+            ):
+                continue
+            if "content_summary" not in meeting and self._repository is not None:
+                meeting["content_summary"] = summarize_meeting_content(
+                    self._repository, str(meeting.get("id") or "")
+                )
+            meetings.append(meeting)
+        return meetings
 
     def refresh(self) -> None:
         """Reload persisted meetings and rebuild the card list."""
@@ -296,6 +332,10 @@ class PastMeetingsPanel(QWidget):
             }
             QLabel#pastMeetingTitle { color: #e5e5e7; }
             QLabel#pastMeetingMeta { color: #98989d; font-size: 11px; }
+            QLabel#pastMeetingContentWarning {
+                color: #ff9f0a;
+                font-size: 11px;
+            }
             QLabel#pastMeetingInsightsPill {
                 color: #98989d;
                 background-color: rgba(255, 255, 255, 0.08);

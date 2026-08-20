@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config
+from meeting.content import summarize_meeting_content
 from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
@@ -100,13 +101,26 @@ def _meeting_display_title(meeting: Dict[str, Any]) -> str:
     return ""
 
 
-def _public_meeting(meeting: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _public_meeting(
+    meeting: Optional[Dict[str, Any]],
+    repository: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Strip a repository meeting dict down to client-safe fields."""
     if not meeting:
         return {}
     public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
     public["display_title"] = _meeting_display_title(meeting)
     public.update(compact_finalization_list_fields(meeting))
+    if repository is not None:
+        summary = summarize_meeting_content(
+            repository, str(meeting.get("id") or "")
+        )
+        public["content_summary"] = summary
+        public.update({
+            "has_audio": summary["has_audio"],
+            "has_transcript": summary["has_transcript"],
+            "can_rerun_speakers": summary["can_rerun_speakers"],
+        })
     return public
 
 
@@ -306,7 +320,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     async def api_meetings(token: str = "") -> Dict[str, Any]:
         await _require(token, host_only=True)
         rows = await asyncio.to_thread(repository.list_meetings)
-        return {"meetings": [_public_meeting(row) for row in rows]}
+        meetings = await asyncio.gather(*[
+            asyncio.to_thread(_public_meeting, row, repository)
+            for row in rows
+        ])
+        return {"meetings": meetings}
 
     @app.get("/api/meetings/{meeting_id}")
     async def api_meeting_detail(meeting_id: str, token: str = "") -> Dict[str, Any]:
@@ -317,8 +335,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         transcript = await _transcript_page(
             meeting_id, "", _TRANSCRIPT_PAGE_DEFAULT
         )
+        public_meeting = await asyncio.to_thread(
+            _public_meeting, meeting, repository
+        )
         return {
-            "meeting": _public_meeting(meeting),
+            "meeting": public_meeting,
             "state": await _state_for(meeting_id, meeting),
             "segments": transcript["items"],
             "transcript_next_cursor": transcript["next_cursor"],
@@ -464,6 +485,17 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")
+        content = await asyncio.to_thread(
+            summarize_meeting_content, repository, meeting_id
+        )
+        if not content["can_rerun_speakers"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "no system-audio recording is available for speaker "
+                    "identification"
+                ),
+            )
         try:
             from services.settings import (
                 resolve_meeting_audio_upload_consent,
