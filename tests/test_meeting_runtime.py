@@ -113,6 +113,8 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
         _RUNTIME_GLOBALS, "speaker_model_path", lambda: "/cached/model"
     )
     rt._starting = True
+    rt._card_meeting_id = "m_partial"
+    rt._finalization = {"status": "pending"}
 
     rt._start_worker(False)
 
@@ -124,8 +126,27 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
         "paused": False,
         "status": "failed",
         "dashboard_available": False,
+        "finalization": None,
+        "meeting_id": None,
     }
+    assert rt._card_meeting_id is None
+    assert rt._finalization is None
     assert "No audio devices" in errors[-1]
+
+
+def test_nonfatal_engine_error_is_deferred_during_start(runtime):
+    rt, controller = runtime
+    errors = []
+    controller.meeting_error.connect(errors.append)
+    rt._starting = True
+
+    rt._on_engine_event(
+        "error",
+        {"code": "asr_unavailable", "message": "Model is unavailable"},
+    )
+
+    assert errors == []
+    assert rt._deferred_start_errors == ["Model is unavailable"]
 
 
 def test_open_dashboard_without_url_surfaces_error(runtime):

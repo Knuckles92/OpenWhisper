@@ -172,6 +172,10 @@ class MeetingRuntime:
         self._finalization: Optional[Dict[str, Any]] = None
         # Meeting whose checklist is currently shown on the Meeting Mode tab.
         self._card_meeting_id: Optional[str] = None
+        # Non-fatal subsystem warnings (for example a missing ASR model) are
+        # held until required startup checks succeed. If capture/server startup
+        # fails, the user sees only the authoritative start failure.
+        self._deferred_start_errors: list[str] = []
         # Consent round-trip state: what to do when the consent dialog
         # resolves ("start" continues start_meeting, "toggle" applies the
         # cloud toggle). Mirrors the hf_consent_requested request/continuation
@@ -623,6 +627,7 @@ class MeetingRuntime:
             self._finalizing = False
             self._finalization = None
             self._card_meeting_id = None
+            self._deferred_start_errors = []
         self.controller.meeting_status_update.emit(
             "Starting demo meeting..." if demo else "Starting meeting..."
         )
@@ -673,6 +678,10 @@ class MeetingRuntime:
                     self._engine = None
                 self._host_url = None
                 self._guest_url = None
+                self._finalizing = False
+                self._finalization = None
+                self._card_meeting_id = None
+                self._deferred_start_errors = []
             self.controller.meeting_active = False
             self.controller.meeting_error.emit(f"Could not start the meeting: {exc}")
             self.controller.meeting_state_changed.emit(
@@ -681,8 +690,11 @@ class MeetingRuntime:
                     "paused": False,
                     "status": "failed",
                     "dashboard_available": False,
+                    "finalization": None,
+                    "meeting_id": None,
                 }
             )
+            self._refresh_past_meetings()
             return
 
         with self._lock:
@@ -695,6 +707,8 @@ class MeetingRuntime:
                 result.get("host_url") or result.get("url") or self._host_url
             )
             self._guest_url = result.get("guest_url") or self._guest_url
+            deferred_errors = list(self._deferred_start_errors)
+            self._deferred_start_errors = []
 
         # No meeting_server_started emit here: the engine's own server_started
         # event already carried the URLs to the UI, and a second emit opens a
@@ -718,6 +732,8 @@ class MeetingRuntime:
             "Demo meeting started: %s" if demo else "Meeting started: %s",
             result.get("meeting_id"),
         )
+        for message in deferred_errors:
+            self.controller.meeting_error.emit(message)
 
     def _build_options(self, cloud: bool, *, demo: bool = False):
         """Compose ``MeetingEngineOptions`` from settings, config, and components.
@@ -1372,6 +1388,10 @@ class MeetingRuntime:
                 self.controller.meeting_server_started.emit(dict(payload))
             elif kind == "error":
                 message = payload.get("message") or str(payload)
+                with self._lock:
+                    if self._starting:
+                        self._deferred_start_errors.append(str(message))
+                        return
                 self.controller.meeting_error.emit(str(message))
             elif kind == "ended":
                 self.controller.meeting_active = False
