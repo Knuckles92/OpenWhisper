@@ -1409,26 +1409,6 @@ QLabel#meetingFinalizationStepDetail {
     background-color: transparent;
 }
 
-QWidget#meetingFinalizationStatsWidget {
-    background-color: transparent;
-}
-
-QWidget#meetingFinalizationStatItem {
-    background-color: rgba(0, 0, 0, 0.3);
-    border: 1px solid #3a3a3c;
-    border-radius: 8px;
-}
-
-QLabel#meetingFinalizationStatValue {
-    color: #f5f5f7;
-    background-color: transparent;
-}
-
-QLabel#meetingFinalizationStatLabel {
-    color: #8e8e93;
-    background-color: transparent;
-}
-
 QProgressBar#meetingFinalizationProgress {
     background-color: #3a3a3c;
     border: none;

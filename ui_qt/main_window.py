@@ -916,8 +916,8 @@ class MainWindow(QMainWindow):
     def _sync_meeting_mode_height(self) -> None:
         """Hold the window tall enough for the Meeting Mode page.
 
-        Its finalization card grows as the pipeline reports step rows and
-        summary stats. The window keeps a deliberately low explicit minimum
+        Its finalization card grows as the pipeline reports step rows. The
+        window keeps a deliberately low explicit minimum
         height so the collapsed recorder layout can shrink, and that same
         minimum lets Qt squeeze the step rows together instead of honoring the
         page's own minimum. While Meeting Mode is selected the window floor

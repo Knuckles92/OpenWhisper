@@ -46,7 +46,7 @@ class MeetingModeTab(QWidget):
     retry_insights_requested = pyqtSignal()
     retry_speakers_requested = pyqtSignal()
     #: Emitted whenever the visible controls change, so the window can keep
-    #: enough height for the finalization checklist and summary stats.
+    #: enough height for the finalization checklist.
     content_height_changed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -276,16 +276,6 @@ class MeetingModeTab(QWidget):
         self._keep_natural_height(self.finalization_steps_widget)
         self.finalization_card.layout.addWidget(self.finalization_steps_widget)
 
-        # Summary statistics container (shown on complete)
-        self.finalization_stats_widget = QWidget()
-        self.finalization_stats_widget.setObjectName("meetingFinalizationStatsWidget")
-        self.finalization_stats_layout = QHBoxLayout(self.finalization_stats_widget)
-        self.finalization_stats_layout.setContentsMargins(0, 6, 0, 6)
-        self.finalization_stats_layout.setSpacing(8)
-        self.finalization_stats_widget.hide()
-        self._keep_natural_height(self.finalization_stats_widget)
-        self.finalization_card.layout.addWidget(self.finalization_stats_widget)
-
         # Buttons row
         fin_buttons_row = QHBoxLayout()
         fin_buttons_row.setSpacing(10)
@@ -455,7 +445,6 @@ class MeetingModeTab(QWidget):
             "total_steps": int(value.get("total_steps") or 0),
             "step_details": str(value.get("step_details") or ""),
             "steps": list(value.get("steps") or []),
-            "summary_stats": dict(value.get("summary_stats") or {}),
         }
 
     def _set_active(self, active: bool) -> None:
@@ -529,10 +518,10 @@ class MeetingModeTab(QWidget):
         self.content_height_changed.emit()
 
     def _render_finalization(self, finalization: Dict[str, Any]) -> None:
-        """Update finalization card copy, tone, steps, and stats visibility.
+        """Update finalization card copy, tone, and step visibility.
 
         Args:
-            finalization: Mapping with status, message, steps, and stats.
+            finalization: Mapping with status, message, and steps.
         """
         status = str(finalization.get("status") or "")
         message = str(finalization.get("message") or "").strip()
@@ -540,7 +529,6 @@ class MeetingModeTab(QWidget):
         total_steps = int(finalization.get("total_steps") or 0)
         step_details = str(finalization.get("step_details") or "").strip()
         steps = list(finalization.get("steps") or [])
-        summary_stats = dict(finalization.get("summary_stats") or {})
 
         titles = {
             "running": "Finalizing Meeting",
@@ -564,6 +552,7 @@ class MeetingModeTab(QWidget):
             self.finalization_progress.show()
             self.finalization_retry_button.hide()
             self.finalization_retry_speakers_button.hide()
+            self.finalization_active_box.show()
 
             if total_steps > 0:
                 self.finalization_step_badge.setText(f"Step {current_step} of {total_steps}")
@@ -592,8 +581,6 @@ class MeetingModeTab(QWidget):
             else:
                 self.finalization_steps_widget.hide()
 
-            self.finalization_stats_widget.hide()
-
         else:
             self.finalization_progress.hide()
             self.finalization_progress.setRange(0, 1)
@@ -607,24 +594,16 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.show()
                 self.finalization_retry_speakers_button.setEnabled(True)
-
-                if step_details and step_details != message:
-                    self.finalization_detail.setText(step_details)
-                    self.finalization_detail.show()
-                else:
-                    self.finalization_detail.hide()
+                # Header + checklist already cover a successful finish; the
+                # stats recap lives on the dashboard instead.
+                self.finalization_active_box.hide()
+                self.finalization_detail.hide()
 
                 if steps:
                     self._populate_steps(steps, current_step=len(steps))
                     self.finalization_steps_widget.show()
                 else:
                     self.finalization_steps_widget.hide()
-
-                if summary_stats:
-                    self._populate_stats(summary_stats)
-                    self.finalization_stats_widget.show()
-                else:
-                    self.finalization_stats_widget.hide()
 
             elif status in {"unavailable", "failed"}:
                 tone = "warning"
@@ -636,6 +615,7 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_button.setEnabled(True)
                 self.finalization_retry_speakers_button.show()
                 self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_active_box.show()
 
                 if step_details and step_details != message:
                     self.finalization_detail.setText(step_details)
@@ -649,16 +629,14 @@ class MeetingModeTab(QWidget):
                 else:
                     self.finalization_steps_widget.hide()
 
-                self.finalization_stats_widget.hide()
-
             else:
                 tone = "info"
                 self.finalization_step_badge.setText("Off")
                 self.finalization_step_badge.setProperty("badgeTone", "neutral")
                 self.finalization_step_badge.show()
+                self.finalization_active_box.show()
                 self.finalization_detail.hide()
                 self.finalization_steps_widget.hide()
-                self.finalization_stats_widget.hide()
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.show()
                 self.finalization_retry_speakers_button.setEnabled(True)
@@ -742,71 +720,6 @@ class MeetingModeTab(QWidget):
             row_layout.addWidget(detail_label)
 
             self.finalization_steps_layout.addWidget(row)
-
-    def _populate_stats(self, stats: Dict[str, Any]) -> None:
-        """Render summary metric cards upon meeting completion.
-
-        Args:
-            stats: Summary metrics dict.
-        """
-        while self.finalization_stats_layout.count():
-            item = self.finalization_stats_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        items_to_show = []
-
-        dur_s = float(stats.get("duration_s") or 0.0)
-        if dur_s > 0:
-            mins, secs = divmod(int(dur_s), 60)
-            dur_str = f"{mins}m {secs}s" if mins else f"{secs}s"
-            items_to_show.append(("Duration", dur_str))
-
-        segs = int(stats.get("segments") or 0)
-        if segs > 0:
-            items_to_show.append(("Segments", f"{segs}"))
-
-        words = int(stats.get("words") or 0)
-        if words > 0:
-            items_to_show.append(("Words", f"{words:,}"))
-
-        kp = int(stats.get("key_points") or 0)
-        if kp > 0:
-            items_to_show.append(("Key Points", f"{kp}"))
-
-        dec = int(stats.get("decisions") or 0)
-        if dec > 0:
-            items_to_show.append(("Decisions", f"{dec}"))
-
-        ai = int(stats.get("action_items") or 0)
-        if ai > 0:
-            items_to_show.append(("Action Items", f"{ai}"))
-
-        if not items_to_show:
-            return
-
-        for label, val in items_to_show:
-            card = QWidget()
-            card.setObjectName("meetingFinalizationStatItem")
-            c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(6, 4, 6, 4)
-            c_layout.setSpacing(2)
-            c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            val_label = QLabel(val)
-            val_label.setObjectName("meetingFinalizationStatValue")
-            val_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-            val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            c_layout.addWidget(val_label)
-
-            lbl_label = QLabel(label)
-            lbl_label.setObjectName("meetingFinalizationStatLabel")
-            lbl_label.setFont(QFont("Segoe UI", 9))
-            lbl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            c_layout.addWidget(lbl_label)
-
-            self.finalization_stats_layout.addWidget(card)
 
     def _refresh_elapsed(self) -> None:
         """Update the elapsed label from the local pause-aware timer."""

@@ -347,6 +347,10 @@ class TestMeetingModeTabState(unittest.TestCase):
                 self.assertFalse(self.tab.finalization_card.isHidden())
                 self.assertTrue(self.tab.finalization_progress.isHidden())
                 self.assertIn(message, self.tab.finalization_message.text())
+                self.assertEqual(
+                    self.tab.finalization_active_box.isHidden(),
+                    status == "completed",
+                )
 
     def test_unavailable_and_failed_use_warning_tone(self):
         """Unavailable/failed stay persistent warnings without dialogs."""
@@ -463,21 +467,13 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.finalization_steps_widget.isHidden())
         self.assertEqual(self.tab.finalization_steps_layout.count(), 4)
 
-    def test_completed_summary_stats_rendering(self):
-        """Completed finalization displays step badge, summary stats grid, and completed checklist."""
+    def test_completed_hides_recap_and_keeps_checklist(self):
+        """Completed finalization keeps the checklist and hides the recap boxes."""
         steps = [
             {"id": "redecode", "name": "Audio Re-transcription", "status": "completed", "detail": "Done"},
             {"id": "consolidation", "name": "Summary & Action Items", "status": "completed", "detail": "Done"},
             {"id": "finalize", "name": "State Finalization", "status": "completed", "detail": "Done"},
         ]
-        stats = {
-            "duration_s": 150.0,
-            "segments": 32,
-            "words": 520,
-            "key_points": 4,
-            "action_items": 2,
-            "decisions": 1,
-        }
         self.tab.set_meeting_state({
             "active": False,
             "status": "ended",
@@ -489,7 +485,14 @@ class TestMeetingModeTabState(unittest.TestCase):
                 "total_steps": 3,
                 "step_details": "All finalization passes completed successfully.",
                 "steps": steps,
-                "summary_stats": stats,
+                "summary_stats": {
+                    "duration_s": 150.0,
+                    "segments": 32,
+                    "words": 520,
+                    "key_points": 4,
+                    "action_items": 2,
+                    "decisions": 1,
+                },
             },
             "dashboard_available": True,
         })
@@ -498,8 +501,8 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertTrue(self.tab.finalization_progress.isHidden())
         self.assertEqual(self.tab.finalization_step_badge.text(), "Complete")
-        self.assertFalse(self.tab.finalization_stats_widget.isHidden())
-        self.assertGreaterEqual(self.tab.finalization_stats_layout.count(), 5)
+        self.assertTrue(self.tab.finalization_active_box.isHidden())
+        self.assertFalse(hasattr(self.tab, "finalization_stats_widget"))
         self.assertFalse(self.tab.finalization_steps_widget.isHidden())
         self.assertEqual(self.tab.finalization_steps_layout.count(), 3)
 
