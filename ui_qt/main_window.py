@@ -452,6 +452,27 @@ class MainWindow(QMainWindow):
         }
     """
 
+    _MODELS_BUTTON_STYLE = """
+        QPushButton#modelsButton {
+            background-color: #2c2c2e;
+            color: #30d158;
+            border: 1px solid #3a3a3c;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#modelsButton:hover {
+            background-color: #30d158;
+            color: #ffffff;
+            border: 1px solid #30d158;
+        }
+        QPushButton#modelsButton:pressed {
+            background-color: #248a3d;
+            color: #ffffff;
+        }
+    """
+
     _TRAY_BUTTON_STYLE = """
         QPushButton#trayButton {
             background-color: #2c2c2e;
@@ -526,6 +547,20 @@ class MainWindow(QMainWindow):
         footer_layout.setContentsMargins(16, 7, 16, 7)
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
+
+        self.models_button = QPushButton("Model Manager")
+        self.models_button.setObjectName("modelsButton")
+        self.models_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.models_button.setFixedHeight(34)
+        self.models_button.setMinimumWidth(130)
+        self.models_button.setStyleSheet(self._MODELS_BUTTON_STYLE)
+        self.models_button.setToolTip(
+            "Browse, download, and activate voice and text models"
+        )
+        self.models_button.clicked.connect(self.open_model_manager)
+        footer_layout.addWidget(self.models_button)
+
+        footer_layout.addSpacing(10)
 
         self.tray_button = Button("Minimize to Tray")
         self.tray_button.setObjectName("trayButton")
@@ -962,6 +997,8 @@ class MainWindow(QMainWindow):
             self.history_sidebar.hide()
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
+            # Keep the compact footer to tray / expand / quit only.
+            self.models_button.hide()
             self.compact_button.setText("Full Size")
 
             self.setMinimumSize(0, 0)
@@ -986,6 +1023,7 @@ class MainWindow(QMainWindow):
             self.history_sidebar.show()
             self.title_bar.title_label.show()
             self.title_bar.maximize_btn.show()
+            self.models_button.show()
             self.compact_button.setText("Compact")
 
             if self._full_geometry is not None:

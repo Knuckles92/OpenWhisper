@@ -100,23 +100,48 @@ To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whethe
 
 Use this for macOS and Linux, for development, or for NVIDIA GPU acceleration.
 
-**Note:** It's recommended to set up a virtual environment (venv) to avoid package version conflicts. I have found Python 3.12 to be pretty stable with this codebase; 3.11 is verified working too.
+**Python:** 3.11–3.12 recommended (3.11 verified; 3.12 stable). 3.13 works, but on Debian/Ubuntu you need `python3-dev` and a compiler because `pynput` → `evdev` has no prebuilt wheel for 3.13 yet.
 
-On Debian, Ubuntu, and Pop!_OS, two system libraries are not shipped by the pip wheels and must be installed first — PyQt6 6.5+ refuses to start without the second one:
+**Note:** Use a virtual environment (venv) to avoid package version conflicts.
+
+On a minimal **Debian / Ubuntu / Pop!_OS** install, install Python and the system libraries PyQt6 and `sounddevice` need before creating the venv. On a fresh box, run `apt update` first:
 
 ```bash
-sudo apt install -y libportaudio2 libxcb-cursor0
+sudo apt update
+sudo apt install -y \
+  python3 python3-venv python3-dev build-essential \
+  libportaudio2 libegl1 libxcb-cursor0 libxkbcommon-x11-0 \
+  libxcb-icccm4 libxcb-keysyms1 libxcb-xkb1
 ```
 
-`libportaudio2` backs `sounddevice` (recording); `libxcb-cursor0` is required by Qt's `xcb` platform plugin. Without it the app exits with *"no Qt platform plugin could be initialized"*.
+`libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*.
+
+**Fedora / RHEL:**
+
+```bash
+sudo dnf install -y \
+  python3 python3-devel gcc portaudio \
+  xcb-util-cursor xcb-util-keysyms xcb-util-wm \
+  libxkbcommon-x11 mesa-libEGL
+```
+
+**Arch Linux:**
+
+```bash
+sudo pacman -S --needed \
+  python python-pip base-devel portaudio \
+  xcb-util-cursor xcb-util-keysyms xcb-util-wm \
+  libxkbcommon libgl
+```
 
 ```bash
 git clone https://github.com/Knuckles92/OpenWhisper
 cd OpenWhisper
-python -m venv venv
 # Windows
+python -m venv venv
 venv\Scripts\activate
-# Linux/Mac
+# macOS / Linux
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -208,7 +233,7 @@ Removes the PATH entry only. Your venv, code, and the `scripts/` folder are left
 If you can't or don't want to run the installer (e.g., corporate execution-policy restrictions), add the path yourself in PowerShell:
 
 ```powershell
-$dir = "D:\path\to\whisper_local\scripts"   # <-- adjust to your clone location
+$dir = "D:\path\to\OpenWhisper\scripts"   # <-- adjust to your clone location
 $current = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($current -split ";" -notcontains $dir) {
     [Environment]::SetEnvironmentVariable("Path", "$current;$dir", "User")
@@ -229,7 +254,7 @@ Register `ow` and `openwhisper` as global commands so the app launches from any 
 ./install.sh
 ```
 
-This adds the `scripts/` folder to your `PATH` via `~/.zprofile` (idempotent). Open a new terminal afterward, then run:
+This adds the `scripts/` folder to your `PATH` in your shell profile files (`~/.bashrc`, `~/.zprofile`, and on macOS also `~/.bash_profile`; fish users get `~/.config/fish/config.fish`). It is idempotent. The installer prints the exact `source …` command for your shell — run that in your current terminal, or open a new one, then run:
 
 ```bash
 ow              # short alias
@@ -243,6 +268,9 @@ The launcher invokes `venv/bin/python` directly, so the app always uses the proj
 If you registered the launcher, just type `ow` or `openwhisper` from any terminal. Otherwise:
 
 ```bash
+# macOS / Linux
+python3 app_qt.py
+# Windows
 python app_qt.py
 ```
 
@@ -284,15 +312,19 @@ The download policy lives in **Settings → Advanced → Hugging Face Downloads*
 Setting `HF_HUB_OFFLINE=1` in the environment before launching is a hard override that disables downloads entirely (still supported for scripts and CI):
 
 ```bash
-export HF_HUB_OFFLINE=1  # Linux/Mac
-set HF_HUB_OFFLINE=1     # Windows
+export HF_HUB_OFFLINE=1
+python3 app_qt.py
+```
+
+```powershell
+set HF_HUB_OFFLINE=1
 python app_qt.py
 ```
 
 Upgrading from an older version: the previous **Skip HuggingFace network checks** toggle migrates automatically — enabled becomes **Never connect**, disabled becomes **Ask before downloading**.
 ## Requirements
 
-- Python 3.8+ (3.12 recommended)
+- Python 3.11–3.12 recommended; 3.13 supported (needs `python3-dev` on Debian/Ubuntu for `evdev`)
 - Windows, macOS, or Linux
 
 **Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
