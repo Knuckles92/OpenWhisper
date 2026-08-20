@@ -251,6 +251,25 @@ def discard_meeting(repository: Any, meeting_id: str) -> None:
         logger.exception("Failed to discard meeting %s", meeting_id)
 
 
+def _resume_endpoint(meeting: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the stored non-secret endpoint snapshot, if any."""
+    try:
+        from services.text_llm import snapshot_from_meeting
+
+        return snapshot_from_meeting(meeting).to_dict()
+    except Exception:
+        raw = meeting.get("agent_endpoint_json")
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return None
+
+
 def build_resume_options(meeting: Dict[str, Any]) -> Dict[str, Any]:
     """Kwargs hints for ``MeetingEngineOptions`` when resuming a meeting.
 
@@ -271,6 +290,7 @@ def build_resume_options(meeting: Dict[str, Any]) -> Dict[str, Any]:
         "asr_model": meeting.get("asr_model") or "auto",
         "llm_provider": meeting.get("agent_provider") or "openrouter",
         "llm_model": meeting.get("agent_model") or "",
+        "llm_endpoint": _resume_endpoint(meeting),
         "spool_root": os.path.dirname(spool_dir) if spool_dir else "",
     }
 

@@ -48,3 +48,25 @@ class TestCloudConsentCopy(_QtTestCase):
         self.assertNotIn("Your audio never leaves this computer", text)
         self.assertIn("does not upload audio", text)
         self.assertIn("Past-meeting recall", text)
+
+    def test_cloud_consent_names_local_endpoint(self):
+        dialog = MeetingConsentDialog(
+            destination="your local server at 127.0.0.1:1234",
+            remote=False,
+        )
+        body = dialog.findChild(QLabel, "consentBodyLabel")
+        text = body.text() if body is not None else ""
+        self.assertIn("127.0.0.1:1234", text)
+        self.assertIn("does not leave this machine", text)
+        self.assertNotIn("OpenRouter", text)
+
+    def test_cloud_consent_names_remote_endpoint(self):
+        dialog = MeetingConsentDialog(
+            destination="Work gateway (llm.example.com)",
+            remote=True,
+        )
+        body = dialog.findChild(QLabel, "consentBodyLabel")
+        text = body.text() if body is not None else ""
+        self.assertIn("Work gateway (llm.example.com)", text)
+        self.assertIn("leaves this computer", text)
+        self.assertNotIn("OpenRouter", text)

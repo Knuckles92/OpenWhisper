@@ -404,6 +404,17 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         provider = (meeting.get("agent_provider")
                     or getattr(options, "llm_provider", "") or "openrouter")
         model = meeting.get("agent_model") or getattr(options, "llm_model", "") or ""
+        endpoint = getattr(options, "llm_endpoint", None)
+        raw_endpoint = meeting.get("agent_endpoint_json")
+        if isinstance(raw_endpoint, dict):
+            endpoint = raw_endpoint
+        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
+            try:
+                parsed = json.loads(raw_endpoint)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                endpoint = parsed
         speaker_api_key = ""
         try:
             from services.transcript_cleanup import find_api_key
@@ -427,7 +438,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 functools.partial(
                     rerun_finalization, repository, meeting_id,
                     from_step="failed",
-                    provider=provider, model=model,
+                    provider=provider, model=model, endpoint=endpoint,
                     agent_core_kind=getattr(options, "agent_core_kind", "pi"),
                     sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
                     asr_model_name=str(meeting.get("asr_model") or "auto"),

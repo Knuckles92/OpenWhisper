@@ -444,6 +444,32 @@ class TestIntelligenceHealth:
         assert events_of(engine, "intelligence")[-1]["online"] is True
         assert fakes.schedulers and fakes.schedulers[0].started
 
+    def test_start_persists_and_passes_llm_endpoint(
+            self, make_engine, fakes, repo):
+        import json
+
+        endpoint = {
+            "profile_id": "custom_abcd1234",
+            "name": "LM Studio",
+            "kind": "custom",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "api_key_env": "",
+        }
+        engine = make_engine(
+            cloud_enabled=True,
+            llm_provider="custom_abcd1234",
+            llm_model="local-qwen",
+            llm_endpoint=endpoint,
+        )
+        result = engine.start()
+        meeting = repo.get_meeting(result["meeting_id"])
+        stored = meeting["agent_endpoint_json"]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        assert stored["base_url"] == endpoint["base_url"]
+        assert fakes.cores[0].config.endpoint["base_url"] == endpoint["base_url"]
+        assert fakes.cores[0].config.provider == "custom_abcd1234"
+
     def test_cloud_disabled_starts_no_intelligence(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=False)
         engine.start()
@@ -1200,3 +1226,35 @@ def test_engine_module_has_no_dead_recent_text_api():
     from meeting.engine import MeetingEngine
 
     assert not hasattr(MeetingEngine, "get_recent_text")
+
+
+class TestDirectAgentCapabilities:
+    def test_json_mode_retries_without_response_format(self):
+        from unittest.mock import MagicMock
+
+        from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+
+        agent = DirectOpenRouterAgent()
+        agent._model = "local-qwen"
+        agent._use_json_response_format = True
+        agent._tools = MagicMock()
+        agent._tools.apply_agent_ops.return_value = []
+        client = MagicMock()
+        timed = MagicMock()
+        client.with_options.return_value = timed
+
+        def _create(**kwargs):
+            if "response_format" in kwargs:
+                raise RuntimeError("unknown field response_format / json_object")
+            return MagicMock(
+                choices=[
+                    MagicMock(message=MagicMock(content='{"ops": []}'))
+                ],
+                usage=None,
+            )
+
+        timed.chat.completions.create.side_effect = _create
+        result = agent._run_json_mode(client, "sys", "user", timeout_s=5)
+        assert result.ok is True
+        assert agent._use_json_response_format is False
+        assert timed.chat.completions.create.call_count == 2

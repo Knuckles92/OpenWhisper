@@ -62,7 +62,16 @@ from services.settings import (
     resolve_meeting_llm_provider,
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
+    resolve_transcript_cleanup_model,
+    resolve_transcript_cleanup_provider,
     settings_manager,
+)
+from services.text_llm import (
+    get_profile,
+    list_profiles,
+    profile_display_name,
+    remove_custom_profile,
+    upsert_custom_profile,
 )
 from ui_qt.dialogs.model_details_dialog import ModelDetailsDialog
 from ui_qt.utils.app_icon import app_icon
@@ -452,6 +461,7 @@ class ModelManagerDialog(QDialog):
             "textTabAccent",
         )
         self.text_model_picker = TextModelPicker()
+        self._connect_picker_profile_signals(self.text_model_picker)
         self.text_model_picker.provider_changed.connect(
             self._on_text_provider_changed
         )
@@ -475,8 +485,11 @@ class ModelManagerDialog(QDialog):
         footnote_icon.setPixmap(_design_icon("info-blue.svg").pixmap(18, 18))
         footnote_layout.addWidget(footnote_icon)
         note = WrappedLabel(
-            "Text models are called only when AI cleanup is enabled. Cleanup "
-            "behavior, prompts, and learned rules remain in Settings → Cleanup."
+            "Text models are called only when AI cleanup is enabled. Add an "
+            "OpenAI-compatible endpoint for local servers. API keys stay in "
+            "environment variables or .env; a blank key variable means no "
+            "auth. Cleanup behavior, prompts, and learned rules remain in "
+            "Settings → Cleanup."
         )
         note.setObjectName("textModelFootnote")
         footnote_layout.addWidget(note, stretch=1)
@@ -588,6 +601,7 @@ class ModelManagerDialog(QDialog):
         self.meeting_model_picker = TextModelPicker(
             idle_status="Open Meeting Mode to load the model catalog."
         )
+        self._connect_picker_profile_signals(self.meeting_model_picker)
         self.meeting_model_picker.provider_changed.connect(
             self._on_meeting_provider_changed
         )
@@ -645,7 +659,8 @@ class ModelManagerDialog(QDialog):
         footnote_icon.setPixmap(_design_icon("info-blue.svg").pixmap(18, 18))
         footnote_layout.addWidget(footnote_icon)
         note = WrappedLabel(
-            "Cloud consent, knowledge folder, and report views stay in "
+            "Add an OpenAI-compatible endpoint for a local server. Cloud "
+            "consent, knowledge folder, and report views stay in "
             "Settings → Meeting."
         )
         note.setObjectName("textModelFootnote")
@@ -975,21 +990,128 @@ class ModelManagerDialog(QDialog):
         except Exception:
             return {}
 
+    def _connect_picker_profile_signals(self, picker: TextModelPicker) -> None:
+        """Wire add/edit/delete endpoint actions for one picker."""
+        picker.add_endpoint_requested.connect(self._add_text_endpoint)
+        picker.edit_endpoint_requested.connect(self._edit_text_endpoint)
+        picker.delete_endpoint_requested.connect(self._delete_text_endpoint)
+
+    def _refresh_picker_profiles(self) -> None:
+        """Reload custom endpoints into both text pickers."""
+        profiles = list_profiles(self._settings_snapshot())
+        self.text_model_picker.set_profiles(profiles)
+        self.meeting_model_picker.set_profiles(profiles)
+
+    def _add_text_endpoint(self) -> None:
+        """Create a custom OpenAI-compatible endpoint profile."""
+        from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
+
+        dialog = TextEndpointDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        payload = dialog.result_payload() or {}
+        try:
+            settings = settings_manager.load_all_settings()
+            profile = upsert_custom_profile(
+                settings,
+                name=payload["name"],
+                base_url=payload["base_url"],
+                api_key_env=payload.get("api_key_env", ""),
+            )
+            settings_manager.save_all_settings(settings)
+        except Exception as exc:
+            logger.error("Couldn't add text endpoint: %s", exc)
+            self.message_label.setText(f"Couldn't add endpoint: {exc}")
+            return
+        self._refresh_picker_profiles()
+        sender = self.sender()
+        if sender is self.meeting_model_picker:
+            self.meeting_model_picker.set_provider(profile.id)
+            self._fetch_catalog_models(
+                profile.id, picker=self.meeting_model_picker
+            )
+        else:
+            self.text_model_picker.set_provider(profile.id)
+            self._fetch_catalog_models(
+                profile.id, picker=self.text_model_picker
+            )
+        self.message_label.setText(f'Added endpoint "{profile.name}"')
+
+    def _edit_text_endpoint(self, profile_id: str) -> None:
+        """Edit an existing custom endpoint profile."""
+        from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
+
+        profile = get_profile(profile_id, self._settings_snapshot())
+        if profile is None or profile.builtin:
+            return
+        dialog = TextEndpointDialog(profile, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        payload = dialog.result_payload() or {}
+        try:
+            settings = settings_manager.load_all_settings()
+            updated = upsert_custom_profile(
+                settings,
+                name=payload["name"],
+                base_url=payload["base_url"],
+                api_key_env=payload.get("api_key_env", ""),
+                profile_id=profile_id,
+            )
+            settings_manager.save_all_settings(settings)
+        except Exception as exc:
+            logger.error("Couldn't edit text endpoint: %s", exc)
+            self.message_label.setText(f"Couldn't save endpoint: {exc}")
+            return
+        self._refresh_picker_profiles()
+        self.text_model_picker.set_provider(updated.id)
+        self.meeting_model_picker.set_provider(
+            self.meeting_model_picker.provider
+        )
+        self.message_label.setText(f'Updated endpoint "{updated.name}"')
+
+    def _delete_text_endpoint(self, profile_id: str) -> None:
+        """Delete a custom endpoint that is not currently assigned."""
+        settings = self._settings_snapshot()
+        profile = get_profile(profile_id, settings)
+        if profile is None or profile.builtin:
+            return
+        cleanup_id = resolve_transcript_cleanup_provider(settings)
+        meeting_id = resolve_meeting_llm_provider(settings)
+        if profile_id in (cleanup_id, meeting_id):
+            self.message_label.setText(
+                f'"{profile.name}" is in use. Choose another text model '
+                "before deleting this endpoint."
+            )
+            return
+        confirmed = QMessageBox.question(
+            self,
+            "Delete endpoint",
+            f'Delete "{profile.name}"?\n\n'
+            "Meetings that already recorded this endpoint can still retry "
+            "using the stored connection snapshot.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            stored = settings_manager.load_all_settings()
+            remove_custom_profile(stored, profile_id)
+            settings_manager.save_all_settings(stored)
+        except Exception as exc:
+            logger.error("Couldn't delete text endpoint: %s", exc)
+            self.message_label.setText(f"Couldn't delete endpoint: {exc}")
+            return
+        self._refresh_picker_profiles()
+        self.message_label.setText(f'Deleted endpoint "{profile.name}"')
+
     def _load_text_settings(self) -> None:
         """Load the active cleanup choice into the on-demand text picker."""
-        provider = settings_manager.get(
-            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
-            config.TRANSCRIPT_CLEANUP_PROVIDER,
-        )
-        if provider not in TranscriptCleanupProvider.ALL:
-            provider = config.TRANSCRIPT_CLEANUP_PROVIDER
-
-        model = settings_manager.get(
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
-            default_transcript_cleanup_model(provider),
-        )
-        if not isinstance(model, str) or not model.strip():
-            model = default_transcript_cleanup_model(provider)
+        settings = self._settings_snapshot()
+        provider = resolve_transcript_cleanup_provider(settings)
+        model = resolve_transcript_cleanup_model(settings)
+        if not isinstance(model, str):
+            model = ""
         model = model.strip()
 
         sort = settings_manager.get(
@@ -1002,6 +1124,7 @@ class ModelManagerDialog(QDialog):
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_sort(sort)
+        self._refresh_picker_profiles()
         self.text_model_picker.set_provider(provider, model)
         self.text_model_picker.set_active_selection(provider, model)
 
@@ -1298,7 +1421,9 @@ class ModelManagerDialog(QDialog):
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_active_selection(provider, model)
-        display_provider = "OpenAI" if provider == "openai" else "OpenRouter"
+        display_provider = profile_display_name(
+            provider, self._settings_snapshot()
+        )
         self.message_label.setText(
             f"Text model set to {display_provider} · {model}"
         )
@@ -1323,7 +1448,9 @@ class ModelManagerDialog(QDialog):
         self._active_meeting_provider = provider
         self._active_meeting_llm_model = model
         self.meeting_model_picker.set_active_selection(provider, model)
-        display_provider = "OpenAI" if provider == "openai" else "OpenRouter"
+        display_provider = profile_display_name(
+            provider, self._settings_snapshot()
+        )
         self.message_label.setText(
             f"Meeting intelligence model set to {display_provider} · {model}"
         )

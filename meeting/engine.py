@@ -83,6 +83,7 @@ class MeetingEngineOptions:
     asr_language: str = 'auto'
     llm_provider: str = 'openrouter'
     llm_model: str = ''
+    llm_endpoint: Optional[Dict[str, Any]] = None
     agent_core_kind: str = 'pi'   # 'pi' | 'direct'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
@@ -435,6 +436,10 @@ class MeetingEngine:
                 asr_model=self.options.asr_model,
                 agent_provider=self.options.llm_provider,
                 agent_model=self.options.llm_model,
+                agent_endpoint_json=(
+                    json.dumps(self.options.llm_endpoint)
+                    if self.options.llm_endpoint else None
+                ),
                 spool_dir=spool_dir,
                 state_json=None,
                 state_seq=0,
@@ -2423,6 +2428,7 @@ class MeetingEngine:
                         model=self.options.llm_model,
                         api_key=None,  # resolved inside the agent layer
                         system_prompt=system_prompt,
+                        endpoint=self.options.llm_endpoint,
                     ),
                     self,
                 )

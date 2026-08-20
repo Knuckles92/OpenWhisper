@@ -4,7 +4,8 @@
  * Protocol (NDJSON JSON-RPC 2.0 over stdio; stdout is protocol-only):
  *  - FIRST line out: {"jsonrpc":"2.0","method":"hello","params":
  *      {"token":<OPENWHISPER_SIDECAR_TOKEN>,"protocol":1,"pi_version":"..."}}
- *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt}
+ *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt,
+ *                    base_url?, api_key_env?, kind?}
  *      | checkpoint {request_id, state, new_segments, is_consolidation,
  *                    is_polish, is_notes, system_prompt?}  (a notes
  *                    checkpoint carries the note-taker system_prompt)
@@ -49,7 +50,10 @@ function main(): void {
     process.stderr.write("fatal: OPENWHISPER_SIDECAR_TOKEN is not set\n");
     process.exit(1);
   }
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey =
+    process.env.OPENWHISPER_LLM_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    "dummy";
   const envModel = process.env.PI_MODEL;
 
   const rpc = new RpcEndpoint();
@@ -92,6 +96,8 @@ function main(): void {
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
     const modelId = String(params?.model || envModel || "");
+    const baseUrl = String(params?.base_url || process.env.OPENWHISPER_LLM_BASE_URL || "");
+    const kind = String(params?.kind || provider);
     systemPrompt = String(params?.system_prompt ?? "");
     if (!modelId) {
       throw new Error("no model configured (initialize.model and PI_MODEL are both empty)");
@@ -104,6 +110,8 @@ function main(): void {
       provider,
       modelId,
       apiKey,
+      baseUrl,
+      kind,
       tools: createMeetingTools(rpc, counters, toolPolicy),
       log: (level, msg) => rpc.log(level, msg),
       onEvent: emitProgress,

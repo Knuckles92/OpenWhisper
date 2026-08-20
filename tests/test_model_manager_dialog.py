@@ -635,6 +635,62 @@ class TestTextModelManager(_DialogTestCase):
         self.assertEqual(picker.activate_button.text(), "Active")
         self.assertFalse(picker.activate_button.isEnabled())
 
+    def test_custom_endpoint_appears_and_activation_persists(self):
+        dialog, values = self._make_dialog(
+            extra_settings={
+                SettingsKey.TEXT_LLM_PROFILES: [
+                    {
+                        "id": "custom_abcd1234",
+                        "name": "LM Studio",
+                        "base_url": "http://127.0.0.1:1234/v1",
+                        "api_key_env": "",
+                    }
+                ],
+                SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+                SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "local-qwen",
+            }
+        )
+        picker = dialog.text_model_picker
+        labels = [
+            picker.provider_combo.itemText(i)
+            for i in range(picker.provider_combo.count())
+        ]
+        self.assertIn("LM Studio", labels)
+        self.assertEqual(picker.provider, "custom_abcd1234")
+        self.assertEqual(
+            picker.provider_url.text(), "http://127.0.0.1:1234/v1"
+        )
+        self.assertEqual(
+            picker.provider_requirement.text(), "No API key required"
+        )
+        picker.model_combo.setCurrentText("other-local")
+        dialog._activate_text_model("custom_abcd1234")
+        self.assertEqual(
+            values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER], "custom_abcd1234"
+        )
+        self.assertEqual(
+            values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL], "other-local"
+        )
+
+    def test_assigned_custom_endpoint_cannot_be_deleted(self):
+        dialog, values = self._make_dialog(
+            extra_settings={
+                SettingsKey.TEXT_LLM_PROFILES: [
+                    {
+                        "id": "custom_abcd1234",
+                        "name": "LM Studio",
+                        "base_url": "http://127.0.0.1:1234/v1",
+                        "api_key_env": "",
+                    }
+                ],
+                SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+                SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "local-qwen",
+            }
+        )
+        dialog._delete_text_endpoint("custom_abcd1234")
+        self.assertIn("in use", dialog.message_label.text())
+        self.assertEqual(len(values[SettingsKey.TEXT_LLM_PROFILES]), 1)
+
     def test_catalog_result_populates_matching_provider(self):
         dialog, _values = self._make_text_dialog(model="gpt-4o-mini")
         models = ["gpt-4.1", "gpt-4o-mini", "o4-mini"]
@@ -724,6 +780,14 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     SettingsKey.MEETING_SPEAKER_ID_BACKEND: (
                         MeetingSpeakerIdBackend.OPENAI
                     ),
+                    SettingsKey.TEXT_LLM_PROFILES: [
+                        {
+                            "id": "custom_abcd1234",
+                            "name": "LM Studio",
+                            "base_url": "http://127.0.0.1:1234/v1",
+                            "api_key_env": "",
+                        }
+                    ],
                 }
             )
             with (
@@ -755,6 +819,10 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             self.assertEqual(
                 saved[SettingsKey.MEETING_SPEAKER_ID_BACKEND],
                 MeetingSpeakerIdBackend.OPENAI,
+            )
+            self.assertEqual(
+                saved[SettingsKey.TEXT_LLM_PROFILES][0]["id"],
+                "custom_abcd1234",
             )
 
     def test_meeting_tab_links_to_model_manager(self):
@@ -831,6 +899,33 @@ class TestMeetingModelManager(_DialogTestCase):
         self.assertEqual(values[SettingsKey.MEETING_LLM_PROVIDER], "openai")
         self.assertEqual(values[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini")
         self.assertEqual(picker.activate_button.text(), "Active")
+
+    def test_meeting_custom_endpoint_activation_persists(self):
+        dialog, values = self._make_meeting_dialog(
+            provider="custom_abcd1234",
+            model="local-qwen",
+            extra={
+                SettingsKey.TEXT_LLM_PROFILES: [
+                    {
+                        "id": "custom_abcd1234",
+                        "name": "LM Studio",
+                        "base_url": "http://127.0.0.1:1234/v1",
+                        "api_key_env": "",
+                    }
+                ]
+            },
+        )
+        picker = dialog.meeting_model_picker
+        self.assertEqual(picker.provider, "custom_abcd1234")
+        self.assertEqual(
+            picker.provider_url.text(), "http://127.0.0.1:1234/v1"
+        )
+        picker.model_combo.setCurrentText("other-local")
+        dialog._activate_meeting_llm_model("custom_abcd1234")
+        self.assertEqual(
+            values[SettingsKey.MEETING_LLM_PROVIDER], "custom_abcd1234"
+        )
+        self.assertEqual(values[SettingsKey.MEETING_LLM_MODEL], "other-local")
 
     def test_meeting_language_and_core_persist(self):
         dialog, values = self._make_meeting_dialog()

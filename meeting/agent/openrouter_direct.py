@@ -344,6 +344,8 @@ class DirectOpenRouterAgent:
         self._headers: Optional[Dict[str, str]] = None
         self._model: str = ""
         self._json_mode = False
+        self._use_json_response_format = True
+        self._profile_kind: str = ""
         self._polish_mode = False
         self._notes_mode = False
         self._notes_item_ids: Optional[frozenset] = None
@@ -367,11 +369,22 @@ class DirectOpenRouterAgent:
         self._tools = tools
         self._fatal = False
         self._shut_down = False
-        self._api_key = cfg.api_key or find_provider_api_key(cfg.provider)
-        self._base_url = self._provider_base_url(cfg.provider)
-        self._headers = (
-            dict(_OPENROUTER_HEADERS) if cfg.provider == "openrouter" else None
+        profile = self._resolve_profile(cfg)
+        self._profile_kind = profile.kind if profile is not None else cfg.provider
+        self._api_key = cfg.api_key or (
+            self._resolve_profile_key(profile, cfg.provider)
         )
+        self._base_url = (
+            profile.base_url if profile is not None
+            else self._provider_base_url(cfg.provider)
+        )
+        self._headers = (
+            dict(_OPENROUTER_HEADERS)
+            if (profile is not None and profile.kind == "openrouter")
+            or cfg.provider == "openrouter"
+            else None
+        )
+        self._use_json_response_format = True
         self._model = self._resolve_model(cfg)
 
         if OpenAI is None:
@@ -436,8 +449,38 @@ class DirectOpenRouterAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _resolve_profile(cfg: AgentConfig):
+        """Resolve the text-LLM profile for this agent config."""
+        try:
+            from services.text_llm import profile_from_agent_config
+
+            return profile_from_agent_config(cfg.provider, cfg.endpoint)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _resolve_profile_key(profile: Any, provider: str) -> Optional[str]:
+        """Resolve the SDK key, treating auth-free profiles as available."""
+        if profile is not None:
+            try:
+                from services.text_llm import resolve_api_key
+
+                return resolve_api_key(profile)
+            except Exception:
+                pass
+        return find_provider_api_key(provider)
+
+    @staticmethod
     def _provider_base_url(provider: str) -> Optional[str]:
         """Base URL for a provider (None = OpenAI default)."""
+        try:
+            from services.text_llm import get_profile
+
+            profile = get_profile(provider)
+            if profile is not None:
+                return profile.base_url
+        except Exception:
+            pass
         if provider == "openrouter":
             try:
                 from config import config
@@ -514,6 +557,14 @@ class DirectOpenRouterAgent:
                 "fallback"
             )
             self._json_mode = True
+        elif self._looks_like_response_format_error(exc):
+            self._use_json_response_format = False
+
+    @staticmethod
+    def _looks_like_response_format_error(exc: Exception) -> bool:
+        """True when the server rejected ``response_format=json_object``."""
+        text = str(exc).lower()
+        return "response_format" in text or "json_object" in text
 
     @staticmethod
     def _merge_usage(total: Dict[str, Any], usage: Any) -> None:
@@ -793,20 +844,33 @@ class DirectOpenRouterAgent:
         ]
         usage: Dict[str, Any] = {}
 
-        for attempt in range(2):
+        for attempt in range(3):
             if self._cancel_event.is_set():
                 return AgentResult(ok=False, error="canceled", usage=usage)
             try:
+                kwargs: Dict[str, Any] = {
+                    "model": self._model,
+                    "messages": messages,
+                    "temperature": _TEMPERATURE,
+                }
+                if self._use_json_response_format:
+                    kwargs["response_format"] = {"type": "json_object"}
                 response = client.with_options(
                     timeout=timeout_s
-                ).chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=_TEMPERATURE,
-                )
+                ).chat.completions.create(**kwargs)
             except Exception as exc:
+                retry_without_format = (
+                    self._use_json_response_format
+                    and self._looks_like_response_format_error(exc)
+                )
                 self._note_error(exc)
+                if retry_without_format:
+                    logger.warning(
+                        "Provider rejected response_format=json_object; "
+                        "retrying without it"
+                    )
+                    self._use_json_response_format = False
+                    continue
                 error = "canceled" if self._cancel_event.is_set() else str(exc)
                 return AgentResult(ok=False, error=error, usage=usage)
             self._merge_usage(usage, getattr(response, "usage", None))
@@ -821,7 +885,7 @@ class DirectOpenRouterAgent:
                 if not isinstance(ops, list):
                     raise ValueError('missing "ops" list')
             except ValueError as exc:  # includes json.JSONDecodeError
-                if attempt == 0:
+                if attempt < 2:
                     # One repair retry with the parse error in context.
                     messages.append({"role": "assistant", "content": content})
                     messages.append({

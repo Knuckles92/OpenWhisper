@@ -367,11 +367,38 @@ class TestSidecarHandshake:
     def test_missing_api_key_is_fatal(self, stub_dir):
         payload_dir, stub = stub_dir
         agent = PiSidecarAgent(str(payload_dir))
-        with patch("meeting.agent.pi_sidecar.find_provider_api_key",
-                   return_value=None):
+        with patch.object(PiSidecarAgent, "_resolve_api_key", return_value=None):
             with pytest.raises(RuntimeError, match="API key"):
                 agent.initialize(_cfg(api_key=None), FakeTools())
         assert agent._fatal is True
+
+    def test_custom_endpoint_env_and_initialize_fields(self, stub_dir):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub)
+        cfg = _cfg(
+            api_key=None,
+            provider="custom_abcd1234",
+            endpoint={
+                "profile_id": "custom_abcd1234",
+                "name": "LM Studio",
+                "kind": "custom",
+                "base_url": "http://127.0.0.1:1234/v1",
+                "api_key_env": "",
+            },
+        )
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+            agent.initialize(cfg, FakeTools())
+            try:
+                env = agent._build_env("dummy")
+                fields = agent._endpoint_fields()
+            finally:
+                agent.shutdown()
+        assert env["OPENWHISPER_LLM_API_KEY"] == "dummy"
+        assert env["OPENWHISPER_LLM_BASE_URL"] == "http://127.0.0.1:1234/v1"
+        assert fields["base_url"] == "http://127.0.0.1:1234/v1"
+        assert fields["kind"] == "custom"
+        assert fields["api_key_env"] == "OPENWHISPER_LLM_API_KEY"
 
     def test_child_death_before_hello_is_not_a_token_mismatch(self, stub_dir):
         """A child that never speaks must not be diagnosed as a bad token."""

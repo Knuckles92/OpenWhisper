@@ -1,6 +1,6 @@
-"""Provider-to-model picker used by the Model Manager text cards."""
+"""Profile-to-model picker used by the Model Manager text cards."""
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
@@ -18,6 +18,14 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
+from services.text_llm import (
+    PROFILE_KIND_OPENROUTER,
+    TextLLMProfile,
+    builtin_profiles,
+    credential_status,
+    get_profile,
+    list_profiles,
+)
 from services.transcript_cleanup import find_api_key
 from ui_qt.widgets.buttons import Button
 from ui_qt.widgets.no_wheel import NoWheelComboBox
@@ -33,29 +41,15 @@ def _design_icon(filename: str) -> QIcon:
 
 
 class TextModelPicker(QWidget):
-    """Single-flow provider and text-model selection controls."""
+    """Single-flow profile and text-model selection controls."""
 
     provider_changed = pyqtSignal(str)
     refresh_requested = pyqtSignal(str)
     activation_requested = pyqtSignal(str)
     sort_changed = pyqtSignal(str)
-
-    _PROVIDERS = (
-        (
-            TranscriptCleanupProvider.OPENAI,
-            "OpenAI",
-            "Direct access to OpenAI chat and reasoning models.",
-            "Requires OPENAI_API_KEY",
-            "OAI",
-        ),
-        (
-            TranscriptCleanupProvider.OPENROUTER,
-            "OpenRouter",
-            "One catalog with models from OpenAI, Anthropic, Google, and more.",
-            "Requires OPENROUTER_API_KEY",
-            "OR",
-        ),
-    )
+    add_endpoint_requested = pyqtSignal()
+    edit_endpoint_requested = pyqtSignal(str)
+    delete_endpoint_requested = pyqtSignal(str)
 
     _SORT_OPTIONS = (
         ("A → Z", TranscriptCleanupModelSort.ALPHABETICAL),
@@ -88,9 +82,10 @@ class TextModelPicker(QWidget):
         self._active_provider = ""
         self._active_model = ""
         self._idle_status = idle_status
+        self._profiles: List[TextLLMProfile] = list(builtin_profiles())
         self._draft_models = {
-            provider: default_transcript_cleanup_model(provider)
-            for provider in TranscriptCleanupProvider.ALL
+            profile.id: default_transcript_cleanup_model(profile.id)
+            for profile in self._profiles
         }
         self._setup_ui()
 
@@ -111,12 +106,7 @@ class TextModelPicker(QWidget):
         return heading
 
     def _setup_ui(self) -> None:
-        """Construct the side-by-side provider and model selection cards.
-
-        The two numbered steps sit in equal-width columns so the whole flow
-        fits the dialog's compact default height without scrolling; the active
-        banner and primary action pin to the bottom edge of their cards.
-        """
+        """Construct the side-by-side provider and model selection cards."""
         self.setObjectName("textModelPicker")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
@@ -127,24 +117,36 @@ class TextModelPicker(QWidget):
         provider_layout = QVBoxLayout(self.provider_card)
         provider_layout.setContentsMargins(16, 14, 16, 14)
         provider_layout.setSpacing(10)
-        provider_layout.addLayout(self._step_heading("1", "Choose a provider"))
+        provider_layout.addLayout(self._step_heading("1", "Choose an endpoint"))
 
         self.provider_combo = NoWheelComboBox()
         self.provider_combo.setObjectName("textModelProviderCombo")
         self.provider_combo.setMinimumHeight(44)
-        provider_icons = {
-            TranscriptCleanupProvider.OPENAI: _design_icon("box-blue.svg"),
-            TranscriptCleanupProvider.OPENROUTER: _design_icon(
-                "stack-purple.svg"
-            ),
-        }
-        for provider, name, _description, _requirement, _mark in self._PROVIDERS:
-            self.provider_combo.addItem(provider_icons[provider], name, provider)
         self.provider_combo.setIconSize(QSize(22, 22))
         self.provider_combo.currentIndexChanged.connect(
             self._on_provider_combo_changed
         )
         provider_layout.addWidget(self.provider_combo)
+
+        manage_row = QHBoxLayout()
+        manage_row.setSpacing(8)
+        self.add_endpoint_button = Button("Add endpoint")
+        self.add_endpoint_button.setObjectName("textEndpointAddButton")
+        self.add_endpoint_button.setToolTip(
+            "Add an OpenAI-compatible server such as LM Studio or vLLM"
+        )
+        self.add_endpoint_button.clicked.connect(self.add_endpoint_requested.emit)
+        self.edit_endpoint_button = Button("Edit")
+        self.edit_endpoint_button.setObjectName("textEndpointEditButton")
+        self.edit_endpoint_button.clicked.connect(self._emit_edit)
+        self.delete_endpoint_button = Button("Delete")
+        self.delete_endpoint_button.setObjectName("textEndpointDeleteButton")
+        self.delete_endpoint_button.clicked.connect(self._emit_delete)
+        manage_row.addWidget(self.add_endpoint_button)
+        manage_row.addWidget(self.edit_endpoint_button)
+        manage_row.addWidget(self.delete_endpoint_button)
+        manage_row.addStretch()
+        provider_layout.addLayout(manage_row)
 
         self.provider_identity_card = QFrame()
         self.provider_identity_card.setObjectName("textProviderIdentityCard")
@@ -169,6 +171,9 @@ class TextModelPicker(QWidget):
         self.provider_description = QLabel("")
         self.provider_description.setObjectName("textProviderDescription")
         self.provider_description.setWordWrap(True)
+        self.provider_url = QLabel("")
+        self.provider_url.setObjectName("textProviderUrl")
+        self.provider_url.setWordWrap(True)
         self.provider_requirement = QLabel("")
         self.provider_requirement.setObjectName("textProviderRequirement")
         credential_row = QHBoxLayout()
@@ -181,6 +186,7 @@ class TextModelPicker(QWidget):
         credential_row.addStretch()
         copy.addWidget(self.provider_title)
         copy.addWidget(self.provider_description)
+        copy.addWidget(self.provider_url)
         copy.addLayout(credential_row)
         identity_row.addLayout(copy, stretch=1)
         identity_card_layout.addLayout(identity_row)
@@ -319,16 +325,42 @@ class TextModelPicker(QWidget):
         model_card_layout.addLayout(action_row)
 
         layout.addWidget(self.model_card, stretch=1)
+        self._reload_provider_combo()
         self._render_provider()
 
+    def set_profiles(self, profiles: List[TextLLMProfile]) -> None:
+        """Replace the selectable profile list without changing the catalog."""
+        if not profiles:
+            profiles = list(builtin_profiles())
+        current = self.provider
+        self._profiles = list(profiles)
+        for profile in self._profiles:
+            self._draft_models.setdefault(
+                profile.id, default_transcript_cleanup_model(profile.id)
+            )
+        self._reload_provider_combo()
+        if get_profile(current) is None and current not in {
+            p.id for p in self._profiles
+        }:
+            current = self._profiles[0].id
+        self.set_provider(current)
+
+    def current_profile(self) -> Optional[TextLLMProfile]:
+        """Return the selected profile, if any."""
+        for profile in self._profiles:
+            if profile.id == self.provider:
+                return profile
+        return get_profile(self.provider)
+
     def set_provider(self, provider: str, model: Optional[str] = None) -> None:
-        """Show one provider and optionally stage a model for it.
+        """Show one profile and optionally stage a model for it.
 
         Args:
-            provider: A ``TranscriptCleanupProvider`` value.
+            provider: A text-LLM profile id.
             model: Optional model id to stage for the provider.
         """
-        if provider not in TranscriptCleanupProvider.ALL:
+        known = {profile.id for profile in self._profiles}
+        if provider not in known and get_profile(provider) is None:
             return
         self._save_current_draft()
         if model:
@@ -340,33 +372,77 @@ class TextModelPicker(QWidget):
         self.provider = provider
         self._render_provider()
 
+    def _reload_provider_combo(self) -> None:
+        """Rebuild the profile combo from the current profile list."""
+        icons = {
+            TranscriptCleanupProvider.OPENAI: _design_icon("box-blue.svg"),
+            TranscriptCleanupProvider.OPENROUTER: _design_icon(
+                "stack-purple.svg"
+            ),
+        }
+        custom_icon = _design_icon("stack-slate.svg")
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        for profile in self._profiles:
+            icon = icons.get(profile.id, custom_icon)
+            self.provider_combo.addItem(icon, profile.name, profile.id)
+        self.provider_combo.blockSignals(False)
+
     def _on_provider_combo_changed(self, _index: int) -> None:
         """Swap the in-place catalog when the provider selector changes."""
         self._save_current_draft()
         provider = self.provider_combo.currentData()
-        if provider not in TranscriptCleanupProvider.ALL:
+        if not provider:
             return
         self.provider = provider
         self._render_provider()
         self.provider_changed.emit(provider)
 
-    def _provider_details(self) -> tuple:
-        """Return display metadata for the selected provider."""
-        for details in self._PROVIDERS:
-            if details[0] == self.provider:
-                return details
-        return self._PROVIDERS[0]
+    def _profile_copy(self, profile: Optional[TextLLMProfile]) -> tuple:
+        """Return mark, description, and default requirement copy."""
+        if profile is None:
+            return ("API", "Unknown endpoint.", "Requires an API key")
+        if profile.id == TranscriptCleanupProvider.OPENAI:
+            return (
+                "OAI",
+                "Direct access to OpenAI chat and reasoning models.",
+                "Requires OPENAI_API_KEY",
+            )
+        if profile.id == TranscriptCleanupProvider.OPENROUTER:
+            return (
+                "OR",
+                "One catalog with models from OpenAI, Anthropic, Google, and more.",
+                "Requires OPENROUTER_API_KEY",
+            )
+        return (
+            "API",
+            "Any server that speaks the OpenAI Chat Completions API.",
+            (
+                f"Requires {profile.api_key_env}"
+                if profile.api_key_env else "No API key required"
+            ),
+        )
 
     def _render_provider(self) -> None:
         """Update provider copy and the staged model without changing pages."""
-        _provider, name, description, requirement, mark = self._provider_details()
+        profile = self.current_profile()
+        mark, description, requirement = self._profile_copy(profile)
         self.provider_mark.setText(mark)
-        self.provider_title.setText(name)
+        self.provider_title.setText(profile.name if profile else "Endpoint")
         self.provider_description.setText(description)
+        if profile is not None and profile.base_url:
+            self.provider_url.setText(profile.base_url)
+            self.provider_url.setVisible(True)
+        else:
+            self.provider_url.setText("")
+            self.provider_url.setVisible(False)
         self._update_credential_status(requirement)
-        show_sort = self.provider == TranscriptCleanupProvider.OPENROUTER
+        show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
         self.sort_label.setVisible(show_sort)
         self.sort_combo.setVisible(show_sort)
+        can_edit = bool(profile and not profile.builtin)
+        self.edit_endpoint_button.setEnabled(can_edit)
+        self.delete_endpoint_button.setEnabled(can_edit)
 
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -386,13 +462,18 @@ class TextModelPicker(QWidget):
             requirement: Missing-key copy from the selected provider metadata.
                 When omitted, the copy is looked up from that metadata.
         """
-        if requirement is None:
-            requirement = self._provider_details()[3]
-        credential_name = requirement.removeprefix("Requires ")
-        available = bool(find_api_key(self.provider))
-        self.provider_requirement.setText(
-            f"{credential_name} found" if available else requirement
-        )
+        profile = self.current_profile()
+        if profile is not None and not profile.builtin:
+            available, text = credential_status(profile)
+        else:
+            if requirement is None:
+                requirement = self._profile_copy(profile)[2]
+            credential_name = requirement.removeprefix("Requires ")
+            available = bool(find_api_key(self.provider))
+            text = (
+                f"{credential_name} found" if available else requirement
+            )
+        self.provider_requirement.setText(text)
         credential_icon = _design_icon(
             "check-green.svg" if available else "info-warning.svg"
         )
@@ -420,7 +501,8 @@ class TextModelPicker(QWidget):
         Returns:
             A ``TranscriptCleanupModelSort`` value.
         """
-        if self.provider != TranscriptCleanupProvider.OPENROUTER:
+        profile = self.current_profile()
+        if profile is None or profile.kind != PROFILE_KIND_OPENROUTER:
             return TranscriptCleanupModelSort.ALPHABETICAL
         return (
             self.sort_combo.currentData()
@@ -469,20 +551,30 @@ class TextModelPicker(QWidget):
         """Store the active selection and refresh related status UI.
 
         Args:
-            provider: Active ``TranscriptCleanupProvider`` value.
+            provider: Active text-LLM profile id.
             model: Active model id.
         """
         self._active_provider = provider
         self._active_model = model
         self._update_active_summary()
 
+    def _active_profile_name(self) -> str:
+        """Display name for the currently active profile."""
+        for profile in self._profiles:
+            if profile.id == self._active_provider:
+                return profile.name
+        profile = get_profile(self._active_provider)
+        if profile is not None:
+            return profile.name
+        if self._active_provider == TranscriptCleanupProvider.OPENAI:
+            return "OpenAI"
+        if self._active_provider == TranscriptCleanupProvider.OPENROUTER:
+            return "OpenRouter"
+        return self._active_provider or "Endpoint"
+
     def _update_active_summary(self) -> None:
         """Show the Active now badge only for the currently selected provider."""
-        provider_name = (
-            "OpenAI"
-            if self._active_provider == TranscriptCleanupProvider.OPENAI
-            else "OpenRouter"
-        )
+        provider_name = self._active_profile_name()
         self.active_summary.setText(
             f"Active now: {provider_name} · {self._active_model}"
         )
@@ -490,7 +582,6 @@ class TextModelPicker(QWidget):
             bool(self._active_provider)
             and self.provider == self._active_provider
         )
-        # Long provider/model ids must not widen the chip past its row.
         value = self._active_model or "Not selected"
         metrics = self.current_model_value.fontMetrics()
         self.current_model_value.setText(
@@ -512,3 +603,15 @@ class TextModelPicker(QWidget):
         self.activate_button.style().unpolish(self.activate_button)
         self.activate_button.style().polish(self.activate_button)
         self.activate_button.update()
+
+    def _emit_edit(self) -> None:
+        """Ask the owner to edit the selected custom endpoint."""
+        profile = self.current_profile()
+        if profile is not None and not profile.builtin:
+            self.edit_endpoint_requested.emit(profile.id)
+
+    def _emit_delete(self) -> None:
+        """Ask the owner to delete the selected custom endpoint."""
+        profile = self.current_profile()
+        if profile is not None and not profile.builtin:
+            self.delete_endpoint_requested.emit(profile.id)

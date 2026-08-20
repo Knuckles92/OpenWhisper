@@ -86,14 +86,39 @@ class TestSchema:
         manager = DatabaseManager(db_path=db_path)
         try:
             from sqlalchemy import inspect, text
-            assert SCHEMA_VERSION == 10
+            assert SCHEMA_VERSION == 11
             with manager.engine.connect() as c:
                 version = c.execute(
                     text("SELECT version FROM schema_version")).scalar()
-            assert version == 10
+            assert version == 11
             assert "meeting_sessions" in inspect(manager.engine).get_table_names()
         finally:
             manager.close()
+
+    def test_agent_endpoint_json_roundtrip(self, repo):
+        import json
+
+        endpoint = {
+            "profile_id": "custom_abcd1234",
+            "name": "LM Studio",
+            "kind": "custom",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "api_key_env": "",
+        }
+        repo.create_meeting(
+            id="m_endpoint", title="Endpoint meeting", status="active",
+            started_at=datetime.now().isoformat(),
+            host_token="host-token", guest_token="guest-token",
+            cloud_enabled=True, spool_dir="/tmp/spool",
+            agent_provider="custom_abcd1234", agent_model="local-qwen",
+            agent_endpoint_json=json.dumps(endpoint),
+        )
+        meeting = repo.get_meeting("m_endpoint")
+        stored = meeting["agent_endpoint_json"]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        assert stored["base_url"] == "http://127.0.0.1:1234/v1"
+        assert stored["profile_id"] == "custom_abcd1234"
 
 
 class TestMeetingLifecycle:

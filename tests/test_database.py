@@ -214,7 +214,7 @@ class TestDatabaseManager:
             assert "raw_text" in columns
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 10
+            assert version == SCHEMA_VERSION == 11
         finally:
             manager.close()
 
@@ -284,7 +284,66 @@ class TestDatabaseManager:
 
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 10
+            assert version == SCHEMA_VERSION == 11
+        finally:
+            manager.close()
+
+    def test_migration_adds_agent_endpoint_json(self, tmp_path):
+        """Verify schema v11 adds agent_endpoint_json to a v10 meeting DB."""
+        db_path = str(tmp_path / "legacy_v10.db")
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)"
+            )
+            conn.execute("INSERT INTO schema_version(version) VALUES (10)")
+            conn.execute(
+                """
+                CREATE TABLE meeting_sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    paused_total_s REAL NOT NULL DEFAULT 0,
+                    host_token TEXT NOT NULL,
+                    guest_token TEXT NOT NULL,
+                    cloud_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    asr_model TEXT,
+                    agent_provider TEXT,
+                    agent_model TEXT,
+                    spool_dir TEXT NOT NULL,
+                    state_json TEXT,
+                    state_seq INTEGER NOT NULL DEFAULT 0,
+                    app_pid INTEGER,
+                    app_heartbeat_at TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        from services.database import DatabaseManager, SCHEMA_VERSION
+
+        manager = DatabaseManager(db_path=db_path)
+        try:
+            with manager.engine.connect() as connection:
+                columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        "PRAGMA table_info(meeting_sessions)"
+                    )
+                }
+                version = connection.exec_driver_sql(
+                    "SELECT version FROM schema_version"
+                ).scalar_one()
+
+            assert "agent_endpoint_json" in columns
+            assert version == SCHEMA_VERSION == 11
         finally:
             manager.close()
 

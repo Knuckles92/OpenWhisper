@@ -39,7 +39,9 @@ with `CREATE_NO_WINDOW`, stdio piped, and this environment:
 | Variable | Purpose |
 | --- | --- |
 | `OPENWHISPER_SIDECAR_TOKEN` | Handshake token; echoed in the first `hello` line so Python can authenticate the process. |
-| `OPENROUTER_API_KEY` | OpenRouter credential used by the Pi provider config. |
+| `OPENWHISPER_LLM_API_KEY` | Process-scoped API key written into Pi's generated `models.json` (`$OPENWHISPER_LLM_API_KEY`). Auth-free local servers receive a dummy value. |
+| `OPENWHISPER_LLM_BASE_URL` | Optional fallback base URL when `initialize.base_url` is empty. |
+| `OPENROUTER_API_KEY` | Legacy alias of the same key, kept for older sidecar bundles. |
 | `PI_MODEL` | Fallback model id when `initialize.model` is empty. |
 
 ### Payload layout expected by the Python side
@@ -58,7 +60,7 @@ Diagnostics go out as `log` notifications (or stderr).
 - **First line out** (before anything else):
   `{"jsonrpc":"2.0","method":"hello","params":{"token":"...","protocol":1,"pi_version":"..."}}`
 - **Python → sidecar requests:** `initialize {meeting_id, provider, model,
-  system_prompt}` · `checkpoint {request_id, state, new_segments,
+  system_prompt, base_url, api_key_env, kind}` · `checkpoint {request_id, state, new_segments,
   is_consolidation, is_polish}` → `{"applied":N,"rejected":N,"usage":{}}` ·
   `cancel {request_id}` · `ping {}` · `status {}` · `shutdown {}`
 - **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
@@ -67,8 +69,8 @@ Diagnostics go out as `log` notifications (or stderr).
 - **Sidecar → Python notifications:** `log {level, msg}` · `progress
   {request_id, event, delta, tool, streaming}` from Pi
   `session.subscribe` (the official SDK hook; `thinking_delta` means the
-  model is still thinking). Custom models.json sets `reasoning: true` and
-  OpenRouter `thinkingFormat` so those thinking events actually arrive.
+  model is still thinking).   Built-in OpenAI/OpenRouter profiles set `reasoning: true` and OpenRouter
+  `thinkingFormat`; generic endpoints default to non-reasoning settings.
 
 `initialize` creates one Pi session per meeting (in-memory, private temp agent
 dir so user-global `~/.pi` extensions can't inject tools). Each `checkpoint`

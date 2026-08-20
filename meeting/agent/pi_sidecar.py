@@ -413,7 +413,7 @@ class PiSidecarAgent:
         self._ping_misses = 0
         self._initialized = False
 
-        api_key = cfg.api_key or find_provider_api_key(cfg.provider)
+        api_key = cfg.api_key or self._resolve_api_key(cfg)
         if not api_key:
             self._fatal = True
             raise RuntimeError(
@@ -736,15 +736,66 @@ class PiSidecarAgent:
             return [portable, bundle]
         return ["node", bundle]
 
+    @staticmethod
+    def _resolve_api_key(cfg: AgentConfig) -> Optional[str]:
+        """Resolve the process key, including auth-free custom endpoints."""
+        try:
+            from services.text_llm import (
+                profile_from_agent_config,
+                resolve_api_key,
+            )
+
+            profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
+            return resolve_api_key(profile)
+        except Exception:
+            return find_provider_api_key(cfg.provider)
+
+    def _endpoint_fields(self) -> Dict[str, Any]:
+        """Non-secret connection fields passed to sidecar ``initialize``."""
+        assert self._cfg is not None
+        try:
+            from services.text_llm import (
+                SIDECAR_API_KEY_ENV,
+                profile_from_agent_config,
+            )
+
+            profile = profile_from_agent_config(
+                self._cfg.provider, self._cfg.endpoint,
+            )
+            return {
+                "base_url": profile.base_url or "",
+                "api_key_env": SIDECAR_API_KEY_ENV,
+                "kind": profile.kind,
+            }
+        except Exception:
+            return {
+                "base_url": "",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "kind": self._cfg.provider,
+            }
+
     def _build_env(self, api_key: str) -> Dict[str, str]:
         """Environment for the sidecar child process."""
         assert self._cfg is not None
         env = os.environ.copy()
         env["OPENWHISPER_SIDECAR_TOKEN"] = self._token or ""
-        # The sidecar currently reads OPENROUTER_API_KEY for the session key.
+        env["OPENWHISPER_LLM_API_KEY"] = api_key
+        # Keep OPENROUTER_API_KEY for older sidecar bundles and tests.
         env["OPENROUTER_API_KEY"] = api_key
         if self._cfg.provider == "openai":
             env["OPENAI_API_KEY"] = api_key
+        try:
+            from services.text_llm import profile_from_agent_config
+
+            profile = profile_from_agent_config(
+                self._cfg.provider, self._cfg.endpoint,
+            )
+            if profile.api_key_env:
+                env[profile.api_key_env] = api_key
+            if profile.base_url:
+                env["OPENWHISPER_LLM_BASE_URL"] = profile.base_url
+        except Exception:
+            pass
         if self._cfg.model:
             env["PI_MODEL"] = self._cfg.model
         return env
@@ -847,6 +898,7 @@ class PiSidecarAgent:
                     "provider": self._cfg.provider,
                     "model": self._cfg.model,
                     "system_prompt": self._cfg.system_prompt or "",
+                    **self._endpoint_fields(),
                 },
                 timeout_s=_RPC_DEFAULT_TIMEOUT_S,
             )
@@ -1532,7 +1584,7 @@ class PiSidecarAgent:
         if self._stop_health.wait(backoff):
             return False
 
-        api_key = self._cfg.api_key or find_provider_api_key(self._cfg.provider)
+        api_key = self._cfg.api_key or self._resolve_api_key(self._cfg)
         if not api_key:
             self._fatal = True
             self._initialized = False

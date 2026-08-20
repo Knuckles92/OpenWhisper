@@ -920,7 +920,34 @@ class UIController(QObject):
         """
         from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
 
-        dialog = MeetingConsentDialog(parent=self.main_window)
+        destination = None
+        remote = None
+        try:
+            from services.settings import (
+                resolve_meeting_llm_profile,
+                settings_manager,
+            )
+            from services.text_llm import (
+                consent_destination,
+                destination_is_remote,
+            )
+
+            profile = resolve_meeting_llm_profile(
+                settings_manager.load_all_settings()
+            )
+            destination = consent_destination(profile)
+            remote = destination_is_remote(profile)
+        except Exception:
+            logger.debug(
+                "Could not resolve meeting endpoint for consent copy",
+                exc_info=True,
+            )
+
+        dialog = MeetingConsentDialog(
+            parent=self.main_window,
+            destination=destination,
+            remote=remote,
+        )
         dialog.exec()
         return dialog.result_action == MeetingConsentDialog.RESULT_ENABLE
 

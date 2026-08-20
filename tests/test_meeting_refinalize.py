@@ -27,8 +27,9 @@ def repo(db):
     return SqlMeetingRepository(db=db)
 
 
-def make_meeting(repo, meeting_id="m_retry", state_json=None, cloud_enabled=True):
-    repo.create_meeting(
+def make_meeting(repo, meeting_id="m_retry", state_json=None, cloud_enabled=True,
+                 **extra):
+    fields = dict(
         id=meeting_id, title="Budget sync", status="ended",
         started_at=datetime.now().isoformat(),
         ended_at=datetime.now().isoformat(),
@@ -37,6 +38,8 @@ def make_meeting(repo, meeting_id="m_retry", state_json=None, cloud_enabled=True
         agent_provider="openrouter", agent_model="test/model",
         state_json=state_json, state_seq=0,
     )
+    fields.update(extra)
+    repo.create_meeting(**fields)
     return meeting_id
 
 
@@ -379,3 +382,40 @@ class TestProtection:
         human = next(item for item in items if item["id"] == "it_human")
         assert human["text"] == "Human wrote this"
         assert human["status"] == "edited"
+
+
+class TestEndpointSnapshot:
+    def test_stored_snapshot_is_passed_to_agent(self, repo, monkeypatch):
+        endpoint = {
+            "profile_id": "custom_abcd1234",
+            "name": "LM Studio",
+            "kind": "custom",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "api_key_env": "",
+        }
+        core = FakeAgentCore()
+        make_meeting(
+            repo,
+            state_json=seeded_state("m_retry", DEFAULT_STEPS),
+            agent_endpoint_json=json.dumps(endpoint),
+            agent_provider="custom_abcd1234",
+        )
+        add_transcript(repo, "m_retry")
+        install_cores(monkeypatch, core)
+
+        rerun_finalization(
+            repo, "m_retry",
+            from_step="consolidation",
+            provider="custom_abcd1234",
+            model="local-qwen",
+        )
+        assert core.cfg is not None
+        assert core.cfg.endpoint["base_url"] == endpoint["base_url"]
+        assert core.cfg.endpoint["profile_id"] == "custom_abcd1234"
+
+    def test_old_row_reconstructs_builtin_endpoint(self):
+        from meeting.refinalize import _meeting_endpoint
+
+        snapshot = _meeting_endpoint({"agent_provider": "openai"})
+        assert snapshot["profile_id"] == "openai"
+        assert snapshot["kind"] == "openai"

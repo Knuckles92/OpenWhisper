@@ -32,6 +32,7 @@ try:
         resolve_meeting_end_redecode,
         resolve_meeting_end_report,
         resolve_meeting_report_views,
+        resolve_meeting_llm_endpoint,
         resolve_meeting_llm_model,
         resolve_meeting_llm_provider,
         resolve_meeting_language,
@@ -668,6 +669,7 @@ class MeetingRuntime:
             asr_language=resolve_meeting_language(settings),
             llm_provider=resolve_meeting_llm_provider(settings),
             llm_model=resolve_meeting_llm_model(settings),
+            llm_endpoint=resolve_meeting_llm_endpoint(settings),
             agent_core_kind=agent_kind,
             sidecar_payload_dir=payload_dir,
             diarization_model_path=(
@@ -883,6 +885,7 @@ class MeetingRuntime:
                     from_step=step_key,
                     provider=provider,
                     model=model,
+                    endpoint=resolve_meeting_llm_endpoint(settings),
                     agent_core_kind=agent_core_kind,
                     sidecar_payload_dir=payload_dir,
                     store=store,
@@ -1047,6 +1050,7 @@ class MeetingRuntime:
                     spool_root=config.MEETINGS_FOLDER,
                     llm_provider=resolve_meeting_llm_provider(settings),
                     llm_model=resolve_meeting_llm_model(settings),
+                    llm_endpoint=resolve_meeting_llm_endpoint(settings),
                     agent_core_kind=resolve_meeting_agent_core(settings),
                     sidecar_payload_dir=meeting_agent_payload_dir(),
                 )

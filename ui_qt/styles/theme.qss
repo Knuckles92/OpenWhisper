@@ -414,6 +414,50 @@ QLabel#textProviderTitle {
     border: none;
 }
 
+QLabel#textProviderUrl {
+    color: #7d8b99;
+    font-size: 11px;
+    font-family: Consolas, "Cascadia Mono", "SF Mono", monospace;
+    background-color: transparent;
+    border: none;
+}
+
+QPushButton#textEndpointAddButton,
+QPushButton#textEndpointEditButton,
+QPushButton#textEndpointDeleteButton {
+    color: #c5ced8;
+    background-color: #141b22;
+    border: 1px solid #3b4752;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton#textEndpointAddButton:hover,
+QPushButton#textEndpointEditButton:hover,
+QPushButton#textEndpointDeleteButton:hover {
+    color: #f2f5f8;
+    background-color: #1a232c;
+    border-color: #52606d;
+}
+
+QPushButton#textEndpointEditButton:disabled,
+QPushButton#textEndpointDeleteButton:disabled {
+    color: #66707a;
+    border-color: #2a333c;
+}
+
+QDialog#textEndpointDialog {
+    background-color: #12181f;
+}
+
+QLabel#textEndpointError {
+    color: #ff6b6b;
+    font-size: 12px;
+    background-color: transparent;
+    border: none;
+}
+
 QLabel#textProviderDescription,
 QLabel#textModelStatus,
 QLabel#textModelFootnote {

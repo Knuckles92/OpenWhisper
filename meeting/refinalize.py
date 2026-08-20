@@ -37,6 +37,26 @@ from meeting.state.store import MeetingStateStore
 
 logger = logging.getLogger(__name__)
 
+
+def _meeting_endpoint(meeting: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the stored non-secret endpoint snapshot, if any."""
+    try:
+        from services.text_llm import snapshot_from_meeting
+
+        return snapshot_from_meeting(meeting).to_dict()
+    except Exception:
+        raw = (meeting or {}).get("agent_endpoint_json")
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return None
+
+
 #: Same block size the live scheduler uses for transcript cleanup.
 _POLISH_MAX_SEGMENTS = 400
 #: Per-block wall for a headless polish pass.
@@ -581,6 +601,7 @@ def rerun_polish(
     *,
     provider: str,
     model: str,
+    endpoint: Optional[Dict[str, Any]] = None,
     agent_core_kind: str = "pi",
     sidecar_payload_dir: Optional[str] = None,
     store: Optional[MeetingStateStore] = None,
@@ -630,6 +651,7 @@ def rerun_polish(
                 model=model,
                 api_key=None,
                 system_prompt=build_system_prompt(),
+                endpoint=endpoint or _meeting_endpoint(meeting),
             ),
             tools,
         )
@@ -681,6 +703,7 @@ def rerun_finalization(
     from_step: str = "failed",
     provider: str,
     model: str,
+    endpoint: Optional[Dict[str, Any]] = None,
     agent_core_kind: str = "pi",
     sidecar_payload_dir: Optional[str] = None,
     store: Optional[MeetingStateStore] = None,
@@ -849,6 +872,7 @@ def rerun_finalization(
                 meeting_id,
                 provider=provider,
                 model=model,
+                endpoint=endpoint,
                 agent_core_kind=agent_core_kind,
                 sidecar_payload_dir=sidecar_payload_dir,
                 store=store,
@@ -879,6 +903,7 @@ def rerun_finalization(
                     meeting_id,
                     provider=provider,
                     model=model,
+                    endpoint=endpoint,
                     agent_core_kind=agent_core_kind,
                     sidecar_payload_dir=sidecar_payload_dir,
                     store=store,

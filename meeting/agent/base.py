@@ -53,7 +53,7 @@ def find_provider_api_key(provider: str) -> Optional[str]:
     standalone and the services layer is unavailable.
 
     Args:
-        provider: Provider id (``openrouter`` or ``openai``).
+        provider: Profile id (``openrouter``, ``openai``, or ``custom_…``).
 
     Returns:
         The API key string, or None when no key is available.

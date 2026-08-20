@@ -56,6 +56,7 @@ from services.settings import (
 )
 from services.history_manager import history_manager
 from services.recorder import AudioRecorder
+from services.text_llm import profile_display_name
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.widgets import (
@@ -516,8 +517,9 @@ class SettingsDialog(QDialog):
 
         cleanup_info = QLabel(
             "Runs the selected chat model on each transcript after transcription. "
-            "OpenAI needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
-            "(environment or .env). Edit the prompt to change cleanup style "
+            "Built-in OpenAI/OpenRouter keys and any custom endpoint variable "
+            "come from the environment or .env. Local servers can leave the "
+            "key variable blank. Edit the prompt to change cleanup style "
             "(e.g. bullets, email tone)."
         )
         cleanup_info.setObjectName("infoLabel")
@@ -1103,11 +1105,10 @@ class SettingsDialog(QDialog):
             saved_provider = resolve_transcript_cleanup_provider(settings)
             saved_model = resolve_transcript_cleanup_model(settings)
         except Exception:
+            settings = {}
             saved_provider = "openai"
             saved_model = config.TRANSCRIPT_CLEANUP_MODEL
-        provider_name = (
-            "OpenAI" if saved_provider == "openai" else "OpenRouter"
-        )
+        provider_name = profile_display_name(saved_provider, settings)
         self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
     def _refresh_meeting_model_summary(self):
@@ -1126,9 +1127,7 @@ class SettingsDialog(QDialog):
             (label for code, label in MeetingLanguage.CHOICES if code == language),
             language,
         )
-        provider_name = (
-            "OpenAI" if provider == "openai" else "OpenRouter"
-        )
+        provider_name = profile_display_name(provider, settings)
         core_label = (
             "Pi (sidecar)" if core == MeetingAgentCore.PI
             else "Direct (no sidecar)"

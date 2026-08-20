@@ -436,6 +436,39 @@ class TestMeetingSettings(unittest.TestCase):
             config.MEETING_SERVER_PORT,
         )
 
+    def test_custom_profile_id_is_accepted(self):
+        from services.settings import resolve_transcript_cleanup_provider
+
+        settings = {
+            self.keys.TEXT_LLM_PROFILES: [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "LM Studio",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ],
+            self.keys.MEETING_LLM_PROVIDER: "custom_abcd1234",
+            self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+        }
+        self.assertEqual(self.resolve_provider(settings), "custom_abcd1234")
+        self.assertEqual(
+            resolve_transcript_cleanup_provider(settings), "custom_abcd1234"
+        )
+
+    def test_unknown_custom_profile_falls_back(self):
+        from services.settings import resolve_transcript_cleanup_provider
+
+        settings = {
+            self.keys.MEETING_LLM_PROVIDER: "custom_missing",
+            self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_missing",
+        }
+        self.assertEqual(self.resolve_provider(settings), config.MEETING_LLM_PROVIDER)
+        self.assertEqual(
+            resolve_transcript_cleanup_provider(settings),
+            config.TRANSCRIPT_CLEANUP_PROVIDER,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

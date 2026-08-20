@@ -118,6 +118,7 @@ class AgentConfig:
     api_key: Optional[str]
     system_prompt: str
     extra: Dict[str, Any] = field(default_factory=dict)
+    endpoint: Optional[Dict[str, Any]] = None
 
 
 @dataclass
