@@ -232,6 +232,15 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_retry_speakers = (
             self.meeting_runtime.retry_speakers
         )
+        self.ui_controller.on_meeting_retry_step = (
+            self.meeting_runtime.retry_finalization
+        )
+        self.ui_controller.on_meeting_defer_insights = (
+            self.meeting_runtime.defer_finalization_card
+        )
+        self.ui_controller.on_meeting_start_new = (
+            self.meeting_runtime.start_new_meeting
+        )
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.

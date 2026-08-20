@@ -185,6 +185,7 @@ def test_runtime_reuses_dashboard_and_opens_selected_history():
     controller = type("Controller", (), {
         "meeting_status_update": FakeSignal(),
         "meeting_error": FakeSignal(),
+        "meeting_state_changed": FakeSignal(),
     })()
     runtime = MeetingRuntime(controller)
     runtime._repo = type("Repository", (), {

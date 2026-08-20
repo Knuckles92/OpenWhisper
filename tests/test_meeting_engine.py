@@ -444,6 +444,32 @@ class TestIntelligenceHealth:
         assert events_of(engine, "intelligence")[-1]["online"] is True
         assert fakes.schedulers and fakes.schedulers[0].started
 
+    def test_start_persists_and_passes_llm_endpoint(
+            self, make_engine, fakes, repo):
+        import json
+
+        endpoint = {
+            "profile_id": "custom_abcd1234",
+            "name": "LM Studio",
+            "kind": "custom",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "api_key_env": "",
+        }
+        engine = make_engine(
+            cloud_enabled=True,
+            llm_provider="custom_abcd1234",
+            llm_model="local-qwen",
+            llm_endpoint=endpoint,
+        )
+        result = engine.start()
+        meeting = repo.get_meeting(result["meeting_id"])
+        stored = meeting["agent_endpoint_json"]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        assert stored["base_url"] == endpoint["base_url"]
+        assert fakes.cores[0].config.endpoint["base_url"] == endpoint["base_url"]
+        assert fakes.cores[0].config.provider == "custom_abcd1234"
+
     def test_cloud_disabled_starts_no_intelligence(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=False)
         engine.start()
@@ -672,6 +698,28 @@ class TestEndLifecycle:
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
+
+    def test_end_failed_polish_marks_step_failed(self, make_engine, repo, fakes):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        scheduler = fakes.schedulers[0]
+
+        def boom(timeout_s=60.0, progress_cb=None):
+            scheduler.polishes += 1
+            return ConsolidationOutcome(
+                status="failed", message="Transcript cleanup failed: boom",
+            )
+
+        scheduler.run_final_polish = boom
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        polish = next(step for step in fin["steps"] if step["id"] == "polish")
+        assert polish["status"] == "failed"
+        assert fin["status"] == "failed"
+        assert scheduler.consolidations == 1
 
     def test_ended_precedes_slow_offline_pass(self, make_engine, repo, fakes):
         engine = make_engine(cloud_enabled=False, end_redecode=True)
@@ -1178,3 +1226,35 @@ def test_engine_module_has_no_dead_recent_text_api():
     from meeting.engine import MeetingEngine
 
     assert not hasattr(MeetingEngine, "get_recent_text")
+
+
+class TestDirectAgentCapabilities:
+    def test_json_mode_retries_without_response_format(self):
+        from unittest.mock import MagicMock
+
+        from meeting.agent.openrouter_direct import DirectOpenRouterAgent
+
+        agent = DirectOpenRouterAgent()
+        agent._model = "local-qwen"
+        agent._use_json_response_format = True
+        agent._tools = MagicMock()
+        agent._tools.apply_agent_ops.return_value = []
+        client = MagicMock()
+        timed = MagicMock()
+        client.with_options.return_value = timed
+
+        def _create(**kwargs):
+            if "response_format" in kwargs:
+                raise RuntimeError("unknown field response_format / json_object")
+            return MagicMock(
+                choices=[
+                    MagicMock(message=MagicMock(content='{"ops": []}'))
+                ],
+                usage=None,
+            )
+
+        timed.chat.completions.create.side_effect = _create
+        result = agent._run_json_mode(client, "sys", "user", timeout_s=5)
+        assert result.ok is True
+        assert agent._use_json_response_format is False
+        assert timed.chat.completions.create.call_count == 2

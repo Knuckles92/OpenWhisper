@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
-    model_manager_requested = pyqtSignal()
+    model_manager_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
@@ -424,7 +424,9 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
-            tab.manage_models_requested.connect(self.model_manager_requested)
+            tab.manage_models_requested.connect(
+                lambda: self.model_manager_requested.emit("library")
+            )
             tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
@@ -951,8 +953,8 @@ class MainWindow(QMainWindow):
     def _sync_meeting_mode_height(self) -> None:
         """Hold the window tall enough for the Meeting Mode page.
 
-        Its finalization card grows as the pipeline reports step rows and
-        summary stats. The window keeps a deliberately low explicit minimum
+        Its finalization card grows as the pipeline reports step rows. The
+        window keeps a deliberately low explicit minimum
         height so the collapsed recorder layout can shrink, and that same
         minimum lets Qt squeeze the step rows together instead of honoring the
         page's own minimum. While Meeting Mode is selected the window floor
@@ -1059,7 +1061,7 @@ class MainWindow(QMainWindow):
     def open_model_manager(self):
         """Open the Model Manager dialog."""
         logger.info("Opening model manager")
-        self.model_manager_requested.emit()
+        self.model_manager_requested.emit("ondemand")
 
     def open_hotkey_settings(self):
         """Open hotkey settings dialog."""

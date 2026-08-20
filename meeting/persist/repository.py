@@ -45,6 +45,7 @@ def _session_to_dict(row: MeetingSession) -> Dict[str, Any]:
         "cloud_enabled": row.cloud_enabled,
         "asr_model": row.asr_model,
         "agent_provider": row.agent_provider, "agent_model": row.agent_model,
+        "agent_endpoint_json": row.agent_endpoint_json,
         "spool_dir": row.spool_dir,
         "state_json": row.state_json, "state_seq": row.state_seq,
         "app_pid": row.app_pid, "app_heartbeat_at": row.app_heartbeat_at,

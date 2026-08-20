@@ -77,12 +77,16 @@ export interface PiSession {
 }
 
 export interface CreateSessionOptions {
-  /** Provider id; the sidecar registers "openrouter" via models.json. */
+  /** Provider / profile id written into models.json. */
   provider: string;
   /** Model id as understood by the provider (e.g. "anthropic/claude-sonnet-4-5"). */
   modelId: string;
-  /** API key for the provider (from OPENROUTER_API_KEY). */
+  /** API key for the provider (from OPENWHISPER_LLM_API_KEY). */
   apiKey?: string;
+  /** OpenAI-compatible API root. Required for custom endpoints. */
+  baseUrl?: string;
+  /** Compatibility kind: openai | openrouter | custom. */
+  kind?: string;
   /** The ONLY tools the session gets; built-ins are disabled structurally. */
   tools: MeetingToolDef[];
   log: (level: "debug" | "info" | "warning" | "error", msg: string) => void;
@@ -189,26 +193,21 @@ function toTypebox(spec: ParamSpec): any {
 // Provider registration (custom provider via models.json in a private agent dir)
 // ---------------------------------------------------------------------------
 
-/** OpenAI-compatible API base URL per provider id. */
+/** OpenAI-compatible API base URL per built-in provider id. */
 const PROVIDER_BASE_URLS: Record<string, string> = {
   openrouter: "https://openrouter.ai/api/v1",
   openai: "https://api.openai.com/v1",
 };
 
-/** Environment variable each provider's key arrives in (set by the Python host). */
-const PROVIDER_KEY_ENVS: Record<string, string> = {
-  openrouter: "OPENROUTER_API_KEY",
-  openai: "OPENAI_API_KEY",
-};
+const GENERIC_KEY_ENV = "OPENWHISPER_LLM_API_KEY";
 
-/** Base URL for a provider id, defaulting to OpenRouter for unknown ids. */
-export function providerBaseUrl(provider: string): string {
-  return PROVIDER_BASE_URLS[provider] ?? PROVIDER_BASE_URLS.openrouter;
-}
-
-/** Key-env reference for a provider id, defaulting to OpenRouter's. */
-function providerKeyEnv(provider: string): string {
-  return PROVIDER_KEY_ENVS[provider] ?? PROVIDER_KEY_ENVS.openrouter;
+/** Base URL for a provider id. Unknown ids require an explicit URL. */
+export function providerBaseUrl(provider: string, baseUrl?: string): string {
+  const explicit = (baseUrl || "").replace(/\/$/, "");
+  if (explicit) return explicit;
+  const known = PROVIDER_BASE_URLS[provider];
+  if (known) return known;
+  throw new Error(`no base URL for provider ${provider}`);
 }
 
 /**
@@ -224,34 +223,41 @@ function providerKeyEnv(provider: string): string {
  * this fail the same way (pi#5106): long silent thinks, then tool-call
  * 400s because ``reasoning_content`` was never captured to replay.
  */
-function modelCompat(provider: string, modelId: string): Record<string, unknown> {
+function modelCompat(kind: string, modelId: string): Record<string, unknown> {
   const compat: Record<string, unknown> = {};
-  if (provider === "openrouter") {
+  if (kind === "openrouter") {
     compat.thinkingFormat = "openrouter";
     compat.supportsDeveloperRole = false;
   }
-  if (/deepseek-v4/i.test(modelId)) {
+  if (kind === "openrouter" && /deepseek-v4/i.test(modelId)) {
     compat.requiresReasoningContentOnAssistantMessages = true;
   }
   return compat;
 }
 
-async function writeAgentDir(provider: string, modelId: string): Promise<string> {
+async function writeAgentDir(
+  provider: string,
+  modelId: string,
+  baseUrl?: string,
+  kind?: string,
+): Promise<string> {
   const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openwhisper-pi-"));
+  const resolvedKind = kind || provider;
   const deepseek = /deepseek/i.test(modelId);
+  const reasoning = resolvedKind === "openrouter" || resolvedKind === "openai";
   const modelsJson = {
     providers: {
       [provider]: {
-        baseUrl: providerBaseUrl(provider),
-        apiKey: `$${providerKeyEnv(provider)}`,
+        baseUrl: providerBaseUrl(provider, baseUrl),
+        apiKey: `$${GENERIC_KEY_ENV}`,
         api: "openai-completions",
-        compat: modelCompat(provider, modelId),
+        compat: modelCompat(resolvedKind, modelId),
         models: [
           {
             id: modelId,
             name: modelId,
-            // Meeting models think; ``false`` hides thinking_delta from subscribe.
-            reasoning: true,
+            // Built-in cloud models think; custom endpoints default off.
+            reasoning,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             // Conservative defaults; OpenRouter enforces real limits server-side.
@@ -321,7 +327,15 @@ function turnFailure(session: any): string | null {
  * injecting tools, and only the provided custom tools are registered.
  */
 export async function createSession(opts: CreateSessionOptions): Promise<PiSession> {
-  const agentDir = await writeAgentDir(opts.provider, opts.modelId);
+  const agentDir = await writeAgentDir(
+    opts.provider,
+    opts.modelId,
+    opts.baseUrl,
+    opts.kind,
+  );
+  const reasoning =
+    (opts.kind || opts.provider) === "openrouter" ||
+    (opts.kind || opts.provider) === "openai";
 
   // Point ModelRuntime at our private agentDir so models.json (OpenRouter
   // custom provider) is picked up. getModel moved off the pi-ai root export
@@ -370,11 +384,13 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
     noTools: "builtin",
     // Official SDK option; without it OpenRouter gets effort:"none" and
     // thinking tokens are excluded from the stream (no thinking_delta).
-    thinkingLevel: "medium",
+    ...(reasoning ? { thinkingLevel: "medium" } : {}),
     sessionManager: (SessionManager as any).inMemory(),
   });
   try {
-    (session as any).setThinkingLevel?.("medium");
+    if (reasoning) {
+      (session as any).setThinkingLevel?.("medium");
+    }
   } catch {
     /* older SDKs omit the setter; createAgentSession option is enough */
   }

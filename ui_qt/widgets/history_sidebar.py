@@ -24,6 +24,7 @@ from config import config
 from services.format_utils import format_file_size
 from services.history_manager import HistoryEntry, history_manager
 from services.settings import SettingsKey, settings_manager
+from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
@@ -94,9 +95,15 @@ def _format_cleanup_info(entry: HistoryEntry) -> str:
     """
     if not entry.cleanup_model:
         return "Cleaned"
-    provider = _CLEANUP_PROVIDER_DISPLAY_NAMES.get(
-        entry.cleanup_provider, entry.cleanup_provider or ""
-    )
+    provider_id = entry.cleanup_provider or ""
+    provider = _CLEANUP_PROVIDER_DISPLAY_NAMES.get(provider_id)
+    if not provider and provider_id:
+        try:
+            provider = profile_display_name(
+                provider_id, settings_manager.load_all_settings()
+            ) or provider_id
+        except Exception:
+            provider = provider_id
     return f"{provider} · {entry.cleanup_model}" if provider else entry.cleanup_model
 
 

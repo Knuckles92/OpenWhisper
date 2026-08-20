@@ -31,6 +31,26 @@ from meeting.state.store import MeetingStateStore
 
 logger = logging.getLogger(__name__)
 
+
+def _meeting_endpoint(meeting: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the stored non-secret endpoint snapshot, if any."""
+    try:
+        from services.text_llm import snapshot_from_meeting
+
+        return snapshot_from_meeting(meeting).to_dict()
+    except Exception:
+        raw = (meeting or {}).get("agent_endpoint_json")
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return None
+
+
 #: Hard wall for one re-run consolidation pass. The sidecar also stalls
 #: after ``CONSOLIDATION_STALL_S`` of silence (no Pi events / tool calls).
 DEFAULT_TIMEOUT_S = 900.0
@@ -202,7 +222,8 @@ def _consolidate(core: Any, payload: CheckpointPayload,
 
 
 def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
-                   model: str, agent_core_kind: str = "pi",
+                   model: str, endpoint: Optional[Dict[str, Any]] = None,
+                   agent_core_kind: str = "pi",
                    sidecar_payload_dir: Optional[str] = None,
                    store: Optional[MeetingStateStore] = None,
                    timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
@@ -270,6 +291,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
                 model=model,
                 api_key=None,  # resolved inside the agent layer
                 system_prompt=build_system_prompt(),
+                endpoint=endpoint or _meeting_endpoint(meeting),
             ),
             tools,
         )

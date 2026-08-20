@@ -19,7 +19,7 @@ from services.models import (
 logger = logging.getLogger(__name__)
 
 # Schema version for future migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class DatabaseManager:
@@ -267,6 +267,36 @@ class DatabaseManager:
             # Base.metadata.create_all after migrations run; the FTS index is
             # created by _ensure_meeting_fts. Nothing to transform here.
             logger.info("Migration v9->v10: Meeting Mode tables added via create_all")
+
+        if from_version < 11:
+            try:
+                table_exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='meeting_sessions'"
+                    )
+                ).fetchone()
+                if table_exists:
+                    columns = {
+                        row[1]
+                        for row in conn.execute(
+                            text("PRAGMA table_info(meeting_sessions)")
+                        ).fetchall()
+                    }
+                    if "agent_endpoint_json" not in columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE meeting_sessions "
+                                "ADD COLUMN agent_endpoint_json TEXT"
+                            )
+                        )
+                logger.info(
+                    "Migration v10->v11: Added agent_endpoint_json "
+                    "to meeting_sessions"
+                )
+            except Exception as e:
+                logger.error("Migration v10->v11 failed: %s", e)
+                raise
 
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")

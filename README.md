@@ -174,17 +174,23 @@ That resolves what pip would install for `win_amd64`, records the SHA-256 pip re
 
 Two things not to skip: `install_bytes` drives the pre-install free-space check, so it must be the measured value the script prints rather than an estimate; and `GPU_COMPONENT_VERSION` is what the Model Manager compares against an installed manifest, so leaving it unchanged means nobody is told an update exists.
 
-OPTIONAL: For cloud transcription, set your API key:
+OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, set API keys in the environment or a `.env` file. Keys are never stored in settings.
+
 ```bash
 # Windows
 set OPENAI_API_KEY=your-key
+set OPENROUTER_API_KEY=your-key
 
 # macOS / Linux
 export OPENAI_API_KEY=your-key
+export OPENROUTER_API_KEY=your-key
 
 # Or create a .env file
 OPENAI_API_KEY=your-key
+OPENROUTER_API_KEY=your-key
 ```
+
+Custom OpenAI-compatible text endpoints (LM Studio, vLLM, Ollama `/v1`, LiteLLM, or a private gateway) are added in **Model Manager**. Each named profile stores only a display name, base URL, and optional API-key environment-variable name. Leave the variable blank for an auth-free local server. You can type a model id by hand if `/models` is unavailable.
 
 ## Required macOS permissions
 

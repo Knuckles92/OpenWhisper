@@ -10,6 +10,7 @@ Serialization contract: ``MeetingState.to_dict()`` round-trips through
 """
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -211,6 +212,9 @@ class FinalizationState:
     step_details: str = ""
     steps: List[Dict[str, Any]] = field(default_factory=list)
     summary_stats: Dict[str, Any] = field(default_factory=dict)
+    #: Desktop-card visibility only. Does not change pipeline outcome: an
+    #: incomplete meeting stays incomplete, and Past Meetings still lists it.
+    card_deferred: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -222,7 +226,36 @@ class FinalizationState:
             "step_details": self.step_details,
             "steps": [dict(s) for s in self.steps],
             "summary_stats": dict(self.summary_stats),
+            "card_deferred": bool(self.card_deferred),
         }
+
+    def history_pill(self, *, meeting_status: str = "") -> Optional[tuple[str, str]]:
+        """Return ``(label, tone)`` for compact history list pills.
+
+        Args:
+            meeting_status: Meeting lifecycle status. Live sessions omit a pill.
+
+        Returns:
+            A label/tone pair, or ``None`` when the row should show no insights
+            pill (in-flight work, or a live meeting).
+        """
+        if meeting_status in {"active", "paused", "ending"}:
+            return None
+        if self.card_deferred:
+            return ("Saved for later", "warning")
+        failed_steps = any(
+            str(step.get("status") or "") == "failed"
+            for step in (self.steps or [])
+        )
+        if self.status == "failed" or (self.status == "completed" and failed_steps):
+            return ("Incomplete", "warning")
+        if self.status == "unavailable":
+            return ("Unavailable", "warning")
+        if self.status == "completed":
+            return ("Ready", "success")
+        if self.status == "disabled":
+            return ("Off", "neutral")
+        return None
 
     @classmethod
     def default_for_cloud(cls, cloud_enabled: bool) -> "FinalizationState":
@@ -303,6 +336,9 @@ class FinalizationState:
                     step_details=str(value.step_details or ""),
                     steps=list(value.steps or []),
                     summary_stats=dict(value.summary_stats or {}),
+                    card_deferred=_coerce_card_deferred(
+                        getattr(value, "card_deferred", False)
+                    ),
                 )
             return cls.infer_legacy(
                 cloud_enabled=cloud_enabled, meeting_status=meeting_status,
@@ -336,6 +372,7 @@ class FinalizationState:
             step_details=str(value.get("step_details") or ""),
             steps=steps_list,
             summary_stats=stats_dict,
+            card_deferred=_coerce_card_deferred(value.get("card_deferred", False)),
         )
 
     @classmethod
@@ -375,23 +412,115 @@ class FinalizationState:
             return cls(
                 status="disabled",
                 message="Cloud intelligence is off for this meeting.",
+                stage=fin.stage,
+                current_step=fin.current_step,
+                total_steps=fin.total_steps,
+                step_details=fin.step_details,
+                steps=list(fin.steps or []),
                 summary_stats=fin.summary_stats,
+                card_deferred=fin.card_deferred,
             )
         if fin.status == "running":
+            interrupted_steps = []
+            for step in fin.steps or []:
+                row = dict(step)
+                if row.get("status") in {"running", "pending"}:
+                    row["status"] = "failed"
+                    row["detail"] = (
+                        row.get("detail")
+                        or "Interrupted before this step finished."
+                    )
+                interrupted_steps.append(row)
             return cls(
                 status="failed",
                 message=(
                     "Final cloud insights were interrupted before they "
                     "finished."
                 ),
+                stage=fin.stage,
+                current_step=fin.current_step,
+                total_steps=fin.total_steps,
+                step_details=fin.step_details,
+                steps=interrupted_steps,
                 summary_stats=fin.summary_stats,
+                card_deferred=fin.card_deferred,
             )
         return cls(
             status="unavailable",
             message=(
                 "Final cloud insights were not recorded for this meeting."
             ),
+            stage=fin.stage,
+            current_step=fin.current_step,
+            total_steps=fin.total_steps,
+            step_details=fin.step_details,
+            steps=list(fin.steps or []),
+            summary_stats=fin.summary_stats,
+            card_deferred=fin.card_deferred,
         )
+
+
+def _coerce_card_deferred(value: Any) -> bool:
+    """Parse the desktop-card deferral flag; unknown shapes stay visible."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
+
+
+def finalization_from_meeting_row(meeting: Dict[str, Any]) -> FinalizationState:
+    """Normalize the insights payload stored on a repository meeting row.
+
+    Args:
+        meeting: Repository meeting dict, possibly including ``state_json``.
+
+    Returns:
+        A historical finalization value safe to show on list UIs.
+    """
+    raw = meeting.get("state_json")
+    data: Dict[str, Any] = {}
+    if isinstance(raw, dict):
+        data = raw
+    elif raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            data = parsed
+    return FinalizationState.normalize_historical(
+        data.get("finalization"),
+        cloud_enabled=bool(
+            data.get("cloud_enabled", meeting.get("cloud_enabled"))
+        ),
+        meeting_status=str(meeting.get("status") or "ended"),
+    )
+
+
+def compact_finalization_list_fields(meeting: Dict[str, Any]) -> Dict[str, Any]:
+    """Public list-row fields derived from a meeting's finalization snapshot.
+
+    Args:
+        meeting: Repository meeting dict.
+
+    Returns:
+        Compact fields safe to expose on meeting-list APIs. Does not include
+        ``state_json`` or step details.
+    """
+    status = str(meeting.get("status") or "ended")
+    fin = finalization_from_meeting_row(meeting)
+    fields: Dict[str, Any] = {
+        "finalization_status": fin.status,
+        "finalization_deferred": bool(fin.card_deferred),
+    }
+    pill = fin.history_pill(meeting_status=status)
+    if pill:
+        fields["insights_pill"] = pill[0]
+        fields["insights_tone"] = pill[1]
+    return fields
 
 
 @dataclass

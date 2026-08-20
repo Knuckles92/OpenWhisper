@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+
+from meeting.state.schema import finalization_from_meeting_row
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -56,6 +58,16 @@ def _format_duration(meeting: Dict[str, Any]) -> str:
     return f"{hours}h {minutes}m" if hours else f"{minutes} min"
 
 
+def _insights_pill(meeting: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Return the compact insights pill for a past-meeting row."""
+    try:
+        fin = finalization_from_meeting_row(meeting)
+    except Exception:
+        logger.debug("Could not derive insights pill for a past meeting", exc_info=True)
+        return None
+    return fin.history_pill(meeting_status=str(meeting.get("status") or "ended"))
+
+
 class PastMeetingItem(QFrame):
     """Compact card for one persisted meeting session."""
 
@@ -87,12 +99,28 @@ class PastMeetingItem(QFrame):
         footer.setContentsMargins(0, 2, 0, 0)
         footer.setSpacing(8)
 
-        status = str(meeting.get("status") or "ended").replace("_", " ").title()
         duration = _format_duration(meeting)
-        detail = " · ".join(value for value in (duration, status) if value)
-        self.detail_label = QLabel(detail)
+        self.detail_label = QLabel(duration)
         self.detail_label.setObjectName("pastMeetingMeta")
         footer.addWidget(self.detail_label)
+
+        pill = _insights_pill(meeting)
+        self.insights_pill = QLabel("")
+        self.insights_pill.setObjectName("pastMeetingInsightsPill")
+        self.insights_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.insights_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        if pill:
+            label, tone = pill
+            self.insights_pill.setText(label)
+            self.insights_pill.setProperty("pillTone", tone)
+            style = self.insights_pill.style()
+            if style is not None:
+                style.unpolish(self.insights_pill)
+                style.polish(self.insights_pill)
+            self.insights_pill.show()
+        else:
+            self.insights_pill.hide()
+        footer.addWidget(self.insights_pill)
         footer.addStretch()
 
         self.open_button = QPushButton("Open")
@@ -268,6 +296,30 @@ class PastMeetingsPanel(QWidget):
             }
             QLabel#pastMeetingTitle { color: #e5e5e7; }
             QLabel#pastMeetingMeta { color: #98989d; font-size: 11px; }
+            QLabel#pastMeetingInsightsPill {
+                color: #98989d;
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 10px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QLabel#pastMeetingInsightsPill[pillTone="warning"] {
+                color: #ff9f0a;
+                background-color: rgba(255, 159, 10, 0.15);
+                border: 1px solid rgba(255, 159, 10, 0.35);
+            }
+            QLabel#pastMeetingInsightsPill[pillTone="success"] {
+                color: #30d158;
+                background-color: rgba(48, 209, 88, 0.15);
+                border: 1px solid rgba(48, 209, 88, 0.35);
+            }
+            QLabel#pastMeetingInsightsPill[pillTone="neutral"] {
+                color: #98989d;
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+            }
             QPushButton#pastMeetingOpenButton {
                 background-color: rgba(10, 132, 255, 0.14);
                 color: #6fb1ff;

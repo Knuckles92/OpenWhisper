@@ -4,7 +4,8 @@
  * Protocol (NDJSON JSON-RPC 2.0 over stdio; stdout is protocol-only):
  *  - FIRST line out: {"jsonrpc":"2.0","method":"hello","params":
  *      {"token":<OPENWHISPER_SIDECAR_TOKEN>,"protocol":1,"pi_version":"..."}}
- *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt}
+ *  - Inbound requests: initialize {meeting_id, provider, model, system_prompt,
+ *                    base_url?, api_key_env?, kind?}
  *      | checkpoint {request_id, state, new_segments, is_consolidation,
  *                    is_polish, is_notes, system_prompt?}  (a notes
  *                    checkpoint carries the note-taker system_prompt)
@@ -36,13 +37,23 @@ interface CheckpointResponse {
   canceled?: boolean;
 }
 
+function checkpointKind(params: any): string {
+  if (params?.is_consolidation) return "consolidation";
+  if (params?.is_polish) return "polish";
+  if (params?.is_notes) return "note-taker";
+  return "checkpoint";
+}
+
 function main(): void {
   const token = process.env.OPENWHISPER_SIDECAR_TOKEN;
   if (!token) {
     process.stderr.write("fatal: OPENWHISPER_SIDECAR_TOKEN is not set\n");
     process.exit(1);
   }
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey =
+    process.env.OPENWHISPER_LLM_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    "dummy";
   const envModel = process.env.PI_MODEL;
 
   const rpc = new RpcEndpoint();
@@ -85,6 +96,8 @@ function main(): void {
   rpc.onRequest("initialize", async (params) => {
     const provider = String(params?.provider || "openrouter");
     const modelId = String(params?.model || envModel || "");
+    const baseUrl = String(params?.base_url || process.env.OPENWHISPER_LLM_BASE_URL || "");
+    const kind = String(params?.kind || provider);
     systemPrompt = String(params?.system_prompt ?? "");
     if (!modelId) {
       throw new Error("no model configured (initialize.model and PI_MODEL are both empty)");
@@ -97,6 +110,8 @@ function main(): void {
       provider,
       modelId,
       apiKey,
+      baseUrl,
+      kind,
       tools: createMeetingTools(rpc, counters, toolPolicy),
       log: (level, msg) => rpc.log(level, msg),
       onEvent: emitProgress,
@@ -110,26 +125,46 @@ function main(): void {
 
   rpc.onRequest("checkpoint", (params): Promise<CheckpointResponse> => {
     // Serialize checkpoints: chain this run behind whatever is in flight.
+    const receivedAt = Date.now();
+    const requestId = String(params?.request_id ?? "");
+    const kind = checkpointKind(params);
+    const segments = Array.isArray(params?.new_segments)
+      ? params.new_segments.length
+      : 0;
+    const queuedBehind = activeRequestId;
+    rpc.log(
+      "info",
+      `${kind} ${requestId} received (${segments} new segments)` +
+        (queuedBehind ? ` queued behind ${queuedBehind}` : ""),
+    );
     const run = checkpointChain.then(
-      () => runCheckpoint(params),
-      () => runCheckpoint(params),
+      () => runCheckpoint(params, receivedAt),
+      () => runCheckpoint(params, receivedAt),
     );
     checkpointChain = run.catch(() => undefined);
     return run;
   });
 
-  async function runCheckpoint(params: any): Promise<CheckpointResponse> {
+  async function runCheckpoint(
+    params: any,
+    receivedAt: number,
+  ): Promise<CheckpointResponse> {
     if (!session) {
       throw new Error("checkpoint before initialize");
     }
     const requestId = String(params?.request_id ?? "");
     if (requestId && canceledRequests.delete(requestId)) {
+      rpc.log(
+        "info",
+        `checkpoint ${requestId} skipped (canceled while queued)`,
+      );
       return { applied: 0, rejected: 0, usage: {}, canceled: true };
     }
+    const startedAt = Date.now();
+    const queueWaitMs = Math.max(0, startedAt - receivedAt);
     activeRequestId = requestId;
     counters.applied = 0;
     counters.rejected = 0;
-    const isConsolidation = Boolean(params?.is_consolidation);
     const isPolish = Boolean(params?.is_polish);
     const isNotes = Boolean(params?.is_notes);
     toolPolicy.polishOnly = isPolish;
@@ -137,9 +172,9 @@ function main(): void {
     toolPolicy.noteIds = liveNoteIds(params?.state);
     rpc.log(
       "info",
-      `${isConsolidation ? "consolidation" : isPolish ? "polish" : isNotes ? "note-taker" : "checkpoint"} ` +
-        `${requestId} started ` +
-        `(${Array.isArray(params?.new_segments) ? params.new_segments.length : 0} new segments)`,
+      `${checkpointKind(params)} ${requestId} started ` +
+        `(${Array.isArray(params?.new_segments) ? params.new_segments.length : 0} new segments, ` +
+        `queue_wait=${queueWaitMs}ms)`,
     );
     try {
       const turn = await session.runTurn(buildCheckpointPrompt(systemPrompt, params));
@@ -152,7 +187,8 @@ function main(): void {
       rpc.log(
         "info",
         `checkpoint ${requestId} settled: ${response.applied} applied, ` +
-          `${response.rejected} rejected${turn.aborted ? " (canceled)" : ""}`,
+          `${response.rejected} rejected${turn.aborted ? " (canceled)" : ""} ` +
+          `queue_wait=${queueWaitMs}ms runtime=${Date.now() - startedAt}ms`,
       );
       return response;
     } finally {

@@ -208,8 +208,73 @@ QDialog#modelManagerDialog {
 
 QWidget#modelManagerVoiceTab,
 QWidget#modelManagerTextTab,
-QWidget#modelManagerMeetingTab {
+QWidget#modelManagerMeetingTab,
+QWidget#modelManagerOndemandTab,
+QWidget#modelManagerLibraryTab {
     background-color: #10161c;
+}
+
+QFrame#modelManagerModeCard,
+QFrame#modelManagerRuntimeCard {
+    background-color: #141b22;
+    border: 1px solid #35404a;
+    border-radius: 12px;
+}
+
+QLabel#modelManagerModeCardTitle {
+    color: #f1f4f7;
+    background-color: transparent;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#modelManagerModeCardSubtitle,
+QLabel#localModelPickerCaption {
+    color: #98a3b0;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QComboBox#localModelPickerCombo,
+QComboBox#ondemandEngineCombo,
+QComboBox#meetingLanguageCombo,
+QComboBox#meetingSpeakerIdCombo,
+QComboBox#meetingAgentCoreCombo,
+QComboBox#libraryDeviceCombo,
+QComboBox#libraryComputeCombo {
+    color: #eef2f6;
+    background-color: #161e26;
+    border: 1px solid #3b4752;
+    border-radius: 9px;
+    font-size: 13px;
+    padding-left: 12px;
+    padding-right: 32px;
+}
+
+QPushButton#localModelPickerManage,
+QPushButton#modelManagerInlineLink {
+    color: #0a84ff;
+    background: transparent;
+    border: none;
+    font-size: 12px;
+    padding: 2px 4px;
+}
+
+QPushButton#localModelPickerManage:hover,
+QPushButton#modelManagerInlineLink:hover {
+    text-decoration: underline;
+}
+
+QLabel#modelRowUsage {
+    background-color: rgba(10, 132, 255, 0.10);
+    color: #8eb8ff;
+    border: 1px solid rgba(10, 132, 255, 0.22);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 QWidget#textModelPicker {
@@ -345,6 +410,50 @@ QLabel#textProviderTitle {
     color: #f0f3f6;
     font-size: 15px;
     font-weight: 700;
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#textProviderUrl {
+    color: #7d8b99;
+    font-size: 11px;
+    font-family: Consolas, "Cascadia Mono", "SF Mono", monospace;
+    background-color: transparent;
+    border: none;
+}
+
+QPushButton#textEndpointAddButton,
+QPushButton#textEndpointEditButton,
+QPushButton#textEndpointDeleteButton {
+    color: #c5ced8;
+    background-color: #141b22;
+    border: 1px solid #3b4752;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton#textEndpointAddButton:hover,
+QPushButton#textEndpointEditButton:hover,
+QPushButton#textEndpointDeleteButton:hover {
+    color: #f2f5f8;
+    background-color: #1a232c;
+    border-color: #52606d;
+}
+
+QPushButton#textEndpointEditButton:disabled,
+QPushButton#textEndpointDeleteButton:disabled {
+    color: #66707a;
+    border-color: #2a333c;
+}
+
+QDialog#textEndpointDialog {
+    background-color: #12181f;
+}
+
+QLabel#textEndpointError {
+    color: #ff6b6b;
+    font-size: 12px;
     background-color: transparent;
     border: none;
 }
@@ -1389,6 +1498,12 @@ QLabel#meetingFinalizationDetail {
     background-color: transparent;
 }
 
+QLabel#meetingFinalizationKeepHint {
+    color: #98989d;
+    font-size: 11px;
+    background-color: transparent;
+}
+
 QWidget#meetingFinalizationStepsWidget {
     background-color: rgba(0, 0, 0, 0.15);
     border: 1px solid #3a3a3c;
@@ -1405,26 +1520,6 @@ QLabel#meetingFinalizationStepName {
 }
 
 QLabel#meetingFinalizationStepDetail {
-    color: #8e8e93;
-    background-color: transparent;
-}
-
-QWidget#meetingFinalizationStatsWidget {
-    background-color: transparent;
-}
-
-QWidget#meetingFinalizationStatItem {
-    background-color: rgba(0, 0, 0, 0.3);
-    border: 1px solid #3a3a3c;
-    border-radius: 8px;
-}
-
-QLabel#meetingFinalizationStatValue {
-    color: #f5f5f7;
-    background-color: transparent;
-}
-
-QLabel#meetingFinalizationStatLabel {
     color: #8e8e93;
     background-color: transparent;
 }
@@ -1448,6 +1543,16 @@ QPushButton#meetingFinalizationDashboardButton {
     font-size: 13px;
     border-radius: 8px;
     min-width: 140px;
+}
+
+QPushButton#meetingFinalizationStepAction {
+    color: #0a84ff;
+    background-color: transparent;
+    border: none;
+    padding: 0 4px;
+    font-size: 11px;
+    min-width: 0;
+    min-height: 0;
 }
 
 QDialog#meetingConsentDialog,

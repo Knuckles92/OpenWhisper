@@ -28,15 +28,28 @@ class ArchivedMeetingDashboard:
         spool_root: str,
         llm_provider: str = "openrouter",
         llm_model: str = "",
+        llm_endpoint: Optional[Dict[str, Any]] = None,
         agent_core_kind: str = "pi",
         sidecar_payload_dir: Optional[str] = None,
     ) -> None:
         self.repository = repository
         self.meeting_id = str(meeting["id"])
+        stored_endpoint = None
+        raw_endpoint = meeting.get("agent_endpoint_json")
+        if isinstance(raw_endpoint, dict):
+            stored_endpoint = raw_endpoint
+        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
+            try:
+                parsed = json.loads(raw_endpoint)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                stored_endpoint = parsed
         self.options = SimpleNamespace(
             spool_root=spool_root,
             llm_provider=meeting.get("agent_provider") or llm_provider,
             llm_model=meeting.get("agent_model") or llm_model,
+            llm_endpoint=stored_endpoint or llm_endpoint,
             agent_core_kind=agent_core_kind,
             sidecar_payload_dir=sidecar_payload_dir,
         )

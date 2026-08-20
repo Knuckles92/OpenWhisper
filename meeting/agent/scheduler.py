@@ -384,9 +384,11 @@ class CheckpointScheduler:
             with self._lock:
                 self._pending_segments += claimed
             return
-        logger.debug(
-            "Firing checkpoint %s (%d segments, %d notified)",
+        logger.info(
+            "Firing checkpoint %s (%d segments, %d notified, "
+            "consecutive_failures=%d)",
             payload.request_id, len(segments), claimed,
+            self._consecutive_failures,
         )
         try:
             result = self._agent.checkpoint(payload)
@@ -407,7 +409,11 @@ class CheckpointScheduler:
             self._maybe_fire_notes()
             self._maybe_fire_polish()
         else:
-            self._record_failure(claimed, result.error or "checkpoint failed")
+            self._record_failure(
+                claimed,
+                result.error or "checkpoint failed",
+                request_id=payload.request_id,
+            )
 
     def _dashboard_needs_live_seed(self, snapshot: Dict[str, Any]) -> bool:
         """True when live insights have not seeded the visible dashboard yet."""
@@ -602,8 +608,17 @@ class CheckpointScheduler:
                 payload.request_id, result.error or "unknown",
             )
 
-    def _record_failure(self, claimed: int, error: str) -> None:
-        """Restore claimed work and schedule a bounded health retry."""
+    def _record_failure(
+        self, claimed: int, error: str, request_id: str = "",
+    ) -> None:
+        """Restore claimed work and schedule a bounded health retry.
+
+        Args:
+            claimed: Segment notifications that this failed fire consumed.
+            error: Failure text from the agent or transcript fetch.
+            request_id: Checkpoint id when the agent ran; empty on a
+                fetch failure before a payload exists.
+        """
         with self._lock:
             self._pending_segments += claimed
         self._consecutive_failures += 1
@@ -612,13 +627,16 @@ class CheckpointScheduler:
         )]
         self._retry_not_before = time.monotonic() + delay
         logger.warning(
-            "Checkpoint failed (%d consecutive); retrying in %.0fs: %s",
-            self._consecutive_failures, delay, error,
+            "Checkpoint failed (%d consecutive, claimed=%d request_id=%s); "
+            "retrying in %.0fs: %s",
+            self._consecutive_failures, claimed, request_id or "-",
+            delay, error,
         )
         if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
             logger.error(
                 "Intelligence declared offline after %d consecutive "
-                "checkpoint failures", self._consecutive_failures,
+                "checkpoint failures (request_id=%s)",
+                self._consecutive_failures, request_id or "-",
             )
             self._set_online(False)
 

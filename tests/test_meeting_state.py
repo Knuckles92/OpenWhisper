@@ -987,6 +987,40 @@ class TestFinalizationState:
         )
         assert cloud_off.status == "disabled"
 
+    def test_normalize_historical_keeps_step_list(self):
+        from meeting.state.schema import FinalizationState
+
+        steps = [
+            {
+                "id": "redecode",
+                "name": "Audio Re-transcription",
+                "status": "completed",
+                "detail": "Done",
+            },
+            {
+                "id": "polish",
+                "name": "Transcript Cleanup",
+                "status": "running",
+                "detail": "Cleaning…",
+            },
+        ]
+        interrupted = FinalizationState.normalize_historical(
+            {
+                "status": "running",
+                "message": "Cleaning transcript…",
+                "steps": steps,
+                "current_step": 2,
+                "total_steps": 2,
+            },
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert interrupted.status == "failed"
+        assert len(interrupted.steps) == 2
+        assert interrupted.steps[0]["status"] == "completed"
+        assert interrupted.steps[1]["status"] == "failed"
+        assert interrupted.current_step == 2
+
     def test_normalize_historical_preserves_live_and_terminal(self):
         from meeting.state.schema import FinalizationState
 
@@ -1005,6 +1039,84 @@ class TestFinalizationState:
         )
         assert completed.status == "completed"
         assert completed.message == "Done."
+
+    def test_card_deferred_round_trip_and_defaults(self):
+        from meeting.state.schema import FinalizationState, MeetingState
+
+        deferred = FinalizationState(status="failed", message="boom", card_deferred=True)
+        rebuilt = MeetingState.from_dict(MeetingState(
+            meeting_id="m_defer",
+            status="ended",
+            cloud_enabled=True,
+            finalization=deferred,
+        ).to_dict())
+        assert rebuilt.finalization.card_deferred is True
+        assert rebuilt.finalization.status == "failed"
+
+        missing = FinalizationState.coerce(
+            {"status": "failed", "message": "boom"},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert missing.card_deferred is False
+
+        malformed = FinalizationState.coerce(
+            {"status": "failed", "message": "boom", "card_deferred": "nope"},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert malformed.card_deferred is False
+
+    def test_normalize_historical_preserves_card_deferred(self):
+        from meeting.state.schema import FinalizationState
+
+        interrupted = FinalizationState.normalize_historical(
+            {"status": "running", "message": "Preparing…", "card_deferred": True},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert interrupted.status == "failed"
+        assert interrupted.card_deferred is True
+
+        already_failed = FinalizationState.normalize_historical(
+            {"status": "failed", "message": "boom", "card_deferred": True},
+            cloud_enabled=True,
+            meeting_status="ended",
+        )
+        assert already_failed.status == "failed"
+        assert already_failed.card_deferred is True
+
+    def test_history_pill_precedence(self):
+        from meeting.state.schema import FinalizationState
+
+        deferred = FinalizationState(
+            status="failed", message="boom", card_deferred=True,
+        )
+        assert deferred.history_pill(meeting_status="ended") == (
+            "Saved for later", "warning",
+        )
+
+        incomplete = FinalizationState(
+            status="completed",
+            steps=[{"id": "polish", "status": "failed"}],
+        )
+        assert incomplete.history_pill(meeting_status="ended") == (
+            "Incomplete", "warning",
+        )
+
+        unavailable = FinalizationState(status="unavailable")
+        assert unavailable.history_pill(meeting_status="ended") == (
+            "Unavailable", "warning",
+        )
+
+        ready = FinalizationState(status="completed")
+        assert ready.history_pill(meeting_status="ended") == ("Ready", "success")
+
+        off = FinalizationState(status="disabled")
+        assert off.history_pill(meeting_status="ended") == ("Off", "neutral")
+
+        live = FinalizationState(status="failed", card_deferred=True)
+        assert live.history_pill(meeting_status="active") is None
 
     def test_step_progression_round_trip(self):
         from meeting.state.schema import FinalizationState, MeetingState

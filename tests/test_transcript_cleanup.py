@@ -364,7 +364,10 @@ class TestPolishCleanupRule(unittest.TestCase):
         client = self._mock_openai('Always spell the user\'s name "Alex Rivera".')
         with patch(
             "services.transcript_cleanup.find_api_key", return_value="test-key"
-        ), patch("services.transcript_cleanup.OpenAI", return_value=client):
+        ), patch(
+            "services.transcript_cleanup.create_openai_client",
+            return_value=client,
+        ):
             rule, error = polish_cleanup_rule(
                 "um so my name should always be spelled Alex Rivera"
             )
@@ -384,11 +387,118 @@ class TestPolishCleanupRule(unittest.TestCase):
         client.chat.completions.create.side_effect = TimeoutError("timed out")
         with patch(
             "services.transcript_cleanup.find_api_key", return_value="test-key"
-        ), patch("services.transcript_cleanup.OpenAI", return_value=client):
+        ), patch(
+            "services.transcript_cleanup.create_openai_client",
+            return_value=client,
+        ):
             rule, error = polish_cleanup_rule("expand SCWA")
 
         self.assertEqual(rule, "expand SCWA")
         self.assertIsNotNone(error)
+
+
+class TestCleanupCustomEndpoints(unittest.TestCase):
+    """Cleanup routes through named OpenAI-compatible profiles."""
+
+    def test_configure_rebuilds_when_endpoint_url_changes(self):
+        settings = {
+            "text_llm_profiles": [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "Local",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ]
+        }
+        with patch(
+            "services.text_llm._load_settings", return_value=settings
+        ), patch(
+            "services.transcript_cleanup.create_openai_client"
+        ) as mock_create:
+            mock_create.side_effect = lambda *args, **kwargs: MagicMock()
+            cleaner = TranscriptCleanup(
+                provider="custom_abcd1234", model="local-qwen"
+            )
+            first_client = cleaner.client
+            first_connection = cleaner._connection
+            self.assertTrue(cleaner.is_available())
+
+            settings["text_llm_profiles"][0]["base_url"] = (
+                "http://127.0.0.1:8000/v1"
+            )
+            cleaner.configure("custom_abcd1234", "local-qwen")
+
+            self.assertIsNot(cleaner.client, first_client)
+            self.assertNotEqual(cleaner._connection, first_connection)
+            self.assertGreaterEqual(mock_create.call_count, 2)
+
+    def test_list_cleanup_models_uses_custom_profile(self):
+        from services.transcript_cleanup import list_cleanup_models
+
+        settings = {
+            "text_llm_profiles": [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "Local",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ]
+        }
+        with patch(
+            "services.text_llm._load_settings", return_value=settings
+        ), patch(
+            "services.transcript_cleanup.list_chat_models",
+            return_value=["alpha", "beta"],
+        ) as mock_list:
+            self.assertEqual(
+                list_cleanup_models("custom_abcd1234"), ["alpha", "beta"]
+            )
+            self.assertEqual(mock_list.call_args.args[0].id, "custom_abcd1234")
+
+    def test_list_cleanup_models_catalog_failure_is_raised(self):
+        from services.transcript_cleanup import list_cleanup_models
+
+        settings = {
+            "text_llm_profiles": [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "Local",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ]
+        }
+        with patch(
+            "services.text_llm._load_settings", return_value=settings
+        ), patch(
+            "services.transcript_cleanup.list_chat_models",
+            side_effect=RuntimeError("catalog down"),
+        ):
+            with self.assertRaises(RuntimeError):
+                list_cleanup_models("custom_abcd1234")
+
+    def test_resolve_accepts_saved_custom_profile(self):
+        from services.settings import (
+            SettingsKey,
+            resolve_transcript_cleanup_provider,
+        )
+
+        settings = {
+            SettingsKey.TEXT_LLM_PROFILES: [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "Local",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ],
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+        }
+        self.assertEqual(
+            resolve_transcript_cleanup_provider(settings), "custom_abcd1234"
+        )
 
 
 if __name__ == "__main__":

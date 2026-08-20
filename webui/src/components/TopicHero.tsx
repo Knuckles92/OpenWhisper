@@ -1,4 +1,4 @@
-import EvidenceChip from './EvidenceChip';
+import { EvidenceRow } from './EvidenceChip';
 
 interface TopicHeroProps {
   meetingTitle: string;
@@ -84,13 +84,7 @@ export default function TopicHero({
         {summary ||
           summaryPlaceholder(status, cloudEnabled, intelligenceOnline)}
       </p>
-      {uniqueEvidence.length > 0 && (
-        <div className="evidence-row">
-          {uniqueEvidence.map((segmentId) => (
-            <EvidenceChip key={segmentId} segmentId={segmentId} onClick={onEvidenceClick} />
-          ))}
-        </div>
-      )}
+      <EvidenceRow ids={uniqueEvidence} onClick={onEvidenceClick} />
     </section>
   );
 }

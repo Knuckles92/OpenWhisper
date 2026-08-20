@@ -29,7 +29,6 @@ from services.settings import (
     TranscriptCleanupReasoning,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
-    resolve_meeting_audio_upload_consent,
     resolve_meeting_context_folder_enabled,
     resolve_meeting_context_folder_path,
     resolve_meeting_past_recall_enabled,
@@ -56,8 +55,8 @@ from services.settings import (
     settings_manager,
 )
 from services.history_manager import history_manager
-from services.components import meeting_agent_payload_dir
 from services.recorder import AudioRecorder
+from services.text_llm import profile_display_name
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.widgets import (
@@ -448,7 +447,7 @@ class SettingsDialog(QDialog):
         self.open_model_manager_btn.setFlat(True)
         self.open_model_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_model_manager_btn.setToolTip(
-            "Save settings and open Model Manager → Text to choose the "
+            "Save settings and open Model Manager → On-demand to choose the "
             "cleanup provider and chat model"
         )
         self.open_model_manager_btn.clicked.connect(
@@ -461,7 +460,7 @@ class SettingsDialog(QDialog):
         self.cleanup_model_summary.setWordWrap(True)
         model_card_layout.addWidget(self.cleanup_model_summary)
         model_hint = QLabel(
-            "Provider and model selection live in Model Manager → Text."
+            "Provider and model selection live in Model Manager → On-demand."
         )
         model_hint.setObjectName("cleanupModelSummaryHint")
         model_hint.setWordWrap(True)
@@ -518,8 +517,9 @@ class SettingsDialog(QDialog):
 
         cleanup_info = QLabel(
             "Runs the selected chat model on each transcript after transcription. "
-            "OpenAI needs OPENAI_API_KEY; OpenRouter needs OPENROUTER_API_KEY "
-            "(environment or .env). Edit the prompt to change cleanup style "
+            "Built-in OpenAI/OpenRouter keys and any custom endpoint variable "
+            "come from the environment or .env. Local servers can leave the "
+            "key variable blank. Edit the prompt to change cleanup style "
             "(e.g. bullets, email tone)."
         )
         cleanup_info.setObjectName("infoLabel")
@@ -691,9 +691,9 @@ class SettingsDialog(QDialog):
     def _create_meeting_tab(self):
         """Create the Meeting Mode settings tab with scrollable content.
 
-        Model selection lives in Model Manager → Meeting. This tab keeps agent
-        core and dashboard network exposure — settings the engine still reads
-        through ``resolve_meeting_*()``.
+        Model selection lives in Model Manager → Meeting Mode. This tab keeps
+        consent, knowledge-folder, report-view, and dashboard network
+        settings the engine still reads through ``resolve_meeting_*()``.
         """
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
@@ -735,8 +735,8 @@ class SettingsDialog(QDialog):
             Qt.CursorShape.PointingHandCursor
         )
         self.open_meeting_model_manager_btn.setToolTip(
-            "Save settings and open Model Manager → Meeting to choose the "
-            "transcription and intelligence models"
+            "Save settings and open Model Manager → Meeting Mode to choose "
+            "transcription, language, speaker ID, and intelligence models"
         )
         self.open_meeting_model_manager_btn.clicked.connect(
             self._open_model_manager_from_meeting
@@ -748,61 +748,24 @@ class SettingsDialog(QDialog):
         self.meeting_model_summary.setWordWrap(True)
         model_card_layout.addWidget(self.meeting_model_summary)
 
-        meeting_language_label = QLabel("Spoken language:")
-        model_card_layout.addWidget(meeting_language_label)
-        self.meeting_language_combo = NoWheelComboBox()
-        self.meeting_language_combo.setObjectName("meetingLanguageCombo")
-        for code, label in MeetingLanguage.CHOICES:
-            self.meeting_language_combo.addItem(label, code)
-        self.meeting_language_combo.setMinimumHeight(36)
-        self.meeting_language_combo.setToolTip(
-            "Choose the meeting language when known. This avoids unreliable "
-            "language detection on short chunks and strong accents."
-        )
-        model_card_layout.addWidget(self.meeting_language_combo)
         model_hint = QLabel(
-            "Whisper and chat model selection live in Model Manager → Meeting."
+            "Whisper, spoken language, speaker identification, the chat "
+            "model, and the agent core live in Model Manager → Meeting Mode."
         )
         model_hint.setObjectName("meetingModelSummaryHint")
         model_hint.setWordWrap(True)
         model_card_layout.addWidget(model_hint)
         layout.addWidget(model_card)
 
-        # Intelligence agent core (provider/model owned by Model Manager)
         layout.addSpacing(12)
         intelligence_title = QLabel("Intelligence")
         intelligence_title.setObjectName("sectionLabel")
         layout.addWidget(intelligence_title)
 
-        meeting_core_label = QLabel("Agent core:")
-        layout.addWidget(meeting_core_label)
-
-        self.meeting_agent_core_combo = NoWheelComboBox()
-        self._pi_payload_available = meeting_agent_payload_dir() is not None
-        pi_label = (
-            "Pi (sidecar)" if self._pi_payload_available
-            else "Pi (sidecar not built)"
-        )
-        self.meeting_agent_core_combo.addItem(pi_label, MeetingAgentCore.PI)
-        pi_index = self.meeting_agent_core_combo.count() - 1
-        model = self.meeting_agent_core_combo.model()
-        item = model.item(pi_index) if hasattr(model, "item") else None
-        if item is not None:
-            item.setEnabled(self._pi_payload_available)
-        self.meeting_agent_core_combo.addItem(
-            "Direct (no sidecar)", MeetingAgentCore.DIRECT
-        )
-        self.meeting_agent_core_combo.setMinimumHeight(36)
-        layout.addWidget(self.meeting_agent_core_combo)
-
         meeting_intelligence_info = QLabel(
-            "Pi is the default agent core (sidecar bundle or Meeting Agent "
-            "component) and falls back to Direct when no payload is "
-            "available. Meeting insights use the chat model chosen in Model "
-            "Manager → Meeting. Transcript text and meeting state are sent "
-            "to the provider — cloud intelligence does not upload audio, "
-            "and nothing is sent until you enable it for a meeting. "
-            "Speaker identification is a separate setting below."
+            "Transcript text and meeting state are sent to the provider — "
+            "cloud intelligence does not upload audio, and nothing is sent "
+            "until you enable it for a meeting."
         )
         meeting_intelligence_info.setObjectName("infoLabel")
         meeting_intelligence_info.setWordWrap(True)
@@ -881,35 +844,6 @@ class SettingsDialog(QDialog):
         after_info.setObjectName("infoLabel")
         after_info.setWordWrap(True)
         layout.addWidget(after_info)
-
-        speaker_id_label = QLabel("Speaker identification:")
-        layout.addWidget(speaker_id_label)
-
-        self.meeting_speaker_id_combo = NoWheelComboBox()
-        self.meeting_speaker_id_combo.setObjectName("meetingSpeakerIdCombo")
-        self.meeting_speaker_id_combo.addItem(
-            "On-device (Speaker 1, Speaker 2, …)",
-            MeetingSpeakerIdBackend.LOCAL,
-        )
-        self.meeting_speaker_id_combo.addItem(
-            "OpenAI (upload system audio after the meeting)",
-            MeetingSpeakerIdBackend.OPENAI,
-        )
-        self.meeting_speaker_id_combo.setMinimumHeight(36)
-        self.meeting_speaker_id_combo.currentIndexChanged.connect(
-            self._on_speaker_id_backend_changed
-        )
-        layout.addWidget(self.meeting_speaker_id_combo)
-
-        speaker_id_info = QLabel(
-            "OpenAI sends the system-audio recording (other participants' "
-            "voices) after End and relabels speakers on the local "
-            "transcript. Requires an OpenAI API key. Microphone audio "
-            "stays on this computer."
-        )
-        speaker_id_info.setObjectName("infoLabel")
-        speaker_id_info.setWordWrap(True)
-        layout.addWidget(speaker_id_info)
 
         self.meeting_end_redecode_check = QCheckBox(
             "Re-transcribe with longer pauses (full recording)"
@@ -1149,7 +1083,7 @@ class SettingsDialog(QDialog):
         self.hf_policy_combo.setFocus()
 
     def _open_model_manager_from_cleanup(self):
-        """Save Settings, close it, then open Model Manager → Text.
+        """Save Settings, close it, then open Model Manager → On-demand.
 
         Model Manager is non-modal and cannot share an ``exec()`` session with
         Settings — opening it mid-modal stacks behind the main window and
@@ -1160,7 +1094,7 @@ class SettingsDialog(QDialog):
         self._save_settings()
 
     def _open_model_manager_from_meeting(self):
-        """Save Settings, close it, then open Model Manager → Meeting."""
+        """Save Settings, close it, then open Model Manager → Meeting Mode."""
         self.open_model_manager_on_close = "meeting"
         self._save_settings()
 
@@ -1171,29 +1105,44 @@ class SettingsDialog(QDialog):
             saved_provider = resolve_transcript_cleanup_provider(settings)
             saved_model = resolve_transcript_cleanup_model(settings)
         except Exception:
+            settings = {}
             saved_provider = "openai"
             saved_model = config.TRANSCRIPT_CLEANUP_MODEL
-        provider_name = (
-            "OpenAI" if saved_provider == "openai" else "OpenRouter"
-        )
+        provider_name = profile_display_name(saved_provider, settings)
         self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
     def _refresh_meeting_model_summary(self):
-        """Reload the read-only meeting Whisper/LLM summary from settings."""
+        """Reload the read-only meeting model recap from settings."""
         try:
             settings = settings_manager.load_all_settings()
-            whisper = resolve_meeting_whisper_model(settings)
-            provider = resolve_meeting_llm_provider(settings)
-            llm_model = resolve_meeting_llm_model(settings)
         except Exception:
-            whisper = config.MEETING_WHISPER_MODEL
-            provider = config.MEETING_LLM_PROVIDER
-            llm_model = config.MEETING_LLM_MODEL
-        provider_name = (
-            "OpenAI" if provider == "openai" else "OpenRouter"
+            settings = {}
+        whisper = resolve_meeting_whisper_model(settings)
+        language = resolve_meeting_language(settings)
+        provider = resolve_meeting_llm_provider(settings)
+        llm_model = resolve_meeting_llm_model(settings)
+        core = resolve_meeting_agent_core(settings)
+        speaker = resolve_meeting_speaker_id_backend(settings)
+        language_label = next(
+            (label for code, label in MeetingLanguage.CHOICES if code == language),
+            language,
+        )
+        provider_name = profile_display_name(provider, settings)
+        core_label = (
+            "Pi (sidecar)" if core == MeetingAgentCore.PI
+            else "Direct (no sidecar)"
+        )
+        speaker_label = (
+            "On-device (WeSpeaker)"
+            if speaker == MeetingSpeakerIdBackend.LOCAL
+            else "OpenAI (gpt-4o-transcribe-diarize)"
         )
         self.meeting_model_summary.setText(
-            f"Whisper · {whisper}\n{provider_name} · {llm_model}"
+            f"Whisper · {whisper}\n"
+            f"Spoken language · {language_label}\n"
+            f"{provider_name} · {llm_model}\n"
+            f"Agent core · {core_label}\n"
+            f"Speaker ID · {speaker_label}"
         )
 
     def _update_threshold_display(self, value):
@@ -1525,32 +1474,6 @@ class SettingsDialog(QDialog):
         self.meeting_report_ribbon_check.blockSignals(blocker)
         self.meeting_report_views_hint.show()
 
-    def _on_speaker_id_backend_changed(self, _index: int = 0) -> None:
-        """Ask for audio-upload consent when the user picks OpenAI."""
-        backend = self.meeting_speaker_id_combo.currentData()
-        if backend != MeetingSpeakerIdBackend.OPENAI:
-            return
-        if resolve_meeting_audio_upload_consent():
-            return
-        from ui_qt.dialogs.meeting_audio_consent_dialog import (
-            MeetingAudioConsentDialog,
-        )
-
-        dialog = MeetingAudioConsentDialog(self)
-        dialog.exec()
-        granted = dialog.result_action == MeetingAudioConsentDialog.RESULT_ENABLE
-        if granted:
-            settings_manager.save_setting(
-                SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, True,
-            )
-            return
-        local_index = self.meeting_speaker_id_combo.findData(
-            MeetingSpeakerIdBackend.LOCAL
-        )
-        blocker = self.meeting_speaker_id_combo.blockSignals(True)
-        self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
-        self.meeting_speaker_id_combo.blockSignals(blocker)
-
     def _browse_context_folder(self):
         """Choose a local folder for meeting-agent knowledge search."""
         current = self.meeting_context_folder_path.text().strip()
@@ -1576,28 +1499,11 @@ class SettingsDialog(QDialog):
         """
         self._refresh_meeting_model_summary()
 
-        core = resolve_meeting_agent_core(settings)
-        language_index = self.meeting_language_combo.findData(
-            resolve_meeting_language(settings)
-        )
-        self.meeting_language_combo.setCurrentIndex(max(0, language_index))
-        if (core == MeetingAgentCore.PI
-                and not getattr(self, "_pi_payload_available", False)):
-            core = MeetingAgentCore.DIRECT
-        core_index = self.meeting_agent_core_combo.findData(core)
-        self.meeting_agent_core_combo.setCurrentIndex(max(0, core_index))
-
         bind_index = self.meeting_bind_combo.findData(
             resolve_meeting_server_bind(settings)
         )
         self.meeting_bind_combo.setCurrentIndex(max(0, bind_index))
         self.meeting_port_spinbox.setValue(resolve_meeting_server_port(settings))
-        backend_index = self.meeting_speaker_id_combo.findData(
-            resolve_meeting_speaker_id_backend(settings)
-        )
-        blocker = self.meeting_speaker_id_combo.blockSignals(True)
-        self.meeting_speaker_id_combo.setCurrentIndex(max(0, backend_index))
-        self.meeting_speaker_id_combo.blockSignals(blocker)
         self.meeting_past_recall_check.setChecked(
             resolve_meeting_past_recall_enabled(settings)
         )
@@ -1821,31 +1727,15 @@ class SettingsDialog(QDialog):
             )
             settings[SettingsKey.MAX_SAVED_RECORDINGS] = self.max_recordings_spinbox.value()
 
-            # Meeting Mode. Whisper/LLM keys pass through untouched because
-            # Model Manager is their single owner.
-            settings[SettingsKey.MEETING_AGENT_CORE] = (
-                self.meeting_agent_core_combo.currentData()
-            )
-            settings[SettingsKey.MEETING_LANGUAGE] = (
-                self.meeting_language_combo.currentData()
-            )
+            # Meeting Mode. Whisper, language, speaker ID, agent core, and
+            # LLM keys pass through untouched because Model Manager is
+            # their single owner.
             settings[SettingsKey.MEETING_SERVER_BIND] = (
                 self.meeting_bind_combo.currentData()
             )
             settings[SettingsKey.MEETING_SERVER_PORT] = (
                 self.meeting_port_spinbox.value()
             )
-            speaker_backend = self.meeting_speaker_id_combo.currentData()
-            if (
-                speaker_backend == MeetingSpeakerIdBackend.OPENAI
-                and not resolve_meeting_audio_upload_consent()
-            ):
-                speaker_backend = MeetingSpeakerIdBackend.LOCAL
-                local_index = self.meeting_speaker_id_combo.findData(
-                    MeetingSpeakerIdBackend.LOCAL
-                )
-                self.meeting_speaker_id_combo.setCurrentIndex(max(0, local_index))
-            settings[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = speaker_backend
             settings[SettingsKey.MEETING_PAST_RECALL_ENABLED] = (
                 self.meeting_past_recall_check.isChecked()
             )

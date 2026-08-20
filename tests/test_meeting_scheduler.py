@@ -71,10 +71,11 @@ class FakeEngine:
 
 
 class FakeAgent:
-    def __init__(self, block_s=0.0, fail_times=0):
+    def __init__(self, block_s=0.0, fail_times=0, fail_error="forced"):
         self.calls = []
         self.block_s = block_s
         self.fail_times = fail_times
+        self.fail_error = fail_error
         self._fail_left = fail_times
         self._entered = threading.Event()
         self._release = threading.Event()
@@ -88,7 +89,7 @@ class FakeAgent:
             time.sleep(0.01)
         if self._fail_left > 0:
             self._fail_left -= 1
-            return AgentResult(ok=False, error="forced")
+            return AgentResult(ok=False, error=self.fail_error)
         return AgentResult(
             ok=True,
             op_results=[OpResult(ok=True, op={"op": "set_topic"}, seq=1)],
@@ -253,6 +254,41 @@ class TestSegmentWatermark:
         assert health == [False, True]
         assert sched._online is True
         assert sched._consecutive_failures == 0
+
+    def test_timeout_failures_retain_work_and_three_mark_offline(self, caplog):
+        engine = FakeEngine([
+            {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "one"},
+        ])
+        agent = FakeAgent(
+            fail_times=3,
+            fail_error="RPC 'checkpoint' timed out after 60s",
+        )
+        health = []
+        sched = CheckpointScheduler(engine, agent, on_health=health.append)
+
+        with caplog.at_level("INFO"):
+            for _ in range(2):
+                sched._pending_segments = 1
+                sched._fire()
+            assert sched._online is True
+            assert health == []
+            sched._pending_segments = 1
+            sched._fire()
+        assert health == [False]
+        assert sched._online is False
+        assert "Intelligence declared offline" in caplog.text
+        assert "consecutive_failures=" in caplog.text
+        assert "Firing checkpoint" in caplog.text
+        assert sched._pending_segments >= 1
+
+        sched._pending_segments = 1
+        sched._fire()
+        assert health == [False, True]
+        assert sched._online is True
+        assert sched._consecutive_failures == 0
+        assert len(agent.calls) == 4
+        sched._fire()
+        assert len(agent.calls) == 4
 
     def test_empty_checkpoint_backfills_blank_dashboard(self):
         empty_store = FakeStore({

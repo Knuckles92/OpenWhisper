@@ -30,6 +30,8 @@ class SettingsKey:
     TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
     TRANSCRIPT_CLEANUP_MODEL_SORT: Final[str] = "transcript_cleanup_model_sort"
     TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
+    # Named OpenAI-compatible endpoints (custom profiles only; builtins omitted).
+    TEXT_LLM_PROFILES: Final[str] = "text_llm_profiles"
     # JSON list of user-taught rule strings appended to the cleanup prompt
     TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
@@ -85,7 +87,12 @@ class RecordingRetentionMode:
 
 
 class TranscriptCleanupProvider:
-    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``."""
+    """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
+
+    Custom OpenAI-compatible endpoints use ``custom_…`` profile ids stored in
+    ``SettingsKey.TEXT_LLM_PROFILES``. Resolvers accept either a built-in id
+    or a known custom profile id.
+    """
     OPENAI: Final[str] = "openai"
     OPENROUTER: Final[str] = "openrouter"
 
@@ -559,15 +566,36 @@ def resolve_transcript_cleanup_prompt(
     return config.TRANSCRIPT_CLEANUP_PROMPT
 
 
+def _known_text_llm_profile_ids(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return built-in plus currently saved custom text-LLM profile ids."""
+    try:
+        from services.text_llm import known_profile_ids
+
+        return known_profile_ids(settings)
+    except Exception:
+        return TranscriptCleanupProvider.ALL
+
+
 def default_transcript_cleanup_model(provider: str) -> str:
     """Return the built-in default cleanup model for a provider.
 
     Args:
-        provider: A ``TranscriptCleanupProvider`` value.
+        provider: A built-in or custom text-LLM profile id.
 
     Returns:
-        Default chat model id for that provider.
+        Default chat model id for that provider. Custom endpoints have no
+        built-in default and return an empty string.
     """
+    try:
+        from services.text_llm import default_model_for_profile, get_profile
+
+        profile = get_profile(provider)
+        if profile is not None:
+            return default_model_for_profile(profile)
+    except Exception:
+        pass
     if provider == TranscriptCleanupProvider.OPENROUTER:
         return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
     return config.TRANSCRIPT_CLEANUP_MODEL
@@ -582,14 +610,16 @@ def resolve_transcript_cleanup_provider(
         settings: Optional loaded settings dict. Loads from disk when omitted.
 
     Returns:
-        A ``TranscriptCleanupProvider`` value, falling back to the config
+        A built-in or custom text-LLM profile id, falling back to the config
         default when the stored value is missing or unknown.
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
 
     provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
-    if provider in TranscriptCleanupProvider.ALL:
+    if isinstance(provider, str) and provider in _known_text_llm_profile_ids(
+        settings
+    ):
         return provider
     return config.TRANSCRIPT_CLEANUP_PROVIDER
 
@@ -733,24 +763,65 @@ def resolve_meeting_llm_provider(
 ) -> str:
     """Return the validated LLM provider for meeting intelligence.
 
-    Reuses the transcript-cleanup provider vocabulary (``openai`` /
-    ``openrouter``) so API keys and base URLs resolve through the same
-    plumbing.
+    Reuses the text-LLM profile vocabulary (built-in ``openai`` /
+    ``openrouter`` plus custom ``custom_…`` ids) so API keys and base URLs
+    resolve through the same plumbing.
 
     Args:
         settings: Optional loaded settings dict. Loads from disk when omitted.
 
     Returns:
-        A ``TranscriptCleanupProvider`` value, falling back to the config
-        default when the stored value is missing or unknown.
+        A text-LLM profile id, falling back to the config default when the
+        stored value is missing or unknown.
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
 
     provider = settings.get(SettingsKey.MEETING_LLM_PROVIDER)
-    if provider in TranscriptCleanupProvider.ALL:
+    if isinstance(provider, str) and provider in _known_text_llm_profile_ids(
+        settings
+    ):
         return provider
     return config.MEETING_LLM_PROVIDER
+
+
+def resolve_transcript_cleanup_profile(
+    settings: Optional[Dict[str, Any]] = None,
+):
+    """Return the ``TextLLMProfile`` used for post-ASR transcript cleanup."""
+    from services.text_llm import builtin_profile, get_profile
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    profile_id = resolve_transcript_cleanup_provider(settings)
+    return get_profile(profile_id, settings) or builtin_profile(profile_id)
+
+
+def resolve_meeting_llm_profile(
+    settings: Optional[Dict[str, Any]] = None,
+):
+    """Return the ``TextLLMProfile`` used for meeting intelligence."""
+    from services.text_llm import builtin_profile, get_profile
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    profile_id = resolve_meeting_llm_provider(settings)
+    return get_profile(profile_id, settings) or builtin_profile(profile_id)
+
+
+def resolve_meeting_llm_endpoint(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return a non-secret meeting endpoint snapshot dict."""
+    from services.text_llm import (
+        builtin_profiles,
+        snapshot_from_profile,
+    )
+
+    profile = resolve_meeting_llm_profile(settings)
+    if profile is None:
+        profile = builtin_profiles()[1]
+    return snapshot_from_profile(profile).to_dict()
 
 
 def resolve_meeting_llm_model(

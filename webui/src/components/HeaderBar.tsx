@@ -4,8 +4,11 @@ import type { MeetingInfo, MeetingStateDoc, Op } from '../types';
 import { ops } from '../types';
 import type { SocketStatus } from '../ws';
 import { enabledReportViews, type ReportViewId } from '../report';
+import ConfirmDialog from './ConfirmDialog';
 import ReportDownload from './report/ReportDownload';
 import ReportViewSelect from './report/ReportViewSelect';
+
+type PendingConfirm = 'end' | 'regenerate' | null;
 
 interface HeaderBarProps {
   token: string;
@@ -49,6 +52,7 @@ export default function HeaderBar({
   const [titleDraft, setTitleDraft] = useState(state.title);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null);
 
   useEffect(() => {
     setTitleDraft(state.title);
@@ -105,6 +109,9 @@ export default function HeaderBar({
     !state.intelligence_online &&
     (meetingLive || meetingEnding) &&
     finalizationStatus !== 'running';
+  const showFinalizationWarning =
+    (finalizationStatus === 'unavailable' || finalizationStatus === 'failed') &&
+    !showOfflineBanner;
   const showDiarizationBanner =
     !state.diarization_available && (meetingLive || meetingEnding);
   const meetingTitle = state.title || meeting?.title || 'Meeting';
@@ -174,11 +181,7 @@ export default function HeaderBar({
                 type="button"
                 className="danger"
                 disabled={busy}
-                onClick={() => {
-                  if (window.confirm('End this meeting?')) {
-                    hostAction(() => api.endMeeting(token));
-                  }
-                }}
+                onClick={() => setPendingConfirm('end')}
               >
                 End
               </button>
@@ -199,13 +202,7 @@ export default function HeaderBar({
             <button
               type="button"
               className="ghost"
-              onClick={() => {
-                if (!window.confirm('Regenerate links? Everyone currently connected will be disconnected.')) return;
-                hostAction(async () => {
-                  const result = await api.regenerateTokens(token);
-                  window.location.replace(result.host_url);
-                });
-              }}
+              onClick={() => setPendingConfirm('regenerate')}
             >
               Regenerate links
             </button>
@@ -235,6 +232,12 @@ export default function HeaderBar({
       {showOfflineBanner && (
         <div className="banner warning" role="status">
           Intelligence offline — transcript continues; insights paused.
+          {(finalizationStatus === 'unavailable' || finalizationStatus === 'failed') &&
+            finalizationMessage && (
+              <small style={{ display: 'block', opacity: 0.85, marginTop: 2 }}>
+                {finalizationMessage}
+              </small>
+            )}
         </div>
       )}
 
@@ -280,7 +283,7 @@ export default function HeaderBar({
         </div>
       )}
 
-      {(finalizationStatus === 'unavailable' || finalizationStatus === 'failed') && (
+      {showFinalizationWarning && (
         <div className="banner warning" role="status">
           {finalizationMessage ||
             (finalizationStatus === 'failed'
@@ -303,6 +306,38 @@ export default function HeaderBar({
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingConfirm === 'end'}
+        title="End this meeting?"
+        message="Live capture will stop. Transcription will finish in the background, and notes and reports stay available."
+        confirmLabel="End meeting"
+        cancelLabel="Keep meeting"
+        danger
+        busy={busy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          setPendingConfirm(null);
+          hostAction(() => api.endMeeting(token));
+        }}
+      />
+      <ConfirmDialog
+        open={pendingConfirm === 'regenerate'}
+        title="Regenerate links?"
+        message="Everyone currently connected will be disconnected and will need the new links to rejoin."
+        confirmLabel="Regenerate links"
+        cancelLabel="Keep current links"
+        danger
+        busy={busy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          setPendingConfirm(null);
+          hostAction(async () => {
+            const result = await api.regenerateTokens(token);
+            window.location.replace(result.host_url);
+          });
+        }}
+      />
     </header>
   );
 }

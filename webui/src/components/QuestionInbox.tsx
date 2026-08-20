@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ops, type Op, type Question } from '../types';
-import EvidenceChip from './EvidenceChip';
+import { EvidenceRow } from './EvidenceChip';
 
 interface QuestionInboxProps {
   questions: Question[];
@@ -79,13 +79,11 @@ export function QuestionRow({
         </div>
       )}
 
-      {q.evidence.length > 0 && (
-        <div className="evidence-row">
-          {q.evidence.map((id) => (
-            <EvidenceChip key={id} segmentId={id} onClick={onEvidenceClick} />
-          ))}
-        </div>
-      )}
+      <EvidenceRow
+        ids={q.evidence}
+        onClick={onEvidenceClick}
+        limit={readOnly ? 0 : undefined}
+      />
 
       {!readOnly && q.status === 'open' && (
         <>

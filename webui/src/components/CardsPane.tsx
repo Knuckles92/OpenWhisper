@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op, type Question } from '../types';
 import { CAPTURE_TAGS, CARD_LABELS, capturedFeedEntries, sortedCardItems } from '../state';
-import EvidenceChip from './EvidenceChip';
+import { EvidenceRow } from './EvidenceChip';
 import { QuestionRow } from './QuestionInbox';
 
 interface CardsPaneProps {
@@ -79,13 +79,11 @@ function CardItemRow({
           {item.text}
         </p>
       )}
-      {item.evidence.length > 0 && (
-        <div className="evidence-row">
-          {item.evidence.map((id) => (
-            <EvidenceChip key={id} segmentId={id} onClick={onEvidenceClick} />
-          ))}
-        </div>
-      )}
+      <EvidenceRow
+        ids={item.evidence}
+        onClick={onEvidenceClick}
+        limit={readOnly ? 0 : undefined}
+      />
       {!readOnly && (
         <div className="card-item-actions no-print">
           <button type="button" onClick={() => setEditing(true)}>

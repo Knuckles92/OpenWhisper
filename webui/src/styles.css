@@ -50,6 +50,7 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden;
   color: var(--ink);
   font-family: var(--font);
   font-size: 14px;
@@ -61,9 +62,11 @@ body {
 }
 
 #root {
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 button,
@@ -153,7 +156,10 @@ a {
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
   max-width: min(1680px, 100%);
   width: 100%;
   margin: 0 auto;
@@ -166,6 +172,8 @@ a {
   flex-direction: column;
   gap: 22px;
   min-height: 0;
+  overflow: auto;
+  overflow-anchor: none;
 }
 
 .app-main.full-bleed {
@@ -173,13 +181,15 @@ a {
 }
 
 .app-main.workspace {
-  --workspace-rail-top: 24px;
-  --workspace-rail-max: calc(100vh - 48px);
+  /* Cap sticky rails to the workspace scrollport. 12rem approximates the
+     locked header + shell padding so rails don't overflow the visible pane. */
+  --workspace-rail-top: 0px;
+  --workspace-rail-max: var(--workspace-scrollport, calc(100dvh - 12rem));
   display: grid;
   grid-template-columns: minmax(240px, 0.2fr) minmax(480px, 0.6fr) minmax(240px, 0.2fr);
   grid-template-areas: "conversation center rail";
   gap: 22px;
-  min-height: auto;
+  min-height: 0;
 }
 
 .workspace-conversation,
@@ -190,12 +200,13 @@ a {
 
 .workspace-conversation,
 .workspace-rail {
-  /* height: 0 keeps sides out of row sizing so the center sets page length.
-     min() caps the stretch at the viewport so a long report doesn't leave empty columns. */
+  /* height: 0 keeps sides out of row sizing so the center sets page length. */
   height: 0;
   min-height: min(100%, var(--workspace-rail-max));
   max-height: var(--workspace-rail-max);
   overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
   position: sticky;
   top: var(--workspace-rail-top);
 }
@@ -224,6 +235,7 @@ a {
   flex-direction: column;
   gap: 22px;
   overflow: visible;
+  overflow-anchor: none;
 }
 
 .workspace-rail {
@@ -314,6 +326,7 @@ a {
   width: 100%;
   max-width: 100%;
   height: 32px;
+  overflow-anchor: none;
 }
 
 /* Header / nav */
@@ -324,6 +337,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-shrink: 0;
   margin-bottom: 8px;
   background: transparent;
   border: none;
@@ -396,6 +410,25 @@ a {
 }
 
 .status-chip.ended {
+  border-color: var(--line);
+  color: var(--soft);
+}
+
+.status-chip.insights-pill {
+  margin-top: 6px;
+}
+
+.status-chip.insights-warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+  color: var(--warning);
+}
+
+.status-chip.insights-success {
+  border-color: color-mix(in srgb, var(--leaf) 45%, var(--line));
+  color: var(--leaf);
+}
+
+.status-chip.insights-neutral {
   border-color: var(--line);
   color: var(--soft);
 }
@@ -1563,6 +1596,7 @@ a {
 
 .evidence-chip {
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--wash);
@@ -1575,6 +1609,22 @@ a {
 .evidence-chip:hover {
   background: color-mix(in srgb, var(--leaf) 12%, white);
   border-color: var(--leaf);
+}
+
+.evidence-more {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--soft);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.evidence-more:hover {
+  border-color: var(--leaf);
+  color: var(--leaf);
 }
 
 /* History */
@@ -2400,14 +2450,17 @@ a {
 
 @media print {
   html,
-  body {
+  body,
+  #root {
     height: auto;
+    overflow: visible;
     background: #fff;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
 
   .header-bar,
+  .confirm-dialog,
   .report-toolbar,
   .report-tabs,
   .report-tab-note,
@@ -2432,9 +2485,11 @@ a {
   }
 
   .app-main,
-  .app-main.full-bleed {
+  .app-main.full-bleed,
+  .app-main.workspace {
     display: block;
     min-height: 0;
+    overflow: visible;
   }
 
   .history-detail-grid {
@@ -2547,6 +2602,103 @@ a {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--soft);
+}
+
+/* In-app confirm (replaces window.confirm) */
+
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  padding: 24px;
+  border: none;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  color: inherit;
+}
+
+.confirm-dialog:focus {
+  outline: none;
+}
+
+.confirm-dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-dialog::backdrop {
+  background:
+    radial-gradient(900px 480px at 50% 40%, rgba(213, 232, 219, 0.45), transparent 70%),
+    color-mix(in srgb, #1a2420 22%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.confirm-card {
+  width: min(420px, calc(100vw - 48px));
+  background: color-mix(in srgb, var(--paper) 90%, white);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, white);
+  border-radius: var(--radius);
+  padding: 28px 26px 22px;
+  box-shadow: 0 18px 48px rgba(26, 36, 32, 0.12);
+  backdrop-filter: blur(6px);
+}
+
+.confirm-card h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.confirm-card p {
+  margin: 0;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .confirm-dialog[open] .confirm-card {
+    animation: confirm-card-in 0.2s ease-out;
+  }
+
+  .confirm-dialog[open]::backdrop {
+    animation: confirm-backdrop-in 0.2s ease-out;
+  }
+}
+
+@keyframes confirm-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes confirm-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Tabs */

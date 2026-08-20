@@ -126,6 +126,8 @@ class MeetingSession(Base):
     asr_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     agent_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     agent_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Non-secret OpenAI-compatible endpoint snapshot (JSON object).
+    agent_endpoint_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     spool_dir: Mapped[str] = mapped_column(String, nullable=False)
     # Latest full MeetingState snapshot for fast reload / history view.
     state_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
