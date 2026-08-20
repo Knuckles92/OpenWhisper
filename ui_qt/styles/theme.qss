@@ -1370,12 +1370,18 @@ QTextEdit#cleanupRuleEditor:focus {
 /* ── Meeting Mode ─────────────────────────────────────────────── */
 
 QWidget#meetingModeTab,
-QWidget#meetingModeContent {
+QWidget#meetingModeContent,
+QWidget#meetingModeScrollHost {
     background-color: transparent;
 }
 
 QLabel#meetingModeSubtitle {
     color: #8e8e93;
+    background-color: transparent;
+}
+
+QLabel#meetingModePlatformHint {
+    color: #ff9f0a;
     background-color: transparent;
 }
 

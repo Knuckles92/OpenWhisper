@@ -6,12 +6,16 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
-from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
+from ui_qt.widgets.meeting_mode_tab import (
+    MeetingModeTab,
+    meeting_audio_support_copy,
+)
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
@@ -100,6 +104,33 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             self.window.tabbed_content.current_index(),
             TabbedContentWidget.TAB_MEETING_MODE,
         )
+
+    def test_expanded_past_meetings_keeps_primary_controls_visible(self):
+        """The sidebar must not clip Start, cloud copy, or the tab label."""
+        self.window.show()
+        self.window.resize(985, 800)
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_MEETING_MODE
+        )
+        self.window.history_sidebar._set_sidebar_width(
+            self.window.history_sidebar.EXPANDED_WIDTH
+        )
+        for _ in range(5):
+            self.app.processEvents()
+
+        tab = self.window.meeting_mode_tab
+        viewport = tab.scroll_area.viewport()
+        for control in (tab.cloud_checkbox, tab.start_button):
+            top_left = control.mapTo(viewport, QPoint(0, 0))
+            self.assertGreaterEqual(top_left.x(), 0)
+            self.assertGreaterEqual(top_left.y(), 0)
+            self.assertLessEqual(top_left.x() + control.width(), viewport.width())
+            self.assertLessEqual(top_left.y() + control.height(), viewport.height())
+
+        tab_bar = self.window.tabbed_content.tab_bar
+        meeting_rect = tab_bar.tabRect(TabbedContentWidget.TAB_MEETING_MODE)
+        label_width = tab_bar.fontMetrics().horizontalAdvance("Meeting Mode")
+        self.assertGreaterEqual(meeting_rect.width(), label_width + 20)
 
 
 class TestMeetingModeWindowHeight(unittest.TestCase):
@@ -267,6 +298,14 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.is_meeting_active)
         self.assertTrue(self.tab.demo_button.isHidden())
         self.assertTrue(self.tab.demo_hint.isHidden())
+
+    def test_platform_copy_does_not_promise_unavailable_system_audio(self):
+        subtitle, linux_hint = meeting_audio_support_copy("linux")
+
+        self.assertIn("when supported", subtitle)
+        self.assertIn("microphone audio only", linux_hint)
+        self.assertIn("Windows", linux_hint)
+        self.assertEqual(self.tab.platform_hint.text(), linux_hint)
 
     def test_developer_mode_shows_demo_meeting_control(self):
         """Developer mode reveals the demo loader on the idle Meeting tab."""

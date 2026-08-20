@@ -54,7 +54,8 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.setObjectName("contentTabBar")
         self.tab_bar.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         self.tab_bar.setDrawBase(False)  # Don't draw base line
-        self.tab_bar.setExpanding(False)  # Don't expand tabs to fill width
+        self.tab_bar.setExpanding(True)
+        self.tab_bar.setUsesScrollButtons(False)
 
         self.tab_bar.addTab("Quick Record")
         self.tab_bar.addTab("Upload File")
@@ -84,10 +85,10 @@ class TabbedContentWidget(QWidget):
                 background-color: transparent;
                 color: #8e8e93;
                 border: none;
-                padding: 12px 24px;
+                padding: 12px 14px;
                 font-size: 14px;
                 font-weight: 600;
-                min-width: 120px;
+                min-width: 90px;
             }
             QTabBar::tab:selected {
                 color: #0a84ff;

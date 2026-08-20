@@ -9,6 +9,7 @@ state flows back in via ``set_meeting_state`` payload dicts (partial updates —
 absent keys leave the current state untouched).
 """
 import logging
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -31,6 +33,28 @@ from ui_qt.widgets.cards import Card
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
+
+
+def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str]:
+    """Return accurate Meeting Mode capture copy for the current platform."""
+    platform = platform or sys.platform
+    subtitle = (
+        "Capture microphone audio and, when supported, system audio. Follow "
+        "the transcript and insights in the browser dashboard."
+    )
+    if platform.startswith("win"):
+        hint = "System audio uses Windows WASAPI loopback when available."
+    elif platform.startswith("linux"):
+        hint = (
+            "Linux captures microphone audio only; system-audio loopback "
+            "requires the Windows Meeting Mode path."
+        )
+    else:
+        hint = (
+            "System-audio capture may be unavailable on this platform; "
+            "Meeting Mode can continue microphone-only."
+        )
+    return subtitle, hint
 
 
 class MeetingModeTab(QWidget):
@@ -100,19 +124,37 @@ class MeetingModeTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("meetingModeScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_area.setStyleSheet(
+            "QScrollArea#meetingModeScrollArea { border: none; "
+            "background: transparent; }"
+        )
+        scroll_host = QWidget()
+        scroll_host.setObjectName("meetingModeScrollHost")
+        center_wrapper = QHBoxLayout(scroll_host)
+        center_wrapper.setContentsMargins(0, 0, 0, 0)
+
         content = QWidget()
         content.setObjectName("meetingModeContent")
+        content.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 14, 24, 16)
         content_layout.setSpacing(16)
 
-        center_wrapper = QHBoxLayout()
         center_wrapper.addStretch()
         center_wrapper.addWidget(content, stretch=1)
         center_wrapper.addStretch()
         content.setMaximumWidth(700)
-        content.setMinimumWidth(500)
-        main_layout.addLayout(center_wrapper)
+        content.setMinimumWidth(0)
+        self.scroll_area.setWidget(scroll_host)
+        main_layout.addWidget(self.scroll_area)
 
         intro_card = Card()
         intro_card.setMinimumHeight(0)
@@ -122,15 +164,28 @@ class MeetingModeTab(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro_card.layout.addWidget(title)
 
-        subtitle = WrappedLabel(
-            "Capture a live meeting with mic and system audio, then follow "
-            "the transcript and insights in the browser dashboard."
-        )
+        subtitle_copy, platform_copy = meeting_audio_support_copy()
+        subtitle = WrappedLabel(subtitle_copy)
         subtitle.setObjectName("meetingModeSubtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setFont(QFont("Segoe UI", 11))
         intro_card.layout.addWidget(subtitle)
+        self.platform_hint = WrappedLabel(platform_copy)
+        self.platform_hint.setObjectName("meetingModePlatformHint")
+        self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.platform_hint.setFont(QFont("Segoe UI", 10))
+        intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
+
+        self.cloud_checkbox = QCheckBox("Cloud intelligence")
+        self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
+        self.cloud_checkbox.setChecked(
+            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
+        )
+        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
+        content_layout.addWidget(
+            self.cloud_checkbox, alignment=Qt.AlignmentFlag.AlignCenter
+        )
 
         # Idle controls
         self.idle_card = Card()
@@ -358,16 +413,6 @@ class MeetingModeTab(QWidget):
         keep_row.addWidget(self.finalization_start_new_button)
         self.finalization_card.layout.addLayout(keep_row)
         content_layout.addWidget(self.finalization_card)
-
-        self.cloud_checkbox = QCheckBox("Cloud intelligence")
-        self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
-        self.cloud_checkbox.setChecked(
-            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
-        )
-        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
-        content_layout.addWidget(
-            self.cloud_checkbox, alignment=Qt.AlignmentFlag.AlignCenter
-        )
 
         content_layout.addStretch()
 
