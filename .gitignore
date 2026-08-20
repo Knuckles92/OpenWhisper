@@ -66,6 +66,10 @@ sidecar/dist/
 .codex/
 .shots/
 
+# Design mockups (local planning artifacts, not shipped)
+mockups/
+webui/mocks/
+
 # Agent instruction files (kept local by preference)
 CLAUDE.md
 AGENTS.md

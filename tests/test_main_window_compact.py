@@ -74,6 +74,7 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.assertTrue(self.window.compact_controller.isVisibleTo(self.window))
         self.assertFalse(self.window.tabbed_content.isVisibleTo(self.window))
         self.assertFalse(self.window.history_edge_tab.isVisibleTo(self.window))
+        self.assertFalse(self.window.models_button.isVisibleTo(self.window))
         self.assertEqual(self.window.compact_button.text(), "Full Size")
 
         self.window.set_compact_mode(False)
@@ -81,7 +82,18 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.assertFalse(self.window._compact_mode)
         self.assertEqual(self.window.geometry(), full_geometry)
         self.assertTrue(self.window.tabbed_content.isVisibleTo(self.window))
+        self.assertTrue(self.window.models_button.isVisibleTo(self.window))
         self.assertEqual(self.window.compact_button.text(), "Compact")
+
+    def test_footer_model_manager_button_opens_manager(self):
+        """Footer Model Manager button uses the existing open signal path."""
+        opened = []
+        self.window.model_manager_requested.connect(lambda: opened.append(True))
+
+        self.window.models_button.click()
+
+        self.assertEqual(opened, [True])
+        self.assertEqual(self.window.models_button.text(), "Model Manager")
 
     def test_compact_controls_delegate_to_quick_record(self):
         """Compact controls use the existing recording signal path."""
