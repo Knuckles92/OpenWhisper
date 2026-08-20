@@ -19,6 +19,8 @@ from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 
 from services.runtime.meeting import MeetingRuntime
 
+_RUNTIME_GLOBALS = MeetingRuntime.__init__.__globals__
+
 
 class _Controller(QObject):
     """Minimal ApplicationController stand-in with meeting signals."""
@@ -47,13 +49,10 @@ def qapp():
 
 @pytest.fixture
 def runtime(qapp, monkeypatch):
+    runtime_settings = _RUNTIME_GLOBALS["settings_manager"]
+    monkeypatch.setattr(runtime_settings, "save_setting", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.save_setting",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.get",
-        lambda key, default=False: default,
+        runtime_settings, "get", lambda key, default=False: default
     )
     controller = _Controller()
     rt = MeetingRuntime(controller)
@@ -76,7 +75,8 @@ def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
     controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     worker = MagicMock()
     monkeypatch.setattr(
-        "services.runtime.meeting.threading.Thread",
+        _RUNTIME_GLOBALS["threading"],
+        "Thread",
         lambda *args, **kwargs: worker,
     )
     rt._starting = True
@@ -109,8 +109,8 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
 
     monkeypatch.setattr("meeting.engine.MeetingEngine", FailingEngine)
     monkeypatch.setattr(rt, "_build_options", lambda *args, **kwargs: object())
-    monkeypatch.setattr(
-        "services.runtime.meeting.speaker_model_path", lambda: "/cached/model"
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "speaker_model_path", lambda: "/cached/model"
     )
     rt._starting = True
 
@@ -646,9 +646,7 @@ def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):
     def fake_get(key, default=False):
         return key == SettingsKey.MEETING_CLOUD_LAST_ENABLED
 
-    monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.get", fake_get
-    )
+    monkeypatch.setattr(_RUNTIME_GLOBALS["settings_manager"], "get", fake_get)
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
 
     rt.start_meeting()
@@ -752,9 +750,8 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
 
     monkeypatch.setattr(rt, "_repository", lambda: repo)
     monkeypatch.setattr("meeting.recovery.finalize_meeting", fake_finalize)
-    monkeypatch.setattr(
-        "services.runtime.meeting.resolve_meeting_language",
-        lambda settings: "en",
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_language", lambda settings: "en"
     )
 
     rt._finalize_recovered_worker("m_dead")
