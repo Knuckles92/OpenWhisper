@@ -996,8 +996,16 @@ class MeetingRuntime:
         """Open the host dashboard in the default browser (UI callback target)."""
         url = self._host_url
         if not url:
-            self.controller.meeting_status_update.emit(
-                "No meeting dashboard available yet"
+            # A retained finalization card may outlive its original server.
+            # Reuse the archive path so the tab button and Past Meetings Open
+            # have identical startup/dependency handling.
+            meeting_id = self._card_meeting_id
+            if meeting_id:
+                self.open_past_meeting(meeting_id)
+                return
+            self._report_dashboard_error(
+                "No meeting dashboard is available. Start a meeting or open "
+                "one from Past Meetings."
             )
             return
         # Never log the path: it carries the host token, which grants full
@@ -1038,7 +1046,7 @@ class MeetingRuntime:
             repository = self._repository()
             meeting = repository.get_meeting(meeting_id)
             if meeting is None:
-                self.controller.meeting_error.emit("That meeting no longer exists")
+                self._report_dashboard_error("That meeting no longer exists")
                 return
             self._hydrate_finalization_card(meeting, reveal=True)
 
@@ -1049,7 +1057,7 @@ class MeetingRuntime:
 
             if not url:
                 if self.is_active:
-                    self.controller.meeting_error.emit(
+                    self._report_dashboard_error(
                         "The live meeting dashboard is unavailable"
                     )
                     return
@@ -1082,7 +1090,7 @@ class MeetingRuntime:
                 url = server.host_url
 
             if not url:
-                self.controller.meeting_error.emit(
+                self._report_dashboard_error(
                     "Could not create a meeting dashboard link"
                 )
                 return
@@ -1096,12 +1104,16 @@ class MeetingRuntime:
             webbrowser.open(history_url)
         except Exception as exc:
             logger.error("Failed to open past meeting", exc_info=True)
-            self.controller.meeting_error.emit(
+            self._report_dashboard_error(
                 f"Could not open the past meeting: {exc}"
             )
         finally:
             with self._lock:
                 self._archive_starting = False
+
+    def _report_dashboard_error(self, message: str) -> None:
+        """Surface dashboard failures consistently for every UI entry point."""
+        self.controller.meeting_error.emit(str(message))
 
     def copy_guest_link(self) -> None:
         """Announce the guest URL for clipboard copy (UI callback target).

@@ -420,6 +420,22 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.finalization_dashboard_button.click()
         self.assertEqual(clicked, [True])
 
+    def test_finalization_dashboard_reports_through_signal_without_url(self):
+        """An unavailable dashboard remains clickable so runtime can explain."""
+        clicked = []
+        self.tab.open_dashboard_requested.connect(lambda: clicked.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "unavailable", "message": "No dashboard"},
+            "dashboard_available": False,
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
+        self.tab.finalization_dashboard_button.click()
+        self.assertEqual(clicked, [True])
+
     def test_failed_finalization_shows_retry_button_and_emits_signal(self):
         """Failed finalization shows Retry insights button and clicking emits signal."""
         clicked = []

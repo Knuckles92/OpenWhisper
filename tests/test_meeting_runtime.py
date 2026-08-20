@@ -128,6 +128,33 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
     assert "No audio devices" in errors[-1]
 
 
+def test_open_dashboard_without_url_surfaces_error(runtime):
+    rt, controller = runtime
+    errors = []
+    statuses = []
+    controller.meeting_error.connect(errors.append)
+    controller.meeting_status_update.connect(statuses.append)
+
+    rt.open_dashboard()
+
+    assert errors == [
+        "No meeting dashboard is available. Start a meeting or open one "
+        "from Past Meetings."
+    ]
+    assert statuses == []
+
+
+def test_open_dashboard_for_retained_card_uses_archive_path(runtime, monkeypatch):
+    rt, _controller = runtime
+    opened = []
+    rt._card_meeting_id = "m_saved"
+    monkeypatch.setattr(rt, "open_past_meeting", opened.append)
+
+    rt.open_dashboard()
+
+    assert opened == ["m_saved"]
+
+
 def test_finalization_running_blocks_second_meeting_not_claim(runtime):
     rt, controller = runtime
     statuses = []

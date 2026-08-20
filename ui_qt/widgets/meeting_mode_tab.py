@@ -609,7 +609,7 @@ class MeetingModeTab(QWidget):
         dashboard_enabled = self._active or self._has_dashboard or show_finalization
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
         self.finalization_dashboard_button.setEnabled(
-            self._has_dashboard or self._active
+            self._has_dashboard or self._active or show_finalization
         )
         self.finalization_dashboard_button.setVisible(dashboard_enabled)
 
