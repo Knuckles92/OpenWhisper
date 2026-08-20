@@ -357,6 +357,90 @@ class TestRerunSpeakers:
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 409
 
+    def _ended(self, client):
+        tc, engine, _ = client
+        engine.ended = True
+        return tc
+
+    def test_on_device_backend_is_400(self, client, monkeypatch):
+        tc = self._ended(client)
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_speaker_id_backend",
+            lambda settings=None: "local",
+        )
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "speaker identification is set to on-device"
+
+    def test_missing_audio_consent_is_400(self, client, monkeypatch):
+        tc = self._ended(client)
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_speaker_id_backend",
+            lambda settings=None: "openai",
+        )
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_audio_upload_consent",
+            lambda settings=None: False,
+        )
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "audio-upload consent has not been given"
+
+    def test_missing_openai_key_is_400(self, client, monkeypatch):
+        tc = self._ended(client)
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_speaker_id_backend",
+            lambda settings=None: "openai",
+        )
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_audio_upload_consent",
+            lambda settings=None: True,
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key",
+            lambda provider: "",
+        )
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "no OpenAI API key is configured"
+
+    def test_unknown_meeting_is_404(self, client):
+        tc = self._ended(client)
+        r = tc.post("/api/meetings/m_gone/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 404
+
+    def test_host_rerun_calls_respeakers(self, client, monkeypatch):
+        tc, engine, repo = client
+        engine.ended = True
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_speaker_id_backend",
+            lambda settings=None: "openai",
+        )
+        monkeypatch.setattr(
+            "services.settings.resolve_meeting_audio_upload_consent",
+            lambda settings=None: True,
+        )
+        monkeypatch.setattr(
+            "services.transcript_cleanup.find_api_key",
+            lambda provider: "sk-test",
+        )
+        calls = {}
+
+        def fake_rerun(repository, meeting_id, **kwargs):
+            calls["meeting_id"] = meeting_id
+            calls["repository"] = repository
+            calls.update(kwargs)
+            return {"ok": True, "relabeled": 3}
+
+        monkeypatch.setattr("meeting.web.api.rerun_speakers", fake_rerun)
+        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "relabeled": 3}
+        assert calls["meeting_id"] == "m_test"
+        assert calls["repository"] is repo
+        assert calls["api_key"] == "sk-test"
+        assert calls["spool_dir"] == repo._meeting.get("spool_dir")
+
 
 class TestRerunInsights:
     def test_guest_cannot_rerun(self, client):

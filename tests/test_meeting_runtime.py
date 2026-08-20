@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from services.settings import SettingsKey
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -44,10 +46,28 @@ def qapp():
 
 
 @pytest.fixture
-def runtime(qapp):
+def runtime(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "services.runtime.meeting.settings_manager.save_setting",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "services.runtime.meeting.settings_manager.get",
+        lambda key, default=False: default,
+    )
     controller = _Controller()
     rt = MeetingRuntime(controller)
     return rt, controller
+
+
+def _record_launch(rt, monkeypatch):
+    launched = []
+
+    def fake_launch(cloud, *, demo=False):
+        launched.append({"cloud": cloud, "demo": demo})
+
+    monkeypatch.setattr(rt, "_launch", fake_launch)
+    return launched
 
 
 def test_finalization_running_blocks_second_meeting_not_claim(runtime):
@@ -187,4 +207,258 @@ def test_retry_insights_runs_and_updates_finalization(runtime, monkeypatch):
     fake_engine._set_finalization.assert_called_with(
         "completed", "Final cloud insights are ready."
     )
+
+
+def test_cloud_start_without_consent_emits_and_does_not_launch(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    consents = []
+    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+
+    rt.start_meeting(cloud_enabled=True)
+
+    assert consents == [True]
+    assert launched == []
+    assert rt._consent_pending_kind == "start"
+    assert rt.is_claimed is True
+    assert controller.meeting_active is False
+
+
+def test_demo_start_without_consent_uses_start_demo_kind(runtime, monkeypatch):
+    rt, controller = runtime
+    _record_launch(rt, monkeypatch)
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+
+    rt.start_demo_meeting(cloud_enabled=True)
+
+    assert rt._consent_pending_kind == "start_demo"
+    assert rt.is_claimed is True
+
+
+def test_declined_consent_still_starts_transcript_only(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    rt._starting = True
+    rt._consent_pending_kind = "start"
+
+    rt.on_consent_result(False)
+
+    assert launched == [{"cloud": False, "demo": False}]
+    assert rt._consent_pending_kind is None
+
+
+def test_granted_consent_starts_with_cloud(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    rt._starting = True
+    rt._consent_pending_kind = "start"
+
+    rt.on_consent_result(True)
+
+    assert launched == [{"cloud": True, "demo": False}]
+
+
+def test_granted_demo_consent_starts_demo_with_cloud(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    rt._consent_pending_kind = "start_demo"
+
+    rt.on_consent_result(True)
+
+    assert launched == [{"cloud": True, "demo": True}]
+
+
+def test_start_without_cloud_skips_consent(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    consents = []
+    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+
+    rt.start_meeting(cloud_enabled=False)
+
+    assert consents == []
+    assert launched == [{"cloud": False, "demo": False}]
+    assert rt._consent_pending_kind is None
+
+
+def test_start_with_consent_already_given_launches_cloud(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    consents = []
+    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: True)
+
+    rt.start_meeting(cloud_enabled=True)
+
+    assert consents == []
+    assert launched == [{"cloud": True, "demo": False}]
+
+
+def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    consents = []
+    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+
+    def fake_get(key, default=False):
+        return key == SettingsKey.MEETING_CLOUD_LAST_ENABLED
+
+    monkeypatch.setattr(
+        "services.runtime.meeting.settings_manager.get", fake_get
+    )
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+
+    rt.start_meeting()
+
+    assert consents == [True]
+    assert launched == []
+    assert rt._consent_pending_kind == "start"
+
+
+def test_second_start_during_consent_is_blocked(runtime, monkeypatch):
+    rt, controller = runtime
+    launched = _record_launch(rt, monkeypatch)
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+    rt.start_meeting(cloud_enabled=True)
+
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    rt.start_meeting(cloud_enabled=False)
+
+    assert launched == []
+    assert any("already in progress" in s for s in statuses)
+    assert rt._consent_pending_kind == "start"
+
+
+def test_toggle_cloud_without_consent_reprompts(runtime, monkeypatch):
+    rt, controller = runtime
+    consents = []
+    states = []
+    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+
+    rt.toggle_cloud(True)
+
+    assert consents == [True]
+    assert rt._consent_pending_kind == "toggle"
+    assert states == []
+
+
+def test_toggle_cloud_with_consent_applies(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: True)
+
+    rt.toggle_cloud(True)
+
+    assert rt._consent_pending_kind is None
+    assert any(s.get("cloud_enabled") is True for s in states)
+
+
+def test_recovery_scan_emits_dead_sessions(runtime, monkeypatch):
+    rt, controller = runtime
+    found = []
+    controller.meeting_recovery_found.connect(found.append)
+    meetings = [{"id": "m_dead", "status": "active"}]
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.recovery.find_recoverable_meetings",
+        lambda repository: meetings,
+    )
+
+    rt._recovery_scan_worker()
+
+    assert found == [meetings]
+
+
+def test_recovery_scan_silent_when_none(runtime, monkeypatch):
+    rt, controller = runtime
+    found = []
+    controller.meeting_recovery_found.connect(found.append)
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.recovery.find_recoverable_meetings",
+        lambda repository: [],
+    )
+
+    rt._recovery_scan_worker()
+
+    assert found == []
+
+
+def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    errors = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.meeting_error.connect(errors.append)
+    meeting = {"id": "m_dead"}
+    repo = SimpleNamespace(get_meeting=lambda meeting_id: meeting)
+    called = []
+
+    def fake_finalize(repository, row, asr_model="auto", asr_language="auto",
+                      on_progress=None):
+        called.append({
+            "repository": repository,
+            "meeting_id": row["id"],
+            "asr_language": asr_language,
+        })
+        return True
+
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+    monkeypatch.setattr("meeting.recovery.finalize_meeting", fake_finalize)
+    monkeypatch.setattr(
+        "services.runtime.meeting.resolve_meeting_language",
+        lambda settings: "en",
+    )
+
+    rt._finalize_recovered_worker("m_dead")
+
+    assert called[0]["meeting_id"] == "m_dead"
+    assert called[0]["repository"] is repo
+    assert called[0]["asr_language"] == "en"
+    assert "finalized" in statuses[-1].lower()
+    assert errors == []
+
+
+def test_finalize_recovered_reports_failure(runtime, monkeypatch):
+    rt, controller = runtime
+    errors = []
+    controller.meeting_error.connect(errors.append)
+    repo = SimpleNamespace(get_meeting=lambda meeting_id: {"id": meeting_id})
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+    monkeypatch.setattr(
+        "meeting.recovery.finalize_meeting",
+        lambda *args, **kwargs: False,
+    )
+
+    rt._finalize_recovered_worker("m_dead")
+
+    assert errors
+    assert "could not finalize" in errors[-1].lower()
+
+
+def test_discard_recovered_deletes_meeting_data(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    repo = object()
+    deleted = []
+
+    def fake_delete(repository, meeting_id, root):
+        deleted.append((repository, meeting_id, root))
+
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+    monkeypatch.setattr(
+        "meeting.persist.data_lifecycle.delete_meeting_data", fake_delete
+    )
+
+    rt._discard_recovered_worker("m_dead")
+
+    assert deleted[0][0] is repo
+    assert deleted[0][1] == "m_dead"
+    assert "discarded" in statuses[-1].lower()
 
