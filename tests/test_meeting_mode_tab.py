@@ -134,7 +134,7 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
 
 
 class TestMeetingModeWindowHeight(unittest.TestCase):
-    """The window must grow rather than squeeze the finalization checklist."""
+    """Finalization remains readable in the responsive scroll viewport."""
 
     FINALIZATION = {
         "status": "running",
@@ -216,7 +216,11 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         })
         self._settle()
 
-        self.assertGreater(self.window.height(), start_height)
+        self.assertEqual(self.window.height(), start_height)
+        self.assertGreater(
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
+        )
         steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
         self.assertGreaterEqual(
             steps_widget.height(), steps_widget.minimumSizeHint().height()
@@ -224,8 +228,8 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         for row in self._step_rows():
             self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
 
-    def test_borrowed_height_is_returned_when_the_card_clears(self):
-        """Ending finalization gives the extra window height back."""
+    def test_scroll_space_is_released_when_the_card_clears(self):
+        """Clearing finalization removes overflow without resizing the window."""
         start_height = self.window.height()
         self.window.meeting_mode_tab.set_meeting_state({
             "active": False,
@@ -233,9 +237,11 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
             "finalization": self.FINALIZATION,
         })
         self._settle()
-        self.assertGreater(self.window.height(), start_height)
-
-        floor_with_card = self.window.minimumHeight()
+        self.assertEqual(self.window.height(), start_height)
+        self.assertGreater(
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
+        )
 
         self.window.meeting_mode_tab.set_meeting_state({
             "status": "starting",
@@ -243,11 +249,11 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         })
         self._settle()
 
-        self.assertLess(self.window.minimumHeight(), floor_with_card)
+        self.assertEqual(self.window.height(), start_height)
         self.assertEqual(self.window._meeting_height_growth, 0)
-        # The shrink itself is animated; check where it is headed.
         self.assertEqual(
-            self.window._resize_animation.endValue().height(), start_height
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
         )
 
     def test_step_rows_are_inset_from_the_list_edges(self):

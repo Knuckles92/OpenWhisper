@@ -88,7 +88,7 @@ class TabbedContentWidget(QWidget):
                 padding: 12px 14px;
                 font-size: 14px;
                 font-weight: 600;
-                min-width: 90px;
+                min-width: 120px;
             }
             QTabBar::tab:selected {
                 color: #0a84ff;
