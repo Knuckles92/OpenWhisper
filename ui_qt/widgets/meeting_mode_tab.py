@@ -58,6 +58,7 @@ class MeetingModeTab(QWidget):
         self.setObjectName("meetingModeTab")
 
         self._active = False
+        self._starting = False
         self._paused = False
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
@@ -441,6 +442,7 @@ class MeetingModeTab(QWidget):
         if "status" in payload:
             status = str(payload["status"])
             self.set_status_text(status.capitalize())
+            self._starting = status == "starting"
             # A new meeting start clears any previous finalization result.
             if status == "starting":
                 self._finalization = None
@@ -541,6 +543,7 @@ class MeetingModeTab(QWidget):
             return
         self._active = active
         if active:
+            self._starting = False
             # Starting a live session replaces any prior finalization result.
             self._finalization = None
             if self._running_since is None:
@@ -577,13 +580,16 @@ class MeetingModeTab(QWidget):
         final_status = (finalization or {}).get("status") or ""
         running_finalization = final_status == "running"
         show_finalization = bool(finalization) and not self._active
+        showing_session = self._active or self._starting
 
-        self.session_card.setVisible(self._active)
+        self.session_card.setVisible(showing_session)
         # Hide the idle Start control while finalization is running or an
         # incomplete card is asking the user to retry, defer, or start new.
         incomplete = self._is_incomplete_finalization(finalization)
         hide_idle_start = running_finalization or incomplete
-        self.idle_card.setVisible(not self._active and not hide_idle_start)
+        self.idle_card.setVisible(
+            not showing_session and not hide_idle_start
+        )
         self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
@@ -593,6 +599,9 @@ class MeetingModeTab(QWidget):
         self.demo_button.setVisible(show_demo)
         self.demo_hint.setVisible(show_demo)
         self.finalization_card.setVisible(show_finalization)
+        self.pause_button.setEnabled(self._active)
+        self.end_button.setEnabled(self._active)
+        self.guest_link_button.setEnabled(self._active and self._has_dashboard)
 
         if show_finalization and finalization is not None:
             self._render_finalization(finalization)

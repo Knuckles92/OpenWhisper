@@ -392,6 +392,56 @@ def loopback_segment(meeting_id, seg_id, start=1.0, end=3.0, chunk_id=None):
 
 
 # ---------------------------------------------------------------------------
+# Required startup services
+# ---------------------------------------------------------------------------
+
+class TestRequiredStartupServices:
+    def test_server_failure_aborts_and_discards_empty_meeting(
+            self, make_engine, repo, fakes):
+        class FailingServer(FakeServer):
+            def start(self):
+                raise ModuleNotFoundError(
+                    "Meeting Mode needs the dashboard dependencies "
+                    "(missing module: uvicorn)."
+                )
+
+        fakes.modules["meeting.web.server"].MeetingWebServer = FailingServer
+        engine = make_engine(cloud_enabled=False)
+
+        with pytest.raises(RuntimeError, match="dashboard dependencies"):
+            engine.start()
+
+        assert engine.is_active() is False
+        assert repo.get_meeting(engine.meeting_id) is None
+        assert all("server_started" != kind for kind, _ in engine.events)
+
+    def test_zero_capture_sources_fail_before_dashboard_start(
+            self, make_engine, repo, fakes):
+        devices = fakes.modules["meeting.capture.devices"]
+        devices.find_mic_device = lambda device_id=None: None
+        devices.find_loopback_device = lambda: None
+        engine = make_engine(cloud_enabled=False)
+
+        with pytest.raises(RuntimeError, match="No audio devices"):
+            engine.start()
+
+        assert engine.is_active() is False
+        assert repo.get_meeting(engine.meeting_id) is None
+        assert fakes.servers == []
+
+    def test_missing_loopback_still_allows_mic_only_start(
+            self, make_engine, fakes):
+        fakes.modules["meeting.capture.devices"].find_loopback_device = lambda: None
+        engine = make_engine(cloud_enabled=False)
+
+        result = engine.start()
+
+        assert result["host_url"]
+        assert engine.is_active() is True
+        assert {source.channel for source in engine._sources} == {"mic"}
+
+
+# ---------------------------------------------------------------------------
 # Intelligence health
 # ---------------------------------------------------------------------------
 

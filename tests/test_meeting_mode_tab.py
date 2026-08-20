@@ -208,7 +208,7 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
 
         self.window.meeting_mode_tab.set_meeting_state({
             "status": "starting",
-            "active": True,
+            "active": False,
         })
         self._settle()
 
@@ -299,6 +299,20 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(self.tab.status_pill.text(), "Active")
         self.assertEqual(self.tab.elapsed_label.text(), "01:05")
 
+    def test_starting_is_non_active_and_does_not_run_timer(self):
+        """Startup shows progress without exposing live controls or a timer."""
+        self.tab.set_meeting_state({"active": False, "status": "starting"})
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.is_meeting_active)
+        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.session_card.isHidden())
+        self.assertEqual(self.tab.status_pill.text(), "Starting")
+        self.assertFalse(self.tab._elapsed_timer.isActive())
+        self.assertFalse(self.tab.pause_button.isEnabled())
+        self.assertFalse(self.tab.end_button.isEnabled())
+        self.assertEqual(self.tab.elapsed_label.text(), "00:00")
+
     def test_start_emits_cloud_choice(self):
         """Start Meeting emits the current cloud-intelligence choice."""
         received = []
@@ -387,7 +401,7 @@ class TestMeetingModeTabState(unittest.TestCase):
                 "message": "done",
             },
         })
-        self.tab.set_meeting_state({"status": "starting", "active": True})
+        self.tab.set_meeting_state({"status": "starting", "active": False})
         self.app.processEvents()
         self.assertIsNone(self.tab.finalization_status)
         self.assertTrue(self.tab.finalization_card.isHidden())

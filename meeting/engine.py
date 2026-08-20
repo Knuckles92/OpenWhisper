@@ -392,20 +392,20 @@ class MeetingEngine:
     def start(self) -> Dict[str, Any]:
         """Create the meeting and bring the whole pipeline up.
 
-        Degrades gracefully: a missing loopback device, ASR model, web
-        stack, or intelligence backend logs and emits ``error``/``status``
-        events but never prevents the rest of the meeting from running.
+        Degrades gracefully when one capture channel, the ASR model, or the
+        intelligence backend is unavailable. The dashboard and at least one
+        live capture source are required: without either one the partial start
+        is torn down and the meeting is not reported as active.
         ``options.demo_mode`` skips capture, ASR, and diarization and seeds a
         canned transcript so End can be tested without a live recording.
 
         Returns:
-            ``{'meeting_id', 'url', 'host_url', 'guest_url'}`` — URL values
-            are None when the web server could not start.
+            ``{'meeting_id', 'url', 'host_url', 'guest_url'}``.
 
         Raises:
             RuntimeError: When the engine is already active or was ended.
-            Exception: When core setup (persistence/state) fails; partial
-                setup is torn down and the meeting row marked ``failed``.
+            Exception: When required setup fails; partial setup is torn down
+                and an empty meeting row is discarded.
         """
         with self._lifecycle_lock:
             if self._active or self._starting or self._end_thread is not None:
@@ -1685,13 +1685,44 @@ class MeetingEngine:
                 logger.exception("Server stop failed during start abort")
         self._stop_heartbeat()
         self.clock.pause()
-        if self.meeting_id:
+        meeting_id = self.meeting_id
+        if not meeting_id:
+            return
+
+        # A start that never captured anything is not a real meeting. Keeping
+        # it would create an "Untitled · Ended" history row for every missing
+        # dependency or unavailable device. Be conservative on inspection
+        # failures: preserve the row whenever we cannot prove it is empty.
+        has_artifacts = True
+        try:
+            has_artifacts = bool(
+                self.repository.get_audio_chunks(meeting_id)
+                or self.repository.get_segments(meeting_id)
+            )
+        except Exception:
+            logger.exception("Could not inspect aborted meeting artifacts")
+        if not has_artifacts:
             try:
-                self.repository.update_meeting(
-                    self.meeting_id, status="failed", ended_at=now_iso()
+                from meeting.persist.data_lifecycle import delete_meeting_data
+
+                delete_meeting_data(
+                    self.repository,
+                    meeting_id,
+                    self.options.spool_root or "meeting_audio",
                 )
             except Exception:
-                logger.exception("Failed to mark aborted meeting as failed")
+                logger.exception("Failed to discard empty aborted meeting")
+            else:
+                logger.info("Discarded empty failed meeting start: %s", meeting_id)
+                self.store = None
+                return
+
+        try:
+            self.repository.update_meeting(
+                meeting_id, status="failed", ended_at=now_iso()
+            )
+        except Exception:
+            logger.exception("Failed to mark aborted meeting as failed")
         if self.store is not None:
             try:
                 self.store.update_runtime_fields(status="failed")
@@ -1768,8 +1799,9 @@ class MeetingEngine:
             from meeting.capture.spool import SpoolWriter  # noqa: F401
         except Exception as exc:
             logger.exception("Capture layer unavailable")
-            self._emit("error", {"code": "capture_unavailable", "message": str(exc)})
-            return "Audio capture is unavailable; no audio is being recorded."
+            raise RuntimeError(
+                f"Audio capture is unavailable: {exc}"
+            ) from exc
 
         self._sources = []
         mic_dev = None
@@ -1822,11 +1854,8 @@ class MeetingEngine:
                          if CHANNEL_MIC in active else
                          "System-audio capture is unavailable.")
         if not active:
-            self._emit("error", {
-                "code": "capture_unavailable",
-                "message": "No audio devices could be opened.",
-            })
-            note = "No audio devices could be opened; no audio is being recorded."
+            self._update_capture_status("No audio devices could be opened.")
+            raise RuntimeError("No audio devices could be opened.")
         else:
             note = " ".join(notes) or None
         self._update_capture_status(note or "")
@@ -2370,7 +2399,7 @@ class MeetingEngine:
     # Web server
     # ------------------------------------------------------------------
 
-    def _start_server(self) -> Optional[str]:
+    def _start_server(self) -> str:
         try:
             from meeting.web.server import MeetingWebServer
             server = MeetingWebServer(
@@ -2380,8 +2409,9 @@ class MeetingEngine:
             url = server.start()
         except Exception as exc:
             logger.exception("Meeting web server failed to start")
-            self._emit("error", {"code": "server_failed", "message": str(exc)})
-            return None
+            raise RuntimeError(
+                f"Meeting dashboard could not start: {exc}"
+            ) from exc
         self._server = server
         self._emit("server_started", {
             "url": url,

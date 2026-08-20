@@ -70,6 +70,64 @@ def _record_launch(rt, monkeypatch):
     return launched
 
 
+def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    worker = MagicMock()
+    monkeypatch.setattr(
+        "services.runtime.meeting.threading.Thread",
+        lambda *args, **kwargs: worker,
+    )
+    rt._starting = True
+
+    rt._launch(False)
+
+    assert controller.meeting_active is False
+    assert rt.is_claimed is True
+    assert states[-1]["status"] == "starting"
+    assert states[-1]["active"] is False
+    worker.start.assert_called_once()
+
+
+def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    errors = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    controller.meeting_error.connect(errors.append)
+
+    class FailingEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_listener(self, listener):
+            self.listener = listener
+
+        def start(self):
+            raise RuntimeError("No audio devices could be opened.")
+
+    monkeypatch.setattr("meeting.engine.MeetingEngine", FailingEngine)
+    monkeypatch.setattr(rt, "_build_options", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "services.runtime.meeting.speaker_model_path", lambda: "/cached/model"
+    )
+    rt._starting = True
+
+    rt._start_worker(False)
+
+    assert rt._starting is False
+    assert controller.meeting_active is False
+    assert rt._engine is None
+    assert states[-1] == {
+        "active": False,
+        "paused": False,
+        "status": "failed",
+        "dashboard_available": False,
+    }
+    assert "No audio devices" in errors[-1]
+
+
 def test_finalization_running_blocks_second_meeting_not_claim(runtime):
     rt, controller = runtime
     statuses = []

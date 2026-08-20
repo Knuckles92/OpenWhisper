@@ -541,8 +541,9 @@ class MeetingRuntime:
         """Kick off the meeting start on a dedicated thread.
 
         ``MeetingEngine.start()`` loads a Whisper model and boots the web
-        server, so it must not run on the Qt main thread. ``meeting_active``
-        is raised immediately so dictation is excluded during startup.
+        server, so it must not run on the Qt main thread. The runtime's
+        ``_starting`` claim excludes dictation without telling the UI that a
+        meeting is active before required startup checks have passed.
 
         Args:
             cloud: Whether cloud intelligence should start with the meeting.
@@ -555,10 +556,8 @@ class MeetingRuntime:
         except Exception as exc:
             logger.warning(f"Could not persist meeting cloud toggle: {exc}")
 
-        self.controller.meeting_active = True
+        self.controller.meeting_active = False
         with self._lock:
-            # Exclusive mode now guards the start; release the claim.
-            self._starting = False
             # A new meeting replaces any retained post-meeting finalization.
             self._finalizing = False
             self._finalization = None
@@ -567,7 +566,7 @@ class MeetingRuntime:
             "Starting demo meeting..." if demo else "Starting meeting..."
         )
         self.controller.meeting_state_changed.emit(
-            {"active": True, "paused": False, "status": "starting",
+            {"active": False, "paused": False, "status": "starting",
              "cloud_enabled": cloud, "finalization": None}
         )
         threading.Thread(
@@ -598,19 +597,35 @@ class MeetingRuntime:
             with self._lock:
                 self._engine = engine
             result = engine.start()
+            if not (result.get("host_url") or result.get("url")):
+                abort = getattr(engine, "_abort_start", None)
+                if callable(abort):
+                    abort()
+                raise RuntimeError(
+                    "Meeting dashboard did not provide an address."
+                )
         except Exception as exc:
             logger.error("Failed to start meeting", exc_info=True)
             with self._lock:
+                self._starting = False
                 if engine is not None and self._engine is engine:
                     self._engine = None
+                self._host_url = None
+                self._guest_url = None
             self.controller.meeting_active = False
             self.controller.meeting_error.emit(f"Could not start the meeting: {exc}")
             self.controller.meeting_state_changed.emit(
-                {"active": False, "status": "failed"}
+                {
+                    "active": False,
+                    "paused": False,
+                    "status": "failed",
+                    "dashboard_available": False,
+                }
             )
             return
 
         with self._lock:
+            self._starting = False
             self._engine = engine
             # The engine's server_started event usually landed first (and
             # already announced the URLs); keep those values when the start
@@ -627,6 +642,7 @@ class MeetingRuntime:
             "Demo meeting loaded — End to test cleanup and the report"
             if demo else "Meeting in progress"
         )
+        self.controller.meeting_active = True
         elapsed_s = 0.0
         if demo:
             try:
