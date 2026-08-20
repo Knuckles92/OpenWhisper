@@ -15,11 +15,11 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from meeting.interfaces import SpooledChunk
 from meeting.state.schema import FinalizationState, now_iso
+from meeting.time_utils import seconds_since
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,7 @@ def is_session_dead(meeting: Dict[str, Any]) -> bool:
     """
     heartbeat = meeting.get("app_heartbeat_at")
     if heartbeat:
-        try:
-            age = (datetime.now() - datetime.fromisoformat(heartbeat)).total_seconds()
-        except (TypeError, ValueError):
-            age = None
+        age = seconds_since(heartbeat)
         if age is not None and age < STALE_HEARTBEAT_S:
             return not _pid_alive(meeting.get("app_pid"))
     return True

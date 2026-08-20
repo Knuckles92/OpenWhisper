@@ -8,7 +8,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from meeting.state.schema import FinalizationState, MeetingState
-from ui_qt.widgets.past_meetings_panel import PastMeetingItem, PastMeetingsPanel
+from ui_qt.widgets.past_meetings_panel import (
+    PastMeetingItem,
+    PastMeetingsPanel,
+    _format_duration,
+)
 
 
 def _meeting(
@@ -134,3 +138,13 @@ def test_failed_and_empty_meetings_are_labeled_honestly():
 
     panel.deleteLater()
     app.processEvents()
+
+
+def test_subminute_duration_uses_seconds_instead_of_zero_minutes():
+    meeting = {
+        "started_at": "2026-08-20T16:55:00Z",
+        "ended_at": "2026-08-20T16:55:40Z",
+        "paused_total_s": 0,
+    }
+
+    assert _format_duration(meeting) == "40 sec"

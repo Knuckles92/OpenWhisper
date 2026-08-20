@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime
 from typing import Optional
+
+from meeting.time_utils import utc_now_iso
 
 
 class MeetingClock:
@@ -36,7 +37,7 @@ class MeetingClock:
             self._t0 = time.monotonic()
             self._pause_credit = 0.0
             self._paused_at = None
-            self.started_at_iso = datetime.now().isoformat()
+            self.started_at_iso = utc_now_iso()
 
     def resume_from_recovery(self, elapsed_s: float) -> None:
         """Re-anchor after crash recovery so meeting time continues at ``elapsed_s``.
@@ -50,7 +51,7 @@ class MeetingClock:
             self._pause_credit = 0.0
             self._paused_at = None
             if self.started_at_iso is None:
-                self.started_at_iso = datetime.now().isoformat()
+                self.started_at_iso = utc_now_iso()
 
     def pause(self) -> None:
         """Freeze meeting time. Idempotent."""

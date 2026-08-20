@@ -14,7 +14,6 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.interfaces import (
@@ -34,6 +33,7 @@ from meeting.state.repair import repair_meeting_state
 from meeting.state.schema import CARD_KEYS, FinalizationState, MeetingState
 from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
+from meeting.time_utils import elapsed_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -416,11 +416,10 @@ def _collect_summary_stats(
     ended = meeting.get("ended_at")
     if started and ended:
         try:
-            start_dt = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(str(ended).replace("Z", "+00:00"))
             paused = float(meeting.get("paused_total_s") or 0)
+            elapsed = elapsed_seconds(started, ended)
             stats["duration_s"] = max(
-                0.0, (end_dt - start_dt).total_seconds() - paused,
+                0.0, float(elapsed or 0.0) - paused,
             )
         except (TypeError, ValueError):
             pass

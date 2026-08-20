@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from meeting.time_utils import utc_now_iso
 
 #: Cards rendered on the dashboard. ``timeline`` items use ``data.start_s``;
 #: ``action_items`` use ``data.owner_participant_id``; ``risks`` may carry
@@ -51,8 +52,8 @@ _TERMINAL_MEETING_STATUSES = frozenset({
 
 
 def now_iso() -> str:
-    """Current wall-clock time in the project's ISO-string convention."""
-    return datetime.now().isoformat()
+    """Current UTC instant; legacy persisted naive values remain readable."""
+    return utc_now_iso()
 
 
 def new_id(prefix: str) -> str:

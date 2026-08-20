@@ -12,7 +12,6 @@ import json
 import logging
 import threading
 import webbrowser
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -1218,9 +1217,11 @@ class MeetingRuntime:
             else:
                 # Minimal honest fallback: mark the session ended so it shows
                 # up in history instead of the recovery list.
+                from meeting.time_utils import utc_now_iso
+
                 repository.update_meeting(
                     meeting_id, status="ended",
-                    ended_at=datetime.now().isoformat(),
+                    ended_at=utc_now_iso(),
                 )
             self.controller.meeting_status_update.emit(
                 "Interrupted meeting finalized"

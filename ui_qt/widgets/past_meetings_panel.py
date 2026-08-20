@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from meeting.content import summarize_meeting_content
 from meeting.state.schema import finalization_from_meeting_row
+from meeting.time_utils import as_local_time, elapsed_seconds, parse_meeting_time
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -27,35 +28,33 @@ _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
-    """Parse one repository timestamp without assuming timezone information."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
+    """Parse one repository timestamp, including UTC ``Z`` values."""
+    return parse_meeting_time(value)
 
 
 def _format_started_at(value: Any) -> str:
-    started = _parse_datetime(value)
+    started = as_local_time(value)
     return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
 
 
 def _format_duration(meeting: Dict[str, Any]) -> str:
-    started = _parse_datetime(meeting.get("started_at"))
-    ended = _parse_datetime(meeting.get("ended_at"))
-    if started is None or ended is None:
+    elapsed = elapsed_seconds(
+        meeting.get("started_at"), meeting.get("ended_at")
+    )
+    if elapsed is None:
         return ""
     try:
         seconds = max(
             0,
-            int((ended - started).total_seconds())
+            int(elapsed)
             - int(float(meeting.get("paused_total_s") or 0)),
         )
     except (TypeError, ValueError):
         return ""
     hours, remainder = divmod(seconds, 3600)
-    minutes, _ = divmod(remainder, 60)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    if not hours and not minutes:
+        return f"{remaining_seconds} sec"
     return f"{hours}h {minutes}m" if hours else f"{minutes} min"
 
 
