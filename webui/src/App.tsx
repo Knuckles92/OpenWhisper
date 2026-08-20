@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
 import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
@@ -11,6 +11,7 @@ import ParticipantsPane from './components/ParticipantsPane';
 import SpotlightRow from './components/SpotlightRow';
 import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
+import { EvidenceProvider } from './evidence';
 import {
   enabledReportViews,
   resolveReportView,
@@ -53,6 +54,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     resolveReportView(['ribbon', 'brief', 'signal']),
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     dispatch({
@@ -148,10 +150,19 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     }
     setHighlightSegmentId(segmentId);
     setShowHistory(false);
-    requestAnimationFrame(() => {
-      document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
   }, [token, ui.segments, ui.state]);
+
+  useLayoutEffect(() => {
+    const el = workspaceRef.current;
+    if (!el) return undefined;
+    const sync = () => {
+      el.style.setProperty('--workspace-scrollport', `${el.clientHeight}px`);
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showHistory]);
 
   const seekTo = useCallback((seconds: number) => {
     const el = audioRef.current;
@@ -208,130 +219,132 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           />
         </div>
       ) : (
-        <div className="app-main workspace">
-          <aside className="workspace-conversation">
-            <TranscriptPane
-              segments={ui.segments}
-              participants={participants}
-              highlightSegmentId={highlightSegmentId}
-              onHighlightClear={() => setHighlightSegmentId(null)}
-              newestFirst
-              onReassignSpeaker={(segmentId, participantId) =>
-                sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
-              }
-              headerExtra={
-                <div className="recording-inline">
-                  <audio
-                    ref={audioRef}
-                    key={`${ui.state.meeting_id}:${ui.state.status}`}
-                    controls
-                    preload="metadata"
-                    src={api.audioUrl(
-                      token,
-                      ui.state.meeting_id,
-                      ui.state.status,
-                    )}
+        <EvidenceProvider segments={ui.segments} participants={participants}>
+          <div className="app-main workspace" ref={workspaceRef} data-workspace-scroll>
+            <aside className="workspace-conversation">
+              <TranscriptPane
+                segments={ui.segments}
+                participants={participants}
+                highlightSegmentId={highlightSegmentId}
+                onHighlightClear={() => setHighlightSegmentId(null)}
+                newestFirst
+                onReassignSpeaker={(segmentId, participantId) =>
+                  sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
+                }
+                headerExtra={
+                  <div className="recording-inline">
+                    <audio
+                      ref={audioRef}
+                      key={`${ui.state.meeting_id}:${ui.state.status}`}
+                      controls
+                      preload={ui.state.status === 'active' ? 'none' : 'metadata'}
+                      src={api.audioUrl(
+                        token,
+                        ui.state.meeting_id,
+                        ui.state.status,
+                      )}
+                    />
+                  </div>
+                }
+              />
+            </aside>
+
+            <div className="workspace-center">
+              {isHost && showActivity && (
+                <ActivityPane
+                  token={token}
+                  onUndo={sendUndo}
+                  onHide={() => setShowActivity(false)}
+                  refreshKey={ui.state.seq}
+                  cloudEnabled={ui.state.cloud_enabled}
+                  intelligenceOnline={ui.state.intelligence_online}
+                  meetingStatus={ui.state.status}
+                  finalizationStatus={ui.state.finalization?.status ?? null}
+                  finalizationMessage={ui.state.finalization?.message ?? null}
+                  agentActivity={ui.agentActivity}
+                />
+              )}
+
+              {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
+                <ReportTabs
+                  state={ui.state}
+                  segments={ui.segments}
+                  meeting={ui.meeting}
+                  onEvidenceClick={handleEvidenceClick}
+                  onSeek={seekTo}
+                  transcriptComplete={transcriptComplete}
+                  showDownload={false}
+                  showSwitcher={false}
+                  activeView={reportView}
+                  onViewChange={selectReportView}
+                />
+              ) : (
+                <>
+                  <MeetingOverview
+                    meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
+                    status={ui.state.status}
+                    topic={ui.state.topic.current}
+                    topicEvidence={
+                      ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
+                    }
+                    summary={ui.state.rolling_summary}
+                    summaryEvidence={ui.state.rolling_summary_evidence}
+                    cloudEnabled={ui.state.cloud_enabled}
+                    intelligenceOnline={ui.state.intelligence_online}
+                    onEvidenceClick={handleEvidenceClick}
+                  />
+
+                  <SpotlightRow
+                    cards={ui.state.cards}
+                    status={ui.state.status}
+                    cloudEnabled={ui.state.cloud_enabled}
+                    intelligenceOnline={ui.state.intelligence_online}
+                    onSendOp={sendOp}
+                    onEvidenceClick={handleEvidenceClick}
+                    onUndo={isHost ? sendUndo : undefined}
+                    lastSeqByTarget={ui.lastSeqByTarget}
+                  />
+
+                  <NotesPane
+                    notes={ui.state.cards.live_notes ?? []}
+                    status={ui.state.status}
+                    cloudEnabled={ui.state.cloud_enabled}
+                    intelligenceOnline={ui.state.intelligence_online}
+                    onSendOp={sendOp}
+                    onEvidenceClick={handleEvidenceClick}
+                    onUndo={isHost ? sendUndo : undefined}
+                    lastSeqByTarget={ui.lastSeqByTarget}
+                  />
+                </>
+              )}
+            </div>
+
+            <aside className="workspace-rail">
+              <section className="panel capture">
+                <h3 className="capture-heading">Captured</h3>
+                <div className="capture-body">
+                  <CardsPane
+                    cards={ui.state.cards}
+                    questions={ui.state.questions}
+                    onSendOp={sendOp}
+                    onEvidenceClick={handleEvidenceClick}
+                    onUndo={isHost ? sendUndo : undefined}
+                    lastSeqByTarget={ui.lastSeqByTarget}
+                    newestFirst
+                    embedded
                   />
                 </div>
-              }
-            />
-          </aside>
-
-          <div className="workspace-center">
-            {isHost && showActivity && (
-              <ActivityPane
-                token={token}
-                onUndo={sendUndo}
-                onHide={() => setShowActivity(false)}
-                refreshKey={ui.state.seq}
-                cloudEnabled={ui.state.cloud_enabled}
-                intelligenceOnline={ui.state.intelligence_online}
-                meetingStatus={ui.state.status}
-                finalizationStatus={ui.state.finalization?.status ?? null}
-                finalizationMessage={ui.state.finalization?.message ?? null}
-                agentActivity={ui.agentActivity}
+              </section>
+              <ParticipantsPane
+                participants={participants}
+                onlineIds={ui.onlineIds}
+                onRename={(participantId, displayName) =>
+                  sendOp({ op: 'rename_participant', participant_id: participantId, display_name: displayName })
+                }
               />
-            )}
-
-            {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
-              <ReportTabs
-                state={ui.state}
-                segments={ui.segments}
-                meeting={ui.meeting}
-                onEvidenceClick={handleEvidenceClick}
-                onSeek={seekTo}
-                transcriptComplete={transcriptComplete}
-                showDownload={false}
-                showSwitcher={false}
-                activeView={reportView}
-                onViewChange={selectReportView}
-              />
-            ) : (
-              <>
-                <MeetingOverview
-                  meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
-                  status={ui.state.status}
-                  topic={ui.state.topic.current}
-                  topicEvidence={
-                    ui.state.topic.history[ui.state.topic.history.length - 1]?.evidence ?? []
-                  }
-                  summary={ui.state.rolling_summary}
-                  summaryEvidence={ui.state.rolling_summary_evidence}
-                  cloudEnabled={ui.state.cloud_enabled}
-                  intelligenceOnline={ui.state.intelligence_online}
-                  onEvidenceClick={handleEvidenceClick}
-                />
-
-                <SpotlightRow
-                  cards={ui.state.cards}
-                  status={ui.state.status}
-                  cloudEnabled={ui.state.cloud_enabled}
-                  intelligenceOnline={ui.state.intelligence_online}
-                  onSendOp={sendOp}
-                  onEvidenceClick={handleEvidenceClick}
-                  onUndo={isHost ? sendUndo : undefined}
-                  lastSeqByTarget={ui.lastSeqByTarget}
-                />
-
-                <NotesPane
-                  notes={ui.state.cards.live_notes ?? []}
-                  status={ui.state.status}
-                  cloudEnabled={ui.state.cloud_enabled}
-                  intelligenceOnline={ui.state.intelligence_online}
-                  onSendOp={sendOp}
-                  onEvidenceClick={handleEvidenceClick}
-                  onUndo={isHost ? sendUndo : undefined}
-                  lastSeqByTarget={ui.lastSeqByTarget}
-                />
-              </>
-            )}
+            </aside>
           </div>
-
-          <aside className="workspace-rail">
-            <section className="panel capture">
-              <h3 className="capture-heading">Captured</h3>
-              <div className="capture-body">
-                <CardsPane
-                  cards={ui.state.cards}
-                  questions={ui.state.questions}
-                  onSendOp={sendOp}
-                  onEvidenceClick={handleEvidenceClick}
-                  onUndo={isHost ? sendUndo : undefined}
-                  lastSeqByTarget={ui.lastSeqByTarget}
-                  newestFirst
-                  embedded
-                />
-              </div>
-            </section>
-            <ParticipantsPane
-              participants={participants}
-              onlineIds={ui.onlineIds}
-              onRename={(participantId, displayName) =>
-                sendOp({ op: 'rename_participant', participant_id: participantId, display_name: displayName })
-              }
-            />
-          </aside>
-        </div>
+        </EvidenceProvider>
       )}
     </div>
   );

@@ -85,6 +85,9 @@ class UIController(QObject):
         self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
         self.on_meeting_retry_insights: Optional[Callable] = None
         self.on_meeting_retry_speakers: Optional[Callable] = None
+        self.on_meeting_retry_step: Optional[Callable] = None  # (step_id: str)
+        self.on_meeting_defer_insights: Optional[Callable] = None
+        self.on_meeting_start_new: Optional[Callable] = None  # (cloud: Optional[bool])
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
         self._meeting_active = False
         self._meeting_urls: dict = {}
@@ -142,6 +145,13 @@ class UIController(QObject):
         )
         meeting_tab.retry_speakers_requested.connect(
             self._on_meeting_retry_speakers
+        )
+        meeting_tab.retry_step_requested.connect(self._on_meeting_retry_step)
+        meeting_tab.defer_insights_requested.connect(
+            self._on_meeting_defer_insights
+        )
+        meeting_tab.start_new_meeting_requested.connect(
+            self._on_meeting_start_new_requested
         )
 
         # Set up the copied animation callback
@@ -612,12 +622,13 @@ class UIController(QObject):
         dialog.exec()
         return dialog.result_action
 
-    def open_model_manager_dialog(self, tab: str = "voice"):
+    def open_model_manager_dialog(self, tab: str = "ondemand"):
         """Show the non-modal Model Manager (single instance, re-raised).
 
         Args:
-            tab: ``\"voice\"``, ``\"text\"``, or ``\"meeting\"`` — which
-                manager tab to show.
+            tab: ``\"ondemand\"``, ``\"meeting\"``, ``\"library\"``, or the
+                legacy values ``\"voice\"`` (Library) and ``\"text\"``
+                (On-demand, scrolled to cleanup).
         """
         from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 
@@ -629,6 +640,8 @@ class UIController(QObject):
             dialog.on_download_requested = self.on_model_download_requested
             dialog.on_delete_requested = self.on_model_delete_requested
             dialog.on_set_active_requested = self._on_manager_set_active
+            dialog.on_backend_changed = self.select_transcription_backend
+            dialog.on_runtime_settings_changed = self._on_manager_runtime_changed
             dialog.component_install_requested.connect(
                 self.on_component_install_requested
             )
@@ -641,16 +654,42 @@ class UIController(QObject):
             self._model_manager_dialog = dialog
 
         self._model_manager_dialog.refresh()
-        if tab == "text":
-            self._model_manager_dialog.show_text_tab()
+        if tab in ("text", "ondemand"):
+            if tab == "text":
+                self._model_manager_dialog.show_text_tab()
+            else:
+                self._model_manager_dialog.show_ondemand_tab()
         elif tab == "meeting":
             self._model_manager_dialog.show_meeting_tab()
+        elif tab in ("library", "voice"):
+            self._model_manager_dialog.show_library_tab()
         self._model_manager_dialog.show()
         self._model_manager_dialog.raise_()
         self._model_manager_dialog.activateWindow()
 
+    def select_transcription_backend(self, display_name: str) -> None:
+        """Select a dictation backend through the main-window combo path.
+
+        Args:
+            display_name: A ``config.MODEL_CHOICES`` label such as
+                ``\"Local Whisper\"``.
+        """
+        tabs = getattr(self.main_window, "transcription_tabs", None)
+        if not display_name or not tabs:
+            return
+        tab = tabs[0]
+        if tab.model_combo.currentText() == display_name:
+            return
+        tab.model_combo.setCurrentText(display_name)
+
+    def _on_manager_runtime_changed(self) -> None:
+        """Resync inline engine combos and reload after device/quant changes."""
+        self.refresh_local_engine_controls()
+        if self.on_whisper_settings_changed:
+            self.on_whisper_settings_changed()
+
     def _on_manager_set_active(self, model_name: str):
-        """Persist a Model Manager 'Set Active' choice and reload the engine.
+        """Persist a Model Manager Whisper assignment and reload the engine.
 
         Identical contract to ``LocalEngineControls._on_changed``: write the
         setting, re-sync the inline combos (signal-safe), then fire the same
@@ -757,6 +796,21 @@ class UIController(QObject):
         """Forward a retry speaker-identification request to the runtime."""
         if self.on_meeting_retry_speakers:
             self.on_meeting_retry_speakers()
+
+    def _on_meeting_retry_step(self, step_id: str):
+        """Forward a per-step finalization retry to the runtime."""
+        if self.on_meeting_retry_step:
+            self.on_meeting_retry_step(step_id)
+
+    def _on_meeting_defer_insights(self):
+        """Forward Keep for later to the meeting runtime."""
+        if self.on_meeting_defer_insights:
+            self.on_meeting_defer_insights()
+
+    def _on_meeting_start_new_requested(self, cloud_enabled: bool):
+        """Forward Start new meeting from an incomplete insights card."""
+        if self.on_meeting_start_new:
+            self.on_meeting_start_new(cloud_enabled)
 
     def _on_past_meeting_requested(self, meeting_id: str) -> None:
         """Open a persisted meeting selected from the Meeting Mode sidebar."""

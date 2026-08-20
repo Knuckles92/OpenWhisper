@@ -942,17 +942,38 @@ class MeetingEngine:
                                 message=f"Cleaning transcript (block {curr_blk}/{total_blks})…",
                             )
                         polish = getattr(scheduler, "run_final_polish", None)
+                        polish_status = "completed"
+                        polish_detail = "Transcript cleanup finished"
                         if callable(polish):
                             try:
-                                polish(timeout_s=POLISH_TIMEOUT_S, progress_cb=_polish_progress)
-                            except TypeError:
-                                polish(timeout_s=POLISH_TIMEOUT_S)
-                            except Exception:
+                                try:
+                                    polish_outcome = polish(
+                                        timeout_s=POLISH_TIMEOUT_S,
+                                        progress_cb=_polish_progress,
+                                    )
+                                except TypeError:
+                                    polish_outcome = polish(
+                                        timeout_s=POLISH_TIMEOUT_S,
+                                    )
+                                polish_status = getattr(
+                                    polish_outcome, "status", "completed",
+                                )
+                                polish_detail = (
+                                    getattr(polish_outcome, "message", "")
+                                    or (
+                                        "Transcript cleanup finished"
+                                        if polish_status == "completed"
+                                        else "Transcript cleanup failed"
+                                    )
+                                )
+                            except Exception as exc:
                                 logger.exception("Post-end transcript polish failed")
+                                polish_status = "failed"
+                                polish_detail = f"Transcript cleanup failed: {exc}"
                         _update_step(
                             "polish",
-                            "completed",
-                            "Transcript cleanup finished",
+                            "completed" if polish_status == "completed" else "failed",
+                            polish_detail,
                         )
                     if want_report:
                         _update_step(
@@ -1046,7 +1067,18 @@ class MeetingEngine:
                         f"Saved {summary_stats['segments']} segments ({summary_stats['words']} words)",
                     )
 
-                    if status == "completed":
+                    if any(s.get("status") == "failed" for s in steps):
+                        status = "failed"
+                        failed_names = [
+                            str(s.get("name") or s.get("id"))
+                            for s in steps
+                            if s.get("status") == "failed"
+                        ]
+                        final_msg = (
+                            f"{', '.join(failed_names)} failed. "
+                            "The recording and transcript were kept."
+                        )
+                    elif status == "completed":
                         if not want_report:
                             final_msg = message
                         else:

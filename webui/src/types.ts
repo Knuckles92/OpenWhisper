@@ -113,6 +113,7 @@ export interface FinalizationState {
   step_details?: string;
   steps?: FinalizationStep[];
   summary_stats?: Record<string, unknown>;
+  card_deferred?: boolean;
 }
 
 export interface MeetingStateDoc {
@@ -154,12 +155,18 @@ export interface Segment {
   created_at?: string;
 }
 
+export type InsightsPillTone = 'warning' | 'success' | 'neutral';
+
 export interface MeetingInfo {
   id: string;
   title: string;
   display_title?: string;
   started_at: string | null;
   status: string;
+  finalization_status?: FinalizationStatus | string;
+  finalization_deferred?: boolean;
+  insights_pill?: string;
+  insights_tone?: InsightsPillTone | string;
   [key: string]: unknown;
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
 import { CAPTURE_TAGS, selectSpotlightItems } from '../state';
-import EvidenceChip from './EvidenceChip';
+import { EvidenceRow } from './EvidenceChip';
 
 interface SpotlightRowProps {
   cards: MeetingStateDoc['cards'];
@@ -95,13 +95,7 @@ function SpotlightCard({
           {item.text}
         </p>
       )}
-      {item.evidence.length > 0 && (
-        <div className="evidence-row">
-          {item.evidence.map((id) => (
-            <EvidenceChip key={id} segmentId={id} onClick={onEvidenceClick} />
-          ))}
-        </div>
-      )}
+      <EvidenceRow ids={item.evidence} onClick={onEvidenceClick} />
       <div className="spotlight-foot">
         <span className="spotlight-meta">
           {statusLabel(item)}

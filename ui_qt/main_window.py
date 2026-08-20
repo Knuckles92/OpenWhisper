@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
-    model_manager_requested = pyqtSignal()
+    model_manager_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     history_toggle_requested = pyqtSignal()
@@ -424,7 +424,9 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
-            tab.manage_models_requested.connect(self.model_manager_requested)
+            tab.manage_models_requested.connect(
+                lambda: self.model_manager_requested.emit("library")
+            )
             tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
@@ -1024,7 +1026,7 @@ class MainWindow(QMainWindow):
     def open_model_manager(self):
         """Open the Model Manager dialog."""
         logger.info("Opening model manager")
-        self.model_manager_requested.emit()
+        self.model_manager_requested.emit("ondemand")
 
     def open_hotkey_settings(self):
         """Open hotkey settings dialog."""

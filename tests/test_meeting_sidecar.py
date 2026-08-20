@@ -2,6 +2,7 @@
 Tests for PiSidecarAgent: stdio hello handshake, auth failure, restart budget.
 """
 import json
+import logging
 import os
 import sys
 import textwrap
@@ -21,12 +22,17 @@ from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpRe
 
 #: Minimal NDJSON sidecar stub (Python). Speaks hello from env token, answers
 #: initialize/checkpoint/ping/shutdown. Optional SIDECAR_STUB_MODE=
-#: bad_token|crash_after_init|die_silently.
+#: bad_token|crash_after_init|die_silently|slow|slow_progress.
 _STUB_SOURCE = textwrap.dedent(r"""
-import json, os, sys, time
+import json, os, sys, time, threading
 
 token = os.environ.get("OPENWHISPER_SIDECAR_TOKEN", "")
 mode = os.environ.get("SIDECAR_STUB_MODE", "ok")
+delay = float(os.environ.get("SIDECAR_STUB_DELAY", "0.8"))
+stdout_lock = threading.Lock()
+checkpoint_lock = threading.Lock()
+cancel_lock = threading.Lock()
+canceled = set()
 if mode == "die_silently":
     # Dies before writing a byte, exactly like a bundle that cannot load.
     sys.exit(3)
@@ -37,6 +43,68 @@ sys.stdout.write(json.dumps({
     "params": {"token": hello_token, "protocol": 1, "pi_version": "stub-1"},
 }) + "\n")
 sys.stdout.flush()
+
+def write_msg(obj):
+    with stdout_lock:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+def mark_canceled(request_id):
+    with cancel_lock:
+        canceled.add(request_id)
+
+def take_canceled(request_id):
+    with cancel_lock:
+        if request_id in canceled:
+            canceled.discard(request_id)
+            return True
+        return False
+
+def run_slow_checkpoint(req_id, params):
+    request_id = str(params.get("request_id") or "")
+    if take_canceled(request_id):
+        write_msg({
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {"applied": 0, "rejected": 0, "usage": {},
+                       "canceled": True},
+        })
+        return
+    with checkpoint_lock:
+        if take_canceled(request_id):
+            write_msg({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"applied": 0, "rejected": 0, "usage": {},
+                           "canceled": True},
+            })
+            return
+        end = time.time() + delay
+        while time.time() < end:
+            if take_canceled(request_id):
+                write_msg({
+                    "jsonrpc": "2.0", "id": req_id,
+                    "result": {"applied": 0, "rejected": 0, "usage": {},
+                               "canceled": True},
+                })
+                return
+            remaining = end - time.time()
+            if remaining <= 0:
+                break
+            if mode == "slow_progress":
+                write_msg({
+                    "jsonrpc": "2.0", "method": "progress",
+                    "params": {
+                        "request_id": request_id,
+                        "event": "message_update",
+                        "delta": "thinking_delta",
+                        "streaming": True,
+                    },
+                })
+            time.sleep(min(0.15, remaining))
+        write_msg({
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {"applied": 3, "rejected": 0,
+                       "usage": {"totalTokens": 1}},
+        })
 
 if mode == "bad_token":
     time.sleep(30)
@@ -68,9 +136,20 @@ for line in sys.stdin:
         }) + "\n")
         sys.stdout.flush()
         break
+    elif method == "cancel":
+        mark_canceled(str((msg.get("params") or {}).get("request_id") or ""))
+        write_msg({
+            "jsonrpc": "2.0", "id": req_id, "result": {"ok": True},
+        })
     elif method == "checkpoint":
         params = msg.get("params") or {}
-        if mode == "notes_tools" and params.get("is_notes"):
+        if mode in ("slow", "slow_progress"):
+            threading.Thread(
+                target=run_slow_checkpoint,
+                args=(req_id, params),
+                daemon=True,
+            ).start()
+        elif mode == "notes_tools" and params.get("is_notes"):
             # Notes-mode tool storm: mixed patch_state ops plus a question.
             # The host's tool bridge must filter to live_notes ops only and
             # reject the question with notes_only.
@@ -355,8 +434,8 @@ class TestCheckpointResults:
         agent.cancel()
         assert [p["request_id"] for _, p in calls] == ["r1", "r2"]
 
-    def test_checkpoint_timeout_does_not_restart_sidecar(self, tmp_path):
-        """A slow model turn is not a dead sidecar; do not kill in-flight work."""
+    def test_checkpoint_timeout_does_not_restart_sidecar(self, tmp_path, caplog):
+        """A confirmed timeout+cancel is not a dead sidecar."""
         agent = PiSidecarAgent(str(tmp_path))
         agent._cfg = _cfg()
         agent._tools = FakeTools()
@@ -364,20 +443,53 @@ class TestCheckpointResults:
         agent._proc = type("Proc", (), {"poll": staticmethod(lambda: None)})()
         recover_calls = []
         agent._try_recover = lambda reason: recover_calls.append(reason) or False
-        agent._rpc = lambda method, params, timeout_s, stall_s=None: (
-            (_ for _ in ()).throw(
-                TimeoutError(f"RPC '{method}' timed out after {timeout_s:.0f}s")
+
+        def fake_rpc(method, params, timeout_s, stall_s=None):
+            if method == "cancel":
+                return {"ok": True}
+            raise TimeoutError(
+                f"RPC '{method}' timed out after {timeout_s:.0f}s"
             )
-        )
-        result = agent.consolidate(CheckpointPayload(
-            request_id="req-slow",
-            state_snapshot={},
-            new_segments=[],
-            is_consolidation=True,
-        ))
+
+        agent._rpc = fake_rpc
+        with caplog.at_level(logging.WARNING):
+            result = agent.consolidate(CheckpointPayload(
+                request_id="req-slow",
+                state_snapshot={},
+                new_segments=[],
+                is_consolidation=True,
+            ))
         assert result.ok is False
         assert "timed out" in (result.error or "")
         assert recover_calls == []
+        assert "cancel=acked" in caplog.text
+        assert "request_id=req-slow" in caplog.text
+
+    def test_checkpoint_timeout_recovers_when_cancel_unconfirmed(self, tmp_path, caplog):
+        """An unconfirmed cancel may still hold the sidecar queue; recover."""
+        agent = PiSidecarAgent(str(tmp_path))
+        agent._cfg = _cfg()
+        agent._tools = FakeTools()
+        agent._initialized = True
+        agent._proc = type("Proc", (), {"poll": staticmethod(lambda: None)})()
+        recover_calls = []
+        agent._try_recover = lambda reason: recover_calls.append(reason) or False
+
+        def fake_rpc(method, params, timeout_s, stall_s=None):
+            raise TimeoutError(
+                f"RPC '{method}' timed out after {timeout_s:.0f}s"
+            )
+
+        agent._rpc = fake_rpc
+        with caplog.at_level(logging.WARNING):
+            result = agent.checkpoint(CheckpointPayload(
+                request_id="req-orphan",
+                state_snapshot={},
+                new_segments=[],
+            ))
+        assert result.ok is False
+        assert recover_calls and "cancel unconfirmed" in recover_calls[0]
+        assert "cancel=unconfirmed" in caplog.text
 
     def test_checkpoint_transport_error_still_restarts(self, tmp_path):
         agent = PiSidecarAgent(str(tmp_path))
@@ -407,14 +519,17 @@ class TestCheckpointResults:
 
     def test_await_pending_progress_resets_stall(self, tmp_path):
         agent = PiSidecarAgent(str(tmp_path))
-        pending = pi_mod._Pending()
+        pending = pi_mod._Pending(request_id="r1")
+        agent._pending[1] = pending
         ticks = {"n": 0}
 
         def wait(timeout=None):
             ticks["n"] += 1
-            if ticks["n"] == 2:
-                agent._note_progress("thinking")
-            if ticks["n"] >= 4:
+            if ticks["n"] in (2, 4):
+                agent._note_progress(
+                    "thinking", request_id="r1", event="thinking_delta",
+                )
+            if ticks["n"] >= 6:
                 pending.event.set()
             return pending.event.is_set()
 
@@ -428,6 +543,55 @@ class TestCheckpointResults:
         with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=mono):
             agent._await_pending(pending, timeout_s=30.0, stall_s=5.0, method="checkpoint")
         assert pending.event.is_set()
+        assert pending.last_progress_event == "thinking_delta"
+
+    def test_progress_resets_only_matching_request(self, tmp_path):
+        """A neighbor turn's thinking ticks must not keep this RPC alive."""
+        agent = PiSidecarAgent(str(tmp_path))
+        pending_a = pi_mod._Pending(request_id="req-a", last_progress_mono=100.0)
+        pending_b = pi_mod._Pending(request_id="req-b", last_progress_mono=100.0)
+        agent._pending[1] = pending_a
+        agent._pending[2] = pending_b
+        with patch("meeting.agent.pi_sidecar.time.monotonic", return_value=110.0):
+            agent._note_progress(
+                "thinking", request_id="req-a", event="thinking_delta",
+            )
+        assert pending_a.last_progress_mono == 110.0
+        assert pending_a.last_progress_event == "thinking_delta"
+        assert pending_b.last_progress_mono == 100.0
+        pending_b.event.wait = lambda timeout=None: False
+        times = iter([110.0, 110.0, 111.0, 116.0])
+        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=lambda: next(times)):
+            with pytest.raises(TimeoutError, match="stalled"):
+                agent._await_pending(
+                    pending_b, timeout_s=30.0, stall_s=5.0, method="checkpoint",
+                )
+
+    def test_late_response_logs_correlated_metadata(self, tmp_path, caplog):
+        agent = PiSidecarAgent(str(tmp_path))
+        pending = pi_mod._Pending(
+            method="checkpoint",
+            rpc_id=9,
+            request_id="req-late",
+            pass_kind="cards",
+            sent_mono=10.0,
+            last_progress_event="thinking_delta",
+            last_progress_mono=11.0,
+        )
+        agent._expire_pending(
+            9, pending, "RPC 'checkpoint' stalled after 180s without agent progress",
+        )
+        with caplog.at_level(logging.WARNING):
+            agent._handle_response({
+                "jsonrpc": "2.0",
+                "id": 9,
+                "result": {"applied": 3, "rejected": 1},
+            })
+        assert "Late sidecar response" in caplog.text
+        assert "request_id=req-late" in caplog.text
+        assert "pass=cards" in caplog.text
+        assert "applied=3" in caplog.text
+        assert "rejected=1" in caplog.text
 
     def test_progress_notification_uses_thinking_delta(self, tmp_path):
         agent = PiSidecarAgent(str(tmp_path))
@@ -868,3 +1032,136 @@ class TestContextFolderPolish:
         assert result.usage["folder_ok"] is True
         assert "file:plan.md:1" in result.usage["folder_text"]
         assert sum(1 for r in result.op_results if r.ok) == 0
+
+
+def _live_payload(request_id, **kwargs):
+    return CheckpointPayload(
+        request_id=request_id,
+        state_snapshot={},
+        new_segments=[{"id": "sg_1", "start_s": 0.0, "text": "hello"}],
+        **kwargs,
+    )
+
+
+class TestCheckpointTimeoutLifecycle:
+    """Progress-aware live waits, exact cancel, and late-reply correlation."""
+
+    def test_slow_progress_survives_legacy_sixty_second_budget(self, stub_dir):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={
+            "SIDECAR_STUB_MODE": "slow_progress",
+            "SIDECAR_STUB_DELAY": "0.8",
+        })
+        recover_calls = []
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0), \
+             patch.object(pi_mod, "_CHECKPOINT_TIMEOUT_S", 2.0), \
+             patch.object(pi_mod, "_CHECKPOINT_STALL_S", 1.0):
+            agent.initialize(_cfg(), FakeTools())
+            agent._try_recover = lambda reason: recover_calls.append(reason) or False
+            try:
+                result = agent.checkpoint(_live_payload("req-slow-ok"))
+            finally:
+                agent.shutdown()
+        assert result.ok
+        assert recover_calls == []
+
+    def test_silent_timeout_cancels_without_restart(self, stub_dir, caplog):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={
+            "SIDECAR_STUB_MODE": "slow",
+            "SIDECAR_STUB_DELAY": "2.0",
+        })
+        recover_calls = []
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0), \
+             patch.object(pi_mod, "_CHECKPOINT_TIMEOUT_S", 0.6), \
+             patch.object(pi_mod, "_CHECKPOINT_STALL_S", 0.35), \
+             patch.object(pi_mod, "_CANCEL_TIMEOUT_S", 2.0):
+            agent.initialize(_cfg(), FakeTools())
+            agent._try_recover = lambda reason: recover_calls.append(reason) or False
+            try:
+                with caplog.at_level(logging.INFO):
+                    result = agent.checkpoint(_live_payload("req-silent"))
+            finally:
+                agent.shutdown()
+        assert result.ok is False
+        assert "stalled" in (result.error or "") or "timed out" in (result.error or "")
+        assert recover_calls == []
+        assert "request_id=req-silent" in caplog.text
+        assert "Sidecar cancel request_id=req-silent acked" in caplog.text
+        assert "cancel=acked" in caplog.text
+        assert any(
+            item.request_id == "req-silent" for item in agent._expired_rpcs
+        )
+
+    def test_queued_request_is_canceled_before_run(self, stub_dir):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={
+            "SIDECAR_STUB_MODE": "slow",
+            "SIDECAR_STUB_DELAY": "1.0",
+        })
+        results = {}
+
+        def run(name, request_id):
+            results[name] = agent.checkpoint(_live_payload(request_id))
+
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0), \
+             patch.object(pi_mod, "_CHECKPOINT_TIMEOUT_S", 5.0), \
+             patch.object(pi_mod, "_CHECKPOINT_STALL_S", 4.0):
+            agent.initialize(_cfg(), FakeTools())
+            try:
+                first = threading.Thread(
+                    target=run, args=("a", "req-a"), daemon=True,
+                )
+                first.start()
+                deadline = time.monotonic() + 2.0
+                while "req-a" not in agent._active_request_ids:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.01)
+                assert "req-a" in agent._active_request_ids
+                second = threading.Thread(
+                    target=run, args=("b", "req-b"), daemon=True,
+                )
+                second.start()
+                deadline = time.monotonic() + 2.0
+                while "req-b" not in agent._active_request_ids:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.01)
+                assert "req-b" in agent._active_request_ids
+                assert agent._cancel_request("req-b") is True
+                first.join(4.0)
+                second.join(4.0)
+            finally:
+                agent.shutdown()
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert results["a"].ok
+        assert results["b"].ok is False
+        assert results["b"].error == "canceled"
+
+    def test_late_reply_after_host_timeout_is_not_success(self, stub_dir, caplog):
+        payload_dir, stub = stub_dir
+        agent = PiSidecarAgent(str(payload_dir))
+        _patch_cmd(agent, stub, env_extra={
+            "SIDECAR_STUB_MODE": "slow",
+            "SIDECAR_STUB_DELAY": "1.0",
+        })
+        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0), \
+             patch.object(pi_mod, "_CHECKPOINT_TIMEOUT_S", 0.45), \
+             patch.object(pi_mod, "_CHECKPOINT_STALL_S", 0.3), \
+             patch.object(pi_mod, "_CANCEL_TIMEOUT_S", 2.0):
+            agent.initialize(_cfg(), FakeTools())
+            try:
+                with caplog.at_level(logging.WARNING):
+                    result = agent.checkpoint(_live_payload("req-late"))
+                    time.sleep(1.2)
+            finally:
+                agent.shutdown()
+        assert result.ok is False
+        assert "Late sidecar response" in caplog.text
+        assert "request_id=req-late" in caplog.text
+        assert "dropped" in caplog.text

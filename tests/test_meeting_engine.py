@@ -673,6 +673,28 @@ class TestEndLifecycle:
         assert fin["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
+    def test_end_failed_polish_marks_step_failed(self, make_engine, repo, fakes):
+        from meeting.agent.scheduler import ConsolidationOutcome
+
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+        scheduler = fakes.schedulers[0]
+
+        def boom(timeout_s=60.0, progress_cb=None):
+            scheduler.polishes += 1
+            return ConsolidationOutcome(
+                status="failed", message="Transcript cleanup failed: boom",
+            )
+
+        scheduler.run_final_polish = boom
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        polish = next(step for step in fin["steps"] if step["id"] == "polish")
+        assert polish["status"] == "failed"
+        assert fin["status"] == "failed"
+        assert scheduler.consolidations == 1
+
     def test_ended_precedes_slow_offline_pass(self, make_engine, repo, fakes):
         engine = make_engine(cloud_enabled=False, end_redecode=True)
         engine.start()

@@ -43,10 +43,18 @@ _JSONRPC = "2.0"
 _PROTOCOL_VERSION = 1
 
 _HELLO_TIMEOUT_S = 10.0
-_CHECKPOINT_TIMEOUT_S = 60.0
+#: Hard wall for a live cards/notes/polish pass, even while progress ticks.
+_CHECKPOINT_TIMEOUT_S = 300.0
+#: Silence limit for one live request. Thinking/tool ticks reset this clock
+#: for that request only, so a queued neighbor cannot keep it alive.
+_CHECKPOINT_STALL_S = 180.0
 _CONSOLIDATION_TIMEOUT_S = CONSOLIDATION_TIMEOUT_CAP_S
 _CONSOLIDATION_STALL_S = CONSOLIDATION_STALL_S
+_CANCEL_TIMEOUT_S = 5.0
 _RPC_DEFAULT_TIMEOUT_S = 30.0
+#: How many timed-out RPC ids to remember so a late sidecar reply can be
+#: logged with request/pass correlation instead of as an unknown drop.
+_EXPIRED_RPC_LIMIT = 16
 _PING_INTERVAL_S = 10.0
 _PING_TIMEOUT_S = 5.0
 _PING_MISS_LIMIT = 3
@@ -240,6 +248,28 @@ class _Pending:
     event: threading.Event = field(default_factory=threading.Event)
     result: Any = None
     error: Optional[BaseException] = None
+    method: str = ""
+    rpc_id: Any = None
+    request_id: str = ""
+    pass_kind: str = ""
+    sent_mono: float = 0.0
+    last_progress_mono: float = 0.0
+    last_progress_event: str = ""
+
+
+@dataclass(frozen=True)
+class _ExpiredRpc:
+    """Bounded metadata for an RPC the host already abandoned."""
+
+    rpc_id: Any
+    request_id: str
+    pass_kind: str
+    method: str
+    sent_mono: float
+    last_progress_event: str
+    last_progress_mono: float
+    expired_mono: float
+    reason: str
 
 
 def _serialize_op_result(result: OpResult) -> Dict[str, Any]:
@@ -316,6 +346,7 @@ class PiSidecarAgent:
         self._token: Optional[str] = None
         self._next_rpc_id = 1
         self._pending: Dict[Any, _Pending] = {}
+        self._expired_rpcs: Deque[_ExpiredRpc] = deque()
         #: Request ids currently in flight. A consolidation pass can overlap a
         #: rolling checkpoint, so a single slot would cancel the wrong run.
         self._active_request_ids: Set[str] = set()
@@ -422,7 +453,11 @@ class PiSidecarAgent:
         """Run one rolling checkpoint. Blocking; called from a worker thread."""
         if payload.is_consolidation:
             return self.consolidate(payload)
-        return self._run_checkpoint(payload, _CHECKPOINT_TIMEOUT_S)
+        return self._run_checkpoint(
+            payload,
+            _CHECKPOINT_TIMEOUT_S,
+            stall_s=_CHECKPOINT_STALL_S,
+        )
 
     def consolidate(self, payload: CheckpointPayload) -> AgentResult:
         """Run the end-of-meeting full pass. Blocking."""
@@ -437,13 +472,37 @@ class PiSidecarAgent:
         with self._lock:
             request_ids = sorted(self._active_request_ids)
         for request_id in request_ids:
-            try:
-                self._rpc("cancel", {"request_id": request_id}, timeout_s=5.0)
-            except Exception:
-                logger.debug(
-                    "Sidecar cancel RPC failed for request_id=%s",
-                    request_id, exc_info=True,
-                )
+            self._cancel_request(request_id)
+
+    def _cancel_request(self, request_id: str) -> bool:
+        """Ask the sidecar to abort or pre-cancel one checkpoint.
+
+        Args:
+            request_id: The checkpoint ``request_id`` to cancel.
+
+        Returns:
+            True when the sidecar acknowledged the cancel RPC.
+        """
+        if not request_id:
+            return False
+        try:
+            result = self._rpc(
+                "cancel",
+                {"request_id": request_id},
+                timeout_s=_CANCEL_TIMEOUT_S,
+            )
+        except Exception:
+            logger.warning(
+                "Sidecar cancel RPC failed for request_id=%s",
+                request_id, exc_info=True,
+            )
+            return False
+        acked = isinstance(result, dict) and result.get("ok") is True
+        logger.info(
+            "Sidecar cancel request_id=%s %s",
+            request_id, "acked" if acked else f"unexpected={result!r}",
+        )
+        return acked
 
     def is_healthy(self) -> bool:
         """True when the sidecar process is alive and not permanently offline."""
@@ -480,10 +539,49 @@ class PiSidecarAgent:
     # Checkpoint execution
     # ------------------------------------------------------------------
 
-    def _note_progress(self, detail: str = "") -> None:
-        """Mark the in-flight checkpoint as alive; optionally update the UI."""
+    def _matching_pendings_locked(self, request_id: Any = None) -> List[_Pending]:
+        """Return pendings whose stall clock belongs to ``request_id``.
+
+        A missing ``request_id`` is attributed only to the current pass so a
+        neighbor turn's thinking ticks cannot keep the wrong RPC alive.
+        """
+        if isinstance(request_id, str) and request_id:
+            return [
+                pending for pending in self._pending.values()
+                if pending.request_id == request_id
+            ]
+        if not self._pass_kind:
+            return []
+        current_ids = {
+            rid for rid, kind in self._pass_kinds.items()
+            if kind == self._pass_kind
+        }
+        return [
+            pending for pending in self._pending.values()
+            if pending.request_id in current_ids
+        ]
+
+    def _note_progress(
+        self,
+        detail: str = "",
+        request_id: Any = None,
+        event: str = "",
+    ) -> None:
+        """Mark matching in-flight RPCs as alive; optionally update the UI.
+
+        Args:
+            detail: Human-readable status for the progress callback.
+            request_id: Sidecar checkpoint id when known. Tool-bridge calls
+                omit it and fall back to the current pass.
+            event: Compact progress label stored for timeout diagnostics.
+        """
+        now = time.monotonic()
         with self._lock:
-            self._last_progress_mono = time.monotonic()
+            self._last_progress_mono = now
+            for pending in self._matching_pendings_locked(request_id):
+                pending.last_progress_mono = now
+                if event:
+                    pending.last_progress_event = event
             callback = self._progress_cb
         if detail and callable(callback):
             try:
@@ -553,20 +651,46 @@ class PiSidecarAgent:
             # pass. Bundles that predate is_notes ignore the extra fields;
             # the tool-bridge filter below still keeps them notes-only.
             params["system_prompt"] = build_note_taker_system_prompt()
+        pass_kind = self._pass_kind
+        logger.info(
+            "Dispatching %s checkpoint request_id=%s (%d segments, "
+            "timeout=%.0fs stall=%s)",
+            pass_kind or "cards",
+            payload.request_id,
+            len(params.get("new_segments") or []),
+            timeout_s,
+            f"{stall_s:.0f}s" if stall_s is not None else "none",
+        )
         try:
             result = self._rpc(
                 "checkpoint", params, timeout_s=timeout_s, stall_s=stall_s,
             )
         except Exception as exc:
-            logger.warning("Sidecar checkpoint RPC failed: %s", exc)
-            # A timeout means the model is still working, not that the sidecar
-            # is dead. Restarting here kills in-flight work that may be about
-            # to settle (observed 138–178s successes against a 180s budget).
-            if (
-                not self._shut_down
-                and not self._fatal
-                and not isinstance(exc, TimeoutError)
-            ):
+            if isinstance(exc, TimeoutError):
+                canceled = self._cancel_request(payload.request_id)
+                logger.warning(
+                    "Sidecar checkpoint RPC failed: %s "
+                    "(request_id=%s pass=%s cancel=%s)",
+                    exc, payload.request_id, pass_kind or "-",
+                    "acked" if canceled else "unconfirmed",
+                )
+                # A confirmed cancel frees the sidecar chain. An unconfirmed
+                # one may still be holding the serialized queue, so recover
+                # rather than let the next checkpoint wait behind unknown work.
+                if (
+                    not canceled
+                    and not self._shut_down
+                    and not self._fatal
+                ):
+                    self._try_recover(
+                        f"cancel unconfirmed after checkpoint timeout: {exc}"
+                    )
+                return AgentResult(ok=False, error=str(exc))
+            logger.warning(
+                "Sidecar checkpoint RPC failed: %s (request_id=%s pass=%s)",
+                exc, payload.request_id, pass_kind or "-",
+            )
+            if not self._shut_down and not self._fatal:
                 self._try_recover(f"checkpoint failure: {exc}")
             return AgentResult(ok=False, error=str(exc))
         finally:
@@ -798,6 +922,72 @@ class PiSidecarAgent:
             proc.stdin.write(line)
             proc.stdin.flush()
 
+    def _expire_pending(
+        self, req_id: Any, pending: _Pending, reason: str,
+    ) -> None:
+        """Drop a waiter and keep bounded metadata for a late sidecar reply."""
+        now = time.monotonic()
+        expired = _ExpiredRpc(
+            rpc_id=pending.rpc_id if pending.rpc_id is not None else req_id,
+            request_id=pending.request_id,
+            pass_kind=pending.pass_kind,
+            method=pending.method or "unknown",
+            sent_mono=pending.sent_mono or now,
+            last_progress_event=pending.last_progress_event,
+            last_progress_mono=pending.last_progress_mono,
+            expired_mono=now,
+            reason=reason,
+        )
+        with self._lock:
+            self._pending.pop(req_id, None)
+            self._expired_rpcs.append(expired)
+            while len(self._expired_rpcs) > _EXPIRED_RPC_LIMIT:
+                self._expired_rpcs.popleft()
+        elapsed = now - expired.sent_mono
+        progress_age = (
+            now - pending.last_progress_mono
+            if pending.last_progress_mono else -1.0
+        )
+        logger.warning(
+            "Sidecar RPC %s timed out (rpc_id=%s request_id=%s pass=%s "
+            "elapsed=%.1fs last_progress=%s age=%.1fs): %s",
+            expired.method, expired.rpc_id, expired.request_id or "-",
+            expired.pass_kind or "-", elapsed,
+            expired.last_progress_event or "none", progress_age, reason,
+        )
+
+    def _lookup_expired_rpc(self, req_id: Any) -> Optional[_ExpiredRpc]:
+        """Return remembered metadata for an abandoned RPC id, if any."""
+        with self._lock:
+            for item in self._expired_rpcs:
+                if item.rpc_id == req_id or str(item.rpc_id) == str(req_id):
+                    return item
+        return None
+
+    def _log_late_response(self, msg: Dict[str, Any]) -> None:
+        """Log a sidecar reply that arrived after the host abandoned the RPC."""
+        req_id = msg.get("id")
+        expired = self._lookup_expired_rpc(req_id)
+        if expired is None:
+            logger.warning("Response for unknown RPC id %r; dropped", req_id)
+            return
+        now = time.monotonic()
+        result = msg.get("result") if isinstance(msg.get("result"), dict) else {}
+        logger.warning(
+            "Late sidecar response for rpc_id=%r request_id=%s pass=%s "
+            "method=%s elapsed=%.1fs late_by=%.1fs after %s "
+            "applied=%s rejected=%s; dropped",
+            req_id,
+            expired.request_id or "-",
+            expired.pass_kind or "-",
+            expired.method,
+            now - expired.sent_mono,
+            now - expired.expired_mono,
+            expired.reason,
+            result.get("applied") if result else None,
+            result.get("rejected") if result else None,
+        )
+
     def _await_pending(self, pending: _Pending, timeout_s: float,
                        stall_s: Optional[float], method: str) -> None:
         """Wait for an RPC reply, optionally failing after a silent stall.
@@ -806,7 +996,8 @@ class PiSidecarAgent:
             pending: The in-flight host RPC.
             timeout_s: Absolute wall-clock budget.
             stall_s: If set, fail when this many seconds pass with no
-                ``progress`` notification or tool-bridge call.
+                ``progress`` notification or tool-bridge call attributed
+                to this pending request.
             method: RPC method name for the timeout error.
         """
         if stall_s is None:
@@ -815,15 +1006,17 @@ class PiSidecarAgent:
                     f"RPC '{method}' timed out after {timeout_s:.0f}s"
                 )
             return
-        self._note_progress()
-        deadline = time.monotonic() + timeout_s
+        now = time.monotonic()
+        if pending.last_progress_mono <= 0:
+            pending.last_progress_mono = now
+        deadline = now + timeout_s
         while not pending.event.is_set():
             now = time.monotonic()
             if now >= deadline:
                 raise TimeoutError(
                     f"RPC '{method}' timed out after {timeout_s:.0f}s"
                 )
-            silent = now - self._last_progress_mono
+            silent = now - pending.last_progress_mono
             if silent >= stall_s:
                 raise TimeoutError(
                     f"RPC '{method}' stalled after {stall_s:.0f}s without "
@@ -835,11 +1028,31 @@ class PiSidecarAgent:
              timeout_s: float, stall_s: Optional[float] = None) -> Any:
         """Send a JSON-RPC request and wait for the correlated response."""
         req_id = self._alloc_id()
-        pending = _Pending()
+        request_id = ""
+        if isinstance(params, dict):
+            request_id = str(params.get("request_id") or "")
+        pass_kind = self._current_pass_kind(request_id) if request_id else ""
+        sent_mono = time.monotonic()
+        pending = _Pending(
+            method=method,
+            rpc_id=req_id,
+            request_id=request_id,
+            pass_kind=pass_kind,
+            sent_mono=sent_mono,
+            last_progress_mono=sent_mono,
+        )
         with self._lock:
             if self._proc is None or self._proc.poll() is not None:
                 raise RuntimeError("sidecar process is not running")
             self._pending[req_id] = pending
+        if method in ("checkpoint", "cancel", "initialize"):
+            logger.info(
+                "Sending sidecar RPC %s rpc_id=%s request_id=%s pass=%s "
+                "timeout=%.0fs stall=%s",
+                method, req_id, request_id or "-", pass_kind or "-",
+                timeout_s,
+                f"{stall_s:.0f}s" if stall_s is not None else "none",
+            )
         try:
             self._write_msg({
                 "jsonrpc": _JSONRPC,
@@ -849,9 +1062,8 @@ class PiSidecarAgent:
             })
             try:
                 self._await_pending(pending, timeout_s, stall_s, method)
-            except TimeoutError:
-                with self._lock:
-                    self._pending.pop(req_id, None)
+            except TimeoutError as exc:
+                self._expire_pending(req_id, pending, str(exc))
                 raise
             if pending.error is not None:
                 raise pending.error
@@ -1038,9 +1250,14 @@ class PiSidecarAgent:
             event = str(params.get("event") or "update")
             delta = str(params.get("delta") or "")
             tool = str(params.get("tool") or "")
-            pass_kind = self._current_pass_kind(params.get("request_id"))
+            request_id = params.get("request_id")
+            pass_kind = self._current_pass_kind(request_id)
             detail = _progress_detail(event, delta, pass_kind)
-            self._note_progress(detail)
+            self._note_progress(
+                detail,
+                request_id=request_id,
+                event=delta or event,
+            )
             self._emit_activity(
                 _activity_kind(event, delta), detail, tool, pass_kind,
             )
@@ -1061,7 +1278,7 @@ class PiSidecarAgent:
                 if pending is not None:
                     req_id = int(req_id)
         if pending is None:
-            logger.debug("Response for unknown RPC id %r; dropped", msg.get("id"))
+            self._log_late_response(msg)
             return
         if msg.get("error"):
             err = msg["error"]
@@ -1113,7 +1330,7 @@ class PiSidecarAgent:
             return
         tool_name = method.split(".", 1)[-1] if isinstance(method, str) else ""
         detail = _progress_detail("tool_execution_start", pass_kind=pass_kind)
-        self._note_progress(detail)
+        self._note_progress(detail, event=method or "tool")
         self._emit_activity("tool", detail, tool_name, pass_kind)
         try:
             if method == "tool.patch_state":

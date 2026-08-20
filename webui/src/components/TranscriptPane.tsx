@@ -1,4 +1,5 @@
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { scrollChildIntoView } from '../scroll';
 import type { Participant, Segment } from '../types';
 
 interface TranscriptPaneProps {
@@ -51,18 +52,16 @@ export default function TranscriptPane({
   const highlightedAvailable = Boolean(
     highlightSegmentId && sorted.some((segment) => segment.id === highlightSegmentId),
   );
+  const clearHighlightRef = useRef(onHighlightClear);
+  clearHighlightRef.current = onHighlightClear;
 
   useEffect(() => {
-    if (!highlightSegmentId || !highlightedAvailable) return;
-    requestAnimationFrame(() => {
-      document.getElementById(`seg-${highlightSegmentId}`)?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
-    });
-    const t = window.setTimeout(onHighlightClear, 3000);
-    return () => clearTimeout(t);
-  }, [highlightSegmentId, highlightedAvailable, onHighlightClear]);
+    if (!highlightSegmentId || !highlightedAvailable) return undefined;
+    const node = document.getElementById(`${segmentIdPrefix}seg-${highlightSegmentId}`);
+    if (node) scrollChildIntoView(node, { block: 'center' });
+    const timer = window.setTimeout(() => clearHighlightRef.current(), 3000);
+    return () => window.clearTimeout(timer);
+  }, [highlightSegmentId, highlightedAvailable, segmentIdPrefix]);
 
   return (
     <section className="panel">

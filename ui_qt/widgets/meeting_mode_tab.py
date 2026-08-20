@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -45,6 +46,9 @@ class MeetingModeTab(QWidget):
     cloud_toggled = pyqtSignal(bool)
     retry_insights_requested = pyqtSignal()
     retry_speakers_requested = pyqtSignal()
+    retry_step_requested = pyqtSignal(str)
+    defer_insights_requested = pyqtSignal()
+    start_new_meeting_requested = pyqtSignal(bool)  # cloud_enabled
     #: Emitted whenever the visible controls change, so the window can keep
     #: enough height for the finalization checklist.
     content_height_changed = pyqtSignal()
@@ -58,6 +62,7 @@ class MeetingModeTab(QWidget):
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
         self._finalization: Optional[Dict[str, str]] = None
+        self._meeting_id: Optional[str] = None
         self._has_dashboard = False
         self._developer_mode = False
 
@@ -280,12 +285,12 @@ class MeetingModeTab(QWidget):
         fin_buttons_row = QHBoxLayout()
         fin_buttons_row.setSpacing(10)
 
-        self.finalization_retry_button = PrimaryButton("Retry insights")
+        self.finalization_retry_button = PrimaryButton("Retry failed steps")
         self.finalization_retry_button.setObjectName(
             "meetingFinalizationRetryButton"
         )
         self.finalization_retry_button.clicked.connect(
-            self.retry_insights_requested.emit
+            self._on_retry_failed_clicked
         )
         self.finalization_retry_button.hide()
         fin_buttons_row.addWidget(self.finalization_retry_button)
@@ -309,6 +314,47 @@ class MeetingModeTab(QWidget):
         )
         fin_buttons_row.addWidget(self.finalization_dashboard_button)
         self.finalization_card.layout.addLayout(fin_buttons_row)
+
+        self.finalization_keep_hint = WrappedLabel(
+            "This meeting, transcript, and audio stay in Past Meetings. "
+            "Nothing is deleted."
+        )
+        self.finalization_keep_hint.setObjectName("meetingFinalizationKeepHint")
+        self.finalization_keep_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.finalization_keep_hint.setFont(QFont("Segoe UI", 10))
+        self.finalization_keep_hint.hide()
+        self.finalization_card.layout.addWidget(self.finalization_keep_hint)
+
+        keep_row = QHBoxLayout()
+        keep_row.setSpacing(10)
+
+        self.finalization_keep_later_button = Button("Keep for later")
+        self.finalization_keep_later_button.setObjectName(
+            "meetingFinalizationKeepLaterButton"
+        )
+        self.finalization_keep_later_button.setToolTip(
+            "Hide this card and return to idle. The meeting stays in Past "
+            "Meetings until you open it again."
+        )
+        self.finalization_keep_later_button.clicked.connect(
+            self.defer_insights_requested.emit
+        )
+        self.finalization_keep_later_button.hide()
+        keep_row.addWidget(self.finalization_keep_later_button)
+
+        self.finalization_start_new_button = SuccessButton("Start new meeting")
+        self.finalization_start_new_button.setObjectName(
+            "meetingFinalizationStartNewButton"
+        )
+        self.finalization_start_new_button.setToolTip(
+            "Save this meeting in Past Meetings, then start a fresh session."
+        )
+        self.finalization_start_new_button.clicked.connect(
+            self._on_start_new_clicked
+        )
+        self.finalization_start_new_button.hide()
+        keep_row.addWidget(self.finalization_start_new_button)
+        self.finalization_card.layout.addLayout(keep_row)
         content_layout.addWidget(self.finalization_card)
 
         self.cloud_checkbox = QCheckBox("Cloud intelligence")
@@ -331,6 +377,10 @@ class MeetingModeTab(QWidget):
         """Emit the start request with the current cloud choice."""
         self.start_requested.emit(self.cloud_checkbox.isChecked())
 
+    def _on_start_new_clicked(self):
+        """Start a new meeting after saving the incomplete card for later."""
+        self.start_new_meeting_requested.emit(self.cloud_checkbox.isChecked())
+
     def _on_demo_clicked(self):
         """Emit the developer-mode demo meeting request."""
         self.demo_requested.emit(self.cloud_checkbox.isChecked())
@@ -341,6 +391,10 @@ class MeetingModeTab(QWidget):
             self.resume_requested.emit()
         else:
             self.pause_requested.emit()
+
+    def _on_retry_failed_clicked(self):
+        """Retry every failed/skipped checklist step."""
+        self.retry_insights_requested.emit()
 
     # ------------------------------------------------------------------
     # State inflow
@@ -394,6 +448,10 @@ class MeetingModeTab(QWidget):
         if "dashboard_available" in payload:
             self._has_dashboard = bool(payload["dashboard_available"])
 
+        if "meeting_id" in payload:
+            meeting_id = payload.get("meeting_id")
+            self._meeting_id = str(meeting_id) if meeting_id else None
+
         if "finalization" in payload:
             self._set_finalization(payload.get("finalization"))
 
@@ -419,6 +477,35 @@ class MeetingModeTab(QWidget):
         """
         self._has_dashboard = bool(available)
         self._apply_layout_state()
+
+    @staticmethod
+    def _is_incomplete_finalization(finalization: Optional[Dict[str, Any]]) -> bool:
+        """True when the card is a failed / unavailable / partial-failure result.
+
+        Args:
+            finalization: Current finalization payload, or None.
+
+        Returns:
+            True when Keep for later / Start new meeting should replace idle Start.
+        """
+        if not finalization:
+            return False
+        status = str(finalization.get("status") or "")
+        failed_steps = any(
+            str(step.get("status") or "") == "failed"
+            for step in list(finalization.get("steps") or [])
+        )
+        return bool(failed_steps) or status in {"failed", "unavailable"}
+
+    def _set_incomplete_actions_visible(self, visible: bool) -> None:
+        """Show or hide Keep for later and Start new meeting.
+
+        Args:
+            visible: True on incomplete insight cards only.
+        """
+        self.finalization_keep_hint.setVisible(visible)
+        self.finalization_keep_later_button.setVisible(visible)
+        self.finalization_start_new_button.setVisible(visible)
 
     def _set_finalization(self, value: Any) -> None:
         """Store a finalization payload or clear it.
@@ -492,14 +579,16 @@ class MeetingModeTab(QWidget):
         show_finalization = bool(finalization) and not self._active
 
         self.session_card.setVisible(self._active)
-        # Hide Start only while finalization is actively running; terminal
-        # outcomes restore Start so the user can begin another meeting.
-        self.idle_card.setVisible(not self._active and not running_finalization)
-        self.start_button.setVisible(not running_finalization)
+        # Hide the idle Start control while finalization is running or an
+        # incomplete card is asking the user to retry, defer, or start new.
+        incomplete = self._is_incomplete_finalization(finalization)
+        hide_idle_start = running_finalization or incomplete
+        self.idle_card.setVisible(not self._active and not hide_idle_start)
+        self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
             and not self._active
-            and not running_finalization
+            and not hide_idle_start
         )
         self.demo_button.setVisible(show_demo)
         self.demo_hint.setVisible(show_demo)
@@ -544,14 +633,30 @@ class MeetingModeTab(QWidget):
             "unavailable": "Final cloud insights could not run.",
             "failed": "Final cloud insights failed.",
         }
-        self.finalization_title.setText(titles.get(status, "Final insights"))
-        self.finalization_message.setText(message or defaults.get(status, ""))
+        failed_steps = [
+            step for step in steps
+            if str(step.get("status") or "") == "failed"
+        ]
+        needs_retry = bool(failed_steps) or status in {"failed", "unavailable"}
+        display_status = status
+        if failed_steps and status == "completed":
+            display_status = "failed"
+            titles = dict(titles)
+            titles["failed"] = "Meeting Finished With Issues"
+            defaults = dict(defaults)
+            defaults["failed"] = (
+                message
+                or "Some post-meeting steps failed. The recording was kept."
+            )
+        self.finalization_title.setText(titles.get(display_status, "Final insights"))
+        self.finalization_message.setText(message or defaults.get(display_status, ""))
 
         if status == "running":
             tone = "neutral"
             self.finalization_progress.show()
             self.finalization_retry_button.hide()
             self.finalization_retry_speakers_button.hide()
+            self._set_incomplete_actions_visible(False)
             self.finalization_active_box.show()
 
             if total_steps > 0:
@@ -576,7 +681,7 @@ class MeetingModeTab(QWidget):
                 self.finalization_detail.hide()
 
             if steps:
-                self._populate_steps(steps, current_step)
+                self._populate_steps(steps, current_step, allow_actions=False)
                 self.finalization_steps_widget.show()
             else:
                 self.finalization_steps_widget.hide()
@@ -585,15 +690,21 @@ class MeetingModeTab(QWidget):
             self.finalization_progress.hide()
             self.finalization_progress.setRange(0, 1)
             self.finalization_progress.setValue(0)
+            has_speaker_step = any(
+                str(step.get("id") or "") == "speaker_id" for step in steps
+            )
 
-            if status == "completed":
+            if status == "completed" and not failed_steps:
                 tone = "success"
                 self.finalization_step_badge.setText("Complete")
                 self.finalization_step_badge.setProperty("badgeTone", "success")
                 self.finalization_step_badge.show()
                 self.finalization_retry_button.hide()
-                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setVisible(
+                    not has_speaker_step
+                )
                 self.finalization_retry_speakers_button.setEnabled(True)
+                self._set_incomplete_actions_visible(False)
                 # Header + checklist already cover a successful finish; the
                 # stats recap lives on the dashboard instead.
                 self.finalization_active_box.hide()
@@ -605,16 +716,22 @@ class MeetingModeTab(QWidget):
                 else:
                     self.finalization_steps_widget.hide()
 
-            elif status in {"unavailable", "failed"}:
+            elif needs_retry:
                 tone = "warning"
-                badge_text = "Failed" if status == "failed" else "Unavailable"
+                if failed_steps:
+                    badge_text = "Needs retry"
+                else:
+                    badge_text = "Failed" if status == "failed" else "Unavailable"
                 self.finalization_step_badge.setText(badge_text)
                 self.finalization_step_badge.setProperty("badgeTone", "warning")
                 self.finalization_step_badge.show()
                 self.finalization_retry_button.show()
                 self.finalization_retry_button.setEnabled(True)
-                self.finalization_retry_speakers_button.show()
+                self.finalization_retry_speakers_button.setVisible(
+                    not has_speaker_step
+                )
                 self.finalization_retry_speakers_button.setEnabled(True)
+                self._set_incomplete_actions_visible(True)
                 self.finalization_active_box.show()
 
                 if step_details and step_details != message:
@@ -640,6 +757,7 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.show()
                 self.finalization_retry_speakers_button.setEnabled(True)
+                self._set_incomplete_actions_visible(False)
 
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.
@@ -650,12 +768,18 @@ class MeetingModeTab(QWidget):
                 style.polish(widget)
         self.finalization_card.update()
 
-    def _populate_steps(self, steps: List[Dict[str, Any]], current_step: int) -> None:
+    def _populate_steps(
+        self,
+        steps: List[Dict[str, Any]],
+        current_step: int,
+        allow_actions: bool = True,
+    ) -> None:
         """Render the step pipeline rows.
 
         Args:
             steps: List of step dicts with id, name, status, detail.
             current_step: 1-based index of current step.
+            allow_actions: When False, hide per-row Retry / Run again.
         """
         while self.finalization_steps_layout.count():
             item = self.finalization_steps_layout.takeAt(0)
@@ -663,6 +787,7 @@ class MeetingModeTab(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        optional_rerun = {"redecode", "speaker_id", "polish", "consolidation"}
         for idx, s in enumerate(steps, 1):
             row = QWidget()
             row.setObjectName("meetingFinalizationStepRow")
@@ -670,6 +795,7 @@ class MeetingModeTab(QWidget):
             row_layout.setContentsMargins(0, 3, 0, 3)
             row_layout.setSpacing(8)
 
+            step_id = str(s.get("id") or "")
             step_status = s.get("status", "pending")
             if step_status == "completed":
                 icon_text = "✓"
@@ -718,6 +844,26 @@ class MeetingModeTab(QWidget):
             detail_label.setObjectName("meetingFinalizationStepDetail")
             detail_label.setFont(QFont("Segoe UI", 10))
             row_layout.addWidget(detail_label)
+
+            action_label = ""
+            if allow_actions and step_id:
+                if step_status in {"failed", "skipped"}:
+                    action_label = "Retry"
+                elif step_status == "completed" and step_id in optional_rerun:
+                    action_label = "Run again"
+                elif step_status == "failed" and step_id == "finalize":
+                    action_label = "Retry"
+            if action_label:
+                action = QPushButton(action_label)
+                action.setObjectName("meetingFinalizationStepAction")
+                action.setCursor(Qt.CursorShape.PointingHandCursor)
+                action.setFlat(True)
+                action.clicked.connect(
+                    lambda _checked=False, sid=step_id: (
+                        self.retry_step_requested.emit(sid)
+                    )
+                )
+                row_layout.addWidget(action)
 
             self.finalization_steps_layout.addWidget(row)
 

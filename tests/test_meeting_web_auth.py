@@ -223,6 +223,35 @@ class TestHostOnlyAuthz:
         assert meeting["title"] == ""
         assert meeting["display_title"] == "Quarterly roadmap"
         assert "state_json" not in meeting
+        assert "finalization_status" in meeting
+        assert "finalization_deferred" in meeting
+
+    def test_meeting_list_exposes_compact_finalization_fields(self, client):
+        tc, _, repo = client
+        repo._meetings = [{
+            "id": "m_saved",
+            "title": "Saved meeting",
+            "status": "ended",
+            "started_at": "2026-01-02T00:00:00",
+            "cloud_enabled": True,
+            "state_json": (
+                '{"meeting_id":"m_saved","status":"ended","cloud_enabled":true,'
+                '"finalization":{"status":"failed","message":"interrupted",'
+                '"card_deferred":true}}'
+            ),
+        }]
+
+        response = tc.get("/api/meetings", params={"token": HOST_TOKEN})
+
+        assert response.status_code == 200
+        meeting = response.json()["meetings"][0]
+        assert meeting["finalization_status"] == "failed"
+        assert meeting["finalization_deferred"] is True
+        assert meeting["insights_pill"] == "Saved for later"
+        assert meeting["insights_tone"] == "warning"
+        assert "state_json" not in meeting
+        assert "steps" not in meeting
+        assert "host_token" not in meeting
 
     def test_guest_cannot_end_meeting(self, client):
         tc, engine, _ = client
@@ -385,7 +414,7 @@ class TestRerunInsights:
             calls.update(kwargs)
             return {"ok": True, "state": {"seq": 3}, "applied": 2, "error": None}
 
-        monkeypatch.setattr("meeting.web.api.rerun_insights", fake_rerun)
+        monkeypatch.setattr("meeting.web.api.rerun_finalization", fake_rerun)
         r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
         assert r.status_code == 200
         assert r.json() == {"ok": True, "state": {"seq": 3}, "applied": 2,
@@ -401,7 +430,7 @@ class TestRerunInsights:
         def fake_rerun(repository, meeting_id, **kwargs):
             raise ValueError("meeting has no transcript")
 
-        monkeypatch.setattr("meeting.web.api.rerun_insights", fake_rerun)
+        monkeypatch.setattr("meeting.web.api.rerun_finalization", fake_rerun)
         r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
         assert r.status_code == 400
         assert r.json()["detail"] == "meeting has no transcript"
@@ -418,7 +447,7 @@ class TestRerunInsights:
             release.wait(timeout=10)
             return {"ok": True, "state": {"seq": 1}, "applied": 0, "error": None}
 
-        monkeypatch.setattr("meeting.web.api.rerun_insights", fake_rerun)
+        monkeypatch.setattr("meeting.web.api.rerun_finalization", fake_rerun)
         first: dict = {}
 
         def run_first():

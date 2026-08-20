@@ -28,10 +28,14 @@ from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
 from meeting.audio_playback import build_playback
-from meeting.reinsight import rerun_insights
+from meeting.refinalize import rerun_finalization
 from meeting.respeaker import rerun_speakers
 from meeting.persist.data_lifecycle import delete_meeting_data
-from meeting.state.schema import FinalizationState, MeetingState
+from meeting.state.schema import (
+    FinalizationState,
+    MeetingState,
+    compact_finalization_list_fields,
+)
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
 
@@ -102,6 +106,7 @@ def _public_meeting(meeting: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         return {}
     public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
     public["display_title"] = _meeting_display_title(meeting)
+    public.update(compact_finalization_list_fields(meeting))
     return public
 
 
@@ -383,7 +388,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     @app.post("/api/meetings/{meeting_id}/reinsights")
     async def api_rerun_insights(meeting_id: str,
                                  token: str = "") -> Dict[str, Any]:
-        """Re-run the consolidation pass over a past meeting's transcript."""
+        """Retry failed post-meeting steps, including redecode when needed."""
         await _require(token, host_only=True)
         if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
             raise HTTPException(
@@ -399,6 +404,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         provider = (meeting.get("agent_provider")
                     or getattr(options, "llm_provider", "") or "openrouter")
         model = meeting.get("agent_model") or getattr(options, "llm_model", "") or ""
+        speaker_api_key = ""
+        try:
+            from services.transcript_cleanup import find_api_key
+
+            speaker_api_key = find_api_key("openai") or ""
+        except Exception:
+            speaker_api_key = ""
+        language = getattr(options, "asr_language", None)
         # Check-and-claim with no await between: a double-click cannot start
         # two agent cores writing the same past meeting.
         if meeting_id in insights_running:
@@ -412,10 +425,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             return await loop.run_in_executor(
                 insights_executor,
                 functools.partial(
-                    rerun_insights, repository, meeting_id,
+                    rerun_finalization, repository, meeting_id,
+                    from_step="failed",
                     provider=provider, model=model,
                     agent_core_kind=getattr(options, "agent_core_kind", "pi"),
                     sidecar_payload_dir=getattr(options, "sidecar_payload_dir", None),
+                    asr_model_name=str(meeting.get("asr_model") or "auto"),
+                    language=language,
+                    speaker_api_key=speaker_api_key,
                 ),
             )
         except ValueError as exc:

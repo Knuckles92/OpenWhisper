@@ -249,14 +249,14 @@ class AppConfig:
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
     STREAMING_BEAM_SIZE: int = 1  # Preview-only; keep beam tiny for speed
 
-    # Post-ASR transcript cleanup (OpenAI or OpenRouter chat models)
+    # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
     TRANSCRIPT_CLEANUP_TIMEOUT_S: float = 8.0
     TRANSCRIPT_CLEANUP_PROVIDER: str = "openai"
     TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"  # default for OpenAI
     TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
-    # Model-list ordering in the Cleanup settings tab. "alphabetical" sorts
-    # client-side; other values are OpenRouter /models sort params.
+    # Model-list ordering in Model Manager. "alphabetical" sorts client-side;
+    # other values are OpenRouter /models sort params.
     TRANSCRIPT_CLEANUP_MODEL_SORT: str = "alphabetical"
     TRANSCRIPT_CLEANUP_REASONING: str = "off"  # off | low | medium | high
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"

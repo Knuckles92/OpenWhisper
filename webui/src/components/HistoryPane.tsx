@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { ExportFormat, MeetingRow, MeetingStateDoc, SearchRow } from '../types';
 import type { Segment } from '../types';
+import ConfirmDialog from './ConfirmDialog';
 import TranscriptPane from './TranscriptPane';
 import ReportTabs from './report/ReportTabs';
 
@@ -27,6 +28,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [rerunningSpeakers, setRerunningSpeakers] = useState(false);
   const [rerunNote, setRerunNote] = useState<string | null>(null);
   const [transcriptComplete, setTranscriptComplete] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const loadMeetings = useCallback(async () => {
@@ -102,9 +105,6 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     if (!meetingId) return;
     setSelectedId(meetingId);
     setHighlightSegmentId(segmentId || null);
-    window.setTimeout(() => {
-      document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 250);
   };
 
   const selected = meetings.find((m) => m.id === selectedId);
@@ -126,13 +126,16 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   };
 
   const deleteMeeting = async (meetingId: string) => {
-    if (!window.confirm('Delete this meeting and all its data?')) return;
+    setDeleting(true);
     try {
       await api.deleteMeeting(token, meetingId);
       if (selectedId === meetingId) setSelectedId(null);
+      setPendingDeleteId(null);
       await loadMeetings();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -205,12 +208,6 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
 
   const handleEvidenceClick = useCallback((segmentId: string) => {
     setHighlightSegmentId(segmentId);
-    requestAnimationFrame(() => {
-      document.getElementById(`seg-${segmentId}`)?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
-    });
   }, []);
 
   return (
@@ -280,9 +277,17 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     </div>
                   )}
                   <div className="history-item-meta">
-                    {m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'} ·{' '}
-                    {String(m.status ?? '')}
+                    {m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}
                   </div>
+                  {m.insights_pill && (
+                    <span
+                      className={`status-chip insights-pill${
+                        m.insights_tone ? ` insights-${m.insights_tone}` : ''
+                      }`}
+                    >
+                      {String(m.insights_pill)}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -326,7 +331,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                       ? 'Re-running speakers…'
                       : 'Re-run speaker identification'}
                   </button>
-                  <button type="button" className="danger" onClick={() => deleteMeeting(selected.id)}>
+                  <button type="button" className="danger" onClick={() => setPendingDeleteId(selected.id)}>
                     Delete
                   </button>
                 </div>
@@ -395,6 +400,22 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="Delete this meeting?"
+        message="This permanently removes the meeting and all of its recordings, transcripts, and notes."
+        confirmLabel="Delete meeting"
+        cancelLabel="Keep meeting"
+        danger
+        busy={deleting}
+        onCancel={() => {
+          if (!deleting) setPendingDeleteId(null);
+        }}
+        onConfirm={() => {
+          if (pendingDeleteId) void deleteMeeting(pendingDeleteId);
+        }}
+      />
     </section>
   );
 }

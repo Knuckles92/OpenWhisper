@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QPushButton
 
 from config import config
 from services.settings import SettingsKey, settings_manager
@@ -368,7 +368,14 @@ class TestMeetingModeTabState(unittest.TestCase):
             "warning",
         )
         self.assertFalse(self.tab.finalization_card.isHidden())
-        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
+        self.assertFalse(self.tab.finalization_start_new_button.isHidden())
+        self.assertIn(
+            "stay in Past Meetings",
+            self.tab.finalization_keep_hint.text(),
+        )
 
     def test_starting_clears_previous_finalization(self):
         """A subsequent start payload clears the previous result card."""
@@ -415,6 +422,9 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(self.tab.finalization_retry_button.isHidden())
         self.assertTrue(self.tab.finalization_retry_button.isEnabled())
+        self.assertEqual(
+            self.tab.finalization_retry_button.text(), "Retry failed steps"
+        )
         self.assertFalse(self.tab.finalization_retry_speakers_button.isHidden())
         self.tab.finalization_retry_button.click()
         self.assertEqual(clicked, [True])
@@ -505,6 +515,116 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(hasattr(self.tab, "finalization_stats_widget"))
         self.assertFalse(self.tab.finalization_steps_widget.isHidden())
         self.assertEqual(self.tab.finalization_steps_layout.count(), 3)
+
+    def test_failed_redecode_under_completed_shows_retry_controls(self):
+        """A failed checklist row stays retryable even when overall status is completed."""
+        clicked = []
+        self.tab.retry_step_requested.connect(clicked.append)
+        steps = [
+            {
+                "id": "redecode",
+                "name": "Audio Re-transcription",
+                "status": "failed",
+                "detail": "Re-decoding failed; kept live transcript",
+            },
+            {
+                "id": "polish",
+                "name": "Transcript Cleanup",
+                "status": "completed",
+            },
+            {
+                "id": "consolidation",
+                "name": "Summary & Action Items",
+                "status": "completed",
+            },
+            {
+                "id": "finalize",
+                "name": "State Finalization",
+                "status": "completed",
+            },
+        ]
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "completed",
+                "message": "Final insights ready — 12 segments.",
+                "steps": steps,
+            },
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+
+        self.assertEqual(self.tab.finalization_step_badge.text(), "Needs retry")
+        self.assertEqual(
+            self.tab.finalization_title.text(), "Meeting Finished With Issues"
+        )
+        self.assertFalse(self.tab.finalization_retry_button.isHidden())
+        actions = self.tab.finalization_steps_widget.findChildren(QPushButton)
+        labels = [button.text() for button in actions]
+        self.assertIn("Retry", labels)
+        self.assertIn("Run again", labels)
+        retry = next(button for button in actions if button.text() == "Retry")
+        retry.click()
+        self.assertEqual(clicked, ["redecode"])
+
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "running",
+                "message": "Re-transcribing meeting…",
+                "steps": steps,
+            },
+        })
+        self.app.processEvents()
+        self.assertTrue(self.tab.finalization_retry_button.isHidden())
+        running_actions = []
+        for index in range(self.tab.finalization_steps_layout.count()):
+            row = self.tab.finalization_steps_layout.itemAt(index).widget()
+            if row is not None:
+                running_actions.extend(row.findChildren(QPushButton))
+        self.assertEqual(running_actions, [])
+
+    def test_incomplete_card_emits_keep_later_and_start_new(self):
+        """Incomplete cards expose defer and start-new instead of idle Start."""
+        deferred = []
+        started = []
+        self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
+        self.tab.start_new_meeting_requested.connect(started.append)
+        self.tab.cloud_checkbox.setChecked(True)
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "failed",
+                "message": "Final cloud insights were interrupted.",
+            },
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.tab.start_button.isHidden())
+        self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
+        self.assertFalse(self.tab.finalization_start_new_button.isHidden())
+        self.tab.finalization_keep_later_button.click()
+        self.tab.finalization_start_new_button.click()
+        self.assertEqual(deferred, [True])
+        self.assertEqual(started, [True])
+
+    def test_completed_card_keeps_idle_start_without_defer_actions(self):
+        """A clean completed card still uses the idle Start Meeting control."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+            },
+        })
+        self.app.processEvents()
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.finalization_keep_later_button.isHidden())
+        self.assertTrue(self.tab.finalization_start_new_button.isHidden())
 
 
 if __name__ == "__main__":

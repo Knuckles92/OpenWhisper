@@ -6,6 +6,7 @@ import {
   writeStoredReportView,
   type ReportViewId,
 } from '../../report';
+import { EvidenceProvider } from '../../evidence';
 import type { MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import BriefReport from './BriefReport';
 import FullMeetingDocument from './FullMeetingDocument';
@@ -65,30 +66,33 @@ export default function ReportTabs({
 
   const shared = { state, segments, segs, meeting, onEvidenceClick, onSeek };
   const showToolbar = showSwitcher || showDownload;
+  const participants = useMemo(() => Object.values(state.participants), [state.participants]);
 
   return (
-    <section className="report-stage">
-      {showToolbar && (
-        <div className="report-toolbar">
-          {showSwitcher && (
-            <ReportViewSelect views={views} active={active} onSelect={select} />
-          )}
-          {showDownload && (
-            <ReportDownload
-              state={state}
-              meeting={meeting}
-              transcriptComplete={transcriptComplete}
-              activeView={active}
-            />
-          )}
+    <EvidenceProvider segments={segments} participants={participants}>
+      <section className="report-stage">
+        {showToolbar && (
+          <div className="report-toolbar">
+            {showSwitcher && (
+              <ReportViewSelect views={views} active={active} onSelect={select} />
+            )}
+            {showDownload && (
+              <ReportDownload
+                state={state}
+                meeting={meeting}
+                transcriptComplete={transcriptComplete}
+                activeView={active}
+              />
+            )}
+          </div>
+        )}
+        <div className="report-sheet">
+          {active === 'ribbon' && <RibbonReport {...shared} />}
+          {active === 'brief' && <BriefReport {...shared} />}
+          {active === 'signal' && <SignalReport {...shared} />}
         </div>
-      )}
-      <div className="report-sheet">
-        {active === 'ribbon' && <RibbonReport {...shared} />}
-        {active === 'brief' && <BriefReport {...shared} />}
-        {active === 'signal' && <SignalReport {...shared} />}
-      </div>
-      <FullMeetingDocument state={state} segments={segments} />
-    </section>
+        <FullMeetingDocument state={state} segments={segments} />
+      </section>
+    </EvidenceProvider>
   );
 }

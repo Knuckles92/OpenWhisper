@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { isStuckToEnd, workspaceScroller } from '../scroll';
 import { ops, type CardItem, type Op } from '../types';
 import { sortedNoteItems } from '../state';
-import EvidenceChip from './EvidenceChip';
+import { EvidenceRow } from './EvidenceChip';
 
 interface NotesPaneProps {
   notes: CardItem[];
@@ -125,13 +126,11 @@ function NoteBlock({
           {item.text}
         </p>
       )}
-      {item.evidence.length > 0 && (
-        <div className="evidence-row">
-          {item.evidence.map((id) => (
-            <EvidenceChip key={id} segmentId={id} onClick={onEvidenceClick} />
-          ))}
-        </div>
-      )}
+      <EvidenceRow
+        ids={item.evidence}
+        onClick={onEvidenceClick}
+        limit={readOnly ? 0 : undefined}
+      />
       {!readOnly && (
         <div className="note-actions no-print">
           <span className="note-status">{statusLabel(item)}</span>
@@ -227,28 +226,37 @@ export default function NotesPane({
   readOnly = false,
 }: NotesPaneProps) {
   const flowRef = useRef<HTMLDivElement | null>(null);
-  const stickToLatest = useRef(true);
+  // Stay put until the reader scrolls the workspace to the notes. Starting
+  // "on" yanked the page to the first block and hid the topic hero.
+  const stickToLatest = useRef(false);
   const lastCountRef = useRef(0);
   const sorted = sortedNoteItems(notes.filter((item) => item.status !== 'removed'));
 
-  // Follow the page like a note taker writes: keep the newest block in view
-  // unless the reader scrolled up to re-read earlier notes.
+  // Follow the newest block inside the workspace scroller only. Never move
+  // the window — that hid Pause / End whenever the note taker wrote.
   useEffect(() => {
+    if (readOnly) return undefined;
     const flow = flowRef.current;
-    if (!flow) return;
-    if (sorted.length !== lastCountRef.current) {
-      lastCountRef.current = sorted.length;
-      if (stickToLatest.current) {
-        flow.scrollTop = flow.scrollHeight;
-      }
-    }
-  }, [sorted.length, sorted]);
+    if (!flow) return undefined;
+    const scroller = workspaceScroller(flow);
+    if (!scroller) return undefined;
+    const onScroll = () => {
+      stickToLatest.current = isStuckToEnd(scroller);
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+  }, [readOnly]);
 
-  const handleScroll = () => {
+  useEffect(() => {
+    if (readOnly) return;
     const flow = flowRef.current;
-    if (!flow) return;
-    stickToLatest.current = flow.scrollHeight - flow.scrollTop - flow.clientHeight < 80;
-  };
+    if (!flow || sorted.length === lastCountRef.current) return;
+    lastCountRef.current = sorted.length;
+    const scroller = workspaceScroller(flow);
+    if (scroller && stickToLatest.current) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  }, [readOnly, sorted.length]);
 
   return (
     <section className="panel notes-pane">
@@ -259,7 +267,7 @@ export default function NotesPane({
         </span>
       </div>
       <div className="panel-body">
-        <div className="notes-flow" ref={flowRef} onScroll={handleScroll}>
+        <div className="notes-flow" ref={flowRef}>
           {sorted.length === 0 ? (
             <p className="empty-state">{ghostText(status, cloudEnabled, intelligenceOnline)}</p>
           ) : (

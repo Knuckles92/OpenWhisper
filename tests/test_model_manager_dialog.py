@@ -1,7 +1,6 @@
 """Qt tests for the Model Manager dialog and its model rows."""
 import os
 import tempfile
-import types
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +12,8 @@ from PyQt6.QtWidgets import QApplication, QFrame, QMessageBox
 from services.components import ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo
 from services.settings import (
+    MeetingAgentCore,
+    MeetingSpeakerIdBackend,
     SettingsKey,
     SettingsManager,
     TranscriptCleanupModelSort,
@@ -25,6 +26,7 @@ from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets import Button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
+from ui_qt.widgets import text_model_picker as picker_module
 
 
 def _cached(repo_id, size_bytes):
@@ -40,10 +42,55 @@ BASE_REPO = "Systran/faster-whisper-base"
 TINY_REPO = "Systran/faster-whisper-tiny"
 
 
+class _FakeSettings:
+    """In-memory settings store that matches the Model Manager call surface."""
+
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def save_setting(self, key, value):
+        self.values[key] = value
+
+    def load_all_settings(self):
+        return dict(self.values)
+
+    def save_all_settings(self, settings):
+        self.values.clear()
+        self.values.update(settings)
+
+    def load_model_selection(self):
+        return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")
+
+
 class _DialogTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def _settings_values(self, active_model="base", extra=None):
+        values = {
+            SettingsKey.WHISPER_MODEL: active_model,
+            SettingsKey.WHISPER_DEVICE: "auto",
+            SettingsKey.WHISPER_COMPUTE_TYPE: "auto",
+            SettingsKey.SELECTED_MODEL: "local_whisper",
+            SettingsKey.MEETING_WHISPER_MODEL: "auto",
+            SettingsKey.MEETING_LANGUAGE: "auto",
+            SettingsKey.MEETING_LLM_PROVIDER: "openrouter",
+            SettingsKey.MEETING_LLM_MODEL: "deepseek/test-model",
+            SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.DIRECT,
+            SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.LOCAL,
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-test",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
+                TranscriptCleanupModelSort.ALPHABETICAL
+            ),
+        }
+        if extra:
+            values.update(extra)
+        return values
 
     def _make_dialog(
         self,
@@ -51,10 +98,12 @@ class _DialogTestCase(unittest.TestCase):
         active_model="base",
         loaded_model=None,
         env_blocked=False,
+        extra_settings=None,
+        api_keys=None,
+        focus_library=False,
     ):
-        fake_settings = types.SimpleNamespace(
-            get=lambda key, default=None: active_model
-        )
+        values = self._settings_values(active_model, extra_settings)
+        fake_settings = _FakeSettings(values)
         patchers = [
             patch.object(
                 dialog_module, "scan_cached_models", return_value=cached or {}
@@ -65,21 +114,35 @@ class _DialogTestCase(unittest.TestCase):
                 "is_hf_hub_offline_env_set",
                 return_value=env_blocked,
             ),
+            patch.object(
+                picker_module,
+                "find_api_key",
+                side_effect=lambda selected_provider: (api_keys or {}).get(
+                    selected_provider
+                ),
+            ),
         ]
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
-        return ModelManagerDialog(get_loaded_model=lambda: loaded_model)
+        dialog = ModelManagerDialog(get_loaded_model=lambda: loaded_model)
+        if focus_library:
+            dialog.show_library_tab()
+        return dialog, values
 
 
 class TestModelRows(_DialogTestCase):
     """Per-row status, size, and action availability."""
 
+    def _make_dialog(self, **kwargs):
+        kwargs.setdefault("focus_library", True)
+        return super()._make_dialog(**kwargs)
+
     def test_dialog_uses_compact_resizable_default(self):
         previous_stylesheet = self.app.styleSheet()
         self.app.setStyleSheet(ThemeManager().stylesheet)
         self.addCleanup(self.app.setStyleSheet, previous_stylesheet)
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.show()
         self.app.processEvents()
 
@@ -106,21 +169,21 @@ class TestModelRows(_DialogTestCase):
         self.assertEqual((dialog.width(), dialog.height()), (740, 500))
 
     def test_tall_tabs_scroll_instead_of_growing_dialog(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
 
-        self.assertTrue(dialog.voice_scroll_area.widgetResizable())
-        self.assertTrue(dialog.text_scroll_area.widgetResizable())
+        self.assertTrue(dialog.library_scroll_area.widgetResizable())
+        self.assertTrue(dialog.ondemand_scroll_area.widgetResizable())
         self.assertTrue(dialog.meeting_scroll_area.widgetResizable())
-        self.assertIsNotNone(dialog.voice_scroll_area.widget())
-        self.assertIsNotNone(dialog.text_scroll_area.widget())
+        self.assertIsNotNone(dialog.library_scroll_area.widget())
+        self.assertIsNotNone(dialog.ondemand_scroll_area.widget())
         self.assertIsNotNone(dialog.meeting_scroll_area.widget())
         self.assertGreater(
-            dialog.voice_scroll_area.widget().minimumSizeHint().height(),
-            dialog.voice_scroll_area.minimumSizeHint().height(),
+            dialog.library_scroll_area.widget().minimumSizeHint().height(),
+            dialog.library_scroll_area.minimumSizeHint().height(),
         )
         self.assertGreater(
-            dialog.text_scroll_area.widget().minimumSizeHint().height(),
-            dialog.text_scroll_area.minimumSizeHint().height(),
+            dialog.ondemand_scroll_area.widget().minimumSizeHint().height(),
+            dialog.ondemand_scroll_area.minimumSizeHint().height(),
         )
         self.assertGreater(
             dialog.meeting_scroll_area.widget().minimumSizeHint().height(),
@@ -128,12 +191,12 @@ class TestModelRows(_DialogTestCase):
         )
 
     def test_catalog_excludes_auto(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         self.assertNotIn("auto", dialog.rows)
         self.assertIn("base", dialog.rows)
 
     def test_uncached_row_offers_download_with_estimate(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         row = dialog.rows["tiny"]
         self.assertTrue(row.download_button.isVisibleTo(dialog))
         self.assertFalse(row.delete_button.isVisibleTo(dialog))
@@ -141,30 +204,31 @@ class TestModelRows(_DialogTestCase):
         self.assertEqual(row.badge.text(), "Not downloaded")
         self.assertEqual(row.size_label.text(), "~76 MB")
     def test_cached_row_shows_real_size_and_delete(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)}
         )
         row = dialog.rows["tiny"]
         self.assertFalse(row.download_button.isVisibleTo(dialog))
         self.assertTrue(row.delete_button.isVisibleTo(dialog))
         self.assertTrue(row.delete_button.isEnabled())
-        self.assertTrue(row.set_active_button.isVisibleTo(dialog))
+        self.assertFalse(row.set_active_button.isVisibleTo(dialog))
         self.assertEqual(row.badge.text(), "Downloaded")
         self.assertEqual(row.size_label.text(), "76 MB")
 
-    def test_active_cached_row_hides_set_active(self):
-        dialog = self._make_dialog(
+    def test_library_rows_hide_set_active_and_show_usage(self):
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
             active_model="base",
         )
         row = dialog.rows["base"]
-        self.assertEqual(row.badge.text(), "Active")
-        self.assertTrue(row.property("active"))
+        self.assertEqual(row.badge.text(), "Downloaded")
         self.assertFalse(row.set_active_button.isVisibleTo(dialog))
-        self.assertFalse(dialog.rows["tiny"].property("active"))
+        self.assertEqual(row.usage_label.text(), "On-demand")
+        self.assertTrue(row.usage_label.isVisibleTo(dialog))
+        self.assertFalse(dialog.rows["tiny"].usage_label.isVisibleTo(dialog))
 
     def test_loaded_model_delete_is_disabled(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
             loaded_model="base",
         )
@@ -175,26 +239,16 @@ class TestModelRows(_DialogTestCase):
     def test_refresh_moves_delete_lock_when_loaded_model_changes(self):
         """After a Set Active reload, Delete must follow the newly loaded model."""
         loaded = {"name": "base"}
-        fake_settings = types.SimpleNamespace(get=lambda key, default=None: "tiny")
-        patchers = [
-            patch.object(
-                dialog_module,
-                "scan_cached_models",
-                return_value={
-                    BASE_REPO: _cached(BASE_REPO, 145_000_000),
-                    TINY_REPO: _cached(TINY_REPO, 76_000_000),
-                },
-            ),
-            patch.object(dialog_module, "settings_manager", fake_settings),
-            patch.object(
-                dialog_module, "is_hf_hub_offline_env_set", return_value=False
-            ),
-        ]
-        for p in patchers:
-            p.start()
-            self.addCleanup(p.stop)
-
-        dialog = ModelManagerDialog(get_loaded_model=lambda: loaded["name"])
+        dialog, _values = self._make_dialog(
+            cached={
+                BASE_REPO: _cached(BASE_REPO, 145_000_000),
+                TINY_REPO: _cached(TINY_REPO, 76_000_000),
+            },
+            active_model="tiny",
+            loaded_model="base",
+        )
+        dialog._get_loaded_model = lambda: loaded["name"]
+        dialog.refresh()
         self.assertFalse(dialog.rows["base"].delete_button.isEnabled())
         self.assertTrue(dialog.rows["tiny"].delete_button.isEnabled())
 
@@ -204,7 +258,7 @@ class TestModelRows(_DialogTestCase):
         self.assertFalse(dialog.rows["tiny"].delete_button.isEnabled())
 
     def test_stats_count_and_disk_usage(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={
                 BASE_REPO: _cached(BASE_REPO, 145_000_000),
                 TINY_REPO: _cached(TINY_REPO, 76_000_000),
@@ -218,7 +272,7 @@ class TestDownloadingState(_DialogTestCase):
     """Indeterminate download state: badge + one download at a time."""
 
     def test_downloading_row_and_other_downloads_blocked(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.set_downloading("tiny")
 
         self.assertEqual(dialog.rows["tiny"].badge.text(), "Downloading…")
@@ -230,7 +284,7 @@ class TestDownloadingState(_DialogTestCase):
         self.assertTrue(dialog.rows["small"].download_button.isEnabled())
 
     def test_failed_download_reports_in_message(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.set_downloading("tiny")
         dialog.finish_download("tiny", success=False)
         self.assertIn("failed", dialog.message_label.text())
@@ -239,8 +293,12 @@ class TestDownloadingState(_DialogTestCase):
 class TestEnvBlocked(_DialogTestCase):
     """HF_HUB_OFFLINE disables downloads but not deletion."""
 
+    def _make_dialog(self, **kwargs):
+        kwargs.setdefault("focus_library", True)
+        return super()._make_dialog(**kwargs)
+
     def test_banner_shown_and_downloads_disabled(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
             env_blocked=True,
         )
@@ -252,22 +310,26 @@ class TestEnvBlocked(_DialogTestCase):
 class TestFilter(_DialogTestCase):
     """Filter box hides non-matching rows and shows the empty state."""
 
+    def _make_dialog(self, **kwargs):
+        kwargs.setdefault("focus_library", True)
+        return super()._make_dialog(**kwargs)
+
     def test_filter_matches_name_and_repo(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.filter_edit.setText("tiny")
         self.assertTrue(dialog.rows["tiny"].isVisibleTo(dialog))
         self.assertTrue(dialog.rows["tiny.en"].isVisibleTo(dialog))
         self.assertFalse(dialog.rows["base"].isVisibleTo(dialog))
 
     def test_no_match_shows_empty_state(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.filter_edit.setText("no-such-model")
         self.assertTrue(dialog.empty_label.isVisibleTo(dialog))
         dialog.filter_edit.setText("")
         self.assertFalse(dialog.empty_label.isVisibleTo(dialog))
 
     def test_status_filter_downloaded_only(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         dialog.status_filter_combo.setCurrentIndex(
@@ -277,7 +339,7 @@ class TestFilter(_DialogTestCase):
         self.assertFalse(dialog.rows["tiny"].isVisibleTo(dialog))
 
     def test_status_filter_not_downloaded_only(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         dialog.status_filter_combo.setCurrentIndex(
@@ -287,7 +349,7 @@ class TestFilter(_DialogTestCase):
         self.assertTrue(dialog.rows["tiny"].isVisibleTo(dialog))
 
     def test_status_filter_combines_with_search(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={
                 BASE_REPO: _cached(BASE_REPO, 145_000_000),
                 TINY_REPO: _cached(TINY_REPO, 76_000_000),
@@ -302,7 +364,7 @@ class TestFilter(_DialogTestCase):
         self.assertFalse(dialog.rows["tiny.en"].isVisibleTo(dialog))
 
     def test_status_filter_all_shows_everything(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         dialog.status_filter_combo.setCurrentIndex(
@@ -319,7 +381,7 @@ class TestCompactButtons(_DialogTestCase):
     """Header/footer buttons must not clip their labels."""
 
     def test_open_folder_button_fits_label(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         open_folder = next(
             (
                 button
@@ -350,13 +412,13 @@ class TestSorting(_DialogTestCase):
 
     def test_default_keeps_active_model_in_place(self):
         """Recommended sort must not pin the active model to the top."""
-        dialog = self._make_dialog(active_model="medium")
+        dialog, _values = self._make_dialog(active_model="medium")
         self.assertNotEqual(self._row_order(dialog)[0], "medium")
         # Same ordering as size within the not-downloaded group: tiny first.
         self.assertEqual(self._row_order(dialog)[0], "tiny")
 
     def test_downloaded_first_groups_cached_models(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         dialog.sort_combo.setCurrentIndex(
@@ -365,12 +427,12 @@ class TestSorting(_DialogTestCase):
         self.assertEqual(self._row_order(dialog)[0], "base")
 
     def test_smallest_first_uses_catalog_estimates(self):
-        dialog = self._make_dialog(active_model="medium")
+        dialog, _values = self._make_dialog(active_model="medium")
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("size"))
         self.assertEqual(self._row_order(dialog)[0], "tiny")
 
     def test_name_sort_is_alphabetical(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("name"))
         order = self._row_order(dialog)
         self.assertEqual(order, sorted(order, key=str.casefold))
@@ -380,14 +442,14 @@ class TestActions(_DialogTestCase):
     """Row actions route through the dialog callbacks."""
 
     def test_download_click_invokes_callback(self):
-        dialog = self._make_dialog()
+        dialog, _values = self._make_dialog()
         requested = []
         dialog.on_download_requested = requested.append
         dialog.rows["tiny"].download_button.click()
         self.assertEqual(requested, ["tiny"])
 
     def test_delete_confirm_default_no_does_nothing(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         requested = []
@@ -401,7 +463,7 @@ class TestActions(_DialogTestCase):
         self.assertEqual(requested, [])
 
     def test_delete_confirm_yes_invokes_callback(self):
-        dialog = self._make_dialog(
+        dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
         requested = []
@@ -414,14 +476,15 @@ class TestActions(_DialogTestCase):
             dialog.rows["base"].delete_button.click()
         self.assertEqual(requested, ["base"])
 
-    def test_set_active_invokes_callback(self):
-        dialog = self._make_dialog(
+    def test_ondemand_picker_invokes_set_active_callback(self):
+        dialog, _values = self._make_dialog(
             cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)},
             active_model="base",
         )
         requested = []
         dialog.on_set_active_requested = requested.append
-        dialog.rows["tiny"].set_active_button.click()
+        index = dialog.ondemand_whisper_picker.model_combo.findData("tiny")
+        dialog.ondemand_whisper_picker.model_combo.setCurrentIndex(index)
         self.assertEqual(requested, ["tiny"])
 
 
@@ -431,47 +494,16 @@ class TestTextModelManager(_DialogTestCase):
     def _make_text_dialog(
         self, provider="openai", model="gpt-test", api_keys=None
     ):
-        values = {
-            SettingsKey.WHISPER_MODEL: "base",
-            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
-                TranscriptCleanupModelSort.MOST_POPULAR
-            ),
-        }
-
-        class FakeSettings:
-            def get(self, key, default=None):
-                return values.get(key, default)
-
-            def save_setting(self, key, value):
-                values[key] = value
-
-            def load_all_settings(self):
-                return dict(values)
-
-            def save_all_settings(self, settings):
-                values.clear()
-                values.update(settings)
-
-        patchers = [
-            patch.object(dialog_module, "scan_cached_models", return_value={}),
-            patch.object(dialog_module, "settings_manager", FakeSettings()),
-            patch.object(
-                dialog_module,
-                "find_api_key",
-                side_effect=lambda selected_provider: (api_keys or {}).get(
-                    selected_provider
+        return self._make_dialog(
+            extra_settings={
+                SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
+                SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+                SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
+                    TranscriptCleanupModelSort.MOST_POPULAR
                 ),
-            ),
-            patch.object(
-                dialog_module, "is_hf_hub_offline_env_set", return_value=False
-            ),
-        ]
-        for patcher in patchers:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        return ModelManagerDialog(), values
+            },
+            api_keys=api_keys,
+        )
 
     def test_provider_credential_status_shows_when_key_is_found(self):
         dialog, _values = self._make_text_dialog(
@@ -492,10 +524,10 @@ class TestTextModelManager(_DialogTestCase):
         self.assertEqual(status.text(), "Requires OPENROUTER_API_KEY")
         self.assertFalse(status.property("available"))
 
-    def test_voice_text_and_meeting_have_separate_tabs(self):
+    def test_ondemand_meeting_and_library_have_separate_tabs(self):
         dialog, _values = self._make_text_dialog()
         labels = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
-        self.assertEqual(labels, ["Voice", "Text", "Meeting"])
+        self.assertEqual(labels, ["On-demand", "Meeting Mode", "Library"])
         self.assertFalse(dialog.tabs.tabIcon(0).isNull())
         self.assertFalse(dialog.tabs.tabIcon(1).isNull())
         self.assertFalse(dialog.tabs.tabIcon(2).isNull())
@@ -687,6 +719,11 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     SettingsKey.MEETING_WHISPER_MODEL: "tiny",
                     SettingsKey.MEETING_LLM_PROVIDER: "openai",
                     SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
+                    SettingsKey.MEETING_LANGUAGE: "fr",
+                    SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.DIRECT,
+                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: (
+                        MeetingSpeakerIdBackend.OPENAI
+                    ),
                 }
             )
             with (
@@ -697,6 +734,12 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
+                summary = dialog.meeting_model_summary.text()
+                self.assertIn("Whisper · tiny", summary)
+                self.assertIn("Spoken language · French", summary)
+                self.assertIn("OpenAI · gpt-4o-mini", summary)
+                self.assertIn("Agent core · Direct", summary)
+                self.assertIn("Speaker ID · OpenAI", summary)
                 dialog._save_settings()
 
             saved = isolated.load_all_settings()
@@ -704,6 +747,14 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             self.assertEqual(saved[SettingsKey.MEETING_LLM_PROVIDER], "openai")
             self.assertEqual(
                 saved[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini"
+            )
+            self.assertEqual(saved[SettingsKey.MEETING_LANGUAGE], "fr")
+            self.assertEqual(
+                saved[SettingsKey.MEETING_AGENT_CORE], MeetingAgentCore.DIRECT
+            )
+            self.assertEqual(
+                saved[SettingsKey.MEETING_SPEAKER_ID_BACKEND],
+                MeetingSpeakerIdBackend.OPENAI,
             )
 
     def test_meeting_tab_links_to_model_manager(self):
@@ -729,7 +780,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
 
 
 class TestMeetingModelManager(_DialogTestCase):
-    """Meeting tab owns Whisper ASR and intelligence model selection."""
+    """Meeting tab owns Whisper ASR, extras, and intelligence selection."""
 
     def _make_meeting_dialog(
         self,
@@ -737,65 +788,34 @@ class TestMeetingModelManager(_DialogTestCase):
         provider="openrouter",
         model="deepseek/test-model",
         cached=None,
+        extra=None,
     ):
-        values = {
-            SettingsKey.WHISPER_MODEL: "base",
+        settings = {
             SettingsKey.MEETING_WHISPER_MODEL: whisper,
             SettingsKey.MEETING_LLM_PROVIDER: provider,
             SettingsKey.MEETING_LLM_MODEL: model,
-            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-test",
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
-                TranscriptCleanupModelSort.ALPHABETICAL
-            ),
         }
+        if extra:
+            settings.update(extra)
+        return self._make_dialog(cached=cached, extra_settings=settings)
 
-        class FakeSettings:
-            def get(self, key, default=None):
-                return values.get(key, default)
-
-            def save_setting(self, key, value):
-                values[key] = value
-
-            def load_all_settings(self):
-                return dict(values)
-
-            def save_all_settings(self, settings):
-                values.clear()
-                values.update(settings)
-
-        patchers = [
-            patch.object(
-                dialog_module,
-                "scan_cached_models",
-                return_value=cached or {},
-            ),
-            patch.object(dialog_module, "settings_manager", FakeSettings()),
-            patch.object(
-                dialog_module, "find_api_key", return_value=None
-            ),
-            patch.object(
-                dialog_module, "is_hf_hub_offline_env_set", return_value=False
-            ),
-        ]
-        for patcher in patchers:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        return ModelManagerDialog(), values
-
-    def test_meeting_catalog_includes_auto(self):
+    def test_meeting_picker_offers_auto(self):
         dialog, _values = self._make_meeting_dialog()
-        self.assertIn("auto", dialog.meeting_rows)
-        self.assertIn("base", dialog.meeting_rows)
+        names = [
+            dialog.meeting_whisper_picker.model_combo.itemData(i)
+            for i in range(dialog.meeting_whisper_picker.model_combo.count())
+        ]
+        self.assertIn("auto", names)
 
-    def test_meeting_set_active_persists_whisper_model(self):
+    def test_meeting_picker_persists_whisper_model(self):
         dialog, values = self._make_meeting_dialog(
             whisper="auto",
             cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)},
         )
-        dialog.meeting_rows["tiny"].set_active_button.click()
+        index = dialog.meeting_whisper_picker.model_combo.findData("tiny")
+        dialog.meeting_whisper_picker.model_combo.setCurrentIndex(index)
         self.assertEqual(values[SettingsKey.MEETING_WHISPER_MODEL], "tiny")
-        self.assertTrue(dialog.meeting_rows["tiny"].is_active)
+        self.assertEqual(dialog.rows["tiny"].usage_label.text(), "Meetings")
 
     def test_meeting_llm_activation_persists_provider_and_model(self):
         dialog, values = self._make_meeting_dialog()
@@ -812,25 +832,67 @@ class TestMeetingModelManager(_DialogTestCase):
         self.assertEqual(values[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini")
         self.assertEqual(picker.activate_button.text(), "Active")
 
+    def test_meeting_language_and_core_persist(self):
+        dialog, values = self._make_meeting_dialog()
+        language_index = dialog.meeting_language_combo.findData("en")
+        dialog.meeting_language_combo.setCurrentIndex(language_index)
+        core_index = dialog.meeting_agent_core_combo.findData(
+            MeetingAgentCore.DIRECT
+        )
+        dialog.meeting_agent_core_combo.setCurrentIndex(core_index)
+
+        self.assertEqual(values[SettingsKey.MEETING_LANGUAGE], "en")
+        self.assertEqual(
+            values[SettingsKey.MEETING_AGENT_CORE], MeetingAgentCore.DIRECT
+        )
+
+    def test_usage_chip_combines_both_modes(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            active_model="base",
+            extra_settings={SettingsKey.MEETING_WHISPER_MODEL: "base"},
+        )
+        self.assertEqual(
+            dialog.rows["base"].usage_label.text(), "On-demand · Meetings"
+        )
+
+
+class TestOnDemandEngine(_DialogTestCase):
+    """On-demand recording engine routes through the main-window path."""
+
+    def test_engine_combo_invokes_backend_callback(self):
+        dialog, _values = self._make_dialog()
+        requested = []
+        dialog.on_backend_changed = requested.append
+        index = dialog.engine_combo.findData("api_whisper")
+        dialog.engine_combo.setCurrentIndex(index)
+        self.assertEqual(requested, ["API: Whisper"])
+        self.assertFalse(dialog.ondemand_whisper_picker.isEnabled())
+
 
 class TestModelManagerTabFocus(_DialogTestCase):
-    """Model Manager can open directly on Text or Meeting tabs."""
+    """Model Manager can open directly on On-demand, Meeting, or Library."""
 
-    def test_show_text_tab_selects_text_processing(self):
-        dialog = self._make_dialog()
-        self.assertIs(dialog.tabs.currentWidget(), dialog.voice_tab)
+    def test_show_text_tab_selects_ondemand_and_text_card(self):
+        dialog, _values = self._make_dialog()
+        self.assertIs(dialog.tabs.currentWidget(), dialog.ondemand_tab)
 
         dialog.show_text_tab()
 
-        self.assertIs(dialog.tabs.currentWidget(), dialog.text_tab)
+        self.assertIs(dialog.tabs.currentWidget(), dialog.ondemand_tab)
 
     def test_show_meeting_tab_selects_meeting(self):
-        dialog = self._make_dialog()
-        self.assertIs(dialog.tabs.currentWidget(), dialog.voice_tab)
+        dialog, _values = self._make_dialog()
+        self.assertIs(dialog.tabs.currentWidget(), dialog.ondemand_tab)
 
         dialog.show_meeting_tab()
 
         self.assertIs(dialog.tabs.currentWidget(), dialog.meeting_tab)
+
+    def test_show_library_tab_selects_library(self):
+        dialog, _values = self._make_dialog()
+        dialog.show_library_tab()
+        self.assertIs(dialog.tabs.currentWidget(), dialog.library_tab)
 
 
 class TestComponentRows(_DialogTestCase):

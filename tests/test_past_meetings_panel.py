@@ -1,4 +1,5 @@
 """Qt tests for the Meeting Mode Past Meetings sidebar content."""
+import json
 import os
 from datetime import datetime, timedelta
 
@@ -6,19 +7,38 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
 
+from meeting.state.schema import FinalizationState, MeetingState
 from ui_qt.widgets.past_meetings_panel import PastMeetingItem, PastMeetingsPanel
 
 
-def _meeting(meeting_id: str, status: str = "ended", title: str = "Review"):
+def _meeting(
+    meeting_id: str,
+    status: str = "ended",
+    title: str = "Review",
+    *,
+    finalization=None,
+    cloud_enabled=True,
+):
     started = datetime(2025, 1, 2, 9, 30)
-    return {
+    row = {
         "id": meeting_id,
         "title": title,
         "status": status,
         "started_at": started.isoformat(),
         "ended_at": (started + timedelta(minutes=42)).isoformat(),
         "paused_total_s": 120,
+        "cloud_enabled": cloud_enabled,
     }
+    if finalization is not None:
+        state = MeetingState(
+            meeting_id=meeting_id,
+            status=status,
+            cloud_enabled=cloud_enabled,
+            title=title,
+            finalization=finalization,
+        )
+        row["state_json"] = json.dumps(state.to_dict())
+    return row
 
 
 def test_panel_filters_live_sessions_and_emits_selected_meeting():
@@ -54,6 +74,40 @@ def test_panel_shows_empty_state():
     empty_label = panel.findChild(QLabel, "pastMeetingsEmpty")
     assert empty_label is not None
     assert empty_label.text() == "No past meetings yet"
+
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_panel_shows_insights_pills():
+    app = QApplication.instance() or QApplication([])
+    panel = PastMeetingsPanel(
+        meeting_provider=lambda: [
+            _meeting(
+                "m_saved",
+                title="Deferred review",
+                finalization=FinalizationState(
+                    status="failed",
+                    message="interrupted",
+                    card_deferred=True,
+                ),
+            ),
+            _meeting(
+                "m_ready",
+                title="Ready review",
+                finalization=FinalizationState(status="completed", message="done"),
+            ),
+        ]
+    )
+
+    panel.refresh()
+    cards = panel.findChildren(PastMeetingItem)
+
+    assert [card.meeting_id for card in cards] == ["m_saved", "m_ready"]
+    assert cards[0].insights_pill.text() == "Saved for later"
+    assert cards[1].insights_pill.text() == "Ready"
+    assert "40 min" in cards[0].detail_label.text()
+    assert "Ended" not in cards[0].detail_label.text()
 
     panel.deleteLater()
     app.processEvents()

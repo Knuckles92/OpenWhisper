@@ -93,6 +93,15 @@ _ROW_STYLE = """
         color: #32d74b;
         border: 1px solid rgba(48, 209, 88, 0.28);
     }
+    QLabel#modelRowUsage {
+        background-color: rgba(10, 132, 255, 0.10);
+        color: #8eb8ff;
+        border: 1px solid rgba(10, 132, 255, 0.22);
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 600;
+    }
     QPushButton#modelDownloadButton,
     QPushButton#modelSetActiveButton,
     QPushButton#modelDeleteButton {
@@ -211,6 +220,13 @@ class ModelRowWidget(QFrame):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         layout.addWidget(self.size_label)
+
+        self.usage_label = QLabel("")
+        self.usage_label.setObjectName("modelRowUsage")
+        self.usage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.usage_label.setFixedHeight(22)
+        self.usage_label.setVisible(False)
+        layout.addWidget(self.usage_label)
 
         self.badge = QLabel("")
         self.badge.setObjectName("modelRowBadge")
@@ -347,6 +363,16 @@ class ModelRowWidget(QFrame):
         self.delete_button.setToolTip(
             "In use — switch models first" if is_loaded else ""
         )
+
+    def set_usage(self, text: str) -> None:
+        """Show which mode pages currently assign this model.
+
+        Args:
+            text: Usage chip copy such as ``"On-demand"`` or
+                ``"On-demand · Meetings"``. Empty hides the chip.
+        """
+        self.usage_label.setText(text)
+        self.usage_label.setVisible(bool(text))
 
     def matches_filter(self, text: str) -> bool:
         """Return True when the row matches a filter string.
