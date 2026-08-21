@@ -2,7 +2,6 @@
 
 import os
 import types
-import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -19,7 +18,7 @@ from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 
-class _QtTestCase(unittest.TestCase):
+class _QtTestCase:
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -42,16 +41,12 @@ class TestModelDetailsDialog(_QtTestCase):
         for model_name, (family, parameters, languages) in expected.items():
             with self.subTest(model=model_name):
                 dialog = ModelDetailsDialog(get_model_details(model_name))
-                self.assertTrue(dialog.isModal())
-                self.assertEqual(dialog.fact_labels["Family"].text(), family)
-                self.assertEqual(
-                    dialog.fact_labels["Parameters"].text(), parameters
-                )
-                self.assertEqual(
-                    dialog.fact_labels["Languages"].text(), languages
-                )
-                self.assertIn("CTranslate2", dialog.fact_labels["Local format"].text())
-                self.assertEqual(dialog.fact_labels["License"].text(), "MIT")
+                assert dialog.isModal()
+                assert dialog.fact_labels["Family"].text() == family
+                assert dialog.fact_labels["Parameters"].text() == parameters
+                assert dialog.fact_labels["Languages"].text() == languages
+                assert "CTranslate2" in dialog.fact_labels["Local format"].text()
+                assert dialog.fact_labels["License"].text() == "MIT"
 
     def test_source_buttons_open_only_the_requested_urls(self):
         details = get_model_details("distil-medium.en")
@@ -64,15 +59,9 @@ class TestModelDetailsDialog(_QtTestCase):
             dialog.repository_button.click()
             dialog.origin_button.click()
 
-        self.assertEqual(open_url.call_count, 2)
-        self.assertEqual(
-            open_url.call_args_list[0].args[0].toString(),
-            details.repository_url,
-        )
-        self.assertEqual(
-            open_url.call_args_list[1].args[0].toString(),
-            details.origin_url,
-        )
+        assert open_url.call_count == 2
+        assert open_url.call_args_list[0].args[0].toString() == details.repository_url
+        assert open_url.call_args_list[1].args[0].toString() == details.origin_url
 
     def test_dialog_construction_remains_offline_under_hf_override(self):
         with patch.dict(os.environ, {"HF_HUB_OFFLINE": "1"}), patch(
@@ -80,7 +69,7 @@ class TestModelDetailsDialog(_QtTestCase):
             side_effect=AssertionError("network metadata must not be requested"),
         ) as hf_api:
             dialog = ModelDetailsDialog(get_model_details("tiny"))
-        self.assertEqual(dialog.fact_labels["Origin"].text(), "openai/whisper-tiny")
+        assert dialog.fact_labels["Origin"].text() == "openai/whisper-tiny"
         hf_api.assert_not_called()
 
 
@@ -99,7 +88,7 @@ class TestModelTileActivation(_QtTestCase):
             Qt.MouseButton.LeftButton,
             pos=QPoint(5, 5),
         )
-        self.assertEqual(requested, ["base"])
+        assert requested == ["base"]
         row.close()
 
     def test_enter_and_space_request_details(self):
@@ -109,7 +98,7 @@ class TestModelTileActivation(_QtTestCase):
 
         QTest.keyClick(row, Qt.Key.Key_Return)
         QTest.keyClick(row, Qt.Key.Key_Space)
-        self.assertEqual(requested, ["tiny", "tiny"])
+        assert requested == ["tiny", "tiny"]
 
     def test_action_buttons_do_not_request_details(self):
         row = ModelRowWidget("small")
@@ -126,10 +115,10 @@ class TestModelTileActivation(_QtTestCase):
         row.set_active_button.click()
         row.delete_button.click()
 
-        self.assertEqual(downloads_requested, ["small"])
-        self.assertEqual(active_requested, ["small"])
-        self.assertEqual(deletes_requested, ["small"])
-        self.assertEqual(details_requested, [])
+        assert downloads_requested == ["small"]
+        assert active_requested == ["small"]
+        assert deletes_requested == ["small"]
+        assert details_requested == []
 
 
 class TestManagerDetailsRouting(_QtTestCase):
@@ -156,10 +145,8 @@ class TestManagerDetailsRouting(_QtTestCase):
             )
 
         shown_details = dialog_class.call_args.args[0]
-        self.assertEqual(shown_details.model_name, "distil-large-v3")
-        self.assertIs(dialog_class.call_args.kwargs["parent"], manager)
+        assert shown_details.model_name == "distil-large-v3"
+        assert dialog_class.call_args.kwargs["parent"] is manager
         dialog_class.return_value.exec.assert_called_once_with()
 
 
-if __name__ == "__main__":
-    unittest.main()

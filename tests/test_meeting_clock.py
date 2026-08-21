@@ -1,14 +1,9 @@
 """
 Tests for MeetingClock: pause credit, timestamp conversion, recovery re-anchor.
 """
-import os
-import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from meeting.clock import MeetingClock
-
 
 class TestMeetingClock:
     def test_zero_before_start(self):

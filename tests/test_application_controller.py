@@ -1,11 +1,11 @@
 """Controller-level tests for the extracted application controller."""
 
+import pytest
 import importlib
 import sys
 import tempfile
 import time
 import types
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -656,8 +656,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     }
 
 
-class TestApplicationController(unittest.TestCase):
-    def setUp(self):
+class TestApplicationController:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.settings = FakeSettingsManager()
         self.history_manager = FakeHistoryManager()
         self.audio_processor = FakeAudioProcessor()
@@ -703,7 +704,9 @@ class TestApplicationController(unittest.TestCase):
         )
         self.watchdog_patcher.start()
 
-    def tearDown(self):
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         self.watchdog_patcher.stop()
         self.module_patcher.stop()
         config.RECORDED_AUDIO_FILE = self.original_recorded_audio_file
@@ -719,37 +722,37 @@ class TestApplicationController(unittest.TestCase):
         controller = self._create_controller()
 
         controller.on_model_changed("API: GPT-4o Transcribe")
-        self.assertEqual(controller._current_model_name, "api_gpt4o")
-        self.assertEqual(self.settings.saved_model_selection, "api_gpt4o")
-        self.assertEqual(controller.ui_controller.device_infos[-1], "")
+        assert controller._current_model_name == "api_gpt4o"
+        assert self.settings.saved_model_selection == "api_gpt4o"
+        assert controller.ui_controller.device_infos[-1] == ""
 
         controller.on_model_changed("Local Whisper")
-        self.assertEqual(controller._current_model_name, "local_whisper")
-        self.assertEqual(controller.ui_controller.device_infos[-1], "cpu")
+        assert controller._current_model_name == "local_whisper"
+        assert controller.ui_controller.device_infos[-1] == "cpu"
 
     def test_reload_whisper_model_runs_in_background_and_reports(self):
         controller = self._create_controller()
 
         # Scheduling only arms the debounce timer; nothing runs yet.
         controller.reload_whisper_model()
-        self.assertEqual(len(controller.executor.submissions), 0)
+        assert len(controller.executor.submissions) == 0
 
         # Debounce fires -> work is submitted to the executor, combos go busy.
         controller._reload_timer.timeout.emit()
-        self.assertTrue(controller._reload_in_flight)
-        self.assertEqual(controller.ui_controller.engine_busy_states[-1], True)
-        self.assertEqual(len(controller.executor.submissions), 1)
+        assert controller._reload_in_flight
+        assert controller.ui_controller.engine_busy_states[-1] == True
+        assert len(controller.executor.submissions) == 1
 
         # Run the worker exactly as the real executor would.
         fn, args = controller.executor.submissions[0]
         fn(*args)
 
-        self.assertFalse(controller._reload_in_flight)
-        self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
-        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
-        self.assertEqual(controller.ui_controller.engine_busy_states[-1], False)
+        assert not controller._reload_in_flight
+        assert controller.ui_controller.device_infos[-1] == "cpu-reloaded"
+        assert "Whisper engine ready" in controller.ui_controller.statuses
+        assert controller.ui_controller.engine_busy_states[-1] == False
         # Idle after reload refreshes the manager so Delete tracks the new model.
-        self.assertGreaterEqual(controller.ui_controller.model_manager_refreshes, 1)
+        assert controller.ui_controller.model_manager_refreshes >= 1
 
     def test_declined_download_reverts_model_selection(self):
         controller = self._create_controller()
@@ -763,19 +766,16 @@ class TestApplicationController(unittest.TestCase):
         controller._on_hf_consent_requested("small", False, True)
 
         # Selection and inline combos roll back to the model that is cached
-        self.assertEqual(self.settings.all_settings["whisper_model"], "turbo")
-        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
-        self.assertIn(
-            "Model 'small' is unavailable — download declined",
-            controller.ui_controller.statuses,
-        )
+        assert self.settings.all_settings["whisper_model"] == "turbo"
+        assert controller.ui_controller.engine_controls_refreshes == 1
+        assert "Model 'small' is unavailable — download declined" in controller.ui_controller.statuses
 
         # The scheduled background reload brings the reverted model back
         controller._reload_timer.timeout.emit()
         fn, args = controller.executor.submissions[-1]
         fn(*args)
-        self.assertTrue(backend.is_available())
-        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
+        assert backend.is_available()
+        assert "Whisper engine ready" in controller.ui_controller.statuses
 
     def test_declined_download_without_prior_model_keeps_selection(self):
         controller = self._create_controller()
@@ -788,8 +788,8 @@ class TestApplicationController(unittest.TestCase):
 
         controller._on_hf_consent_requested("small", False, True)
 
-        self.assertEqual(self.settings.all_settings["whisper_model"], "small")
-        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 0)
+        assert self.settings.all_settings["whisper_model"] == "small"
+        assert controller.ui_controller.engine_controls_refreshes == 0
 
     def test_reload_whisper_model_refused_while_recording(self):
         controller = self._create_controller()
@@ -797,23 +797,14 @@ class TestApplicationController(unittest.TestCase):
 
         controller.reload_whisper_model()
 
-        self.assertEqual(len(controller.executor.submissions), 0)
-        self.assertIn(
-            "Finish recording before changing the engine",
-            controller.ui_controller.statuses,
-        )
+        assert len(controller.executor.submissions) == 0
+        assert "Finish recording before changing the engine" in controller.ui_controller.statuses
 
     def test_hotkeys_backfill_minimize_tray_and_refresh_display_on_update(self):
         controller = self._create_controller()
 
-        self.assertEqual(
-            controller.hotkey_manager.hotkeys["minimize_tray"],
-            config.DEFAULT_HOTKEYS["minimize_tray"],
-        )
-        self.assertEqual(
-            controller.ui_controller.hotkeys["minimize_tray"],
-            config.DEFAULT_HOTKEYS["minimize_tray"],
-        )
+        assert controller.hotkey_manager.hotkeys["minimize_tray"] == config.DEFAULT_HOTKEYS["minimize_tray"]
+        assert controller.ui_controller.hotkeys["minimize_tray"] == config.DEFAULT_HOTKEYS["minimize_tray"]
 
         updated_hotkeys = {
             "record_toggle": "f4",
@@ -823,34 +814,31 @@ class TestApplicationController(unittest.TestCase):
         }
         controller.update_hotkeys(updated_hotkeys)
 
-        self.assertEqual(controller.hotkey_manager.hotkeys, updated_hotkeys)
-        self.assertEqual(self.settings.saved_hotkeys, updated_hotkeys)
-        self.assertEqual(controller.ui_controller.hotkeys, updated_hotkeys)
-        self.assertIn("Hotkeys updated", controller.ui_controller.statuses)
+        assert controller.hotkey_manager.hotkeys == updated_hotkeys
+        assert self.settings.saved_hotkeys == updated_hotkeys
+        assert controller.ui_controller.hotkeys == updated_hotkeys
+        assert "Hotkeys updated" in controller.ui_controller.statuses
 
     def test_minimize_hotkey_toggles_tray_visibility_on_main_thread(self):
         controller = self._create_controller()
 
         controller.minimize_to_tray()
 
-        self.assertEqual(
-            controller.ui_controller.main_window.tray_visibility_toggles,
-            1,
-        )
+        assert controller.ui_controller.main_window.tray_visibility_toggles == 1
 
     def test_streaming_reconfigure_can_disable_runtime(self):
         controller = self._create_controller()
-        self.assertIsNotNone(controller.streaming_transcriber)
-        self.assertTrue(controller._streaming_enabled)
-        self.assertIsNotNone(controller._streaming_backend)
-        self.assertEqual(controller._streaming_backend.model_name, "tiny.en")
+        assert controller.streaming_transcriber is not None
+        assert controller._streaming_enabled
+        assert controller._streaming_backend is not None
+        assert controller._streaming_backend.model_name == "tiny.en"
 
         self.settings.all_settings["streaming_enabled"] = False
         controller.reconfigure_streaming()
 
-        self.assertIsNone(controller.streaming_transcriber)
-        self.assertFalse(controller._streaming_enabled)
-        self.assertIn("Streaming mode disabled", controller.ui_controller.statuses)
+        assert controller.streaming_transcriber is None
+        assert not controller._streaming_enabled
+        assert "Streaming mode disabled" in controller.ui_controller.statuses
 
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
         controller = self._create_controller()
@@ -858,26 +846,18 @@ class TestApplicationController(unittest.TestCase):
         controller.recorder.is_recording = True
         self.audio_processor.check_result = (False, 1.0)
         controller.stop_recording()
-        self.assertEqual(len(controller.executor.submissions), 1)
-        self.assertEqual(
-            controller.executor.submissions[0][0].__name__, "transcribe_audio_file"
-        )
+        assert len(controller.executor.submissions) == 1
+        assert controller.executor.submissions[0][0].__name__ == "transcribe_audio_file"
 
         controller.executor = FakeExecutor()
         controller.current_backend = controller.transcription_backends["api_gpt4o"]
         controller.recorder.is_recording = True
         self.audio_processor.check_result = (True, 30.0)
         controller.stop_recording()
-        self.assertEqual(len(controller.executor.submissions), 1)
-        self.assertEqual(
-            controller.executor.submissions[0][0].__name__,
-            "transcribe_large_audio_file",
-        )
-        self.assertEqual(controller.ui_controller.overlay.large_file_info, 30.0)
-        self.assertIn(
-            controller.ui_controller.overlay.STATE_LARGE_FILE_SPLITTING,
-            controller.ui_controller.overlay.shown_states,
-        )
+        assert len(controller.executor.submissions) == 1
+        assert controller.executor.submissions[0][0].__name__ == "transcribe_large_audio_file"
+        assert controller.ui_controller.overlay.large_file_info == 30.0
+        assert controller.ui_controller.overlay.STATE_LARGE_FILE_SPLITTING in controller.ui_controller.overlay.shown_states
 
     def test_transcription_complete_saves_history_and_resets_pending_state(self):
         controller = self._create_controller()
@@ -888,18 +868,18 @@ class TestApplicationController(unittest.TestCase):
 
         controller._on_transcription_complete("hello world", None)
 
-        self.assertEqual(len(self.history_manager.entries), 1)
+        assert len(self.history_manager.entries) == 1
         entry = self.history_manager.entries[0]
-        self.assertEqual(entry["text"], "hello world")
-        self.assertIsNone(entry.get("raw_text"))
-        self.assertEqual(entry["source_audio_path"], "source.wav")
-        self.assertEqual(entry["audio_duration"], 9.5)
-        self.assertEqual(entry["file_size"], 2048)
-        self.assertTrue(controller.ui_controller.refreshed_history)
-        self.assertEqual(self.pyperclip.copied[-1], "hello world")
-        self.assertIsNone(controller._pending_audio_path)
-        self.assertIsNone(controller._pending_audio_duration)
-        self.assertIsNone(controller._pending_file_size)
+        assert entry["text"] == "hello world"
+        assert entry.get("raw_text") is None
+        assert entry["source_audio_path"] == "source.wav"
+        assert entry["audio_duration"] == 9.5
+        assert entry["file_size"] == 2048
+        assert controller.ui_controller.refreshed_history
+        assert self.pyperclip.copied[-1] == "hello world"
+        assert controller._pending_audio_path is None
+        assert controller._pending_audio_duration is None
+        assert controller._pending_file_size is None
 
     def test_transcription_complete_stores_raw_and_fixed_text(self):
         controller = self._create_controller()
@@ -908,11 +888,11 @@ class TestApplicationController(unittest.TestCase):
         controller._on_transcription_complete("Fixed sentence.", "um fixed sentence")
 
         entry = self.history_manager.entries[0]
-        self.assertEqual(entry["text"], "Fixed sentence.")
-        self.assertEqual(entry["raw_text"], "um fixed sentence")
-        self.assertEqual(controller.ui_controller.transcription_text, "Fixed sentence.")
-        self.assertEqual(controller.ui_controller.transcription_raw, "um fixed sentence")
-        self.assertEqual(self.pyperclip.copied[-1], "Fixed sentence.")
+        assert entry["text"] == "Fixed sentence."
+        assert entry["raw_text"] == "um fixed sentence"
+        assert controller.ui_controller.transcription_text == "Fixed sentence."
+        assert controller.ui_controller.transcription_raw == "um fixed sentence"
+        assert self.pyperclip.copied[-1] == "Fixed sentence."
 
     def test_transcribe_audio_file_applies_cleanup_when_enabled(self):
         controller = self._create_controller()
@@ -931,10 +911,10 @@ class TestApplicationController(unittest.TestCase):
         controller.transcription_runtime.transcribe_audio_file(clip_path)
 
         entry = self.history_manager.entries[0]
-        self.assertEqual(entry["text"], "Cleaned text.")
-        self.assertEqual(entry["raw_text"], "um cleaned text")
-        self.assertEqual(entry["cleanup_provider"], "openai")
-        self.assertTrue(entry["cleanup_model"])
+        assert entry["text"] == "Cleaned text."
+        assert entry["raw_text"] == "um cleaned text"
+        assert entry["cleanup_provider"] == "openai"
+        assert entry["cleanup_model"]
 
     def test_transcribe_audio_file_skips_cleanup_when_disabled(self):
         controller = self._create_controller()
@@ -953,10 +933,10 @@ class TestApplicationController(unittest.TestCase):
         controller.transcription_runtime.transcribe_audio_file(clip_path)
 
         entry = self.history_manager.entries[0]
-        self.assertEqual(entry["text"], "raw only")
-        self.assertIsNone(entry.get("raw_text"))
-        self.assertIsNone(entry.get("cleanup_provider"))
-        self.assertIsNone(entry.get("cleanup_model"))
+        assert entry["text"] == "raw only"
+        assert entry.get("raw_text") is None
+        assert entry.get("cleanup_provider") is None
+        assert entry.get("cleanup_model") is None
 
     def test_transcribe_clip_delegates_to_current_backend(self):
         controller = self._create_controller()
@@ -966,16 +946,13 @@ class TestApplicationController(unittest.TestCase):
                 return f"clip transcript for {path}"
 
         controller.current_backend = _Backend()
-        self.assertEqual(
-            controller.transcribe_clip("dictation.wav"),
-            "clip transcript for dictation.wav",
-        )
+        assert controller.transcribe_clip("dictation.wav") == "clip transcript for dictation.wav"
 
     def test_transcribe_clip_raises_without_backend_or_when_busy(self):
         controller = self._create_controller()
 
         controller.current_backend = None
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
 
         class _BusyBackend:
@@ -985,7 +962,7 @@ class TestApplicationController(unittest.TestCase):
                 return "should not run"
 
         controller.current_backend = _BusyBackend()
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
 
     # ── Meeting Mode exclusivity ───────────────────────────────────
@@ -998,32 +975,32 @@ class TestApplicationController(unittest.TestCase):
         ui = controller.ui_controller
         controller.meeting_active = True
 
-        self.assertFalse(ui.start_recording())
+        assert not ui.start_recording()
 
-        self.assertFalse(controller.recorder.is_recording)
-        self.assertFalse(ui.is_recording)
-        self.assertFalse(ui.main_window.is_recording)
+        assert not controller.recorder.is_recording
+        assert not ui.is_recording
+        assert not ui.main_window.is_recording
         # Flipped to recording, then reverted once the refusal came back.
-        self.assertEqual(ui.main_window.recording_state_updates, [True, False])
-        self.assertIn(self._MEETING_REFUSAL, ui.statuses)
+        assert ui.main_window.recording_state_updates == [True, False]
+        assert self._MEETING_REFUSAL in ui.statuses
 
     def test_recording_starts_normally_without_a_meeting(self):
         controller = self._create_controller()
         ui = controller.ui_controller
 
-        self.assertTrue(ui.start_recording())
+        assert ui.start_recording()
 
-        self.assertTrue(controller.recorder.is_recording)
-        self.assertTrue(ui.main_window.is_recording)
+        assert controller.recorder.is_recording
+        assert ui.main_window.is_recording
 
     def test_toggle_recording_is_refused_during_a_meeting(self):
         controller = self._create_controller()
         controller.meeting_active = True
 
-        self.assertFalse(controller.toggle_recording())
+        assert not controller.toggle_recording()
 
-        self.assertFalse(controller.recorder.is_recording)
-        self.assertIn(self._MEETING_REFUSAL, controller.ui_controller.statuses)
+        assert not controller.recorder.is_recording
+        assert self._MEETING_REFUSAL in controller.ui_controller.statuses
 
     def test_transcribe_clip_is_refused_during_a_meeting(self):
         """Settings-dialog rule dictation must not run beside a meeting."""
@@ -1035,7 +1012,7 @@ class TestApplicationController(unittest.TestCase):
                 return "should not run"
 
         controller.current_backend = _Backend()
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
 
     def test_second_meeting_start_is_refused_while_one_is_running(self):
@@ -1048,11 +1025,8 @@ class TestApplicationController(unittest.TestCase):
 
         runtime.start_meeting(cloud_enabled=False)
 
-        self.assertEqual(launched, [])
-        self.assertIn(
-            "A meeting is already in progress",
-            controller.ui_controller.meeting_statuses,
-        )
+        assert launched == []
+        assert "A meeting is already in progress" in controller.ui_controller.meeting_statuses
 
     def test_declined_cloud_consent_resyncs_the_toggle(self):
         """Declining consent from the toggle must put the checkbox back."""
@@ -1061,14 +1035,9 @@ class TestApplicationController(unittest.TestCase):
 
         controller.meeting_runtime.toggle_cloud(True)
 
-        self.assertEqual(controller.ui_controller.meeting_consent_requests, 1)
-        self.assertIn(
-            {"cloud_enabled": False}, controller.ui_controller.meeting_states
-        )
-        self.assertIn(
-            "Cloud intelligence stays off",
-            controller.ui_controller.meeting_statuses,
-        )
+        assert controller.ui_controller.meeting_consent_requests == 1
+        assert {"cloud_enabled": False} in controller.ui_controller.meeting_states
+        assert "Cloud intelligence stays off" in controller.ui_controller.meeting_statuses
 
     def test_meeting_cleanup_gives_up_on_a_hanging_engine_shutdown(self):
         """App exit must not wait minutes for the engine to drain."""
@@ -1094,9 +1063,9 @@ class TestApplicationController(unittest.TestCase):
         finally:
             blocked.set()
 
-        self.assertLess(elapsed, 5.0)
-        self.assertFalse(controller.meeting_active)
-        self.assertIsNone(runtime._engine)
+        assert elapsed < 5.0
+        assert not controller.meeting_active
+        assert runtime._engine is None
 
     def test_dashboard_urls_are_redacted_before_logging(self):
         controller = self._create_controller()
@@ -1104,12 +1073,9 @@ class TestApplicationController(unittest.TestCase):
             type(controller.meeting_runtime).__module__
         ].redact_meeting_url
 
-        self.assertEqual(
-            redact("http://127.0.0.1:8123/m/secret-host-token"),
-            "http://127.0.0.1:8123/<redacted>",
-        )
-        self.assertEqual(redact(""), "")
-        self.assertEqual(redact("not-a-url"), "<redacted>")
+        assert redact("http://127.0.0.1:8123/m/secret-host-token") == "http://127.0.0.1:8123/<redacted>"
+        assert redact("") == ""
+        assert redact("not-a-url") == "<redacted>"
 
     def test_cleanup_is_safe_with_partial_state(self):
         controller = self._create_controller()
@@ -1122,9 +1088,9 @@ class TestApplicationController(unittest.TestCase):
 
         controller.cleanup()
 
-        self.assertTrue(controller.executor.shutdown_called)
-        self.assertTrue(controller.ui_controller.cleaned_up)
-        self.assertTrue(self.db_state["closed"])
+        assert controller.executor.shutdown_called
+        assert controller.ui_controller.cleaned_up
+        assert self.db_state["closed"]
 
     # ── Model Manager download/delete orchestration ────────────────
 
@@ -1139,12 +1105,10 @@ class TestApplicationController(unittest.TestCase):
 
         controller.request_model_download("tiny")
 
-        self.assertEqual(
-            controller.ui_controller.consent_requests[-1][0], "tiny"
-        )
-        self.assertEqual(self.settings.all_settings["whisper_model"], "base")
-        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 0)
-        self.assertEqual(len(controller.executor.submissions), 0)
+        assert controller.ui_controller.consent_requests[-1][0] == "tiny"
+        assert self.settings.all_settings["whisper_model"] == "base"
+        assert controller.ui_controller.engine_controls_refreshes == 0
+        assert len(controller.executor.submissions) == 0
 
     def test_manager_download_already_cached_short_circuits(self):
         controller = self._create_controller()
@@ -1157,9 +1121,9 @@ class TestApplicationController(unittest.TestCase):
 
         controller.request_model_download("tiny")
 
-        self.assertEqual(ended, ["tiny"])
-        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
-        self.assertEqual(len(controller.executor.submissions), 0)
+        assert ended == ["tiny"]
+        assert controller.ui_controller.model_manager_refreshes == 1
+        assert len(controller.executor.submissions) == 0
 
     def test_manager_fetch_only_download_leaves_engine_alone(self):
         controller = self._create_controller()
@@ -1177,20 +1141,16 @@ class TestApplicationController(unittest.TestCase):
             busy_before = list(controller.ui_controller.engine_busy_states)
 
             controller.request_model_download("tiny")
-            self.assertEqual(controller.ui_controller.download_started, ["tiny"])
+            assert controller.ui_controller.download_started == ["tiny"]
             fn, args = controller.executor.submissions[-1]
             fn(*args)
 
-        self.assertEqual(fetched, ["tiny"])
-        self.assertEqual(backend.model_name, "base")  # engine untouched
-        self.assertEqual(
-            controller.ui_controller.download_finished, [("tiny", True)]
-        )
-        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
+        assert fetched == ["tiny"]
+        assert backend.model_name == "base"  # engine untouched
+        assert controller.ui_controller.download_finished == [("tiny", True)]
+        assert controller.ui_controller.model_manager_refreshes == 1
         # Fetch-only downloads never toggle the engine-busy state.
-        self.assertEqual(
-            controller.ui_controller.engine_busy_states, busy_before
-        )
+        assert controller.ui_controller.engine_busy_states == busy_before
 
     def test_manager_fetch_bridges_missing_selected_model(self):
         controller = self._create_controller()
@@ -1206,9 +1166,9 @@ class TestApplicationController(unittest.TestCase):
         fn, args = controller.executor.submissions[-1]
         fn(*args)
 
-        self.assertTrue(backend.is_available())
-        self.assertEqual(controller.ui_controller.device_infos[-1], "cpu-reloaded")
-        self.assertIn("Whisper engine ready", controller.ui_controller.statuses)
+        assert backend.is_available()
+        assert controller.ui_controller.device_infos[-1] == "cpu-reloaded"
+        assert "Whisper engine ready" in controller.ui_controller.statuses
 
     def test_manager_delete_refuses_loaded_model(self):
         controller = self._create_controller()
@@ -1217,11 +1177,8 @@ class TestApplicationController(unittest.TestCase):
 
         controller.request_model_delete("base")
 
-        self.assertEqual(
-            controller.ui_controller.deleted_models,
-            [("base", False, "Model is in use — switch models first")],
-        )
-        self.assertEqual(len(controller.executor.submissions), 0)
+        assert controller.ui_controller.deleted_models == [("base", False, "Model is in use — switch models first")]
+        assert len(controller.executor.submissions) == 0
 
     def test_manager_delete_runs_worker_and_reports(self):
         controller = self._create_controller()
@@ -1237,12 +1194,10 @@ class TestApplicationController(unittest.TestCase):
             fn, args = controller.executor.submissions[-1]
             fn(*args)
 
-        self.assertEqual(deleted, ["tiny"])
-        self.assertEqual(
-            controller.ui_controller.deleted_models, [("tiny", True, "")]
-        )
-        self.assertEqual(controller.ui_controller.model_manager_refreshes, 1)
-        self.assertEqual(ended, ["tiny"])
+        assert deleted == ["tiny"]
+        assert controller.ui_controller.deleted_models == [("tiny", True, "")]
+        assert controller.ui_controller.model_manager_refreshes == 1
+        assert ended == ["tiny"]
 
     def test_manager_delete_reports_locked_files(self):
         controller = self._create_controller()
@@ -1255,10 +1210,7 @@ class TestApplicationController(unittest.TestCase):
             fn, args = controller.executor.submissions[-1]
             fn(*args)
 
-        self.assertEqual(
-            controller.ui_controller.deleted_models,
-            [("tiny", False, "Files are in use by another process")],
-        )
+        assert controller.ui_controller.deleted_models == [("tiny", False, "Files are in use by another process")]
 
     # ── GPU component install / fallback ───────────────────────────
 
@@ -1282,14 +1234,14 @@ class TestApplicationController(unittest.TestCase):
         component_id, success, message = (
             controller.ui_controller.component_install_results[-1]
         )
-        self.assertEqual(component_id, "gpu-accel")
-        self.assertTrue(success)
-        self.assertNotIn("Restart", message)
+        assert component_id == "gpu-accel"
+        assert success
+        assert "Restart" not in message
         # The persisted CPU device (fallback residue) moves back to auto so the
         # follow-up reload can adopt the GPU.
-        self.assertEqual(self.settings.all_settings["whisper_device"], "auto")
-        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
-        self.assertEqual(reload_requests, [True])
+        assert self.settings.all_settings["whisper_device"] == "auto"
+        assert controller.ui_controller.engine_controls_refreshes == 1
+        assert reload_requests == [True]
 
     def test_component_activation_failure_keeps_the_restart_message(self):
         import threading
@@ -1313,10 +1265,10 @@ class TestApplicationController(unittest.TestCase):
         _cid, success, message = (
             controller.ui_controller.component_install_results[-1]
         )
-        self.assertTrue(success)
-        self.assertIn("Restart OpenWhisper", message)
-        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
-        self.assertEqual(reload_requests, [])
+        assert success
+        assert "Restart OpenWhisper" in message
+        assert self.settings.all_settings["whisper_device"] == "cpu"
+        assert reload_requests == []
 
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
         controller = self._create_controller()
@@ -1334,9 +1286,9 @@ class TestApplicationController(unittest.TestCase):
         ):
             controller.gpu_fallback_detected.emit()
 
-        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
-        self.assertEqual(controller.ui_controller.engine_controls_refreshes, 1)
-        self.assertIn("Manage models", controller.ui_controller.statuses[-1])
+        assert self.settings.all_settings["whisper_device"] == "cpu"
+        assert controller.ui_controller.engine_controls_refreshes == 1
+        assert "Manage models" in controller.ui_controller.statuses[-1]
 
     def test_gpu_fallback_out_of_memory_does_not_advertise_the_component(self):
         controller = self._create_controller()
@@ -1349,10 +1301,10 @@ class TestApplicationController(unittest.TestCase):
 
         controller.gpu_fallback_detected.emit()
 
-        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        assert self.settings.all_settings["whisper_device"] == "cpu"
         status = controller.ui_controller.statuses[-1]
-        self.assertIn("out of memory", status)
-        self.assertNotIn("Manage models", status)
+        assert "out of memory" in status
+        assert "Manage models" not in status
 
     def test_reload_worker_leaves_the_fallback_warning_visible(self):
         controller = self._create_controller()
@@ -1379,11 +1331,11 @@ class TestApplicationController(unittest.TestCase):
             fn(*args)
 
         statuses = controller.ui_controller.statuses
-        self.assertIn("Whisper engine ready", statuses)
+        assert "Whisper engine ready" in statuses
         # Emitted after the ready status, so the actionable warning is what
         # remains on screen.
-        self.assertIn("Manage models", statuses[-1])
-        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
+        assert "Manage models" in statuses[-1]
+        assert self.settings.all_settings["whisper_device"] == "cpu"
 
     def test_startup_fallback_is_reported_once_the_ui_is_ready(self):
         controller = self._create_controller()
@@ -1401,9 +1353,7 @@ class TestApplicationController(unittest.TestCase):
         ):
             controller.notify_main_ui_ready()
 
-        self.assertEqual(self.settings.all_settings["whisper_device"], "cpu")
-        self.assertIn("Manage models", controller.ui_controller.statuses[-1])
+        assert self.settings.all_settings["whisper_device"] == "cpu"
+        assert "Manage models" in controller.ui_controller.statuses[-1]
 
 
-if __name__ == "__main__":
-    unittest.main()

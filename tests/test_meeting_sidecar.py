@@ -4,6 +4,8 @@ Tests for PiSidecarAgent: stdio hello handshake, auth failure, restart budget.
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import textwrap
 import threading
@@ -12,8 +14,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.agent import pi_sidecar as pi_mod
 from meeting.agent.pi_sidecar import PiSidecarAgent
@@ -1192,3 +1192,32 @@ class TestCheckpointTimeoutLifecycle:
         assert "Late sidecar response" in caplog.text
         assert "request_id=req-late" in caplog.text
         assert "dropped" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Sidecar createMeetingTools polishOnly gate (TypeScript via esbuild runner).
+# --------------------------------------------------------------------------
+
+SIDECAR_ROOT = Path(__file__).resolve().parents[1] / "sidecar"
+RUNNER = SIDECAR_ROOT / "scripts" / "run-tools-test.mjs"
+
+
+def test_polish_only_write_filter():
+    """policy.polishOnly must be the write gate on the Pi tool path."""
+    if not RUNNER.is_file():
+        pytest.fail(f"missing {RUNNER}")
+    esbuild = SIDECAR_ROOT / "node_modules" / "esbuild"
+    if not esbuild.exists():
+        pytest.skip("sidecar esbuild is not installed")
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH")
+
+    result = subprocess.run(
+        [node, str(RUNNER)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(SIDECAR_ROOT),
+    )
+    assert result.returncode == 0, result.stdout + "\n" + result.stderr

@@ -1,13 +1,9 @@
 """Tests for revise_segment_text op validation and store application."""
 from __future__ import annotations
 
-import os
-import sys
 from datetime import datetime
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.interfaces import TranscriptSegment
 from meeting.persist.repository import SqlMeetingRepository
@@ -15,7 +11,6 @@ from meeting.state.patches import OpContext, apply_ops
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
 from services.database import DatabaseManager
-
 
 def _repo(tmp_path):
     db = DatabaseManager(db_path=str(tmp_path / "meet.db"))
@@ -44,7 +39,6 @@ def _repo(tmp_path):
     ])
     return repo, mid
 
-
 def test_revise_segment_text_rejects_missing_evidence():
     state = MeetingState(meeting_id="m1", title="t")
     ctx = OpContext(
@@ -60,7 +54,6 @@ def test_revise_segment_text_rejects_missing_evidence():
     assert not results[0].ok
     assert results[0].reason in {"missing_evidence", "unknown_evidence"}
 
-
 def test_revise_segment_text_rejects_untrusted_human_client():
     state = MeetingState(meeting_id="m1", title="t")
     ctx = OpContext(
@@ -74,7 +67,6 @@ def test_revise_segment_text_rejects_untrusted_human_client():
     }], ctx)
     assert not results[0].ok
     assert results[0].reason == "agent_only"
-
 
 def test_revise_segment_text_applies_via_store(tmp_path):
     repo, mid = _repo(tmp_path)

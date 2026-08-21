@@ -1,16 +1,12 @@
 """
 Tests for CheckpointScheduler: adaptive intervals, coalescing, Jaccard early fire.
 """
-import os
-import sys
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.agent import scheduler as scheduler_mod
 from meeting.agent.scheduler import (
@@ -19,7 +15,6 @@ from meeting.agent.scheduler import (
     _content_words,
 )
 from meeting.interfaces import AgentResult, OpResult
-
 
 class FakeStore:
     def __init__(self, snapshot=None):
@@ -44,14 +39,12 @@ class FakeStore:
         self.apply_calls.append((actor_kind, actor_id, ops))
         return [OpResult(ok=True, op=op) for op in ops]
 
-
 class FakeClock:
     def __init__(self, now_s=200.0):
         self._now = now_s
 
     def now_s(self):
         return self._now
-
 
 class FakeEngine:
     def __init__(self, segments=None, clock_s=200.0):
@@ -68,7 +61,6 @@ class FakeEngine:
         if limit is not None:
             items = items[:limit]
         return items
-
 
 class FakeAgent:
     def __init__(self, block_s=0.0, fail_times=0, fail_error="forced"):
@@ -104,7 +96,6 @@ class FakeAgent:
     def is_healthy(self):
         return True
 
-
 class TestAdaptiveInterval:
     def test_defaults_prioritize_live_dashboard_freshness(self):
         sched = CheckpointScheduler(FakeEngine(), FakeAgent())
@@ -127,7 +118,6 @@ class TestAdaptiveInterval:
         assert sched._interval_for(7) == 45.0
         assert sched._interval_for(8) == 30.0   # pressure floor
         assert sched._interval_for(20) == 30.0
-
 
 class TestCoalescing:
     def test_pending_while_in_flight_coalesce_into_next_fire(self):
@@ -165,7 +155,6 @@ class TestCoalescing:
         finally:
             agent._release.set()
             sched.stop()
-
 
 class TestSegmentWatermark:
     """The fetch cursor must never hide transcript from the agent.
@@ -370,7 +359,6 @@ class TestSegmentWatermark:
         assert len(card_calls) == 12
         assert any(c.is_polish for c in agent.calls)
 
-
 class TestConsolidationRace:
     def test_consolidation_skipped_when_worker_will_not_stop(self):
         engine = FakeEngine([
@@ -468,7 +456,6 @@ class TestConsolidationRace:
         assert outcome.status == "failed"
         assert "model down" in outcome.message
 
-
 class TestFinalPolish:
     def test_final_polish_uses_full_transcript_and_is_polish(self):
         engine = FakeEngine([
@@ -498,7 +485,6 @@ class TestFinalPolish:
         assert agent.calls[1].is_consolidation is True
         assert agent.calls[0].new_segments[0]["id"] == "sg_final"
         assert agent.calls[1].new_segments[0]["id"] == "sg_final"
-
 
 class TestTopicShift:
     def test_content_words_filters_stopwords(self):

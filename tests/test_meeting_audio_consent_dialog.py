@@ -1,6 +1,5 @@
 """Qt tests for the meeting audio-upload consent dialog."""
 import os
-import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,7 +9,7 @@ from ui_qt.dialogs.meeting_audio_consent_dialog import MeetingAudioConsentDialog
 from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
 
 
-class _QtTestCase(unittest.TestCase):
+class _QtTestCase:
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -22,22 +21,22 @@ class TestAudioConsentDialog(_QtTestCase):
 
     def test_buttons_and_default_result(self):
         dialog = MeetingAudioConsentDialog()
-        self.assertEqual(dialog.result_action, MeetingAudioConsentDialog.RESULT_CANCEL)
-        self.assertIsNotNone(self._button(dialog, "meetingAudioConsentNotNowButton"))
-        self.assertIsNotNone(self._button(dialog, "meetingAudioConsentEnableButton"))
+        assert dialog.result_action == MeetingAudioConsentDialog.RESULT_CANCEL
+        assert self._button(dialog, "meetingAudioConsentNotNowButton") is not None
+        assert self._button(dialog, "meetingAudioConsentEnableButton") is not None
 
     def test_enable_records_result(self):
         dialog = MeetingAudioConsentDialog()
         self._button(dialog, "meetingAudioConsentEnableButton").click()
-        self.assertEqual(dialog.result_action, MeetingAudioConsentDialog.RESULT_ENABLE)
+        assert dialog.result_action == MeetingAudioConsentDialog.RESULT_ENABLE
 
     def test_copy_mentions_system_audio_and_openai(self):
         dialog = MeetingAudioConsentDialog()
         body = dialog.findChild(QLabel, "consentBodyLabel")
         text = body.text() if body is not None else ""
-        self.assertIn("system-audio", text)
-        self.assertIn("OpenAI", text)
-        self.assertIn("Others", text)
+        assert "system-audio" in text
+        assert "OpenAI" in text
+        assert "Others" in text
 
 
 class TestCloudConsentCopy(_QtTestCase):
@@ -45,9 +44,9 @@ class TestCloudConsentCopy(_QtTestCase):
         dialog = MeetingConsentDialog()
         body = dialog.findChild(QLabel, "consentBodyLabel")
         text = body.text() if body is not None else ""
-        self.assertNotIn("Your audio never leaves this computer", text)
-        self.assertIn("does not upload audio", text)
-        self.assertIn("Past-meeting recall", text)
+        assert "Your audio never leaves this computer" not in text
+        assert "does not upload audio" in text
+        assert "Past-meeting recall" in text
 
     def test_cloud_consent_names_local_endpoint(self):
         dialog = MeetingConsentDialog(
@@ -56,9 +55,9 @@ class TestCloudConsentCopy(_QtTestCase):
         )
         body = dialog.findChild(QLabel, "consentBodyLabel")
         text = body.text() if body is not None else ""
-        self.assertIn("127.0.0.1:1234", text)
-        self.assertIn("does not leave this machine", text)
-        self.assertNotIn("OpenRouter", text)
+        assert "127.0.0.1:1234" in text
+        assert "does not leave this machine" in text
+        assert "OpenRouter" not in text
 
     def test_cloud_consent_names_remote_endpoint(self):
         dialog = MeetingConsentDialog(
@@ -67,6 +66,6 @@ class TestCloudConsentCopy(_QtTestCase):
         )
         body = dialog.findChild(QLabel, "consentBodyLabel")
         text = body.text() if body is not None else ""
-        self.assertIn("Work gateway (llm.example.com)", text)
-        self.assertIn("leaves this computer", text)
-        self.assertNotIn("OpenRouter", text)
+        assert "Work gateway (llm.example.com)" in text
+        assert "leaves this computer" in text
+        assert "OpenRouter" not in text

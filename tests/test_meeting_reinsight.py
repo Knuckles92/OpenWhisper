@@ -3,30 +3,13 @@ Tests for the headless insight re-run over a stored meeting: guard rails,
 op application through the state store, persistence, and agent-core teardown.
 """
 import json
-import os
-import sys
 from datetime import datetime
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.interfaces import AgentResult, TranscriptSegment
 from meeting.reinsight import rerun_insights
-
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
 
 
 def make_meeting(repo, meeting_id="m_rerun", state_json=None):

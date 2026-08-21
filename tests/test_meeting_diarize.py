@@ -4,15 +4,12 @@ degradation, and Kaldi-compatible filterbank features.
 """
 import logging
 import os
-import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.diarize import fbank as fbank_mod
 from meeting.diarize.clustering import (
@@ -27,11 +24,9 @@ from meeting.diarize.clustering import (
 )
 from meeting.interfaces import TranscriptSegment, OpResult
 
-
 def _unit(vec):
     a = np.asarray(vec, dtype=np.float32)
     return (a / np.linalg.norm(a)).astype(np.float32)
-
 
 class FakeEmbedder:
     def __init__(self, vectors):
@@ -46,7 +41,6 @@ class FakeEmbedder:
         self._i += 1
         return v.copy()
 
-
 class RaisingEmbedder:
     """Embedder whose ONNX session fails at runtime (mid-meeting failure)."""
 
@@ -57,7 +51,6 @@ class RaisingEmbedder:
     def embed(self, mono):
         self.calls += 1
         raise RuntimeError("onnxruntime session crashed")
-
 
 class FakeStore:
     def __init__(self):
@@ -71,7 +64,6 @@ class FakeStore:
             effect={"participant": {"id": pid, "display_name": f"Speaker {self.n}"}},
         )]
 
-
 class FakeRepo:
     def __init__(self):
         self.embeddings = {}
@@ -79,19 +71,16 @@ class FakeRepo:
     def set_segment_embedding(self, segment_id, payload):
         self.embeddings[segment_id] = payload
 
-
 def _make_diarizer(vectors=None, embedder=None):
     embedder = embedder or FakeEmbedder(vectors or [])
     d = OnlineDiarizer(embedder, FakeStore(), FakeRepo(), "m_diar")
     return d
-
 
 def _segment(seg_id, t0, channel="loopback"):
     return TranscriptSegment(
         segment_id=seg_id, meeting_id="m_diar", chunk_id=1, channel=channel,
         start_s=t0, end_s=t0 + 1.0, text="x",
     )
-
 
 def _synthetic_speakers(n, dim=192, speakers=4, sigma=0.035, seed=7):
     """Unit embeddings for ``speakers`` voices that genuinely cluster.
@@ -108,7 +97,6 @@ def _synthetic_speakers(n, dim=192, speakers=4, sigma=0.035, seed=7):
         out.append((v / np.linalg.norm(v)).astype(np.float32))
     return out
 
-
 def _prefill(diarizer, vectors, pid_of=lambda i: f"p_{i % 4}"):
     """Populate a diarizer's records directly (skips the online pass)."""
     records = [
@@ -118,7 +106,6 @@ def _prefill(diarizer, vectors, pid_of=lambda i: f"p_{i % 4}"):
     diarizer._records = list(records)
     diarizer._by_segment_id = {r.segment_id: r for r in records}
     return records
-
 
 class TestAverageLinkage:
     def test_separates_distant_pairs(self):
@@ -134,7 +121,6 @@ class TestAverageLinkage:
         assert len(groups) == 2
         flat = sorted(sorted(g) for g in groups)
         assert flat == [[0, 1], [2, 3]]
-
 
 class TestPinPreservation:
     def test_pinned_segments_never_relabeled_on_recluster(self):
@@ -207,7 +193,6 @@ class TestPinPreservation:
     def test_pin_weight_constant(self):
         assert PIN_WEIGHT == 100
 
-
 class TestPinRaceProtection:
     """A pin landing between op computation and dispatch must win."""
 
@@ -265,7 +250,6 @@ class TestPinRaceProtection:
                 "participant_id": "p_A"}]
         assert d._filter_stale_ops(ops) == []
 
-
 class TestPinOnUnknownSegment:
     def test_pin_never_embedded_segment_does_not_raise(self):
         d = _make_diarizer()
@@ -306,7 +290,6 @@ class TestPinOnUnknownSegment:
         target = d._find_cluster(second)
         assert "sg_0" in target.pinned_segments
         assert d._find_cluster(first) is None  # emptied cluster is dropped
-
 
 class TestGracefulDegradation:
     def test_runtime_failure_degrades_once_and_never_blocks_asr(self, caplog):
@@ -357,7 +340,6 @@ class TestGracefulDegradation:
                  16000)
         assert d.is_available() is False
         d.pin("sg_0", "p_X")  # still accepts corrections without raising
-
 
 class TestBoundedRecluster:
     def test_large_meeting_recluster_stays_fast(self):
@@ -441,7 +423,6 @@ class TestBoundedRecluster:
         assert stale_recent.segment_id in moved  # inside the window: fixed
         assert stale_old.segment_id not in moved  # outside: left alone
 
-
 class TestOverMergeSplit:
     def test_recluster_splits_an_over_merged_participant(self):
         vectors = _synthetic_speakers(40, speakers=2)
@@ -519,7 +500,6 @@ class TestOverMergeSplit:
         assert ops == []
         assert {r.participant_id for r in records} == {"p_A"}
 
-
 class TestAverageLinkageScaling:
     def test_linkage_matches_reference_on_small_input(self):
         vectors = np.stack(_synthetic_speakers(24, speakers=3))
@@ -532,7 +512,6 @@ class TestAverageLinkageScaling:
     def test_singleton_and_empty_inputs(self):
         assert _average_linkage(np.zeros((0, 0)), 0.38) == []
         assert _average_linkage(np.zeros((1, 1)), 0.38) == [[0]]
-
 
 class TestFbank:
     def _tone(self, freq, seconds=1.0):
@@ -596,14 +575,12 @@ class TestFbank:
             np.zeros(fbank_mod.SAMPLE_RATE // 5, dtype=np.float32))
         assert top_tone[:, -1].mean() > silence[:, -1].mean() + 10.0
 
-
 #: Set both to run the embedding-parity gate from the plan
 #: ("cosine >= 0.999 vs reference vectors"). ``..._REF`` is an ``.npz`` with
 #: ``audio_<i>`` (float32 mono 16 kHz) and ``embedding_<i>`` (reference
 #: embedding) array pairs produced by the reference WeSpeaker pipeline.
 _PARITY_MODEL = os.environ.get("OPENWHISPER_SPEAKER_MODEL")
 _PARITY_REF = os.environ.get("OPENWHISPER_SPEAKER_PARITY_REF")
-
 
 @pytest.mark.skipif(
     not (_PARITY_MODEL and _PARITY_REF),

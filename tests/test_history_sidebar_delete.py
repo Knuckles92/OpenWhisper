@@ -1,7 +1,7 @@
 """Qt tests for deleting entries from the history sidebar."""
 
+import pytest
 import os
-import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,17 +13,20 @@ from services.settings import SettingsKey
 from ui_qt.widgets.history_sidebar import HistorySidebar
 
 
-class TestHistorySidebarDelete(unittest.TestCase):
+class TestHistorySidebarDelete:
     """Confirmation behavior for context-menu deletion requests."""
 
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.sidebar = HistorySidebar()
 
-    def tearDown(self):
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         self.sidebar.deleteLater()
 
     def test_delete_is_canceled_when_confirmation_is_rejected(self):
@@ -79,7 +82,7 @@ class TestHistorySidebarDelete(unittest.TestCase):
             "entry-test-id",
             delete_audio_file=False,
         )
-        self.assertEqual(deleted, ["entry-test-id"])
+        assert deleted == ["entry-test-id"]
 
     def test_audio_file_can_be_deleted_with_entry(self):
         entry = SimpleNamespace(audio_file="recording.wav")
@@ -170,5 +173,3 @@ class TestHistorySidebarDelete(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()

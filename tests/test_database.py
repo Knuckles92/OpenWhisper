@@ -8,9 +8,6 @@ import uuid
 from datetime import datetime
 
 # Add parent directory to path for imports
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 class TestDatabaseManager:
     """Tests for the DatabaseManager class."""
@@ -346,7 +343,6 @@ class TestDatabaseManager:
             assert version == SCHEMA_VERSION == 11
         finally:
             manager.close()
-
 
 class TestJsonMigration:
     """Tests for JSON to SQLite migration."""

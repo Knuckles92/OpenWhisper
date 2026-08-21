@@ -1,5 +1,5 @@
 """Tests for named OpenAI-compatible text-LLM endpoint profiles."""
-import unittest
+import pytest
 from unittest.mock import MagicMock, patch
 
 from services.settings import SettingsKey
@@ -28,44 +28,41 @@ from services.text_llm import (
 )
 
 
-class TestProfileValidation(unittest.TestCase):
+class TestProfileValidation:
     """Name, URL, and env-var validation for custom endpoints."""
 
     def test_normalize_base_url_strips_slash_and_requires_http(self):
-        self.assertEqual(
-            normalize_base_url("http://127.0.0.1:1234/v1/"),
-            "http://127.0.0.1:1234/v1",
-        )
-        with self.assertRaises(ValueError):
+        assert normalize_base_url("http://127.0.0.1:1234/v1/") == "http://127.0.0.1:1234/v1"
+        with pytest.raises(ValueError):
             normalize_base_url("ftp://127.0.0.1/v1")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             normalize_base_url("not-a-url")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             normalize_base_url("")
 
     def test_validate_profile_name(self):
-        self.assertEqual(validate_profile_name("  LM Studio  "), "LM Studio")
-        with self.assertRaises(ValueError):
+        assert validate_profile_name("  LM Studio  ") == "LM Studio"
+        with pytest.raises(ValueError):
             validate_profile_name("   ")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             validate_profile_name("x" * 81)
 
     def test_validate_api_key_env_allows_blank(self):
-        self.assertEqual(validate_api_key_env(""), "")
-        self.assertEqual(validate_api_key_env("  LMSTUDIO_API_KEY "), "LMSTUDIO_API_KEY")
-        with self.assertRaises(ValueError):
+        assert validate_api_key_env("") == ""
+        assert validate_api_key_env("  LMSTUDIO_API_KEY ") == "LMSTUDIO_API_KEY"
+        with pytest.raises(ValueError):
             validate_api_key_env("api-key")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             validate_api_key_env("1KEY")
 
 
-class TestProfileCrud(unittest.TestCase):
+class TestProfileCrud:
     """Built-ins stay immutable; custom profiles persist without secrets."""
 
     def test_builtins_always_present(self):
         profiles = list_profiles({})
-        self.assertEqual([p.id for p in profiles], ["openai", "openrouter"])
-        self.assertTrue(all(p.builtin for p in profiles))
+        assert [p.id for p in profiles] == ["openai", "openrouter"]
+        assert all(p.builtin for p in profiles)
 
     def test_upsert_and_remove_custom_profile(self):
         settings = {}
@@ -75,13 +72,13 @@ class TestProfileCrud(unittest.TestCase):
             base_url="http://127.0.0.1:1234/v1/",
             api_key_env="",
         )
-        self.assertTrue(profile.id.startswith("custom_"))
-        self.assertEqual(profile.base_url, "http://127.0.0.1:1234/v1")
-        self.assertEqual(profile.kind, PROFILE_KIND_CUSTOM)
-        self.assertFalse(profile.builtin)
+        assert profile.id.startswith("custom_")
+        assert profile.base_url == "http://127.0.0.1:1234/v1"
+        assert profile.kind == PROFILE_KIND_CUSTOM
+        assert not profile.builtin
         stored = settings[SettingsKey.TEXT_LLM_PROFILES]
-        self.assertEqual(stored[0]["id"], profile.id)
-        self.assertNotIn("api_key", stored[0])
+        assert stored[0]["id"] == profile.id
+        assert "api_key" not in stored[0]
 
         updated = upsert_custom_profile(
             settings,
@@ -90,21 +87,19 @@ class TestProfileCrud(unittest.TestCase):
             api_key_env="HOME_LLM_KEY",
             profile_id=profile.id,
         )
-        self.assertEqual(updated.id, profile.id)
-        self.assertEqual(updated.name, "Home Lab")
-        self.assertEqual(
-            get_profile(profile.id, settings).api_key_env, "HOME_LLM_KEY"
-        )
+        assert updated.id == profile.id
+        assert updated.name == "Home Lab"
+        assert get_profile(profile.id, settings).api_key_env == "HOME_LLM_KEY"
 
-        self.assertTrue(remove_custom_profile(settings, profile.id))
-        self.assertIsNone(get_profile(profile.id, settings))
+        assert remove_custom_profile(settings, profile.id)
+        assert get_profile(profile.id, settings) is None
 
     def test_cannot_delete_builtin(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             remove_custom_profile({}, OPENAI_PROFILE_ID)
 
 
-class TestCredentialsAndCatalog(unittest.TestCase):
+class TestCredentialsAndCatalog:
     """Auth-free dummy keys, catalog filtering, and OpenRouter-only sort."""
 
     def test_auth_free_profile_uses_dummy_key(self):
@@ -114,24 +109,23 @@ class TestCredentialsAndCatalog(unittest.TestCase):
             name="Local",
             base_url="http://127.0.0.1:1234/v1",
         )
-        self.assertEqual(resolve_api_key(profile), AUTH_FREE_API_KEY)
+        assert resolve_api_key(profile) == AUTH_FREE_API_KEY
         with patch("services.text_llm.OpenAI") as mock_openai:
             create_openai_client(profile)
             mock_openai.assert_called_once()
             kwargs = mock_openai.call_args.kwargs
-            self.assertEqual(kwargs["api_key"], AUTH_FREE_API_KEY)
-            self.assertEqual(kwargs["base_url"], profile.base_url)
+            assert kwargs["api_key"] == AUTH_FREE_API_KEY
+            assert kwargs["base_url"] == profile.base_url
 
     def test_missing_required_key_returns_none(self):
         profile = get_profile(OPENAI_PROFILE_ID)
         with patch.dict("os.environ", {}, clear=True), patch(
             "services.text_llm.lookup_env_value", return_value=None
         ):
-            self.assertIsNone(resolve_api_key(profile))
+            assert resolve_api_key(profile) is None
 
     def test_openai_catalog_filters_non_chat_models(self):
-        self.assertEqual(
-            filter_openai_chat_models(
+        assert filter_openai_chat_models(
                 [
                     "gpt-4o-mini",
                     "whisper-1",
@@ -139,9 +133,7 @@ class TestCredentialsAndCatalog(unittest.TestCase):
                     "o4-mini",
                     "dall-e-3",
                 ]
-            ),
-            ["gpt-4o-mini", "o4-mini"],
-        )
+            ) == ["gpt-4o-mini", "o4-mini"]
 
     def test_list_chat_models_sorts_openrouter_only(self):
         openai = get_profile(OPENAI_PROFILE_ID)
@@ -168,9 +160,7 @@ class TestCredentialsAndCatalog(unittest.TestCase):
                 ["gpt-4o-mini", "whisper-1", "o4-mini"]
             ),
         ):
-            self.assertEqual(
-                list_chat_models(openai), ["gpt-4o-mini", "o4-mini"]
-            )
+            assert list_chat_models(openai) == ["gpt-4o-mini", "o4-mini"]
 
         router_client = _client_with(["z-model", "a-model"])
         with patch(
@@ -187,7 +177,7 @@ class TestCredentialsAndCatalog(unittest.TestCase):
             "services.text_llm.create_openai_client",
             return_value=custom_client,
         ):
-            self.assertEqual(list_chat_models(custom, sort="top-weekly"), ["alpha", "zeta"])
+            assert list_chat_models(custom, sort="top-weekly") == ["alpha", "zeta"]
             custom_client.models.list.assert_called_with()
 
     def test_list_chat_models_propagates_catalog_failure(self):
@@ -200,18 +190,18 @@ class TestCredentialsAndCatalog(unittest.TestCase):
             "services.text_llm.create_openai_client",
             side_effect=RuntimeError("catalog down"),
         ):
-            with self.assertRaises(RuntimeError):
+            with pytest.raises(RuntimeError):
                 list_chat_models(profile)
 
 
-class TestSnapshotsAndConsent(unittest.TestCase):
+class TestSnapshotsAndConsent:
     """Meeting snapshots, display names, and consent copy."""
 
     def test_old_meeting_row_reconstructs_builtin_profile(self):
         snapshot = snapshot_from_meeting({"agent_provider": "openai"})
-        self.assertEqual(snapshot.profile_id, OPENAI_PROFILE_ID)
-        self.assertEqual(snapshot.kind, "openai")
-        self.assertIsNone(snapshot.base_url)
+        assert snapshot.profile_id == OPENAI_PROFILE_ID
+        assert snapshot.kind == "openai"
+        assert snapshot.base_url is None
 
     def test_stored_snapshot_wins_over_current_settings(self):
         snapshot = snapshot_from_meeting(
@@ -226,11 +216,11 @@ class TestSnapshotsAndConsent(unittest.TestCase):
                 },
             }
         )
-        self.assertEqual(snapshot.profile_id, "custom_deadbeef")
-        self.assertEqual(snapshot.base_url, "http://10.0.0.8:8080/v1")
+        assert snapshot.profile_id == "custom_deadbeef"
+        assert snapshot.base_url == "http://10.0.0.8:8080/v1"
         profile = snapshot.to_profile()
-        self.assertEqual(profile.kind, PROFILE_KIND_CUSTOM)
-        self.assertFalse(profile.builtin)
+        assert profile.kind == PROFILE_KIND_CUSTOM
+        assert not profile.builtin
 
     def test_profile_from_agent_config_prefers_endpoint_snapshot(self):
         profile = profile_from_agent_config(
@@ -243,8 +233,8 @@ class TestSnapshotsAndConsent(unittest.TestCase):
                 "api_key_env": "",
             },
         )
-        self.assertEqual(profile.id, "custom_abcd1234")
-        self.assertTrue(profile.is_local)
+        assert profile.id == "custom_abcd1234"
+        assert profile.is_local
 
     def test_consent_destination_distinguishes_local_and_remote(self):
         local = upsert_custom_profile(
@@ -258,17 +248,14 @@ class TestSnapshotsAndConsent(unittest.TestCase):
             base_url="https://llm.example.com/v1",
             api_key_env="WORK_LLM_KEY",
         )
-        self.assertIn("127.0.0.1:1234", consent_destination(local))
-        self.assertFalse(destination_is_remote(local))
-        self.assertIn("Work gateway", consent_destination(remote))
-        self.assertTrue(destination_is_remote(remote))
-        self.assertEqual(
-            consent_destination(get_profile(OPENROUTER_PROFILE_ID)),
-            "OpenRouter (openrouter.ai)",
-        )
-        self.assertTrue(destination_is_remote(get_profile(OPENAI_PROFILE_ID)))
+        assert "127.0.0.1:1234" in consent_destination(local)
+        assert not destination_is_remote(local)
+        assert "Work gateway" in consent_destination(remote)
+        assert destination_is_remote(remote)
+        assert consent_destination(get_profile(OPENROUTER_PROFILE_ID)) == "OpenRouter (openrouter.ai)"
+        assert destination_is_remote(get_profile(OPENAI_PROFILE_ID))
 
     def test_profile_display_name_falls_back_to_id(self):
-        self.assertEqual(profile_display_name("openai"), "OpenAI")
-        self.assertEqual(profile_display_name("missing_profile"), "missing_profile")
-        self.assertEqual(SIDECAR_API_KEY_ENV, "OPENWHISPER_LLM_API_KEY")
+        assert profile_display_name("openai") == "OpenAI"
+        assert profile_display_name("missing_profile") == "missing_profile"
+        assert SIDECAR_API_KEY_ENV == "OPENWHISPER_LLM_API_KEY"

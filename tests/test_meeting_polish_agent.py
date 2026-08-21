@@ -1,15 +1,10 @@
 """Tests for transcript-polish prompting and direct-agent tool isolation."""
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.agent.openrouter_direct import DirectOpenRouterAgent
 from meeting.agent.prompts import build_checkpoint_user_prompt
 from meeting.interfaces import OpResult
-
 
 class _Tools:
     def __init__(self) -> None:
@@ -28,7 +23,6 @@ class _Tools:
         self.question_calls += 1
         return OpResult(ok=True, op={"op": "resolve_question"})
 
-
 def test_polish_prompt_limits_the_agent_to_transcript_text():
     prompt = build_checkpoint_user_prompt(
         {"participants": {}, "cards": {}, "questions": []},
@@ -46,7 +40,6 @@ def test_polish_prompt_limits_the_agent_to_transcript_text():
     assert "## FULL MEETING TRANSCRIPT" in prompt
     assert "search_past_meetings" in prompt
     assert "search_context_files" in prompt
-
 
 def test_direct_polish_mode_filters_state_and_question_tools():
     tools = _Tools()
@@ -77,7 +70,6 @@ def test_direct_polish_mode_filters_state_and_question_tools():
     assert len(results) == 1
     assert question_results == []
     assert tools.question_calls == 0
-
 
 def test_direct_read_tool_returns_text_without_ops():
     tools = _Tools()

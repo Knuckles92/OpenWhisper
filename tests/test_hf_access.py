@@ -1,8 +1,8 @@
 """Unit tests for the Hugging Face cache/access coordinator."""
+import pytest
 import os
 import tempfile
 import types
-import unittest
 from unittest.mock import MagicMock, patch
 
 from services.hf_access import (
@@ -29,33 +29,34 @@ def _fake_repo(repo_id, size_on_disk, revisions, repo_type="model"):
     )
 
 
-class TestHelpers(unittest.TestCase):
+class TestHelpers:
     """Tests for module-level helper functions."""
 
     def test_format_download_size_known_models(self):
-        self.assertEqual(format_download_size("base"), "~145 MB")
-        self.assertEqual(format_download_size("turbo"), "~1.6 GB")
+        assert format_download_size("base") == "~145 MB"
+        assert format_download_size("turbo") == "~1.6 GB"
 
     def test_format_download_size_unknown_model(self):
-        self.assertIsNone(format_download_size("some/custom-repo"))
+        assert format_download_size("some/custom-repo") is None
 
     def test_resolve_model_repo(self):
-        self.assertEqual(resolve_model_repo("base"), "Systran/faster-whisper-base")
+        assert resolve_model_repo("base") == "Systran/faster-whisper-base"
         # Unknown names (custom repos, paths) pass through unchanged
-        self.assertEqual(resolve_model_repo("me/my-model"), "me/my-model")
+        assert resolve_model_repo("me/my-model") == "me/my-model"
 
     def test_is_model_cached_local_directory(self):
         """A local model directory counts as cached without any lookup."""
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertTrue(is_model_cached(tmp))
+            assert is_model_cached(tmp)
 
 
 @patch("services.hf_access.is_hf_hub_offline_env_set", return_value=False)
 @patch("services.hf_access.is_model_cached", return_value=False)
-class TestEvaluateAccess(unittest.TestCase):
+class TestEvaluateAccess:
     """Policy/grant/env evaluation for a model missing from the cache."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.coordinator = HuggingFaceAccessCoordinator()
 
     def _set_policy(self, policy):
@@ -65,90 +66,60 @@ class TestEvaluateAccess(unittest.TestCase):
         mock_cached.return_value = True
         for policy in HuggingFaceAccessPolicy.ALL:
             self._set_policy(policy)
-            self.assertEqual(
-                self.coordinator.evaluate_access("base"),
-                AccessDecision.LOAD_CACHED,
-            )
+            assert self.coordinator.evaluate_access("base") == AccessDecision.LOAD_CACHED
 
     def test_ask_policy_needs_consent(self, _mock_cached, _mock_env):
         self._set_policy(HuggingFaceAccessPolicy.ASK)
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.NEEDS_CONSENT,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.NEEDS_CONSENT
 
     def test_never_policy_needs_consent(self, _mock_cached, _mock_env):
         """'never' still surfaces the dialog (with its Download once override)."""
         self._set_policy(HuggingFaceAccessPolicy.NEVER)
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.NEEDS_CONSENT,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.NEEDS_CONSENT
 
     def test_always_policy_allows_download(self, _mock_cached, _mock_env):
         self._set_policy(HuggingFaceAccessPolicy.ALWAYS)
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.DOWNLOAD_ALLOWED,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.DOWNLOAD_ALLOWED
 
     def test_env_override_blocks_even_with_grant(self, _mock_cached, mock_env):
         mock_env.return_value = True
         self._set_policy(HuggingFaceAccessPolicy.ALWAYS)
         self.coordinator.grant_once("base")
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.BLOCKED_BY_ENV,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.BLOCKED_BY_ENV
 
     def test_one_time_grant_is_consumed_once(self, _mock_cached, _mock_env):
         self._set_policy(HuggingFaceAccessPolicy.ASK)
         self.coordinator.grant_once("base")
 
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.DOWNLOAD_ALLOWED,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.DOWNLOAD_ALLOWED
         # Grant is spent — a second request needs fresh consent
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.NEEDS_CONSENT,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.NEEDS_CONSENT
 
     def test_advisory_check_preserves_grant(self, _mock_cached, _mock_env):
         self._set_policy(HuggingFaceAccessPolicy.ASK)
         self.coordinator.grant_once("base")
 
-        self.assertEqual(
-            self.coordinator.evaluate_access("base", consume_grant=False),
-            AccessDecision.DOWNLOAD_ALLOWED,
-        )
+        assert self.coordinator.evaluate_access("base", consume_grant=False) == AccessDecision.DOWNLOAD_ALLOWED
         # Grant survives the advisory check and is consumed here
-        self.assertEqual(
-            self.coordinator.evaluate_access("base"),
-            AccessDecision.DOWNLOAD_ALLOWED,
-        )
+        assert self.coordinator.evaluate_access("base") == AccessDecision.DOWNLOAD_ALLOWED
 
     def test_grant_applies_only_to_that_model(self, _mock_cached, _mock_env):
         self._set_policy(HuggingFaceAccessPolicy.ASK)
         self.coordinator.grant_once("base")
-        self.assertEqual(
-            self.coordinator.evaluate_access("small"),
-            AccessDecision.NEEDS_CONSENT,
-        )
+        assert self.coordinator.evaluate_access("small") == AccessDecision.NEEDS_CONSENT
 
 
-class TestFormatSizeBytes(unittest.TestCase):
+class TestFormatSizeBytes:
     """Human-readable formatting of actual on-disk sizes."""
 
     def test_boundaries(self):
-        self.assertEqual(format_size_bytes(512), "512 B")
-        self.assertEqual(format_size_bytes(145_000_000), "145 MB")
-        self.assertEqual(format_size_bytes(1_530_000_000), "1.53 GB")
-        self.assertEqual(format_size_bytes(12_000), "12 KB")
+        assert format_size_bytes(512) == "512 B"
+        assert format_size_bytes(145_000_000) == "145 MB"
+        assert format_size_bytes(1_530_000_000) == "1.53 GB"
+        assert format_size_bytes(12_000) == "12 KB"
 
 
-class TestScanCachedModels(unittest.TestCase):
+class TestScanCachedModels:
     """Cache enumeration via huggingface_hub.scan_cache_dir."""
 
     def test_maps_repos_by_repo_id(self):
@@ -164,26 +135,24 @@ class TestScanCachedModels(unittest.TestCase):
         with patch("huggingface_hub.scan_cache_dir", return_value=cache_info):
             cached = scan_cached_models()
 
-        self.assertEqual(set(cached), {
+        assert set(cached) == {
             "Systran/faster-whisper-base",
             "Systran/faster-whisper-large-v3",
-        })
+        }
         base = cached["Systran/faster-whisper-base"]
-        self.assertIsInstance(base, CachedModelInfo)
-        self.assertEqual(base.size_bytes, 145_000_000)
-        self.assertEqual(
-            cached["Systran/faster-whisper-large-v3"].revision_hashes, ("d1", "d2")
-        )
+        assert isinstance(base, CachedModelInfo)
+        assert base.size_bytes == 145_000_000
+        assert cached["Systran/faster-whisper-large-v3"].revision_hashes == ("d1", "d2")
 
     def test_missing_cache_dir_returns_empty(self):
         with patch(
             "huggingface_hub.scan_cache_dir",
             side_effect=Exception("cache not found"),
         ):
-            self.assertEqual(scan_cached_models(), {})
+            assert scan_cached_models() == {}
 
 
-class TestDeleteModelFromCache(unittest.TestCase):
+class TestDeleteModelFromCache:
     """Deletion routes through huggingface_hub's delete strategy."""
 
     def _cached_base(self):
@@ -213,7 +182,7 @@ class TestDeleteModelFromCache(unittest.TestCase):
 
     def test_uncached_model_raises_value_error(self):
         with patch("services.hf_access.scan_cached_models", return_value={}):
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 delete_model_from_cache("base")
 
     def test_permission_error_propagates(self):
@@ -227,31 +196,30 @@ class TestDeleteModelFromCache(unittest.TestCase):
             "services.hf_access.scan_cached_models",
             return_value=self._cached_base(),
         ), patch("huggingface_hub.scan_cache_dir", return_value=cache_info):
-            with self.assertRaises(PermissionError):
+            with pytest.raises(PermissionError):
                 delete_model_from_cache("base")
 
 
-class TestRequestDeduplication(unittest.TestCase):
+class TestRequestDeduplication:
     """Only one consent dialog / download may exist per model."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.coordinator = HuggingFaceAccessCoordinator()
 
     def test_begin_request_claims_and_rejects_duplicates(self):
-        self.assertTrue(self.coordinator.begin_request("base"))
-        self.assertFalse(self.coordinator.begin_request("base"))
+        assert self.coordinator.begin_request("base")
+        assert not self.coordinator.begin_request("base")
         # A different model gets its own slot
-        self.assertTrue(self.coordinator.begin_request("small"))
+        assert self.coordinator.begin_request("small")
 
     def test_end_request_releases_slot(self):
-        self.assertTrue(self.coordinator.begin_request("base"))
+        assert self.coordinator.begin_request("base")
         self.coordinator.end_request("base")
-        self.assertTrue(self.coordinator.begin_request("base"))
+        assert self.coordinator.begin_request("base")
 
     def test_end_request_for_unclaimed_model_is_harmless(self):
         self.coordinator.end_request("never-claimed")
-        self.assertTrue(self.coordinator.begin_request("never-claimed"))
+        assert self.coordinator.begin_request("never-claimed")
 
 
-if __name__ == "__main__":
-    unittest.main()

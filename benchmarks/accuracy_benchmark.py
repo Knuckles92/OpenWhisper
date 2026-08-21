@@ -7,10 +7,10 @@ and measures transcription accuracy using word-level comparison.
 
 Usage:
     From project root:
-        python tests/test_accuracy_benchmark.py
+        python benchmarks/accuracy_benchmark.py
 
-    Or from tests folder:
-        python test_accuracy_benchmark.py
+    Or from benchmarks folder:
+        python accuracy_benchmark.py
 """
 
 import os

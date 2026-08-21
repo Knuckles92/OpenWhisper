@@ -1,6 +1,7 @@
 """Unit tests for the extracted Qt bootstrap flow."""
 
-import unittest
+import pytest
+import logging
 from unittest.mock import patch
 
 from ui_qt import bootstrap
@@ -87,8 +88,9 @@ class _FakeApplicationController:
         self.cleaned_up = True
 
 
-class TestBootstrap(unittest.TestCase):
-    def setUp(self):
+class TestBootstrap:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         _FakeApplicationController.instances = []
         _FakeApplicationController.should_raise = False
 
@@ -131,15 +133,15 @@ class TestBootstrap(unittest.TestCase):
         ):
             result = bootstrap.main()
 
-        self.assertEqual(result, 123)
-        self.assertTrue(loading_screen.destroyed)
-        self.assertTrue(ui_controller.show_main_window_called)
-        self.assertEqual(ui_controller.device_info, "cuda")
-        self.assertEqual(len(_FakeApplicationController.instances), 1)
-        self.assertTrue(_FakeApplicationController.instances[0].cleaned_up)
-        self.assertTrue(_FakeApplicationController.instances[0].main_ui_ready_notified)
-        self.assertLess(order.index("loading_screen_shown"), order.index("late_imports"))
-        self.assertLess(order.index("process_events"), order.index("late_imports"))
+        assert result == 123
+        assert loading_screen.destroyed
+        assert ui_controller.show_main_window_called
+        assert ui_controller.device_info == "cuda"
+        assert len(_FakeApplicationController.instances) == 1
+        assert _FakeApplicationController.instances[0].cleaned_up
+        assert _FakeApplicationController.instances[0].main_ui_ready_notified
+        assert order.index("loading_screen_shown") < order.index("late_imports")
+        assert order.index("process_events") < order.index("late_imports")
 
     @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
     @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
@@ -168,15 +170,15 @@ class TestBootstrap(unittest.TestCase):
             "get_late_runtime_components",
             return_value=(lambda: ui_controller, _FakeApplicationController),
         ):
-            with self.assertRaisesRegex(RuntimeError, "boom"):
+            with pytest.raises(RuntimeError, match="boom"):
                 bootstrap.main()
 
-        self.assertTrue(loading_screen.destroyed)
-        self.assertEqual(len(_FakeApplicationController.instances), 1)
-        self.assertTrue(_FakeApplicationController.instances[0].cleaned_up)
+        assert loading_screen.destroyed
+        assert len(_FakeApplicationController.instances) == 1
+        assert _FakeApplicationController.instances[0].cleaned_up
 
 
-class CudaPreloadSummaryTests(unittest.TestCase):
+class TestCudaPreloadSummary:
     """The Linux CUDA preload log must survive being run as ``__main__``.
 
     ``python app_qt.py`` registers the entry module as ``__main__``, not
@@ -188,35 +190,35 @@ class CudaPreloadSummaryTests(unittest.TestCase):
         def __init__(self, libraries):
             self.CUDA_PRELOADED_LIBRARIES = libraries
 
-    def _capture(self, modules):
+    def _capture(self, modules, caplog):
         with patch.object(bootstrap.sys, "platform", "linux"), patch.dict(
             bootstrap.sys.modules, modules, clear=False
         ):
-            with self.assertLogs(level="INFO") as captured:
+            with caplog.at_level(logging.INFO):
                 bootstrap.log_cuda_preload_summary()
-        return "\n".join(captured.output)
+        return caplog.text
 
-    def test_logs_when_entry_module_is_main(self):
+    def test_logs_when_entry_module_is_main(self, caplog):
         entry = self._Entrypoint(["libcublas.so.12", "libcudart.so.12"])
         modules = {"__main__": entry}
         with patch.dict(bootstrap.sys.modules, {}, clear=False):
             bootstrap.sys.modules.pop("app_qt", None)
-            output = self._capture(modules)
+            output = self._capture(modules, caplog)
 
-        self.assertIn("Preloaded 2 CUDA library/libraries", output)
-        self.assertIn("libcublas.so.12", output)
+        assert "Preloaded 2 CUDA library/libraries" in output
+        assert "libcublas.so.12" in output
 
-    def test_logs_when_entry_module_is_app_qt(self):
+    def test_logs_when_entry_module_is_app_qt(self, caplog):
         entry = self._Entrypoint(["libcublas.so.12"])
-        output = self._capture({"app_qt": entry})
+        output = self._capture({"app_qt": entry}, caplog)
 
-        self.assertIn("Preloaded 1 CUDA library/libraries", output)
+        assert "Preloaded 1 CUDA library/libraries" in output
 
-    def test_reports_when_nothing_was_preloaded(self):
+    def test_reports_when_nothing_was_preloaded(self, caplog):
         """An empty list is a real answer: wheels absent, so CPU it is."""
-        output = self._capture({"app_qt": self._Entrypoint([])})
+        output = self._capture({"app_qt": self._Entrypoint([])}, caplog)
 
-        self.assertIn("No NVIDIA CUDA libraries preloaded", output)
+        assert "No NVIDIA CUDA libraries preloaded" in output
 
     def test_silent_on_non_linux(self):
         with patch.object(bootstrap.sys, "platform", "win32"):
@@ -225,5 +227,3 @@ class CudaPreloadSummaryTests(unittest.TestCase):
         info.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()

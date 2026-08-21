@@ -24,7 +24,6 @@ import shutil
 from typing import Tuple, Optional
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services.audio_processor import audio_processor
 from config import config
@@ -36,7 +35,6 @@ logging.basicConfig(
     format='%(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
 
 def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float = 30.0) -> Tuple[str, str]:
     """
@@ -167,11 +165,9 @@ def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float =
 
     return output_path, full_text
 
-
 def normalize_text_for_comparison(text: str) -> str:
     """Normalize text for comparison (lowercase, remove extra spaces)."""
     return ' '.join(text.lower().split())
-
 
 def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     """
@@ -208,7 +204,6 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     )
 
     return similarity, message
-
 
 def run_large_file_workflow(audio_file: str, original_text: str):
     """Test the production large-file transcription path and validate accuracy.
@@ -310,7 +305,6 @@ def run_large_file_workflow(audio_file: str, original_text: str):
 
     return True
 
-
 def main():
     """Main test function."""
     logger.info("=" * 60)
@@ -354,7 +348,6 @@ def main():
                 shutil.rmtree(temp_dir)
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,8 +1,4 @@
 """Unit tests for the product-package eval helpers (no live LLM)."""
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from benchmarks.meeting_mode.product_eval import (
     ProductEvalHost,
@@ -13,7 +9,6 @@ from benchmarks.meeting_mode.product_eval import (
     strip_proposed_after_redecode,
 )
 from meeting.interfaces import OpResult
-
 
 def test_dashboard_package_drops_removed_cards_and_empty_transcript_lines():
     snapshot = {
@@ -46,7 +41,6 @@ def test_dashboard_package_drops_removed_cards_and_empty_transcript_lines():
     assert "user_notes" not in package["cards"]
     assert [row["id"] for row in package["transcript"]] == ["sg_1"]
 
-
 def test_host_polish_rewrites_segment_text_in_place():
     host = ProductEvalHost(
         "m1",
@@ -62,7 +56,6 @@ def test_host_polish_rewrites_segment_text_in_place():
     assert results[0].ok
     assert host.get_transcript()[0]["text"] == "draft"
 
-
 def test_host_rejects_ops_when_writes_are_revoked():
     host = ProductEvalHost(
         "m1",
@@ -73,7 +66,6 @@ def test_host_rejects_ops_when_writes_are_revoked():
     }])
     assert results[0].ok is False
     assert results[0].reason == "agent_writes_revoked"
-
 
 def test_format_reference_groups_speaker_turns():
     class Word:
@@ -91,7 +83,6 @@ def test_format_reference_groups_speaker_turns():
     assert "A: hello there" in text
     assert "B: hi" in text
 
-
 def test_segment_handler_returns_inverse_for_undo():
     host = ProductEvalHost(
         "m1",
@@ -104,7 +95,6 @@ def test_segment_handler_returns_inverse_for_undo():
     ))
     assert inverse["text"] == "old"
     assert host._segments["sg_1"]["text"] == "new"
-
 
 def test_render_package_for_judge_formats_notes_and_timeline():
     package = {
@@ -146,7 +136,6 @@ def test_render_package_for_judge_formats_notes_and_timeline():
     assert "- [resolved] What about memory? → 2GB" in rendered
     assert "[0s] Hello world" in rendered
 
-
 def test_build_live_windows_groups_by_meeting_time():
     segments = [
         {"id": "sg_1", "start_s": 0.0, "text": "a"},
@@ -159,7 +148,6 @@ def test_build_live_windows_groups_by_meeting_time():
         ["sg_1", "sg_2"], ["sg_3"], ["sg_4"],
     ]
     assert build_live_windows(segments, 0) == [list(segments)]
-
 
 def test_host_loads_initial_live_state():
     host = ProductEvalHost(
@@ -185,7 +173,6 @@ def test_host_loads_initial_live_state():
     assert len(notes) == 1
     assert notes[0]["text"] == "The kickoff covered the roadmap."
     assert snapshot["seq"] == base["seq"] + 1
-
 
 def test_strip_proposed_after_redecode_keeps_evidenced_notes_and_touched_items():
     host = ProductEvalHost(

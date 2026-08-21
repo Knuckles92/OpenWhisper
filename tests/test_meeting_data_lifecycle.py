@@ -1,7 +1,6 @@
 """Failure-path tests for meeting audio playback and recoverable deletion."""
 from __future__ import annotations
 
-import os
 import wave
 
 import numpy as np
@@ -9,6 +8,7 @@ import pytest
 
 from meeting.audio_playback import PLAYBACK_RATE, build_playback
 from meeting.persist.data_lifecycle import delete_meeting_data
+from tests.helpers import write_wav as _write_wav
 
 
 class LifecycleRepository:
@@ -29,15 +29,6 @@ class LifecycleRepository:
         if self.fail_delete:
             raise RuntimeError("database unavailable")
         self.meeting = None
-
-
-def _write_wav(path, value, duration_s=0.25):
-    samples = np.full(int(PLAYBACK_RATE * duration_s), value, dtype="<i2")
-    with wave.open(str(path), "wb") as target:
-        target.setnchannels(1)
-        target.setsampwidth(2)
-        target.setframerate(PLAYBACK_RATE)
-        target.writeframes(samples.tobytes())
 
 
 def test_playback_mixes_channels_and_preserves_silence(tmp_path):

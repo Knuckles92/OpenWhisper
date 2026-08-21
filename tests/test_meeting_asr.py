@@ -1,16 +1,16 @@
 """
-Tests for MeetingAsrEngine: fake backend, retry ×3, timestamped segments.
+Tests for live ASR (MeetingAsrEngine: fake backend, retry ×3, timestamped
+segments), post-meeting offline ASR (silence split, overlap drop), and the
+bounded rolling revision helpers plus their persistence.
 """
-import os
-import sys
+import json
 import wave
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.asr.engine import (
     DRAFT_PROMPT_WORDS,
@@ -19,7 +19,24 @@ from meeting.asr.engine import (
     REVISE_MIN_ADVANCE_S,
     MeetingAsrEngine,
 )
-from meeting.interfaces import SpooledChunk
+from meeting.asr.offline import (
+    drop_overlapped_prefix,
+    offline_cut_ranges,
+    offline_segment_id,
+)
+from meeting.asr.revise import (
+    REVISION_WINDOW_S,
+    align_revision_start,
+    build_initial_prompt,
+    interval_iou,
+    match_segments,
+    revision_window,
+    select_chunks_for_window,
+    stitch_window_audio,
+)
+from meeting.capture.spool import TARGET_RATE
+from meeting.interfaces import SpooledChunk, TranscriptSegment
+from tests.helpers import write_wav as _write_wav
 
 
 class FakeRepository:
@@ -32,15 +49,6 @@ class FakeRepository:
 
     def get_pending_chunks(self, meeting_id):
         return list(self.pending)
-
-
-def _write_wav(path, duration_s=0.5, sample_rate=16000, amp=1000):
-    frames = np.full(int(duration_s * sample_rate), amp, dtype=np.int16)
-    with wave.open(path, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(frames.tobytes())
 
 
 def _make_engine(repo, backend):
@@ -173,7 +181,7 @@ class TestAsrSuccessPath:
         )
         engine = _make_engine(repo, backend)
         chunk = _chunk(tmp_path)
-        _write_wav(chunk.file_path, amp=0)
+        _write_wav(chunk.file_path, value=0)
         received = []
 
         def commit(done_chunk, segments):
@@ -445,3 +453,328 @@ class TestRollingReviseScheduling:
         assert persisted["remove_ids"] == []
         assert persisted["segments"][0].segment_id == "sg_crossing"
         assert persisted["segments"][0].start_s == 40.0
+
+
+# --------------------------------------------------------------------------
+# Post-meeting offline ASR: silence split and overlap drop.
+# --------------------------------------------------------------------------
+
+
+class TestOfflineCutRanges:
+    def test_hard_cut_without_audio(self):
+        total = int(90 * TARGET_RATE)
+        ranges = offline_cut_ranges(total, TARGET_RATE, audio=None, overlap_s=1.0)
+        assert ranges
+        assert ranges[0][0] == 0
+        assert ranges[-1][1] == total
+        # Consecutive windows overlap by about 1s.
+        for prev, nxt in zip(ranges, ranges[1:]):
+            overlap = prev[1] - nxt[0]
+            assert overlap == pytest.approx(TARGET_RATE, abs=2)
+
+    def test_quiet_gap_cuts_before_max(self):
+        n = int(40 * TARGET_RATE)
+        audio = np.full(n, 5000, dtype=np.int16)
+        quiet_from = int(16 * TARGET_RATE)
+        audio[quiet_from:quiet_from + int(1.0 * TARGET_RATE)] = 0
+        ranges = offline_cut_ranges(
+            n, TARGET_RATE, audio, target_sec=15.0, max_sec=25.0,
+            quiet_window_s=0.7, overlap_s=1.0,
+        )
+        first_end = ranges[0][1] / TARGET_RATE
+        assert first_end < 25.0
+        assert first_end == pytest.approx(16.7, abs=0.15)
+
+
+class TestOverlapDrop:
+    def test_keeps_later_window_tail(self):
+        segs = [
+            TranscriptSegment(
+                segment_id="a", meeting_id="m", chunk_id=None, channel="mic",
+                start_s=9.2, end_s=9.8, text="only overlap",
+            ),
+            TranscriptSegment(
+                segment_id="b", meeting_id="m", chunk_id=None, channel="mic",
+                start_s=10.5, end_s=12.0, text="new",
+            ),
+        ]
+        kept = drop_overlapped_prefix(segs, keep_from_s=10.0)
+        assert [seg.text for seg in kept] == ["new"]
+
+    def test_keeps_segment_that_starts_in_overlap_but_extends_past(self):
+        segs = [
+            TranscriptSegment(
+                segment_id="a", meeting_id="m", chunk_id=None, channel="mic",
+                start_s=9.2, end_s=9.8, text="only overlap",
+            ),
+            TranscriptSegment(
+                segment_id="b", meeting_id="m", chunk_id=None, channel="mic",
+                start_s=9.5, end_s=12.0, text="spans boundary",
+            ),
+        ]
+        kept = drop_overlapped_prefix(segs, keep_from_s=10.0)
+        assert [seg.text for seg in kept] == ["spans boundary"]
+
+    def test_offline_ids_are_stable(self):
+        first = offline_segment_id("m1", "mic", 1.25, 0)
+        second = offline_segment_id("m1", "mic", 1.25, 0)
+        other = offline_segment_id("m1", "mic", 1.25, 1)
+        assert first == second
+        assert first.startswith("sg_")
+        assert first != other
+
+
+# --------------------------------------------------------------------------
+# Bounded rolling revision helpers and persistence.
+# --------------------------------------------------------------------------
+
+
+def test_revision_window_caps_at_horizon():
+    start, end = revision_window(100.0, window_s=45.0)
+    assert start == 55.0
+    assert end == 100.0
+    start0, end0 = revision_window(10.0, window_s=45.0)
+    assert start0 == 0.0
+    assert end0 == 10.0
+
+
+def test_align_revision_start_never_bisects_existing_segment():
+    existing = [
+        {"start_s": 40.0, "end_s": 70.0},
+        {"start_s": 58.0, "end_s": 62.0},
+    ]
+
+    assert align_revision_start(55.0, existing) == 40.0
+    assert align_revision_start(75.0, existing) == 75.0
+
+
+def test_interval_iou_and_match_prefers_overlap():
+    assert interval_iou(0, 10, 5, 15) == pytest.approx(5 / 15)
+    existing = [
+        {
+            "id": "sg_a",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "speaker_pinned": False,
+            "speaker_participant_id": "p_me",
+            "speaker_source": "channel",
+            "chunk_id": 1,
+            "channel": "mic",
+            "meeting_id": "m1",
+            "text": "helo",
+        },
+        {
+            "id": "sg_b",
+            "start_s": 4.0,
+            "end_s": 8.0,
+            "speaker_pinned": True,
+            "speaker_participant_id": "p_me",
+            "speaker_source": "human",
+            "chunk_id": 1,
+            "channel": "mic",
+            "meeting_id": "m1",
+            "text": "world",
+        },
+    ]
+    decoded = [
+        TranscriptSegment(
+            segment_id="sg_new1",
+            meeting_id="m1",
+            chunk_id=2,
+            channel="mic",
+            start_s=0.2,
+            end_s=3.8,
+            text="hello",
+        ),
+        TranscriptSegment(
+            segment_id="sg_new2",
+            meeting_id="m1",
+            chunk_id=2,
+            channel="mic",
+            start_s=8.5,
+            end_s=11.0,
+            text="again",
+        ),
+    ]
+    plan = match_segments(existing, decoded)
+    by_id = {seg.segment_id: seg for seg in plan.upserts}
+    assert "sg_a" in by_id
+    assert by_id["sg_a"].text == "hello"
+    assert by_id["sg_a"].speaker_participant_id == "p_me"
+    # Pinned unmatched old is kept (not deleted).
+    assert "sg_b" not in plan.remove_ids
+    # New unmatched insert kept with its new id.
+    assert any(seg.segment_id == "sg_new2" for seg in plan.upserts)
+
+
+def test_select_chunks_and_stitch(tmp_path):
+    def write_wav(name, duration_s, amp=1000):
+        path = tmp_path / name
+        frames = np.full(int(duration_s * 16000), amp, dtype=np.int16)
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(frames.tobytes())
+        return str(path)
+
+    chunks = [
+        {
+            "id": 1,
+            "channel": "mic",
+            "seq": 0,
+            "start_s": 0.0,
+            "duration_s": 5.0,
+            "file_path": write_wav("a.wav", 5.0),
+            "asr_status": "done",
+        },
+        {
+            "id": 2,
+            "channel": "mic",
+            "seq": 1,
+            "start_s": 5.0,
+            "duration_s": 5.0,
+            "file_path": write_wav("b.wav", 5.0),
+            "asr_status": "done",
+        },
+        {
+            "id": 3,
+            "channel": "loopback",
+            "seq": 0,
+            "start_s": 0.0,
+            "duration_s": 5.0,
+            "file_path": write_wav("c.wav", 5.0),
+            "asr_status": "done",
+        },
+    ]
+    selected = select_chunks_for_window(chunks, "mic", 3.0, 8.0)
+    assert [c["id"] for c in selected] == [1, 2]
+    audio, start = stitch_window_audio(selected, 3.0, 8.0)
+    assert start == pytest.approx(3.0)
+    assert audio.size == pytest.approx(5.0 * 16000, rel=0.01)
+
+
+def test_build_initial_prompt_truncates():
+    segs = [{"text": "alpha"}, {"text": "beta " * 80}]
+    prompt = build_initial_prompt(segs)
+    assert len(prompt) <= 224
+    assert "beta" in prompt
+
+
+def test_revise_segments_in_range_persists(tmp_path, repo):
+    meeting_id = "m_revise"
+    repo.create_meeting(
+        id=meeting_id,
+        title="t",
+        status="active",
+        started_at=datetime.now().isoformat(),
+        host_token="h",
+        guest_token="g",
+        cloud_enabled=False,
+        spool_dir=str(tmp_path / "spool"),
+        asr_model="base",
+    )
+    chunk_id = repo.register_chunk(
+        meeting_id=meeting_id,
+        channel="mic",
+        seq=0,
+        file_path=str(tmp_path / "x.wav"),
+        start_s=0.0,
+        duration_s=10.0,
+        sample_rate=16000,
+    )
+    repo.commit_chunk_transcription(
+        meeting_id,
+        chunk_id,
+        [
+            TranscriptSegment(
+                segment_id="sg_old",
+                meeting_id=meeting_id,
+                chunk_id=chunk_id,
+                channel="mic",
+                start_s=1.0,
+                end_s=3.0,
+                text="helo",
+            )
+        ],
+    )
+    upserts = [
+        TranscriptSegment(
+            segment_id="sg_old",
+            meeting_id=meeting_id,
+            chunk_id=chunk_id,
+            channel="mic",
+            start_s=1.0,
+            end_s=3.2,
+            text="hello",
+        ),
+        TranscriptSegment(
+            segment_id="sg_new",
+            meeting_id=meeting_id,
+            chunk_id=chunk_id,
+            channel="mic",
+            start_s=4.0,
+            end_s=6.0,
+            text="there",
+        ),
+    ]
+    rows, removed = repo.revise_segments_in_range(
+        meeting_id, "mic", 0.0, 10.0, upserts, remove_ids=[]
+    )
+    assert removed == []
+    texts = {r["id"]: r["text"] for r in rows}
+    assert texts["sg_old"] == "hello"
+    assert texts["sg_new"] == "there"
+    assert REVISION_WINDOW_S == 45.0
+
+
+def test_revise_keeps_segments_referenced_by_dashboard_evidence(tmp_path, repo):
+    meeting_id = "m_evidence"
+    repo.create_meeting(
+        id=meeting_id,
+        title="t",
+        status="active",
+        started_at=datetime.now().isoformat(),
+        host_token="h",
+        guest_token="g",
+        cloud_enabled=True,
+        spool_dir=str(tmp_path / "spool"),
+        asr_model="base",
+        state_json=json.dumps({
+            "rolling_summary_evidence": ["sg_referenced"],
+        }),
+    )
+    chunk_id = repo.register_chunk(
+        meeting_id=meeting_id,
+        channel="mic",
+        seq=0,
+        file_path=str(tmp_path / "x.wav"),
+        start_s=0.0,
+        duration_s=10.0,
+        sample_rate=16000,
+    )
+    repo.commit_chunk_transcription(
+        meeting_id,
+        chunk_id,
+        [TranscriptSegment(
+            segment_id="sg_referenced",
+            meeting_id=meeting_id,
+            chunk_id=chunk_id,
+            channel="mic",
+            start_s=1.0,
+            end_s=3.0,
+            text="original evidence",
+        )],
+    )
+
+    _rows, removed = repo.revise_segments_in_range(
+        meeting_id,
+        "mic",
+        0.0,
+        10.0,
+        segments=[],
+        remove_ids=["sg_referenced"],
+    )
+
+    assert removed == []
+    assert repo.get_segment(meeting_id, "sg_referenced") is not None

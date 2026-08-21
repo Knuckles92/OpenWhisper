@@ -7,10 +7,10 @@ and measures transcription time to compare performance.
 
 Usage:
     From project root:
-        python tests/test_model_benchmark.py
+        python benchmarks/model_benchmark.py
 
-    Or from tests folder:
-        python test_model_benchmark.py
+    Or from benchmarks folder:
+        python model_benchmark.py
 """
 
 import os
@@ -65,9 +65,9 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Add project root to path (go up one level from tests folder)
+# Add project root to path (go up one level from benchmarks folder)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)  # Go up one level from tests/ to project root
+project_root = os.path.dirname(script_dir)  # Go up one level from benchmarks/ to project root
 sys.path.insert(0, project_root)
 
 # Import settings_manager early to ensure it's initialized
@@ -163,7 +163,7 @@ class AudioGenerator:
 
     def __init__(self):
         """Initialize the audio generator."""
-        # Use the tests folder (same folder as this script) for audio files
+        # Use the benchmarks folder (same folder as this script) for audio files
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.temp_dir = script_dir
         self._tts_available = None  # Cache TTS availability check

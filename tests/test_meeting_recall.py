@@ -1,18 +1,13 @@
 """Consent-gated past-meeting recall: caps, exclusion, opaque refs."""
 from __future__ import annotations
 
-import os
-import sys
 from unittest.mock import patch
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.recall import (
     MAX_HIT_LIMIT,
     MAX_SNIPPET_CHARS,
     search_past_meetings,
 )
-
 
 class _Repo:
     def __init__(self, rows=None, meetings=None, segments=None):
@@ -37,7 +32,6 @@ class _Repo:
         rows = list(self.segments.get(meeting_id, []))
         return rows[:limit] if limit else rows
 
-
 def _hit(meeting_id="m_past", text="we adopted the budget",
          title="Q1 review", started_at="2026-03-01T10:00:00",
          start_s=12.0, segment_id="sg_abcdef123456"):
@@ -50,7 +44,6 @@ def _hit(meeting_id="m_past", text="we adopted the budget",
         "started_at": started_at,
         "start_s": start_s,
     }
-
 
 class TestRecallConsent:
     def test_disabled_when_setting_is_off(self):
@@ -73,7 +66,6 @@ class TestRecallConsent:
                 None, query="budget", current_meeting_id="m_live",
             )
         assert result["disabled"] is True
-
 
 class TestRecallSearch:
     def test_excludes_current_meeting_and_omits_sg_ids(self):
@@ -136,7 +128,6 @@ class TestRecallSearch:
             )
         assert "sg_" not in result["text"]
         assert "[id]" in result["text"]
-
 
 class TestRecallSlice:
     def test_rejects_current_meeting_id(self):

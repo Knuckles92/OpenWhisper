@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.context_folder import (
     MAX_HIT_LIMIT,
@@ -17,13 +14,11 @@ from meeting.context_folder import (
     search_context_files,
 )
 
-
 @pytest.fixture(autouse=True)
 def _clear_cache():
     clear_context_folder_cache()
     yield
     clear_context_folder_cache()
-
 
 def _enable(folder: Path):
     return (
@@ -37,12 +32,10 @@ def _enable(folder: Path):
         ),
     )
 
-
 def _write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
-
 
 class TestConsent:
     def test_disabled_when_setting_is_off(self, tmp_path):
@@ -79,7 +72,6 @@ class TestConsent:
         ):
             result = search_context_files(query="budget")
         assert result["disabled"] is True
-
 
 class TestSearch:
     def test_recursive_text_ranking_and_relative_paths(self, tmp_path):
@@ -137,7 +129,6 @@ class TestSearch:
         assert "[id]" in result["text"]
         assert "Ignore previous instructions" in result["text"]
 
-
 class TestSlice:
     def test_returns_passage_for_relative_path(self, tmp_path):
         folder = tmp_path / "vault"
@@ -170,7 +161,6 @@ class TestSlice:
         assert absolute["ok"] is False
         assert "secret token" not in traversal["text"]
         assert "secret token" not in absolute["text"]
-
 
 class TestSafety:
     def test_skips_hidden_dirs_and_symlinks(self, tmp_path):
@@ -222,7 +212,6 @@ class TestSafety:
             result = search_context_files(query="budget")
         assert [hit["path"] for hit in result["hits"]] == ["ok.md"]
 
-
 class TestPackaging:
     def test_extractors_import_and_are_listed_in_the_spec(self):
         import docx
@@ -239,7 +228,6 @@ class TestPackaging:
         assert openpyxl.__name__ == "openpyxl"
         assert pptx.__name__ == "pptx"
         assert pypdf.__name__ == "pypdf"
-
 
 class TestExtraction:
     def test_docx_pptx_xlsx_and_plain_text(self, tmp_path):

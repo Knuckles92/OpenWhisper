@@ -1,30 +1,13 @@
 """Tests for the headless post-meeting finalization retry pipeline."""
 import json
-import os
-import sys
 from datetime import datetime
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.interfaces import AgentResult, TranscriptSegment
 from meeting.refinalize import rerun_finalization
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
-
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
 
 
 def make_meeting(repo, meeting_id="m_retry", state_json=None, cloud_enabled=True,

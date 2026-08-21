@@ -1,7 +1,6 @@
 """Qt tests for the Meeting tab knowledge-folder picker."""
 import os
 import tempfile
-import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -12,7 +11,7 @@ from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 
 
-class _DialogTestCase(unittest.TestCase):
+class _DialogTestCase:
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -39,20 +38,17 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
             settings_patch, history_patch = self._open(isolated)
             with settings_patch, history_patch:
                 dialog = settings_dialog_module.SettingsDialog()
-                self.assertTrue(dialog.meeting_context_folder_check.isChecked())
-                self.assertEqual(
-                    dialog.meeting_context_folder_path.text(),
-                    os.path.normpath(folder),
-                )
+                assert dialog.meeting_context_folder_check.isChecked()
+                assert dialog.meeting_context_folder_path.text() == os.path.normpath(folder)
                 dialog._clear_context_folder()
-                self.assertFalse(dialog.meeting_context_folder_check.isChecked())
-                self.assertEqual(dialog.meeting_context_folder_path.text(), "")
+                assert not dialog.meeting_context_folder_check.isChecked()
+                assert dialog.meeting_context_folder_path.text() == ""
                 dialog._save_settings()
 
             saved = isolated.load_all_settings()
-            self.assertFalse(saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED])
-            self.assertEqual(saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH], "")
-            self.assertEqual(saved[SettingsKey.MEETING_WHISPER_MODEL], "tiny")
+            assert not saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
+            assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH] == ""
+            assert saved[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
 
     def test_browse_sets_path_and_enables_search(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -66,21 +62,15 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
                 return_value=folder,
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                self.assertFalse(dialog.meeting_context_folder_check.isChecked())
+                assert not dialog.meeting_context_folder_check.isChecked()
                 dialog._browse_context_folder()
-                self.assertTrue(dialog.meeting_context_folder_check.isChecked())
-                self.assertEqual(
-                    dialog.meeting_context_folder_path.text(),
-                    os.path.normpath(folder),
-                )
+                assert dialog.meeting_context_folder_check.isChecked()
+                assert dialog.meeting_context_folder_path.text() == os.path.normpath(folder)
                 dialog._save_settings()
 
             saved = isolated.load_all_settings()
-            self.assertTrue(saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED])
-            self.assertEqual(
-                saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH],
-                os.path.normpath(folder),
-            )
+            assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
+            assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH] == os.path.normpath(folder)
 
     def test_saving_preserves_unrelated_meeting_keys(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -100,10 +90,8 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
                 dialog._save_settings()
 
             saved = isolated.load_all_settings()
-            self.assertEqual(saved[SettingsKey.MEETING_WHISPER_MODEL], "tiny")
-            self.assertEqual(saved[SettingsKey.MEETING_LLM_PROVIDER], "openai")
-            self.assertEqual(saved[SettingsKey.MEETING_LLM_MODEL], "gpt-4o-mini")
-            self.assertTrue(saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED])
-            self.assertTrue(
-                os.path.isabs(saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH])
-            )
+            assert saved[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
+            assert saved[SettingsKey.MEETING_LLM_PROVIDER] == "openai"
+            assert saved[SettingsKey.MEETING_LLM_MODEL] == "gpt-4o-mini"
+            assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
+            assert os.path.isabs(saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH])

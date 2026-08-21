@@ -16,10 +16,7 @@ import types
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -45,7 +42,6 @@ class FakeSource:
     def stop(self):
         self.stopped = True
 
-
 class FakeSpool:
     """Spool writer that swallows blocks and never produces chunks."""
 
@@ -61,7 +57,6 @@ class FakeSpool:
     def flush(self):
         self.flushes += 1
         return None
-
 
 class FakeAsr:
     """ASR engine stand-in; records lifecycle calls."""
@@ -104,7 +99,6 @@ class FakeAsr:
     def requeue_pending(self):
         self.requeues += 1
 
-
 class FakeServer:
     """Web server stand-in that records broadcasts instead of sending them."""
 
@@ -126,7 +120,6 @@ class FakeServer:
 
     def stop(self):
         self.stopped = True
-
 
 class FakeDiarizer:
     """Diarizer whose availability and assignments the test drives."""
@@ -152,7 +145,6 @@ class FakeDiarizer:
 
     def pin(self, segment_id, participant_id):
         self.pins.append((segment_id, participant_id))
-
 
 class FakeAgentCore:
     """Agent core stand-in with a settable health verdict."""
@@ -180,7 +172,6 @@ class FakeAgentCore:
 
     def shutdown(self):
         self.shutdowns += 1
-
 
 class FakeScheduler:
     """Checkpoint scheduler stand-in recording its construction kwargs."""
@@ -232,7 +223,6 @@ class FakeScheduler:
             message="Final cloud insights are ready.",
         )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -244,12 +234,10 @@ def db(tmp_path):
     yield manager
     manager.close()
 
-
 @pytest.fixture
 def repo(db):
     from meeting.persist.repository import SqlMeetingRepository
     return SqlMeetingRepository(db=db)
-
 
 @pytest.fixture
 def fakes(monkeypatch):
@@ -345,7 +333,6 @@ def fakes(monkeypatch):
 
     return ns
 
-
 @pytest.fixture
 def make_engine(repo, tmp_path, fakes):
     """Factory building engines wired to the fakes, torn down after the test."""
@@ -378,18 +365,15 @@ def make_engine(repo, tmp_path, fakes):
             pass
         engine._stop_heartbeat()
 
-
 def events_of(engine, kind):
     """All payloads emitted by ``engine`` for one listener event kind."""
     return [payload for k, payload in engine.events if k == kind]
-
 
 def loopback_segment(meeting_id, seg_id, start=1.0, end=3.0, chunk_id=None):
     return TranscriptSegment(
         segment_id=seg_id, meeting_id=meeting_id, chunk_id=chunk_id,
         channel="loopback", start_s=start, end_s=end, text="hello there",
     )
-
 
 # ---------------------------------------------------------------------------
 # Required startup services
@@ -564,7 +548,6 @@ class TestIntelligenceHealth:
         scheduler.on_health(True)
         assert engine.store.with_state(lambda s: s.intelligence_online) is True
 
-
 class TestCloudToggle:
     def test_stop_intelligence_shuts_the_agent_core_down(
             self, make_engine, fakes):
@@ -604,7 +587,6 @@ class TestCloudToggle:
         # A brand-new core is built, since the old one was shut down.
         assert len(fakes.cores) == 2
         assert engine.store.with_state(lambda s: s.intelligence_online) is True
-
 
 # ---------------------------------------------------------------------------
 # End / lifecycle
@@ -993,7 +975,6 @@ class TestEndLifecycle:
         first.join(timeout=10.0)
         assert len(events_of(engine, "ended")) == 1
 
-
 # ---------------------------------------------------------------------------
 # Capture recovery
 # ---------------------------------------------------------------------------
@@ -1033,7 +1014,6 @@ class TestCaptureRecovery:
         assert capture["mic_available"] is True
         assert capture["loopback_available"] is True
         assert capture["message"] == ""
-
 
 # ---------------------------------------------------------------------------
 # Diarization degradation
@@ -1130,7 +1110,6 @@ class TestDiarizationDegradation:
         assert results[0].ok, results[0].reason
         assert fakes.diarizer.pins == [("sg_p", participant["id"])]
 
-
 # ---------------------------------------------------------------------------
 # Store wiring
 # ---------------------------------------------------------------------------
@@ -1161,7 +1140,6 @@ class TestStoreWiring:
         )["speaker_participant_id"] == (
             participant["id"]
         )
-
 
 class TestDemoMeeting:
     def test_demo_mode_skips_live_audio_and_seeds_transcript(
@@ -1206,7 +1184,6 @@ class TestDemoMeeting:
         assert engine.store.with_state(
             lambda s: s.finalization.status
         ) == "completed"
-
 
 class TestCloudSpeakerStep:
     def test_local_backend_omits_speaker_step(self, make_engine):
@@ -1270,13 +1247,11 @@ class TestCloudSpeakerStep:
         assert steps["speaker_id"]["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
-
 def test_engine_module_has_no_dead_recent_text_api():
     """The unused topic-shift buffer is gone (the scheduler reads the DB)."""
     from meeting.engine import MeetingEngine
 
     assert not hasattr(MeetingEngine, "get_recent_text")
-
 
 class TestDirectAgentCapabilities:
     def test_json_mode_retries_without_response_format(self):

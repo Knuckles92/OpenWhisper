@@ -4,14 +4,11 @@ Covers overlap mapping, majority-vote resolution, window planning, clip
 clamping, MP3 encode, the headless segment-handler fix, and the engine
 finalization step. Network is never used.
 """
-import os
-import sys
 from datetime import datetime
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.diarize.cloud_audio import (
     CLIP_MAX_S,
@@ -198,20 +195,6 @@ class TestMp3Encode:
         payload = encode_mp3(frames, 16000, bitrate=32000)
         assert len(payload) < 20 * 1024 * 1024
         assert estimate_mp3_bytes(60.0, 32000) >= len(payload)
-
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
 
 
 def _seed_meeting(repo, meeting_id="m_spk"):

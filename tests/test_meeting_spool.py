@@ -3,13 +3,10 @@ Tests for the Meeting Mode spool: gap-fill (>120ms), quiet/hard cuts, and the
 ``SpoolWriter`` timeline (drift, overlap trimming, pause, atomic sequence).
 """
 import os
-import sys
 import wave
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.capture.spool import (
     DEFAULT_MAX_SEC,
@@ -23,7 +20,6 @@ from meeting.capture.spool import (
 )
 from meeting.clock import MeetingClock
 from meeting.interfaces import CaptureBlock
-
 
 class TestGapFill:
     def test_no_fill_when_expected_is_none(self):
@@ -51,7 +47,6 @@ class TestGapFill:
         fill = gap_fill_frames(0.0, gap_s)
         assert fill.size == int(round(gap_s * TARGET_RATE))
         assert fill.size > 0
-
 
 class TestFindCutPoint:
     def _quiet_buffer(self, duration_s, quiet_from_s=None, loud_amp=5000):
@@ -123,7 +118,6 @@ class TestFindCutPoint:
         assert cut is not None
         assert abs(cut / 44100 - (quiet_from_s + QUIET_WINDOW_S)) <= 0.06
 
-
 # ---------------------------------------------------------------------------
 # SpoolWriter
 # ---------------------------------------------------------------------------
@@ -147,7 +141,6 @@ class FakeRepo:
         self.events.append(("register", chunk_id, fields["asr_status"]))
         return chunk_id
 
-
 class Collector:
     """``on_chunk`` sink that shares the repository's event log."""
 
@@ -159,9 +152,7 @@ class Collector:
         self.chunks.append(chunk)
         self.repo.events.append(("on_chunk", chunk.chunk_id, chunk.start_s))
 
-
 BLOCK = 1024
-
 
 def _make_writer(tmp_path, repo, collector, clock, **kwargs):
     """SpoolWriter with a queue big enough that a test never drops blocks."""
@@ -169,7 +160,6 @@ def _make_writer(tmp_path, repo, collector, clock, **kwargs):
         "m_test", "mic", str(tmp_path), clock, repo, on_chunk=collector,
         queue_size=100000, **kwargs
     )
-
 
 def _signal(duration_s, rate, quiet_every_s=None, quiet_len_s=0.6, amp=6000):
     """Loud int16 tone-ish signal with periodic silent stretches."""
@@ -182,7 +172,6 @@ def _signal(duration_s, rate, quiet_every_s=None, quiet_len_s=0.6, amp=6000):
         for start in range(step, n, step):
             sig[start:start + span] = 0
     return sig
-
 
 def _feed_stream(writer, signal, rate, t0, start_index=0, stall_s=0.0,
                  burst_blocks=0):
@@ -222,14 +211,12 @@ def _feed_stream(writer, signal, rate, t0, start_index=0, stall_s=0.0,
         idx += BLOCK
     return idx
 
-
 def _start_clock():
     """A started ``MeetingClock`` plus the monotonic instant it started at."""
     import time
     clock = MeetingClock()
     clock.start()
     return clock, time.monotonic()
-
 
 class TestSpoolWriterTimeline:
     def test_no_drift_over_60s_at_44100(self, tmp_path):
@@ -332,7 +319,6 @@ class TestSpoolWriterTimeline:
         assert repo.chunks == {}
         assert os.listdir(tmp_path) == []
 
-
 class TestSpoolWriterContract:
     def test_registered_pending_before_on_chunk(self, tmp_path):
         rate = 16000
@@ -411,7 +397,6 @@ class TestSpoolWriterContract:
             if name.startswith("mic_session") or name.endswith(".16k.pcm")
         }
         assert session_names, names
-
 
 class TestSessionWav:
     def test_flush_writes_16k_session_wav(self, tmp_path):

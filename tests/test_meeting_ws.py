@@ -5,12 +5,8 @@ input handling.
 """
 import asyncio
 import copy
-import os
-import sys
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.interfaces import OpResult
 from meeting.state.schema import MeetingState
@@ -20,7 +16,6 @@ from meeting.web.ws import MAX_MESSAGE_CHARS, WsHub
 HOST_TOKEN = "host-ws-token-cccccccccccccccccccc"
 GUEST_TOKEN = "guest-ws-token-dddddddddddddddddddd"
 
-
 def recv_until(ws, msg_type, limit=10):
     """Read messages until one of ``msg_type`` arrives (or fail the test)."""
     for _ in range(limit):
@@ -28,7 +23,6 @@ def recv_until(ws, msg_type, limit=10):
         if message.get("type") == msg_type:
             return message
     raise AssertionError(f"No {msg_type!r} message within {limit} messages")
-
 
 class FakeRepo:
     def __init__(self):
@@ -57,7 +51,6 @@ class FakeRepo:
             hook, self.on_get_last_segments = self.on_get_last_segments, None
             hook()
         return list(self.segments)[:n]
-
 
 class FakeStore:
     def __init__(self):
@@ -108,7 +101,6 @@ class FakeStore:
         for cb in list(self._subs):
             cb(self._state["seq"], [result])
 
-
 _ACTIVITY_TICK = {
     "kind": "thinking",
     "label": "Model is thinking through the transcript…",
@@ -116,7 +108,6 @@ _ACTIVITY_TICK = {
     "pass_kind": "consolidation",
     "ts": "2026-08-16T12:00:00+00:00",
 }
-
 
 class FakeEngine:
     def __init__(self):
@@ -150,7 +141,6 @@ class FakeEngine:
     def undo(self, seq, participant_id):
         return []
 
-
 @pytest.fixture
 def ws_app():
     pytest.importorskip("fastapi")
@@ -164,7 +154,6 @@ def ws_app():
     engine.hub = hub
     app = create_app(engine, repo, hub)
     return TestClient(app), engine, repo
-
 
 # ---------------------------------------------------------------------------
 # Real-store fixture: exercises the actual op authorization rules over WS.
@@ -194,7 +183,6 @@ class AuthzEngine:
         }])
         return dict(results[0].effect["participant"])
 
-
 @pytest.fixture
 def authz_app():
     pytest.importorskip("fastapi")
@@ -206,7 +194,6 @@ def authz_app():
     hub = WsHub(engine, repo)
     app = create_app(engine, repo, hub)
     return TestClient(app), engine
-
 
 class TestWsHello:
     def test_hello_snapshot_shape(self, ws_app):
@@ -251,7 +238,6 @@ class TestWsHello:
         assert patch["type"] == "patch"
         assert patch["results"][0]["effect"]["item"]["text"] == "LOST"
         assert patch["seq"] == 4
-
 
 class TestAgentActivityWs:
     """Host-only ``agent_activity`` fan-out and hello snapshot."""
@@ -332,7 +318,6 @@ class TestAgentActivityWs:
         assert list(conn.pending) == []
         assert conn.ready is False
 
-
 class TestWsActionRoundTrip:
     def test_action_echoes_client_action_id(self, ws_app):
         client, engine, _ = ws_app
@@ -376,7 +361,6 @@ class TestWsActionRoundTrip:
         assert hello["role"] == "guest"
         assert hello["participant_id"] == "p_guest1"
 
-
 class TestGuestIdentity:
     def test_reconnect_with_guest_id_reuses_participant(self, ws_app):
         client, engine, _ = ws_app
@@ -410,7 +394,6 @@ class TestGuestIdentity:
             second = recv_until(ws, "hello")["participant_id"]
         assert first != second
         assert engine.add_guest_calls == 2
-
 
 class TestGuestWsAuthorization:
     """Guests reaching host-only ops through the WS action path."""
@@ -467,7 +450,6 @@ class TestGuestWsAuthorization:
             result = recv_until(ws, "action_result")
         assert result["results"][0]["ok"] is True
         assert engine.store.snapshot()["title"] == "Host title"
-
 
 class TestHostileInput:
     """Malformed frames must be answered, never abort the connection."""

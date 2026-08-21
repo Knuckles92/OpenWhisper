@@ -1,9 +1,9 @@
 """
 Unit tests for saved-recording retention settings and rotation.
 """
+import pytest
 import os
 import tempfile
-import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,12 +17,12 @@ from services.settings import (
 )
 
 
-class TestResolveMaxSavedRecordings(unittest.TestCase):
+class TestResolveMaxSavedRecordings:
     """Tests for resolve_max_saved_recordings()."""
 
     def test_default_is_custom_config_limit(self):
         """Missing settings should use the config custom default."""
-        self.assertEqual(resolve_max_saved_recordings({}), config.MAX_SAVED_RECORDINGS)
+        assert resolve_max_saved_recordings({}) == config.MAX_SAVED_RECORDINGS
 
     def test_keep_all_returns_none(self):
         """Keep-all mode should disable the retention limit."""
@@ -30,7 +30,7 @@ class TestResolveMaxSavedRecordings(unittest.TestCase):
             SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.KEEP_ALL,
             SettingsKey.MAX_SAVED_RECORDINGS: 5,
         }
-        self.assertIsNone(resolve_max_saved_recordings(settings))
+        assert resolve_max_saved_recordings(settings) is None
 
     def test_custom_uses_count(self):
         """Custom mode should use the configured count."""
@@ -38,7 +38,7 @@ class TestResolveMaxSavedRecordings(unittest.TestCase):
             SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.CUSTOM,
             SettingsKey.MAX_SAVED_RECORDINGS: 7,
         }
-        self.assertEqual(resolve_max_saved_recordings(settings), 7)
+        assert resolve_max_saved_recordings(settings) == 7
 
     def test_custom_clamps_to_at_least_one(self):
         """Custom counts below 1 should clamp to 1."""
@@ -46,7 +46,7 @@ class TestResolveMaxSavedRecordings(unittest.TestCase):
             SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.CUSTOM,
             SettingsKey.MAX_SAVED_RECORDINGS: 0,
         }
-        self.assertEqual(resolve_max_saved_recordings(settings), 1)
+        assert resolve_max_saved_recordings(settings) == 1
 
     def test_invalid_count_falls_back_to_config(self):
         """Non-integer custom counts should fall back to config."""
@@ -54,18 +54,21 @@ class TestResolveMaxSavedRecordings(unittest.TestCase):
             SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.CUSTOM,
             SettingsKey.MAX_SAVED_RECORDINGS: "nope",
         }
-        self.assertEqual(resolve_max_saved_recordings(settings), config.MAX_SAVED_RECORDINGS)
+        assert resolve_max_saved_recordings(settings) == config.MAX_SAVED_RECORDINGS
 
 
-class TestRecordingRotation(unittest.TestCase):
+class TestRecordingRotation:
     """Tests for HistoryManager recording rotation."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.temp_dir = tempfile.mkdtemp()
         self.recordings_dir = os.path.join(self.temp_dir, "recordings")
         os.makedirs(self.recordings_dir)
 
-    def tearDown(self):
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         for name in os.listdir(self.recordings_dir):
             os.remove(os.path.join(self.recordings_dir, name))
         os.rmdir(self.recordings_dir)
@@ -91,10 +94,7 @@ class TestRecordingRotation(unittest.TestCase):
         manager._rotate_recordings()
 
         remaining = sorted(os.listdir(self.recordings_dir))
-        self.assertEqual(
-            remaining,
-            ["recording_20260102_120000.wav", "recording_20260103_120000.wav"],
-        )
+        assert remaining == ["recording_20260102_120000.wav", "recording_20260103_120000.wav"]
 
     @patch("services.history_manager.db")
     def test_keep_all_skips_rotation(self, _mock_db):
@@ -109,7 +109,7 @@ class TestRecordingRotation(unittest.TestCase):
 
         manager._rotate_recordings()
 
-        self.assertEqual(len(os.listdir(self.recordings_dir)), 3)
+        assert len(os.listdir(self.recordings_dir)) == 3
 
     @patch("services.history_manager.db")
     def test_set_max_recordings_applies_immediately(self, _mock_db):
@@ -125,13 +125,14 @@ class TestRecordingRotation(unittest.TestCase):
         manager.set_max_recordings(1)
 
         remaining = os.listdir(self.recordings_dir)
-        self.assertEqual(remaining, ["recording_20260103_120000.wav"])
+        assert remaining == ["recording_20260103_120000.wav"]
 
 
-class TestHistoryEntryDeletion(unittest.TestCase):
+class TestHistoryEntryDeletion:
     """Tests for optionally deleting audio with a history entry."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.temp_dir = tempfile.mkdtemp()
         self.recordings_dir = os.path.join(self.temp_dir, "recordings")
         os.makedirs(self.recordings_dir)
@@ -140,7 +141,9 @@ class TestHistoryEntryDeletion(unittest.TestCase):
         with open(self.audio_path, "wb") as handle:
             handle.write(b"RIFF")
 
-    def tearDown(self):
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         if os.path.exists(self.audio_path):
             os.remove(self.audio_path)
         os.rmdir(self.recordings_dir)
@@ -154,9 +157,9 @@ class TestHistoryEntryDeletion(unittest.TestCase):
         )
         mock_db.delete_history_entry.return_value = True
 
-        self.assertTrue(manager.delete_entry("entry-test-id"))
+        assert manager.delete_entry("entry-test-id")
 
-        self.assertTrue(os.path.exists(self.audio_path))
+        assert os.path.exists(self.audio_path)
         mock_db.get_history_entry_by_id.assert_not_called()
         mock_db.clear_history_audio_file.assert_not_called()
 
@@ -171,28 +174,29 @@ class TestHistoryEntryDeletion(unittest.TestCase):
         )
         mock_db.delete_history_entry.return_value = True
 
-        self.assertTrue(
-            manager.delete_entry(
+        assert manager.delete_entry(
                 "entry-test-id",
                 delete_audio_file=True,
             )
-        )
 
-        self.assertFalse(os.path.exists(self.audio_path))
+        assert not os.path.exists(self.audio_path)
         mock_db.clear_history_audio_file.assert_called_once_with(
             self.audio_filename
         )
 
 
-class TestRecordingRetentionPersistence(unittest.TestCase):
+class TestRecordingRetentionPersistence:
     """Settings file round-trip for retention keys."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.temp_dir = tempfile.mkdtemp()
         self.settings_file = os.path.join(self.temp_dir, "settings.json")
         self.manager = SettingsManager(self.settings_file)
 
-    def tearDown(self):
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         if os.path.exists(self.settings_file):
             os.remove(self.settings_file)
         os.rmdir(self.temp_dir)
@@ -204,7 +208,7 @@ class TestRecordingRetentionPersistence(unittest.TestCase):
             SettingsKey.MAX_SAVED_RECORDINGS: 15,
         })
         loaded = self.manager.load_all_settings()
-        self.assertEqual(resolve_max_saved_recordings(loaded), 15)
+        assert resolve_max_saved_recordings(loaded) == 15
 
     def test_save_and_resolve_keep_all(self):
         """Persisted keep-all retention should resolve to None."""
@@ -213,8 +217,6 @@ class TestRecordingRetentionPersistence(unittest.TestCase):
             SettingsKey.MAX_SAVED_RECORDINGS: 15,
         })
         loaded = self.manager.load_all_settings()
-        self.assertIsNone(resolve_max_saved_recordings(loaded))
+        assert resolve_max_saved_recordings(loaded) is None
 
 
-if __name__ == "__main__":
-    unittest.main()

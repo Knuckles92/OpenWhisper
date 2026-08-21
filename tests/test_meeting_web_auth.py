@@ -2,13 +2,9 @@
 Tests for meeting web auth: role resolve, host-only ops, token compare,
 export token stripping, and the re-run-insights in-flight guard.
 """
-import os
-import sys
 import threading
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.web.auth import (
     ROLE_GUEST,
@@ -19,10 +15,8 @@ from meeting.web.auth import (
 )
 from meeting.web.ws import WsHub
 
-
 HOST_TOKEN = "host-secret-token-aaaaaaaaaaaaaaaa"
 GUEST_TOKEN = "guest-secret-token-bbbbbbbbbbbbbbbb"
-
 
 class FakeRepo:
     def __init__(self, meeting=None, meetings=None):
@@ -112,7 +106,6 @@ class FakeRepo:
                  "action": "add_item", "target_id": "it_1",
                  "undoable": True}]
 
-
 class FakeStore:
     def __init__(self, meeting_id="m_test"):
         self._subs = []
@@ -132,7 +125,6 @@ class FakeStore:
     def unsubscribe(self, cb):
         if cb in self._subs:
             self._subs.remove(cb)
-
 
 class FakeEngine:
     def __init__(self, meeting_id="m_test"):
@@ -168,7 +160,6 @@ class FakeEngine:
         self.tokens_regenerated = True
         return {"host_url": "/m/new-host", "guest_url": "/m/new-guest"}
 
-
 @pytest.fixture
 def client():
     from fastapi.testclient import TestClient
@@ -180,7 +171,6 @@ def client():
     app = create_app(engine, repo, hub)
     with TestClient(app) as tc:
         yield tc, engine, repo
-
 
 class TestResolveRole:
     def test_host_and_guest_match(self):
@@ -200,7 +190,6 @@ class TestResolveRole:
         a, b = generate_token_pair()
         assert a != b
         assert len(generate_token()) >= 32
-
 
 class TestHostOnlyAuthz:
     def test_guest_cannot_list_meetings(self, client):
@@ -389,7 +378,6 @@ class TestHostOnlyAuthz:
                          params={"token": GUEST_TOKEN})
         assert blocked.status_code == 403
 
-
 class TestRerunSpeakers:
     def test_guest_cannot_rerun(self, client):
         tc, _, _ = client
@@ -498,7 +486,6 @@ class TestRerunSpeakers:
         assert calls["api_key"] == "sk-test"
         assert calls["spool_dir"] == repo._meeting.get("spool_dir")
 
-
 class TestRerunInsights:
     def test_guest_cannot_rerun(self, client):
         tc, _, _ = client
@@ -582,7 +569,6 @@ class TestRerunInsights:
         third = tc.post("/api/meetings/m_test/reinsights",
                         params={"token": HOST_TOKEN})
         assert third.status_code == 200
-
 
 class TestExportTokenStripping:
     @pytest.mark.parametrize("fmt", ["md", "json", "txt"])

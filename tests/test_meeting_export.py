@@ -2,17 +2,12 @@
 Tests for meeting exporters: markdown/json/txt shape and token stripping.
 """
 import json
-import os
-import sys
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.export.json_export import FORMAT_VERSION, export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
-
 
 def _fixture():
     meeting = {
@@ -100,7 +95,6 @@ def _fixture():
     ]
     return meeting, state, segments
 
-
 class TestJsonExport:
     def test_strips_tokens_and_volatile_fields(self):
         meeting, state, segments = _fixture()
@@ -123,7 +117,6 @@ class TestJsonExport:
         data = json.loads(export_json(meeting, state, segments))
         kp = data["state"]["cards"]["key_points"][0]
         assert kp["evidence"] == ["sg_1"]
-
 
 class TestMarkdownExport:
     def test_golden_structure(self):
@@ -157,7 +150,6 @@ class TestMarkdownExport:
         assert "[00:00:05] Alex: Welcome everyone" in md
         assert "[00:00:10] Sam: Let's plan Q3" in md
         assert md.endswith("\n")
-
 
 class TestTranscriptTxtExport:
     def test_plain_transcript(self):

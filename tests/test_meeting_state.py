@@ -2,17 +2,12 @@
 Tests for the Meeting Mode state layer: patch ops, protection rules, and the
 single-writer store (seq numbering, audit events, undo).
 """
-import os
-import sys
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore
 from meeting.state.patches import AGENT_OPS
-
 
 class FakeRepository:
     """Captures write-through calls; serves events back for undo."""
@@ -69,13 +64,11 @@ class FakeRepository:
         seg["speaker_source"] = source
         seg["speaker_pinned"] = pinned
 
-
 class FailingRepository(FakeRepository):
     """Repository that proves failed durability never leaks live state."""
 
     def on_ops_applied(self, *args, **kwargs):
         raise RuntimeError("database unavailable")
-
 
 def make_store():
     repo = FakeRepository()
@@ -111,7 +104,6 @@ def make_store():
         segment_exists=repo.segment_exists,
     )
     return store, repo
-
 
 class TestItemOps:
     def test_agent_add_item_is_proposed(self):
@@ -319,7 +311,6 @@ class TestItemOps:
         ])[0]
         assert bad_evidence.reason == "unknown_evidence"
 
-
 class TestAgentBoundaries:
     def test_agent_claim_requires_evidence(self):
         repo = FakeRepository()
@@ -381,7 +372,6 @@ class TestAgentBoundaries:
         store, _ = make_store()
         store.apply("agent", "agent", [{"op": "unknown_thing"}])
         assert store.seq == 0
-
 
 class TestAgentAuthorityLimits:
     """Rules the agent's tool schema cannot express, enforced at the seam."""
@@ -489,7 +479,6 @@ class TestAgentAuthorityLimits:
             "We agreed to ship on Friday."
         )
 
-
 class TestEvidenceIntegrity:
     """Evidence anchors are additive; undo must restore the exact prior set."""
 
@@ -536,7 +525,6 @@ class TestEvidenceIntegrity:
         assert item["text"] == "Original"
         assert item["evidence"] == ["sg_known", "sg_a"]
 
-
 class TestParticipants:
     def test_agent_creates_provisional_participant(self):
         store, _ = make_store()
@@ -566,7 +554,6 @@ class TestParticipants:
         assert suggestion.reason == "human_named"
         snapshot = store.snapshot()
         assert snapshot["participants"][pid]["display_name"] == "Sarah Chen"
-
 
 class TestQuestions:
     def test_open_question_cap_applies_to_agent(self):
@@ -640,7 +627,6 @@ class TestQuestions:
         assert not stale.ok
         assert stale.reason == "already_closed"
 
-
 class TestSegmentOps:
     def test_reassign_speaker_flows_through_handler(self):
         store, repo = make_store()
@@ -659,7 +645,6 @@ class TestSegmentOps:
         assert result.inverse == {"op": "reassign_segment_speaker",
                                   "segment_id": "sg_known",
                                   "participant_id": None}
-
 
 class TestStoreMechanics:
     def test_set_title_is_host_only(self):
@@ -758,7 +743,6 @@ class TestStoreMechanics:
         legacy = MeetingState.from_dict({"meeting_id": "m_legacy"})
         assert legacy.report_views == ["ribbon", "brief", "signal"]
 
-
 class TestClientAbusePrevention:
     """Dashboard clients are untrusted: guests must not be able to forge
     provenance, impersonate the host, or grow the state document without
@@ -851,7 +835,6 @@ class TestClientAbusePrevention:
         assert not capped.ok
         assert capped.reason == "question_limit"
 
-
 class TestPinnedSpeakerProtection:
     """A human speaker correction outranks any later automated relabel."""
 
@@ -906,7 +889,6 @@ class TestPinnedSpeakerProtection:
         ])[0]
         assert corrected.ok
         assert repo.segments["sg_known"]["speaker_participant_id"] == dana.target_id
-
 
 class TestFinalizationState:
     """Persisted finalization contract: statuses, legacy, and malformed data."""

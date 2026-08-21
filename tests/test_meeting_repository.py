@@ -4,28 +4,12 @@ segments + FTS search, state write-through, and cascade-safe deletion.
 """
 import json
 import os
-import sys
 from datetime import datetime
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meeting.interfaces import TranscriptSegment
-
-
-@pytest.fixture
-def db(tmp_path):
-    from services.database import DatabaseManager
-    manager = DatabaseManager(db_path=str(tmp_path / "test.db"))
-    yield manager
-    manager.close()
-
-
-@pytest.fixture
-def repo(db):
-    from meeting.persist.repository import SqlMeetingRepository
-    return SqlMeetingRepository(db=db)
 
 
 def make_meeting(repo, meeting_id="m_test1"):

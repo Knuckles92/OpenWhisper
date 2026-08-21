@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 
 # Add the project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services.audio_processor import audio_processor
 from config import config
@@ -17,7 +16,6 @@ from config import config
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 def test_chunking():
     """Test the chunking functionality with our generated test file."""
@@ -80,7 +78,6 @@ def test_chunking():
         logger.error(f"Chunking test failed: {e}")
         audio_processor.cleanup_temp_files()
         return False
-
 
 if __name__ == "__main__":
     success = test_chunking()
