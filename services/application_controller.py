@@ -108,6 +108,8 @@ class ApplicationController(QObject):
     meeting_consent_requested = pyqtSignal()
     # Guest URL ready for clipboard copy (clipboard access is main-thread only).
     meeting_guest_link_ready = pyqtSignal(str)
+    # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
+    past_meetings_refresh_requested = pyqtSignal()
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -1071,6 +1073,9 @@ class ApplicationController(QObject):
         self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
         self.meeting_guest_link_ready.connect(
             self.ui_controller.copy_meeting_guest_link
+        )
+        self.past_meetings_refresh_requested.connect(
+            self.ui_controller.main_window.refresh_past_meetings
         )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)

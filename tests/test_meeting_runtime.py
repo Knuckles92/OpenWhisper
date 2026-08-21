@@ -32,6 +32,7 @@ class _Controller(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     meeting_consent_requested = pyqtSignal()
     meeting_recovery_found = pyqtSignal(object)
+    past_meetings_refresh_requested = pyqtSignal()
     status_update = pyqtSignal(str)
 
     def __init__(self):
@@ -527,6 +528,28 @@ def test_defer_refused_while_finalizing(runtime):
     assert rt.defer_finalization_card() is False
     fake_repo.persist_state.assert_not_called()
     assert any("still being prepared" in status for status in statuses)
+
+
+def test_refresh_past_meetings_from_worker_uses_signal(runtime):
+    """Opening a deferred meeting must not rebuild Qt widgets on the worker."""
+    import threading
+
+    rt, controller = runtime
+    refreshed = []
+    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+
+    def worker():
+        rt._refresh_past_meetings()
+
+    thread = threading.Thread(target=worker, name="meeting-history-dashboard")
+    thread.start()
+    thread.join(timeout=2)
+    assert thread.is_alive() is False
+    assert refreshed == []
+    qapp = QCoreApplication.instance()
+    assert qapp is not None
+    qapp.processEvents()
+    assert refreshed == [True]
 
 
 def test_open_past_meeting_clears_deferral(runtime):

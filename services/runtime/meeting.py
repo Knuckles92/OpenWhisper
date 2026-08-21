@@ -388,8 +388,12 @@ class MeetingRuntime:
         self._refresh_past_meetings()
 
     def _refresh_past_meetings(self) -> None:
-        """Reload the Past Meetings sidebar when the Qt window is available."""
+        """Reload the Past Meetings sidebar on the Qt GUI thread."""
         try:
+            signal = getattr(self.controller, "past_meetings_refresh_requested", None)
+            if signal is not None:
+                signal.emit()
+                return
             self.controller.ui_controller.main_window.refresh_past_meetings()
         except Exception:
             pass

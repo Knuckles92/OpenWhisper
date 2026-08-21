@@ -92,13 +92,13 @@ class PastMeetingItem(QFrame):
         title = str(meeting.get("title") or "").strip()
         if not title:
             title = "Failed meeting" if status == "failed" else "Untitled meeting"
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("pastMeetingTitle")
         self.title_label.setWordWrap(True)
         self.title_label.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         layout.addWidget(self.title_label)
 
-        self.date_label = QLabel(_format_started_at(meeting.get("started_at")))
+        self.date_label = QLabel(_format_started_at(meeting.get("started_at")), self)
         self.date_label.setObjectName("pastMeetingMeta")
         layout.addWidget(self.date_label)
 
@@ -112,11 +112,11 @@ class PastMeetingItem(QFrame):
             content_note = "No transcript captured"
         elif content.get("has_audio") is False:
             content_note = "No audio captured"
-        self.content_label = QLabel(content_note)
+        self.content_label = QLabel(content_note, self)
         self.content_label.setObjectName("pastMeetingContentWarning")
         self.content_label.setWordWrap(True)
-        self.content_label.setVisible(bool(content_note))
         layout.addWidget(self.content_label)
+        self.content_label.setVisible(bool(content_note))
 
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 2, 0, 0)
@@ -126,15 +126,16 @@ class PastMeetingItem(QFrame):
         if status not in {"", "ended"}:
             lifecycle = "Failed" if status == "failed" else status.replace("_", " ").title()
             duration = f"{duration} · {lifecycle}" if duration else lifecycle
-        self.detail_label = QLabel(duration)
+        self.detail_label = QLabel(duration, self)
         self.detail_label.setObjectName("pastMeetingMeta")
         footer.addWidget(self.detail_label)
 
         pill = _insights_pill(meeting)
-        self.insights_pill = QLabel("")
+        self.insights_pill = QLabel("", self)
         self.insights_pill.setObjectName("pastMeetingInsightsPill")
         self.insights_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.insights_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        footer.addWidget(self.insights_pill)
         if pill:
             label, tone = pill
             self.insights_pill.setText(label)
@@ -146,10 +147,9 @@ class PastMeetingItem(QFrame):
             self.insights_pill.show()
         else:
             self.insights_pill.hide()
-        footer.addWidget(self.insights_pill)
         footer.addStretch()
 
-        self.open_button = QPushButton("Open")
+        self.open_button = QPushButton("Open", self)
         self.open_button.setObjectName("pastMeetingOpenButton")
         self.open_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_button.setToolTip("Load this meeting in the web dashboard")
@@ -280,7 +280,7 @@ class PastMeetingsPanel(QWidget):
             return
 
         for meeting in meetings[: self.MAX_MEETINGS]:
-            card = PastMeetingItem(meeting)
+            card = PastMeetingItem(meeting, self.scroll_area.widget())
             card.open_requested.connect(self.meeting_selected.emit)
             self.meetings_layout.addWidget(card)
 
