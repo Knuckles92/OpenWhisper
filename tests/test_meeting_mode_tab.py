@@ -6,12 +6,16 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
-from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
+from ui_qt.widgets.meeting_mode_tab import (
+    MeetingModeTab,
+    meeting_audio_support_copy,
+)
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
@@ -101,9 +105,36 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             TabbedContentWidget.TAB_MEETING_MODE,
         )
 
+    def test_expanded_past_meetings_keeps_primary_controls_visible(self):
+        """The sidebar must not clip Start, cloud copy, or the tab label."""
+        self.window.show()
+        self.window.resize(985, 800)
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_MEETING_MODE
+        )
+        self.window.history_sidebar._set_sidebar_width(
+            self.window.history_sidebar.EXPANDED_WIDTH
+        )
+        for _ in range(5):
+            self.app.processEvents()
+
+        tab = self.window.meeting_mode_tab
+        viewport = tab.scroll_area.viewport()
+        for control in (tab.cloud_checkbox, tab.start_button):
+            top_left = control.mapTo(viewport, QPoint(0, 0))
+            self.assertGreaterEqual(top_left.x(), 0)
+            self.assertGreaterEqual(top_left.y(), 0)
+            self.assertLessEqual(top_left.x() + control.width(), viewport.width())
+            self.assertLessEqual(top_left.y() + control.height(), viewport.height())
+
+        tab_bar = self.window.tabbed_content.tab_bar
+        meeting_rect = tab_bar.tabRect(TabbedContentWidget.TAB_MEETING_MODE)
+        label_width = tab_bar.fontMetrics().horizontalAdvance("Meeting Mode")
+        self.assertGreaterEqual(meeting_rect.width(), label_width + 20)
+
 
 class TestMeetingModeWindowHeight(unittest.TestCase):
-    """The window must grow rather than squeeze the finalization checklist."""
+    """Finalization remains readable in the responsive scroll viewport."""
 
     FINALIZATION = {
         "status": "running",
@@ -185,7 +216,11 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         })
         self._settle()
 
-        self.assertGreater(self.window.height(), start_height)
+        self.assertEqual(self.window.height(), start_height)
+        self.assertGreater(
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
+        )
         steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
         self.assertGreaterEqual(
             steps_widget.height(), steps_widget.minimumSizeHint().height()
@@ -193,8 +228,8 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         for row in self._step_rows():
             self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
 
-    def test_borrowed_height_is_returned_when_the_card_clears(self):
-        """Ending finalization gives the extra window height back."""
+    def test_scroll_space_is_released_when_the_card_clears(self):
+        """Clearing finalization removes overflow without resizing the window."""
         start_height = self.window.height()
         self.window.meeting_mode_tab.set_meeting_state({
             "active": False,
@@ -202,21 +237,23 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
             "finalization": self.FINALIZATION,
         })
         self._settle()
-        self.assertGreater(self.window.height(), start_height)
-
-        floor_with_card = self.window.minimumHeight()
+        self.assertEqual(self.window.height(), start_height)
+        self.assertGreater(
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
+        )
 
         self.window.meeting_mode_tab.set_meeting_state({
             "status": "starting",
-            "active": True,
+            "active": False,
         })
         self._settle()
 
-        self.assertLess(self.window.minimumHeight(), floor_with_card)
+        self.assertEqual(self.window.height(), start_height)
         self.assertEqual(self.window._meeting_height_growth, 0)
-        # The shrink itself is animated; check where it is headed.
         self.assertEqual(
-            self.window._resize_animation.endValue().height(), start_height
+            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
+            0,
         )
 
     def test_step_rows_are_inset_from_the_list_edges(self):
@@ -268,6 +305,14 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.demo_button.isHidden())
         self.assertTrue(self.tab.demo_hint.isHidden())
 
+    def test_platform_copy_does_not_promise_unavailable_system_audio(self):
+        subtitle, linux_hint = meeting_audio_support_copy("linux")
+
+        self.assertIn("when supported", subtitle)
+        self.assertIn("microphone audio only", linux_hint)
+        self.assertIn("Windows", linux_hint)
+        self.assertEqual(self.tab.platform_hint.text(), linux_hint)
+
     def test_developer_mode_shows_demo_meeting_control(self):
         """Developer mode reveals the demo loader on the idle Meeting tab."""
         received = []
@@ -298,6 +343,20 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.session_card.isHidden())
         self.assertEqual(self.tab.status_pill.text(), "Active")
         self.assertEqual(self.tab.elapsed_label.text(), "01:05")
+
+    def test_starting_is_non_active_and_does_not_run_timer(self):
+        """Startup shows progress without exposing live controls or a timer."""
+        self.tab.set_meeting_state({"active": False, "status": "starting"})
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.is_meeting_active)
+        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.session_card.isHidden())
+        self.assertEqual(self.tab.status_pill.text(), "Starting")
+        self.assertFalse(self.tab._elapsed_timer.isActive())
+        self.assertFalse(self.tab.pause_button.isEnabled())
+        self.assertFalse(self.tab.end_button.isEnabled())
+        self.assertEqual(self.tab.elapsed_label.text(), "00:00")
 
     def test_start_emits_cloud_choice(self):
         """Start Meeting emits the current cloud-intelligence choice."""
@@ -352,6 +411,36 @@ class TestMeetingModeTabState(unittest.TestCase):
                     status == "completed",
                 )
 
+    def test_empty_meeting_stays_visible_and_disables_speaker_rerun(self):
+        """A zero-content result cannot look successful or rerun speakers."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "failed",
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+                "content_summary": {
+                    "meeting_status": "failed",
+                    "is_empty": True,
+                    "has_audio": False,
+                    "has_transcript": False,
+                    "can_rerun_speakers": False,
+                },
+            },
+        })
+        self.app.processEvents()
+
+        self.assertEqual(self.tab.finalization_title.text(), "Meeting Failed")
+        self.assertFalse(self.tab.finalization_active_box.isHidden())
+        self.assertIn("No audio or transcript", self.tab.finalization_message.text())
+        self.assertFalse(
+            self.tab.finalization_retry_speakers_button.isEnabled()
+        )
+        self.assertIn(
+            "No system-audio",
+            self.tab.finalization_retry_speakers_button.toolTip(),
+        )
+
     def test_unavailable_and_failed_use_warning_tone(self):
         """Unavailable/failed stay persistent warnings without dialogs."""
         self.tab.set_meeting_state({
@@ -387,7 +476,7 @@ class TestMeetingModeTabState(unittest.TestCase):
                 "message": "done",
             },
         })
-        self.tab.set_meeting_state({"status": "starting", "active": True})
+        self.tab.set_meeting_state({"status": "starting", "active": False})
         self.app.processEvents()
         self.assertIsNone(self.tab.finalization_status)
         self.assertTrue(self.tab.finalization_card.isHidden())
@@ -403,6 +492,22 @@ class TestMeetingModeTabState(unittest.TestCase):
             "dashboard_available": True,
         })
         self.app.processEvents()
+        self.tab.finalization_dashboard_button.click()
+        self.assertEqual(clicked, [True])
+
+    def test_finalization_dashboard_reports_through_signal_without_url(self):
+        """An unavailable dashboard remains clickable so runtime can explain."""
+        clicked = []
+        self.tab.open_dashboard_requested.connect(lambda: clicked.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "unavailable", "message": "No dashboard"},
+            "dashboard_available": False,
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
         self.tab.finalization_dashboard_button.click()
         self.assertEqual(clicked, [True])
 

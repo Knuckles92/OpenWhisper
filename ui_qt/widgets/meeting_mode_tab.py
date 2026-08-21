@@ -9,6 +9,7 @@ state flows back in via ``set_meeting_state`` payload dicts (partial updates —
 absent keys leave the current state untouched).
 """
 import logging
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -31,6 +33,28 @@ from ui_qt.widgets.cards import Card
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
+
+
+def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str]:
+    """Return accurate Meeting Mode capture copy for the current platform."""
+    platform = platform or sys.platform
+    subtitle = (
+        "Capture microphone audio and, when supported, system audio. Follow "
+        "the transcript and insights in the browser dashboard."
+    )
+    if platform.startswith("win"):
+        hint = "System audio uses Windows WASAPI loopback when available."
+    elif platform.startswith("linux"):
+        hint = (
+            "Linux captures microphone audio only; system-audio loopback "
+            "requires the Windows Meeting Mode path."
+        )
+    else:
+        hint = (
+            "System-audio capture may be unavailable on this platform; "
+            "Meeting Mode can continue microphone-only."
+        )
+    return subtitle, hint
 
 
 class MeetingModeTab(QWidget):
@@ -58,12 +82,14 @@ class MeetingModeTab(QWidget):
         self.setObjectName("meetingModeTab")
 
         self._active = False
+        self._starting = False
         self._paused = False
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
-        self._finalization: Optional[Dict[str, str]] = None
+        self._finalization: Optional[Dict[str, Any]] = None
         self._meeting_id: Optional[str] = None
         self._has_dashboard = False
+        self._can_rerun_speakers = False
         self._developer_mode = False
 
         self._elapsed_timer = QTimer(self)
@@ -98,19 +124,37 @@ class MeetingModeTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("meetingModeScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_area.setStyleSheet(
+            "QScrollArea#meetingModeScrollArea { border: none; "
+            "background: transparent; }"
+        )
+        scroll_host = QWidget()
+        scroll_host.setObjectName("meetingModeScrollHost")
+        center_wrapper = QHBoxLayout(scroll_host)
+        center_wrapper.setContentsMargins(0, 0, 0, 0)
+
         content = QWidget()
         content.setObjectName("meetingModeContent")
+        content.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 14, 24, 16)
         content_layout.setSpacing(16)
 
-        center_wrapper = QHBoxLayout()
         center_wrapper.addStretch()
         center_wrapper.addWidget(content, stretch=1)
         center_wrapper.addStretch()
         content.setMaximumWidth(700)
-        content.setMinimumWidth(500)
-        main_layout.addLayout(center_wrapper)
+        content.setMinimumWidth(0)
+        self.scroll_area.setWidget(scroll_host)
+        main_layout.addWidget(self.scroll_area)
 
         intro_card = Card()
         intro_card.setMinimumHeight(0)
@@ -120,15 +164,28 @@ class MeetingModeTab(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro_card.layout.addWidget(title)
 
-        subtitle = WrappedLabel(
-            "Capture a live meeting with mic and system audio, then follow "
-            "the transcript and insights in the browser dashboard."
-        )
+        subtitle_copy, platform_copy = meeting_audio_support_copy()
+        subtitle = WrappedLabel(subtitle_copy)
         subtitle.setObjectName("meetingModeSubtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setFont(QFont("Segoe UI", 11))
         intro_card.layout.addWidget(subtitle)
+        self.platform_hint = WrappedLabel(platform_copy)
+        self.platform_hint.setObjectName("meetingModePlatformHint")
+        self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.platform_hint.setFont(QFont("Segoe UI", 10))
+        intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
+
+        self.cloud_checkbox = QCheckBox("Cloud intelligence")
+        self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
+        self.cloud_checkbox.setChecked(
+            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
+        )
+        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
+        content_layout.addWidget(
+            self.cloud_checkbox, alignment=Qt.AlignmentFlag.AlignCenter
+        )
 
         # Idle controls
         self.idle_card = Card()
@@ -357,16 +414,6 @@ class MeetingModeTab(QWidget):
         self.finalization_card.layout.addLayout(keep_row)
         content_layout.addWidget(self.finalization_card)
 
-        self.cloud_checkbox = QCheckBox("Cloud intelligence")
-        self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
-        self.cloud_checkbox.setChecked(
-            bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
-        )
-        self.cloud_checkbox.toggled.connect(self.cloud_toggled)
-        content_layout.addWidget(
-            self.cloud_checkbox, alignment=Qt.AlignmentFlag.AlignCenter
-        )
-
         content_layout.addStretch()
 
     # ------------------------------------------------------------------
@@ -441,6 +488,7 @@ class MeetingModeTab(QWidget):
         if "status" in payload:
             status = str(payload["status"])
             self.set_status_text(status.capitalize())
+            self._starting = status == "starting"
             # A new meeting start clears any previous finalization result.
             if status == "starting":
                 self._finalization = None
@@ -532,6 +580,8 @@ class MeetingModeTab(QWidget):
             "total_steps": int(value.get("total_steps") or 0),
             "step_details": str(value.get("step_details") or ""),
             "steps": list(value.get("steps") or []),
+            "summary_stats": dict(value.get("summary_stats") or {}),
+            "content_summary": dict(value.get("content_summary") or {}),
         }
 
     def _set_active(self, active: bool) -> None:
@@ -541,6 +591,7 @@ class MeetingModeTab(QWidget):
             return
         self._active = active
         if active:
+            self._starting = False
             # Starting a live session replaces any prior finalization result.
             self._finalization = None
             if self._running_since is None:
@@ -577,13 +628,16 @@ class MeetingModeTab(QWidget):
         final_status = (finalization or {}).get("status") or ""
         running_finalization = final_status == "running"
         show_finalization = bool(finalization) and not self._active
+        showing_session = self._active or self._starting
 
-        self.session_card.setVisible(self._active)
+        self.session_card.setVisible(showing_session)
         # Hide the idle Start control while finalization is running or an
         # incomplete card is asking the user to retry, defer, or start new.
         incomplete = self._is_incomplete_finalization(finalization)
         hide_idle_start = running_finalization or incomplete
-        self.idle_card.setVisible(not self._active and not hide_idle_start)
+        self.idle_card.setVisible(
+            not showing_session and not hide_idle_start
+        )
         self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
@@ -593,6 +647,9 @@ class MeetingModeTab(QWidget):
         self.demo_button.setVisible(show_demo)
         self.demo_hint.setVisible(show_demo)
         self.finalization_card.setVisible(show_finalization)
+        self.pause_button.setEnabled(self._active)
+        self.end_button.setEnabled(self._active)
+        self.guest_link_button.setEnabled(self._active and self._has_dashboard)
 
         if show_finalization and finalization is not None:
             self._render_finalization(finalization)
@@ -600,7 +657,7 @@ class MeetingModeTab(QWidget):
         dashboard_enabled = self._active or self._has_dashboard or show_finalization
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
         self.finalization_dashboard_button.setEnabled(
-            self._has_dashboard or self._active
+            self._has_dashboard or self._active or show_finalization
         )
         self.finalization_dashboard_button.setVisible(dashboard_enabled)
 
@@ -618,6 +675,19 @@ class MeetingModeTab(QWidget):
         total_steps = int(finalization.get("total_steps") or 0)
         step_details = str(finalization.get("step_details") or "").strip()
         steps = list(finalization.get("steps") or [])
+        content = dict(finalization.get("content_summary") or {})
+        meeting_failed = str(content.get("meeting_status") or "") == "failed"
+        empty_meeting = bool(content.get("is_empty", False))
+        self._can_rerun_speakers = bool(
+            content.get("can_rerun_speakers", False)
+        )
+        if empty_meeting:
+            message = (
+                "No audio or transcript was captured. The meeting failed "
+                "before it could start, so no dashboard was created."
+                if meeting_failed
+                else "No audio or transcript was captured for this meeting."
+            )
 
         titles = {
             "running": "Finalizing Meeting",
@@ -648,8 +718,26 @@ class MeetingModeTab(QWidget):
                 message
                 or "Some post-meeting steps failed. The recording was kept."
             )
-        self.finalization_title.setText(titles.get(display_status, "Final insights"))
+        self.finalization_title.setText(
+            "Meeting Failed"
+            if meeting_failed and empty_meeting
+            else "Empty Meeting"
+            if empty_meeting
+            else titles.get(display_status, "Final insights")
+        )
         self.finalization_message.setText(message or defaults.get(display_status, ""))
+        self.finalization_keep_hint.setText(
+            "This failed start has no audio or transcript."
+            if empty_meeting
+            else "This meeting, transcript, and audio stay in Past Meetings. "
+                 "Nothing is deleted."
+        )
+        speaker_tip = (
+            "Re-run speaker identification"
+            if self._can_rerun_speakers
+            else "No system-audio recording is available for speaker identification"
+        )
+        self.finalization_retry_speakers_button.setToolTip(speaker_tip)
 
         if status == "running":
             tone = "neutral"
@@ -703,11 +791,13 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_speakers_button.setVisible(
                     not has_speaker_step
                 )
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(False)
                 # Header + checklist already cover a successful finish; the
                 # stats recap lives on the dashboard instead.
-                self.finalization_active_box.hide()
+                self.finalization_active_box.setVisible(empty_meeting)
                 self.finalization_detail.hide()
 
                 if steps:
@@ -730,7 +820,9 @@ class MeetingModeTab(QWidget):
                 self.finalization_retry_speakers_button.setVisible(
                     not has_speaker_step
                 )
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(True)
                 self.finalization_active_box.show()
 
@@ -756,7 +848,9 @@ class MeetingModeTab(QWidget):
                 self.finalization_steps_widget.hide()
                 self.finalization_retry_button.hide()
                 self.finalization_retry_speakers_button.show()
-                self.finalization_retry_speakers_button.setEnabled(True)
+                self.finalization_retry_speakers_button.setEnabled(
+                    self._can_rerun_speakers
+                )
                 self._set_incomplete_actions_visible(False)
 
         self.finalization_card.setProperty("finalizationTone", tone)
@@ -863,6 +957,12 @@ class MeetingModeTab(QWidget):
                         self.retry_step_requested.emit(sid)
                     )
                 )
+                if step_id == "speaker_id" and not self._can_rerun_speakers:
+                    action.setEnabled(False)
+                    action.setToolTip(
+                        "No system-audio recording is available for speaker "
+                        "identification"
+                    )
                 row_layout.addWidget(action)
 
             self.finalization_steps_layout.addWidget(row)

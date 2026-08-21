@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import text as sql_text
 
 from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
 from meeting.interfaces import OpResult, TranscriptSegment
+from meeting.time_utils import utc_now_iso
 from services.models import (
     MeetingAudioChunk,
     MeetingEvent,
@@ -33,7 +33,7 @@ MAX_CHUNK_ATTEMPTS = 3
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    return utc_now_iso()
 
 
 def _session_to_dict(row: MeetingSession) -> Dict[str, Any]:

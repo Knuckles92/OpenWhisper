@@ -458,6 +458,9 @@ class MainWindow(QMainWindow):
             self.past_meeting_requested.emit
         )
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
+        self.history_sidebar.animation.finished.connect(
+            self._on_sidebar_animation_finished
+        )
         root_layout.addWidget(self.history_sidebar)
 
         # Sync the sidebar with the restored tab (must be after history_sidebar is created)
@@ -1281,6 +1284,18 @@ class MainWindow(QMainWindow):
         target_width = min(self.maximumWidth(), base + sidebar_width)
         geo = self.geometry()
         self.setGeometry(geo.x(), geo.y(), target_width, geo.height())
+
+    def _on_sidebar_animation_finished(self) -> None:
+        """Reflow responsive Meeting Mode controls at the final sidebar width."""
+        if (
+            self.tabbed_content.current_index()
+            != TabbedContentWidget.TAB_MEETING_MODE
+        ):
+            return
+        self.meeting_mode_tab.updateGeometry()
+        self.meeting_mode_tab.scroll_area.widget().updateGeometry()
+        self.meeting_mode_tab.scroll_area.viewport().update()
+        self._schedule_meeting_mode_height_sync()
 
     def _animate_resize(self, target_width: int, target_height: int):
         """Animate window resize.

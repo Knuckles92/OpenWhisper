@@ -19,6 +19,8 @@ from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 
 from services.runtime.meeting import MeetingRuntime
 
+_RUNTIME_GLOBALS = MeetingRuntime.__init__.__globals__
+
 
 class _Controller(QObject):
     """Minimal ApplicationController stand-in with meeting signals."""
@@ -47,13 +49,10 @@ def qapp():
 
 @pytest.fixture
 def runtime(qapp, monkeypatch):
+    runtime_settings = _RUNTIME_GLOBALS["settings_manager"]
+    monkeypatch.setattr(runtime_settings, "save_setting", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.save_setting",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.get",
-        lambda key, default=False: default,
+        runtime_settings, "get", lambda key, default=False: default
     )
     controller = _Controller()
     rt = MeetingRuntime(controller)
@@ -68,6 +67,113 @@ def _record_launch(rt, monkeypatch):
 
     monkeypatch.setattr(rt, "_launch", fake_launch)
     return launched
+
+
+def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    worker = MagicMock()
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["threading"],
+        "Thread",
+        lambda *args, **kwargs: worker,
+    )
+    rt._starting = True
+
+    rt._launch(False)
+
+    assert controller.meeting_active is False
+    assert rt.is_claimed is True
+    assert states[-1]["status"] == "starting"
+    assert states[-1]["active"] is False
+    worker.start.assert_called_once()
+
+
+def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    errors = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    controller.meeting_error.connect(errors.append)
+
+    class FailingEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_listener(self, listener):
+            self.listener = listener
+
+        def start(self):
+            raise RuntimeError("No audio devices could be opened.")
+
+    monkeypatch.setattr("meeting.engine.MeetingEngine", FailingEngine)
+    monkeypatch.setattr(rt, "_build_options", lambda *args, **kwargs: object())
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "speaker_model_path", lambda: "/cached/model"
+    )
+    rt._starting = True
+    rt._card_meeting_id = "m_partial"
+    rt._finalization = {"status": "pending"}
+
+    rt._start_worker(False)
+
+    assert rt._starting is False
+    assert controller.meeting_active is False
+    assert rt._engine is None
+    assert states[-1] == {
+        "active": False,
+        "paused": False,
+        "status": "failed",
+        "dashboard_available": False,
+        "finalization": None,
+        "meeting_id": None,
+    }
+    assert rt._card_meeting_id is None
+    assert rt._finalization is None
+    assert "No audio devices" in errors[-1]
+
+
+def test_nonfatal_engine_error_is_deferred_during_start(runtime):
+    rt, controller = runtime
+    errors = []
+    controller.meeting_error.connect(errors.append)
+    rt._starting = True
+
+    rt._on_engine_event(
+        "error",
+        {"code": "asr_unavailable", "message": "Model is unavailable"},
+    )
+
+    assert errors == []
+    assert rt._deferred_start_errors == ["Model is unavailable"]
+
+
+def test_open_dashboard_without_url_surfaces_error(runtime):
+    rt, controller = runtime
+    errors = []
+    statuses = []
+    controller.meeting_error.connect(errors.append)
+    controller.meeting_status_update.connect(statuses.append)
+
+    rt.open_dashboard()
+
+    assert errors == [
+        "No meeting dashboard is available. Start a meeting or open one "
+        "from Past Meetings."
+    ]
+    assert statuses == []
+
+
+def test_open_dashboard_for_retained_card_uses_archive_path(runtime, monkeypatch):
+    rt, _controller = runtime
+    opened = []
+    rt._card_meeting_id = "m_saved"
+    monkeypatch.setattr(rt, "open_past_meeting", opened.append)
+
+    rt.open_dashboard()
+
+    assert opened == ["m_saved"]
 
 
 def test_finalization_running_blocks_second_meeting_not_claim(runtime):
@@ -561,9 +667,7 @@ def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):
     def fake_get(key, default=False):
         return key == SettingsKey.MEETING_CLOUD_LAST_ENABLED
 
-    monkeypatch.setattr(
-        "services.runtime.meeting.settings_manager.get", fake_get
-    )
+    monkeypatch.setattr(_RUNTIME_GLOBALS["settings_manager"], "get", fake_get)
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
 
     rt.start_meeting()
@@ -667,9 +771,8 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
 
     monkeypatch.setattr(rt, "_repository", lambda: repo)
     monkeypatch.setattr("meeting.recovery.finalize_meeting", fake_finalize)
-    monkeypatch.setattr(
-        "services.runtime.meeting.resolve_meeting_language",
-        lambda settings: "en",
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "resolve_meeting_language", lambda settings: "en"
     )
 
     rt._finalize_recovered_worker("m_dead")

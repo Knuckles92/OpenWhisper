@@ -268,14 +268,20 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   className={`history-item${selectedId === m.id ? ' active' : ''}`}
                   onClick={() => setSelectedId(m.id)}
                 >
-                  {(m.display_title || m.title) && (
-                    <div
-                      className="history-item-title"
-                      title={String(m.display_title || m.title)}
-                    >
-                      {String(m.display_title || m.title)}
-                    </div>
-                  )}
+                  <div
+                    className="history-item-title"
+                    title={String(
+                      m.display_title
+                      || m.title
+                      || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                    )}
+                  >
+                    {String(
+                      m.display_title
+                      || m.title
+                      || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                    )}
+                  </div>
                   <div className="history-item-meta">
                     {m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}
                   </div>
@@ -295,6 +301,11 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
             {selected && (
               <div>
                 <h3 className="no-print" style={{ marginTop: 0 }}>Details</h3>
+                {selected.content_summary?.is_empty && (
+                  <div className="banner warning no-print" role="status">
+                    No audio or transcript was captured for this meeting.
+                  </div>
+                )}
                 <div className="no-print" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <input
                     value={renameDraft}
@@ -325,7 +336,16 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   <button
                     type="button"
                     onClick={() => rerunSpeakers(selected.id)}
-                    disabled={rerunning || rerunningSpeakers}
+                    disabled={
+                      rerunning
+                      || rerunningSpeakers
+                      || selected.can_rerun_speakers === false
+                    }
+                    title={
+                      selected.can_rerun_speakers === false
+                        ? 'No system-audio recording is available for speaker identification'
+                        : undefined
+                    }
                   >
                     {rerunningSpeakers
                       ? 'Re-running speakers…'
@@ -372,12 +392,16 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                 <section className="panel no-print" style={{ marginTop: 16 }}>
                   <div className="panel-header"><span>Recording</span></div>
                   <div className="panel-body">
-                    <audio
-                      ref={audioRef}
-                      controls
-                      preload="metadata"
-                      src={api.audioUrl(token, selected.id)}
-                    />
+                    {selected.has_audio === false ? (
+                      <p className="empty-state">No audio was captured.</p>
+                    ) : (
+                      <audio
+                        ref={audioRef}
+                        controls
+                        preload="metadata"
+                        src={api.audioUrl(token, selected.id)}
+                      />
+                    )}
                   </div>
                 </section>
 

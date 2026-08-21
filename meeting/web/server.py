@@ -14,7 +14,16 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
-import uvicorn
+try:
+    import uvicorn
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised via runtime
+    if exc.name != "uvicorn":
+        raise
+    raise ModuleNotFoundError(
+        "Meeting Mode needs the dashboard dependencies. Reinstall this "
+        "branch's environment with `python -m pip install -r requirements.txt` "
+        "(missing module: uvicorn)."
+    ) from exc
 
 from meeting.web.api import create_app
 from meeting.web.ws import WsHub

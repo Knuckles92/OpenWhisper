@@ -8,7 +8,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from meeting.state.schema import FinalizationState, MeetingState
-from ui_qt.widgets.past_meetings_panel import PastMeetingItem, PastMeetingsPanel
+from ui_qt.widgets.past_meetings_panel import (
+    PastMeetingItem,
+    PastMeetingsPanel,
+    _format_duration,
+)
 
 
 def _meeting(
@@ -111,3 +115,36 @@ def test_panel_shows_insights_pills():
 
     panel.deleteLater()
     app.processEvents()
+
+
+def test_failed_and_empty_meetings_are_labeled_honestly():
+    app = QApplication.instance() or QApplication([])
+    failed = _meeting("m_failed", status="failed", title="")
+    failed["content_summary"] = {
+        "is_empty": True,
+        "has_audio": False,
+        "has_transcript": False,
+    }
+    panel = PastMeetingsPanel(meeting_provider=lambda: [failed])
+
+    panel.refresh()
+    card = panel.findChild(PastMeetingItem)
+
+    assert card is not None
+    assert card.title_label.text() == "Failed meeting"
+    assert card.content_label.text() == "Meeting failed to start"
+    assert "Failed" in card.detail_label.text()
+    assert card.insights_pill.text() == "Failed start"
+
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_subminute_duration_uses_seconds_instead_of_zero_minutes():
+    meeting = {
+        "started_at": "2026-08-20T16:55:00Z",
+        "ended_at": "2026-08-20T16:55:40Z",
+        "paused_total_s": 0,
+    }
+
+    assert _format_duration(meeting) == "40 sec"

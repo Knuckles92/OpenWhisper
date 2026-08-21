@@ -12,7 +12,6 @@ import json
 import logging
 import threading
 import webbrowser
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -43,7 +42,66 @@ try:
         settings_manager,
     )
 except ImportError:  # pragma: no cover - supports lightweight test stubs
+    from services import settings as _settings
     from services.settings import SettingsKey, settings_manager
+
+    class _FallbackMeetingAgentCore:
+        PI = "pi"
+        DIRECT = "direct"
+
+    MeetingAgentCore = getattr(
+        _settings, "MeetingAgentCore", _FallbackMeetingAgentCore
+    )
+    resolve_meeting_agent_core = getattr(
+        _settings, "resolve_meeting_agent_core", lambda settings=None: "direct"
+    )
+    resolve_meeting_audio_upload_consent = getattr(
+        _settings,
+        "resolve_meeting_audio_upload_consent",
+        lambda settings=None: False,
+    )
+    resolve_meeting_end_polish = getattr(
+        _settings, "resolve_meeting_end_polish", lambda settings=None: False
+    )
+    resolve_meeting_end_redecode = getattr(
+        _settings, "resolve_meeting_end_redecode", lambda settings=None: False
+    )
+    resolve_meeting_end_report = getattr(
+        _settings, "resolve_meeting_end_report", lambda settings=None: False
+    )
+    resolve_meeting_report_views = getattr(
+        _settings,
+        "resolve_meeting_report_views",
+        lambda settings=None: ("ribbon", "brief", "signal"),
+    )
+    resolve_meeting_llm_endpoint = getattr(
+        _settings, "resolve_meeting_llm_endpoint", lambda settings=None: None
+    )
+    resolve_meeting_llm_model = getattr(
+        _settings, "resolve_meeting_llm_model", lambda settings=None: ""
+    )
+    resolve_meeting_llm_provider = getattr(
+        _settings,
+        "resolve_meeting_llm_provider",
+        lambda settings=None: "openrouter",
+    )
+    resolve_meeting_language = getattr(
+        _settings, "resolve_meeting_language", lambda settings=None: "auto"
+    )
+    resolve_meeting_server_bind = getattr(
+        _settings, "resolve_meeting_server_bind", lambda settings=None: "localhost"
+    )
+    resolve_meeting_server_port = getattr(
+        _settings, "resolve_meeting_server_port", lambda settings=None: 0
+    )
+    resolve_meeting_speaker_id_backend = getattr(
+        _settings,
+        "resolve_meeting_speaker_id_backend",
+        lambda settings=None: "local",
+    )
+    resolve_meeting_whisper_model = getattr(
+        _settings, "resolve_meeting_whisper_model", lambda settings=None: "auto"
+    )
 
 if TYPE_CHECKING:
     from meeting.engine import MeetingEngine
@@ -114,6 +172,10 @@ class MeetingRuntime:
         self._finalization: Optional[Dict[str, Any]] = None
         # Meeting whose checklist is currently shown on the Meeting Mode tab.
         self._card_meeting_id: Optional[str] = None
+        # Non-fatal subsystem warnings (for example a missing ASR model) are
+        # held until required startup checks succeed. If capture/server startup
+        # fails, the user sees only the authoritative start failure.
+        self._deferred_start_errors: list[str] = []
         # Consent round-trip state: what to do when the consent dialog
         # resolves ("start" continues start_meeting, "toggle" applies the
         # cloud toggle). Mirrors the hf_consent_requested request/continuation
@@ -232,6 +294,9 @@ class MeetingRuntime:
         if fin.status in {"pending"} and not fin.steps:
             return False
         payload = fin.to_dict()
+        payload["content_summary"] = self._meeting_content_summary(
+            meeting_id, meeting=meeting
+        )
         with self._lock:
             self._card_meeting_id = meeting_id
             self._finalization = payload
@@ -541,8 +606,9 @@ class MeetingRuntime:
         """Kick off the meeting start on a dedicated thread.
 
         ``MeetingEngine.start()`` loads a Whisper model and boots the web
-        server, so it must not run on the Qt main thread. ``meeting_active``
-        is raised immediately so dictation is excluded during startup.
+        server, so it must not run on the Qt main thread. The runtime's
+        ``_starting`` claim excludes dictation without telling the UI that a
+        meeting is active before required startup checks have passed.
 
         Args:
             cloud: Whether cloud intelligence should start with the meeting.
@@ -555,19 +621,18 @@ class MeetingRuntime:
         except Exception as exc:
             logger.warning(f"Could not persist meeting cloud toggle: {exc}")
 
-        self.controller.meeting_active = True
+        self.controller.meeting_active = False
         with self._lock:
-            # Exclusive mode now guards the start; release the claim.
-            self._starting = False
             # A new meeting replaces any retained post-meeting finalization.
             self._finalizing = False
             self._finalization = None
             self._card_meeting_id = None
+            self._deferred_start_errors = []
         self.controller.meeting_status_update.emit(
             "Starting demo meeting..." if demo else "Starting meeting..."
         )
         self.controller.meeting_state_changed.emit(
-            {"active": True, "paused": False, "status": "starting",
+            {"active": False, "paused": False, "status": "starting",
              "cloud_enabled": cloud, "finalization": None}
         )
         threading.Thread(
@@ -598,19 +663,42 @@ class MeetingRuntime:
             with self._lock:
                 self._engine = engine
             result = engine.start()
+            if not (result.get("host_url") or result.get("url")):
+                abort = getattr(engine, "_abort_start", None)
+                if callable(abort):
+                    abort()
+                raise RuntimeError(
+                    "Meeting dashboard did not provide an address."
+                )
         except Exception as exc:
             logger.error("Failed to start meeting", exc_info=True)
             with self._lock:
+                self._starting = False
                 if engine is not None and self._engine is engine:
                     self._engine = None
+                self._host_url = None
+                self._guest_url = None
+                self._finalizing = False
+                self._finalization = None
+                self._card_meeting_id = None
+                self._deferred_start_errors = []
             self.controller.meeting_active = False
             self.controller.meeting_error.emit(f"Could not start the meeting: {exc}")
             self.controller.meeting_state_changed.emit(
-                {"active": False, "status": "failed"}
+                {
+                    "active": False,
+                    "paused": False,
+                    "status": "failed",
+                    "dashboard_available": False,
+                    "finalization": None,
+                    "meeting_id": None,
+                }
             )
+            self._refresh_past_meetings()
             return
 
         with self._lock:
+            self._starting = False
             self._engine = engine
             # The engine's server_started event usually landed first (and
             # already announced the URLs); keep those values when the start
@@ -619,6 +707,8 @@ class MeetingRuntime:
                 result.get("host_url") or result.get("url") or self._host_url
             )
             self._guest_url = result.get("guest_url") or self._guest_url
+            deferred_errors = list(self._deferred_start_errors)
+            self._deferred_start_errors = []
 
         # No meeting_server_started emit here: the engine's own server_started
         # event already carried the URLs to the UI, and a second emit opens a
@@ -627,6 +717,7 @@ class MeetingRuntime:
             "Demo meeting loaded — End to test cleanup and the report"
             if demo else "Meeting in progress"
         )
+        self.controller.meeting_active = True
         elapsed_s = 0.0
         if demo:
             try:
@@ -641,6 +732,8 @@ class MeetingRuntime:
             "Demo meeting started: %s" if demo else "Meeting started: %s",
             result.get("meeting_id"),
         )
+        for message in deferred_errors:
+            self.controller.meeting_error.emit(message)
 
     def _build_options(self, cloud: bool, *, demo: bool = False):
         """Compose ``MeetingEngineOptions`` from settings, config, and components.
@@ -950,6 +1043,7 @@ class MeetingRuntime:
     ) -> None:
         """Persist-aware UI/engine broadcast for a finalization snapshot."""
         payload = dict(finalization or {})
+        payload["content_summary"] = self._meeting_content_summary(meeting_id)
         if (
             engine is not None
             and getattr(engine, "meeting_id", None) == meeting_id
@@ -980,8 +1074,16 @@ class MeetingRuntime:
         """Open the host dashboard in the default browser (UI callback target)."""
         url = self._host_url
         if not url:
-            self.controller.meeting_status_update.emit(
-                "No meeting dashboard available yet"
+            # A retained finalization card may outlive its original server.
+            # Reuse the archive path so the tab button and Past Meetings Open
+            # have identical startup/dependency handling.
+            meeting_id = self._card_meeting_id
+            if meeting_id:
+                self.open_past_meeting(meeting_id)
+                return
+            self._report_dashboard_error(
+                "No meeting dashboard is available. Start a meeting or open "
+                "one from Past Meetings."
             )
             return
         # Never log the path: it carries the host token, which grants full
@@ -1022,7 +1124,7 @@ class MeetingRuntime:
             repository = self._repository()
             meeting = repository.get_meeting(meeting_id)
             if meeting is None:
-                self.controller.meeting_error.emit("That meeting no longer exists")
+                self._report_dashboard_error("That meeting no longer exists")
                 return
             self._hydrate_finalization_card(meeting, reveal=True)
 
@@ -1033,7 +1135,7 @@ class MeetingRuntime:
 
             if not url:
                 if self.is_active:
-                    self.controller.meeting_error.emit(
+                    self._report_dashboard_error(
                         "The live meeting dashboard is unavailable"
                     )
                     return
@@ -1066,7 +1168,7 @@ class MeetingRuntime:
                 url = server.host_url
 
             if not url:
-                self.controller.meeting_error.emit(
+                self._report_dashboard_error(
                     "Could not create a meeting dashboard link"
                 )
                 return
@@ -1080,12 +1182,16 @@ class MeetingRuntime:
             webbrowser.open(history_url)
         except Exception as exc:
             logger.error("Failed to open past meeting", exc_info=True)
-            self.controller.meeting_error.emit(
+            self._report_dashboard_error(
                 f"Could not open the past meeting: {exc}"
             )
         finally:
             with self._lock:
                 self._archive_starting = False
+
+    def _report_dashboard_error(self, message: str) -> None:
+        """Surface dashboard failures consistently for every UI entry point."""
+        self.controller.meeting_error.emit(str(message))
 
     def copy_guest_link(self) -> None:
         """Announce the guest URL for clipboard copy (UI callback target).
@@ -1186,9 +1292,11 @@ class MeetingRuntime:
             else:
                 # Minimal honest fallback: mark the session ended so it shows
                 # up in history instead of the recovery list.
+                from meeting.time_utils import utc_now_iso
+
                 repository.update_meeting(
                     meeting_id, status="ended",
-                    ended_at=datetime.now().isoformat(),
+                    ended_at=utc_now_iso(),
                 )
             self.controller.meeting_status_update.emit(
                 "Interrupted meeting finalized"
@@ -1280,6 +1388,10 @@ class MeetingRuntime:
                 self.controller.meeting_server_started.emit(dict(payload))
             elif kind == "error":
                 message = payload.get("message") or str(payload)
+                with self._lock:
+                    if self._starting:
+                        self._deferred_start_errors.append(str(message))
+                        return
                 self.controller.meeting_error.emit(str(message))
             elif kind == "ended":
                 self.controller.meeting_active = False
@@ -1328,6 +1440,7 @@ class MeetingRuntime:
         """
         status = str(finalization.get("status") or "")
         message = str(finalization.get("message") or "")
+        meeting_id = getattr(self._engine, "meeting_id", None)
         normalized = {
             "status": status,
             "message": message,
@@ -1338,11 +1451,14 @@ class MeetingRuntime:
             "steps": list(finalization.get("steps") or []),
             "summary_stats": dict(finalization.get("summary_stats") or {}),
             "card_deferred": bool(finalization.get("card_deferred", False)),
+            "content_summary": dict(
+                finalization.get("content_summary")
+                or self._meeting_content_summary(meeting_id)
+            ),
         }
         terminal = status in {
             "completed", "disabled", "unavailable", "failed",
         }
-        meeting_id = getattr(self._engine, "meeting_id", None)
         with self._lock:
             self._finalization = normalized
             self._finalizing = status == "running"
@@ -1417,6 +1533,29 @@ class MeetingRuntime:
 
             self._repo = SqlMeetingRepository()
         return self._repo
+
+    def _meeting_content_summary(
+        self,
+        meeting_id: Optional[str],
+        *,
+        meeting: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Derive durable audio/transcript capabilities for desktop cards."""
+        if not meeting_id:
+            return {}
+        from meeting.content import summarize_meeting_content
+
+        summary = summarize_meeting_content(self._repository(), meeting_id)
+        row = meeting
+        if row is None:
+            try:
+                row = self._repository().get_meeting(meeting_id)
+            except Exception:
+                logger.exception(
+                    "Could not read meeting status for content summary"
+                )
+        summary["meeting_status"] = str((row or {}).get("status") or "")
+        return summary
 
     def cleanup(self) -> None:
         """Release the meeting engine on application shutdown.
