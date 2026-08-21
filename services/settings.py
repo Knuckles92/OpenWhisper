@@ -16,12 +16,9 @@ class SettingsKey:
     HOTKEYS: Final[str] = "hotkeys"
     SELECTED_MODEL: Final[str] = "selected_model"
     AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
-    CURRENT_WAVEFORM_STYLE: Final[str] = "current_waveform_style"
-    WAVEFORM_STYLE_CONFIGS: Final[str] = "waveform_style_configs"
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
-    STREAMING_OVERLAY_POSITION: Final[str] = "streaming_overlay_position"
     AUTO_PASTE: Final[str] = "auto_paste"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
     TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
@@ -339,38 +336,6 @@ class SettingsManager:
             logger.error(f"Failed to save settings: {e}")
             raise
 
-    def load_waveform_style_settings(self) -> Tuple[str, Dict[str, Dict]]:
-        """Load waveform style settings from file.
-
-        Returns:
-            Tuple containing (current_style, all_style_configs).
-            Falls back to defaults if file doesn't exist or is corrupted.
-        """
-        with self._lock:
-            try:
-                if os.path.exists(self.settings_file):
-                    with open(self.settings_file, 'r') as f:
-                        settings = json.load(f)
-
-                    current_style = settings.get(SettingsKey.CURRENT_WAVEFORM_STYLE, config.CURRENT_WAVEFORM_STYLE)
-                    saved_configs = settings.get(SettingsKey.WAVEFORM_STYLE_CONFIGS, {})
-
-                    all_configs = config.WAVEFORM_STYLE_CONFIGS.copy()
-                    for style_name, saved_config in saved_configs.items():
-                        if style_name in all_configs and isinstance(saved_config, dict):
-                            all_configs[style_name].update(saved_config)
-
-                    if current_style not in all_configs:
-                        logger.warning(f"Invalid current style '{current_style}', falling back to default")
-                        current_style = config.CURRENT_WAVEFORM_STYLE
-
-                    return current_style, all_configs
-
-            except Exception as e:
-                logger.warning(f"Failed to load waveform style settings: {e}")
-
-            return config.CURRENT_WAVEFORM_STYLE, config.WAVEFORM_STYLE_CONFIGS.copy()
-
     def load_model_selection(self) -> str:
         """Load the saved model selection.
 
@@ -648,27 +613,6 @@ def resolve_transcript_cleanup_model(
     )
 
 
-def resolve_transcript_cleanup_model_sort(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return the validated model-list sort order for Model Manager's Text tab.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        A ``TranscriptCleanupModelSort`` value, falling back to the config
-        default when the stored value is missing or unknown.
-    """
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    sort = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT)
-    if sort in TranscriptCleanupModelSort.ALL:
-        return sort
-    return config.TRANSCRIPT_CLEANUP_MODEL_SORT
-
-
 def resolve_transcript_cleanup_reasoning(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -783,18 +727,6 @@ def resolve_meeting_llm_provider(
     ):
         return provider
     return config.MEETING_LLM_PROVIDER
-
-
-def resolve_transcript_cleanup_profile(
-    settings: Optional[Dict[str, Any]] = None,
-):
-    """Return the ``TextLLMProfile`` used for post-ASR transcript cleanup."""
-    from services.text_llm import builtin_profile, get_profile
-
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-    profile_id = resolve_transcript_cleanup_provider(settings)
-    return get_profile(profile_id, settings) or builtin_profile(profile_id)
 
 
 def resolve_meeting_llm_profile(

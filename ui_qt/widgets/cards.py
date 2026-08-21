@@ -105,10 +105,6 @@ class HeaderCard(Card):
             self.layout.addWidget(self.content_widget)
             self.setMinimumHeight(0)
 
-    def add_header_widget(self, widget):
-        """Add a widget to the header."""
-        self.header_layout.addWidget(widget)
-
     def add_content_widget(self, widget):
         """Add a widget to the card body (collapsible-aware)."""
         if self.collapsible:
@@ -231,28 +227,3 @@ class HeaderCard(Card):
             end=end,
             on_finished=on_finished,
         )
-
-
-class StatCard(Card):
-    """Card for displaying statistics."""
-
-    def __init__(self, label: str = "", value: str = "", parent=None):
-        """Initialize stat card."""
-        super().__init__(parent)
-
-        self.label = QLabel(label)
-        self.label.setObjectName("statusLabel")
-
-        self.value = QLabel(value)
-        self.value.setObjectName("accentLabel")
-        self.value_font = QFont("Segoe UI", 24) # Increased size
-        self.value_font.setBold(True)
-        self.value.setFont(self.value_font)
-
-        self.layout.addWidget(self.label)
-        self.layout.addWidget(self.value)
-        self.layout.addStretch()
-
-    def set_value(self, value: str):
-        """Update the stat value."""
-        self.value.setText(value)

@@ -592,19 +592,3 @@ def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
     if applied:
         logger.info("State repair applied %d op(s)", applied)
     return applied
-
-
-def backfill_timeline(store: Any, segments: List[Dict[str, Any]]) -> int:
-    """Apply timeline backfill ops through the state store when needed.
-
-    Deprecated alias for :func:`repair_meeting_state` (kept for call sites
-    and tests that only care about timeline).
-
-    Args:
-        store: A ``MeetingStateStore``.
-        segments: Transcript segment dicts for evidence ``start_s`` lookup.
-
-    Returns:
-        Count of ops successfully applied.
-    """
-    return repair_meeting_state(store, segments)

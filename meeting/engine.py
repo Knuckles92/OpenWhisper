@@ -196,12 +196,6 @@ class MeetingEngine:
             if cb not in self._listeners:
                 self._listeners.append(cb)
 
-    def remove_listener(self, cb: Listener) -> None:
-        """Unregister a previously added listener (no-op when unknown)."""
-        with self._listener_lock:
-            if cb in self._listeners:
-                self._listeners.remove(cb)
-
     def _emit(self, kind: str, payload: Dict[str, Any]) -> None:
         with self._listener_lock:
             listeners = list(self._listeners)

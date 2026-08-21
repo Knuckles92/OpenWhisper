@@ -445,8 +445,6 @@ class MeetingRepository(Protocol):
         self, meeting_id: str, cursor_start_s: Optional[float] = None,
         cursor_id: Optional[str] = None, limit: int = 500,
     ) -> List[Dict[str, Any]]: ...
-    def set_segment_embedding(self, meeting_id: str, segment_id: str,
-                              embedding: bytes) -> None: ...
 
     # -- state write-through --
     def on_ops_applied(self, meeting_id: str, state: Dict[str, Any],

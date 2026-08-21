@@ -30,8 +30,6 @@ class TabbedContentWidget(QWidget):
         super().__init__(parent)
 
         # State
-        self._recording_active = False
-        self._active_recording_tab = -1  # Which tab has active recording
         self._last_saved_tab_index: Optional[int] = None
         self._pending_tab_index: Optional[int] = None
         self._tab_save_timer = QTimer(self)
@@ -210,20 +208,9 @@ class TabbedContentWidget(QWidget):
             is_recording: True if recording started, False if stopped
             source_tab: The tab index where recording is active
         """
-        self._recording_active = is_recording
-        self._active_recording_tab = source_tab if is_recording else -1
-
         for i in range(self.tab_bar.count()):
             self.tab_bar.setTabEnabled(i, not is_recording or i == source_tab)
 
         logger.debug(
             f"Recording state: active={is_recording}, source_tab={source_tab}"
         )
-
-    def is_recording_active(self) -> bool:
-        """Check if recording is currently active."""
-        return self._recording_active
-
-    def get_active_recording_tab(self) -> int:
-        """Get the tab index where recording is active, or -1 if not recording."""
-        return self._active_recording_tab

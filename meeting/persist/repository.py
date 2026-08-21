@@ -805,27 +805,6 @@ class SqlMeetingRepository:
             ).order_by(MeetingSegment.start_s.desc()).limit(count).all()
             return [_segment_to_dict(r) for r in reversed(rows)]
 
-    def set_segment_embedding(self, meeting_id: str, segment_id: str,
-                              embedding: bytes) -> None:
-        with self._db.get_session() as session:
-            row = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.id == segment_id,
-            ).one_or_none()
-            if row is not None:
-                row.embedding = embedding
-
-    def get_segment_embeddings(self, meeting_id: str) -> List[Dict[str, Any]]:
-        """Segments of a meeting that carry embeddings (for re-clustering)."""
-        with self._db.get_session() as session:
-            rows = session.query(MeetingSegment).filter(
-                MeetingSegment.meeting_id == meeting_id,
-                MeetingSegment.embedding.isnot(None),
-            ).order_by(MeetingSegment.start_s).all()
-            return [
-                {**_segment_to_dict(r), "embedding": r.embedding} for r in rows
-            ]
-
     # ------------------------------------------------------------------
     # State write-through + audit
     # ------------------------------------------------------------------

@@ -3,7 +3,7 @@ System Tray Implementation for PyQt6 UI.
 Manages system tray icon and menu.
 """
 import logging
-from typing import Optional, Callable
+from typing import Optional
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import pyqtSignal
@@ -28,11 +28,6 @@ class SystemTrayManager(QSystemTrayIcon):
         super().__init__()
         self.main_window = main_window
         self._meeting_active = False
-
-        # Callbacks
-        self.on_show: Optional[Callable] = None
-        self.on_hide: Optional[Callable] = None
-        self.on_exit: Optional[Callable] = None
 
         self._setup_icon()
         self._setup_menu()
@@ -98,18 +93,12 @@ class SystemTrayManager(QSystemTrayIcon):
         if self.main_window:
             self.main_window.restore_from_tray()
 
-        if self.on_show:
-            self.on_show()
-
         self.show_requested.emit()
 
     def _on_hide(self):
         """Handle hide action."""
         if self.main_window:
             self.main_window.hide()
-
-        if self.on_hide:
-            self.on_hide()
 
         self.hide_requested.emit()
 
@@ -132,9 +121,6 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _on_exit(self):
         """Handle exit action."""
-        if self.on_exit:
-            self.on_exit()
-
         self.exit_requested.emit()
         QApplication.instance().quit()
 

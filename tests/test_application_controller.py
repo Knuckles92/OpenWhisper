@@ -364,6 +364,9 @@ class DummyMainWindow:
     def toggle_tray_visibility(self):
         self.tray_visibility_toggles += 1
 
+    def refresh_past_meetings(self):
+        pass
+
 
 class DummyUIController:
     def __init__(self):

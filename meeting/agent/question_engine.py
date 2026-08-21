@@ -19,7 +19,6 @@ from meeting.state.patches import (
 __all__ = [
     "open_questions",
     "question_capacity",
-    "questions_needing_followup",
     "build_question_guidance",
 ]
 
@@ -42,16 +41,6 @@ def open_questions(state: Dict[str, Any]) -> List[Dict[str, Any]]:
 def question_capacity(state: Dict[str, Any]) -> int:
     """How many more questions the agent may ask before hitting the open cap."""
     return max(0, MAX_OPEN_QUESTIONS - len(open_questions(state)))
-
-
-def questions_needing_followup(state: Dict[str, Any]) -> List[str]:
-    """Ids of open questions carrying a medium-confidence suggested answer.
-
-    These are the prune candidates: the agent should try to firm them up to a
-    full resolution (confidence at or above the resolve threshold) before
-    asking anything new.
-    """
-    return [q["id"] for q in open_questions(state) if q.get("suggested_answer")]
 
 
 def build_question_guidance(state: Dict[str, Any]) -> str:

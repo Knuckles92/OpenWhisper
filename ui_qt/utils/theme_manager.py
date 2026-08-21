@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject
 
 from config import bundle_root
 
@@ -20,8 +20,6 @@ _RELATIVE_URL_RE = re.compile(r"url\(\s*(?!['\"]?[a-zA-Z]:)(?!['\"]?[:/])([^)]+?
 
 class ThemeManager(QObject):
     """Manages application theme and stylesheet."""
-
-    theme_changed = pyqtSignal(str)  # Emitted when theme changes
 
     def __init__(self):
         """Initialize theme manager."""
@@ -59,7 +57,6 @@ class ThemeManager(QObject):
     def set_theme(self, theme_name: str):
         """Set the application theme."""
         self.current_theme = theme_name
-        self.theme_changed.emit(theme_name)
 
     def get_color(self, color_name: str) -> str:
         """Get a color value from the theme."""

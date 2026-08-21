@@ -2,7 +2,6 @@
 
 from meeting.agent.evidence import repair_evidence_ids
 from meeting.state.repair import (
-    backfill_timeline,
     build_summary_backfill_ops,
     build_timeline_backfill_ops,
     build_topic_backfill_ops,
@@ -120,7 +119,7 @@ def test_build_topic_ops_from_first_key_point():
     assert "assumptions" in ops[0]["text"].lower()
 
 
-def test_backfill_timeline_applies_through_store():
+def test_repair_meeting_state_applies_through_store():
     state = MeetingState(meeting_id="m_repair")
     store = MeetingStateStore(state)
     store.apply("agent", "agent", [
@@ -129,7 +128,7 @@ def test_backfill_timeline_applies_through_store():
     ])
     # Bypass store evidence checks by injecting a segment map via apply that
     # does not validate existence when segment_exists is None.
-    applied = backfill_timeline(
+    applied = repair_meeting_state(
         store,
         [{"id": "sg_1", "start_s": 3.0, "text": "Ship Friday please"}],
     )

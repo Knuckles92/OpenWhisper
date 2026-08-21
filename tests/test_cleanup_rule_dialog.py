@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import QApplication, QPushButton
 
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 
+_APP = QApplication.instance() or QApplication([])
+
 
 class _QtTestCase:
     @classmethod

@@ -368,14 +368,6 @@ class LocalEngineControls(QWidget):
             self._select(combo, value, fallback)
             combo.blockSignals(False)
 
-    def current_values(self) -> tuple:
-        """Return the (model, device, compute) currently shown."""
-        return (
-            self.model_combo.currentText(),
-            self.device_combo.currentText(),
-            self.compute_combo.currentText(),
-        )
-
     def set_resolved_info(self, info: str):
         """Update the small 'what auto resolved to' readout."""
         self.resolved_label.setText(info)

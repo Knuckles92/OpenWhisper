@@ -16,7 +16,7 @@ from PyQt6.QtGui import (
     QLinearGradient, QFont, QFontMetrics, QCursor
 )
 from config import config
-from services.settings import settings_manager, resolve_streaming_overlay_font_size
+from services.settings import resolve_streaming_overlay_font_size
 from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
@@ -128,9 +128,7 @@ class WaveformOverlay(QWidget):
         # Large file information for warning states
         self.large_file_info = LargeFileOverlayInfo()
 
-        # Load waveform style
-        _, style_configs = settings_manager.load_waveform_style_settings()
-        style_config = style_configs.get('particle', config.WAVEFORM_STYLE_CONFIGS.get('particle', {}))
+        style_config = config.WAVEFORM_STYLE_CONFIGS.get('particle', {})
         self.style: BaseWaveformStyle = ParticleStyle(
             self.overlay_width, self.overlay_height, style_config
         )

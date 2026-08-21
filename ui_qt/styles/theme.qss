@@ -20,16 +20,6 @@ QDialog {
     color: #f5f5f7;
 }
 
-/* Hotkey display elements with smooth transitions */
-/* Note: QSS doesn't support CSS transitions - animations are handled in Python code */
-HotkeyKey {
-    /* Transitions handled programmatically in hotkey_display.py */
-}
-
-HotkeyKey:hover {
-    /* Hover effects handled programmatically */
-}
-
 /* Standard buttons with modern styling */
 QPushButton {
     background-color: #2c2c2e; /* Secondary System Fill */
@@ -206,8 +196,6 @@ QDialog#modelManagerDialog {
     background-color: #10161c;
 }
 
-QWidget#modelManagerVoiceTab,
-QWidget#modelManagerTextTab,
 QWidget#modelManagerMeetingTab,
 QWidget#modelManagerOndemandTab,
 QWidget#modelManagerLibraryTab {
@@ -1053,19 +1041,6 @@ QFrame {
     border: none;
 }
 
-QFrame#cardFrame {
-    background-color: #2c2c2e;
-    border-radius: 16px;
-    border: 1px solid #3a3a3c;
-}
-
-/* Status bar */
-QStatusBar {
-    background-color: #1c1c1e;
-    color: #8e8e93;
-    border-top: 1px solid #2c2c2e;
-}
-
 /* Custom card widget */
 QWidget#card {
     background-color: #2c2c2e;
@@ -1077,11 +1052,6 @@ QWidget#controlPanel {
     background-color: #2c2c2e;
     border-radius: 16px;
     padding: 20px;
-}
-
-QWidget#header {
-    background-color: transparent;
-    border-bottom: 1px solid #2c2c2e;
 }
 
 /* Content Tab Bar */
@@ -1107,12 +1077,6 @@ QTabBar#contentTabBar::tab:hover:!selected {
 
 QTabBar#contentTabBar::tab:disabled {
     color: #48484a;
-}
-
-/* Recording indicator - pulsing effect handled in Python */
-QTabBar#contentTabBar::tab:selected[recording="true"] {
-    color: #ff453a;
-    border-bottom-color: #ff453a;
 }
 
 /* Tooltips — elevated surface so they read against the dark window.
@@ -1595,12 +1559,6 @@ QPushButton#meetingRecoveryDiscardButton {
     font-size: 13px;
 }
 
-/* Meeting tab in Settings */
-QLabel#meetingModelsStatus {
-    color: #8e8e93;
-    font-size: 12px;
-}
-
 QLabel#meetingBindWarning {
     background-color: #3a2a1c;
     border: 1px solid #ff9f0a;
@@ -1608,8 +1566,4 @@ QLabel#meetingBindWarning {
     color: #ffd60a;
     font-size: 12px;
     padding: 10px 12px;
-}
-
-QPushButton#meetingModelsRefreshButton {
-    font-size: 13px;
 }

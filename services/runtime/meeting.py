@@ -213,12 +213,7 @@ class MeetingRuntime:
             return
 
         try:
-            try:
-                meetings = find_recoverable_meetings(self._repository())
-            except TypeError:
-                # Tolerate a no-arg signature (module resolves its own
-                # repository internally).
-                meetings = find_recoverable_meetings()
+            meetings = find_recoverable_meetings(self._repository())
         except Exception as exc:
             logger.error(f"Meeting recovery scan failed: {exc}")
             return
@@ -390,13 +385,9 @@ class MeetingRuntime:
     def _refresh_past_meetings(self) -> None:
         """Reload the Past Meetings sidebar on the Qt GUI thread."""
         try:
-            signal = getattr(self.controller, "past_meetings_refresh_requested", None)
-            if signal is not None:
-                signal.emit()
-                return
-            self.controller.ui_controller.main_window.refresh_past_meetings()
+            self.controller.past_meetings_refresh_requested.emit()
         except Exception:
-            pass
+            logger.exception("Could not request a Past Meetings refresh")
 
     def defer_finalization_card(self) -> bool:
         """Persist Keep for later and hide the desktop Final Insights card.
@@ -1021,7 +1012,9 @@ class MeetingRuntime:
                     try:
                         engine.revoke_agent_writes()
                     except Exception:
-                        pass
+                        logger.exception(
+                            "Could not revoke agent writes after finalization retry"
+                        )
 
             with self._lock:
                 self._finalizing = False
@@ -1029,10 +1022,7 @@ class MeetingRuntime:
                 self._card_meeting_id = meeting_id
             self._publish_finalization(meeting_id, finalization, engine=engine)
             self.controller.meeting_status_update.emit(message)
-            try:
-                self.controller.ui_controller.main_window.refresh_past_meetings()
-            except Exception:
-                pass
+            self._refresh_past_meetings()
 
         threading.Thread(
             target=_worker, name="meeting-retry-finalization", daemon=True
@@ -1270,38 +1260,23 @@ class MeetingRuntime:
 
     def _finalize_recovered_worker(self, meeting_id: str) -> None:
         try:
-            repository = self._repository()
-            finalize = None
-            try:
-                from meeting import recovery as recovery_module
-                finalize = getattr(recovery_module, "finalize_meeting", None)
-            except Exception:
-                pass
-            if finalize is not None:
-                # finalize_meeting expects the meeting dict (not the id).
-                meeting = repository.get_meeting(meeting_id)
-                if meeting is None:
-                    raise ValueError(f"Unknown meeting '{meeting_id}'")
-                settings = settings_manager.load_all_settings()
-                if not finalize(
-                    repository,
-                    meeting,
-                    asr_language=resolve_meeting_language(settings),
-                ):
-                    self.controller.meeting_error.emit(
-                        "Could not finalize the meeting — "
-                        "transcription may still be pending"
-                    )
-                    return
-            else:
-                # Minimal honest fallback: mark the session ended so it shows
-                # up in history instead of the recovery list.
-                from meeting.time_utils import utc_now_iso
+            from meeting.recovery import finalize_meeting
 
-                repository.update_meeting(
-                    meeting_id, status="ended",
-                    ended_at=utc_now_iso(),
+            repository = self._repository()
+            meeting = repository.get_meeting(meeting_id)
+            if meeting is None:
+                raise ValueError(f"Unknown meeting '{meeting_id}'")
+            settings = settings_manager.load_all_settings()
+            if not finalize_meeting(
+                repository,
+                meeting,
+                asr_language=resolve_meeting_language(settings),
+            ):
+                self.controller.meeting_error.emit(
+                    "Could not finalize the meeting — "
+                    "transcription may still be pending"
                 )
+                return
             self.controller.meeting_status_update.emit(
                 "Interrupted meeting finalized"
             )

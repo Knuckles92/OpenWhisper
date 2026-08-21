@@ -223,10 +223,6 @@ class TranscriptionTabBase(QWidget):
         self.current_model = model_name
         self.model_changed.emit(model_name)
 
-    def get_model_value(self) -> str:
-        """Get the model value key."""
-        return config.MODEL_VALUE_MAP.get(self.current_model, "local_whisper")
-
     def set_model_selection(self, model_value: str):
         """Set the model selection by internal value.
 

@@ -3,8 +3,7 @@
 A crash leaves a meeting row in ``active``/``paused`` with a stale
 pid/heartbeat and its spooled chunks still ``pending``. On startup the app
 scans for such sessions and offers to finalize them (headless: transcribe the
-remaining chunks and mark the meeting ended), resume them (a fresh
-``MeetingEngine`` built from ``build_resume_options``), or discard them.
+remaining chunks and mark the meeting ended) or discard them.
 
 No Qt imports; the sibling ASR import is lazy so partial availability never
 breaks importing this module.
@@ -232,64 +231,6 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     logger.info("Finalized interrupted meeting %s (%d chunk(s) transcribed)",
                 meeting_id, total)
     return True
-
-
-def discard_meeting(repository: Any, meeting_id: str) -> None:
-    """Mark an interrupted meeting as failed; audio and segments are kept.
-
-    Args:
-        repository: A ``MeetingRepository``.
-        meeting_id: The meeting to discard.
-    """
-    try:
-        repository.update_meeting(meeting_id, status="failed",
-                                  ended_at=now_iso())
-    except Exception:
-        logger.exception("Failed to discard meeting %s", meeting_id)
-
-
-def _resume_endpoint(meeting: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Return the stored non-secret endpoint snapshot, if any."""
-    try:
-        from services.text_llm import snapshot_from_meeting
-
-        return snapshot_from_meeting(meeting).to_dict()
-    except Exception:
-        raw = meeting.get("agent_endpoint_json")
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                return None
-            return parsed if isinstance(parsed, dict) else None
-        return None
-
-
-def build_resume_options(meeting: Dict[str, Any]) -> Dict[str, Any]:
-    """Kwargs hints for ``MeetingEngineOptions`` when resuming a meeting.
-
-    Resume-in-place is handled by the Qt runtime constructing a fresh
-    ``MeetingEngine`` — these hints carry the interrupted meeting's title and
-    engine-relevant settings forward.
-
-    Args:
-        meeting: The interrupted meeting dict.
-
-    Returns:
-        A dict of ``MeetingEngineOptions`` field values.
-    """
-    spool_dir = meeting.get("spool_dir") or ""
-    return {
-        "title": meeting.get("title") or "",
-        "cloud_enabled": bool(meeting.get("cloud_enabled")),
-        "asr_model": meeting.get("asr_model") or "auto",
-        "llm_provider": meeting.get("agent_provider") or "openrouter",
-        "llm_model": meeting.get("agent_model") or "",
-        "llm_endpoint": _resume_endpoint(meeting),
-        "spool_root": os.path.dirname(spool_dir) if spool_dir else "",
-    }
 
 
 def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:

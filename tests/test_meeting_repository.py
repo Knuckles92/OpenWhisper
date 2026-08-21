@@ -231,15 +231,6 @@ class TestSegments:
         assert seg["speaker_participant_id"] is None
         assert seg["speaker_pinned"] is True
 
-    def test_embeddings_round_trip(self, repo):
-        make_meeting(repo)
-        repo.add_segments([make_segment("m_test1", "sg_e", 0.0, 2.0, "emb")])
-        payload = b"\x00\x01\x02\x03"
-        repo.set_segment_embedding("m_test1", "sg_e", payload)
-        rows = repo.get_segment_embeddings("m_test1")
-        assert len(rows) == 1
-        assert rows[0]["embedding"] == payload
-
     def test_keyset_paging_handles_equal_timestamps(self, repo):
         make_meeting(repo)
         repo.add_segments([

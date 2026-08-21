@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Dict, List, Tuple
 
-from _version import __version__
-
 try:
     import numpy as np
 except ImportError:  # pragma: no cover - lightweight fallback for test/import environments
@@ -114,9 +112,6 @@ def env_file_path() -> str:
 class AppConfig:
     """Centralized configuration for the OpenWhisper application."""
 
-    # Application version (see _version.py)
-    VERSION: str = __version__
-
     # File paths. These resolve under %LOCALAPPDATA%\OpenWhisper in frozen
     # builds and stay CWD-relative when running from source.
     SETTINGS_FILE: str = field(
@@ -126,7 +121,6 @@ class AppConfig:
         default_factory=lambda: user_data_path("recorded_audio.wav")
     )
     LOG_FILE: str = field(default_factory=lambda: user_data_path("openwhisper.log"))
-    ENV_FILE: str = ".env"
 
     # Logging configuration
     LOG_LEVEL: str = os.environ.get("OPENWHISPER_LOG_LEVEL", "INFO").upper()
@@ -196,9 +190,6 @@ class AppConfig:
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
 
     # Streaming text overlay settings
-    STREAMING_OVERLAY_WIDTH: int = 450
-    STREAMING_OVERLAY_MIN_HEIGHT: int = 100
-    STREAMING_OVERLAY_MAX_HEIGHT: int = 300
     STREAMING_OVERLAY_FONT_SIZE: int = 16
 
     # Timing settings
@@ -206,7 +197,6 @@ class AppConfig:
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
     CANCELLATION_GRACE_MS: int = 200  # Extra delay after cancel animation before hiding overlay
-    PROGRESS_BAR_INTERVAL_MS: int = 10
     # Continue capturing this many ms after stop to avoid end cut-offs
     POST_ROLL_MS: int = 1200
     # How long to wait for the recorder thread to flush post-roll frames before saving
@@ -247,7 +237,6 @@ class AppConfig:
     STREAMING_CHUNK_DURATION_SEC: float = 3.0  # Process every N seconds of new audio
     STREAMING_OVERLAP_SEC: float = 0.75  # Overlap with previous chunk for word boundaries
     STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
-    STREAMING_BEAM_SIZE: int = 1  # Preview-only; keep beam tiny for speed
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
@@ -306,10 +295,8 @@ class AppConfig:
     MEETINGS_FOLDER: str = field(
         default_factory=lambda: user_data_path("meetings")
     )
-    MEETING_CHECKPOINT_BASE_S: int = 45
 
     # Waveform style settings
-    CURRENT_WAVEFORM_STYLE: str = "particle"
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
 
     def __post_init__(self):
@@ -372,7 +359,6 @@ class AppConfig:
                     'audio_response': 1.5,
                     'bg_color': '#0a0a0a',
                     'text_color': '#ffffff',
-                    'particle_trail': True,
                     'glow_effect': True,
                     'turbulence_strength': 10,
                     'color_shift_speed': 50

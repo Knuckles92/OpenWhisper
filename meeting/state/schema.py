@@ -32,11 +32,6 @@ CARD_KEYS = (
     "user_notes",
 )
 
-ITEM_STATUSES = ("proposed", "edited", "confirmed", "removed")
-QUESTION_STATUSES = ("open", "resolved", "dismissed")
-PARTICIPANT_KINDS = ("me", "others_cluster", "guest")
-NAME_SOURCES = ("default", "human", "agent_inferred")
-ACTOR_TYPES = ("agent", "user", "host", "system")
 #: Post-meeting cloud consolidation lifecycle (orthogonal to meeting status).
 FINALIZATION_STATUSES = (
     "pending",

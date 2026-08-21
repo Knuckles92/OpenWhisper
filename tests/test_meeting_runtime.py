@@ -552,6 +552,47 @@ def test_refresh_past_meetings_from_worker_uses_signal(runtime):
     assert refreshed == [True]
 
 
+def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
+    """Retry must not rebuild Qt widgets on the finalization worker."""
+    import time
+
+    rt, controller = runtime
+    controller.meeting_active = False
+    rt._engine = None
+    rt._card_meeting_id = "m_card"
+    fake_repo = MagicMock()
+    fake_repo.get_meeting.return_value = {"id": "m_card", "asr_model": "base"}
+    rt._repo = fake_repo
+    refreshed = []
+    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+
+    def fake_rerun(repository, meeting_id, **kwargs):
+        return {
+            "ok": True,
+            "applied": 1,
+            "error": None,
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+                "steps": [],
+            },
+        }
+
+    monkeypatch.setattr("meeting.refinalize.rerun_finalization", fake_rerun)
+    rt.retry_finalization("polish")
+    for _ in range(50):
+        if not rt.is_finalizing:
+            break
+        time.sleep(0.02)
+
+    assert rt.is_finalizing is False
+    assert refreshed == []
+    qapp = QCoreApplication.instance()
+    assert qapp is not None
+    qapp.processEvents()
+    assert refreshed == [True]
+
+
 def test_open_past_meeting_clears_deferral(runtime):
     rt, controller = runtime
     states = []

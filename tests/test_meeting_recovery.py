@@ -8,7 +8,6 @@ from meeting.recovery import (
     STALE_HEARTBEAT_S,
     _mark_ended,
     _pid_alive,
-    discard_meeting,
     finalize_meeting,
     find_recoverable_meetings,
     is_session_dead,
@@ -331,21 +330,3 @@ def test_finalize_meeting_unfinished_chunks_mark_needs_recovery(monkeypatch):
 
     assert finalize_meeting(repo, meeting) is False
     assert repo.updates[-1] == ("m_crash", {"status": "needs_recovery"})
-
-
-def test_discard_meeting_marks_failed():
-    repo = FakeRepository()
-    discard_meeting(repo, "m_dead")
-    assert len(repo.updates) == 1
-    meeting_id, fields = repo.updates[0]
-    assert meeting_id == "m_dead"
-    assert fields["status"] == "failed"
-    assert fields["ended_at"]
-
-
-def test_discard_meeting_swallows_repository_errors():
-    class Boom:
-        def update_meeting(self, meeting_id, **fields):
-            raise RuntimeError("locked")
-
-    discard_meeting(Boom(), "m_dead")

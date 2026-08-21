@@ -7,10 +7,10 @@ import sys
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QComboBox, QTextEdit, QFrame, QPushButton
+    QLabel, QFrame, QPushButton
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QRect
-from PyQt6.QtGui import QAction, QFont, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import QAction, QKeySequence
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -226,10 +226,8 @@ class CustomTitleBar(QFrame):
 
 
 from ui_qt.widgets import (
-    HeaderCard, Card, PrimaryButton, DangerButton,
-    SuccessButton, WarningButton, ControlPanel, Button,
+    Button,
     HistorySidebar, HistoryEdgeTab, HotkeyHintFilter,
-    TranscriptionStatsWidget,
     TabbedContentWidget, QuickRecordTab, UploadFileTab, MeetingModeTab,
     CompactRecordController,
 )
@@ -251,15 +249,12 @@ class MainWindow(QMainWindow):
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
-    transcription_ready = pyqtSignal(str)
     settings_requested = pyqtSignal()
     model_manager_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
-    history_toggle_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
-    tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
     meeting_dashboard_requested = pyqtSignal()
     past_meeting_requested = pyqtSignal(str)  # meeting_id
 
@@ -335,7 +330,6 @@ class MainWindow(QMainWindow):
         # Setup UI
         self._setup_ui()
         self._setup_menu()
-        self._connect_signals()
         self._load_saved_settings()
         self._restore_window_geometry()
         self._restore_compact_mode()
@@ -671,12 +665,6 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction("About", self.show_about)
         about_action.setMenuRole(QAction.MenuRole.NoRole)
 
-    def _connect_signals(self):
-        """Connect signals to slots."""
-        # Note: Button signals are now handled by QuickRecordTab
-        # Tab connections are set up in _setup_ui
-        pass
-
     def _load_saved_settings(self):
         """Load saved settings and apply to UI."""
         try:
@@ -706,9 +694,6 @@ class MainWindow(QMainWindow):
 
         self._schedule_history_sidebar_refresh()
         self._schedule_meeting_mode_height_sync()
-
-        # Emit signal for external listeners
-        self.tab_changed.emit(index)
 
     def _schedule_history_sidebar_refresh(self) -> None:
         """Defer visible sidebar refreshes so tab clicks stay responsive."""
@@ -1052,10 +1037,6 @@ class MainWindow(QMainWindow):
         # Animate the height change
         self._animate_resize(self.width(), new_height)
 
-    def get_model_value(self) -> str:
-        """Get the model value key."""
-        return self.quick_record_tab.get_model_value()
-
     def open_settings(self):
         """Open settings dialog."""
         logger.info("Opening settings dialog")
@@ -1070,11 +1051,6 @@ class MainWindow(QMainWindow):
         """Open hotkey settings dialog."""
         logger.info("Opening hotkey settings")
         self.hotkeys_requested.emit()
-
-    def switch_to_quick_record(self):
-        """Switch to the Quick Record tab."""
-        logger.info("Switching to Quick Record tab")
-        self.tabbed_content.set_current_index(TabbedContentWidget.TAB_QUICK_RECORD)
 
     def show_about(self):
         """Show about dialog."""
@@ -1268,8 +1244,6 @@ class MainWindow(QMainWindow):
         # The sidebar's single animation drives the window width via
         # width_animated -> _on_sidebar_width_animated.
         self.history_sidebar.toggle()
-
-        self.history_toggle_requested.emit()
 
     def _on_sidebar_width_animated(self, sidebar_width: int):
         """Resize the window in lockstep with the sidebar width animation.

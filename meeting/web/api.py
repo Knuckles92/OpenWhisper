@@ -298,18 +298,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
 
     @app.get("/api/transcript")
     async def api_transcript(token: str = "", cursor: str = "",
-                             limit: int = _TRANSCRIPT_PAGE_DEFAULT,
-                             after_start_s: Optional[float] = None) -> Dict[str, Any]:
+                             limit: int = _TRANSCRIPT_PAGE_DEFAULT) -> Dict[str, Any]:
         await _require(token)
         meeting_id = getattr(engine, "meeting_id", None)
         if not meeting_id:
             return {"items": [], "next_cursor": None}
-        # Compatibility for the old scheduler/debug client contract.
-        if after_start_s is not None and not cursor:
-            items = await asyncio.to_thread(
-                engine.get_transcript, after_start_s, min(limit, _TRANSCRIPT_PAGE_MAX)
-            )
-            return {"items": items, "next_cursor": None}
         return await _transcript_page(meeting_id, cursor, limit)
 
     # ------------------------------------------------------------------

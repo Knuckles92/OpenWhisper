@@ -602,60 +602,46 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         try:
             if self.model is not None:
-                logger.debug("[cleanup] Starting cleanup...")
-
                 # Cancel any ongoing transcription
                 self.should_cancel = True
 
                 # Force CUDA to finish ALL pending operations before destroying model
                 # This is critical for large models like turbo
-                logger.debug("[cleanup] Synchronizing CUDA...")
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
-                        logger.debug("[cleanup] CUDA synchronized")
                 except ImportError:
                     pass
-                except Exception as e:
-                    logger.debug(f"[cleanup] CUDA sync error: {e}")
+                except Exception:
+                    logger.debug("CUDA sync failed during model cleanup", exc_info=True)
 
                 # Small delay after sync
                 time.sleep(0.3)
 
-                logger.debug("[cleanup] Setting model = None...")
                 self.model = None
-                logger.debug("[cleanup] Model set to None")
 
                 # Give CUDA/ctranslate2 time to finish destructor work
-                logger.debug("[cleanup] Sleeping 0.5s...")
                 time.sleep(0.5)
-                logger.debug("[cleanup] Sleep done")
 
                 # Force garbage collection to release memory
-                logger.debug("[cleanup] Calling gc.collect()...")
                 import gc
                 gc.collect()
-                logger.debug("[cleanup] gc.collect() done")
 
                 # Another delay before touching CUDA cache
                 time.sleep(0.2)
 
                 # Clear GPU cache
-                logger.debug("[cleanup] Clearing CUDA cache...")
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                        logger.debug("[cleanup] CUDA cache cleared")
                 except ImportError:
                     pass
-                except Exception as e:
-                    logger.debug(f"[cleanup] CUDA error: {e}")
-
-                logger.debug("[cleanup] Cleanup complete!")
-        except Exception as e:
-            logger.debug(f"[cleanup] Exception: {e}")
+                except Exception:
+                    logger.debug("CUDA cache clear failed during model cleanup", exc_info=True)
+        except Exception:
+            logger.debug("Local Whisper cleanup failed", exc_info=True)
 
     @property
     def device(self) -> Optional[str]:

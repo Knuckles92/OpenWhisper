@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
 
@@ -217,7 +216,6 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_end = self.meeting_runtime.end_meeting
         self.ui_controller.on_meeting_pause = self.meeting_runtime.pause_meeting
         self.ui_controller.on_meeting_resume = self.meeting_runtime.resume_meeting
-        self.ui_controller.on_meeting_cancel = self.meeting_runtime.cancel_meeting
         self.ui_controller.on_meeting_open_dashboard = (
             self.meeting_runtime.open_dashboard
         )

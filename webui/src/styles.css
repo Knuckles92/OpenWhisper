@@ -358,10 +358,6 @@ a {
   font-weight: 400;
 }
 
-.header-title {
-  display: none;
-}
-
 .header-title-edit {
   display: flex;
   align-items: center;
@@ -375,15 +371,6 @@ a {
   font-weight: 600;
   max-width: 320px;
   background: color-mix(in srgb, white 70%, transparent);
-}
-
-.header-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-  order: 3;
 }
 
 .status-chip {
@@ -1566,25 +1553,6 @@ a {
   font-size: 0.85rem;
 }
 
-.participant-row {
-  display: none;
-}
-
-.participant-kind {
-  font-size: 11px;
-  color: var(--soft);
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--wash);
-}
-
-.participant-online {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--leaf-2);
-}
-
 /* Evidence chips */
 
 .evidence-row {
@@ -1688,13 +1656,6 @@ a {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
-}
-
-.report-tabs.tab-row {
-  padding: 0;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
 }
 
 .report-view-select {
@@ -1842,12 +1803,6 @@ a {
 .print-topic-history {
   margin: 0 0 8px;
   padding-left: 1.2em;
-  color: var(--soft);
-}
-
-.report-tab-note {
-  margin: 10px 0 16px;
-  font-size: 13px;
   color: var(--soft);
 }
 
@@ -2462,11 +2417,8 @@ a {
   .header-bar,
   .confirm-dialog,
   .report-toolbar,
-  .report-tabs,
-  .report-tab-note,
   .report-download,
   .report-view-select,
-  .stage,
   .workspace-conversation,
   .workspace-rail,
   .agent-activity,
@@ -2498,7 +2450,6 @@ a {
 
   .panel-body,
   .notes-flow,
-  .stage-conversation > .panel > .panel-body,
   .workspace-conversation > .panel > .panel-body {
     max-height: none !important;
     overflow: visible !important;
@@ -2699,29 +2650,6 @@ a {
   to {
     opacity: 1;
   }
-}
-
-/* Tabs */
-
-.tab-row {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.tab {
-  padding: 8px 14px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  color: var(--soft);
-}
-
-.tab.active {
-  color: var(--leaf);
-  border-bottom-color: var(--leaf);
 }
 
 .empty-state {

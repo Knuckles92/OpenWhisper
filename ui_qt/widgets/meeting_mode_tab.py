@@ -8,7 +8,6 @@ outcomes without blocking other tabs. All user intent leaves through signals;
 state flows back in via ``set_meeting_state`` payload dicts (partial updates —
 absent keys leave the current state untouched).
 """
-import logging
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -31,8 +30,6 @@ from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.wrapped_label import WrappedLabel
-
-logger = logging.getLogger(__name__)
 
 
 def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str]:

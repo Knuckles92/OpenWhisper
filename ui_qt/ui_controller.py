@@ -16,7 +16,7 @@ from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
-from ui_qt.widgets import QuickRecordTab, UploadFileTab, TabbedContentWidget
+from ui_qt.widgets import TabbedContentWidget
 from services.settings import SettingsKey
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,6 @@ class UIController(QObject):
     # Signals
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
-    record_canceled = pyqtSignal()
-    model_changed = pyqtSignal(str)
     transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
@@ -78,7 +76,6 @@ class UIController(QObject):
         self.on_meeting_end: Optional[Callable] = None
         self.on_meeting_pause: Optional[Callable] = None
         self.on_meeting_resume: Optional[Callable] = None
-        self.on_meeting_cancel: Optional[Callable] = None
         self.on_meeting_open_dashboard: Optional[Callable] = None
         self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
         self.on_meeting_copy_guest_link: Optional[Callable] = None
@@ -191,7 +188,6 @@ class UIController(QObject):
         logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
-        self.model_changed.emit(model_name)
 
     def _on_whisper_engine_changed(self):
         """Handle a local-engine (model/device/quant) change from the main GUI.
@@ -331,7 +327,6 @@ class UIController(QObject):
             self.on_record_cancel()
             logger.info("Record cancel callback called")
 
-        self.record_canceled.emit()
         self.main_window.clear_transcription()
 
     def set_transcript(self, text: str, raw=None):
@@ -457,10 +452,6 @@ class UIController(QObject):
         self.audio_levels = levels
         self.audio_levels_updated.emit(levels)
 
-    def show_overlay(self):
-        """Show the overlay."""
-        self.overlay.show_at_cursor()
-
     def hide_overlay(self):
         """Hide the overlay."""
         self.overlay.hide()
@@ -491,10 +482,6 @@ class UIController(QObject):
         self.streaming_flow_active = False
         self.overlay.clear_streaming_text()
         logger.debug("Streaming preview cleared")
-
-    def set_streaming_overlay_finalizing(self):
-        """No-op kept for compatibility; processing uses the waveform states."""
-        return
 
     def show_caret_paste_indicator(self):
         """Show the caret paste indicator."""
@@ -535,10 +522,6 @@ class UIController(QObject):
     def show_main_window(self):
         """Show the main window."""
         self.main_window.restore_from_tray()
-
-    def hide_main_window(self):
-        """Hide the main window."""
-        self.main_window.hide()
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
         """Open the settings dialog.
@@ -1004,18 +987,6 @@ class UIController(QObject):
         if self.on_upload_audio:
             self.on_upload_audio(audio_path)
 
-    def get_quick_record_tab(self) -> QuickRecordTab:
-        """Get the Quick Record tab widget.
-
-        Returns:
-            The QuickRecordTab instance
-        """
-        return self.main_window.quick_record_tab
-
-    def get_upload_file_tab(self) -> UploadFileTab:
-        """Get the Upload File tab widget."""
-        return self.main_window.upload_file_tab
-
     def switch_to_tab(self, index: int):
         """Switch to a specific tab.
 
@@ -1023,14 +994,6 @@ class UIController(QObject):
             index: Tab index.
         """
         self.main_window.tabbed_content.set_current_index(index)
-
-    def switch_to_quick_record(self):
-        """Switch to the Quick Record tab."""
-        self.switch_to_tab(TabbedContentWidget.TAB_QUICK_RECORD)
-
-    def switch_to_upload_file(self):
-        """Switch to the Upload File tab."""
-        self.switch_to_tab(TabbedContentWidget.TAB_UPLOAD_FILE)
 
     def switch_to_meeting_mode(self):
         """Switch to the Meeting Mode tab."""
@@ -1077,10 +1040,6 @@ class UIController(QObject):
             "openwhisper.fiorilabs.tech</a><br>"
             "Open source and free to use.</p>"
         )
-
-    def get_model_value(self) -> str:
-        """Get the selected model value."""
-        return self.main_window.get_model_value()
 
     def refresh_history(self):
         """Refresh the history sidebar."""
