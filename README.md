@@ -338,6 +338,10 @@ Upgrading from an older version: the previous **Skip HuggingFace network checks*
 
 **Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository's comment and docstring policy.
+
 ## Credits
 
 OpenWhisper builds on these projects:

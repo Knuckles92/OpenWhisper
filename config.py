@@ -1,6 +1,4 @@
-"""
-Configuration constants for the OpenWhisper application.
-"""
+"""OpenWhisper configuration constants."""
 import os
 import sys
 from dataclasses import dataclass, field
@@ -135,7 +133,6 @@ class AppConfig:
     RECORDINGS_FOLDER: str = field(
         default_factory=lambda: user_data_path("recordings")
     )
-    # Default when retention mode is "custom" (None / keep_all means unlimited).
     MAX_SAVED_RECORDINGS: int = 20
     DATABASE_FILE: str = field(
         default_factory=lambda: user_data_path("openwhisper.db")
@@ -143,7 +140,7 @@ class AppConfig:
 
     # Audio settings
     CHUNK_SIZE: int = 1024
-    AUDIO_FORMAT: type = np.int16  # NumPy dtype for audio format
+    AUDIO_FORMAT: type = np.int16
     CHANNELS: int = 1
     SAMPLE_RATE: int = 44100
 
@@ -169,9 +166,7 @@ class AppConfig:
     # collapsed; the layout's own minimum still governs the expanded state.
     MAIN_WINDOW_MIN_HEIGHT: int = 460
     MAIN_WINDOW_DEFAULT_WIDTH: int = 605
-    # Compact height for the collapsed transcription + local-engine layout.
     MAIN_WINDOW_DEFAULT_HEIGHT: int = 580
-    # Target height when the user expands the transcription panel.
     MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24
@@ -185,7 +180,7 @@ class AppConfig:
     # Waveform overlay settings
     WAVEFORM_OVERLAY_WIDTH: int = 300
     WAVEFORM_OVERLAY_HEIGHT: int = 80
-    WAVEFORM_STREAMING_MAX_HEIGHT: int = 400  # Soft cap; also limited by screen space near cursor
+    WAVEFORM_STREAMING_MAX_HEIGHT: int = 400
     WAVEFORM_FRAME_RATE: int = 30
     WAVEFORM_LEVEL_SMOOTHING: float = 0.7
 
@@ -196,29 +191,24 @@ class AppConfig:
     HOTKEY_DEBOUNCE_MS: int = 300
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
-    CANCELLATION_GRACE_MS: int = 200  # Extra delay after cancel animation before hiding overlay
-    # Continue capturing this many ms after stop to avoid end cut-offs
+    CANCELLATION_GRACE_MS: int = 200
     POST_ROLL_MS: int = 1200
-    # How long to wait for the recorder thread to flush post-roll frames before saving
     POST_ROLL_FINALIZE_GRACE_MS: int = 800
-    # Extra silence appended to the end of saved audio so ASR models don't drop the last word
     END_PADDING_MS: int = 500
     # Debounce for whisper-engine reloads triggered by the inline main-GUI
     # controls; coalesces rapid model/device/quant changes into one reload.
     WHISPER_RELOAD_DEBOUNCE_MS: int = 400
-    # Hotkey watchdog: detects sleep/resume gaps; periodic refresh re-registers the hook
     HOTKEY_WATCHDOG_INTERVAL_MS: int = 10_000
     HOTKEY_SLEEP_GAP_THRESHOLD_SEC: float = 30.0
     HOTKEY_HOOK_REFRESH_INTERVAL_MS: int = 5 * 60 * 1000
-    # Whisper expects 16 kHz audio regardless of recorder sample rate
     WHISPER_TARGET_SAMPLE_RATE: int = 16000
 
     # Audio splitting settings
-    MAX_FILE_SIZE_MB: int = 23  # Maximum file size before splitting
-    SILENCE_THRESHOLD: float = 0.01  # Volume threshold to detect silence
-    MIN_CHUNK_DURATION_SEC: int = 30  # Minimum duration for each chunk in seconds
-    SILENCE_DURATION_SEC: float = 0.5  # Duration of silence needed for split point
-    OVERLAP_DURATION_SEC: float = 2.0  # Overlap between chunks to avoid word cutoffs
+    MAX_FILE_SIZE_MB: int = 23
+    SILENCE_THRESHOLD: float = 0.01
+    MIN_CHUNK_DURATION_SEC: int = 30
+    SILENCE_DURATION_SEC: float = 0.5
+    OVERLAP_DURATION_SEC: float = 2.0
 
     # Whisper model - "auto" selects based on hardware (turbo for GPU, base for
     # CPU). On macOS there is no CUDA, so "auto" resolves to CPU (base model).
@@ -226,28 +216,28 @@ class AppConfig:
 
     # Faster-whisper settings. CUDA is unavailable on macOS (faster-whisper has
     # no MPS/Metal backend), so "auto" runs on CPU there.
-    FASTER_WHISPER_DEVICE: str = "auto"  # "auto", "cuda", "cpu" (cuda N/A on macOS)
-    FASTER_WHISPER_COMPUTE_TYPE: str = "auto"  # "auto", "float16", "int8", "float32" (float16 needs GPU)
+    FASTER_WHISPER_DEVICE: str = "auto"
+    FASTER_WHISPER_COMPUTE_TYPE: str = "auto"
     FASTER_WHISPER_VAD_ENABLED: bool = True
     FASTER_WHISPER_VAD_MIN_SILENCE_MS: int = 500
     FASTER_WHISPER_BEAM_SIZE: int = 5
 
     # Streaming transcription settings
-    STREAMING_ENABLED: bool = False  # Opt-in feature for real-time transcription
-    STREAMING_CHUNK_DURATION_SEC: float = 3.0  # Process every N seconds of new audio
-    STREAMING_OVERLAP_SEC: float = 0.75  # Overlap with previous chunk for word boundaries
-    STREAMING_QUEUE_SIZE: int = 10  # Maximum queued chunks (prevents memory issues)
+    STREAMING_ENABLED: bool = False
+    STREAMING_CHUNK_DURATION_SEC: float = 3.0
+    STREAMING_OVERLAP_SEC: float = 0.75
+    STREAMING_QUEUE_SIZE: int = 10
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
     TRANSCRIPT_CLEANUP_TIMEOUT_S: float = 8.0
     TRANSCRIPT_CLEANUP_PROVIDER: str = "openai"
-    TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"  # default for OpenAI
+    TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"
     TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
     # Model-list ordering in Model Manager. "alphabetical" sorts client-side;
     # other values are OpenRouter /models sort params.
     TRANSCRIPT_CLEANUP_MODEL_SORT: str = "alphabetical"
-    TRANSCRIPT_CLEANUP_REASONING: str = "off"  # off | low | medium | high
+    TRANSCRIPT_CLEANUP_REASONING: str = "off"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     TRANSCRIPT_CLEANUP_PROMPT: str = (
         "You clean up speech-to-text transcripts. "
@@ -278,20 +268,20 @@ class AppConfig:
     DEVELOPER_MODE: bool = False
 
     # Meeting Mode defaults
-    MEETING_WHISPER_MODEL: str = "auto"  # dedicated meeting ASR model selection
-    MEETING_LANGUAGE: str = "auto"  # auto-detect, or an ISO-639-1 Whisper code
+    MEETING_WHISPER_MODEL: str = "auto"
+    MEETING_LANGUAGE: str = "auto"
     MEETING_LLM_PROVIDER: str = "openrouter"
     MEETING_LLM_MODEL: str = "deepseek/deepseek-v4-flash-0731"
-    MEETING_AGENT_CORE: str = "pi"  # Direct is the fallback when no sidecar payload is present
-    MEETING_SPEAKER_ID_BACKEND: str = "local"  # "local" | "openai"
+    MEETING_AGENT_CORE: str = "pi"
+    MEETING_SPEAKER_ID_BACKEND: str = "local"
     MEETING_END_REDECODE: bool = False
     MEETING_END_POLISH: bool = True
     MEETING_END_REPORT: bool = True
     MEETING_REPORT_RIBBON: bool = True
     MEETING_REPORT_BRIEF: bool = True
     MEETING_REPORT_SIGNAL: bool = True
-    MEETING_SERVER_BIND: str = "localhost"  # "localhost" | "lan"
-    MEETING_SERVER_PORT: int = 0  # 0 = ephemeral port
+    MEETING_SERVER_BIND: str = "localhost"
+    MEETING_SERVER_PORT: int = 0
     MEETINGS_FOLDER: str = field(
         default_factory=lambda: user_data_path("meetings")
     )
@@ -300,7 +290,6 @@ class AppConfig:
     WAVEFORM_STYLE_CONFIGS: Dict[str, Dict] = None
 
     def __post_init__(self):
-        """Initialize computed fields after dataclass creation."""
         if self.DEFAULT_HOTKEYS is None:
             if sys.platform == "darwin":
                 # Control+Option combos avoid macOS system shortcuts (Spotlight,
@@ -333,16 +322,13 @@ class AppConfig:
 
         if self.WHISPER_MODEL_CHOICES is None:
             self.WHISPER_MODEL_CHOICES = [
-                # Auto-select based on hardware (turbo for GPU, base for CPU)
                 "auto",
-                # Standard models
                 "tiny", "tiny.en",
                 "base", "base.en",
                 "small", "small.en",
                 "medium", "medium.en",
                 "large-v1", "large-v2", "large-v3",
                 "turbo",
-                # Distil models (faster, English-focused)
                 "distil-small.en", "distil-medium.en",
                 "distil-large-v2", "distil-large-v3"
             ]
@@ -364,6 +350,4 @@ class AppConfig:
                     'color_shift_speed': 50
                 }
             }
-
-# Global config instance
 config = AppConfig()

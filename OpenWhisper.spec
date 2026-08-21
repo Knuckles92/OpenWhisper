@@ -24,12 +24,10 @@ from _version import __version__  # noqa: E402
 APP_NAME = "OpenWhisper"
 ICON_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
 
-# ---------------------------------------------------------------------------
 # Bundled read-only assets
 #
 # Relative layout is preserved because config.bundle_root() resolves assets as
 # <root>/ui_qt/styles/theme.qss, where <root> is sys._MEIPASS when frozen.
-# ---------------------------------------------------------------------------
 datas = [
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
@@ -51,7 +49,6 @@ hiddenimports = [
     "lxml",
 ]
 
-# ---------------------------------------------------------------------------
 # Native packages needing explicit collection
 #
 # Each of these ships DLLs and/or data files that PyInstaller's module graph
@@ -62,7 +59,6 @@ hiddenimports = [
 #   av            - av/ and av.libs/ MUST stay siblings; av/__init__.py calls
 #                   os.add_dll_directory() on ../av.libs to find FFmpeg
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
-# ---------------------------------------------------------------------------
 for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
                 "tokenizers", "sounddevice", "lxml"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
@@ -70,7 +66,6 @@ for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
-# ---------------------------------------------------------------------------
 # Exclusions
 #
 # torch/torchaudio and the nvidia CUDA wheels are present in a development
@@ -81,7 +76,6 @@ for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
 #
 # scipy was removed as a dependency; the exclusion keeps a stale venv from
 # silently reintroducing it.
-# ---------------------------------------------------------------------------
 excludes = [
     "torch", "torchaudio", "torchgen", "functorch", "nvidia",
     "sympy", "networkx", "scipy",

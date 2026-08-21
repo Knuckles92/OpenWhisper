@@ -1,25 +1,7 @@
-"""Downloadable components: catalog, install, and removal.
+"""Secure installation of optional downloadable components.
 
-The installer ships CPU transcription only. Optional payloads that would
-otherwise dominate the download — currently the ~960 MB NVIDIA CUDA runtime —
-are fetched on demand and unpacked under ``%LOCALAPPDATA%\\OpenWhisper\\components``.
-
-The catalog describing those payloads ships in the application rather than being
-fetched: its entries are immutable PyPI wheel URLs with pinned SHA-256 digests,
-so there is no server of ours to host, keep up, or fail over from.
-
-This module deliberately mirrors :mod:`services.hf_access`: string constants
-for component states and install phases live here rather than in the Qt layer,
-so business logic can interpret results without importing UI modules, and a
-coordinator singleton owns claim tokens so at most one install per component
-is in flight.
-
-Networking uses :mod:`urllib.request` rather than ``httpx`` (which is present
-transitively via ``openai``) for two Windows-specific reasons: ``urllib``
-reads WinINET/registry proxy settings, and :func:`ssl.create_default_context`
-loads the Windows system trust store, including the enterprise roots that
-TLS-inspecting proxies depend on. ``httpx`` defaults to ``certifi`` and fails
-certificate validation in exactly those environments.
+The bundled catalog pins immutable PyPI URLs and SHA-256 digests. ``urllib`` is
+used because it honors Windows proxy settings and enterprise trust roots.
 """
 
 from __future__ import annotations
@@ -126,7 +108,7 @@ _BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = (
             f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
         ),
         "sha256": _PLACEHOLDER_SHA256,
-        "size_bytes": 30_000_000,  # ~30 MB compressed, estimate
+        "size_bytes": 30_000_000,
         "extract": "zip",
     },
 )
@@ -139,7 +121,7 @@ _BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
             f"speaker-id-win_amd64-{SPEAKER_ID_COMPONENT_VERSION}.zip"
         ),
         "sha256": _PLACEHOLDER_SHA256,
-        "size_bytes": 28_000_000,  # ~28 MB ONNX model, estimate
+        "size_bytes": 28_000_000,
         "extract": "zip",
     },
 )
@@ -204,7 +186,7 @@ _REQUIRED_GPU_SHARED_OBJECTS: Final[Tuple[str, ...]] = (
 )
 
 _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
-_CHUNK_BYTES: Final[int] = 1 << 20  # 1 MiB: IO and hashing dominate at this size
+_CHUNK_BYTES: Final[int] = 1 << 20
 _NETWORK_TIMEOUT_S: Final[int] = 30
 # Written last, so its presence means "this tree is complete".
 _SENTINEL_NAME: Final[str] = ".installed"
@@ -223,11 +205,11 @@ class ComponentState:
     """Lifecycle state of a component on this machine."""
 
     NOT_INSTALLED: Final[str] = "not_installed"
-    EXTERNAL: Final[str] = "external"  # usable CUDA supplied outside components
+    EXTERNAL: Final[str] = "external"
     INSTALLED: Final[str] = "installed"
     UPDATE_AVAILABLE: Final[str] = "update_available"
-    INCOMPATIBLE: Final[str] = "incompatible"  # built for a different runtime
-    BROKEN: Final[str] = "broken"  # partial or damaged install
+    INCOMPATIBLE: Final[str] = "incompatible"
+    BROKEN: Final[str] = "broken"
 
 
 class InstallPhase:
@@ -260,11 +242,10 @@ class ComponentInfo:
     available_version: Optional[str]
     download_bytes: int
     install_bytes: int
-    reason: str = ""  # why INCOMPATIBLE / BROKEN; empty otherwise
+    reason: str = ""
 
     @property
     def is_usable(self) -> bool:
-        """True when the component is installed and safe to activate."""
         return self.state in (
             ComponentState.EXTERNAL,
             ComponentState.INSTALLED,
@@ -370,12 +351,7 @@ def gpu_runtime_available() -> bool:
     return False
 
 
-# --------------------------------------------------------------------------
-# Paths
-# --------------------------------------------------------------------------
-
 def component_dir(component_id: str) -> str:
-    """Installed location of ``component_id``."""
     return os.path.join(components_root(), component_id)
 
 
@@ -390,7 +366,6 @@ def staging_dir() -> str:
 
 
 def cache_dir() -> str:
-    """Directory holding downloaded archives and partial ``.part`` files."""
     return os.path.join(components_root(), ".cache")
 
 
@@ -404,7 +379,6 @@ def is_installed(component_id: str) -> bool:
 
 
 def _payload_has_sidecar_bundle(payload_dir: str) -> bool:
-    """True when ``payload_dir`` contains the compiled Pi sidecar bundle."""
     return os.path.isfile(os.path.join(payload_dir, _SIDECAR_BUNDLE_NAME))
 
 
@@ -448,7 +422,6 @@ def meeting_agent_payload_dir() -> Optional[str]:
 
 
 def _first_onnx_file(root: str) -> Optional[str]:
-    """Return the first ``.onnx`` file under ``root``, or None."""
     if not root or not os.path.isdir(root):
         return None
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -459,12 +432,10 @@ def _first_onnx_file(root: str) -> Optional[str]:
 
 
 def speaker_model_cache_dir() -> str:
-    """Per-user directory for the downloaded speaker-embedding ONNX model."""
     return os.path.join(local_app_dir(), "models", "speaker-id")
 
 
 def _env_speaker_model_path() -> Optional[str]:
-    """``OPENWHISPER_SPEAKER_MODEL`` when it points at an ONNX file or folder."""
     raw = (os.environ.get(_SPEAKER_MODEL_ENV) or "").strip()
     if not raw:
         return None
@@ -485,7 +456,6 @@ def _env_speaker_model_path() -> Optional[str]:
 
 
 def _installed_speaker_model_path() -> Optional[str]:
-    """ONNX inside a staged speaker-id component, even if unpublished."""
     if not is_installed(ComponentId.SPEAKER_ID):
         return None
     found = _first_onnx_file(component_dir(ComponentId.SPEAKER_ID))
@@ -496,7 +466,6 @@ def _installed_speaker_model_path() -> Optional[str]:
 
 
 def _source_speaker_model_path() -> Optional[str]:
-    """Repo ``models/speaker-id`` when running from source."""
     if is_frozen():
         return None
     return _first_onnx_file(os.path.join(bundle_root(), "models", "speaker-id"))
@@ -526,7 +495,6 @@ def speaker_model_path() -> Optional[str]:
 
 
 def _speaker_model_download_allowed() -> bool:
-    """True when a missing speaker model may be fetched from Hugging Face."""
     try:
         from services.settings import (
             HuggingFaceAccessPolicy,
@@ -543,14 +511,6 @@ def _speaker_model_download_allowed() -> bool:
 
 
 def _verify_speaker_model(path: str) -> None:
-    """Reject a speaker-model file whose SHA-256 does not match the pin.
-
-    Args:
-        path: Downloaded ONNX path.
-
-    Raises:
-        ComponentError: The file is missing, empty, or the digest mismatches.
-    """
     if not os.path.isfile(path):
         raise ComponentError("The speaker model download produced no file.")
     digest = hashlib.sha256()
@@ -569,14 +529,6 @@ def _verify_speaker_model(path: str) -> None:
 
 
 def _download_speaker_model() -> str:
-    """Fetch the pinned WeSpeaker ONNX into the per-user cache.
-
-    Returns:
-        Absolute path to the verified ONNX file.
-
-    Raises:
-        ComponentError: huggingface_hub is missing or the download failed.
-    """
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
@@ -635,7 +587,6 @@ def ensure_speaker_model() -> Optional[str]:
 
 
 def read_manifest(component_id: str) -> Optional[dict]:
-    """Read an installed component's manifest, or None when absent/unreadable."""
     path = os.path.join(component_dir(component_id), _MANIFEST_NAME)
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -645,7 +596,6 @@ def read_manifest(component_id: str) -> Optional[dict]:
 
 
 def installed_size_bytes(component_id: str) -> int:
-    """Total on-disk size of an installed component."""
     total = 0
     for root, _dirs, files in os.walk(component_dir(component_id)):
         for name in files:
@@ -671,24 +621,12 @@ def prune_orphans() -> None:
             _rmtree(os.path.join(root, name))
 
 
-# --------------------------------------------------------------------------
-# Compatibility
-# --------------------------------------------------------------------------
-
 def _current_abi() -> str:
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
 def check_compatibility(manifest: dict) -> Optional[str]:
-    """Validate a manifest against this runtime.
-
-    Args:
-        manifest: Parsed component manifest.
-
-    Returns:
-        A human-readable reason the component cannot be used, or None when it
-        is compatible.
-    """
+    """Return why a manifest is incompatible, or None."""
     api = manifest.get("component_api")
     if api is not None and api != COMPONENT_API:
         return (
@@ -713,12 +651,8 @@ def check_compatibility(manifest: dict) -> Optional[str]:
     return None
 
 
-# --------------------------------------------------------------------------
-# Download and install
-# --------------------------------------------------------------------------
-
+# Called as (phase, done bytes, total bytes), always off the Qt thread.
 ProgressCallback = Callable[[str, int, int], None]
-"""Called as ``(phase, done_bytes, total_bytes)``. Never from the Qt thread."""
 
 
 def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
@@ -729,7 +663,6 @@ def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
 
 
 def _rmtree(path: str) -> None:
-    """Delete a tree if present, ignoring failures."""
     if path and os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
 
@@ -925,7 +858,6 @@ def _safe_extract_nvidia_wheel(
 
 
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
-    """Ensure a staged component has its minimum required runtime files."""
     if component_id != ComponentId.GPU_ACCEL:
         return
 
@@ -955,15 +887,6 @@ def install_component(
     so an interruption leaves either the previous install or the new one
     intact — never a half-written mixture.
 
-    Args:
-        component_id: Component to install.
-        entry: Catalog entry describing archives, sizes, and hashes.
-        progress: Progress sink.
-        cancel: Set to abort.
-
-    Raises:
-        ComponentCanceled: The install was canceled.
-        ComponentError: The install could not be completed.
     """
     archives = entry.get("archives") or []
     if not archives:
@@ -1060,13 +983,12 @@ def uninstall_component(component_id: str) -> None:
 
 
 def _check_free_space(required_bytes: int) -> None:
-    """Raise when the components volume cannot hold archive plus extracted tree."""
     if required_bytes <= 0:
         return
     root = components_root()
     os.makedirs(root, exist_ok=True)
     free = shutil.disk_usage(root).free
-    needed = int(required_bytes * 1.15)  # headroom for filesystem overhead
+    needed = int(required_bytes * 1.15)
     if free < needed:
         raise ComponentError(
             f"Not enough disk space: {format_size_bytes(needed)} needed, "
@@ -1089,10 +1011,6 @@ def _describe_disk_error(exc: OSError) -> str:
     return f"Installation failed: {exc}"
 
 
-# --------------------------------------------------------------------------
-# Coordinator
-# --------------------------------------------------------------------------
-
 class ComponentCoordinator:
     """Owns the catalog and serializes installs.
 
@@ -1108,15 +1026,8 @@ class ComponentCoordinator:
         self._active: Set[str] = set()
         self._cancel_flags: Dict[str, threading.Event] = {}
 
-    # -- install claims ----------------------------------------------------
-
     def begin_install(self, component_id: str) -> Optional[threading.Event]:
-        """Claim the install slot for ``component_id``.
-
-        Returns:
-            A cancel event to pass to :func:`install_component`, or None when
-            an install is already in flight.
-        """
+        """Claim an install and return its cancel event, or None if busy."""
         with self._lock:
             if component_id in self._active:
                 logger.debug(f"Install for '{component_id}' already in flight")
@@ -1127,7 +1038,6 @@ class ComponentCoordinator:
             return event
 
     def end_install(self, component_id: str) -> None:
-        """Release the install slot for ``component_id``."""
         with self._lock:
             self._active.discard(component_id)
             self._cancel_flags.pop(component_id, None)
@@ -1137,7 +1047,6 @@ class ComponentCoordinator:
             return component_id in self._active
 
     def cancel_install(self, component_id: str) -> None:
-        """Request cancellation of an in-flight install."""
         with self._lock:
             event = self._cancel_flags.get(component_id)
         if event is not None:
@@ -1156,8 +1065,6 @@ class ComponentCoordinator:
         for event in events:
             event.set()
 
-    # -- catalog -----------------------------------------------------------
-
     def fetch_catalog(self, force: bool = False) -> Optional[dict]:
         """Return the component catalog.
 
@@ -1173,19 +1080,15 @@ class ComponentCoordinator:
         remote flag suppressed update detection. Regenerate the pinned entries
         with ``python scripts/build_component.py gpu-accel``.
 
-        Args:
-            force: Accepted for call-compatibility; the catalog is static.
+        ``force`` remains accepted for call compatibility.
         """
         return _BUILTIN_CATALOG
 
     def catalog_entry(self, component_id: str) -> Optional[dict]:
-        """Catalog entry for ``component_id``, or None when unavailable."""
         catalog = self.fetch_catalog()
         if not catalog:
             return None
         return (catalog.get("components") or {}).get(component_id)
-
-    # -- state -------------------------------------------------------------
 
     def describe(self, component_id: str) -> ComponentInfo:
         """Summarize a component's state for the UI.

@@ -455,9 +455,7 @@ class TestRollingReviseScheduling:
         assert persisted["segments"][0].start_s == 40.0
 
 
-# --------------------------------------------------------------------------
 # Post-meeting offline ASR: silence split and overlap drop.
-# --------------------------------------------------------------------------
 
 
 class TestOfflineCutRanges:
@@ -524,9 +522,7 @@ class TestOverlapDrop:
         assert first != other
 
 
-# --------------------------------------------------------------------------
 # Bounded rolling revision helpers and persistence.
-# --------------------------------------------------------------------------
 
 
 def test_revision_window_caps_at_horizon():

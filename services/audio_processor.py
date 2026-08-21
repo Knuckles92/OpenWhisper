@@ -1,7 +1,4 @@
-"""
-Audio processing utilities for handling large audio files.
-Includes file size checking and smart audio splitting with silence detection.
-"""
+"""File-size checks and silence-aware audio splitting."""
 import os
 import wave
 import numpy as np
@@ -30,7 +27,7 @@ class AudioFilePreview:
     channels: int
     needs_splitting: bool
     estimated_chunks: int
-    chunk_durations: List[float] = field(default_factory=list)  # Estimated duration of each chunk in seconds
+    chunk_durations: List[float] = field(default_factory=list)
 
     @property
     def duration_formatted(self) -> str:
@@ -53,23 +50,15 @@ class AudioProcessor:
     """Handles audio file processing including size checking and smart splitting."""
 
     def __init__(self):
-        """Initialize the audio processor."""
-        self.temp_files: List[str] = []  # Track temporary files for cleanup
+        self.temp_files: List[str] = []
 
     def check_file_size(self, audio_path: str) -> Tuple[bool, float]:
-        """Check if audio file exceeds size limit.
-
-        Args:
-            audio_path: Path to the audio file to check.
-
-        Returns:
-            Tuple of (needs_splitting, file_size_mb)
-        """
+        """Return whether the file needs splitting and its size in MiB."""
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         file_size_bytes = os.path.getsize(audio_path)
-        file_size_mb = file_size_bytes / (1024 * 1024)  # Convert to MB
+        file_size_mb = file_size_bytes / (1024 * 1024)
 
         needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
 
@@ -80,21 +69,7 @@ class AudioProcessor:
         return needs_splitting, file_size_mb
 
     def preview_file(self, audio_path: str) -> AudioFilePreview:
-        """Analyze an audio file and return preview information.
-
-        This method provides metadata about the file including estimated
-        chunk information without actually splitting the file.
-
-        Args:
-            audio_path: Path to the audio file to analyze.
-
-        Returns:
-            AudioFilePreview with file metadata and chunk estimates.
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist.
-            ValueError: If the file format is not supported.
-        """
+        """Return metadata and estimated chunks without creating files."""
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
@@ -102,29 +77,22 @@ class AudioProcessor:
         file_size_bytes = os.path.getsize(audio_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
 
-        # Load audio to get duration and metadata
         try:
             audio_data, sample_rate, channels = self._load_audio_metadata(audio_path)
         except Exception as e:
             raise ValueError(f"Failed to read audio file: {e}")
 
-        # Calculate duration
         duration_seconds = len(audio_data) / sample_rate
 
-        # Check if splitting is needed
         needs_splitting = file_size_mb > config.MAX_FILE_SIZE_MB
 
-        # Estimate chunks
         chunk_durations = []
         if needs_splitting:
-            # Use the same logic as _find_split_points to estimate chunks
             split_points = self._find_split_points(audio_data, sample_rate)
 
             if not split_points:
-                # Fallback to time-based splits
                 split_points = self._generate_time_based_splits(len(audio_data), sample_rate)
 
-            # Calculate chunk durations from split points
             start_idx = 0
             for end_idx in split_points + [len(audio_data)]:
                 chunk_samples = end_idx - start_idx
@@ -153,33 +121,19 @@ class AudioProcessor:
         )
 
     def split_audio_file(self, audio_path: str, progress_callback: Optional[Callable[[str], None]] = None) -> List[str]:
-        """Split audio file into smaller chunks using silence detection.
-
-        Args:
-            audio_path: Path to the input audio file.
-            progress_callback: Optional callback function for progress updates.
-
-        Returns:
-            List of paths to the split audio files.
-
-        Raises:
-            Exception: If splitting fails.
-        """
+        """Split an audio file at silence points, with time-based fallback."""
         try:
             if progress_callback:
                 progress_callback("Loading audio file...")
 
-            # Load audio data
             audio_data, sample_rate = self._load_audio_data(audio_path)
 
             if progress_callback:
                 progress_callback("Analyzing audio for optimal split points...")
 
-            # Find optimal split points using silence detection
             split_points = self._find_split_points(audio_data, sample_rate)
 
             if not split_points:
-                # Fallback to time-based splitting if no silence found
                 logger.warning("No suitable silence points found, using time-based splitting")
                 if progress_callback:
                     progress_callback("Generating time-based splits...")
@@ -188,7 +142,6 @@ class AudioProcessor:
             if progress_callback:
                 progress_callback(f"Creating {len(split_points)} audio chunks...")
 
-            # Create chunks
             chunk_files = self._create_chunks(audio_data, sample_rate, split_points, audio_path)
 
             logger.info(f"Successfully split audio into {len(chunk_files)} chunks")
@@ -200,35 +153,14 @@ class AudioProcessor:
             raise
 
     def _load_audio_data(self, audio_path: str) -> Tuple[np.ndarray, int]:
-        """Load audio data from any supported audio format using PyAV.
-
-        Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
-
-        Args:
-            audio_path: Path to the audio file.
-
-        Returns:
-            Tuple of (audio_data, sample_rate) where audio_data is mono int16.
-        """
         audio_data, sample_rate, _ = self._load_audio_metadata(audio_path)
         return audio_data, sample_rate
 
     def _load_audio_metadata(self, audio_path: str) -> Tuple[np.ndarray, int, int]:
-        """Load audio data and metadata from any supported audio format using PyAV.
-
-        Supports WAV, MP3, M4A, OGG, FLAC, WMA, and other formats.
-
-        Args:
-            audio_path: Path to the audio file.
-
-        Returns:
-            Tuple of (audio_data, sample_rate, channels) where audio_data is mono int16.
-        """
         import av
 
         container = av.open(audio_path)
 
-        # Get the audio stream
         if not container.streams.audio:
             raise ValueError("No audio stream found in file")
 
@@ -236,10 +168,8 @@ class AudioProcessor:
         sample_rate = stream.rate
         channels = stream.channels
 
-        # Decode all audio frames
         frames = []
         for frame in container.decode(audio=0):
-            # Convert frame to numpy array (float format, planar layout)
             arr = frame.to_ndarray()
             frames.append(arr)
 
@@ -248,42 +178,26 @@ class AudioProcessor:
         if not frames:
             raise ValueError("No audio frames found in file")
 
-        # Concatenate all frames
         # PyAV returns shape (channels, samples) for planar formats
         audio_float = np.concatenate(frames, axis=1 if len(frames[0].shape) > 1 else 0)
 
-        # Handle stereo by taking the average of channels
         if len(audio_float.shape) > 1 and audio_float.shape[0] > 1:
             audio_float = np.mean(audio_float, axis=0)
         elif len(audio_float.shape) > 1:
-            audio_float = audio_float[0]  # Single channel, just flatten
+            audio_float = audio_float[0]
 
-        # Convert from float [-1.0, 1.0] to int16 [-32768, 32767]
-        # PyAV decodes to float32 by default
         audio_data = (audio_float * INT16_MAX).clip(INT16_MIN, INT16_MAX).astype(np.int16)
 
         return audio_data, sample_rate, channels
 
     def _find_split_points(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
-        """Find optimal split points in audio using silence detection.
-
-        Args:
-            audio_data: Audio data as numpy array.
-            sample_rate: Sample rate of the audio.
-
-        Returns:
-            List of frame indices where splits should occur.
-        """
-        # Calculate target chunk size in samples
-        max_chunk_samples = int((config.MAX_FILE_SIZE_MB * 1024 * 1024) / 2)  # Rough estimate for 16-bit audio
+        max_chunk_samples = int((config.MAX_FILE_SIZE_MB * 1024 * 1024) / 2)
         min_chunk_samples = int(config.MIN_CHUNK_DURATION_SEC * sample_rate)
         silence_samples = int(config.SILENCE_DURATION_SEC * sample_rate)
 
-        # Normalize audio for silence detection
         audio_abs = np.abs(audio_data.astype(np.float32)) / 32767.0
 
-        # Apply smoothing to reduce noise in silence detection
-        window_size = int(0.1 * sample_rate)  # 100ms window
+        window_size = int(0.1 * sample_rate)
         if window_size > 1:
             audio_smooth = np.convolve(audio_abs, np.ones(window_size) / window_size, mode='same')
         else:
@@ -292,13 +206,10 @@ class AudioProcessor:
         split_points = []
         last_split = 0
 
-        # Search for split points
         search_start = min_chunk_samples
         while search_start < len(audio_data):
-            # Define search window for split point
             search_end = min(search_start + max_chunk_samples - min_chunk_samples, len(audio_data))
 
-            # Find silence in the search window
             best_split = self._find_best_silence(audio_smooth, search_start, search_end,
                                                silence_samples, sample_rate)
 
@@ -307,7 +218,6 @@ class AudioProcessor:
                 last_split = best_split
                 search_start = best_split + min_chunk_samples
             else:
-                # No silence found, force a split at max chunk size
                 forced_split = min(last_split + max_chunk_samples, len(audio_data) - 1)
                 split_points.append(forced_split)
                 last_split = forced_split
@@ -317,18 +227,6 @@ class AudioProcessor:
 
     def _find_best_silence(self, audio_smooth: np.ndarray, start: int, end: int,
                           silence_samples: int, sample_rate: int) -> Optional[int]:
-        """Find the best silence period in a given range.
-
-        Args:
-            audio_smooth: Smoothed audio data.
-            start: Start index to search.
-            end: End index to search.
-            silence_samples: Required silence duration in samples.
-            sample_rate: Sample rate.
-
-        Returns:
-            Index of the best split point, or None if no suitable silence found.
-        """
         # Search from the end of the range backwards to prefer later splits
         search_range = range(end - silence_samples, start, -int(0.1 * sample_rate))
 
@@ -339,31 +237,20 @@ class AudioProcessor:
             if i + silence_samples >= len(audio_smooth):
                 continue
 
-            # Check if this region is silent enough
             silence_region = audio_smooth[i:i + silence_samples]
             max_level = np.max(silence_region)
             avg_level = np.mean(silence_region)
 
             if max_level < config.SILENCE_THRESHOLD:
-                # Calculate silence quality (lower is better)
                 silence_quality = avg_level + (max_level * 0.1)
 
                 if silence_quality < best_silence_quality:
                     best_silence_quality = silence_quality
-                    best_silence_start = i + silence_samples // 2  # Split in middle of silence
+                    best_silence_start = i + silence_samples // 2
 
         return best_silence_start
 
     def _generate_time_based_splits(self, total_samples: int, sample_rate: int) -> List[int]:
-        """Generate time-based splits as fallback when no silence is found.
-
-        Args:
-            total_samples: Total number of audio samples.
-            sample_rate: Sample rate.
-
-        Returns:
-            List of split point indices.
-        """
         # Target duration per chunk (slightly less than max to account for overhead)
         target_duration = (config.MAX_FILE_SIZE_MB * 0.8) * 1024 * 1024 / (2 * sample_rate)
         target_samples = int(target_duration * sample_rate)
@@ -379,36 +266,20 @@ class AudioProcessor:
 
     def _create_chunks(self, audio_data: np.ndarray, sample_rate: int,
                       split_points: List[int], original_file: str) -> List[str]:
-        """Create individual audio chunk files.
-
-        Args:
-            audio_data: Original audio data.
-            sample_rate: Sample rate.
-            split_points: List of split point indices.
-            original_file: Path to original file for metadata.
-
-        Returns:
-            List of paths to created chunk files.
-        """
         chunk_files = []
         overlap_samples = int(config.OVERLAP_DURATION_SEC * sample_rate)
 
-        # Create temporary directory for chunks
         temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
 
-        # Create chunks
         start_idx = 0
         for i, end_idx in enumerate(split_points + [len(audio_data)]):
-            # Add overlap to avoid cutting words
             chunk_start = max(0, start_idx - (overlap_samples if i > 0 else 0))
             chunk_end = min(len(audio_data), end_idx + overlap_samples)
 
             chunk_data = audio_data[chunk_start:chunk_end]
 
-            # Create chunk filename
             chunk_filename = os.path.join(temp_dir, f"chunk_{i:03d}.wav")
 
-            # Save chunk
             self._save_audio_chunk(chunk_data, sample_rate, chunk_filename)
 
             chunk_files.append(chunk_filename)
@@ -420,20 +291,13 @@ class AudioProcessor:
                         f"({len(chunk_data)/sample_rate:.1f}s, "
                         f"{os.path.getsize(chunk_filename)/(1024*1024):.1f}MB)")
 
-        self.temp_files.append(temp_dir)  # Add directory for cleanup
+        self.temp_files.append(temp_dir)
         return chunk_files
 
     def _save_audio_chunk(self, audio_data: np.ndarray, sample_rate: int, filename: str):
-        """Save audio chunk to WAV file.
-
-        Args:
-            audio_data: Audio data to save.
-            sample_rate: Sample rate.
-            filename: Output filename.
-        """
         with wave.open(filename, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
             wav_file.setframerate(sample_rate)
             wav_file.writeframes(audio_data.tobytes())
 
@@ -452,39 +316,26 @@ class AudioProcessor:
         logger.info("Temporary files cleaned up")
 
     def combine_transcriptions(self, transcriptions: List[str]) -> str:
-        """Combine multiple transcriptions into a single text.
-
-        Args:
-            transcriptions: List of transcription strings from chunks.
-
-        Returns:
-            Combined transcription text.
-        """
+        """Combine non-empty chunk transcripts with normalized spacing."""
         if not transcriptions:
             return ""
 
-        # Remove any empty transcriptions
         valid_transcriptions = [t.strip() for t in transcriptions if t.strip()]
 
         if not valid_transcriptions:
             return ""
 
-        # Combine with space separation, handling sentence boundaries
         combined = ""
         for i, transcription in enumerate(valid_transcriptions):
             if i > 0:
-                # Add space between chunks, but avoid double spaces
                 if not combined.endswith(" ") and not transcription.startswith(" "):
                     combined += " "
 
             combined += transcription
 
-        # Clean up any double spaces
         while "  " in combined:
             combined = combined.replace("  ", " ")
 
         return combined.strip()
 
-
-# Global instance for easy access
 audio_processor = AudioProcessor()

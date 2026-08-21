@@ -44,7 +44,7 @@ def _make_installed(root: Path, component_id: str, manifest: dict) -> Path:
     return target
 
 
-# --- installation state ---------------------------------------------------
+# Installation state
 
 def test_not_installed_when_directory_absent(component_root):
     assert components.is_installed("gpu-accel") is False
@@ -80,7 +80,7 @@ def test_uninstall_removes_the_tree(component_root):
     assert components.is_installed("gpu-accel") is False
 
 
-# --- compatibility gates --------------------------------------------------
+# Compatibility gates
 
 def test_empty_manifest_is_compatible():
     assert check_compatibility({}) is None
@@ -107,7 +107,7 @@ def test_matching_abi_is_accepted():
     assert check_compatibility({"python_abi": tag}) is None
 
 
-# --- coordinator ----------------------------------------------------------
+# Coordinator
 
 def test_begin_install_is_exclusive():
     coordinator = ComponentCoordinator()
@@ -435,7 +435,7 @@ def test_describe_survives_a_missing_catalog_entry(component_root):
     assert info.installed_version == "1.0"
 
 
-# --- archive safety -------------------------------------------------------
+# Archive safety
 
 def _zip_with_member(path: Path, member_name: str) -> Path:
     with zipfile.ZipFile(path, "w") as archive:
@@ -568,7 +568,7 @@ def test_safe_extract_honors_cancellation(tmp_path):
         )
 
 
-# --- disk space -----------------------------------------------------------
+# Disk space
 
 def test_free_space_check_raises_when_short(component_root):
     class _Usage:

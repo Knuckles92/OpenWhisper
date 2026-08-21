@@ -27,7 +27,6 @@ import { createSession, PiSession, piVersion } from "./pi-adapter";
 
 const PROTOCOL_VERSION = 1;
 
-/** Topic-history entries kept in the prompt's state block (newest last). */
 const MAX_TOPIC_HISTORY = 5;
 
 interface CheckpointResponse {
@@ -262,9 +261,6 @@ function main(): void {
  * verbatim on every checkpoint eventually blows the context window. The
  * projection keeps live content only: non-removed items, open questions, and
  * the last few topic-history entries.
- *
- * @param state The raw `MeetingState.to_dict()` snapshot from the host.
- * @returns A structurally identical but bounded snapshot for the prompt.
  */
 function projectStateForPrompt(state: any): any {
   if (!state || typeof state !== "object") return state ?? {};
@@ -302,9 +298,6 @@ function projectStateForPrompt(state: any): any {
   return projected;
 }
 
-/**
- * live_notes block ids visible in a state snapshot (notes-pass op gate).
- */
 function liveNoteIds(state: any): Set<string> {
   const ids = new Set<string>();
   const blocks = state?.cards?.live_notes;
@@ -320,9 +313,6 @@ function liveNoteIds(state: any): Set<string> {
 
 /**
  * Bounded projection for note-taker passes: only the notes page matters.
- *
- * @param state The raw `MeetingState.to_dict()` snapshot from the host.
- * @returns topic, rolling summary, and the non-removed live_notes blocks.
  */
 function notesPageProjection(state: any): any {
   const cards = state?.cards ?? {};
@@ -452,10 +442,6 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   return parts.join("\n");
 }
 
-/**
- * Compose the user message for one note-taker pass: the notes page, the new
- * transcript segments, and the pass instructions.
- */
 function buildNotesPrompt(systemPrompt: string, params: any): string {
   const page = notesPageProjection(params?.state ?? {});
   const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];

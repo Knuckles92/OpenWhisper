@@ -1,5 +1,3 @@
-"""Tests for the Meeting Mode main-window tab."""
-
 import os
 import unittest
 from unittest.mock import patch
@@ -20,15 +18,11 @@ from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
 class TestMeetingModeTabRegistration(unittest.TestCase):
-    """Verify Meeting Mode is registered as its own content tab."""
-
     @classmethod
     def setUpClass(cls):
-        """Create the shared Qt application."""
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        """Create a main window with isolated settings access."""
         self.load_settings = patch.object(
             settings_manager,
             "load_all_settings",
@@ -46,7 +40,6 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.window = MainWindow()
 
     def tearDown(self):
-        """Close the window and restore settings methods."""
         self.window._force_quit = True
         self.window.close()
         self.app.processEvents()
@@ -55,7 +48,6 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.load_settings.stop()
 
     def test_meeting_mode_is_third_tab(self):
-        """Main window hosts Meeting Mode at tab index 2."""
         self.assertEqual(TabbedContentWidget.TAB_MEETING_MODE, 2)
         self.assertEqual(self.window.tabbed_content.tab_bar.count(), 3)
         self.assertEqual(
@@ -73,7 +65,6 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "meeting_panel"))
 
     def test_sidebar_switches_to_past_meetings_for_meeting_mode(self):
-        """Meeting Mode replaces recorder history with Past Meetings."""
         self.assertFalse(self.window.history_sidebar.content_widget.isHidden())
         self.assertTrue(
             self.window.history_sidebar.meetings_content_widget.isHidden()
@@ -91,7 +82,6 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.assertIn("Past Meetings", self.window.history_edge_tab.toolTip())
 
     def test_compact_mode_does_not_require_footer_meeting_strip(self):
-        """Compact mode still works without a footer meeting strip."""
         self.window.set_compact_mode(True)
         self.assertTrue(self.window._compact_mode)
         self.assertFalse(self.window.tabbed_content.isVisibleTo(self.window))
@@ -155,11 +145,9 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Create the shared Qt application."""
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        """Show a main window on the Meeting Mode tab with isolated settings."""
         self.load_settings = patch.object(
             settings_manager, "load_all_settings", return_value={}
         )
@@ -187,7 +175,6 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self._settle()
 
     def tearDown(self):
-        """Close the window and restore settings methods."""
         self.window._force_quit = True
         self.window.close()
         self.app.processEvents()
@@ -196,12 +183,10 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self.load_settings.stop()
 
     def _settle(self):
-        """Let deferred layout and height-sync work complete."""
         for _ in range(10):
             self.app.processEvents()
 
     def _step_rows(self):
-        """Return the rendered step row widgets."""
         layout = self.window.meeting_mode_tab.finalization_steps_layout
         return [layout.itemAt(i).widget() for i in range(layout.count())]
 
@@ -272,15 +257,11 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
 
 
 class TestMeetingModeTabState(unittest.TestCase):
-    """Exercise idle/active control visibility on the Meeting Mode tab."""
-
     @classmethod
     def setUpClass(cls):
-        """Create the shared Qt application."""
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        """Build a standalone tab with patched settings."""
         self.get_setting = patch.object(
             settings_manager,
             "get",
@@ -292,7 +273,6 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab = MeetingModeTab()
 
     def tearDown(self):
-        """Dispose the tab and restore settings."""
         self.tab.deleteLater()
         self.app.processEvents()
         self.get_setting.stop()
@@ -534,7 +514,6 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.finalization_retry_button.click()
         self.assertEqual(clicked, [True])
 
-        # Switching to running hides the retry button
         self.tab.set_meeting_state({
             "active": False,
             "status": "ended",

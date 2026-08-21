@@ -1,7 +1,4 @@
-"""
-System Tray Implementation for PyQt6 UI.
-Manages system tray icon and menu.
-"""
+"""System tray icon and menu."""
 import logging
 from typing import Optional
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
@@ -24,7 +21,6 @@ class SystemTrayManager(QSystemTrayIcon):
     meeting_dashboard_requested = pyqtSignal()
 
     def __init__(self, main_window=None):
-        """Initialize system tray manager."""
         super().__init__()
         self.main_window = main_window
         self._meeting_active = False
@@ -37,27 +33,21 @@ class SystemTrayManager(QSystemTrayIcon):
         logger.info("System tray initialized")
 
     def _setup_icon(self):
-        """Setup the tray icon."""
         self.setIcon(app_icon())
 
     def _setup_menu(self):
-        """Setup the tray context menu."""
-        self.menu = QMenu()  # Styled by the app-wide theme's QMenu rules
+        self.menu = QMenu()
 
-        # Show action
         show_action = self.menu.addAction("Show")
         show_action.triggered.connect(self._on_show)
 
-        # Hide action
         hide_action = self.menu.addAction("Hide")
         hide_action.triggered.connect(self._on_hide)
 
-        # Toggle recording action
         self.menu.addSeparator()
         self.toggle_action = self.menu.addAction("Start Recording")
         self.toggle_action.triggered.connect(self._on_toggle)
 
-        # Meeting Mode actions
         self.menu.addSeparator()
         self.meeting_toggle_action = self.menu.addAction("Start Meeting")
         self.meeting_toggle_action.triggered.connect(self._on_meeting_toggle)
@@ -65,13 +55,11 @@ class SystemTrayManager(QSystemTrayIcon):
         self.meeting_dashboard_action.triggered.connect(self._on_meeting_dashboard)
         self.meeting_dashboard_action.setEnabled(False)
 
-        # Settings action
         self.menu.addSeparator()
         settings_action = self.menu.addAction("Settings")
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
         settings_action.triggered.connect(self._on_settings)
 
-        # Exit action
         self.menu.addSeparator()
         exit_action = self.menu.addAction("Exit")
         exit_action.setMenuRole(QAction.MenuRole.NoRole)
@@ -80,56 +68,42 @@ class SystemTrayManager(QSystemTrayIcon):
         self.setContextMenu(self.menu)
 
     def _connect_signals(self):
-        """Connect signals."""
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason):
-        """Handle tray icon activation."""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._on_show()
 
     def _on_show(self):
-        """Handle show action."""
         if self.main_window:
             self.main_window.restore_from_tray()
 
         self.show_requested.emit()
 
     def _on_hide(self):
-        """Handle hide action."""
         if self.main_window:
             self.main_window.hide()
 
         self.hide_requested.emit()
 
     def _on_toggle(self):
-        """Handle toggle recording action."""
         self.toggle_recording.emit()
 
     def _on_meeting_toggle(self):
-        """Handle Start/End Meeting from the tray menu."""
         self.meeting_toggle_requested.emit()
 
     def _on_meeting_dashboard(self):
-        """Handle Open Meeting Dashboard from the tray menu."""
         self.meeting_dashboard_requested.emit()
 
     def _on_settings(self):
-        """Handle settings action."""
         if self.main_window:
             self.main_window.open_settings()
 
     def _on_exit(self):
-        """Handle exit action."""
         self.exit_requested.emit()
         QApplication.instance().quit()
 
     def set_recording(self, is_recording: bool):
-        """Update the menu based on recording state.
-
-        Args:
-            is_recording: True while a dictation recording is active.
-        """
         if is_recording:
             self.toggle_action.setText("Stop Recording")
         else:
@@ -138,14 +112,7 @@ class SystemTrayManager(QSystemTrayIcon):
     def set_meeting_active(
         self, active: bool, dashboard_available: Optional[bool] = None
     ):
-        """Update meeting menu labels for the current session state.
-
-        Args:
-            active: True while a Meeting Mode session is capturing.
-            dashboard_available: When provided, controls the Open Dashboard
-                action independently of capture activity so the link stays
-                available during post-meeting finalization.
-        """
+        """Update meeting actions, optionally overriding dashboard availability."""
         self._meeting_active = bool(active)
         if self._meeting_active:
             self.meeting_toggle_action.setText("End Meeting")

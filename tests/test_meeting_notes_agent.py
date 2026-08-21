@@ -261,9 +261,7 @@ class TestNotesPatchOps:
         assert state.cards["live_notes"][0].status == "edited"
 
 
-# ---------------------------------------------------------------------------
 # Scheduler cadence
-# ---------------------------------------------------------------------------
 
 class FakeStore:
     def __init__(self):
@@ -600,9 +598,7 @@ class TestEngineNotesStrip:
         }
 
 
-# --------------------------------------------------------------------------
 # Report-view consolidation prompt trimming (meeting.agent.prompts).
-# --------------------------------------------------------------------------
 
 _STEP_RE = re.compile(r"^(\d+)\. ")
 

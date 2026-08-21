@@ -413,10 +413,6 @@ class MeetingModeTab(QWidget):
 
         content_layout.addStretch()
 
-    # ------------------------------------------------------------------
-    # User intent
-    # ------------------------------------------------------------------
-
     def _on_start_clicked(self):
         """Emit the start request with the current cloud choice."""
         self.start_requested.emit(self.cloud_checkbox.isChecked())
@@ -439,10 +435,6 @@ class MeetingModeTab(QWidget):
     def _on_retry_failed_clicked(self):
         """Retry every failed/skipped checklist step."""
         self.retry_insights_requested.emit()
-
-    # ------------------------------------------------------------------
-    # State inflow
-    # ------------------------------------------------------------------
 
     def set_developer_mode(self, enabled: bool) -> None:
         """Show or hide demo-meeting controls.

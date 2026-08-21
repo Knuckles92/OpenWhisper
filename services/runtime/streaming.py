@@ -35,8 +35,6 @@ class StreamingRuntime:
         self.controller = controller
 
     def setup_audio_level_callback(self) -> None:
-        """Setup audio level callback for waveform display."""
-
         def audio_level_callback(level: float) -> None:
             levels = [level] * 20
             self.controller.ui_controller.update_audio_levels(levels)
@@ -45,7 +43,6 @@ class StreamingRuntime:
         self.controller.recorder.set_audio_level_callback(callback)
 
     def setup_streaming(self) -> None:
-        """Initialize streaming transcriber if enabled."""
         self._configure_streaming(initial_setup=True)
 
     def reconfigure_streaming(self) -> None:
@@ -63,7 +60,6 @@ class StreamingRuntime:
         self._configure_streaming(initial_setup=False)
 
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
-        """Handle partial transcription from the streaming worker."""
         self.controller.partial_transcription.emit(text, is_final)
         if self.controller._streaming_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
@@ -111,7 +107,6 @@ class StreamingRuntime:
             self.controller.streaming_overlay_hide.emit()
 
     def cleanup(self) -> None:
-        """Release streaming resources."""
         self._cleanup_streaming_resources()
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
@@ -169,15 +164,9 @@ class StreamingRuntime:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
 
     def _warmup_streaming_backend(self, backend) -> None:
-        """Run a short silent inference so the first live preview is not a cold start.
-
-        Args:
-            backend: Dedicated streaming LocalWhisperBackend instance.
-        """
         try:
             import numpy as np
 
-            # 0.5s of silence at Whisper's expected sample rate
             silence = np.zeros(
                 max(1, config.WHISPER_TARGET_SAMPLE_RATE // 2),
                 dtype=np.float32,

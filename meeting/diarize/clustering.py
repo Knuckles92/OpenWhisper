@@ -252,12 +252,6 @@ class OnlineDiarizer:
 
     def __init__(self, embedder: SpeakerEmbedder, store, repository,
                  meeting_id: str) -> None:
-        """Args:
-            embedder: Loaded speaker embedder.
-            store: ``MeetingStateStore`` for participant creation.
-            repository: ``MeetingRepository`` for embedding persistence.
-            meeting_id: The owning meeting session id.
-        """
         self._embedder = embedder
         self._store = store
         self._repository = repository
@@ -275,10 +269,6 @@ class OnlineDiarizer:
         self._speaker_counter = 0
         self._new_since_recluster = 0
         self._last_recluster_mono = time.monotonic()
-
-    # ------------------------------------------------------------------
-    # Diarizer protocol
-    # ------------------------------------------------------------------
 
     def assign(self, segment: TranscriptSegment, audio: np.ndarray,
                sample_rate: int) -> Optional[str]:
@@ -417,10 +407,6 @@ class OnlineDiarizer:
                 "%s (meeting %s); degrading to channel-level labels",
                 message, self._meeting_id, exc_info=exc_info,
             )
-
-    # ------------------------------------------------------------------
-    # Assignment internals
-    # ------------------------------------------------------------------
 
     def _assign_inner(self, segment: TranscriptSegment, audio: np.ndarray,
                       sample_rate: int) -> Optional[str]:
@@ -608,10 +594,6 @@ class OnlineDiarizer:
         if not pid:
             raise RuntimeError("Participant creation returned no id")
         return pid
-
-    # ------------------------------------------------------------------
-    # Periodic re-clustering
-    # ------------------------------------------------------------------
 
     def _should_recluster(self) -> bool:
         """Whether the periodic re-cluster is due (lock held)."""

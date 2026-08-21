@@ -108,12 +108,7 @@ class SoundcardLoopbackSource:
                          exc_info=True)
             return True
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
     def _run(self) -> None:
-        """Recorder loop: read float32 blocks, convert, emit."""
         _coinitialize()
         try:
             import soundcard as sc
@@ -143,7 +138,6 @@ class SoundcardLoopbackSource:
             self._settled.set()
 
     def _emit(self, data) -> None:
-        """Convert one float32 block to mono int16 and deliver it."""
         try:
             arr = np.asarray(data, dtype=np.float32)
             if arr.ndim == 2 and arr.shape[1] > 1:

@@ -153,10 +153,6 @@ class MeetingAsrEngine:
         self._last_revised_frontier: Dict[str, float] = {}
         self._revise_lock = threading.Lock()
 
-    # ------------------------------------------------------------------
-    # AsrEngine surface
-    # ------------------------------------------------------------------
-
     def start(
         self,
         on_chunk_result: Callable[[SpooledChunk, List[TranscriptSegment]], None],
@@ -267,10 +263,6 @@ class MeetingAsrEngine:
                 logger.exception("Error releasing meeting ASR model")
             del backend
 
-    # ------------------------------------------------------------------
-    # Recovery
-    # ------------------------------------------------------------------
-
     def requeue_pending(self) -> int:
         """Re-enqueue this meeting's unfinished chunks from the database.
 
@@ -315,12 +307,7 @@ class MeetingAsrEngine:
             )
         return requeued
 
-    # ------------------------------------------------------------------
-    # Worker
-    # ------------------------------------------------------------------
-
     def _worker(self) -> None:
-        """Consume the chunk queue until the stop sentinel arrives."""
         while True:
             item = self._queue.get()
             if item is _STOP:
@@ -396,7 +383,6 @@ class MeetingAsrEngine:
             return False
 
     def _beam_size_for_backlog(self) -> int:
-        """Choose live decode quality from the current queue depth."""
         with self._idle_cond:
             queued_behind = max(0, self._outstanding - 1)
         fast_mode = queued_behind >= FAST_MODE_BACKLOG_CHUNKS
@@ -411,7 +397,6 @@ class MeetingAsrEngine:
         return 1 if fast_mode else 5
 
     def _log_queue_wait(self, chunk: SpooledChunk) -> None:
-        """Log a chunk once when it waited too long for live ASR."""
         with self._idle_cond:
             enqueued_at = self._enqueued_at.get(chunk.chunk_id)
             already_warned = chunk.chunk_id in self._queue_wait_warned
@@ -431,7 +416,6 @@ class MeetingAsrEngine:
 
     @staticmethod
     def _is_digital_silence(frames: np.ndarray) -> bool:
-        """Return whether int16 audio is safely below the silence shortcut."""
         if frames.size == 0:
             return True
         peak = int(np.max(np.abs(frames.astype(np.int32, copy=False))))
@@ -533,7 +517,6 @@ class MeetingAsrEngine:
         chunk: SpooledChunk,
         segments: List[TranscriptSegment],
     ) -> None:
-        """Append a durably committed chunk result to its prompt context."""
         key = (chunk.meeting_id, chunk.channel)
         words = self._draft_context.setdefault(key, [])
         for segment in segments:
@@ -555,10 +538,6 @@ class MeetingAsrEngine:
             logger.exception(
                 "Could not set chunk %s status to '%s'", chunk_id, status
             )
-
-    # ------------------------------------------------------------------
-    # Rolling revise
-    # ------------------------------------------------------------------
 
     def backlog_depth(self) -> int:
         """Chunks waiting behind the in-flight worker item (0 when idle)."""

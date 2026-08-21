@@ -373,9 +373,7 @@ def test_build_keypoint_coverage_from_live_notes():
 
 
 
-# --------------------------------------------------------------------------
 # Tolerant evidence-id repair (meeting.agent.evidence).
-# --------------------------------------------------------------------------
 
 KNOWN = [
     "sg_5f2c721de88ac0aa2321",

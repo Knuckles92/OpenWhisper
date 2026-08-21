@@ -72,11 +72,6 @@ class _OfflineToolHost:
 
     def __init__(self, store: MeetingStateStore,
                  repository: Any = None) -> None:
-        """Args:
-            store: The store owning the meeting's state document.
-            repository: Optional ``MeetingRepository`` for past-meeting recall.
-                Falls back to the store's repository when omitted.
-        """
         self._store = store
         self._repository = (
             repository if repository is not None

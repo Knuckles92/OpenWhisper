@@ -118,9 +118,7 @@ class TestFindCutPoint:
         assert cut is not None
         assert abs(cut / 44100 - (quiet_from_s + QUIET_WINDOW_S)) <= 0.06
 
-# ---------------------------------------------------------------------------
 # SpoolWriter
-# ---------------------------------------------------------------------------
 
 class FakeRepo:
     """Dict-backed stand-in for ``MeetingRepository.register_chunk``."""

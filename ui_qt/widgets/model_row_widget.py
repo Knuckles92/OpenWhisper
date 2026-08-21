@@ -165,7 +165,7 @@ class ModelRowWidget(QFrame):
     details_requested = pyqtSignal(str)
 
     def __init__(self, model_name: str, parent=None):
-        """Initialize the row for one catalog model.
+        """Represent one concrete faster-whisper catalog model.
 
         Args:
             model_name: Concrete faster-whisper model name (e.g. ``"base"``).
@@ -193,7 +193,6 @@ class ModelRowWidget(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(12)
 
-        # Identity column: model name over summary.
         identity = QVBoxLayout()
         identity.setSpacing(2)
 
@@ -259,14 +258,12 @@ class ModelRowWidget(QFrame):
         layout.addWidget(self.delete_button)
 
     def _model_summary(self) -> str:
-        """Return a compact, user-facing description of this model."""
         language = "English only" if self.model_name.endswith(".en") else "Multilingual"
         family = "Distilled" if self.model_name.startswith("distil-") else ""
         return " / ".join(part for part in (language, family) if part)
 
     @staticmethod
     def _compact_button(button, width: int) -> None:
-        """Apply dialog-sized dimensions to a shared application button."""
         button.set_base_minimum_size(width, 28)
         button.setMinimumWidth(width)
         button.setMaximumWidth(width)
@@ -284,7 +281,6 @@ class ModelRowWidget(QFrame):
         self.badge.update()
 
     def _set_active_style(self, active: bool) -> None:
-        """Tint the row when this model is the active selection."""
         self.setProperty("active", active)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -375,16 +371,10 @@ class ModelRowWidget(QFrame):
         self.usage_label.setVisible(bool(text))
 
     def matches_filter(self, text: str) -> bool:
-        """Return True when the row matches a filter string.
-
-        Args:
-            text: Lowercased substring to match against name and repo ID.
-        """
         return text in self.model_name.lower() or text in self.repo_id.lower()
 
     @staticmethod
     def _is_action_child(widget) -> bool:
-        """Return whether a clicked descendant is one of the row buttons."""
         while widget is not None:
             if isinstance(widget, QAbstractButton):
                 return True
@@ -392,7 +382,6 @@ class ModelRowWidget(QFrame):
         return False
 
     def mouseReleaseEvent(self, event) -> None:
-        """Request details when the tile body is clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.position().toPoint())
             if not self._is_action_child(child):
@@ -402,7 +391,6 @@ class ModelRowWidget(QFrame):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        """Open details from the keyboard when the tile has focus."""
         if event.key() in (
             Qt.Key.Key_Return,
             Qt.Key.Key_Enter,

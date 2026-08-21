@@ -50,12 +50,6 @@ class MeetingWebServer:
 
     def __init__(self, engine: Any, repository: Any, bind: str = "localhost",
                  port: int = 0) -> None:
-        """Args:
-            engine: The ``MeetingEngine`` the app and hub act against.
-            repository: A ``MeetingRepository`` for reads (tokens, history).
-            bind: ``'localhost'`` (127.0.0.1) or ``'lan'`` (0.0.0.0).
-            port: TCP port; 0 selects an ephemeral port at startup.
-        """
         self._engine = engine
         self._repository = repository
         self._bind = bind if bind in ("localhost", "lan") else "localhost"
@@ -67,10 +61,6 @@ class MeetingWebServer:
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._base_url = ""
-
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
 
     @property
     def app(self) -> Any:
@@ -105,10 +95,6 @@ class MeetingWebServer:
             return ""
         token = (meeting or {}).get(key)
         return f"{self._base_url}/m/{token}" if token else ""
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def start(self) -> str:
         """Start serving on a daemon thread.
@@ -177,7 +163,6 @@ class MeetingWebServer:
             self._loop = None
 
     def _bound_port(self, server: uvicorn.Server) -> int:
-        """The actual listening port (resolves ephemeral port 0)."""
         try:
             return server.servers[0].sockets[0].getsockname()[1]
         except Exception:
@@ -219,10 +204,6 @@ class MeetingWebServer:
     def is_running(self) -> bool:
         """True while the server thread is alive."""
         return self._thread is not None and self._thread.is_alive()
-
-    # ------------------------------------------------------------------
-    # Broadcast
-    # ------------------------------------------------------------------
 
     def broadcast(self, message: Dict[str, Any], *,
                   host_only: bool = False) -> None:

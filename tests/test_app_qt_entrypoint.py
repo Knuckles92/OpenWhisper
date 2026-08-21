@@ -160,9 +160,7 @@ def test_preload_is_a_no_op_on_windows(tmp_path, monkeypatch):
     assert app_qt.CUDA_PRELOADED_LIBRARIES == []
 
 
-# --------------------------------------------------------------------------
 # Startup profiling hooks.
-# --------------------------------------------------------------------------
 
 def test_startup_profiler_records_elapsed_times():
     with patch(

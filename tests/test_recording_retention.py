@@ -18,8 +18,6 @@ from services.settings import (
 
 
 class TestResolveMaxSavedRecordings:
-    """Tests for resolve_max_saved_recordings()."""
-
     def test_default_is_custom_config_limit(self):
         """Missing settings should use the config custom default."""
         assert resolve_max_saved_recordings({}) == config.MAX_SAVED_RECORDINGS
@@ -58,8 +56,6 @@ class TestResolveMaxSavedRecordings:
 
 
 class TestRecordingRotation:
-    """Tests for HistoryManager recording rotation."""
-
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -129,8 +125,6 @@ class TestRecordingRotation:
 
 
 class TestHistoryEntryDeletion:
-    """Tests for optionally deleting audio with a history entry."""
-
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.temp_dir = tempfile.mkdtemp()

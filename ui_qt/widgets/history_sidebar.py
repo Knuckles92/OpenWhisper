@@ -1,8 +1,4 @@
-"""
-History sidebar widget for displaying transcription history.
-Collapsible sidebar panel that slides in/out from the right side of the main window.
-
-Animation design: the sidebar animates a single ``sidebarWidth`` property and
+"""The sidebar animates a single ``sidebarWidth`` property and
 emits ``width_animated`` every frame so the main window can resize in lockstep
 (one animation clock for both). The inner content is a fixed-width child pinned
 in ``resizeEvent`` rather than managed by a layout, so animating the sidebar
@@ -33,7 +29,6 @@ from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 
 logger = logging.getLogger(__name__)
 
-# Shared dropdown styling for the per-item context menu and the header menu.
 _MENU_STYLESHEET = """
     QMenu {
         background-color: rgba(44, 44, 46, 0.95);
@@ -113,13 +108,11 @@ def _entry_was_cleaned(entry: HistoryEntry) -> bool:
 
 
 class HistoryItemWidget(QFrame):
-    """Widget displaying a single history entry."""
-
-    clicked = pyqtSignal(str)  # Emits entry_id
-    copy_requested = pyqtSignal(str)  # Emits entry_id (fixed text)
-    copy_raw_requested = pyqtSignal(str)  # Emits entry_id (raw ASR text)
-    delete_requested = pyqtSignal(str)  # Emits entry_id
-    retranscribe_requested = pyqtSignal(str)  # Emits audio_path
+    clicked = pyqtSignal(str)
+    copy_requested = pyqtSignal(str)
+    copy_raw_requested = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
+    retranscribe_requested = pyqtSignal(str)
 
     def __init__(self, entry: HistoryEntry, parent=None):
         super().__init__(parent)
@@ -136,12 +129,10 @@ class HistoryItemWidget(QFrame):
         self._apply_style()
 
     def _setup_ui(self):
-        """Setup the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(10)
 
-        # Top row: timestamp, optional audio chip, model badge
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
         top_row.setContentsMargins(0, 0, 0, 0)
@@ -253,7 +244,6 @@ class HistoryItemWidget(QFrame):
             layout.addLayout(footer)
 
     def _apply_style(self):
-        """Apply custom styling."""
         self.setStyleSheet("""
             QFrame#historyItem {
                 background-color: rgba(44, 44, 46, 0.5);
@@ -318,11 +308,9 @@ class HistoryItemWidget(QFrame):
         """)
 
     def _show_context_menu(self, pos):
-        """Show context menu with copy, retranscribe, and delete actions."""
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
 
-        # Copy actions (Fixed is the cleaned transcript when cleanup ran)
         if self.entry.raw_text:
             copy_fixed = menu.addAction("Copy Fixed")
             copy_fixed.triggered.connect(
@@ -354,7 +342,6 @@ class HistoryItemWidget(QFrame):
         menu.exec(self.mapToGlobal(pos))
 
     def mousePressEvent(self, event):
-        """Handle click to view full transcription."""
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.pos())
             if child is not None and isinstance(child, QPushButton):
@@ -365,14 +352,11 @@ class HistoryItemWidget(QFrame):
 
 
 class HistorySidebar(QWidget):
-    """Collapsible sidebar showing transcription history."""
-
-    # Signals for Quick Record mode
-    entry_selected = pyqtSignal(str)  # Emits entry_id when clicked
-    entry_copied = pyqtSignal(str)  # Emits entry_id when copy requested
-    entry_deleted = pyqtSignal(str)  # Emits entry_id when delete requested
-    retranscribe_requested = pyqtSignal(str)  # Emits audio_path
-    past_meeting_selected = pyqtSignal(str)  # Emits meeting_id
+    entry_selected = pyqtSignal(str)
+    entry_copied = pyqtSignal(str)
+    entry_deleted = pyqtSignal(str)
+    retranscribe_requested = pyqtSignal(str)
+    past_meeting_selected = pyqtSignal(str)
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
@@ -393,12 +377,10 @@ class HistorySidebar(QWidget):
         self._setup_meetings_ui()
         self._apply_style()
 
-        # Start collapsed - animate min/max width together via sidebarWidth
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
 
     def _setup_ui(self):
-        """Setup the sidebar UI."""
         self.setObjectName("historySidebar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -414,7 +396,6 @@ class HistorySidebar(QWidget):
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(12)
 
-        # Header with close button
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
 
@@ -434,8 +415,6 @@ class HistorySidebar(QWidget):
 
         content_layout.addLayout(header_layout)
 
-        # Search bar for filtering history entries (always visible, above the
-        # scrolling sections)
         self.search_input = QLineEdit()
         self.search_input.setObjectName("historySearchInput")
         self.search_input.setPlaceholderText("Search history...")
@@ -444,7 +423,6 @@ class HistorySidebar(QWidget):
         self.search_input.textChanged.connect(self._on_search_text_changed)
         content_layout.addWidget(self.search_input)
 
-        # Debounce timer so the list isn't rebuilt on every keystroke
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(250)
@@ -489,7 +467,6 @@ class HistorySidebar(QWidget):
         self.animation.finished.connect(self._on_animation_finished)
 
     def _setup_meetings_ui(self):
-        """Create the alternate Meeting Mode sidebar page."""
         self.meetings_content_widget = PastMeetingsPanel(self)
         self.meetings_content_widget.setFixedWidth(self.EXPANDED_WIDTH)
         self.meetings_content_widget.meeting_selected.connect(
@@ -498,7 +475,6 @@ class HistorySidebar(QWidget):
         self.meetings_content_widget.hide()
 
     def resizeEvent(self, event):
-        """Pin both fixed-width pages to the left edge at full height."""
         super().resizeEvent(event)
         geometry = (0, 0, self.EXPANDED_WIDTH, self.height())
         self.content_widget.setGeometry(*geometry)
@@ -506,11 +482,9 @@ class HistorySidebar(QWidget):
             self.meetings_content_widget.setGeometry(*geometry)
 
     def _get_sidebar_width(self):
-        """Get the current sidebar width."""
         return self._current_width
 
     def _set_sidebar_width(self, width):
-        """Set the sidebar width (used by animation)."""
         self._current_width = int(width)
         self.setMinimumWidth(self._current_width)
         self.setMaximumWidth(self._current_width)
@@ -519,13 +493,11 @@ class HistorySidebar(QWidget):
     sidebarWidth = pyqtProperty(int, _get_sidebar_width, _set_sidebar_width)
 
     def _on_animation_finished(self):
-        """Snap to the exact final width when the animation completes."""
         target = self.EXPANDED_WIDTH if self._is_expanded else self.COLLAPSED_WIDTH
         self.setMinimumWidth(target)
         self.setMaximumWidth(target)
 
     def _apply_style(self):
-        """Apply custom styling."""
         self.setStyleSheet("""
             QWidget#historySidebar {
                 background-color: #1c1c1e;
@@ -604,7 +576,6 @@ class HistorySidebar(QWidget):
         """)
 
     def expand(self):
-        """Expand the sidebar."""
         if self._is_expanded:
             return
 
@@ -627,7 +598,6 @@ class HistorySidebar(QWidget):
         logger.debug("Sidebar expanding")
 
     def collapse(self):
-        """Collapse the sidebar."""
         if not self._is_expanded:
             return
 
@@ -641,18 +611,12 @@ class HistorySidebar(QWidget):
         logger.debug("Sidebar collapsing")
 
     def toggle(self):
-        """Toggle sidebar visibility."""
         if self._is_expanded:
             self.collapse()
         else:
             self.expand()
 
     def set_meeting_mode(self, enabled: bool) -> None:
-        """Switch between recorder history and meeting history content.
-
-        Args:
-            enabled: True shows Past Meetings; False shows recorder History.
-        """
         enabled = bool(enabled)
         if enabled == self._meeting_mode:
             return
@@ -665,7 +629,6 @@ class HistorySidebar(QWidget):
 
     @property
     def is_expanded(self) -> bool:
-        """Return whether sidebar is expanded."""
         return self._is_expanded
 
     def refresh(self):
@@ -682,25 +645,21 @@ class HistorySidebar(QWidget):
 
     @staticmethod
     def _clear_layout(layout: QVBoxLayout):
-        """Remove and delete all widgets from a layout."""
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
     def _make_empty_label(self, message: str) -> QLabel:
-        """Create a styled placeholder label for an empty section."""
         label = QLabel(message)
         label.setStyleSheet("color: #636366; font-size: 12px; padding: 8px 0px;")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return label
 
     def _on_search_text_changed(self, text: str):
-        """Restart the debounce timer on each keystroke."""
         self._search_timer.start()
 
     def _load_history(self):
-        """Load and display transcription history, filtered by the search query."""
         self._clear_layout(self.history_list_layout)
 
         entries = history_manager.get_history()
@@ -741,14 +700,12 @@ class HistorySidebar(QWidget):
             )
 
     def _on_entry_clicked(self, entry_id: str):
-        """Handle history entry click."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
             self.entry_selected.emit(entry_id)
             logger.debug(f"Entry selected: {entry_id[:8]}...")
 
     def _on_copy_requested(self, entry_id: str):
-        """Handle copy request for fixed (display) text."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry:
             try:
@@ -760,7 +717,6 @@ class HistorySidebar(QWidget):
                 logger.error(f"Failed to copy to clipboard: {e}")
 
     def _on_copy_raw_requested(self, entry_id: str):
-        """Handle copy request for raw ASR text."""
         entry = history_manager.get_entry_by_id(entry_id)
         if entry and entry.raw_text:
             try:
@@ -772,7 +728,6 @@ class HistorySidebar(QWidget):
                 logger.error(f"Failed to copy raw text to clipboard: {e}")
 
     def _on_delete_requested(self, entry_id: str):
-        """Confirm and handle an individual history-entry deletion request."""
         delete_audio_file = False
         try:
             should_confirm = settings_manager.get(
@@ -856,7 +811,6 @@ class HistorySidebar(QWidget):
             logger.info(f"Deleted entry: {entry_id[:8]}...")
 
     def _show_header_menu(self):
-        """Show the header menu with bulk history actions."""
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
 
@@ -877,7 +831,6 @@ class HistorySidebar(QWidget):
         menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
 
     def _on_clear_history(self):
-        """Clear all history entries after confirmation (keeps recordings)."""
         reply = QMessageBox.question(
             self,
             "Clear History",
@@ -892,7 +845,6 @@ class HistorySidebar(QWidget):
         self.refresh()
 
     def _on_clear_history_and_recordings(self):
-        """Clear all history entries and saved recordings after confirmation."""
         reply = QMessageBox.question(
             self,
             "Clear History and Recordings",
@@ -908,7 +860,6 @@ class HistorySidebar(QWidget):
         self.refresh()
 
     def _on_export_history(self):
-        """Export all history entries to a text or JSON file."""
         entries = history_manager.get_history()
         if not entries:
             QMessageBox.information(self, "Export History", "No history to export.")
@@ -969,15 +920,12 @@ class HistorySidebar(QWidget):
             )
 
     def _on_open_recordings_folder(self):
-        """Open the saved-recordings folder in the system file browser."""
         folder = os.path.abspath(history_manager.recordings_folder)
         os.makedirs(folder, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
 
 class HistoryEdgeTab(QPushButton):
-    """Vertical edge tab button to toggle history sidebar - always visible."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("historyEdgeTab")
@@ -991,36 +939,26 @@ class HistoryEdgeTab(QPushButton):
         self._apply_style()
 
     def set_expanded(self, expanded: bool):
-        """Update the tab state."""
         self._is_expanded = expanded
         self._update_icon()
 
     def set_shortcut_hint(self, shortcut: str):
-        """Show a keyboard shortcut alongside the toggle tooltips.
-
-        Args:
-            shortcut: Display string such as "Ctrl+H"; empty hides the hint.
-        """
         self._shortcut_hint = f" ({shortcut})" if shortcut else ""
         self._update_icon()
 
     def set_panel_name(self, name: str) -> None:
-        """Set the contextual panel name used by the edge tooltip."""
         self._panel_name = name
         self._update_icon()
 
     def _update_icon(self):
-        """Update the icon based on expanded state."""
-        # Use arrow characters to indicate direction
         if self._is_expanded:
-            self.setText("›")  # Arrow pointing right (to collapse)
+            self.setText("›")
             self.setToolTip(f"Close {self._panel_name}{self._shortcut_hint}")
         else:
-            self.setText("‹")  # Arrow pointing left (to expand)
+            self.setText("‹")
             self.setToolTip(f"Open {self._panel_name}{self._shortcut_hint}")
 
     def _apply_style(self):
-        """Apply custom styling."""
         self.setStyleSheet("""
             QPushButton#historyEdgeTab {
                 background-color: #2c2c2e;

@@ -1,5 +1,3 @@
-"""Runtime helpers for the Qt application controller."""
-
 from services.runtime.hotkeys import HotkeyRuntime
 from services.runtime.meeting import MeetingRuntime
 from services.runtime.streaming import StreamingRuntime

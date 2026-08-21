@@ -51,17 +51,7 @@ _OPENAI_NON_CHAT_MARKERS = (
 
 @dataclass(frozen=True)
 class TextLLMProfile:
-    """One named chat-completions endpoint.
-
-    Attributes:
-        id: Stable profile id (``openai``, ``openrouter``, or ``custom_…``).
-        name: User-visible label.
-        kind: Compatibility flavor (``openai``, ``openrouter``, ``custom``).
-        base_url: OpenAI-compatible API root, or None for official OpenAI.
-        api_key_env: Environment variable holding the key. Empty means
-            the endpoint does not require authentication.
-        builtin: True for the immutable OpenAI and OpenRouter profiles.
-    """
+    """Named chat endpoint whose credential remains outside persisted settings."""
 
     id: str
     name: str
@@ -72,7 +62,6 @@ class TextLLMProfile:
 
     @property
     def requires_api_key(self) -> bool:
-        """Whether a key must be present in the environment."""
         return bool(self.api_key_env)
 
     @property
@@ -95,7 +84,6 @@ class TextLLMSnapshot:
     api_key_env: str
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize for settings / meeting rows."""
         return {
             "profile_id": self.profile_id,
             "name": self.name,
@@ -105,7 +93,6 @@ class TextLLMSnapshot:
         }
 
     def to_profile(self) -> TextLLMProfile:
-        """Rebuild a runtime profile from this snapshot."""
         return TextLLMProfile(
             id=self.profile_id,
             name=self.name,
@@ -142,7 +129,6 @@ def builtin_profiles() -> Tuple[TextLLMProfile, ...]:
 
 
 def builtin_profile(profile_id: str) -> Optional[TextLLMProfile]:
-    """Return a built-in profile by id, or None."""
     for profile in builtin_profiles():
         if profile.id == profile_id:
             return profile
@@ -150,17 +136,7 @@ def builtin_profile(profile_id: str) -> Optional[TextLLMProfile]:
 
 
 def normalize_base_url(url: str) -> str:
-    """Validate and canonicalize an OpenAI-compatible base URL.
-
-    Args:
-        url: User-supplied URL.
-
-    Returns:
-        Canonical ``http(s)://host[:port][/path]`` without a trailing slash.
-
-    Raises:
-        ValueError: When the URL is empty or not http(s) with a host.
-    """
+    """Return a canonical HTTP(S) API URL or raise ValueError."""
     raw = (url or "").strip()
     if not raw:
         raise ValueError("Base URL is required")
@@ -199,12 +175,10 @@ def validate_api_key_env(name: str) -> str:
 
 
 def new_custom_profile_id() -> str:
-    """Allocate a stable id for a user-created endpoint."""
     return f"{_CUSTOM_ID_PREFIX}{secrets.token_hex(4)}"
 
 
 def snapshot_from_profile(profile: TextLLMProfile) -> TextLLMSnapshot:
-    """Build a persistable snapshot from a live profile."""
     return TextLLMSnapshot(
         profile_id=profile.id,
         name=profile.name,
@@ -215,7 +189,6 @@ def snapshot_from_profile(profile: TextLLMProfile) -> TextLLMSnapshot:
 
 
 def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
-    """Parse a stored snapshot mapping, or None when invalid."""
     if isinstance(raw, str) and raw.strip():
         try:
             import json
@@ -282,7 +255,6 @@ def _custom_payload(settings: Dict[str, Any]) -> List[Any]:
 
 
 def parse_custom_profile(raw: Any) -> Optional[TextLLMProfile]:
-    """Validate one stored custom-profile dict."""
     if not isinstance(raw, dict):
         return None
     profile_id = raw.get("id")
@@ -309,7 +281,7 @@ def parse_custom_profile(raw: Any) -> Optional[TextLLMProfile]:
 def list_custom_profiles(
     settings: Optional[Dict[str, Any]] = None,
 ) -> List[TextLLMProfile]:
-    """Return validated custom profiles from settings, in stored order."""
+    """Return validated custom profiles in persisted order."""
     seen = set()
     profiles: List[TextLLMProfile] = []
     for raw in _custom_payload(_load_settings(settings)):
@@ -348,12 +320,10 @@ def get_profile(
 
 
 def known_profile_ids(settings: Optional[Dict[str, Any]] = None) -> Tuple[str, ...]:
-    """Return every currently valid profile id."""
     return tuple(profile.id for profile in list_profiles(settings))
 
 
 def custom_profiles_payload(profiles: Sequence[TextLLMProfile]) -> List[Dict[str, str]]:
-    """Serialize custom profiles for the settings JSON file."""
     payload = []
     for profile in profiles:
         if profile.builtin or profile.kind != PROFILE_KIND_CUSTOM:
@@ -377,21 +347,7 @@ def upsert_custom_profile(
     api_key_env: str = "",
     profile_id: Optional[str] = None,
 ) -> TextLLMProfile:
-    """Create or replace a custom profile inside ``settings``.
-
-    Args:
-        settings: Mutable settings dict (caller persists it).
-        name: Display name.
-        base_url: OpenAI-compatible API root.
-        api_key_env: Optional environment-variable name.
-        profile_id: Existing custom id to replace; allocated when omitted.
-
-    Returns:
-        The stored ``TextLLMProfile``.
-
-    Raises:
-        ValueError: On invalid fields or when the custom-profile cap is hit.
-    """
+    """Create or replace a validated custom endpoint in mutable settings."""
     from services.settings import SettingsKey
 
     name = validate_profile_name(name)
@@ -433,18 +389,7 @@ def upsert_custom_profile(
 
 
 def remove_custom_profile(settings: Dict[str, Any], profile_id: str) -> bool:
-    """Delete a custom profile from ``settings``.
-
-    Args:
-        settings: Mutable settings dict (caller persists it).
-        profile_id: Custom profile id.
-
-    Returns:
-        True when a custom profile was removed.
-
-    Raises:
-        ValueError: When the id belongs to a built-in profile.
-    """
+    """Delete a custom profile, rejecting built-in IDs."""
     from services.settings import SettingsKey
 
     if builtin_profile(profile_id) is not None:
@@ -470,7 +415,6 @@ def profile_display_name(
 
 
 def default_model_for_profile(profile: TextLLMProfile) -> str:
-    """Built-in default model id for a profile (empty for custom)."""
     if profile.id == OPENROUTER_PROFILE_ID or profile.kind == PROFILE_KIND_OPENROUTER:
         return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
     if profile.id == OPENAI_PROFILE_ID or profile.kind == PROFILE_KIND_OPENAI:
@@ -515,7 +459,6 @@ def credential_status(profile: TextLLMProfile) -> Tuple[bool, str]:
 
 
 def connection_fingerprint(profile: TextLLMProfile) -> Tuple[Any, ...]:
-    """Values that require rebuilding an OpenAI client when they change."""
     return (
         profile.id,
         profile.kind,
@@ -526,7 +469,6 @@ def connection_fingerprint(profile: TextLLMProfile) -> Tuple[Any, ...]:
 
 
 def provider_headers(profile: TextLLMProfile) -> Optional[Dict[str, str]]:
-    """Extra default headers for a profile, if any."""
     if profile.kind == PROFILE_KIND_OPENROUTER:
         return dict(_OPENROUTER_HEADERS)
     return None
@@ -538,19 +480,7 @@ def create_openai_client(
     timeout: float = 15.0,
     api_key: Optional[str] = None,
 ) -> OpenAI:
-    """Build an OpenAI SDK client for ``profile``.
-
-    Args:
-        profile: Resolved endpoint profile.
-        timeout: Client timeout in seconds.
-        api_key: Explicit key. Resolved from the environment when omitted.
-
-    Returns:
-        An ``OpenAI`` client.
-
-    Raises:
-        RuntimeError: When a required API key is missing.
-    """
+    """Build a client, resolving credentials when no explicit key is supplied."""
     key = api_key or resolve_api_key(profile)
     if not key:
         raise RuntimeError(
@@ -589,18 +519,6 @@ def list_chat_models(
     Catalog failure is the caller's problem: the UI still lets the user type
     a model id by hand.
 
-    Args:
-        profile: Resolved endpoint profile.
-        api_key: Optional explicit API key.
-        sort: Optional OpenRouter sort key. Ignored for other profiles.
-        timeout: Client timeout in seconds.
-
-    Returns:
-        Model id strings.
-
-    Raises:
-        RuntimeError: When a required API key is missing.
-        Exception: Network/API errors from the underlying client.
     """
     client = create_openai_client(profile, timeout=timeout, api_key=api_key)
     server_sort = (
@@ -630,7 +548,6 @@ def chat_request_options(profile: TextLLMProfile, reasoning: str = "off") -> dic
 
 
 def consent_destination(profile: TextLLMProfile) -> str:
-    """Human-readable destination used by the meeting consent dialog."""
     if profile.is_local:
         host = urlsplit(profile.base_url or "").netloc or "localhost"
         return f"your local server at {host}"
@@ -643,7 +560,6 @@ def consent_destination(profile: TextLLMProfile) -> str:
 
 
 def destination_is_remote(profile: TextLLMProfile) -> bool:
-    """True when transcript text would leave this machine."""
     return not profile.is_local
 
 
@@ -675,13 +591,7 @@ def profile_from_agent_config(
     endpoint: Optional[Any] = None,
     settings: Optional[Dict[str, Any]] = None,
 ) -> TextLLMProfile:
-    """Resolve the profile an agent core should call.
-
-    Args:
-        provider: Profile id (legacy ``openai`` / ``openrouter`` still work).
-        endpoint: Optional snapshot mapping stored on the meeting.
-        settings: Optional settings dict for custom-profile lookup.
-    """
+    """Resolve a live profile, preferring the meeting's persisted snapshot."""
     snapshot = snapshot_from_mapping(endpoint)
     if snapshot is not None:
         return snapshot.to_profile()

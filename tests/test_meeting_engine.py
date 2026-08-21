@@ -18,9 +18,7 @@ import pytest
 
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
 
-# ---------------------------------------------------------------------------
 # Fakes
-# ---------------------------------------------------------------------------
 
 class FakeSource:
     """Capture source that reports itself active without opening a device."""
@@ -223,9 +221,7 @@ class FakeScheduler:
             message="Final cloud insights are ready.",
         )
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def db(tmp_path):
@@ -375,9 +371,7 @@ def loopback_segment(meeting_id, seg_id, start=1.0, end=3.0, chunk_id=None):
         channel="loopback", start_s=start, end_s=end, text="hello there",
     )
 
-# ---------------------------------------------------------------------------
 # Required startup services
-# ---------------------------------------------------------------------------
 
 class TestRequiredStartupServices:
     def test_server_failure_aborts_and_discards_empty_meeting(
@@ -425,9 +419,7 @@ class TestRequiredStartupServices:
         assert {source.channel for source in engine._sources} == {"mic"}
 
 
-# ---------------------------------------------------------------------------
 # Intelligence health
-# ---------------------------------------------------------------------------
 
 class TestIntelligenceHealth:
     def test_unhealthy_core_reports_offline_and_meeting_still_starts(
@@ -588,9 +580,7 @@ class TestCloudToggle:
         assert len(fakes.cores) == 2
         assert engine.store.with_state(lambda s: s.intelligence_online) is True
 
-# ---------------------------------------------------------------------------
 # End / lifecycle
-# ---------------------------------------------------------------------------
 
 class TestEndLifecycle:
     def test_end_failure_still_emits_ended(self, make_engine, repo):
@@ -975,9 +965,7 @@ class TestEndLifecycle:
         first.join(timeout=10.0)
         assert len(events_of(engine, "ended")) == 1
 
-# ---------------------------------------------------------------------------
 # Capture recovery
-# ---------------------------------------------------------------------------
 
 class TestCaptureRecovery:
     def test_default_loopback_change_restarts_only_that_channel(
@@ -1015,9 +1003,7 @@ class TestCaptureRecovery:
         assert capture["loopback_available"] is True
         assert capture["message"] == ""
 
-# ---------------------------------------------------------------------------
 # Diarization degradation
-# ---------------------------------------------------------------------------
 
 class TestDiarizationDegradation:
     def _prime(self, engine, repo):
@@ -1110,9 +1096,7 @@ class TestDiarizationDegradation:
         assert results[0].ok, results[0].reason
         assert fakes.diarizer.pins == [("sg_p", participant["id"])]
 
-# ---------------------------------------------------------------------------
 # Store wiring
-# ---------------------------------------------------------------------------
 
 class TestStoreWiring:
     def test_pinned_segments_are_protected_from_the_diarizer(

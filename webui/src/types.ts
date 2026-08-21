@@ -184,10 +184,6 @@ export interface MeetingInfo {
   [key: string]: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Ops (client -> server mutations, from the pinned vocabulary)
-// ---------------------------------------------------------------------------
-
 export interface Op {
   op: string;
   [key: string]: unknown;
@@ -246,10 +242,6 @@ export const ops = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Effects (server -> client entity updates, from patches.py OpResult.effect)
-// ---------------------------------------------------------------------------
-
 export type Effect =
   | { entity: 'item'; item: CardItem }
   | { entity: 'topic'; topic: TopicState }
@@ -271,10 +263,6 @@ export type Effect =
       text: string;
       segment: Segment;
     };
-
-// ---------------------------------------------------------------------------
-// WebSocket protocol
-// ---------------------------------------------------------------------------
 
 export interface PatchResult {
   op: Op;
@@ -411,10 +399,6 @@ export type ClientMessage =
   | { type: 'action'; client_action_id: string; op: Op }
   | { type: 'undo'; client_action_id: string; seq: number }
   | { type: 'ping' };
-
-// ---------------------------------------------------------------------------
-// REST payloads
-// ---------------------------------------------------------------------------
 
 export interface SessionResponse {
   role: Role;

@@ -3,10 +3,11 @@
 TypeScript glue between OpenWhisper's Meeting Mode and the
 [Pi coding agent SDK](https://pi.dev) (`@earendil-works/pi-coding-agent`).
 It runs OpenRouter models through Pi's agentic loop while holding
-**meeting-state-only authority**: the session gets exactly three custom tools
-(`patch_state`, `ask_question`, `resolve_question`) and no shell, filesystem,
-or network tools. Every tool call is bridged back to the Python host over RPC,
-where the state-patch layer validates it again.
+**meeting-state-only authority**: the session gets five custom tools
+(`patch_state`, `ask_question`, `resolve_question`, `search_past_meetings`,
+`search_context_files`) and no shell, filesystem, or network tools. Every tool
+call is bridged back to the Python host over RPC, where write operations are
+validated again.
 
 ## Build
 
@@ -65,7 +66,9 @@ Diagnostics go out as `log` notifications (or stderr).
   `cancel {request_id}` · `ping {}` · `status {}` · `shutdown {}`
 - **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
   {ops}` · `tool.ask_question {text, evidence}` · `tool.resolve_question
-  {question_id, answer_text, confidence, evidence}`
+  {question_id, answer_text, confidence, evidence}` ·
+  `tool.search_past_meetings {query, meeting_id?, limit?}` ·
+  `tool.search_context_files {query, limit?}`
 - **Sidecar → Python notifications:** `log {level, msg}` · `progress
   {request_id, event, delta, tool, streaming}` from Pi
   `session.subscribe` (the official SDK hook; `thinking_delta` means the
@@ -83,8 +86,8 @@ then exits cleanly; the sidecar also exits when its stdin closes.
 ## Source layout
 
 - `src/rpc.ts` — NDJSON JSON-RPC endpoint (correlation, dispatch, timeouts).
-- `src/tools.ts` — the three meeting tools; op vocabulary documented in the
-  tool descriptions; applied/rejected tallies for checkpoint responses.
+- `src/tools.ts` — the five meeting tools; op vocabulary documented in the
+  tool descriptions; applied/rejected tallies for checkpoint write responses.
 - `src/pi-adapter.ts` — the **only** file that imports Pi packages. Session
   creation, OpenRouter provider registration (`models.json` in a temp agent
   dir), tool registration, run/abort/dispose. Uncertain SDK touchpoints are

@@ -1,12 +1,4 @@
-"""
-Local Whisper transcription backend using faster-whisper for optimized performance.
-
-This backend uses faster-whisper (CTranslate2) which provides:
-- Up to 4x faster transcription than openai-whisper
-- Lower memory usage through quantization
-- Built-in VAD (Voice Activity Detection) for silence skipping
-- No external FFmpeg dependency (uses PyAV)
-"""
+"""Local transcription with faster-whisper."""
 import logging
 from typing import Optional, List, Tuple
 from faster_whisper import WhisperModel
@@ -48,26 +40,16 @@ class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
 
     def __init__(self, model_name: str = None, device: str = None, compute_type: str = None):
-        """Initialize the local faster-whisper backend.
-
-        Args:
-            model_name: Whisper model name to use. Reads from settings if None.
-                       Use "auto" to auto-select based on hardware (turbo for GPU, base for CPU).
-                       Available: auto, tiny, base, small, medium, large-v2, large-v3, turbo, distil-large-v3
-            device: Device to use ("cuda" or "cpu"). Overrides settings if provided.
-            compute_type: Compute type to use ("float16", "float32", "int8", etc.). Overrides settings if provided.
-        """
         super().__init__()
-        # Read model from settings if not explicitly provided
         if model_name is None:
             from services.settings import SettingsKey, settings_manager
             settings = settings_manager.load_all_settings()
             model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
-        self.model_name = model_name  # May be "auto", resolved in _load_model
+        self.model_name = model_name
         self.model: Optional[WhisperModel] = None
         self._device: Optional[str] = None
         self._compute_type: Optional[str] = None
-        self._override_device = device  # Store override values
+        self._override_device = device
         self._override_compute_type = compute_type
         self._model_missing = False
         self._last_loaded_model: Optional[str] = None
@@ -81,16 +63,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._load_model()
 
     def _cuda_is_available(self) -> bool:
-        """Check whether a usable CUDA device is present.
-
-        Uses CTranslate2's own device probe rather than torch: CTranslate2 is a
-        hard dependency of this backend, whereas torch is not installed at all,
-        so the previous ``import torch`` check always reported no GPU and forced
-        CPU even on CUDA-capable machines.
-
-        Returns:
-            True if at least one CUDA device is available, False otherwise.
-        """
+        """Probe with CTranslate2 because torch is not a required dependency."""
         try:
             import ctranslate2
             return ctranslate2.get_cuda_device_count() > 0
@@ -99,14 +72,6 @@ class LocalWhisperBackend(TranscriptionBackend):
             return False
 
     def _get_supported_compute_types(self, device: str) -> set:
-        """Get compute types supported by the current hardware.
-
-        Args:
-            device: "cpu" or "cuda"
-
-        Returns:
-            Set of supported compute type strings.
-        """
         try:
             import ctranslate2
             supported = ctranslate2.get_supported_compute_types(device)
@@ -114,27 +79,15 @@ class LocalWhisperBackend(TranscriptionBackend):
             return set(supported)
         except Exception as e:
             logger.warning(f"Could not query supported compute types: {e}")
-            # Return safe fallback - float32 is always supported
             return {"float32"}
 
     def _select_best_compute_type(self, device: str, preferred: str) -> str:
-        """Select the best available compute type, with fallback.
-
-        Args:
-            device: "cpu" or "cuda"
-            preferred: The preferred compute type to use if supported
-
-        Returns:
-            The best available compute type string.
-        """
         supported = self._get_supported_compute_types(device)
 
         if preferred in supported:
             return preferred
 
-        # Preferred type not supported, try fallbacks
         if device == "cpu":
-            # CPU fallback order: int8 (fastest) -> int8_float32 -> float32 (most compatible)
             fallback_order = ["int8", "int8_float32", "float32"]
         else:
             # GPU fallback order: float16 (fastest) -> int8_float16 ->
@@ -158,22 +111,10 @@ class LocalWhisperBackend(TranscriptionBackend):
                 )
                 return fallback
 
-        # Ultimate fallback - float32 should always work
         logger.warning(f"No preferred compute types available, using float32")
         return "float32"
 
     def _detect_hardware(self) -> Tuple[str, str, str]:
-        """Auto-detect the best device, compute type, and model for transcription.
-
-        Returns:
-            Tuple of (device, compute_type, model) where:
-            - device: "cuda" for GPU or "cpu" for CPU
-            - compute_type: "float16" for GPU, "int8" for CPU, each narrowed
-              afterwards to something the hardware actually supports (a Pascal
-              card has no float16 and lands on int8_float32)
-            - model: "turbo" for GPU, "base" for CPU
-        """
-        # Use override values if provided, otherwise check user settings
         from services.settings import SettingsKey, settings_manager
         settings = settings_manager.load_all_settings()
 
@@ -187,10 +128,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         else:
             compute_type = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, config.FASTER_WHISPER_COMPUTE_TYPE)
 
-        # Get model from settings (no override for model, use model_name parameter instead)
         model = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
 
-        # Auto-detect based on CUDA availability
         has_cuda = False
         if device == "auto" or compute_type == "auto" or model == "auto":
             has_cuda = self._cuda_is_available()
@@ -206,7 +145,6 @@ class LocalWhisperBackend(TranscriptionBackend):
                 detected_model = "base"
                 logger.info("No CUDA available - using CPU with int8 quantization and base model")
 
-            # Apply auto-detected values only where needed
             if device == "auto":
                 device = detected_device
             if compute_type == "auto":
@@ -214,8 +152,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             if model == "auto":
                 model = detected_model
 
-        # Validate that the compute type is actually supported on this hardware
-        # This prevents crashes on CPUs without AVX2 when int8 is selected
+        # Validate int8 in particular: CPUs without AVX2 may reject it.
         compute_type = self._select_best_compute_type(device, compute_type)
 
         return device, compute_type, model
@@ -240,11 +177,8 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             self._device, self._compute_type, detected_model = self._detect_hardware()
 
-            # Before committing to the GPU. Also covers an explicit device="cuda"
-            # from settings, which skips auto-detection entirely.
             self._downgrade_to_cpu_if_gpu_libraries_missing()
 
-            # Use detected model if current model is "auto"
             if self.model_name == "auto":
                 self.model_name = detected_model
 
@@ -325,19 +259,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._compute_type = self._select_best_compute_type("cpu", "int8")
 
     def _describe_gpu_failure(self, error: Exception) -> Tuple[str, str, str]:
-        """Classify a GPU failure into actionable advice and a short status note.
-
-        The causes need different responses — install the libraries, pick a
-        smaller model, or investigate — so they must not share one message.
-
-        Args:
-            error: The exception raised by the GPU attempt.
-
-        Returns:
-            ``(advice, note, cause)``: advice is appended to the log warning and
-            may be empty; note is the short suffix shown in :attr:`device_info`;
-            cause is one of the ``GpuFallbackCause`` constants.
-        """
+        """Return cause-specific advice, status note, and fallback cause."""
         text = str(error).lower()
 
         if any(marker in text for marker in _GPU_OOM_MARKERS):
@@ -418,8 +340,6 @@ class LocalWhisperBackend(TranscriptionBackend):
         thread. A failed download leaves the backend unavailable; it is never
         treated as cached and never falls back to another model.
 
-        Raises:
-            Exception: If the download or the subsequent local load fails.
         """
         from services.hf_access import download_model_files
 
@@ -431,17 +351,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             )
 
     def transcribe(self, audio_path: str) -> str:
-        """Transcribe audio file using faster-whisper model.
-
-        Args:
-            audio_path: Path to the audio file to transcribe.
-
-        Returns:
-            Transcribed text.
-
-        Raises:
-            Exception: If transcription fails or model is not available.
-        """
+        """Transcribe an audio file with the loaded faster-whisper model."""
         if not self.is_available():
             raise Exception("Faster-whisper model is not available.")
 
@@ -451,14 +361,12 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             logger.info(f"Processing audio with faster-whisper (VAD={config.FASTER_WHISPER_VAD_ENABLED})...")
 
-            # Configure VAD parameters if enabled
             vad_params = None
             if config.FASTER_WHISPER_VAD_ENABLED:
                 vad_params = dict(
                     min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
                 )
 
-            # Transcribe - returns a generator of segments and transcription info
             segments, info = self.model.transcribe(
                 audio_path,
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
@@ -469,8 +377,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             logger.info(f"Detected language: {info.language} "
                         f"(probability: {info.language_probability:.2f})")
 
-            # Iterate through segments to get transcribed text
-            # Note: segments is a generator - transcription happens as we iterate
+            # faster-whisper performs transcription while this generator is consumed.
             text_parts = []
             for segment in segments:
                 if self.should_cancel:
@@ -480,7 +387,6 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             transcript = " ".join(text_parts).strip()
 
-            # Clean up extra whitespace
             import re
             transcript = re.sub(r'\s+', ' ', transcript)
 
@@ -496,17 +402,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.is_transcribing = False
 
     def transcribe_chunks(self, chunk_files: List[str]) -> str:
-        """Transcribe multiple audio chunk files efficiently with faster-whisper.
-
-        Args:
-            chunk_files: List of paths to audio chunk files.
-
-        Returns:
-            Combined transcribed text from all chunks.
-
-        Raises:
-            Exception: If transcription fails or model is not available.
-        """
+        """Transcribe chunks sequentially and combine their text."""
         if not self.is_available():
             raise Exception("Faster-whisper model is not available.")
 
@@ -516,7 +412,6 @@ class LocalWhisperBackend(TranscriptionBackend):
 
             transcriptions = []
 
-            # Configure VAD parameters if enabled
             vad_params = None
             if config.FASTER_WHISPER_VAD_ENABLED:
                 vad_params = dict(
@@ -530,7 +425,6 @@ class LocalWhisperBackend(TranscriptionBackend):
 
                 logger.info(f"Processing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
 
-                # Transcribe individual chunk
                 segments, info = self.model.transcribe(
                     chunk_file,
                     beam_size=config.FASTER_WHISPER_BEAM_SIZE,
@@ -538,7 +432,6 @@ class LocalWhisperBackend(TranscriptionBackend):
                     vad_parameters=vad_params
                 )
 
-                # Collect text from segments
                 text_parts = []
                 for segment in segments:
                     if self.should_cancel:
@@ -552,7 +445,6 @@ class LocalWhisperBackend(TranscriptionBackend):
                 logger.info(f"Chunk {i+1}/{len(chunk_files)} completed. "
                            f"Length: {len(chunk_text)} characters")
 
-            # Combine transcriptions using audio_processor
             from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)
 
@@ -569,27 +461,17 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.is_transcribing = False
 
     def is_available(self) -> bool:
-        """Check if the faster-whisper model is available.
-
-        Returns:
-            True if model is loaded and available, False otherwise.
-        """
+        """Return whether a model is loaded."""
         return self.model is not None
 
     def reload_model(self, model_name: str = None):
-        """Reload the Whisper model with a different model name.
-
-        Args:
-            model_name: New model name to load. Reads from settings if None.
-        """
+        """Reload an explicit model or the model currently stored in settings."""
         if model_name:
             self.model_name = model_name
         else:
-            # Read from settings when no explicit model provided
             from services.settings import SettingsKey, settings_manager
             settings = settings_manager.load_all_settings()
             self.model_name = settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL)
-        # Clean up existing model first
         self.cleanup()
         self._load_model()
 
@@ -602,11 +484,9 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         try:
             if self.model is not None:
-                # Cancel any ongoing transcription
                 self.should_cancel = True
 
-                # Force CUDA to finish ALL pending operations before destroying model
-                # This is critical for large models like turbo
+                # Turbo can leave pending CUDA work that outlives the model object.
                 try:
                     import torch
                     if torch.cuda.is_available():
@@ -616,22 +496,17 @@ class LocalWhisperBackend(TranscriptionBackend):
                 except Exception:
                     logger.debug("CUDA sync failed during model cleanup", exc_info=True)
 
-                # Small delay after sync
                 time.sleep(0.3)
 
                 self.model = None
 
-                # Give CUDA/ctranslate2 time to finish destructor work
                 time.sleep(0.5)
 
-                # Force garbage collection to release memory
                 import gc
                 gc.collect()
 
-                # Another delay before touching CUDA cache
                 time.sleep(0.2)
 
-                # Clear GPU cache
                 try:
                     import torch
                     if torch.cuda.is_available():
@@ -674,14 +549,12 @@ class LocalWhisperBackend(TranscriptionBackend):
 
     @property
     def name(self) -> str:
-        """Get the backend name with model info."""
         device_info = f"{self._device}/{self._compute_type}" if self._device else "not loaded"
         status = "Ready" if self.is_available() else "Not Available"
         return f"FasterWhisper ({self.model_name}, {device_info}) - {status}"
 
     @property
     def device_info(self) -> str:
-        """Get current device, compute type, and model info."""
         if self._model_missing:
             return f"{self.model_name} | not downloaded"
         if self._device and self._compute_type:
@@ -697,9 +570,5 @@ class LocalWhisperBackend(TranscriptionBackend):
 
     @property
     def requires_file_splitting(self) -> bool:
-        """faster-whisper can handle files of any size without splitting.
-
-        The library processes audio in a streaming fashion and can handle
-        arbitrarily long audio files without memory issues.
-        """
+        """Return False because faster-whisper streams arbitrarily long audio."""
         return False

@@ -2,12 +2,10 @@
  * The Pi custom tools: patch_state, ask_question, resolve_question,
  * and the read-only search_past_meetings / search_context_files.
  *
- * Each tool forwards its call over JSON-RPC to the Python host
- * (tool.patch_state / tool.ask_question / tool.resolve_question), awaits the
- * validation result, and returns it verbatim to the Pi session as the tool
- * result. Rejections (human_edited, revision_mismatch, low_confidence, ...)
- * are returned as normal results so the model can self-correct within the
- * same run or at the next checkpoint.
+ * Each tool forwards its call over JSON-RPC to the Python host, awaits the
+ * validation result, and returns it verbatim to the Pi session. Rejections
+ * (human_edited, revision_mismatch, low_confidence, ...) are normal results so
+ * the model can self-correct within the same run or at the next checkpoint.
  *
  * This is the sidecar's ENTIRE authority surface: no shell, no filesystem,
  * no network tools exist — meeting-state-only authority is structural, and
@@ -16,22 +14,18 @@
 import type { RpcEndpoint } from "./rpc";
 import type { MeetingToolDef } from "./pi-adapter";
 
-/** How long a tool bridge call may wait on the Python host. */
 const TOOL_RPC_TIMEOUT_MS = 30_000;
 
-/** Applied/rejected tallies for the current checkpoint (reset by main.ts). */
 export interface OpCounters {
   applied: number;
   rejected: number;
 }
 
-/** Mutable policy for the currently serialized checkpoint. */
 export interface ToolPolicy {
   polishOnly: boolean;
   /** Notes pass: only live_notes item ops may pass (add_item with
    *  card=live_notes, or update/remove targeting a known note block). */
   notesOnly: boolean;
-  /** live_notes block ids visible in the current pass's state snapshot. */
   noteIds: ReadonlySet<string>;
 }
 
@@ -71,12 +65,6 @@ function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): st
   return `${applied} applied, ${rejected} rejected`;
 }
 
-/**
- * Build the three meeting tools bound to an RPC endpoint and shared counters.
- *
- * @param rpc Endpoint used to bridge tool calls to the Python host.
- * @param counters Mutable applied/rejected tallies, reset per checkpoint.
- */
 export function createMeetingTools(
   rpc: RpcEndpoint,
   counters: OpCounters,
@@ -362,7 +350,6 @@ export function createMeetingTools(
   ];
 }
 
-/** Forward a single-result tool call and tally its outcome. */
 async function bridgeSingle(
   rpc: RpcEndpoint,
   counters: OpCounters,

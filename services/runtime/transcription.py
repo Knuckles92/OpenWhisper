@@ -67,7 +67,6 @@ class TranscriptionRuntime:
         self._transcript_cleanup = TranscriptCleanup()
 
     def start_recording(self) -> None:
-        """Start audio recording."""
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
                 "Meeting Mode is active — end the meeting to use dictation"
@@ -148,7 +147,6 @@ class TranscriptionRuntime:
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
     def toggle_recording(self) -> None:
-        """Toggle between starting and stopping recording."""
         logger.info(
             f"Toggle recording. Current state: {self.controller.recorder.is_recording}"
         )
@@ -170,7 +168,6 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Canceled")
 
     def _cancel_recording(self) -> None:
-        """Discard the active recording without transcribing."""
         self.controller.streaming_runtime.cancel_streaming_session()
         self.controller.recording_state_changed.emit(False)
         self.controller.recorder.stop_recording()
@@ -180,18 +177,13 @@ class TranscriptionRuntime:
         logger.info("Recording canceled")
 
     def _cancel_transcription(self) -> None:
-        """Cancel an in-progress transcription job."""
         self.controller.current_backend.cancel_transcription()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Transcription canceled")
         logger.info("Transcription canceled")
 
     def retranscribe_audio(self, audio_path: str) -> None:
-        """Re-transcribe an existing audio file.
-
-        Args:
-            audio_path: Path to the saved recording.
-        """
+        """Re-transcribe a saved recording."""
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
                 "Meeting Mode is active — end it before retranscribing"
@@ -247,16 +239,7 @@ class TranscriptionRuntime:
     def _maybe_cleanup_transcript(
         self, raw: str
     ) -> tuple[str, Optional[str], Optional[CleanupInfo]]:
-        """Optionally clean up ASR text.
-
-        Args:
-            raw: Unprocessed ASR transcript.
-
-        Returns:
-            Tuple of (fixed text, raw text when it differs from fixed, and
-            the CleanupInfo of the run when cleanup actually happened —
-            None when cleanup was disabled, unavailable, or failed).
-        """
+        """Return fixed text, distinct raw text, and successful cleanup metadata."""
         settings = settings_manager.load_all_settings()
         enabled = settings.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
@@ -301,7 +284,6 @@ class TranscriptionRuntime:
         return fixed, None, info
 
     def transcribe_audio_file(self, audio_path: str) -> None:
-        """Transcribe a single audio file in a background thread."""
         try:
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
@@ -316,7 +298,6 @@ class TranscriptionRuntime:
             self.controller.transcription_failed.emit(str(exc))
 
     def transcribe_large_audio_file(self, audio_path: str) -> None:
-        """Transcribe a large audio file by splitting it into chunks."""
         chunk_files = []
         if self.controller._pending_file_size is None:
             self.controller._pending_file_size = os.path.getsize(audio_path)
@@ -370,7 +351,6 @@ class TranscriptionRuntime:
         raw_text: Optional[str] = None,
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
-        """Handle transcription completion."""
         self.controller.ui_controller.set_transcript(transcript, raw=raw_text)
         self.controller.ui_controller.set_status("Transcription complete!")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -451,13 +431,11 @@ class TranscriptionRuntime:
             self.controller.ui_controller.set_status("Ready")
 
     def on_transcription_error(self, error_message: str) -> None:
-        """Handle transcription error."""
         self.controller.ui_controller.set_status(f"Error: {error_message}")
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
 
     def on_model_changed(self, model_name: str) -> None:
-        """Handle model selection change."""
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
                 "End the meeting before changing transcription models"
@@ -488,7 +466,6 @@ class TranscriptionRuntime:
             self.controller.streaming_runtime.reconfigure_streaming()
 
     def show_large_file_overlay(self, file_size_mb: float, is_splitting: bool) -> None:
-        """Show the large-file overlay state."""
         overlay = self.controller.ui_controller.overlay
         overlay.set_large_file_info(file_size_mb)
 

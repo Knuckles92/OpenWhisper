@@ -90,9 +90,7 @@ def export_markdown(meeting: Dict[str, Any], state: Dict[str, Any],
     return "\n".join(out) + "\n"
 
 
-# ---------------------------------------------------------------------------
 # Header
-# ---------------------------------------------------------------------------
 
 def _metadata_line(meeting: Dict[str, Any], state: Dict[str, Any],
                    segments: List[Dict[str, Any]]) -> str:
@@ -125,9 +123,7 @@ def _duration_s(meeting: Dict[str, Any],
     return None
 
 
-# ---------------------------------------------------------------------------
 # Topic / summary
-# ---------------------------------------------------------------------------
 
 def _append_topic(out: List[str], state: Dict[str, Any]) -> None:
     """Append the current topic and its earlier revisions."""
@@ -158,9 +154,7 @@ def _append_summary(out: List[str], state: Dict[str, Any]) -> None:
         out += ["", "## Summary", "", summary]
 
 
-# ---------------------------------------------------------------------------
 # Cards
-# ---------------------------------------------------------------------------
 
 def _live_items(state: Dict[str, Any], card: str) -> List[Dict[str, Any]]:
     """Items on a card that are not removed and have non-empty text."""
@@ -293,9 +287,7 @@ def _key_point_lines(items: List[Dict[str, Any]],
     return lines
 
 
-# ---------------------------------------------------------------------------
 # Questions
-# ---------------------------------------------------------------------------
 
 def _append_questions(out: List[str], state: Dict[str, Any],
                       participants: Dict[str, Dict[str, Any]]) -> None:

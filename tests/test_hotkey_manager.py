@@ -39,8 +39,6 @@ HotkeyManager = hotkey_manager_module.HotkeyManager
 
 
 class TestHotkeyManager:
-    """Test cases for the HotkeyManager class."""
-
     @patch.object(HotkeyManager, "_setup_keyboard_hook")
     def test_record_toggle_uses_monotonic_time(self, _mock_setup_keyboard_hook):
         """Record toggle debounce should not depend on wall-clock jumps."""
@@ -79,9 +77,7 @@ class TestHotkeyManager:
             manager.rehook()
             mock_cleanup.assert_called_once()
 
-        # _setup_keyboard_hook: once in __init__, once in rehook
         assert _mock_setup.call_count == 2
-        # State preserved
         assert not manager.program_enabled
         assert manager.hotkeys == original_hotkeys
         assert manager.on_record_toggle is callback

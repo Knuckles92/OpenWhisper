@@ -34,12 +34,6 @@ class SdCaptureSource:
 
     def __init__(self, channel: str, device_index: int, samplerate: int,
                  n_channels: int) -> None:
-        """Args:
-            channel: ``mic`` or ``loopback``; stamped on every block.
-            device_index: sounddevice device index to open.
-            samplerate: Native sample rate to capture at, in Hz.
-            n_channels: Number of device channels to open (downmixed to mono).
-        """
         self.channel = channel
         self._device_index = int(device_index)
         self._samplerate = int(samplerate)
@@ -111,12 +105,7 @@ class SdCaptureSource:
         except Exception:
             return False
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
     def _callback(self, indata, frames, time_info, status) -> None:
-        """PortAudio callback: downmix, timestamp, emit. Never raises."""
         try:
             if status and not self._status_logged:
                 self._status_logged = True
@@ -155,7 +144,6 @@ class SdCaptureSource:
                 logger.exception("Capture callback error (%s)", self.channel)
 
     def _on_finished(self) -> None:
-        """PortAudio finished callback: flags unexpected stream termination."""
         if self._active:
             self._active = False
             logger.warning("Capture stream ended unexpectedly: channel=%s",

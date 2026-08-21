@@ -123,18 +123,6 @@ class CheckpointScheduler:
                  min_interval_s: float = 5.0,
                  max_interval_s: float = 20.0,
                  on_health: Optional[Callable[[bool], None]] = None) -> None:
-        """Args:
-            engine: The ``MeetingEngine`` (provides ``store``, ``clock``, and
-                ``get_transcript``).
-            agent_core: An ``AgentCore`` implementation.
-            base_interval_s: Default spacing between checkpoints.
-            min_interval_s: Floor used under high segment pressure and as the
-                hard minimum for topic-shift early fires.
-            max_interval_s: Ceiling used when few segments are waiting.
-            on_health: Optional callback invoked with True/False when the
-                intelligence loop comes online or is declared offline after
-                repeated failures.
-        """
         self._engine = engine
         self._agent = agent_core
         self._base_interval_s = base_interval_s
@@ -167,10 +155,6 @@ class CheckpointScheduler:
         self._notes_checkpoint_mark = 0
         self._notes_sent_starts: Dict[str, float] = {}
         self._notes_max_sent_start_s = -1.0
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def start(self) -> None:
         """Start the worker thread. Idempotent."""
@@ -220,10 +204,6 @@ class CheckpointScheduler:
         with self._lock:
             self._pending_segments += int(count)
         self._wake.set()
-
-    # ------------------------------------------------------------------
-    # Worker loop
-    # ------------------------------------------------------------------
 
     def _interval_for(self, pending: int) -> float:
         """Adaptive interval: shrink under pressure, stretch when quiet."""
@@ -301,10 +281,6 @@ class CheckpointScheduler:
             )
             return True
         return False
-
-    # ------------------------------------------------------------------
-    # Firing
-    # ------------------------------------------------------------------
 
     def _build_payload(self, segments: List[Dict[str, Any]],
                        is_consolidation: bool,
@@ -652,10 +628,6 @@ class CheckpointScheduler:
                 self._on_health(online)
             except Exception:
                 logger.exception("Scheduler on_health callback raised")
-
-    # ------------------------------------------------------------------
-    # Consolidation
-    # ------------------------------------------------------------------
 
     def _revoke_agent_writes(self) -> None:
         """Close the engine agent-write gate before a terminal consolidation."""

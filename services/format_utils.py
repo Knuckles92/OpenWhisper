@@ -1,22 +1,9 @@
-"""Shared display-formatting helpers.
-
-Single home for human-readable formatting used by both the data layer
-(history models) and UI widgets, so timestamps and sizes render identically
-everywhere.
-"""
+"""Shared display-formatting helpers."""
 from datetime import datetime
 
 
 def format_timestamp(iso_timestamp: str) -> str:
-    """Format an ISO-8601 timestamp for display.
-
-    Args:
-        iso_timestamp: Timestamp string as stored (``datetime.isoformat()``).
-
-    Returns:
-        Display string like ``"Jun 28, 2026 01:42 PM"``, or the raw input if
-        it cannot be parsed.
-    """
+    """Format an ISO-8601 timestamp, returning raw input if parsing fails."""
     try:
         dt = datetime.fromisoformat(iso_timestamp)
         return dt.strftime("%b %d, %Y %I:%M %p")
@@ -25,18 +12,7 @@ def format_timestamp(iso_timestamp: str) -> str:
 
 
 def format_size_bytes(size_bytes: int) -> str:
-    """Return a human-readable size for an actual on-disk byte count.
-
-    Uses decimal units, matching how model and download sizes are advertised.
-    Prefer this for anything the user compares against a published size;
-    :func:`format_file_size` uses binary units and suits local file listings.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        A string like ``"1.53 GB"`` / ``"145 MB"`` / ``"12 KB"``.
-    """
+    """Format advertised/download sizes with decimal units."""
     if size_bytes >= 1_000_000_000:
         return f"{size_bytes / 1_000_000_000:.2f} GB"
     if size_bytes >= 1_000_000:
@@ -47,15 +23,7 @@ def format_size_bytes(size_bytes: int) -> str:
 
 
 def format_file_size(size_bytes: float) -> str:
-    """Format a byte count for display.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        Display string like ``"512 B"``, ``"1.2 KB"``, ``"3.4 MB"`` or
-        ``"1.1 GB"``.
-    """
+    """Format local file sizes with binary units."""
     if size_bytes < 1024:
         return f"{int(size_bytes)} B"
     size = size_bytes / 1024

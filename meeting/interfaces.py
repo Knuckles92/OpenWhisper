@@ -12,9 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checka
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
 # Shared value types
-# ---------------------------------------------------------------------------
 
 #: Channel identifiers for the two capture streams.
 CHANNEL_MIC = "mic"
@@ -153,9 +151,7 @@ class AgentResult:
     usage: Dict[str, Any] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
 # Capture
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class CaptureSource(Protocol):
@@ -180,9 +176,7 @@ class CaptureSource(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Spool
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class ChunkSpool(Protocol):
@@ -197,9 +191,7 @@ class ChunkSpool(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # ASR
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class AsrEngine(Protocol):
@@ -225,9 +217,7 @@ class AsrEngine(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Diarization
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class Diarizer(Protocol):
@@ -254,9 +244,7 @@ class Diarizer(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Agent core
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class AgentToolHost(Protocol):
@@ -327,9 +315,7 @@ class AgentCore(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # State store
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class StateStore(Protocol):
@@ -352,9 +338,7 @@ class StateStore(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Web transport
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class TransportServer(Protocol):
@@ -383,9 +367,7 @@ class TransportServer(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Persistence
-# ---------------------------------------------------------------------------
 
 @runtime_checkable
 class MeetingRepository(Protocol):

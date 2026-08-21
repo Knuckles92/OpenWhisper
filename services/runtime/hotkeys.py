@@ -71,7 +71,6 @@ if USE_PYNPUT_BACKEND:
     }
 
     def _qt_event_modifiers(event) -> frozenset:
-        """Return canonical modifier names for a Qt key event."""
         modifiers = set()
 
         if sys.platform == "darwin" and hasattr(event, "nativeModifiers"):
@@ -99,7 +98,6 @@ if USE_PYNPUT_BACKEND:
         return frozenset(modifiers)
 
     def _qt_event_key_name(event) -> Optional[str]:
-        """Return a canonical main-key name for a Qt key event."""
         key = int(event.key())
         if key in _QT_MODIFIER_KEYS:
             return None
@@ -170,7 +168,6 @@ class HotkeyRuntime:
         self._active_window_hotkey_filter: Optional[ActiveWindowHotkeyFilter] = None
 
     def setup_hotkeys(self) -> None:
-        """Setup hotkey management."""
         logger.info("Setting up hotkeys...")
         # Backfill any newly-introduced default actions (e.g. minimize_tray) over
         # saved settings, so existing users get new hotkeys without reconfiguring.
@@ -215,7 +212,6 @@ class HotkeyRuntime:
         QTimer.singleShot(0, self._warn_autopaste_not_trusted)
 
     def _warn_autopaste_not_trusted(self) -> None:
-        """Show the one-time auto-paste-permission modal on the main thread."""
         # Re-check in case it was granted between setup and this deferred call.
         if is_accessibility_trusted():
             return
@@ -264,7 +260,6 @@ class HotkeyRuntime:
             )
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
-        """Update application hotkeys."""
         logger.info(f"Updating hotkeys: {hotkeys}")
         if self.controller.hotkey_manager:
             self.controller.hotkey_manager.update_hotkeys(hotkeys)
@@ -273,7 +268,6 @@ class HotkeyRuntime:
             self.controller.ui_controller.set_status("Hotkeys updated")
 
     def setup_hook_watchdog(self) -> None:
-        """Setup timers to detect sleep and refresh the keyboard hook."""
         self.controller._watchdog_interval_ms = config.HOTKEY_WATCHDOG_INTERVAL_MS
         self.controller._sleep_gap_threshold_sec = config.HOTKEY_SLEEP_GAP_THRESHOLD_SEC
         self.controller._expected_watchdog_time = time.monotonic() + (
@@ -323,7 +317,6 @@ class HotkeyRuntime:
             logger.info("Active-window hotkey filter installed")
 
     def cleanup(self) -> None:
-        """Remove Qt hotkey filter owned by this runtime."""
         if self._active_window_hotkey_filter is None:
             return
 
@@ -333,7 +326,6 @@ class HotkeyRuntime:
         self._active_window_hotkey_filter = None
 
     def on_watchdog_tick(self) -> None:
-        """Check for time gaps indicating system sleep/resume."""
         now = time.monotonic()
         gap = now - self.controller._expected_watchdog_time
         self.controller._expected_watchdog_time = now + (
@@ -348,7 +340,6 @@ class HotkeyRuntime:
             self.rehook_keyboard()
 
     def on_periodic_hook_refresh(self) -> None:
-        """Periodically re-register the keyboard hook."""
         now = time.monotonic()
         if now - self.controller._last_rehook_time < 60.0:
             return
@@ -357,7 +348,6 @@ class HotkeyRuntime:
         self.rehook_keyboard()
 
     def rehook_keyboard(self) -> None:
-        """Re-register the keyboard hook via HotkeyManager."""
         if self.controller.hotkey_manager:
             try:
                 self.controller.hotkey_manager.rehook()
@@ -369,7 +359,6 @@ class HotkeyRuntime:
                 logger.error(f"Failed to re-register keyboard hook: {exc}")
 
     def on_stt_state_changed(self, enabled: bool) -> None:
-        """Handle STT state changes on the main thread."""
         state = OverlayState.STT_ENABLED if enabled else OverlayState.STT_DISABLED
         self.controller.overlay_state_update.emit(state)
 

@@ -110,10 +110,6 @@ _SESSION_META_EVERY_SAMPLES = 16000 * 5
 _SENTINEL = object()
 
 
-# ---------------------------------------------------------------------------
-# Pure helpers (unit-testable with synthetic arrays)
-# ---------------------------------------------------------------------------
-
 def resample_to_16k(frames_int16: np.ndarray, src_rate: int) -> np.ndarray:
     """Resample mono int16 audio to 16 kHz mono int16.
 
@@ -179,13 +175,6 @@ class _CutScanner:
     def __init__(self, sample_rate: int, target_sec: float, max_sec: float,
                  quiet_rms: float = QUIET_RMS,
                  quiet_window_s: float = QUIET_WINDOW_S) -> None:
-        """Args:
-            sample_rate: Sample rate of the pushed audio in Hz.
-            target_sec: Minimum chunk duration before scanning starts.
-            max_sec: Hard maximum chunk duration.
-            quiet_rms: RMS threshold in int16 units.
-            quiet_window_s: Required quiet duration in seconds.
-        """
         self._rate = int(sample_rate)
         self._frame_len = max(1, int(round(_CUT_SCAN_HOP_S * self._rate)))
         self._win_frames = max(
@@ -499,10 +488,6 @@ def resolve_session_wav(
     return None
 
 
-# ---------------------------------------------------------------------------
-# SpoolWriter
-# ---------------------------------------------------------------------------
-
 class SpoolWriter:
     """Chunked WAV spool for one channel of a meeting (``ChunkSpool``).
 
@@ -581,10 +566,6 @@ class SpoolWriter:
         )
         self._thread.start()
 
-    # ------------------------------------------------------------------
-    # Audio thread
-    # ------------------------------------------------------------------
-
     def feed(self, block: CaptureBlock) -> None:
         """Hand a captured block to the writer thread. Never blocks or raises.
 
@@ -622,10 +603,6 @@ class SpoolWriter:
                 logger.exception("Spool feed failed on channel %s",
                                  self._channel)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def flush(self, timeout_s: float = FLUSH_TIMEOUT_S) -> Optional[SpooledChunk]:
         """Stop the writer, finalize the remainder, and join (end of meeting).
 
@@ -659,12 +636,7 @@ class SpoolWriter:
                                    self._channel)
             return self._final_chunk
 
-    # ------------------------------------------------------------------
-    # Writer thread
-    # ------------------------------------------------------------------
-
     def _writer_loop(self) -> None:
-        """Drain the queue until flushed, then finalize the remainder."""
         try:
             while True:
                 try:
@@ -694,12 +666,10 @@ class SpoolWriter:
                              self._channel)
 
     def _stream_end_s(self) -> float:
-        """Meeting time just past the last buffered sample."""
         rate = self._rate or TARGET_RATE
         return self._origin_s + (self._consumed + self._pending) / float(rate)
 
     def _reset_stream(self, rate: int, origin_s: float) -> None:
-        """Start a fresh native-rate stream (first block or rate change)."""
         self._rate = int(rate)
         self._origin_s = float(origin_s)
         self._consumed = 0
@@ -708,7 +678,6 @@ class SpoolWriter:
         self._scanner = self._new_scanner(self._rate)
 
     def _new_scanner(self, rate: int) -> _CutScanner:
-        """Build a cut scanner using this spool's live chunking profile."""
         return _CutScanner(
             rate,
             self._target_sec,
@@ -718,7 +687,6 @@ class SpoolWriter:
 
     def _process_block(self, frames: np.ndarray, t_meeting: float,
                        src_rate: int) -> None:
-        """Align one block onto the stream timeline and buffer it."""
         frames = np.asarray(frames, dtype=np.int16).reshape(-1)
         if frames.size == 0:
             return
@@ -756,7 +724,6 @@ class SpoolWriter:
         self._cut_ready_chunks()
 
     def _log_timeline_fix(self, message: str, seconds: float) -> None:
-        """Log a gap-fill/overlap-trim, throttled after the first few."""
         self._gap_logs += 1
         if self._gap_logs <= _MAX_GAP_LOGS:
             logger.info(message, abs(seconds), self._channel)
@@ -764,7 +731,6 @@ class SpoolWriter:
             logger.debug(message, abs(seconds), self._channel)
 
     def _append(self, frames: np.ndarray) -> None:
-        """Buffer native-rate samples without concatenating per block."""
         self._blocks.append(frames)
         self._pending += int(frames.size)
         if self._scanner is not None:
@@ -772,7 +738,6 @@ class SpoolWriter:
         self._append_session(frames)
 
     def _cut_ready_chunks(self) -> None:
-        """Finalize as many chunks as the pending buffer supports."""
         while self._scanner is not None:
             cut = self._scanner.cut_index()
             if cut is None or cut <= 0:
@@ -791,7 +756,6 @@ class SpoolWriter:
             self._emit_chunk(chunk, start_s, rate)
 
     def _concat_pending(self) -> np.ndarray:
-        """Collapse the buffered native blocks into one contiguous array."""
         if not self._blocks:
             return np.zeros(0, dtype=np.int16)
         if len(self._blocks) == 1:
@@ -799,7 +763,6 @@ class SpoolWriter:
         return np.concatenate(self._blocks)
 
     def _finalize_remainder(self) -> None:
-        """Write whatever is still buffered (end of stream)."""
         if self._pending <= 0 or self._rate is None:
             self._blocks = []
             self._pending = 0
@@ -818,7 +781,6 @@ class SpoolWriter:
         self._emit_chunk(buffered, start_s, rate)
 
     def _append_session(self, frames: np.ndarray) -> None:
-        """Append gap-filled native samples to the continuous session PCM."""
         if frames.size == 0 or self._rate is None:
             return
         if self._session_fp is None:
@@ -839,7 +801,6 @@ class SpoolWriter:
             self._session_meta_at = self._session_samples
 
     def _write_session_meta(self) -> None:
-        """Flush the native PCM handle and rewrite its JSON watermark."""
         if self._session_fp is not None:
             try:
                 self._session_fp.flush()
@@ -858,7 +819,6 @@ class SpoolWriter:
             logger.exception("Session metadata write failed (%s)", self._channel)
 
     def _close_session_pcm(self) -> Optional[str]:
-        """Close the native PCM handle and return its path when it has audio."""
         handle = self._session_fp
         self._session_fp = None
         if handle is not None:
@@ -874,7 +834,6 @@ class SpoolWriter:
         return pcm_path
 
     def _spill_session_pcm(self) -> None:
-        """Resample the current native PCM onto the accumulating 16 kHz PCM."""
         pcm_path = self._close_session_pcm()
         rate = self._session_rate
         if pcm_path is None or rate is None:
@@ -893,7 +852,6 @@ class SpoolWriter:
         self._session_rate = None
 
     def _finalize_session(self) -> None:
-        """Resample native PCM to the durable 16 kHz session WAV."""
         self._spill_session_pcm()
         wav_path = session_wav_path(self._spool_dir, self._channel)
         if not os.path.isfile(self._session_16k_pcm):
@@ -907,10 +865,6 @@ class SpoolWriter:
             os.remove(self._session_16k_pcm)
         except OSError:
             pass
-
-    # ------------------------------------------------------------------
-    # Chunk output (writer thread)
-    # ------------------------------------------------------------------
 
     def _emit_chunk(self, native_samples: np.ndarray, start_s: float,
                     rate: int) -> Optional[SpooledChunk]:

@@ -10,8 +10,6 @@ from services.transcript_cleanup import (
 
 
 class TestTranscriptCleanup:
-    """Tests for TranscriptCleanup behavior and fallbacks."""
-
     def test_empty_text_returns_unchanged(self):
         cleaner = TranscriptCleanup(api_key="test-key")
         cleaner.client = MagicMock()
@@ -287,8 +285,6 @@ class TestTranscriptCleanupSettings:
 
 
 class TestPolishCleanupRule:
-    """Tests for polishing raw instructions into learned rules."""
-
     @staticmethod
     def _mock_openai(content):
         client = MagicMock()
@@ -451,9 +447,7 @@ class TestCleanupCustomEndpoints:
 
 
 
-# --------------------------------------------------------------------------
 # Streaming preview helpers (services.streaming_transcriber).
-# --------------------------------------------------------------------------
 
 from services.streaming_transcriber import append_preview_text
 

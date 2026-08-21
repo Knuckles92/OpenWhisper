@@ -34,8 +34,6 @@ from services._hotkey_pynput import parse_hotkey
 logger = logging.getLogger(__name__)
 
 
-# --- Carbon constants ----------------------------------------------------------
-
 # Carbon modifier masks (from <Carbon/HIToolbox/Events.h>).
 _CARBON_MODIFIERS: Dict[str, int] = {
     "cmd": 0x0100,    # cmdKey
@@ -46,7 +44,6 @@ _CARBON_MODIFIERS: Dict[str, int] = {
 
 
 def _four_char_code(code: str) -> int:
-    """Pack a 4-character string into a big-endian OSType integer."""
     return (
         (ord(code[0]) << 24)
         | (ord(code[1]) << 16)
@@ -61,8 +58,6 @@ _K_EVENT_PARAM_DIRECT_OBJECT = _four_char_code("----")
 _TYPE_EVENT_HOTKEY_ID = _four_char_code("hkid")
 _HOTKEY_SIGNATURE = _four_char_code("OWHK")  # OpenWhisper HotKey
 
-
-# --- ANSI virtual key codes ----------------------------------------------------
 
 # kVK_ANSI_* codes (physical key positions, layout-independent), used so that
 # letter/digit/symbol hotkeys resolve without touching layout APIs. Special and
@@ -81,7 +76,6 @@ _ANSI_KEYCODES: Dict[str, int] = {
 
 
 def _build_special_keycodes() -> Dict[str, int]:
-    """Map pynput special-key names (esc, space, f5, ...) to virtual keycodes."""
     mapping: Dict[str, int] = {}
     for key in pynput_keyboard.Key:
         keycode = getattr(key.value, "vk", None)
@@ -117,9 +111,6 @@ def keycode_for(main_key: Optional[str]) -> Optional[int]:
     return None
 
 
-# --- ctypes structures / prototypes --------------------------------------------
-
-
 class _EventTypeSpec(ctypes.Structure):
     _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
 
@@ -135,7 +126,6 @@ _EVENT_HANDLER_PROC = ctypes.CFUNCTYPE(
 
 
 def _load_carbon() -> Optional[ctypes.CDLL]:
-    """Load the Carbon framework and configure function signatures."""
     if sys.platform != "darwin":
         return None
     try:
@@ -208,7 +198,6 @@ class CarbonHotkeyRegistrar:
         self._handler_proc = _EVENT_HANDLER_PROC(self._handle_event)
         self._handler_ref = ctypes.c_void_p()
         self._handler_installed = False
-        # action name <-> hotkey id, and the live EventHotKeyRefs to unregister.
         self._id_to_action: Dict[int, str] = {}
         self._hotkey_refs: List[ctypes.c_void_p] = []
         self._next_id = 1
@@ -237,7 +226,6 @@ class CarbonHotkeyRegistrar:
         return True
 
     def _handle_event(self, _next_handler, event, _user_data) -> int:
-        """Carbon callback (main thread): resolve the hotkey id and dispatch."""
         try:
             hotkey_id = _EventHotKeyID()
             status = _carbon.GetEventParameter(

@@ -1,5 +1,3 @@
-"""Services package - core business logic and managers."""
-
 from importlib import import_module
 
 __all__ = [

@@ -1,7 +1,4 @@
-"""
-Tabbed content widget for the main window workspace.
-Hosts Quick Record, Upload File, and Meeting Mode pages.
-"""
+"""Main-window tab container."""
 import logging
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -18,10 +15,8 @@ logger = logging.getLogger(__name__)
 class TabbedContentWidget(QWidget):
     """Container widget with a tab bar and stacked content area."""
 
-    # Signals
-    tab_changed = pyqtSignal(int)  # Emitted when tab selection changes
+    tab_changed = pyqtSignal(int)
 
-    # Tab indices
     TAB_QUICK_RECORD = 0
     TAB_UPLOAD_FILE = 1
     TAB_MEETING_MODE = 2
@@ -29,7 +24,6 @@ class TabbedContentWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # State
         self._last_saved_tab_index: Optional[int] = None
         self._pending_tab_index: Optional[int] = None
         self._tab_save_timer = QTimer(self)
@@ -42,16 +36,14 @@ class TabbedContentWidget(QWidget):
         self._restore_last_tab()
 
     def _setup_ui(self):
-        """Setup the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Tab bar
         self.tab_bar = QTabBar()
         self.tab_bar.setObjectName("contentTabBar")
         self.tab_bar.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        self.tab_bar.setDrawBase(False)  # Don't draw base line
+        self.tab_bar.setDrawBase(False)
         self.tab_bar.setExpanding(True)
         self.tab_bar.setUsesScrollButtons(False)
 
@@ -59,7 +51,6 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.addTab("Upload File")
         self.tab_bar.addTab("Meeting Mode")
 
-        # Center the tab bar horizontally
         tab_container = QWidget()
         tab_container_layout = QVBoxLayout(tab_container)
         tab_container_layout.setContentsMargins(24, 16, 24, 8)
@@ -71,13 +62,11 @@ class TabbedContentWidget(QWidget):
 
         layout.addWidget(tab_container)
 
-        # Stacked widget for content
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
         layout.addWidget(self.stack, stretch=1)
 
     def _apply_style(self):
-        """Apply custom styling to the tab bar."""
         self.tab_bar.setStyleSheet("""
             QTabBar::tab {
                 background-color: transparent;
@@ -101,11 +90,9 @@ class TabbedContentWidget(QWidget):
         """)
 
     def _connect_signals(self):
-        """Connect internal signals."""
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
 
     def _restore_last_tab(self):
-        """Restore the last selected tab from settings."""
         try:
             settings = settings_manager.load_all_settings()
             last_tab = settings.get(SettingsKey.LAST_TAB_INDEX, self.TAB_QUICK_RECORD)
@@ -116,7 +103,6 @@ class TabbedContentWidget(QWidget):
             logger.warning(f"Failed to restore last tab: {e}")
 
     def _on_tab_changed(self, index: int):
-        """Handle tab selection change."""
         self.stack.setCurrentIndex(index)
 
         self._schedule_tab_selection_save(index)
@@ -156,30 +142,11 @@ class TabbedContentWidget(QWidget):
         self._save_pending_tab_selection()
 
     def add_tab(self, widget: QWidget, title: str) -> int:
-        """Add a widget to the stacked widget.
-
-        Note: The tab bar tabs are created in _setup_ui, this method
-        just adds the content widgets to the stack.
-
-        Args:
-            widget: The widget to add
-            title: Tab title (for logging purposes)
-
-        Returns:
-            Index of the added widget
-        """
         index = self.stack.addWidget(widget)
         logger.debug(f"Added tab '{title}' at index {index}")
         return index
 
     def sync_stack_with_tab_bar(self):
-        """Synchronize the stacked widget with the tab bar selection.
-
-        This method should be called AFTER all tabs have been added via add_tab().
-        It fixes a timing issue where _restore_last_tab() sets the tab bar index
-        before the stack has any widgets, causing a desync between the visual
-        tab selection and the displayed content.
-        """
         current_tab = self.tab_bar.currentIndex()
         if self.stack.currentIndex() != current_tab:
             logger.debug(
@@ -189,25 +156,13 @@ class TabbedContentWidget(QWidget):
             self.stack.setCurrentIndex(current_tab)
 
     def current_index(self) -> int:
-        """Get the current tab index."""
         return self.tab_bar.currentIndex()
 
     def set_current_index(self, index: int):
-        """Set the current tab index.
-
-        Args:
-            index: Tab index to switch to.
-        """
         if 0 <= index < self.tab_bar.count():
             self.tab_bar.setCurrentIndex(index)
 
     def set_recording_state(self, is_recording: bool, source_tab: int):
-        """Track recording state for the active content tab.
-
-        Args:
-            is_recording: True if recording started, False if stopped
-            source_tab: The tab index where recording is active
-        """
         for i in range(self.tab_bar.count()):
             self.tab_bar.setTabEnabled(i, not is_recording or i == source_tab)
 

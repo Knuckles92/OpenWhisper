@@ -72,7 +72,6 @@ class HotkeyHoverHint(QWidget):
         self._fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def set_hotkey(self, hotkey: str) -> None:
-        """Update the shortcut text shown in the hover hint."""
         self._text_label.setText(hotkey)
         self.adjustSize()
 
@@ -123,7 +122,6 @@ class HotkeyHintFilter(QObject):
         button.installEventFilter(self)
 
     def set_hotkey(self, hotkey: str) -> None:
-        """Update the shortcut text shown in the hover hint."""
         self._hotkey = hotkey
         if self._hint is not None:
             self._hint.set_hotkey(hotkey)
@@ -140,7 +138,6 @@ class HotkeyHintFilter(QObject):
         return False
 
     def show_hint(self) -> None:
-        """Show the pill centered above the button."""
         if not self._hotkey or not self._button.isEnabled():
             return
 
@@ -160,7 +157,6 @@ class HotkeyHintFilter(QObject):
         self._hint.raise_()
 
     def hide_hint(self) -> None:
-        """Hide the pill immediately."""
         if self._hint is not None:
             self._hint.hide()
 
@@ -169,7 +165,6 @@ class Button(QPushButton):
     """Modern button with smooth hover and click animations."""
 
     def __init__(self, text: str = "", parent=None):
-        """Initialize modern button."""
         super().__init__(text, parent)
         self.setMinimumHeight(44)
         self.setFont(QFont("Segoe UI", 12))
@@ -187,13 +182,11 @@ class Button(QPushButton):
         self._hotkey_hint_filter = HotkeyHintFilter(self)
 
     def setText(self, text: str):
-        """Override setText to update base text."""
         self._base_text = text
         super().setText(text)
         self._refresh_size()
 
     def set_hotkey(self, hotkey: str):
-        """Set the hotkey shown in a hover hint above the button."""
         self._hotkey_hint_filter.set_hotkey(hotkey)
 
     def set_base_minimum_size(self, width: int, height: int) -> None:
@@ -268,7 +261,6 @@ class PrimaryButton(Button):
     """Primary action button with gradient."""
 
     def __init__(self, text: str = "", parent=None):
-        """Initialize primary button."""
         super().__init__(text, parent)
         self.setObjectName("primaryButton")
         self._base_min_height = 48
@@ -281,7 +273,6 @@ class DangerButton(Button):
     """Danger button for destructive actions."""
 
     def __init__(self, text: str = "", parent=None):
-        """Initialize danger button."""
         super().__init__(text, parent)
         self.setObjectName("dangerButton")
         self._base_min_height = 48
@@ -294,7 +285,6 @@ class SuccessButton(Button):
     """Success button for positive actions."""
 
     def __init__(self, text: str = "", parent=None):
-        """Initialize success button."""
         super().__init__(text, parent)
         self.setObjectName("successButton")
         self._base_min_height = 48
@@ -307,7 +297,6 @@ class WarningButton(Button):
     """Warning button for caution actions (yellow/amber)."""
 
     def __init__(self, text: str = "", parent=None):
-        """Initialize warning button."""
         super().__init__(text, parent)
         self.setObjectName("warningButton")
         self._base_min_height = 48

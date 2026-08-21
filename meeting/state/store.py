@@ -63,10 +63,6 @@ class MeetingStateStore:
         self._lock = threading.RLock()
         self._subscribers: List[Subscriber] = []
 
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
-
     @property
     def meeting_id(self) -> str:
         return self._state.meeting_id
@@ -85,10 +81,6 @@ class MeetingStateStore:
         """Run a read-only function against the live state under the lock."""
         with self._lock:
             return fn(self._state)
-
-    # ------------------------------------------------------------------
-    # Mutation
-    # ------------------------------------------------------------------
 
     def apply(self, actor_type: str, actor_id: Optional[str],
               ops: List[Dict[str, Any]]) -> List[OpResult]:
@@ -222,10 +214,6 @@ class MeetingStateStore:
             # they bypass protection without weakening it for anyone else.
             return self.apply("system", actor_id, [inverse])
 
-    # ------------------------------------------------------------------
-    # Fan-out
-    # ------------------------------------------------------------------
-
     def subscribe(self, cb: Subscriber) -> None:
         with self._lock:
             if cb not in self._subscribers:
@@ -251,10 +239,6 @@ class MeetingStateStore:
                 cb(seq, applied)
             except Exception:
                 logger.exception("State subscriber raised")
-
-    # ------------------------------------------------------------------
-    # Segment ops
-    # ------------------------------------------------------------------
 
     def _apply_segment_op(self, result: OpResult) -> None:
         """Route a validated segment op to the segment handler."""

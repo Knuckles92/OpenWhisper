@@ -93,7 +93,6 @@ _ENGINE_CAPTIONS = {
 
 
 def _design_icon(filename: str) -> QIcon:
-    """Load a bundled Tabler icon used by the Model Manager."""
     path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
     icon = QIcon(str(path))
     # Preserve the semantic icon color for disabled current-state buttons.
@@ -102,7 +101,6 @@ def _design_icon(filename: str) -> QIcon:
 
 
 def _display_name_for_backend(model_value: str) -> str:
-    """Return the main-window combo label for an internal backend value."""
     for display, value in config.MODEL_VALUE_MAP.items():
         if value == model_value:
             return display
@@ -110,8 +108,6 @@ def _display_name_for_backend(model_value: str) -> str:
 
 
 class _CompactStat(QWidget):
-    """Small inline statistic used in the Model Manager summary."""
-
     def __init__(self, label: str, value: str, parent=None):
         super().__init__(parent)
         self.setObjectName("modelManagerStat")
@@ -126,13 +122,10 @@ class _CompactStat(QWidget):
         layout.addWidget(caption)
 
     def set_value(self, value: str) -> None:
-        """Update the displayed statistic value."""
         self.value.setText(value)
 
 
 class ModelManagerDialog(QDialog):
-    """Non-modal home for on-demand, meeting, and library model selection."""
-
     DEFAULT_SIZE = QSize(900, 620)
     MINIMUM_SIZE = QSize(720, 480)
     COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
@@ -148,7 +141,7 @@ class ModelManagerDialog(QDialog):
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         parent=None,
     ):
-        """Initialize the Model Manager.
+        """Protect the loaded model from deletion while its files are mapped.
 
         Args:
             get_loaded_model: Provider returning the model name currently
@@ -182,8 +175,6 @@ class ModelManagerDialog(QDialog):
         self.resize(self.DEFAULT_SIZE)
         self._text_models_loaded.connect(self._on_text_models_loaded)
         self.refresh()
-
-    # ── Construction ───────────────────────────────────────────────
 
     def _build_components_section(self) -> QVBoxLayout:
         """Build the optional-components group shown above the model list.
@@ -226,7 +217,6 @@ class ModelManagerDialog(QDialog):
         return section
 
     def refresh_components(self) -> None:
-        """Re-read component state from disk and re-render every row."""
         for component_id, row in self._component_rows.items():
             row.update_state(
                 component_coordinator.describe(component_id),
@@ -237,7 +227,6 @@ class ModelManagerDialog(QDialog):
     def set_component_progress(
         self, component_id: str, phase: str, done: int, total: int
     ) -> None:
-        """Forward install progress to the matching row."""
         row = self._component_rows.get(component_id)
         if row is not None:
             row.set_progress(phase, done, total)
@@ -245,7 +234,6 @@ class ModelManagerDialog(QDialog):
     def finish_component_install(
         self, component_id: str, success: bool, message: str
     ) -> None:
-        """Render the outcome of an install attempt."""
         self.refresh_components()
         if message:
             self.message_label.setText(message)
@@ -266,7 +254,6 @@ class ModelManagerDialog(QDialog):
             self.component_remove_requested.emit(component_id)
 
     def _setup_ui(self) -> None:
-        """Build the shared shell and the On-demand / Meeting / Library tabs."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 20, 28, 16)
         layout.setSpacing(12)
@@ -392,7 +379,6 @@ class ModelManagerDialog(QDialog):
         return card, card_layout
 
     def _labeled_combo(self, label: str, combo: QComboBox) -> QWidget:
-        """Return a field label stacked over a combo."""
         wrapper = QWidget()
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
@@ -404,7 +390,6 @@ class ModelManagerDialog(QDialog):
         return wrapper
 
     def _build_ondemand_tab(self) -> QWidget:
-        """Build Voice and Text assignment for Quick Record / Upload."""
         tab, scroll, layout = self._make_scroll_page("modelManagerOndemandTab")
         self.ondemand_scroll_area = scroll
         self.text_scroll_area = scroll
@@ -499,7 +484,6 @@ class ModelManagerDialog(QDialog):
         return tab
 
     def _build_meeting_tab(self) -> QWidget:
-        """Build meeting ASR, speaker ID, and intelligence assignment."""
         tab, scroll, layout = self._make_scroll_page("modelManagerMeetingTab")
         self.meeting_scroll_area = scroll
 
@@ -671,7 +655,6 @@ class ModelManagerDialog(QDialog):
         return tab
 
     def _build_library_tab(self) -> QWidget:
-        """Build the shared Whisper cache, components, and runtime tab."""
         tab = QWidget()
         tab.setObjectName("modelManagerLibraryTab")
         layout = QVBoxLayout(tab)
@@ -837,8 +820,6 @@ class ModelManagerDialog(QDialog):
         button.setMinimumWidth(fitted)
         button.setMaximumWidth(fitted)
 
-    # ── Callback plumbing (dialog signals) ─────────────────────────
-
     #: Assigned by UIController; called with the model name.
     on_download_requested: Optional[Callable[[str], None]] = None
     on_delete_requested: Optional[Callable[[str], None]] = None
@@ -868,7 +849,6 @@ class ModelManagerDialog(QDialog):
         self.refresh()
 
     def _on_meeting_set_active_clicked(self, model_name: str) -> None:
-        """Persist the Meeting Mode Whisper ASR selection."""
         try:
             settings_manager.save_setting(
                 SettingsKey.MEETING_WHISPER_MODEL, model_name
@@ -910,7 +890,6 @@ class ModelManagerDialog(QDialog):
         self._refresh_meeting_runtime_label()
 
     def _on_meeting_language_changed(self, _index: int) -> None:
-        """Persist the meeting spoken-language pin."""
         language = self.meeting_language_combo.currentData()
         if language is None:
             return
@@ -921,7 +900,6 @@ class ModelManagerDialog(QDialog):
             self.message_label.setText(f"Couldn't save spoken language: {exc}")
 
     def _on_meeting_agent_core_changed(self, _index: int) -> None:
-        """Persist the meeting agent core (how the chat model is called)."""
         core = self.meeting_agent_core_combo.currentData()
         if core is None:
             return
@@ -973,7 +951,6 @@ class ModelManagerDialog(QDialog):
         self._refresh_speaker_id_status()
 
     def _on_details_requested(self, model_name: str) -> None:
-        """Open the bundled technical profile for a selected model."""
         if model_name == "auto":
             return
         details = get_model_details(model_name)
@@ -991,19 +968,16 @@ class ModelManagerDialog(QDialog):
             return {}
 
     def _connect_picker_profile_signals(self, picker: TextModelPicker) -> None:
-        """Wire add/edit/delete endpoint actions for one picker."""
         picker.add_endpoint_requested.connect(self._add_text_endpoint)
         picker.edit_endpoint_requested.connect(self._edit_text_endpoint)
         picker.delete_endpoint_requested.connect(self._delete_text_endpoint)
 
     def _refresh_picker_profiles(self) -> None:
-        """Reload custom endpoints into both text pickers."""
         profiles = list_profiles(self._settings_snapshot())
         self.text_model_picker.set_profiles(profiles)
         self.meeting_model_picker.set_profiles(profiles)
 
     def _add_text_endpoint(self) -> None:
-        """Create a custom OpenAI-compatible endpoint profile."""
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         dialog = TextEndpointDialog(parent=self)
@@ -1038,7 +1012,6 @@ class ModelManagerDialog(QDialog):
         self.message_label.setText(f'Added endpoint "{profile.name}"')
 
     def _edit_text_endpoint(self, profile_id: str) -> None:
-        """Edit an existing custom endpoint profile."""
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         profile = get_profile(profile_id, self._settings_snapshot())
@@ -1106,7 +1079,6 @@ class ModelManagerDialog(QDialog):
         self.message_label.setText(f'Deleted endpoint "{profile.name}"')
 
     def _load_text_settings(self) -> None:
-        """Load the active cleanup choice into the on-demand text picker."""
         settings = self._settings_snapshot()
         provider = resolve_transcript_cleanup_provider(settings)
         model = resolve_transcript_cleanup_model(settings)
@@ -1129,7 +1101,6 @@ class ModelManagerDialog(QDialog):
         self.text_model_picker.set_active_selection(provider, model)
 
     def _load_meeting_settings(self) -> None:
-        """Load meeting Whisper/LLM/extra choices into the Meeting tab."""
         settings = self._settings_snapshot()
         provider = resolve_meeting_llm_provider(settings)
         model = resolve_meeting_llm_model(settings)
@@ -1163,7 +1134,6 @@ class ModelManagerDialog(QDialog):
         self._refresh_speaker_id_status()
 
     def _load_engine_and_runtime(self) -> None:
-        """Refresh the on-demand engine combo and shared device/quant."""
         try:
             model_value = settings_manager.load_model_selection()
         except Exception:
@@ -1192,12 +1162,10 @@ class ModelManagerDialog(QDialog):
         self._refresh_meeting_runtime_label()
 
     def _update_engine_caption(self) -> None:
-        """Explain the concrete model behind the selected recording engine."""
         value = self.engine_combo.currentData() or "local_whisper"
         self.engine_caption.setText(_ENGINE_CAPTIONS.get(value, ""))
 
     def _update_ondemand_whisper_enabled(self) -> None:
-        """Disable the local-size picker when the engine is not Local Whisper."""
         is_local = self.engine_combo.currentData() == "local_whisper"
         self.ondemand_whisper_picker.setEnabled(is_local)
         if not is_local:
@@ -1207,7 +1175,6 @@ class ModelManagerDialog(QDialog):
             )
 
     def _refresh_meeting_runtime_label(self) -> None:
-        """Show the shared device/quant that meeting ASR inherits."""
         device = self.device_combo.currentText() or "auto"
         compute = self.compute_combo.currentText() or "auto"
         self.meeting_runtime_label.setText(
@@ -1216,7 +1183,6 @@ class ModelManagerDialog(QDialog):
         )
 
     def _refresh_speaker_id_status(self) -> None:
-        """Describe the selected speaker-ID backend and component state."""
         backend = self.meeting_speaker_id_combo.currentData()
         if backend == MeetingSpeakerIdBackend.OPENAI:
             self.speaker_id_status.setText(
@@ -1245,20 +1211,16 @@ class ModelManagerDialog(QDialog):
             )
 
     def show_text_tab(self) -> None:
-        """Select On-demand and scroll to the cleanup text card."""
         self.tabs.setCurrentWidget(self.ondemand_tab)
         self.ondemand_scroll_area.ensureWidgetVisible(self.text_card)
 
     def show_meeting_tab(self) -> None:
-        """Select the Meeting Mode tab."""
         self.tabs.setCurrentWidget(self.meeting_tab)
 
     def show_library_tab(self) -> None:
-        """Select the Library tab (downloads and shared runtime)."""
         self.tabs.setCurrentWidget(self.library_tab)
 
     def show_ondemand_tab(self) -> None:
-        """Select the On-demand tab."""
         self.tabs.setCurrentWidget(self.ondemand_tab)
 
     def _on_manager_tab_changed(self, index: int) -> None:
@@ -1276,14 +1238,12 @@ class ModelManagerDialog(QDialog):
             )
 
     def _on_text_provider_changed(self, provider: str) -> None:
-        """Load a newly selected provider in the cleanup model picker."""
         if self.tabs.currentWidget() is self.ondemand_tab:
             self._fetch_catalog_models(
                 provider, picker=self.text_model_picker
             )
 
     def _on_meeting_provider_changed(self, provider: str) -> None:
-        """Load a newly selected provider in the meeting LLM picker."""
         if self.tabs.currentWidget() is self.meeting_tab:
             self._fetch_catalog_models(
                 provider, picker=self.meeting_model_picker
@@ -1402,7 +1362,6 @@ class ModelManagerDialog(QDialog):
         )
 
     def _activate_text_model(self, provider: str) -> None:
-        """Persist one provider/model pair as the cleanup model."""
         if provider != self.text_model_picker.provider:
             return
         model = self.text_model_picker.model_combo.currentText().strip()
@@ -1429,7 +1388,6 @@ class ModelManagerDialog(QDialog):
         )
 
     def _activate_meeting_llm_model(self, provider: str) -> None:
-        """Persist one provider/model pair as the meeting intelligence model."""
         if provider != self.meeting_model_picker.provider:
             return
         model = self.meeting_model_picker.model_combo.currentText().strip()
@@ -1458,7 +1416,6 @@ class ModelManagerDialog(QDialog):
     def _usage_for(
         self, model_name: str, dictation_model: str, meeting_model: str
     ) -> str:
-        """Return the Library usage chip for one catalog row."""
         uses = []
         if model_name == dictation_model:
             uses.append("On-demand")
@@ -1466,10 +1423,7 @@ class ModelManagerDialog(QDialog):
             uses.append("Meetings")
         return " · ".join(uses)
 
-    # ── State updates ──────────────────────────────────────────────
-
     def refresh(self) -> None:
-        """Refresh cache state and every mode-page assignment."""
         self._load_text_settings()
         self._load_meeting_settings()
         self._load_engine_and_runtime()
@@ -1520,13 +1474,11 @@ class ModelManagerDialog(QDialog):
         self._apply_filter(self.filter_edit.text())
 
     def set_downloading(self, model_name: str) -> None:
-        """Mark a model as downloading (badge + disabled buttons)."""
         self._downloading_model = model_name
         self.message_label.setText(f'Downloading "{model_name}"…')
         self.refresh()
 
     def finish_download(self, model_name: str, success: bool) -> None:
-        """Clear the downloading state once a download ends."""
         if self._downloading_model == model_name:
             self._downloading_model = None
         self.message_label.setText(
@@ -1535,16 +1487,12 @@ class ModelManagerDialog(QDialog):
         self.refresh()
 
     def show_delete_result(self, model_name: str, success: bool, error: str) -> None:
-        """Report a delete outcome (row refresh arrives via cache-changed)."""
         if success:
             self.message_label.setText(f'Deleted "{model_name}"')
         else:
             self.message_label.setText(f"Could not delete: {error}")
 
-    # ── Filter ─────────────────────────────────────────────────────
-
     def _apply_filter(self, _value=None):
-        """Filter and sort rows using the current toolbar selections."""
         text = self.filter_edit.text()
         needle = text.strip().lower()
         status = self.status_filter_combo.currentData()

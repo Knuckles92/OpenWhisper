@@ -162,10 +162,6 @@ class WsHub:
     """Connection registry and broadcast fan-out for dashboard WebSockets."""
 
     def __init__(self, engine: Any, repository: Any) -> None:
-        """Args:
-            engine: The ``MeetingEngine`` owning tokens, store, and actions.
-            repository: A ``MeetingRepository`` for meeting/segment reads.
-        """
         self._engine = engine
         self._repository = repository
         self._connections: Dict[WebSocket, _Connection] = {}
@@ -177,10 +173,6 @@ class WsHub:
         #: Set by ``MeetingWebServer`` so ``hello`` can carry an absolute
         #: guest URL; falls back to a relative ``/m/{token}`` path.
         self.get_guest_url: Optional[Callable[[], str]] = None
-
-    # ------------------------------------------------------------------
-    # Lifecycle (called from the server's event loop)
-    # ------------------------------------------------------------------
 
     def on_startup(self) -> None:
         """Capture the serving loop and subscribe to the state store."""
@@ -214,10 +206,6 @@ class WsHub:
                 logger.exception("Failed to unsubscribe stale state store")
         store.subscribe(self._on_store_batch)
         self._subscribed_store = store
-
-    # ------------------------------------------------------------------
-    # Broadcast
-    # ------------------------------------------------------------------
 
     def _on_store_batch(self, seq: int, applied: List[OpResult]) -> None:
         """State-store subscriber: fan applied ops out as a ``patch``."""
@@ -352,10 +340,6 @@ class WsHub:
             await websocket.close(code=code)
         except Exception:
             logger.debug("WebSocket close failed", exc_info=True)
-
-    # ------------------------------------------------------------------
-    # Connection handling
-    # ------------------------------------------------------------------
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         """Serve one dashboard WebSocket from handshake to disconnect.
@@ -611,10 +595,6 @@ class WsHub:
             return (store.snapshot().get("participants") or {}).get(participant_id)
         except Exception:
             return None
-
-    # ------------------------------------------------------------------
-    # Receive loop
-    # ------------------------------------------------------------------
 
     async def _receive_loop(self, websocket: WebSocket,
                             conn: _Connection) -> None:

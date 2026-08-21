@@ -1194,9 +1194,7 @@ class TestCheckpointTimeoutLifecycle:
         assert "dropped" in caplog.text
 
 
-# --------------------------------------------------------------------------
 # Sidecar createMeetingTools polishOnly gate (TypeScript via esbuild runner).
-# --------------------------------------------------------------------------
 
 SIDECAR_ROOT = Path(__file__).resolve().parents[1] / "sidecar"
 RUNNER = SIDECAR_ROOT / "scripts" / "run-tools-test.mjs"

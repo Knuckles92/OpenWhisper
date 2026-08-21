@@ -1,5 +1,3 @@
-"""Tests for the main window's compact recording mode."""
-
 import pytest
 import os
 from unittest.mock import patch
@@ -14,16 +12,12 @@ from ui_qt.main_window import MainWindow
 
 
 class TestMainWindowCompactMode:
-    """Exercise compact/full transitions without displaying a real window."""
-
     @classmethod
     def setUpClass(cls):
-        """Create the shared Qt application."""
         cls.app = QApplication.instance() or QApplication([])
 
     @pytest.fixture(autouse=True)
     def _setup(self):
-        """Create a main window with isolated settings access."""
         self.load_settings = patch.object(
             settings_manager,
             "load_all_settings",
@@ -43,7 +37,6 @@ class TestMainWindowCompactMode:
     @pytest.fixture(autouse=True)
     def _teardown(self):
         yield
-        """Close the window and restore settings methods."""
         self.window._force_quit = True
         self.window.close()
         self.app.processEvents()
@@ -104,7 +97,6 @@ class TestMainWindowCompactMode:
         assert not self.window.is_recording
 
     def test_compact_mode_selection_is_persisted(self):
-        """Mode transitions write the compact preference setting."""
         self.window.set_compact_mode(True)
         self.saved_setting.assert_any_call(SettingsKey.COMPACT_MODE, True)
 
@@ -112,7 +104,6 @@ class TestMainWindowCompactMode:
         self.saved_setting.assert_any_call(SettingsKey.COMPACT_MODE, False)
 
     def test_persisted_compact_mode_is_restored(self):
-        """Startup restoration applies the saved compact preference."""
         self.mock_get_setting.side_effect = (
             lambda key, default=None: True
             if key == SettingsKey.COMPACT_MODE

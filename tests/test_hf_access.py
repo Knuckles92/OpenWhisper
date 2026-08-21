@@ -30,8 +30,6 @@ def _fake_repo(repo_id, size_on_disk, revisions, repo_type="model"):
 
 
 class TestHelpers:
-    """Tests for module-level helper functions."""
-
     def test_format_download_size_known_models(self):
         assert format_download_size("base") == "~145 MB"
         assert format_download_size("turbo") == "~1.6 GB"

@@ -1,7 +1,3 @@
-"""
-PyQt6 main window.
-Main application window with recording controls and transcription display.
-"""
 import logging
 import sys
 from typing import Optional, Callable
@@ -25,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class CustomTitleBar(QFrame):
-    """Custom title bar for frameless window with integrated menu."""
-
     _MENU_BAR_STYLE = """
         QMenuBar {
             background-color: transparent;
@@ -103,7 +97,7 @@ class CustomTitleBar(QFrame):
         self.parent_window = parent
         self._drag_position = None
         self._is_maximized = False
-        self._normal_geometry = None  # Store geometry before maximizing
+        self._normal_geometry = None
         self.setFixedHeight(32)
         self.setObjectName("customTitleBar")
         self.setAutoFillBackground(True)
@@ -121,20 +115,17 @@ class CustomTitleBar(QFrame):
         self.setStyleSheet(self._TITLE_BAR_STYLE)
 
     def _build_menu_bar(self, layout: QHBoxLayout) -> None:
-        """Create the integrated menu bar widget on the title bar."""
         from PyQt6.QtWidgets import QMenuBar
         self.menu_bar = QMenuBar()
         self.menu_bar.setStyleSheet(self._MENU_BAR_STYLE)
         layout.addWidget(self.menu_bar)
 
     def _build_title_label(self, layout: QHBoxLayout) -> None:
-        """Create the centered application title label."""
         self.title_label = QLabel("OpenWhisper")
         self.title_label.setStyleSheet(self._TITLE_LABEL_STYLE)
         layout.addWidget(self.title_label)
 
     def _build_window_buttons(self, layout: QHBoxLayout) -> None:
-        """Create the minimize/maximize/close window-control buttons."""
         self.minimize_btn = QPushButton("─")
         self.minimize_btn.setFixedSize(46, 32)
         self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
@@ -166,13 +157,11 @@ class CustomTitleBar(QFrame):
             if getattr(self.parent_window, "_compact_mode", False):
                 return
             if self._is_maximized:
-                # Restore to saved geometry
                 if self._normal_geometry:
                     self.parent_window.setGeometry(self._normal_geometry)
                 self.maximize_btn.setText("□")
                 self.maximize_btn.setToolTip("Maximize")
             else:
-                # Save current geometry before maximizing
                 self._normal_geometry = self.parent_window.geometry()
                 self.parent_window.showMaximized()
                 self.maximize_btn.setText("❐")
@@ -236,15 +225,12 @@ from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
 
 class MainWindow(QMainWindow):
-    """PyQt6 main window with clean, professional design."""
-
     # Window-local keyboard shortcuts. Distinct from the global hotkeys in
     # config.DEFAULT_HOTKEYS, which work even when the app is unfocused.
     HISTORY_SHORTCUT = "Ctrl+H"
     COMPACT_SHORTCUT = "Ctrl+Shift+C"
     QUIT_SHORTCUT = "Ctrl+Q"
 
-    # Signals for application events
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
@@ -259,11 +245,9 @@ class MainWindow(QMainWindow):
     past_meeting_requested = pyqtSignal(str)  # meeting_id
 
     def __init__(self):
-        """Initialize the main window."""
         super().__init__()
         self.setWindowTitle("OpenWhisper")
 
-        # Frameless window with custom title bar.
         # Keep the explicit Window type flag: setWindowFlags() replaces *all*
         # flags, and a bare FramelessWindowHint drops the top-level Window type.
         # On macOS that produces an NSWindow that fails to order back to the
@@ -282,15 +266,13 @@ class MainWindow(QMainWindow):
             config.MAIN_WINDOW_DEFAULT_HEIGHT,
         )
 
-        # State
         self.is_recording = False
         self.current_model = config.MODEL_CHOICES[0]
-        self._force_quit = False  # Flag to bypass minimize to tray on close
-        self._initial_show_complete = False  # Track if initial show has completed
+        self._force_quit = False
+        self._initial_show_complete = False
         self._compact_mode = False
         self._full_geometry = None
 
-        # Window sizing for sidebar toggle
         self._collapsed_width = config.MAIN_WINDOW_DEFAULT_WIDTH
         self._sidebar_width = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
         self._geometry_format = "collapsed_content_v1"
@@ -299,7 +281,6 @@ class MainWindow(QMainWindow):
         # matching expand restores exactly that much (see _on_transcription_collapsed).
         self._collapse_freed_height = 0
 
-        # Same tracking for the Engine Settings panel (independent of transcription).
         self._engine_collapse_freed_height = 0
 
         # Height borrowed to fit the Meeting Mode page, returned once that
@@ -309,14 +290,12 @@ class MainWindow(QMainWindow):
         self._meeting_height_timer.setSingleShot(True)
         self._meeting_height_timer.timeout.connect(self._sync_meeting_mode_height)
 
-        # Edge resize support for frameless window
-        self._resize_margin = 8  # Pixels from edge to trigger resize
+        self._resize_margin = 8
         self._resizing = False
-        self._resize_edge = None  # Tuple of (horizontal, vertical) edge flags
+        self._resize_edge = None
         self._resize_start_pos = None
         self._resize_start_geometry = None
 
-        # Geometry persistence
         self._geometry_save_timer = None
         self._tab_history_refresh_timer = QTimer(self)
         self._tab_history_refresh_timer.setSingleShot(True)
@@ -324,28 +303,22 @@ class MainWindow(QMainWindow):
             self._refresh_history_sidebar_if_expanded
         )
 
-        # Callbacks (will be set by controller)
         self.on_show_copied_animation: Optional[Callable] = None
 
-        # Setup UI
         self._setup_ui()
         self._setup_menu()
         self._load_saved_settings()
         self._restore_window_geometry()
         self._restore_compact_mode()
 
-        # Enable mouse tracking for resize cursor updates
         self.setMouseTracking(True)
-        # Install event filter on application to catch mouse moves from all widgets
         from PyQt6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
 
     def _setup_ui(self):
-        """Setup the user interface."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        # Subtle border to indicate resize areas on frameless window
         central_widget.setStyleSheet("""
             QWidget#centralWidget {
                 border: 1px solid #3a3a3c;
@@ -354,29 +327,24 @@ class MainWindow(QMainWindow):
         central_widget.setObjectName("centralWidget")
         central_widget.setMouseTracking(True)
 
-        # Outer layout for title bar + content
         outer_layout = QVBoxLayout(central_widget)
         outer_layout.setContentsMargins(1, 1, 1, 1)  # 1px margin for border visibility
         outer_layout.setSpacing(0)
 
-        # Custom title bar
         self.title_bar = CustomTitleBar(self)
         outer_layout.addWidget(self.title_bar)
 
-        # Container for main content + sidebar
         content_wrapper = QWidget()
         root_layout = QHBoxLayout(content_wrapper)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         outer_layout.addWidget(content_wrapper, stretch=1)
 
-        # Main content area (left side)
         main_area = QWidget()
         main_area_layout = QVBoxLayout(main_area)
         main_area_layout.setContentsMargins(0, 0, 0, 0)
         main_area_layout.setSpacing(0)
 
-        # Tabbed Content Widget (Quick Record)
         self.tabbed_content = TabbedContentWidget()
         self.quick_record_tab = QuickRecordTab()
 
@@ -391,8 +359,6 @@ class MainWindow(QMainWindow):
         )
         self.tabbed_content.add_tab(self.meeting_mode_tab, "Meeting Mode")
 
-        # All transcription tabs; used to fan out shared state (model
-        # selection, engine settings, collapse mirroring, device info).
         self.transcription_tabs = (self.quick_record_tab, self.upload_file_tab)
 
         # Sync the stack with the tab bar after all tabs have been added
@@ -411,10 +377,8 @@ class MainWindow(QMainWindow):
             self.quick_record_tab.cancel_button.click
         )
 
-        # Connect tab changed signal to update sidebar and emit signal
         self.tabbed_content.tab_changed.connect(self._on_tab_changed)
 
-        # Connect signals shared by all transcription tabs
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
@@ -425,7 +389,6 @@ class MainWindow(QMainWindow):
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
-        # Connect tab-specific signals
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
@@ -433,16 +396,13 @@ class MainWindow(QMainWindow):
         main_area_layout.addWidget(self.tabbed_content)
         main_area_layout.addWidget(self.compact_controller)
 
-        # Add main area to root layout
         root_layout.addWidget(main_area, stretch=1)
 
-        # History edge tab (always visible toggle button)
         self.history_edge_tab = HistoryEdgeTab()
         self.history_edge_tab.set_shortcut_hint(self.HISTORY_SHORTCUT)
         self.history_edge_tab.clicked.connect(self.toggle_history)
         root_layout.addWidget(self.history_edge_tab)
 
-        # History sidebar (right side)
         self.history_sidebar = HistorySidebar()
         self.history_sidebar.entry_selected.connect(self._on_history_entry_selected)
         self.history_sidebar.entry_copied.connect(self._on_history_entry_copied)
@@ -554,7 +514,6 @@ class MainWindow(QMainWindow):
     """
 
     def _build_footer(self, outer_layout: QVBoxLayout) -> None:
-        """Create the bottom footer bar containing window actions."""
         self.footer = QWidget()
         self.footer.setObjectName("footerBar")
         self.footer.setFixedHeight(48)
@@ -620,14 +579,10 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self.footer)
 
     def _setup_menu(self):
-        """Setup the menu bar in the custom title bar."""
-        # Hide the QMainWindow's built-in menu bar
         self.menuBar().hide()
 
-        # Use the custom title bar's menu bar
         menubar = self.title_bar.menu_bar
 
-        # File menu
         file_menu = menubar.addMenu("File")
         # Qt auto-assigns PreferencesRole to actions named "Settings", which
         # rewrites the label to "Preferences" on Windows. Keep our wording.
@@ -644,7 +599,6 @@ class MainWindow(QMainWindow):
         quit_action.setMenuRole(QAction.MenuRole.NoRole)
         quit_action.setShortcut(QKeySequence(self.QUIT_SHORTCUT))
 
-        # View menu
         view_menu = menubar.addMenu("View")
         sidebar_name = (
             "Past Meetings"
@@ -660,13 +614,11 @@ class MainWindow(QMainWindow):
             "Open Meeting Dashboard", self.meeting_dashboard_requested.emit
         )
 
-        # Help menu
         help_menu = menubar.addMenu("Help")
         about_action = help_menu.addAction("About", self.show_about)
         about_action.setMenuRole(QAction.MenuRole.NoRole)
 
     def _load_saved_settings(self):
-        """Load saved settings and apply to UI."""
         try:
             saved_model = settings_manager.load_model_selection()
             for tab in self.transcription_tabs:
@@ -676,10 +628,8 @@ class MainWindow(QMainWindow):
             logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
             logger.error(f"Failed to load saved settings: {e}")
-            # Use default (already set)
 
     def _on_tab_changed(self, index: int):
-        """Handle tab selection change."""
         logger.debug(f"Tab changed to index {index}")
 
         if self._compact_mode and index != TabbedContentWidget.TAB_QUICK_RECORD:
@@ -703,19 +653,16 @@ class MainWindow(QMainWindow):
         self._tab_history_refresh_timer.start(75)
 
     def _refresh_history_sidebar_if_expanded(self) -> None:
-        """Refresh history only when the sidebar is actually visible."""
         if self.history_sidebar.is_expanded:
             self.history_sidebar.refresh()
 
     def _on_quick_record_toggled(self, is_recording: bool):
-        """Handle record toggle from Quick Record tab."""
         self.is_recording = is_recording
         self.compact_controller.set_recording_state(is_recording)
         self.compact_controller.set_status(
             "Recording in progress..." if is_recording else "Ready to record"
         )
 
-        # Lock/unlock tabs during recording (keep Meeting Mode lock if active)
         if is_recording:
             self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
         elif not self.meeting_mode_tab.is_meeting_active:
@@ -724,7 +671,6 @@ class MainWindow(QMainWindow):
         self.record_toggled.emit(is_recording)
 
     def _on_quick_record_canceled(self):
-        """Handle cancel from Quick Record tab."""
         self.is_recording = False
         self.compact_controller.set_recording_state(False)
         self.compact_controller.set_status("Ready to record")
@@ -734,7 +680,6 @@ class MainWindow(QMainWindow):
         self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
-        """Handle model selection change from either tab and keep both in sync."""
         self.current_model = model_name
 
         # Sync the other tabs' combos without re-emitting the signal
@@ -751,11 +696,6 @@ class MainWindow(QMainWindow):
         self.model_changed.emit(model_name)
 
     def _apply_local_engine_visibility(self, model_name: str):
-        """Show the local-engine panel only when Local Whisper is the backend.
-
-        Args:
-            model_name: The backend display name (e.g. "Local Whisper").
-        """
         is_local = config.MODEL_VALUE_MAP.get(model_name) == "local_whisper"
         for tab in self.transcription_tabs:
             tab.set_local_engine_visible(is_local)
@@ -774,12 +714,9 @@ class MainWindow(QMainWindow):
         self.whisper_engine_changed.emit()
 
     def _on_upload_file_transcribe(self, audio_path: str):
-        """Handle Transcribe click from the Upload File tab."""
         self.upload_file_requested.emit(audio_path)
 
     def _update_recording_state(self):
-        """Update UI states based on recording status."""
-        # Delegate to quick record tab
         self.quick_record_tab.is_recording = self.is_recording
         self.quick_record_tab._update_recording_state()
         self.compact_controller.set_recording_state(self.is_recording)
@@ -787,55 +724,32 @@ class MainWindow(QMainWindow):
             "Recording in progress..." if self.is_recording else "Ready to record"
         )
 
-        # Lock/unlock tabs during recording (keep Meeting Mode lock if active)
         if self.is_recording:
             self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
         elif not self.meeting_mode_tab.is_meeting_active:
             self.tabbed_content.set_recording_state(False, -1)
 
     def set_status(self, status_text: str):
-        """Update the status label on the active tab."""
-        # Update the Quick Record tab status
         self.quick_record_tab.set_status(status_text)
         self.compact_controller.set_status(status_text)
 
     def set_device_info(self, device_info: str):
-        """Set the resolved-engine readout on both tabs' Local engine panels.
-
-        Args:
-            device_info: Device information string to display.
-        """
         for tab in self.transcription_tabs:
             tab.set_device_info(device_info)
 
     def set_transcript(self, text: str, raw=None):
-        """Set the transcription text.
-
-        Args:
-            text: Fixed/display transcript.
-            raw: Optional unprocessed ASR text when distinct from ``text``.
-        """
         self.quick_record_tab.set_transcript(text, raw=raw)
 
     def append_transcription(self, text: str):
-        """Append text to the transcription."""
         self.quick_record_tab.append_transcription(text)
 
     def clear_transcription(self):
-        """Clear the transcription text."""
         self.quick_record_tab.clear_transcription()
 
     def set_partial_transcription(self, text: str, is_final: bool):
-        """Display partial transcription with visual indicator.
-
-        Args:
-            text: Partial transcription text
-            is_final: Whether this chunk is finalized
-        """
         self.quick_record_tab.set_partial_transcription(text, is_final)
 
     def clear_partial_transcription(self):
-        """Clear partial transcription buffer."""
         self.quick_record_tab.clear_partial_transcription()
 
     def set_transcription_stats(
@@ -844,19 +758,11 @@ class MainWindow(QMainWindow):
         audio_duration: float,
         file_size: int
     ):
-        """Set the transcription statistics display.
-
-        Args:
-            transcription_time: Time taken to transcribe in seconds.
-            audio_duration: Duration of the audio in seconds.
-            file_size: Size of the audio file in bytes.
-        """
         self.quick_record_tab.set_transcription_stats(
             transcription_time, audio_duration, file_size
         )
 
     def clear_transcription_stats(self):
-        """Clear and hide the transcription statistics display."""
         self.quick_record_tab.clear_transcription_stats()
 
     def _on_transcription_collapsed(self, collapsed: bool, delta: int):
@@ -989,11 +895,6 @@ class MainWindow(QMainWindow):
         self._animate_resize(self.width(), target)
 
     def _meeting_mode_page_min_height(self) -> int:
-        """Return the shortest height that fits the Meeting Mode page.
-
-        A width-dependent minimum wins when the page reports one, since text
-        that rewraps needs more height than a single-line estimate.
-        """
         page = self.meeting_mode_tab
         needed = page.minimumSizeHint().height()
 
@@ -1003,7 +904,6 @@ class MainWindow(QMainWindow):
         return needed
 
     def _max_usable_height(self) -> int:
-        """Return the tallest window height that still fits on screen."""
         from PyQt6.QtWidgets import QApplication
 
         screen = (
@@ -1015,55 +915,40 @@ class MainWindow(QMainWindow):
         return screen.availableGeometry().height()
 
     def _on_stats_visibility_changed(self, visible: bool):
-        """Handle stats widget visibility change and adjust window height.
-
-        Args:
-            visible: True if stats are now visible, False if hidden.
-        """
-        # Get the stats widget height (approximately 60px when visible)
         stats_height = 60 if visible else 0
         current_height = self.height()
 
         if visible:
-            # Expand window to fit stats
             new_height = current_height + stats_height
         else:
-            # Shrink window when stats hidden
             new_height = max(
                 config.MAIN_WINDOW_MIN_HEIGHT,
                 current_height - stats_height,
             )
 
-        # Animate the height change
         self._animate_resize(self.width(), new_height)
 
     def open_settings(self):
-        """Open settings dialog."""
         logger.info("Opening settings dialog")
         self.settings_requested.emit()
 
     def open_model_manager(self):
-        """Open the Model Manager dialog."""
         logger.info("Opening model manager")
         self.model_manager_requested.emit("ondemand")
 
     def open_hotkey_settings(self):
-        """Open hotkey settings dialog."""
         logger.info("Opening hotkey settings")
         self.hotkeys_requested.emit()
 
     def show_about(self):
-        """Show about dialog."""
         logger.info("Showing about dialog")
         self.about_requested.emit()
 
     def minimize_to_tray(self):
-        """Minimize the window to the system tray."""
         logger.info("Minimizing to tray")
         self.hide()
 
     def toggle_compact_mode(self) -> None:
-        """Toggle between the full workspace and compact recording controller."""
         self.set_compact_mode(not self._compact_mode)
 
     def set_compact_mode(self, compact: bool, persist: bool = True) -> None:
@@ -1098,7 +983,6 @@ class MainWindow(QMainWindow):
             self.history_sidebar.hide()
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
-            # Keep the compact footer to tray / expand / quit only.
             self.models_button.hide()
             self.compact_button.setText("Full Size")
 
@@ -1141,7 +1025,6 @@ class MainWindow(QMainWindow):
                 logger.warning(f"Failed to save compact mode: {e}")
 
     def _restore_compact_mode(self) -> None:
-        """Restore the persisted compact/full mode selection."""
         try:
             if settings_manager.get(SettingsKey.COMPACT_MODE, False) is True:
                 self.set_compact_mode(True, persist=False)
@@ -1149,7 +1032,6 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to restore compact mode: {e}")
 
     def _save_compact_geometry(self) -> None:
-        """Persist the compact controller position separately from full geometry."""
         geo = self.geometry()
         try:
             settings_manager.save_setting(
@@ -1160,7 +1042,6 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to save compact window geometry: {e}")
 
     def _restore_compact_geometry(self) -> None:
-        """Restore and clamp the compact controller position to the screen."""
         x = self.x()
         y = self.y()
         try:
@@ -1181,7 +1062,6 @@ class MainWindow(QMainWindow):
         self.move(x, y)
 
     def toggle_tray_visibility(self):
-        """Toggle between hidden-to-tray and visible foreground states."""
         if self.isVisible() and not self.isMinimized():
             self.minimize_to_tray()
             return
@@ -1208,7 +1088,6 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def quit_application(self):
-        """Quit the application completely (bypasses minimize to tray)."""
         logger.info("Quitting application")
         self._save_geometry()
         self._force_quit = True
@@ -1216,7 +1095,6 @@ class MainWindow(QMainWindow):
         QApplication.instance().quit()
 
     def toggle_history(self):
-        """Toggle the sidebar for the currently selected workspace mode."""
         logger.info("Toggling contextual sidebar")
 
         if self._compact_mode:
@@ -1224,7 +1102,6 @@ class MainWindow(QMainWindow):
             if self.history_sidebar.is_expanded:
                 return
 
-        # Update the edge tab arrow direction immediately for instant visual feedback
         will_be_expanded = not self.history_sidebar.is_expanded
         self.history_edge_tab.set_expanded(will_be_expanded)
 
@@ -1260,7 +1137,6 @@ class MainWindow(QMainWindow):
         self.setGeometry(geo.x(), geo.y(), target_width, geo.height())
 
     def _on_sidebar_animation_finished(self) -> None:
-        """Reflow responsive Meeting Mode controls at the final sidebar width."""
         if (
             self.tabbed_content.current_index()
             != TabbedContentWidget.TAB_MEETING_MODE
@@ -1300,16 +1176,13 @@ class MainWindow(QMainWindow):
         self._resize_animation.start()
 
     def refresh_history(self):
-        """Refresh the currently active sidebar page."""
         self.history_sidebar.refresh()
 
     def refresh_past_meetings(self) -> None:
-        """Refresh the currently visible Past Meetings page, when selected."""
         if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:
             self.history_sidebar.refresh()
 
     def _on_history_entry_selected(self, entry_id: str):
-        """Open the history entry viewer dialog for the selected tile."""
         entry = history_manager.get_entry_by_id(entry_id)
         if not entry:
             return
@@ -1322,47 +1195,37 @@ class MainWindow(QMainWindow):
         logger.info(f"Opened history entry dialog: {entry_id[:8]}...")
 
     def _on_history_entry_copied_from_dialog(self):
-        """Handle copy from the history entry dialog."""
         self.set_status("Copied to clipboard")
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
         if self.on_show_copied_animation:
             self.on_show_copied_animation()
 
     def _on_history_entry_delete_requested(self, entry_id: str):
-        """Delete a history entry requested from the viewer dialog."""
         if history_manager.delete_entry(entry_id):
             self.refresh_history()
             self._on_history_entry_deleted(entry_id)
             logger.info(f"Deleted history entry from dialog: {entry_id[:8]}...")
 
     def _on_history_entry_copied(self, entry_id: str):
-        """Handle history entry copied notification."""
         self.set_status("Copied to clipboard")
-        # Auto-clear status after delay
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
     def _on_history_entry_deleted(self, entry_id: str):
-        """Handle history entry deleted notification."""
         self.set_status("Entry deleted")
-        # Auto-clear status after delay
         QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
 
     def _on_retranscribe_requested(self, audio_path: str):
-        """Handle re-transcription request for a saved recording."""
         logger.info("Re-transcribe requested: %s", audio_path)
         self.retranscribe_requested.emit(audio_path)
 
     def closeEvent(self, event):
-        """Handle window close event."""
         logger.info("Main window closing")
         self.tabbed_content.flush_pending_tab_selection()
-        # If force quit is set, close immediately
         if self._force_quit:
             logger.info("Force quit - closing application")
             event.accept()
             return
 
-        # Check if minimize to tray is enabled (default: True)
         try:
             settings = settings_manager.load_all_settings()
             minimize_tray = settings.get(SettingsKey.MINIMIZE_TRAY, True)  # Default to True
@@ -1371,17 +1234,14 @@ class MainWindow(QMainWindow):
             minimize_tray = True  # Default to True on error
 
         if minimize_tray:
-            # Hide window instead of closing (X button behavior)
             event.ignore()
             try:
                 self.hide()
                 logger.info("Window hidden to system tray")
             except Exception as e:
                 logger.debug(f"Error hiding window: {e}")
-                # If hiding fails, accept the close event
                 event.accept()
         else:
-            # Close normally
             event.accept()
 
     def update_hotkeys(
@@ -1403,8 +1263,6 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
         self.compact_controller.update_hotkeys(record_key, cancel_key)
         self.tray_button.set_hotkey(minimize_key)
-
-    # ==================== Edge Resize Support ====================
 
     def _get_resize_edge(self, pos) -> tuple:
         """Determine which edge(s) the cursor is near.
@@ -1438,11 +1296,6 @@ class MainWindow(QMainWindow):
         return (horizontal, vertical)
 
     def _update_cursor_for_edge(self, edge: tuple):
-        """Update cursor shape based on edge.
-
-        Args:
-            edge: Tuple of (horizontal, vertical) edge flags.
-        """
         from PyQt6.QtGui import QCursor
 
         h, v = edge
@@ -1459,14 +1312,12 @@ class MainWindow(QMainWindow):
             self.setCursor(Qt.CursorShape.SizeBDiagCursor)
 
     def _begin_resize(self, edge: tuple, global_pos) -> None:
-        """Start a resize operation from a given edge and global position."""
         self._resizing = True
         self._resize_edge = edge
         self._resize_start_pos = global_pos
         self._resize_start_geometry = self.geometry()
 
     def _apply_resize_delta(self, global_pos) -> None:
-        """Apply resize based on the stored start geometry and a global cursor position."""
         if not self._resizing or not self._resize_edge or not self._resize_start_geometry:
             return
 
@@ -1479,24 +1330,21 @@ class MainWindow(QMainWindow):
         new_width = geo.width()
         new_height = geo.height()
 
-        # Handle horizontal resize
-        if h == -1:  # Left edge
+        if h == -1:
             new_width = max(self.minimumWidth(), geo.width() - delta.x())
             new_x = geo.x() + geo.width() - new_width
-        elif h == 1:  # Right edge
+        elif h == 1:
             new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() + delta.x()))
 
-        # Handle vertical resize
-        if v == -1:  # Top edge
+        if v == -1:
             new_height = max(self.minimumHeight(), geo.height() - delta.y())
             new_y = geo.y() + geo.height() - new_height
-        elif v == 1:  # Bottom edge
+        elif v == 1:
             new_height = max(self.minimumHeight(), geo.height() + delta.y())
 
         self.setGeometry(new_x, new_y, new_width, new_height)
 
     def _finish_resize(self) -> None:
-        """Finish a resize operation and persist geometry."""
         if not self._resizing:
             return
         self._resizing = False
@@ -1506,7 +1354,6 @@ class MainWindow(QMainWindow):
         self._schedule_geometry_save()
 
     def mousePressEvent(self, event):
-        """Handle mouse press for edge resize."""
         if event.button() == Qt.MouseButton.LeftButton:
             edge = self._get_resize_edge(event.position().toPoint())
             if edge != (0, 0):
@@ -1517,19 +1364,16 @@ class MainWindow(QMainWindow):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Handle mouse move for resize cursor and resizing."""
         if self._resizing and self._resize_edge:
             self._apply_resize_delta(event.globalPosition().toPoint())
             event.accept()
             return
 
-        # Update cursor based on edge proximity
         edge = self._get_resize_edge(event.position().toPoint())
         self._update_cursor_for_edge(edge)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Handle mouse release to end resize."""
         if event.button() == Qt.MouseButton.LeftButton and self._resizing:
             self._finish_resize()
             event.accept()
@@ -1537,23 +1381,18 @@ class MainWindow(QMainWindow):
 
         super().mouseReleaseEvent(event)
 
-    # ==================== Geometry Persistence ====================
-
     def _schedule_geometry_save(self):
-        """Schedule geometry save with debounce to avoid excessive writes."""
         if self._geometry_save_timer is None:
             self._geometry_save_timer = QTimer(self)
             self._geometry_save_timer.setSingleShot(True)
             self._geometry_save_timer.timeout.connect(self._save_geometry)
 
-        # Reset timer on each call (debounce)
         self._geometry_save_timer.stop()
-        self._geometry_save_timer.start(500)  # Save 500ms after last change
+        self._geometry_save_timer.start(500)
 
     def _save_geometry(self):
-        """Save current window geometry to settings."""
         if self.isMaximized() or self.isMinimized():
-            return  # Don't save maximized/minimized state
+            return
 
         if self._compact_mode:
             self._save_compact_geometry()
@@ -1584,18 +1423,15 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to save window geometry: {e}")
 
     def _restore_window_geometry(self):
-        """Restore window geometry from settings."""
         try:
             geo = settings_manager.get(SettingsKey.WINDOW_GEOMETRY)
             if isinstance(geo, dict) and {'x', 'y', 'width', 'height'}.issubset(geo.keys()):
-                # Validate geometry is within screen bounds
                 from PyQt6.QtWidgets import QApplication
                 from PyQt6.QtCore import QRect
 
                 screen = QApplication.primaryScreen()
                 if screen:
                     screen_geo = screen.availableGeometry()
-                    # Check if saved position is at least partially on screen
                     saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
                     if screen_geo.intersects(saved_rect):
                         raw_width = geo['width']
@@ -1612,7 +1448,6 @@ class MainWindow(QMainWindow):
                             raw_width -= config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
                             migrated_expanded_width = True
 
-                        # Ensure size constraints - both min and max for width and height
                         width = max(self.minimumWidth(), min(raw_width, self.maximumWidth()))
                         max_height = screen_geo.height()
 
@@ -1656,22 +1491,19 @@ class MainWindow(QMainWindow):
             logger.warning(f"Failed to restore window geometry: {e}")
 
     def resizeEvent(self, event):
-        """Handle resize event to save geometry."""
         super().resizeEvent(event)
         # A narrower window rewraps the Meeting Mode text, changing how much
         # height that page needs. Height-only changes cannot alter the wrap.
         if event.oldSize().width() != event.size().width():
             self._schedule_meeting_mode_height_sync()
-        if not self._resizing:  # Don't save during active drag resize (already handled)
+        if not self._resizing:
             self._schedule_geometry_save()
 
     def moveEvent(self, event):
-        """Handle move event to save geometry."""
         super().moveEvent(event)
         self._schedule_geometry_save()
 
     def showEvent(self, event):
-        """Handle show event - restore geometry when showing from tray."""
         super().showEvent(event)
 
         # Skip geometry restoration on initial show (already handled in __init__)
@@ -1681,7 +1513,6 @@ class MainWindow(QMainWindow):
             self._schedule_meeting_mode_height_sync()
             return
 
-        # Re-apply saved geometry when restoring from tray (subsequent shows)
         if not self.isMaximized():
             if self._compact_mode:
                 self._restore_compact_geometry()
@@ -1691,14 +1522,11 @@ class MainWindow(QMainWindow):
         self._schedule_meeting_mode_height_sync()
 
     def eventFilter(self, obj, event):
-        """Filter events to update resize cursor when hovering near edges."""
         if event.type() == QEvent.Type.MouseMove and not self._resizing:
-            # Check if event has position info and is within our window
             if hasattr(event, 'globalPosition'):
                 global_pos = event.globalPosition().toPoint()
                 local_pos = self.mapFromGlobal(global_pos)
 
-                # Only update cursor if mouse is within window bounds
                 if self.rect().contains(local_pos):
                     edge = self._get_resize_edge(local_pos)
                     self._update_cursor_for_edge(edge)

@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 class MeetingRecoveryDialog(QDialog):
-    """Modal dialog offering Finalize/Discard for interrupted meetings."""
-
     def __init__(self, meetings: List[Dict[str, Any]], parent=None):
         """Initialize the recovery dialog.
 
@@ -45,7 +43,6 @@ class MeetingRecoveryDialog(QDialog):
         self._setup_ui(meetings)
 
     def _setup_ui(self, meetings: List[Dict[str, Any]]):
-        """Build the header, one row per meeting, and the close button."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -77,7 +74,6 @@ class MeetingRecoveryDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _build_row(self, meeting: Dict[str, Any]) -> QFrame:
-        """Build one meeting row with its Finalize/Discard actions."""
         meeting_id = str(meeting.get("id", ""))
         row = QFrame()
         row.setObjectName("meetingRecoveryRow")

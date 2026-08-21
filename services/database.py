@@ -1,7 +1,4 @@
-"""
-SQLite database manager for transcription history.
-Provides unified data persistence via SQLAlchemy ORM with migration support.
-"""
+"""SQLite persistence and schema migrations."""
 import json
 import logging
 import os
@@ -18,7 +15,6 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-# Schema version for future migrations
 SCHEMA_VERSION = 11
 
 
@@ -56,10 +52,6 @@ class DatabaseManager:
 
         logger.info(f"DatabaseManager initialized: {self.db_path}")
 
-    # ------------------------------------------------------------------
-    # Session lifecycle
-    # ------------------------------------------------------------------
-
     @contextmanager
     def get_session(self):
         """Yield a thread-scoped session with auto commit/rollback."""
@@ -73,12 +65,7 @@ class DatabaseManager:
         finally:
             self.Session.remove()
 
-    # ------------------------------------------------------------------
-    # Schema initialisation & migrations
-    # ------------------------------------------------------------------
-
     def _init_database(self) -> None:
-        """Create tables (if new DB) and run migrations for existing DBs."""
         # For existing databases, run migrations BEFORE create_all so that
         # ALTER TABLE statements can add columns that models expect.
         self._maybe_run_migrations()
@@ -87,11 +74,9 @@ class DatabaseManager:
         self._drop_removed_meeting_tables()
         self._ensure_meeting_fts()
 
-        # Ensure schema_version row exists
         with self.get_session() as session:
             version_row = session.get(SchemaVersion, SCHEMA_VERSION)
             if not version_row:
-                # Clear any old version rows and set current
                 session.query(SchemaVersion).delete()
                 session.add(SchemaVersion(version=SCHEMA_VERSION))
 
@@ -158,10 +143,9 @@ class DatabaseManager:
             logger.warning(f"Could not initialize meeting FTS index: {e}")
 
     def _maybe_run_migrations(self) -> None:
-        """Check if the database already exists and needs migrations."""
         insp = inspect(self.engine)
         if not insp.has_table('schema_version'):
-            return  # Fresh database — create_all will handle everything
+            return
 
         with self.engine.connect() as conn:
             row = conn.execute(text("SELECT version FROM schema_version LIMIT 1")).fetchone()
@@ -175,7 +159,6 @@ class DatabaseManager:
             conn.commit()
 
     def _run_migrations(self, conn, from_version: int) -> None:
-        """Run progressive migrations using raw SQL (standard for non-Alembic projects)."""
         logger.info(f"Running database migrations from v{from_version} to v{SCHEMA_VERSION}")
 
         if from_version < 6:
@@ -301,10 +284,6 @@ class DatabaseManager:
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
-    # ------------------------------------------------------------------
-    # JSON migration (legacy)
-    # ------------------------------------------------------------------
-
     def _migrate_from_json(self) -> None:
         """Migrate existing JSON data to SQLite on first run."""
         history_file = getattr(config, 'HISTORY_FILE', 'transcription_history.json')
@@ -335,17 +314,13 @@ class DatabaseManager:
                         audio_duration=entry.get('audio_duration'),
                         file_size=entry.get('file_size'),
                     )
-                    session.merge(obj)  # merge = INSERT OR UPDATE
+                    session.merge(obj)
 
             backup_path = json_path + '.bak'
             os.rename(json_path, backup_path)
             logger.info(f"Migrated {len(entries)} history entries from JSON. Backup: {backup_path}")
         except Exception as e:
             logger.error(f"Failed to migrate history from JSON: {e}")
-
-    # =====================================================================
-    # Transcription History
-    # =====================================================================
 
     def add_history_entry(
         self,
@@ -402,10 +377,6 @@ class DatabaseManager:
                 TranscriptionHistory.audio_file == audio_file
             ).update({TranscriptionHistory.audio_file: None})
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def close(self) -> None:
         """Release all connections."""
         self.Session.remove()
@@ -413,8 +384,6 @@ class DatabaseManager:
 
 
 class _LazyDatabaseManager:
-    """Create the database manager only when persistence is first used."""
-
     def __init__(self) -> None:
         self._instance: Optional[DatabaseManager] = None
 
@@ -431,6 +400,4 @@ class _LazyDatabaseManager:
             self._instance.close()
             self._instance = None
 
-
-# Public lazy database manager proxy.
 db = _LazyDatabaseManager()

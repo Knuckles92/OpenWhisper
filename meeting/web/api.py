@@ -170,10 +170,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     if os.path.isdir(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    # ------------------------------------------------------------------
-    # Auth helpers
-    # ------------------------------------------------------------------
-
     async def _current_meeting() -> Optional[Dict[str, Any]]:
         meeting_id = getattr(engine, "meeting_id", None)
         if not meeting_id:
@@ -266,10 +262,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             raise HTTPException(status_code=400, detail="body must be an object")
         return body
 
-    # ------------------------------------------------------------------
-    # Dashboard page + WebSocket
-    # ------------------------------------------------------------------
-
     @app.get("/m/{token}", response_class=HTMLResponse)
     async def dashboard(token: str) -> Response:
         role = await _resolve(token)
@@ -283,10 +275,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await hub.handle_connection(websocket)
-
-    # ------------------------------------------------------------------
-    # Session + transcript
-    # ------------------------------------------------------------------
 
     @app.get("/api/session")
     async def api_session(token: str = "") -> Dict[str, Any]:
@@ -304,10 +292,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if not meeting_id:
             return {"items": [], "next_cursor": None}
         return await _transcript_page(meeting_id, cursor, limit)
-
-    # ------------------------------------------------------------------
-    # Past meetings (host only)
-    # ------------------------------------------------------------------
 
     @app.get("/api/meetings")
     async def api_meetings(token: str = "") -> Dict[str, Any]:
@@ -553,10 +537,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         )
         return {"ok": True}
 
-    # ------------------------------------------------------------------
-    # Search + export (host only)
-    # ------------------------------------------------------------------
-
     @app.get("/api/search")
     async def api_search(token: str = "", q: str = "") -> Dict[str, Any]:
         await _require(token, host_only=True)
@@ -602,10 +582,6 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
-
-    # ------------------------------------------------------------------
-    # Meeting control (host only)
-    # ------------------------------------------------------------------
 
     @app.post("/api/meeting/end")
     async def api_meeting_end(token: str = "") -> Dict[str, Any]:

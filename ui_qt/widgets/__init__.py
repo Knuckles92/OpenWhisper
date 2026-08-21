@@ -1,6 +1,3 @@
-"""
-PyQt6 custom widgets package.
-"""
 from ui_qt.widgets.buttons import (
     Button,
     HotkeyHintFilter,

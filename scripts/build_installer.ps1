@@ -80,7 +80,7 @@ function Get-TreeSize($Path) {
     return ($items | Measure-Object -Property Length -Sum).Sum
 }
 
-# --- Locate the interpreter -------------------------------------------------
+# Locate the interpreter
 $Python = Join-Path $RepoRoot 'venv\Scripts\python.exe'
 if (-not (Test-Path $Python)) {
     throw "Virtual environment not found at $Python. Create it with: python -m venv venv"
@@ -93,7 +93,7 @@ Write-Step "Building OpenWhisper $Version"
 Invoke-Native $Python @('-c', 'import PyInstaller') `
     -ErrorMessage "PyInstaller is missing. Run: pip install -r requirements-build.txt"
 
-# --- Clean ------------------------------------------------------------------
+# Clean
 if ($Clean) {
     Write-Step "Cleaning previous build output"
     foreach ($dir in @('build', 'dist', 'installer\Output')) {
@@ -105,11 +105,11 @@ if ($Clean) {
     }
 }
 
-# --- Icon -------------------------------------------------------------------
+# Icon
 Write-Step "Generating application icon"
 Invoke-Native $Python @('scripts\generate_icon.py') -ErrorMessage "Icon generation failed"
 
-# --- Freeze -----------------------------------------------------------------
+# Freeze
 Write-Step "Freezing with PyInstaller (this takes a few minutes)"
 Invoke-Native $Python `
     @('-m', 'PyInstaller', '--noconfirm', '--clean', '--log-level', 'WARN', 'OpenWhisper.spec') `
@@ -166,7 +166,7 @@ foreach ($lib in @('avcodec', 'avformat', 'avutil', 'swresample', 'swscale')) {
 }
 Write-Host "    all required assets and native libraries bundled" -ForegroundColor Green
 
-# --- Optional code signing --------------------------------------------------
+# Optional code signing
 $SignPfx = $env:OPENWHISPER_SIGN_PFX
 if ($SignPfx -and (Test-Path $SignPfx)) {
     Write-Step "Signing the executable"
@@ -190,7 +190,7 @@ if ($SkipInstaller) {
     exit 0
 }
 
-# --- Inno Setup -------------------------------------------------------------
+# Inno Setup
 Write-Step "Building the installer with Inno Setup"
 $Iscc = $null
 $Candidates = @(
@@ -227,7 +227,7 @@ if ($SignPfx -and (Test-Path $SignPfx)) {
     ) -ErrorMessage "Signing the installer failed"
 }
 
-# --- Report -----------------------------------------------------------------
+# Report
 $SetupSize = (Get-Item $SetupPath).Length
 $Hash = (Get-FileHash -Algorithm SHA256 $SetupPath).Hash.ToLower()
 

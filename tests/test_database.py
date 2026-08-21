@@ -1,17 +1,10 @@
-"""
-Tests for SQLAlchemy database layer.
-"""
 import json
 import os
 import pytest
 import uuid
 from datetime import datetime
 
-# Add parent directory to path for imports
-
 class TestDatabaseManager:
-    """Tests for the DatabaseManager class."""
-
     @pytest.fixture
     def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
@@ -37,7 +30,6 @@ class TestDatabaseManager:
         assert "meeting_insights" not in table_names
 
     def test_history_crud(self, temp_db):
-        """Test history entry create, read, update, delete."""
         entry_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
 
@@ -345,10 +337,7 @@ class TestDatabaseManager:
             manager.close()
 
 class TestJsonMigration:
-    """Tests for JSON to SQLite migration."""
-
     def test_history_migration(self, tmp_path):
-        """Test migrating history from JSON file."""
         history_data = {
             "entries": [
                 {

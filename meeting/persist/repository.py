@@ -183,19 +183,10 @@ class SqlMeetingRepository:
     """Implements ``meeting.interfaces.MeetingRepository`` on the app database."""
 
     def __init__(self, db: Optional[Any] = None) -> None:
-        """Args:
-            db: A ``DatabaseManager``-compatible object (``get_session``
-                context manager + ``engine``). Defaults to the app singleton;
-                injectable for tests.
-        """
         if db is None:
             from services.database import db as app_db
             db = app_db
         self._db = db
-
-    # ------------------------------------------------------------------
-    # Meetings
-    # ------------------------------------------------------------------
 
     def create_meeting(self, **fields) -> None:
         with self._db.get_session() as session:
@@ -286,10 +277,6 @@ class SqlMeetingRepository:
             ).all()
             return [_session_to_dict(r) for r in rows]
 
-    # ------------------------------------------------------------------
-    # Audio chunks
-    # ------------------------------------------------------------------
-
     def register_chunk(self, **fields) -> int:
         with self._db.get_session() as session:
             row = MeetingAudioChunk(**fields)
@@ -376,10 +363,6 @@ class SqlMeetingRepository:
                 MeetingAudioChunk.channel == channel,
             ).order_by(MeetingAudioChunk.seq.desc()).first()
             return int(row[0]) + 1 if row is not None else 0
-
-    # ------------------------------------------------------------------
-    # Segments
-    # ------------------------------------------------------------------
 
     def add_segments(self, segments: List[TranscriptSegment]) -> None:
         if not segments:
@@ -805,10 +788,6 @@ class SqlMeetingRepository:
             ).order_by(MeetingSegment.start_s.desc()).limit(count).all()
             return [_segment_to_dict(r) for r in reversed(rows)]
 
-    # ------------------------------------------------------------------
-    # State write-through + audit
-    # ------------------------------------------------------------------
-
     def on_ops_applied(self, meeting_id: str, state: Dict[str, Any],
                        results: List[OpResult], actor_type: str,
                        actor_id: Optional[str]) -> None:
@@ -984,10 +963,6 @@ class SqlMeetingRepository:
                 MeetingEvent.meeting_id == meeting_id,
                 MeetingEvent.action == f"undo:{int(seq)}",
             ).first() is not None
-
-    # ------------------------------------------------------------------
-    # Search
-    # ------------------------------------------------------------------
 
     def search_transcripts(self, query: str, *,
                            exclude_meeting_id: Optional[str] = None,

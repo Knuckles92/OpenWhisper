@@ -25,14 +25,10 @@ import {
 // TypeBox >= 1.0 ships as the "typebox" package (also re-exported by pi-ai).
 import { Type } from "typebox";
 
-/** Injected at bundle time by build.mjs (esbuild `define`). */
 declare const __PI_VERSION__: string | undefined;
 
-// ---------------------------------------------------------------------------
-// Neutral tool-definition types (no Pi imports needed by callers)
-// ---------------------------------------------------------------------------
+// Neutral tool-definition types
 
-/** JSON-schema-shaped parameter spec, compiled to TypeBox inside the adapter. */
 export type ParamSpec =
   | { type: "string"; description?: string }
   | { type: "number"; description?: string }
@@ -48,44 +44,32 @@ export interface ObjectSpec {
   additionalProperties?: boolean;
 }
 
-/** A custom tool as the sidecar defines it, independent of the Pi SDK. */
 export interface MeetingToolDef {
   name: string;
   label: string;
   description: string;
   parameters: ObjectSpec;
-  /** Returns the text handed back to the model plus structured details. */
   execute: (params: Record<string, any>) => Promise<{ text: string; details?: unknown }>;
 }
 
 export interface TurnResult {
-  /** True when the turn ended because `abort()` was called. */
   aborted: boolean;
   /** Best-effort token usage for the turn; empty when unavailable. */
   usage: Record<string, unknown>;
 }
 
 export interface PiSession {
-  /** Send one user message and run the agentic loop until it settles. */
   runTurn(userMessage: string): Promise<TurnResult>;
-  /** True while Pi is in an agent run (including provider thinking). */
   isBusy(): boolean;
-  /** Abort the in-flight run, if any. */
   abort(): Promise<void>;
-  /** Release the session and its temp agent directory. */
   dispose(): Promise<void>;
 }
 
 export interface CreateSessionOptions {
-  /** Provider / profile id written into models.json. */
   provider: string;
-  /** Model id as understood by the provider (e.g. "anthropic/claude-sonnet-4-5"). */
   modelId: string;
-  /** API key for the provider (from OPENWHISPER_LLM_API_KEY). */
   apiKey?: string;
-  /** OpenAI-compatible API root. Required for custom endpoints. */
   baseUrl?: string;
-  /** Compatibility kind: openai | openrouter | custom. */
   kind?: string;
   /** The ONLY tools the session gets; built-ins are disabled structurally. */
   tools: MeetingToolDef[];
@@ -99,10 +83,8 @@ export interface CreateSessionOptions {
   onEvent?: (info: SessionProgress) => void;
 }
 
-/** Compact view of a documented ``AgentSessionEvent`` for the host. */
 export interface SessionProgress {
   type: string;
-  /** ``assistantMessageEvent.type`` on ``message_update`` (text_delta, thinking_delta, …). */
   delta?: string;
   toolName?: string;
 }
@@ -152,14 +134,11 @@ function describeSessionEvent(event: any): SessionProgress | null {
   return null;
 }
 
-/** Version string reported in the hello handshake. */
 export function piVersion(): string {
   return typeof __PI_VERSION__ === "string" ? __PI_VERSION__ : "dev";
 }
 
-// ---------------------------------------------------------------------------
 // Schema compilation
-// ---------------------------------------------------------------------------
 
 function toTypebox(spec: ParamSpec): any {
   const opts: Record<string, unknown> = {};
@@ -189,11 +168,8 @@ function toTypebox(spec: ParamSpec): any {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Provider registration (custom provider via models.json in a private agent dir)
-// ---------------------------------------------------------------------------
+// Provider registration
 
-/** OpenAI-compatible API base URL per built-in provider id. */
 const PROVIDER_BASE_URLS: Record<string, string> = {
   openrouter: "https://openrouter.ai/api/v1",
   openai: "https://api.openai.com/v1",
@@ -201,7 +177,6 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
 
 const GENERIC_KEY_ENV = "OPENWHISPER_LLM_API_KEY";
 
-/** Base URL for a provider id. Unknown ids require an explicit URL. */
 export function providerBaseUrl(provider: string, baseUrl?: string): string {
   const explicit = (baseUrl || "").replace(/\/$/, "");
   if (explicit) return explicit;
@@ -279,22 +254,15 @@ async function writeAgentDir(
   return agentDir;
 }
 
-// ---------------------------------------------------------------------------
 // Turn failure detection
-// ---------------------------------------------------------------------------
 
 /**
- * Detect a failed model turn on a settled session.
- *
  * `AgentSession.prompt()` resolves normally when the provider request fails:
  * the loop records an assistant message with `stopReason: "error"` and an
  * `errorMessage`, and surfaces the same text on `state.errorMessage`. Without
  * this check a dead API key, a network outage or a rate limit would be
  * reported to the Python host as a successful zero-op checkpoint, and the
  * scheduler would advance its watermark past transcript the agent never saw.
- *
- * @param session The Pi `AgentSession` after `prompt()` has settled.
- * @returns A failure message, or null when the last assistant turn is fine.
  */
 function turnFailure(session: any): string | null {
   const state = session?.state;
@@ -315,13 +283,9 @@ function turnFailure(session: any): string | null {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Session
-// ---------------------------------------------------------------------------
 
 /**
- * Create a Pi session locked down to meeting-state authority.
- *
  * Built-in tools (shell, filesystem, network) are disabled via `noTools`, a
  * private temp `agentDir` prevents the user's global ~/.pi extensions from
  * injecting tools, and only the provided custom tools are registered.
@@ -346,7 +310,7 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
     refreshOnCreate: false,
   });
   if (opts.apiKey) {
-    // Runtime override in addition to the $OPENROUTER_API_KEY env reference.
+    // Runtime override in addition to the key environment reference.
     await modelRuntime.setRuntimeApiKey(opts.provider, opts.apiKey);
   }
 
@@ -374,8 +338,8 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
   );
 
   // TODO(pi-api): docs say noTools "all" disables all tools and "builtin"
-  // disables only defaults; verify custom tools survive "builtin" (intended:
-  // ONLY the three meeting tools are callable).
+  // disables only defaults; verify custom tools survive "builtin" so only the
+  // registered meeting tools are callable.
   const { session } = await (createAgentSession as any)({
     agentDir,
     model,

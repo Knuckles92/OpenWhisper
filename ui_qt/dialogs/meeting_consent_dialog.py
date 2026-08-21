@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class MeetingConsentDialog(QDialog):
-    """Modal dialog asking the user to approve cloud meeting intelligence."""
-
     RESULT_CANCEL: Final[str] = "cancel"
     RESULT_ENABLE: Final[str] = "enable"
 
@@ -80,7 +78,6 @@ class MeetingConsentDialog(QDialog):
         return destination, bool(remote)
 
     def _setup_ui(self):
-        """Build the dialog copy and action buttons."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)

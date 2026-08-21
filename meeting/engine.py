@@ -116,11 +116,6 @@ class MeetingEngine:
     """
 
     def __init__(self, options: MeetingEngineOptions, repository: Optional[Any] = None) -> None:
-        """Args:
-            options: Resolved plain-value configuration for this meeting.
-            repository: A ``MeetingRepository``; defaults to the SQL
-                repository on the app database (imported lazily).
-        """
         if repository is None:
             from meeting.persist.repository import SqlMeetingRepository
             repository = SqlMeetingRepository()
@@ -181,10 +176,6 @@ class MeetingEngine:
 
         self._hb_stop: Optional[threading.Event] = None
         self._hb_thread: Optional[threading.Thread] = None
-
-    # ------------------------------------------------------------------
-    # Listeners
-    # ------------------------------------------------------------------
 
     def add_listener(self, cb: Listener) -> None:
         """Register an event listener ``cb(kind, payload)``.
@@ -374,10 +365,6 @@ class MeetingEngine:
             self._broadcast({"type": "status", **payload})
         except Exception:
             logger.exception("Ephemeral finalization emit failed")
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def is_active(self) -> bool:
         """True from a successful ``start()`` until end/cancel completes."""
@@ -735,7 +722,6 @@ class MeetingEngine:
                 and (want_polish or want_report)
             )
 
-            # Build the pipeline of steps
             steps: List[Dict[str, Any]] = []
             if will_offline:
                 steps.append({
@@ -1027,7 +1013,6 @@ class MeetingEngine:
                         "Saving final transcript and meeting state...",
                         message="Finalizing meeting state…",
                     )
-                    # Collect summary statistics
                     summary_stats: Dict[str, Any] = {
                         "segments": 0,
                         "words": 0,
@@ -1751,10 +1736,6 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Agent core shutdown failed")
 
-    # ------------------------------------------------------------------
-    # Heartbeat
-    # ------------------------------------------------------------------
-
     def _start_heartbeat(self) -> None:
         self._hb_stop = threading.Event()
         self._hb_thread = threading.Thread(
@@ -1773,10 +1754,6 @@ class MeetingEngine:
     def _stop_heartbeat(self) -> None:
         if self._hb_stop is not None:
             self._hb_stop.set()
-
-    # ------------------------------------------------------------------
-    # Capture + spool
-    # ------------------------------------------------------------------
 
     def _start_capture(self) -> Optional[str]:
         """Open mic and loopback streams; returns a user-facing degradation
@@ -2117,10 +2094,6 @@ class MeetingEngine:
         except Exception:
             logger.exception("Failed to enqueue chunk %s", chunk.chunk_id)
 
-    # ------------------------------------------------------------------
-    # ASR + segments
-    # ------------------------------------------------------------------
-
     def _start_asr(self) -> None:
         try:
             from meeting.asr.engine import MeetingAsrEngine
@@ -2323,10 +2296,6 @@ class MeetingEngine:
             "created_at": created_at,
         }
 
-    # ------------------------------------------------------------------
-    # Diarization
-    # ------------------------------------------------------------------
-
     def _start_diarizer(self) -> None:
         self._degraded_diarization = False
         diarizer = None
@@ -2389,10 +2358,6 @@ class MeetingEngine:
         except Exception:
             logger.exception("Diarizer relabel batch failed")
 
-    # ------------------------------------------------------------------
-    # Web server
-    # ------------------------------------------------------------------
-
     def _start_server(self) -> str:
         try:
             from meeting.web.server import MeetingWebServer
@@ -2413,10 +2378,6 @@ class MeetingEngine:
             "guest_url": server.guest_url,
         })
         return url
-
-    # ------------------------------------------------------------------
-    # Intelligence
-    # ------------------------------------------------------------------
 
     def _maybe_start_intelligence(self) -> None:
         """Bring up agent core + scheduler when cloud processing is enabled.
@@ -2718,9 +2679,7 @@ class MeetingEngine:
                 invalidate()
         return {"host_url": host_url, "guest_url": guest_url}
 
-    # ------------------------------------------------------------------
     # Client actions (web server entry points)
-    # ------------------------------------------------------------------
 
     def apply_client_action(self, actor_type: str, actor_id,
                             op: Dict[str, Any]) -> List[OpResult]:
@@ -2799,10 +2758,6 @@ class MeetingEngine:
         return self.repository.get_segments(
             self.meeting_id, after_start_s=after_start_s, limit=limit
         )
-
-    # ------------------------------------------------------------------
-    # AgentToolHost
-    # ------------------------------------------------------------------
 
     def apply_agent_ops(self, ops: List[Dict[str, Any]]) -> List[OpResult]:
         """Validate and apply state-patch ops on behalf of the agent."""
@@ -2890,10 +2845,6 @@ class MeetingEngine:
         if not self.agent_writes_allowed():
             return OpResult(ok=False, op=op, reason="agent_writes_revoked")
         return self.store.apply("agent", "agent", [op])[0]
-
-    # ------------------------------------------------------------------
-    # Persistence helpers
-    # ------------------------------------------------------------------
 
     def _persist_snapshot(self) -> None:
         """Write the current full state snapshot to the meeting row."""

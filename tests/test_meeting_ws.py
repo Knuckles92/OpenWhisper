@@ -155,9 +155,7 @@ def ws_app():
     app = create_app(engine, repo, hub)
     return TestClient(app), engine, repo
 
-# ---------------------------------------------------------------------------
 # Real-store fixture: exercises the actual op authorization rules over WS.
-# ---------------------------------------------------------------------------
 
 class AuthzEngine:
     """Minimal engine surface backed by a real ``MeetingStateStore``."""

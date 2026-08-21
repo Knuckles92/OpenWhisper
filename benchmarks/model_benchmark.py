@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Model Benchmark Test Script
+Transcription model speed benchmark.
 
 Tests all transcription models against known-length audio files (10s, 30s, 2min)
 and measures transcription time to compare performance.
@@ -20,11 +20,9 @@ import logging
 import warnings
 import subprocess
 import platform
-from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
-# Suppress warnings that might clutter output
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 
@@ -38,21 +36,16 @@ def _patch_subprocess_for_windows():
     if platform.system() != "Windows":
         return
 
-    # Store the original Popen
     _original_popen = subprocess.Popen
 
     class _NoConsolePopen(_original_popen):
-        """Popen wrapper that adds CREATE_NO_WINDOW flag on Windows."""
-
         def __init__(self, *args, **kwargs):
-            # Add CREATE_NO_WINDOW to creationflags if not already set
             if 'creationflags' not in kwargs:
                 kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             elif not (kwargs['creationflags'] & subprocess.CREATE_NO_WINDOW):
                 kwargs['creationflags'] |= subprocess.CREATE_NO_WINDOW
             super().__init__(*args, **kwargs)
 
-    # Replace subprocess.Popen globally
     subprocess.Popen = _NoConsolePopen
 
 
@@ -65,20 +58,16 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Add project root to path (go up one level from benchmarks folder)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)  # Go up one level from benchmarks/ to project root
+project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
 
-# Import settings_manager early to ensure it's initialized
-# (LocalWhisperBackend uses it internally, so we want it ready)
 from services.settings import settings_manager
 
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
 from config import config
 
-# Setup logging - redirect to null to reduce noise
 logging.basicConfig(
     level=logging.CRITICAL,  # Only show critical errors
     format='%(levelname)s - %(message)s',
@@ -89,7 +78,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TestResult:
-    """Result of a single transcription test."""
     model_name: str
     audio_duration: float
     transcription_time: float
@@ -120,12 +108,8 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
     import re
 
     def normalize_text(text: str) -> List[str]:
-        """Normalize text to lowercase words only."""
-        # Convert to lowercase
         text = text.lower()
-        # Remove punctuation and extra whitespace
         text = re.sub(r'[^\w\s]', '', text)
-        # Split into words and filter empty
         words = [w.strip() for w in text.split() if w.strip()]
         return words
 
@@ -135,9 +119,6 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
     if not expected_words:
         return 100.0 if not transcribed_words else 0.0
 
-    # Count matches using a simple sequential comparison
-    # This is a basic approach - for more sophisticated comparison,
-    # consider using Levenshtein distance or WER (Word Error Rate)
     matches = 0
     transcribed_set = set(transcribed_words)
     expected_counts = {}
@@ -149,7 +130,6 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
     for word in transcribed_words:
         transcribed_counts[word] = transcribed_counts.get(word, 0) + 1
 
-    # Count how many expected words appear in transcription
     for word, count in expected_counts.items():
         transcribed_count = transcribed_counts.get(word, 0)
         matches += min(count, transcribed_count)
@@ -159,18 +139,13 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
 
 
 class AudioGenerator:
-    """Generate test audio files of specified durations."""
-
     def __init__(self):
-        """Initialize the audio generator."""
-        # Use the benchmarks folder (same folder as this script) for audio files
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.temp_dir = script_dir
-        self._tts_available = None  # Cache TTS availability check
+        self._tts_available = None
         logger.info(f"Using audio directory: {self.temp_dir}")
 
     def _check_tts_available(self) -> bool:
-        """Check if TTS dependencies are available."""
         if self._tts_available is None:
             try:
                 from gtts import gTTS
@@ -181,7 +156,6 @@ class AudioGenerator:
         return self._tts_available
 
     def _find_ami_audio(self) -> Optional[str]:
-        """Find an existing real speech audio file in the repository."""
         ami_dir = os.path.join(project_root, "benchmarks", "meeting_mode", "data", "ami", "audio")
         if os.path.isdir(ami_dir):
             for fname in ["IN1009.Mix-Headset.wav", "IN1001.Mix-Headset.wav"]:
@@ -191,7 +165,6 @@ class AudioGenerator:
         return None
 
     def _check_audio_available(self) -> bool:
-        """Check if TTS or real speech corpus audio is available."""
         return self._check_tts_available() or (self._find_ami_audio() is not None)
 
     def generate_tts_audio(self, duration_seconds: float, output_filename: str) -> Optional[Tuple[str, str]]:
@@ -207,7 +180,6 @@ class AudioGenerator:
         """
         output_path = os.path.join(self.temp_dir, output_filename)
 
-        # 1. Try gTTS if available
         if self._check_tts_available():
             try:
                 from gtts import gTTS  # type: ignore
@@ -253,7 +225,6 @@ class AudioGenerator:
             except Exception as e:
                 logger.debug(f"gTTS generation failed, attempting corpus slice fallback: {e}")
 
-        # 2. Fallback: slice real speech audio from AMI corpus
         ami_audio = self._find_ami_audio()
         if ami_audio:
             try:
@@ -286,9 +257,7 @@ class AudioGenerator:
 
 
     def cleanup(self):
-        """Clean up generated audio files."""
         try:
-            # Remove only the generated test audio files, not the entire directory
             for filename in os.listdir(self.temp_dir):
                 if filename.startswith("test_") and filename.endswith(".wav"):
                     file_path = os.path.join(self.temp_dir, filename)
@@ -302,8 +271,6 @@ class AudioGenerator:
 
 
 class ModelBenchmark:
-    """Benchmark all transcription models."""
-
     def __init__(
         self,
         local_models: Optional[List[str]] = None,
@@ -311,20 +278,11 @@ class ModelBenchmark:
         compute_type: Optional[str] = None,
         skip_api: bool = False,
     ):
-        """Initialize the benchmark.
-
-        Args:
-            local_models: List of local faster-whisper model names to test.
-            device: Override device ("cuda" or "cpu").
-            compute_type: Override compute type ("float16", "int8", etc.).
-            skip_api: When True, do not probe or benchmark OpenAI API backends.
-        """
         self.audio_generator = AudioGenerator()
         self.results: List[TestResult] = []
         self.device = None if device == "auto" else device
         self.compute_type = None if compute_type == "auto" else compute_type
 
-        # Store list of local models to test (will be initialized one at a time)
         if local_models is not None:
             models = list(local_models)
         else:
@@ -336,7 +294,6 @@ class ModelBenchmark:
             models.append('turbo')
         self.local_models_to_test = models
 
-        # Initialize API backends (lightweight, can stay loaded)
         self.backends: Dict[str, any] = {}
 
         if not skip_api:
@@ -356,18 +313,6 @@ class ModelBenchmark:
                     print(f"⚠️  Failed to initialize {backend_name}: {error_msg}")
 
     def test_model(self, backend_name: str, backend: any, audio_file: str, duration: float) -> TestResult:
-        """
-        Test a single model with a single audio file.
-
-        Args:
-            backend_name: Name of the backend
-            backend: Backend instance
-            audio_file: Path to audio file
-            duration: Duration of audio in seconds
-
-        Returns:
-            TestResult object
-        """
         print(f"\n  Testing {backend_name}...")
 
         try:
@@ -389,7 +334,6 @@ class ModelBenchmark:
             )
 
         try:
-            # Time the transcription
             start_time = time.time()
             transcribed_text = backend.transcribe(audio_file)
             end_time = time.time()
@@ -405,11 +349,9 @@ class ModelBenchmark:
             )
 
         except KeyboardInterrupt:
-            # Re-raise keyboard interrupts
             raise
         except Exception as e:
             error_msg = str(e)
-            # Truncate very long error messages
             if len(error_msg) > 100:
                 error_msg = error_msg[:97] + "..."
             logger.error(f"Transcription failed for {backend_name}: {error_msg}")
@@ -422,17 +364,14 @@ class ModelBenchmark:
             )
 
     def _print_local_whisper_config(self, backend):
-        """Print local whisper configuration details for a single backend."""
         print("\n" + "=" * 80)
         print("Local Whisper Configuration")
         print("=" * 80)
 
-        # Model info
         print(f"\n  Model:        {backend.model_name}")
         print(f"  Device:       {backend._device}")
         print(f"  Compute Type: {backend._compute_type}")
 
-        # Additional CUDA info if using GPU
         if backend._device == "cuda":
             try:
                 import torch
@@ -442,13 +381,11 @@ class ModelBenchmark:
                     print(f"  GPU:          {gpu_name}")
                     print(f"  GPU Memory:   {gpu_memory:.1f} GB")
 
-                    # CUDA version
                     cuda_version = torch.version.cuda
                     print(f"  CUDA Version: {cuda_version}")
             except Exception as e:
                 print(f"  GPU Info:     (could not retrieve: {e})")
 
-        # VAD settings from config
         try:
             print(f"\n  VAD Enabled:  {config.FASTER_WHISPER_VAD_ENABLED}")
             print(f"  Beam Size:    {config.FASTER_WHISPER_BEAM_SIZE}")
@@ -460,12 +397,6 @@ class ModelBenchmark:
         print("")
 
     def run_benchmark(self, durations: List[float] = [10.0, 30.0, 120.0]):
-        """
-        Run benchmark tests for all models and durations.
-
-        Args:
-            durations: List of audio durations in seconds to test
-        """
         print("=" * 80)
         print("Model Benchmark Test")
         print("=" * 80)
@@ -476,11 +407,9 @@ class ModelBenchmark:
         print(f"Durations: {', '.join([f'{d}s' for d in durations])}")
         print("\n" + "=" * 80)
 
-        # Generate test audio files
         print("\n📁 Generating test audio files...")
         audio_files = {}
 
-        # Check if audio source is available (either TTS or speech corpus)
         if not self.audio_generator._check_audio_available():
             print("\n❌ ERROR: No speech audio generator available")
             print("   Please either install gTTS (pip install gtts pydub) or ensure")
@@ -492,9 +421,7 @@ class ModelBenchmark:
             audio_result = self.audio_generator.generate_tts_audio(duration, filename)
 
             if audio_result:
-                # audio_result is a tuple: (file_path, expected_text)
-                # Extract just the file path for testing
-                audio_files[duration] = audio_result[0]  # Store just the file path
+                audio_files[duration] = audio_result[0]
             else:
                 print(f"❌ Failed to generate {duration}s audio file")
                 return
@@ -503,7 +430,6 @@ class ModelBenchmark:
             print("❌ Failed to generate any test audio files. Exiting.")
             return
 
-        # Run tests for local models (initialize -> test all durations -> cleanup -> next)
         print("\n" + "=" * 80)
         print("Running benchmark tests for local models...")
         print("=" * 80)
@@ -531,13 +457,11 @@ class ModelBenchmark:
                     print(f"⚠️  {backend_key} backend not available - skipping")
                     continue
 
-                # Print device/compute_type info for THIS model
                 print(f"\n  Model Configuration:")
                 print(f"    Model Name:    {backend.model_name}")
                 print(f"    Device:        {backend._device}")
                 print(f"    Compute Type:  {backend._compute_type}")
 
-                # Print full hardware config for the first local model only
                 if not config_printed:
                     print(f"\n  Hardware Configuration:")
                     self._print_local_whisper_config(backend)
@@ -547,7 +471,6 @@ class ModelBenchmark:
 
                 print(f"✅ {backend_key} loaded successfully")
 
-                # Test this model with all durations
                 for duration, audio_file in audio_files.items():
                     print(f"\n🎵 Testing {backend_key} with {duration}s audio file...")
                     try:
@@ -560,7 +483,6 @@ class ModelBenchmark:
                             print(f"  ❌ {backend_key}: {result.error}")
                     except KeyboardInterrupt:
                         print("\n⚠️  Benchmark interrupted by user")
-                        # Cleanup before raising
                         if backend:
                             backend.cleanup()
                         raise
@@ -577,12 +499,10 @@ class ModelBenchmark:
                             error=f"Unexpected error: {error_msg}"
                         ))
 
-                # Cleanup this model before loading the next
                 # Skip cleanup for turbo model - ctranslate2 destructor crashes with large models
                 if model_name == 'turbo':
                     print(f"\n⏭️  Skipping cleanup for {backend_key} (turbo model - known destructor issue)")
                     # Keep reference alive to prevent GC from destroying it (causes segfault)
-                    # Store it so Python never tries to destroy it during script lifetime
                     self._turbo_backend_ref = backend
                     backend = None
                 elif is_last_model:
@@ -614,7 +534,6 @@ class ModelBenchmark:
                     except:
                         pass
 
-        # Run tests for API backends (already initialized, lightweight)
         if self.backends:
             print("\n" + "=" * 80)
             print("Running benchmark tests for API models...")
@@ -636,7 +555,6 @@ class ModelBenchmark:
                         print("\n⚠️  Benchmark interrupted by user")
                         raise
                     except Exception as e:
-                        # Catch any unexpected errors and continue
                         error_msg = str(e)
                         if len(error_msg) > 100:
                             error_msg = error_msg[:97] + "..."
@@ -649,11 +567,9 @@ class ModelBenchmark:
                             error=f"Unexpected error: {error_msg}"
                         ))
 
-        # Print results summary
         self.print_results()
 
     def print_results(self):
-        """Print formatted benchmark results."""
         print("\n" + "=" * 80)
         print("Benchmark Results Summary")
         print("=" * 80)
@@ -662,11 +578,9 @@ class ModelBenchmark:
             print("No results to display.")
             return
 
-        # Group results by duration
         durations = sorted(set(r.audio_duration for r in self.results))
         models = sorted(set(r.model_name for r in self.results))
 
-        # Print table header
         print(f"\n{'Model':<25} {'Duration':<12} {'Time (s)':<12} {'Speed (x)':<12} {'Status':<10}")
         print("-" * 80)
 
@@ -674,10 +588,8 @@ class ModelBenchmark:
             print(f"\n📊 Audio Duration: {duration:.0f} seconds")
             print("-" * 80)
 
-            # Get results for this duration
             duration_results = [r for r in self.results if r.audio_duration == duration]
 
-            # Find fastest successful result for speed comparison
             successful_results = [r for r in duration_results if r.success]
             if successful_results:
                 fastest_time = min(r.transcription_time for r in successful_results)
@@ -695,7 +607,6 @@ class ModelBenchmark:
                         print(f"{result.model_name:<25} {result.audio_duration:<12.0f} "
                               f"{'N/A':<12} {'N/A':<12} ❌ {result.error}")
 
-        # Print fastest model summary
         print("\n" + "=" * 80)
         print("Fastest Model by Duration")
         print("=" * 80)
@@ -707,7 +618,6 @@ class ModelBenchmark:
                 fastest = min(duration_results, key=lambda r: r.transcription_time)
                 print(f"{duration:.0f}s: {fastest.model_name} ({fastest.transcription_time:.2f}s)")
 
-        # Print overall statistics
         print("\n" + "=" * 80)
         print("Overall Statistics")
         print("=" * 80)
@@ -726,10 +636,8 @@ class ModelBenchmark:
         print("\n" + "=" * 80)
 
     def cleanup(self):
-        """Clean up resources."""
         self.audio_generator.cleanup()
 
-        # Cleanup backends
         for backend_name, backend in self.backends.items():
             try:
                 backend.cleanup()
@@ -738,7 +646,6 @@ class ModelBenchmark:
 
 
 def main(argv: Optional[List[str]] = None):
-    """Main entry point."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Model Speed & Throughput Benchmark")

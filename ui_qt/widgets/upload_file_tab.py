@@ -1,9 +1,4 @@
-"""
-Upload File Tab widget.
-Provides drag-and-drop and browse-based audio file upload with inline
-file preview on top of the shared transcription tab scaffolding (model
-selection, status, transcript).
-"""
+"""Audio file upload and transcription tab."""
 import logging
 import os
 from PyQt6.QtWidgets import (
@@ -130,7 +125,6 @@ class DropZoneWidget(QFrame):
             self.open_file_browser()
 
     def open_file_browser(self):
-        """Open the native file dialog for audio file selection."""
         audio_path, _ = QFileDialog.getOpenFileName(
             self, "Select Audio File", "", AUDIO_FILTERS
         )
@@ -189,7 +183,6 @@ class FileInfoCard(Card):
         self.layout.addLayout(btn_layout)
 
     def set_preview(self, preview: AudioFilePreview):
-        """Populate the card with file preview data."""
         self._preview = preview
         self.filename_label.setText(preview.file_name)
         self.details_label.setText(
@@ -217,7 +210,6 @@ class FileInfoCard(Card):
             self.chunk_label.show()
 
     def set_transcribing(self, active: bool):
-        """Toggle button states during transcription."""
         self.transcribe_btn.setEnabled(not active)
         self.remove_btn.setEnabled(not active)
         if active:
@@ -247,26 +239,20 @@ class UploadFileTab(TranscriptionTabBase):
         self._preview: AudioFilePreview | None = None
 
     def _build_content_before_status(self, layout: QVBoxLayout):
-        """Build the drop zone and file info card above the status label."""
         self.drop_zone = DropZoneWidget()
         layout.addWidget(self.drop_zone)
 
-        # File info card (hidden until a file is selected)
         self.file_info_card = FileInfoCard()
         self.file_info_card.hide()
         layout.addWidget(self.file_info_card)
 
     def _connect_signals(self):
-        """Connect file-selection signals in addition to the shared ones."""
         super()._connect_signals()
         self.drop_zone.file_selected.connect(self._on_file_selected)
         self.file_info_card.transcribe_clicked.connect(self._on_transcribe)
         self.file_info_card.remove_clicked.connect(self.clear_file)
 
-    # ── Internal handlers ──────────────────────────────────────────
-
     def _on_file_selected(self, path: str):
-        """Analyze the dropped/browsed file and show its info card."""
         try:
             preview = audio_processor.preview_file(path)
         except FileNotFoundError:
@@ -302,17 +288,13 @@ class UploadFileTab(TranscriptionTabBase):
         self.set_status("Transcribing...")
         self.upload_requested.emit(self._audio_path)
 
-    # ── Public API ─────────────────────────────────────────────────
-
     def set_transcript(self, text: str, raw=None):
-        """Set the transcript text and reset transcribing state."""
         super().set_transcript(text, raw=raw)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)
 
     def clear_file(self):
-        """Reset to the empty drop-zone state."""
         self._audio_path = None
         self._preview = None
         self.file_info_card.hide()
@@ -323,9 +305,7 @@ class UploadFileTab(TranscriptionTabBase):
         self.set_status("Select an audio file to transcribe")
 
     def set_file(self, audio_path: str):
-        """Programmatically set a file (e.g., from File menu redirect)."""
         self._on_file_selected(audio_path)
 
     def open_file_browser(self):
-        """Open the file browser dialog."""
         self.drop_zone.open_file_browser()

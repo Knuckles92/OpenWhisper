@@ -307,7 +307,6 @@ def _context_folder_enabled() -> bool:
 
 
 def _op_results_payload(results: List[OpResult]) -> Dict[str, Any]:
-    """Serialize op results for a tool-result message."""
     return {
         "results": [
             {
@@ -353,10 +352,6 @@ class DirectOpenRouterAgent:
         self._fatal = False
         self._shut_down = False
         self._cancel_event = threading.Event()
-
-    # ------------------------------------------------------------------
-    # AgentCore lifecycle
-    # ------------------------------------------------------------------
 
     def initialize(self, cfg: AgentConfig, tools: AgentToolHost) -> None:
         """Prepare the core: resolve credentials, build the client, probe tools.
@@ -444,13 +439,8 @@ class DirectOpenRouterAgent:
         self._shut_down = True
         self.cancel()
 
-    # ------------------------------------------------------------------
-    # Client plumbing
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _resolve_profile(cfg: AgentConfig):
-        """Resolve the text-LLM profile for this agent config."""
         try:
             from services.text_llm import profile_from_agent_config
 
@@ -460,7 +450,6 @@ class DirectOpenRouterAgent:
 
     @staticmethod
     def _resolve_profile_key(profile: Any, provider: str) -> Optional[str]:
-        """Resolve the SDK key, treating auth-free profiles as available."""
         if profile is not None:
             try:
                 from services.text_llm import resolve_api_key
@@ -472,7 +461,6 @@ class DirectOpenRouterAgent:
 
     @staticmethod
     def _provider_base_url(provider: str) -> Optional[str]:
-        """Base URL for a provider (None = OpenAI default)."""
         try:
             from services.text_llm import get_profile
 
@@ -492,7 +480,6 @@ class DirectOpenRouterAgent:
 
     @staticmethod
     def _resolve_model(cfg: AgentConfig) -> str:
-        """The configured model, falling back to the cleanup default."""
         if cfg.model:
             return cfg.model
         try:
@@ -506,7 +493,6 @@ class DirectOpenRouterAgent:
         return _DEFAULT_MODELS.get(cfg.provider, _DEFAULT_MODELS["openai"])
 
     def _ensure_client(self) -> Optional[Any]:
-        """Build (or rebuild after cancel) the chat client."""
         with self._client_lock:
             if self._client is not None:
                 return self._client
@@ -525,7 +511,6 @@ class DirectOpenRouterAgent:
             return self._client
 
     def _probe_tool_support(self, client: Any) -> None:
-        """One tool-call request; failure selects the JSON-mode fallback."""
         try:
             client.with_options(timeout=_PROBE_TIMEOUT_S).chat.completions.create(
                 model=self._model,
@@ -543,7 +528,6 @@ class DirectOpenRouterAgent:
             self._json_mode = True
 
     def _note_error(self, exc: Exception) -> None:
-        """Classify a request failure: auth errors are fatal for the session."""
         status = getattr(exc, "status_code", None)
         if status in (401, 403):
             self._fatal = True
@@ -562,7 +546,6 @@ class DirectOpenRouterAgent:
 
     @staticmethod
     def _looks_like_response_format_error(exc: Exception) -> bool:
-        """True when the server rejected ``response_format=json_object``."""
         text = str(exc).lower()
         return "response_format" in text or "json_object" in text
 
@@ -575,10 +558,6 @@ class DirectOpenRouterAgent:
             if isinstance(value, int):
                 total[key] = total.get(key, 0) + value
         total["requests"] = total.get("requests", 0) + 1
-
-    # ------------------------------------------------------------------
-    # Checkpoint execution
-    # ------------------------------------------------------------------
 
     def _run_pass(self, payload: CheckpointPayload, timeout_s: float) -> AgentResult:
         if not self.is_healthy():
@@ -639,7 +618,6 @@ class DirectOpenRouterAgent:
             self._citable_ids = []
 
     def _repair_ops(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Repair truncated/typo'd evidence ids before exact-match validation."""
         tools = self._tools
         exists = getattr(tools, "segment_exists", None)
         if not callable(exists) or not self._citable_ids:
@@ -650,13 +628,11 @@ class DirectOpenRouterAgent:
         return repaired
 
     def _repair_evidence_list(self, evidence: List[str]) -> List[str]:
-        """Repair a question tool's evidence list (same rules as ops).."""
         ops = self._repair_ops([{"op": "ask_question",
                                  "evidence": evidence}])
         return ops[0].get("evidence") or evidence
 
     def _dispatch_read_tool(self, name: str, args: Dict[str, Any]) -> str:
-        """Run a read-only tool and return the text the model should see."""
         if name == "search_past_meetings":
             search = getattr(self._tools, "search_past_meetings", None)
             if not callable(search):
@@ -696,7 +672,6 @@ class DirectOpenRouterAgent:
         raise ValueError(f"unknown read tool: {name}")
 
     def _dispatch_tool_call(self, name: str, args: Dict[str, Any]) -> List[OpResult]:
-        """Route one model tool call to the tool host."""
         tools = self._tools
         assert tools is not None
         if name == "patch_state":

@@ -1,7 +1,3 @@
-"""
-Settings dialog for PyQt6 UI.
-Tabbed interface for managing application settings.
-"""
 import logging
 import os
 import tempfile
@@ -67,8 +63,6 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsDialog(QDialog):
-    """Settings dialog with tabbed interface."""
-
     settings_changed = pyqtSignal(dict)
 
     #: Internal: emitted from the rule-polish worker thread
@@ -79,13 +73,11 @@ class SettingsDialog(QDialog):
     _rule_dictation_finished = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
-        """Initialize settings dialog."""
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumSize(600, 500)
         self.setMaximumWidth(800)
 
-        # Callbacks
         self.on_settings_save: Optional[Callable] = None
         # Transcribes a short dictated clip; wired by UIController.
         self.on_dictation_transcribe: Optional[Callable[[str], str]] = None
@@ -95,7 +87,6 @@ class SettingsDialog(QDialog):
         # "meeting"), or None when Settings should not open the manager.
         self.open_model_manager_on_close: Optional[str] = None
 
-        # Learned-rules worker state (AI polish + dictation)
         self._rule_polishing = False
         self._rule_dictation_state = "idle"  # idle | recording | transcribing
         self._rule_recorder: Optional[AudioRecorder] = None
@@ -116,7 +107,6 @@ class SettingsDialog(QDialog):
         self.finished.connect(self._release_rule_recorder)
 
     def _setup_ui(self):
-        """Setup the user interface."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -127,7 +117,6 @@ class SettingsDialog(QDialog):
         self.tabs.setObjectName("settingsTabs")
         self.tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Create tabs
         self._create_general_tab()
         self._create_audio_tab()
         self._create_hotkeys_tab()
@@ -137,7 +126,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self.tabs)
 
-        # Button layout
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(16, 16, 16, 16)
         button_layout.setSpacing(8)
@@ -167,18 +155,15 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(scroll, title)
 
     def _create_general_tab(self):
-        """Create general settings tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Title
         title = QLabel("General Settings")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
-        # Auto-paste checkbox
         layout.addSpacing(12)
         self.auto_paste_check = QCheckBox("Auto-paste transcription to active window")
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
@@ -196,7 +181,6 @@ class SettingsDialog(QDialog):
         layout.addSpacing(12)
         layout.addWidget(self.minimize_tray_check)
 
-        # Saved recordings retention
         layout.addSpacing(24)
         recordings_label = QLabel("Saved Recordings")
         recordings_label.setObjectName("sectionLabel")
@@ -237,7 +221,6 @@ class SettingsDialog(QDialog):
         retention_info.setWordWrap(True)
         layout.addWidget(retention_info)
 
-        # Streaming transcription checkbox
         layout.addSpacing(24)
         streaming_label = QLabel("Real-Time Transcription (Experimental)")
         streaming_label.setObjectName("sectionLabel")
@@ -263,7 +246,6 @@ class SettingsDialog(QDialog):
         font_size_layout.addStretch()
         layout.addLayout(font_size_layout)
 
-        # Info label for streaming
         streaming_info = QLabel(
             "Shows transcribed text as you speak on the near-cursor overlay using a dedicated "
             "tiny.en preview model. Requires Local Whisper backend. Final transcription still "
@@ -279,18 +261,15 @@ class SettingsDialog(QDialog):
         self._add_scrollable_tab(tab, "General")
 
     def _create_audio_tab(self):
-        """Create audio settings tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Title
         title = QLabel("Audio Settings")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
-        # Sample rate
         layout.addSpacing(12)
         sample_rate_label = QLabel("Sample Rate (Hz):")
         layout.addWidget(sample_rate_label)
@@ -300,7 +279,6 @@ class SettingsDialog(QDialog):
         self.sample_rate_combo.setMinimumHeight(36)
         layout.addWidget(self.sample_rate_combo)
 
-        # Channels
         layout.addSpacing(12)
         channels_label = QLabel("Channels:")
         layout.addWidget(channels_label)
@@ -310,7 +288,6 @@ class SettingsDialog(QDialog):
         self.channels_combo.setMinimumHeight(36)
         layout.addWidget(self.channels_combo)
 
-        # Silence threshold
         layout.addSpacing(12)
         threshold_label = QLabel("Silence Threshold:")
         layout.addWidget(threshold_label)
@@ -331,7 +308,6 @@ class SettingsDialog(QDialog):
         threshold_layout.addWidget(self.threshold_value_label)
         layout.addLayout(threshold_layout)
 
-        # Input device selection
         layout.addSpacing(16)
         device_label = QLabel("Input Device:")
         layout.addWidget(device_label)
@@ -349,13 +325,11 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(tab, "Audio")
 
     def _create_hotkeys_tab(self):
-        """Create hotkeys settings tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Title
         title = QLabel("Hotkeys")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
@@ -415,10 +389,8 @@ class SettingsDialog(QDialog):
         return scroll_area, layout
 
     def _create_cleanup_general_subtab(self):
-        """Build the General cleanup subtab (behavior and prompt)."""
         scroll_area, layout = self._cleanup_subtab_scaffold()
 
-        # Title
         title = QLabel("AI Transcript Cleanup")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
@@ -467,7 +439,6 @@ class SettingsDialog(QDialog):
         model_card_layout.addWidget(model_hint)
         layout.addWidget(model_card)
 
-        # Thinking / reasoning effort
         self.cleanup_reasoning_label = QLabel("Thinking level:")
         layout.addWidget(self.cleanup_reasoning_label)
 
@@ -531,7 +502,6 @@ class SettingsDialog(QDialog):
         return scroll_area
 
     def _create_cleanup_rules_subtab(self):
-        """Build the Learned Rules cleanup subtab (rule teaching UI)."""
         scroll_area, layout = self._cleanup_subtab_scaffold()
 
         hero = QFrame()
@@ -913,7 +883,6 @@ class SettingsDialog(QDialog):
         ):
             check.toggled.connect(self._guard_report_views)
 
-        # Dashboard access (privacy control)
         layout.addSpacing(24)
         meeting_server_title = QLabel("Dashboard Access")
         meeting_server_title.setObjectName("sectionLabel")
@@ -976,24 +945,20 @@ class SettingsDialog(QDialog):
         self._meeting_tab_index = self.tabs.addTab(tab, "Meeting")
 
     def _create_advanced_tab(self):
-        """Create advanced settings tab with scrollable content."""
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setContentsMargins(0, 0, 0, 0)
         tab_layout.setSpacing(0)
 
-        # Create scroll area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
-        # Content widget for scrollable area
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Title
         title = QLabel("Advanced Settings")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
@@ -1001,7 +966,6 @@ class SettingsDialog(QDialog):
         # Local engine knobs (model / device / quant) live in the main
         # window's Engine Settings panel and the Model Manager, not here.
 
-        # Max file size
         layout.addSpacing(12)
         max_size_label = QLabel("Maximum File Size (MB):")
         layout.addWidget(max_size_label)
@@ -1013,7 +977,6 @@ class SettingsDialog(QDialog):
         self.max_size_spinbox.setMinimumHeight(36)
         layout.addWidget(self.max_size_spinbox)
 
-        # Enable logging checkbox
         layout.addSpacing(12)
         self.logging_check = QCheckBox("Enable detailed logging")
         layout.addWidget(self.logging_check)
@@ -1032,7 +995,6 @@ class SettingsDialog(QDialog):
         developer_info.setWordWrap(True)
         layout.addWidget(developer_info)
 
-        # Hugging Face model download policy
         layout.addSpacing(16)
         hf_title = QLabel("Hugging Face Downloads")
         hf_title.setObjectName("sectionLabel")
@@ -1068,7 +1030,6 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
 
-        # Wire up scroll area
         scroll_area.setWidget(content)
         tab_layout.addWidget(scroll_area)
         self._advanced_tab_index = self.tabs.addTab(tab, "Advanced")
@@ -1094,12 +1055,10 @@ class SettingsDialog(QDialog):
         self._save_settings()
 
     def _open_model_manager_from_meeting(self):
-        """Save Settings, close it, then open Model Manager → Meeting Mode."""
         self.open_model_manager_on_close = "meeting"
         self._save_settings()
 
     def _refresh_cleanup_model_summary(self):
-        """Reload the read-only cleanup provider/model line from settings."""
         try:
             settings = settings_manager.load_all_settings()
             saved_provider = resolve_transcript_cleanup_provider(settings)
@@ -1112,7 +1071,6 @@ class SettingsDialog(QDialog):
         self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
     def _refresh_meeting_model_summary(self):
-        """Reload the read-only meeting model recap from settings."""
         try:
             settings = settings_manager.load_all_settings()
         except Exception:
@@ -1146,12 +1104,10 @@ class SettingsDialog(QDialog):
         )
 
     def _update_threshold_display(self, value):
-        """Update threshold value display."""
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
     def _update_recording_retention_ui(self):
-        """Enable the custom count spinbox only when Custom is selected."""
         is_custom = (
             self.recording_retention_combo.currentData()
             == RecordingRetentionMode.CUSTOM
@@ -1160,13 +1116,11 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.setEnabled(is_custom)
 
     def _update_streaming_font_ui(self):
-        """Enable the preview font size control only when streaming is on."""
         enabled = self.streaming_enabled_check.isChecked()
         self.streaming_font_size_label.setEnabled(enabled)
         self.streaming_font_size_spinbox.setEnabled(enabled)
 
     def _update_cleanup_prompt_ui(self):
-        """Enable cleanup controls when AI cleanup is on."""
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
             self.cleanup_reasoning_label,
@@ -1185,29 +1139,21 @@ class SettingsDialog(QDialog):
             widget.setEnabled(enabled)
         self._update_cleanup_rule_controls()
 
-    # ── Cleanup prompt ───────────────────────────────────────────────
-
     def _open_cleanup_prompt_editor(self):
-        """Open a larger popup editor for the cleanup prompt."""
         dialog = CleanupPromptDialog(self.cleanup_prompt_edit.toPlainText(), self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.cleanup_prompt_edit.setPlainText(dialog.prompt_text())
 
     def _reset_cleanup_prompt(self):
-        """Restore the built-in default cleanup prompt."""
         self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
 
-    # ── Learned rules ──────────────────────────────────────────────
-
     def _staged_cleanup_rules(self) -> list:
-        """Return the rules currently staged in the list widget."""
         return [
             self.cleanup_rules_list.item(i).text()
             for i in range(self.cleanup_rules_list.count())
         ]
 
     def _update_cleanup_rule_controls(self):
-        """Gate rule controls on the master toggle and worker activity."""
         enabled = self.transcript_cleanup_check.isChecked()
         busy = self._rule_polishing or self._rule_dictation_state != "idle"
         rule_count = self.cleanup_rules_list.count()
@@ -1231,7 +1177,6 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_delete_btn.setEnabled(enabled and has_selection)
 
     def _add_cleanup_rule(self):
-        """Polish the typed instruction with AI, then confirm and stage it."""
         self._polish_cleanup_rule(self.cleanup_rule_input.text())
 
     def _polish_cleanup_rule(self, raw: str):
@@ -1312,7 +1257,6 @@ class SettingsDialog(QDialog):
         self._update_cleanup_rule_controls()
 
     def _edit_cleanup_rule(self):
-        """Open the rule editor for the selected rule."""
         items = self.cleanup_rules_list.selectedItems()
         if not items:
             return
@@ -1325,15 +1269,11 @@ class SettingsDialog(QDialog):
             item.setText(rule)
 
     def _delete_cleanup_rule(self):
-        """Remove the selected rules from the staged list."""
         for item in self.cleanup_rules_list.selectedItems():
             self.cleanup_rules_list.takeItem(self.cleanup_rules_list.row(item))
         self._update_cleanup_rule_controls()
 
-    # ── Rule dictation ─────────────────────────────────────────────
-
     def _toggle_rule_dictation(self):
-        """Start or stop dictating a rule instruction."""
         if self._rule_dictation_state == "recording":
             self._stop_rule_dictation()
             return
@@ -1433,21 +1373,16 @@ class SettingsDialog(QDialog):
         self._polish_cleanup_rule(raw)
 
     def _release_rule_recorder(self):
-        """Release the dictation recorder when the dialog closes."""
         self._rule_dictation_timer.stop()
         if self._rule_recorder is not None:
             self._rule_recorder.cleanup()
             self._rule_recorder = None
 
-    # ── Meeting Mode ───────────────────────────────────────────────
-
     def _update_meeting_bind_ui(self):
-        """Show the LAN exposure warning only when sharing is selected."""
         is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
         self.meeting_bind_warning.setVisible(is_lan)
 
     def _report_view_checks(self):
-        """Return the three post-meeting report-view checkboxes."""
         return (
             self.meeting_report_ribbon_check,
             self.meeting_report_brief_check,
@@ -1455,7 +1390,6 @@ class SettingsDialog(QDialog):
         )
 
     def _update_report_views_enabled(self):
-        """Gray out report-view toggles when the final report is off."""
         enabled = self.meeting_end_report_check.isChecked()
         self.meeting_report_views_title.setEnabled(enabled)
         self.meeting_report_views_info.setEnabled(enabled)
@@ -1475,7 +1409,6 @@ class SettingsDialog(QDialog):
         self.meeting_report_views_hint.show()
 
     def _browse_context_folder(self):
-        """Choose a local folder for meeting-agent knowledge search."""
         current = self.meeting_context_folder_path.text().strip()
         start = current if os.path.isdir(current) else os.path.expanduser("~")
         chosen = QFileDialog.getExistingDirectory(
@@ -1487,7 +1420,6 @@ class SettingsDialog(QDialog):
         self.meeting_context_folder_check.setChecked(True)
 
     def _clear_context_folder(self):
-        """Remove the configured knowledge folder and disable search."""
         self.meeting_context_folder_path.clear()
         self.meeting_context_folder_check.setChecked(False)
 
@@ -1536,18 +1468,14 @@ class SettingsDialog(QDialog):
         self._update_meeting_bind_ui()
 
     def _populate_audio_devices(self):
-        """Populate the audio device dropdown with available input devices."""
         self.audio_device_combo.clear()
-        # Add system default option
         self.audio_device_combo.addItem("System Default", None)
 
-        # Add available input devices
         devices = AudioRecorder.get_input_devices()
         for device_id, device_name in devices:
             self.audio_device_combo.addItem(device_name, device_id)
 
     def _open_hotkey_dialog(self):
-        """Open hotkey configuration dialog."""
         logger.info("Opening hotkey configuration dialog")
         from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 
@@ -1555,11 +1483,9 @@ class SettingsDialog(QDialog):
         dialog.exec()
 
     def _load_settings(self):
-        """Load settings from configuration."""
         try:
             settings = settings_manager.load_all_settings()
 
-            # Load checkboxes
             self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
             self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
             self.transcript_cleanup_check.setChecked(
@@ -1586,7 +1512,6 @@ class SettingsDialog(QDialog):
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
 
-            # Load recording retention
             retention_mode = settings.get(
                 SettingsKey.RECORDING_RETENTION_MODE,
                 RecordingRetentionMode.CUSTOM,
@@ -1607,7 +1532,6 @@ class SettingsDialog(QDialog):
                 self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
             self._update_recording_retention_ui()
 
-            # Load streaming settings
             streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_font_size_spinbox.setValue(
@@ -1624,10 +1548,8 @@ class SettingsDialog(QDialog):
             policy_index = self.hf_policy_combo.findData(policy)
             self.hf_policy_combo.setCurrentIndex(max(0, policy_index))
 
-            # Load audio input device
             saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if saved_device_id is not None:
-                # Find the device in the combo box by its data (device ID)
                 for i in range(self.audio_device_combo.count()):
                     if self.audio_device_combo.itemData(i) == saved_device_id:
                         self.audio_device_combo.setCurrentIndex(i)
@@ -1636,7 +1558,6 @@ class SettingsDialog(QDialog):
             logger.info("Settings loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load settings: {e}")
-            # Use defaults on error
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
             self.transcript_cleanup_check.setChecked(config.TRANSCRIPT_CLEANUP_ENABLED)
@@ -1664,30 +1585,25 @@ class SettingsDialog(QDialog):
             )
 
     def _save_settings(self):
-        """Save settings and close dialog."""
         try:
             # Load existing settings. The transcription engine and local
             # whisper model/device/compute are owned by the main-window
             # controls, so their keys pass through untouched.
             settings = settings_manager.load_all_settings()
 
-            # Check if the Hugging Face access policy changed
             old_hf_policy = settings_manager.load_hf_access_policy()
             new_hf_policy = self.hf_policy_combo.currentData()
             hf_policy_changed = old_hf_policy != new_hf_policy
 
-            # Check if audio input device changed
             old_audio_device = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             new_audio_device = self.audio_device_combo.currentData()
             audio_device_changed = old_audio_device != new_audio_device
 
-            # Check if streaming settings changed
             old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
             streaming_settings_changed = (
                 old_streaming_enabled != self.streaming_enabled_check.isChecked()
             )
 
-            # Update with new values
             settings[SettingsKey.AUTO_PASTE] = self.auto_paste_check.isChecked()
             settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
             settings[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED] = (
@@ -1771,7 +1687,6 @@ class SettingsDialog(QDialog):
                 self.developer_mode_check.isChecked()
             )
 
-            # Save audio input device (None for system default)
             if new_audio_device is None:
                 settings.pop(SettingsKey.AUDIO_INPUT_DEVICE, None)
             else:
@@ -1781,16 +1696,13 @@ class SettingsDialog(QDialog):
             # new hf_access_policy takes effect immediately)
             settings_manager.save_all_settings(settings)
 
-            # Apply retention limit immediately (may delete oldest files if lowered)
             history_manager.set_max_recordings(resolve_max_saved_recordings(settings))
 
             logger.info("Settings saved successfully")
 
-            # Call callback if set
             if self.on_settings_save:
                 self.on_settings_save(settings)
 
-            # Emit signal with change flags
             settings['_audio_device_changed'] = audio_device_changed
             settings['_streaming_settings_changed'] = streaming_settings_changed
             settings['_hf_policy_changed'] = hf_policy_changed

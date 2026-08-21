@@ -15,17 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 class MeetingAudioConsentDialog(QDialog):
-    """Modal dialog asking the user to approve uploading system audio."""
-
     RESULT_CANCEL: Final[str] = "cancel"
     RESULT_ENABLE: Final[str] = "enable"
 
     def __init__(self, parent=None):
-        """Initialize the consent dialog.
-
-        Args:
-            parent: Parent widget (normally the Settings dialog).
-        """
         super().__init__(parent)
         self.setObjectName("meetingAudioConsentDialog")
         self.result_action = self.RESULT_CANCEL
@@ -37,7 +30,6 @@ class MeetingAudioConsentDialog(QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Build the dialog copy and action buttons."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -82,6 +74,5 @@ class MeetingAudioConsentDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _finish(self, action: str):
-        """Record the chosen action and accept the dialog."""
         self.result_action = action
         self.accept()

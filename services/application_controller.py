@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class ApplicationController(QObject):
     """Main application controller integrating UI and logic."""
 
-    # fixed text, optional raw_text, optional CleanupInfo
+    # fixed text, optional raw text, optional CleanupInfo
     transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
     status_update = pyqtSignal(str)
@@ -73,7 +73,6 @@ class ApplicationController(QObject):
     # True for the selected-model flow (download + load) and False for
     # Model Manager fetch-only downloads.
     hf_consent_requested = pyqtSignal(str, bool, bool)
-    # Model Manager lifecycle (emitted possibly from worker threads).
     model_download_started = pyqtSignal(str)
     model_download_finished = pyqtSignal(str, bool)
     model_deleted = pyqtSignal(str, bool, str)
@@ -91,15 +90,11 @@ class ApplicationController(QObject):
     # worker threads); the connected slot reverts the persisted device setting
     # and raises a cause-specific warning on the Qt main thread.
     gpu_fallback_detected = pyqtSignal()
-    # Meeting Mode (emitted possibly from engine worker threads).
-    # Partial state payload dict for the meeting panel: any of active/paused/
-    # status/cloud_enabled/elapsed_s.
+    # Meeting Mode signals may originate from engine worker threads.
     meeting_state_changed = pyqtSignal(object)
     meeting_status_update = pyqtSignal(str)
     meeting_error = pyqtSignal(str)
-    # Start result dict: meeting_id, url, host_url, guest_url.
     meeting_server_started = pyqtSignal(object)
-    # List of interrupted meeting dicts found by the startup recovery scan.
     meeting_recovery_found = pyqtSignal(object)
     # One-time cloud-intelligence consent; the connected slot shows the
     # consent dialog on the Qt main thread and routes the result back into
@@ -167,12 +162,7 @@ class ApplicationController(QObject):
     def _setup_transcription_backends(
         self, local_backend: Optional[LocalWhisperBackend] = None
     ) -> None:
-        """Initialize transcription backends.
-
-        Args:
-            local_backend: Optional preloaded LocalWhisperBackend (e.g. loaded
-                off the UI thread during the splash screen animation).
-        """
+        """Accept an optionally preloaded local backend from the splash worker."""
         logger.info("Setting up transcription backends...")
 
         self.transcription_backends["local_whisper"] = (
@@ -189,7 +179,6 @@ class ApplicationController(QObject):
         logger.info(f"Using transcription backend: {saved_model}")
 
     def _setup_ui_callbacks(self) -> None:
-        """Setup UI event callbacks."""
         self.ui_controller.on_record_start = self.start_recording
         self.ui_controller.on_record_stop = self.stop_recording
         self.ui_controller.on_record_cancel = self.cancel
@@ -266,7 +255,6 @@ class ApplicationController(QObject):
         self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
 
     def _do_reload_whisper_model(self) -> None:
-        """Debounce fired: kick off the reload on a worker thread (UI thread)."""
         if self.is_meeting_active():
             logger.info("Canceling queued whisper reload: meeting owns the engine")
             self.status_update.emit("End the meeting before changing the engine")
@@ -390,11 +378,7 @@ class ApplicationController(QObject):
             self.hf_consent_requested.emit(model_name, False, True)
 
     def get_loaded_local_model(self) -> Optional[str]:
-        """Return the model name the local engine currently has loaded, if any.
-
-        Used by the Model Manager to disable deletion of the in-use model
-        (its files are memory-mapped by ctranslate2).
-        """
+        """Return the loaded model so its memory-mapped files cannot be deleted."""
         backend = self.transcription_backends.get("local_whisper")
         if backend is not None and backend.is_available():
             return getattr(backend, "last_loaded_model", None)
@@ -409,11 +393,9 @@ class ApplicationController(QObject):
         the same coordinator policy/grant/dedup machinery as
         ``ensure_local_model_available``.
 
-        Args:
-            model_name: Concrete faster-whisper model name (not ``"auto"``).
         """
         if not hf_access_coordinator.begin_request(model_name):
-            return  # consent dialog or download already in flight
+            return
 
         try:
             decision = hf_access_coordinator.evaluate_access(
@@ -442,8 +424,6 @@ class ApplicationController(QObject):
         the engine. The coordinator's request slot also guards against a
         concurrent download of the same model.
 
-        Args:
-            model_name: Concrete faster-whisper model name (not ``"auto"``).
         """
         backend = self.transcription_backends.get("local_whisper")
         if backend is not None and backend.is_available():
@@ -463,7 +443,6 @@ class ApplicationController(QObject):
         self.executor.submit(self._model_delete_worker, model_name)
 
     def _model_delete_worker(self, model_name: str) -> None:
-        """Delete cached model files off the Qt thread; report via signals."""
         try:
             delete_model_from_cache(model_name)
         except (PermissionError, OSError) as exc:
@@ -553,18 +532,8 @@ class ApplicationController(QObject):
         # cached, so this never re-enters the consent flow.
         self.reload_whisper_model()
 
-    # ------------------------------------------------------------------
-    # Downloadable components
-    # ------------------------------------------------------------------
-
     def request_component_install(self, component_id: str) -> None:
-        """Start installing a component on the component worker thread.
-
-        No-op when an install for this component is already in flight.
-
-        Args:
-            component_id: Component to install (see ``ComponentId``).
-        """
+        """Start an install unless the same component is already in flight."""
         cancel_event = component_coordinator.begin_install(component_id)
         if cancel_event is None:
             return
@@ -575,11 +544,9 @@ class ApplicationController(QObject):
         )
 
     def cancel_component_install(self, component_id: str) -> None:
-        """Request cancellation of an in-flight component install."""
         component_coordinator.cancel_install(component_id)
 
     def request_component_uninstall(self, component_id: str) -> None:
-        """Remove an installed component from disk."""
         try:
             uninstall_component(component_id)
             self.status_update.emit("Component removed")
@@ -598,9 +565,6 @@ class ApplicationController(QObject):
         1 MiB chunks would otherwise queue thousands of cross-thread events
         and visibly stall the UI.
 
-        Args:
-            component_id: Component being installed.
-            cancel_event: Event the download loop polls to abort.
         """
         import time
 
@@ -722,7 +686,6 @@ class ApplicationController(QObject):
 
     @staticmethod
     def _describe_gpu_fallback(backend) -> str:
-        """Status message for a GPU fallback, naming the cause-specific fix."""
         cause = getattr(backend, "gpu_fallback_cause", None)
         if cause == GpuFallbackCause.OUT_OF_MEMORY:
             return (
@@ -745,14 +708,7 @@ class ApplicationController(QObject):
         return "GPU failed to load — using CPU. See openwhisper.log for details."
 
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
-        """Run the approved download/load on a worker thread with busy states.
-
-        Args:
-            model_name: Concrete model to download and/or load.
-            load_into_engine: True for the selected-model flow (download +
-                load, engine busy); False for fetch-only Model Manager
-                downloads that leave the engine alone.
-        """
+        """Run an approved load or fetch-only download on a worker."""
         if load_into_engine:
             self.engine_busy_changed.emit(True)
         self.model_download_started.emit(model_name)
@@ -842,7 +798,6 @@ class ApplicationController(QObject):
                 self.engine_busy_changed.emit(False)
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
-        """Change the audio input device."""
         logger.info(f"Changing audio device to: {device_id}")
 
         if self.recorder.is_recording:
@@ -877,7 +832,6 @@ class ApplicationController(QObject):
         return True
 
     def stop_recording(self) -> None:
-        """Stop recording and submit transcription (UI callback target)."""
         self.transcription_runtime.stop_recording()
 
     def toggle_recording(self) -> bool:
@@ -907,11 +861,6 @@ class ApplicationController(QObject):
         )
 
     def _refuse_dictation_during_meeting(self) -> bool:
-        """Exclusive mode: block dictation starts while a meeting is active.
-
-        Returns:
-            True when the start was refused (meeting in progress).
-        """
         if not self.is_meeting_active():
             return False
         logger.info("Dictation start refused: Meeting Mode is active")
@@ -921,7 +870,6 @@ class ApplicationController(QObject):
         return True
 
     def cancel(self) -> None:
-        """Cancel an active recording or transcription (UI/hotkey callback target)."""
         self.transcription_runtime.cancel()
 
     def minimize_to_tray(self) -> None:
@@ -971,26 +919,18 @@ class ApplicationController(QObject):
         return backend.transcribe(audio_path)
 
     def retranscribe_audio(self, audio_path: str) -> None:
-        """Re-transcribe an existing audio file (UI callback target).
-
-        Args:
-            audio_path: Path to the saved recording.
-        """
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.retranscribe_audio(audio_path)
 
     def upload_audio_file(self, audio_path: str) -> None:
-        """Transcribe an uploaded audio file (UI callback target)."""
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.upload_audio_file(audio_path)
 
     def on_model_changed(self, model_name: str) -> None:
-        """Switch the active transcription backend (UI callback target)."""
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.on_model_changed(model_name)
 
     def update_status_with_auto_hide(self, status: str) -> None:
-        """Emit a thread-safe status update (HotkeyManager callback target)."""
         self.hotkey_runtime.update_status_with_auto_hide(status)
 
     def _on_meeting_consent_requested(self) -> None:
@@ -1018,7 +958,6 @@ class ApplicationController(QObject):
         self.meeting_runtime.on_consent_result(granted)
 
     def _on_meeting_recovery_found(self, meetings) -> None:
-        """Show the meeting recovery dialog for interrupted sessions (Qt main thread)."""
         try:
             self.ui_controller.show_meeting_recovery_dialog(
                 list(meetings),
@@ -1029,7 +968,6 @@ class ApplicationController(QObject):
             logger.error(f"Meeting recovery dialog failed: {exc}")
 
     def _connect_signals(self) -> None:
-        """Connect Qt signals to UI controller methods."""
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
@@ -1096,7 +1034,6 @@ class ApplicationController(QObject):
         )
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
-        """Handle recording state change on main thread."""
         self.ui_controller.is_recording = is_recording
         if self.ui_controller.main_window.is_recording != is_recording:
             self.ui_controller.main_window.is_recording = is_recording
@@ -1113,7 +1050,7 @@ class ApplicationController(QObject):
         self.transcription_runtime.on_transcription_error(error_message)
 
     def cleanup(self) -> None:
-        """Cleanup resources."""
+        """Release application resources in dependency order."""
         logger.info("Starting application cleanup...")
 
         try:

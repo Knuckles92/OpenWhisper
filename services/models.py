@@ -1,7 +1,4 @@
-"""
-SQLAlchemy ORM models for OpenWhisper database.
-Defines persistent entities for transcription history.
-"""
+"""SQLAlchemy persistence models."""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -18,23 +15,13 @@ from services.format_utils import format_timestamp
 
 
 class Base(DeclarativeBase):
-    """SQLAlchemy declarative base for all models."""
     pass
 
-
-# ---------------------------------------------------------------------------
-# Schema version tracking
-# ---------------------------------------------------------------------------
 
 class SchemaVersion(Base):
     __tablename__ = 'schema_version'
 
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-
-# ---------------------------------------------------------------------------
-# Transcription history
-# ---------------------------------------------------------------------------
 
 class TranscriptionHistory(Base):
     """A single transcription history entry (replaces HistoryEntry dataclass)."""
@@ -56,8 +43,6 @@ class TranscriptionHistory(Base):
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
     )
-
-    # -- Factory ----------------------------------------------------------
 
     @classmethod
     def create(
@@ -87,8 +72,6 @@ class TranscriptionHistory(Base):
             cleanup_model=cleanup_model,
         )
 
-    # -- Display helpers (ported from HistoryEntry dataclass) -------------
-
     @property
     def formatted_timestamp(self) -> str:
         return format_timestamp(self.timestamp)
@@ -101,13 +84,11 @@ class TranscriptionHistory(Base):
         return self.text[:max_len].rsplit(' ', 1)[0] + "..."
 
 
-# ---------------------------------------------------------------------------
 # Meeting Mode
 #
 # Table names are deliberately distinct from the legacy meetings /
 # meeting_chunks / meeting_insights tables, which DatabaseManager still drops
 # on startup for users migrating from older versions.
-# ---------------------------------------------------------------------------
 
 class MeetingSession(Base):
     """One meeting: lifecycle, access tokens, and the latest state snapshot."""
@@ -169,7 +150,7 @@ class MeetingSegment(Base):
     """A timestamped transcript segment; its id is a stable evidence anchor."""
     __tablename__ = 'meeting_segments'
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # 'sg_...'
+    id: Mapped[str] = mapped_column(String, primary_key=True)
     meeting_id: Mapped[str] = mapped_column(
         ForeignKey('meeting_sessions.id', ondelete='CASCADE'), nullable=False)
     chunk_id: Mapped[Optional[int]] = mapped_column(
@@ -195,7 +176,7 @@ class MeetingParticipant(Base):
     """A person in the meeting (host, diarized remote cluster, or web guest)."""
     __tablename__ = 'meeting_participants'
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # 'p_...'
+    id: Mapped[str] = mapped_column(String, primary_key=True)
     meeting_id: Mapped[str] = mapped_column(
         ForeignKey('meeting_sessions.id', ondelete='CASCADE'), nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
@@ -211,7 +192,7 @@ class MeetingStateItem(Base):
     """Write-through mirror of one dashboard card item."""
     __tablename__ = 'meeting_state_items'
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # 'it_...'
+    id: Mapped[str] = mapped_column(String, primary_key=True)
     meeting_id: Mapped[str] = mapped_column(
         ForeignKey('meeting_sessions.id', ondelete='CASCADE'), nullable=False)
     card: Mapped[str] = mapped_column(String, nullable=False)
@@ -236,7 +217,7 @@ class MeetingQuestion(Base):
     """Write-through mirror of one quiet-inbox question."""
     __tablename__ = 'meeting_questions'
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # 'q_...'
+    id: Mapped[str] = mapped_column(String, primary_key=True)
     meeting_id: Mapped[str] = mapped_column(
         ForeignKey('meeting_sessions.id', ondelete='CASCADE'), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)

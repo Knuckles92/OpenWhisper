@@ -1,4 +1,3 @@
-"""Word-wrapped label that reports the height its text actually occupies."""
 from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import QLabel
 
@@ -15,12 +14,6 @@ class WrappedLabel(QLabel):
     """
 
     def __init__(self, text: str = "", parent=None):
-        """Create a word-wrapped label.
-
-        Args:
-            text: Initial label text.
-            parent: Optional parent widget.
-        """
         super().__init__(text, parent)
         self.setWordWrap(True)
 
@@ -50,11 +43,7 @@ class WrappedLabel(QLabel):
         return QSize(hint.width(), self.heightForWidth(width))
 
     def resizeEvent(self, event):
-        """Re-report geometry when the wrap width changes.
-
-        Args:
-            event: Resize event carrying the old and new size.
-        """
+        """Re-report geometry when the wrap width changes."""
         super().resizeEvent(event)
         if event.oldSize().width() != event.size().width():
             self.updateGeometry()

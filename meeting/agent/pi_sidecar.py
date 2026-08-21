@@ -198,12 +198,10 @@ def _activity_kind(event: str, delta: str = "") -> str:
 
 
 def _utc_now_iso() -> str:
-    """Current time as an ISO-8601 string with an explicit UTC offset."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _pass_kind_for(payload: CheckpointPayload) -> str:
-    """Which pass ``payload`` represents, for activity/progress labeling."""
     if payload.is_consolidation:
         return PASS_CONSOLIDATION
     if bool(getattr(payload, "is_polish", False)):
@@ -273,7 +271,6 @@ class _ExpiredRpc:
 
 
 def _serialize_op_result(result: OpResult) -> Dict[str, Any]:
-    """Serialize an ``OpResult`` for the tool-bridge RPC response."""
     return {
         "ok": result.ok,
         "reason": result.reason,
@@ -310,7 +307,6 @@ def _op_results_from_counts(applied: int, rejected: int) -> List[OpResult]:
 
 
 def _coerce_count(value: Any) -> int:
-    """Best-effort int conversion for a sidecar-reported tally."""
     try:
         return max(0, int(value))
     except (TypeError, ValueError):
@@ -332,10 +328,6 @@ class PiSidecarAgent:
     supports_notes_pass = True
 
     def __init__(self, payload_dir: str) -> None:
-        """Args:
-            payload_dir: Directory holding ``bundle.cjs`` and optionally a
-                portable ``node.exe``.
-        """
         self._payload_dir = payload_dir
         self._cfg: Optional[AgentConfig] = None
         self._tools: Optional[AgentToolHost] = None
@@ -391,10 +383,6 @@ class PiSidecarAgent:
         #: notification carries no request id (and by the tool bridge).
         self._pass_kinds: Dict[str, str] = {}
         self._pass_kind = ""
-
-    # ------------------------------------------------------------------
-    # AgentCore lifecycle
-    # ------------------------------------------------------------------
 
     def initialize(self, cfg: AgentConfig, tools: AgentToolHost) -> None:
         """Spawn the sidecar, complete the hello handshake, and initialize Pi.
@@ -534,10 +522,6 @@ class PiSidecarAgent:
                 # shutdown guard anyway); a running one finishes on its own.
                 executor.shutdown(wait=False, cancel_futures=True)
             self._initialized = False
-
-    # ------------------------------------------------------------------
-    # Checkpoint execution
-    # ------------------------------------------------------------------
 
     def _matching_pendings_locked(self, request_id: Any = None) -> List[_Pending]:
         """Return pendings whose stall clock belongs to ``request_id``.
@@ -718,10 +702,6 @@ class PiSidecarAgent:
                 ok=False, op_results=op_results, error="canceled", usage=usage,
             )
         return AgentResult(ok=True, op_results=op_results, usage=usage)
-
-    # ------------------------------------------------------------------
-    # Process spawn / teardown
-    # ------------------------------------------------------------------
 
     def _bundle_path(self) -> str:
         return os.path.join(self._payload_dir, _BUNDLE_NAME)
@@ -954,10 +934,6 @@ class PiSidecarAgent:
                         stream.close()
                     except Exception:
                         pass
-
-    # ------------------------------------------------------------------
-    # RPC transport
-    # ------------------------------------------------------------------
 
     def _alloc_id(self) -> int:
         with self._lock:
@@ -1496,10 +1472,6 @@ class PiSidecarAgent:
             "id": req_id,
             "error": {"code": code, "message": message},
         })
-
-    # ------------------------------------------------------------------
-    # Health / restart
-    # ------------------------------------------------------------------
 
     def _ensure_health_thread(self) -> None:
         if self._health_thread is not None and self._health_thread.is_alive():

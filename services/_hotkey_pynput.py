@@ -1,18 +1,8 @@
-"""
-pynput-based hotkey backend (macOS and Linux).
+"""macOS/Linux hotkeys via Carbon or pynput.
 
-Used on platforms where the Windows ``keyboard`` library is unavailable or
-requires root. Unlike the ``keyboard`` backend (which uses per-key suppression),
-pynput cannot selectively suppress individual key events on macOS, so hotkeys
-are observed but not swallowed. macOS default hotkeys therefore use modifier
-combinations that do not collide with normal typing.
-
-On macOS the primary hotkey path uses Carbon and does not need Accessibility.
-Accessibility is still needed for synthetic auto-paste and for the pynput
-fallback/capture paths that observe or post keyboard events.
-
-This module is imported only by ``services.hotkey_manager`` when the active
-platform selects the pynput backend; nothing else should import it directly.
+Carbon hotkeys need no Accessibility grant; synthetic paste and pynput event
+taps do. Pynput observes configured hotkeys but cannot selectively suppress
+them.
 """
 import logging
 import os
@@ -61,8 +51,6 @@ def get_listener_class():
 
     return MacOSHotkeyListener
 
-
-# --- Key naming / parsing helpers (shared with the hotkey capture dialog) ----
 
 # Modifier aliases -> canonical modifier name. ``win``/``super`` map to ``cmd``
 # so legacy Windows-style settings still resolve to the Command key on macOS.
@@ -185,9 +173,6 @@ def format_hotkey_display(hotkey_string: str) -> str:
     return "".join(parts)
 
 
-# --- macOS Accessibility (Input Monitoring) trust ------------------------------
-
-
 def is_accessibility_trusted() -> bool:
     """Return whether this process has macOS Accessibility trust.
 
@@ -234,7 +219,6 @@ def request_accessibility_trust() -> bool:
 
 
 def _find_containing_app_bundle(path: str) -> Optional[Path]:
-    """Return the nearest .app bundle containing path, if this is a bundled app."""
     if not path:
         return None
 
@@ -254,7 +238,6 @@ def _find_containing_app_bundle(path: str) -> Optional[Path]:
 
 
 def _find_python_framework_app_bundle() -> Optional[Path]:
-    """Return the framework Python.app for virtualenv/dev launches, if present."""
     prefixes = {
         getattr(sys, "base_prefix", ""),
         getattr(sys, "exec_prefix", ""),
@@ -367,8 +350,6 @@ def accessibility_permission_diagnostics() -> str:
     return "\n".join(lines)
 
 
-# --- Synthetic paste -----------------------------------------------------------
-
 _paste_controller: Optional[pynput_keyboard.Controller] = None
 
 
@@ -391,17 +372,11 @@ class HotkeyManager:
     """Manages global hotkeys and keyboard event handling via pynput."""
 
     def __init__(self, hotkeys: Dict[str, str] = None):
-        """Initialize the hotkey manager.
-
-        Args:
-            hotkeys: Dictionary of hotkey mappings. Uses defaults if None.
-        """
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
         self._last_action_times: Dict[str, float] = {}
 
-        # Callback functions
         self.on_record_toggle: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
@@ -411,7 +386,6 @@ class HotkeyManager:
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
 
-        # Live keyboard state
         self._pressed_modifiers: set = set()
         self._pressed_main_keys: set = set()
         self._listener: Optional[pynput_keyboard.Listener] = None
@@ -420,7 +394,6 @@ class HotkeyManager:
         self._carbon_registrar = None
         self._use_carbon = sys.platform == "darwin"
 
-        # Setup keyboard hook
         self._setup_keyboard_hook()
 
     def _setup_keyboard_hook(self):
@@ -444,7 +417,6 @@ class HotkeyManager:
         logger.info("Keyboard hook started")
 
     def _setup_carbon_hotkeys(self) -> bool:
-        """Register hotkeys via Carbon. Returns False to fall back to pynput."""
         try:
             from services import _hotkey_carbon
         except Exception as exc:
@@ -464,7 +436,6 @@ class HotkeyManager:
         return True
 
     def _on_press(self, key) -> None:
-        """Handle a global key-press event."""
         modifier = modifier_of(key)
         if modifier is not None:
             self._pressed_modifiers.add(modifier)
@@ -488,12 +459,7 @@ class HotkeyManager:
         main_key: str,
         source: str = "global",
     ) -> bool:
-        """Handle a normalized hotkey press from either pynput or Qt.
-
-        Matches the key state against the configured hotkeys and dispatches the
-        action. Returns True when the key state matched a configured hotkey, even
-        if the action was suppressed by debounce or disabled state.
-        """
+        """Dispatch a normalized press and return whether a hotkey matched."""
         # Enable/disable toggle works even while the program is disabled.
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("enable_disable")):
             logger.debug(f"Enable/disable hotkey matched from {source}")
@@ -561,7 +527,6 @@ class HotkeyManager:
                 threading.Thread(target=self.on_meeting_toggle, daemon=True).start()
 
     def _on_release(self, key) -> None:
-        """Handle a global key-release event."""
         modifier = modifier_of(key)
         if modifier is not None:
             self._pressed_modifiers.discard(modifier)
@@ -572,10 +537,8 @@ class HotkeyManager:
             self._pressed_main_keys.discard(name)
 
     def _toggle_program_enabled(self):
-        """Toggle the program enabled state."""
         self.program_enabled = not self.program_enabled
 
-        # Reset debounce timing when toggling to avoid stale state.
         self._debouncer.reset()
 
         notify_stt_toggle(
@@ -583,7 +546,6 @@ class HotkeyManager:
         )
 
     def _should_trigger_record_toggle(self) -> bool:
-        """Check if record toggle should trigger (with debounce)."""
         return self._debouncer.should_trigger()
 
     def _should_accept_action(self, action: str) -> bool:
@@ -596,16 +558,6 @@ class HotkeyManager:
         return True
 
     def _matches_hotkey(self, active_modifiers: frozenset, main_key: str, hotkey_string: Optional[str]) -> bool:
-        """Check if the current key state matches a hotkey string.
-
-        Args:
-            active_modifiers: Set of currently-pressed canonical modifier names.
-            main_key: Canonical name of the just-pressed non-modifier key.
-            hotkey_string: Hotkey string (e.g. "ctrl+alt+r", "ctrl+alt+shift+r").
-
-        Returns:
-            True if the modifier set and main key both match exactly (no extra modifiers).
-        """
         if not hotkey_string:
             return False
 
@@ -636,11 +588,7 @@ class HotkeyManager:
             logger.error(f"Failed to re-register keyboard hook: {e}")
 
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
-        """Update the hotkey mappings.
-
-        Args:
-            new_hotkeys: Dictionary of new hotkey mappings.
-        """
+        """Replace configured hotkeys and update OS registrations."""
         self.hotkeys.update(new_hotkeys)
         if self._carbon_registrar is not None:
             # Carbon hotkeys are registered with the OS, not matched live, so the
@@ -676,17 +624,7 @@ class HotkeyManager:
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
                      is_transcribing_fn: Callable[[], bool] = None):
-        """Set callback functions for hotkey events.
-
-        Args:
-            on_record_toggle: Called when record toggle hotkey is pressed.
-            on_cancel: Called when cancel hotkey is pressed.
-            on_enable_toggle: Called when enable/disable hotkey is pressed.
-            on_minimize_tray: Called when minimize-to-tray hotkey is pressed.
-            on_status_update: Called to update status display.
-            on_status_update_auto_hide: Called to update status with auto-hide.
-            is_transcribing_fn: Function to check if transcription is in progress.
-        """
+        """Set callbacks invoked by hotkey events."""
         self.on_record_toggle = on_record_toggle
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle

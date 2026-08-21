@@ -1,4 +1,3 @@
-"""Profile-to-model picker used by the Model Manager text cards."""
 from pathlib import Path
 from typing import List, Optional
 
@@ -33,7 +32,6 @@ from ui_qt.widgets.searchable_combo import SearchableComboBox
 
 
 def _design_icon(filename: str) -> QIcon:
-    """Load a bundled Tabler icon used by the text-model picker."""
     path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
     icon = QIcon(str(path))
     icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
@@ -41,8 +39,6 @@ def _design_icon(filename: str) -> QIcon:
 
 
 class TextModelPicker(QWidget):
-    """Single-flow profile and text-model selection controls."""
-
     provider_changed = pyqtSignal(str)
     refresh_requested = pyqtSignal(str)
     activation_requested = pyqtSignal(str)
@@ -71,12 +67,6 @@ class TextModelPicker(QWidget):
         parent=None,
         idle_status: str = "Open this tab to load the model catalog.",
     ):
-        """Build the text-model picker.
-
-        Args:
-            parent: Optional owning widget.
-            idle_status: Placeholder shown before a catalog is fetched.
-        """
         super().__init__(parent)
         self.provider = TranscriptCleanupProvider.OPENAI
         self._active_provider = ""
@@ -91,7 +81,6 @@ class TextModelPicker(QWidget):
 
     @staticmethod
     def _step_heading(number: str, title: str) -> QHBoxLayout:
-        """Build the numbered heading row shared by both section cards."""
         heading = QHBoxLayout()
         heading.setSpacing(10)
         step = QLabel(number)
@@ -106,7 +95,6 @@ class TextModelPicker(QWidget):
         return heading
 
     def _setup_ui(self) -> None:
-        """Construct the side-by-side provider and model selection cards."""
         self.setObjectName("textModelPicker")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
@@ -346,7 +334,6 @@ class TextModelPicker(QWidget):
         self.set_provider(current)
 
     def current_profile(self) -> Optional[TextLLMProfile]:
-        """Return the selected profile, if any."""
         for profile in self._profiles:
             if profile.id == self.provider:
                 return profile
@@ -373,7 +360,6 @@ class TextModelPicker(QWidget):
         self._render_provider()
 
     def _reload_provider_combo(self) -> None:
-        """Rebuild the profile combo from the current profile list."""
         icons = {
             TranscriptCleanupProvider.OPENAI: _design_icon("box-blue.svg"),
             TranscriptCleanupProvider.OPENROUTER: _design_icon(
@@ -389,7 +375,6 @@ class TextModelPicker(QWidget):
         self.provider_combo.blockSignals(False)
 
     def _on_provider_combo_changed(self, _index: int) -> None:
-        """Swap the in-place catalog when the provider selector changes."""
         self._save_current_draft()
         provider = self.provider_combo.currentData()
         if not provider:
@@ -399,7 +384,6 @@ class TextModelPicker(QWidget):
         self.provider_changed.emit(provider)
 
     def _profile_copy(self, profile: Optional[TextLLMProfile]) -> tuple:
-        """Return mark, description, and default requirement copy."""
         if profile is None:
             return ("API", "Unknown endpoint.", "Requires an API key")
         if profile.id == TranscriptCleanupProvider.OPENAI:
@@ -424,7 +408,6 @@ class TextModelPicker(QWidget):
         )
 
     def _render_provider(self) -> None:
-        """Update provider copy and the staged model without changing pages."""
         profile = self.current_profile()
         mark, description, requirement = self._profile_copy(profile)
         self.provider_mark.setText(mark)
@@ -490,7 +473,6 @@ class TextModelPicker(QWidget):
             self._draft_models[self.provider] = model
 
     def _on_model_changed(self, text: str) -> None:
-        """Track the staged model and refresh activation affordance."""
         if text.strip():
             self._draft_models[self.provider] = text.strip()
         self._update_activation_button()
@@ -538,28 +520,16 @@ class TextModelPicker(QWidget):
         self._update_activation_button()
 
     def set_loading(self, loading: bool) -> None:
-        """Render catalog loading state.
-
-        Args:
-            loading: Whether a catalog request is in flight.
-        """
         self.refresh_button.setEnabled(not loading)
         if loading:
             self.status_label.setText("Loading models…")
 
     def set_active_selection(self, provider: str, model: str) -> None:
-        """Store the active selection and refresh related status UI.
-
-        Args:
-            provider: Active text-LLM profile id.
-            model: Active model id.
-        """
         self._active_provider = provider
         self._active_model = model
         self._update_active_summary()
 
     def _active_profile_name(self) -> str:
-        """Display name for the currently active profile."""
         for profile in self._profiles:
             if profile.id == self._active_provider:
                 return profile.name
@@ -605,13 +575,11 @@ class TextModelPicker(QWidget):
         self.activate_button.update()
 
     def _emit_edit(self) -> None:
-        """Ask the owner to edit the selected custom endpoint."""
         profile = self.current_profile()
         if profile is not None and not profile.builtin:
             self.edit_endpoint_requested.emit(profile.id)
 
     def _emit_delete(self) -> None:
-        """Ask the owner to delete the selected custom endpoint."""
         profile = self.current_profile()
         if profile is not None and not profile.builtin:
             self.delete_endpoint_requested.emit(profile.id)

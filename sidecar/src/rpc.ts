@@ -19,7 +19,6 @@ import * as readline from "node:readline";
 
 const JSONRPC = "2.0";
 
-/** JSON-RPC error codes used by this endpoint. */
 export const RPC_PARSE_ERROR = -32700;
 export const RPC_METHOD_NOT_FOUND = -32601;
 export const RPC_INTERNAL_ERROR = -32603;
@@ -27,7 +26,6 @@ export const RPC_INTERNAL_ERROR = -32603;
 export type RequestHandler = (params: any) => unknown | Promise<unknown>;
 export type NotificationHandler = (params: any) => void;
 
-/** Error raised when the remote side answers a request with an error object. */
 export class RpcRemoteError extends Error {
   readonly code: number;
   readonly data: unknown;
@@ -60,22 +58,18 @@ export class RpcEndpoint {
     private readonly output: NodeJS.WritableStream = process.stdout,
   ) {}
 
-  /** Register the handler for an inbound request method. */
   onRequest(method: string, handler: RequestHandler): void {
     this.requestHandlers.set(method, handler);
   }
 
-  /** Register the handler for an inbound notification method. */
   onNotification(method: string, handler: NotificationHandler): void {
     this.notificationHandlers.set(method, handler);
   }
 
-  /** Register a callback invoked once when stdin closes (host went away). */
   onClose(cb: () => void): void {
     this.closeHandler = cb;
   }
 
-  /** Begin reading NDJSON messages from stdin. */
   start(): void {
     this.output.on("error", () => {
       // stdout is gone (EPIPE): the host process died; nothing sensible left.
@@ -88,18 +82,10 @@ export class RpcEndpoint {
     this.reader.on("close", () => this.handleClose());
   }
 
-  /** Send a notification (no response expected). */
   notify(method: string, params?: unknown): void {
     this.send({ jsonrpc: JSONRPC, method, params: params ?? {} });
   }
 
-  /**
-   * Send a request to the host and await its response.
-   *
-   * @param method RPC method name (e.g. "tool.patch_state").
-   * @param params Parameters object.
-   * @param timeoutMs Optional timeout; 0 or undefined waits forever.
-   */
   request(method: string, params?: unknown, timeoutMs?: number): Promise<any> {
     const id = `sc-${this.nextId++}`;
     return new Promise((resolve, reject) => {
@@ -121,7 +107,6 @@ export class RpcEndpoint {
     });
   }
 
-  /** Emit a diagnostic through the `log` notification (stderr fallback). */
   log(level: "debug" | "info" | "warning" | "error", msg: string): void {
     try {
       this.notify("log", { level, msg });

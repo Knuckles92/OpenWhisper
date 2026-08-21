@@ -1,21 +1,6 @@
-"""
-Hotkey management for the OpenWhisper application.
-
-This module is a thin platform dispatcher. The actual implementation lives in
-one of two backends, and only the selected backend's library is imported:
-
-* Windows  -> ``services._hotkey_keyboard`` (uses the ``keyboard`` library,
-  which can suppress keys before they reach the focused app).
-* macOS / Linux -> ``services._hotkey_pynput`` (uses ``pynput``; cannot suppress
-  keys, so a Qt focus-window fallback is layered on in ``services.runtime``).
-
-Importing ``keyboard`` on macOS (or the pynput-only paths on Windows) would fail
-because the platform library is not installed there, so the unused backend is
-never imported.
-"""
+"""Load only the hotkey backend supported by the current platform."""
 import sys
 
-# pynput on macOS and Linux; the keyboard library on Windows.
 USE_PYNPUT_BACKEND = sys.platform != "win32"
 
 if USE_PYNPUT_BACKEND:

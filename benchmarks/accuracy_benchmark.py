@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Model Accuracy Benchmark Test Script
+Transcription model accuracy benchmark.
 
 Tests all transcription models against generated speech audio with known text
 and measures transcription accuracy using word-level comparison.
@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 
-# Suppress warnings that might clutter output
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 
@@ -56,7 +55,6 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
@@ -66,7 +64,6 @@ from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
 from config import config
 
-# Setup logging - minimal output
 logging.basicConfig(
     level=logging.CRITICAL,
     format='%(levelname)s - %(message)s',
@@ -75,7 +72,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Test text samples - varied content types for comprehensive accuracy testing
 TEST_SAMPLES = {
     "conversational": {
         "name": "Conversational Speech",
@@ -123,7 +119,6 @@ TEST_SAMPLES = {
 
 @dataclass
 class AccuracyResult:
-    """Result of a single accuracy test."""
     model_name: str
     sample_id: str
     sample_name: str
@@ -138,7 +133,6 @@ class AccuracyResult:
 
 @dataclass
 class ModelSummary:
-    """Summary statistics for a model across all samples."""
     model_name: str
     avg_word_accuracy: float = 0.0
     avg_char_accuracy: float = 0.0
@@ -207,10 +201,9 @@ def calculate_character_accuracy(expected: str, transcribed: str) -> float:
     if not s1 or not s2:
         return 0.0
 
-    # Levenshtein distance calculation
     m, n = len(s1), len(s2)
 
-    # Use two rows for memory efficiency
+    # Keep only two rows to bound memory use.
     prev_row = list(range(n + 1))
     curr_row = [0] * (n + 1)
 
@@ -230,8 +223,6 @@ def calculate_character_accuracy(expected: str, transcribed: str) -> float:
 
 
 class AudioGenerator:
-    """Generate test audio files from text using TTS."""
-
     def __init__(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.temp_dir = script_dir
@@ -266,7 +257,6 @@ class AudioGenerator:
         """
         output_path = os.path.join(self.temp_dir, filename)
 
-        # 1. Try gTTS if available
         if self._check_tts_available():
             try:
                 from gtts import gTTS
@@ -288,7 +278,6 @@ class AudioGenerator:
             except Exception as e:
                 logger.debug(f"gTTS failed, attempting corpus fallback: {e}")
 
-        # 2. Fallback: slice from AMI reference meeting IN1009
         corpus = self._find_ami_corpus()
         if corpus:
             ami_audio_path, ami_annot_dir = corpus
@@ -326,7 +315,6 @@ class AudioGenerator:
         return None, None
 
     def cleanup(self, filenames: List[str]):
-        """Clean up generated audio files."""
         for filename in filenames:
             try:
                 filepath = os.path.join(self.temp_dir, filename)
@@ -337,8 +325,6 @@ class AudioGenerator:
 
 
 class AccuracyBenchmark:
-    """Benchmark transcription accuracy across models."""
-
     def __init__(
         self,
         local_models: Optional[List[str]] = None,
@@ -355,11 +341,9 @@ class AccuracyBenchmark:
         override_device = None if device == "auto" else device
         override_compute = None if compute_type == "auto" else compute_type
 
-        # Initialize backends
         print("Initializing transcription backends...")
         print("-" * 60)
 
-        # Local Whisper models
         models_to_test = local_models if local_models is not None else ["auto"]
         for model_name in models_to_test:
             backend_key = f"local_whisper_{model_name}" if len(models_to_test) > 1 or model_name != "auto" else "local_whisper"
@@ -377,7 +361,6 @@ class AccuracyBenchmark:
             except Exception as e:
                 print(f"  ❌ {backend_key}: {str(e)[:60]}...")
 
-        # OpenAI backends
         if not skip_api:
             for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
                 try:
@@ -395,7 +378,6 @@ class AccuracyBenchmark:
 
     def test_sample(self, backend_name: str, backend, sample_id: str,
                     sample: dict, audio_file: str) -> AccuracyResult:
-        """Test a single sample with a single model."""
         expected_text = sample["text"]
 
         try:
@@ -463,7 +445,6 @@ class AccuracyBenchmark:
             )
 
     def run_benchmark(self):
-        """Run accuracy benchmark on all models with all samples."""
         print("=" * 80)
         print("Model Accuracy Benchmark")
         print("=" * 80)
@@ -472,14 +453,12 @@ class AccuracyBenchmark:
         print(f"Models: {', '.join(self.backends.keys())}")
         print(f"Samples: {', '.join(samples_to_run.keys())}")
 
-        # Check if audio source is available (TTS or corpus)
         if not self.audio_generator._check_audio_available():
             print("\n❌ ERROR: No speech audio generator available")
             print("   Please either install gTTS (pip install gtts pydub) or ensure")
             print("   AMI benchmark audio exists under benchmarks/meeting_mode/data/ami/audio/")
             return
 
-        # Generate audio files for all samples
         print("\n" + "=" * 80)
         print("Generating test audio files...")
         print("=" * 80)
@@ -507,7 +486,6 @@ class AccuracyBenchmark:
             print("\n❌ Failed to generate any audio files. Exiting.")
             return
 
-        # Run tests
         print("\n" + "=" * 80)
         print("Running accuracy tests...")
         print("=" * 80)
@@ -540,11 +518,9 @@ class AccuracyBenchmark:
                 except Exception as e:
                     print(f"❌ Error: {str(e)[:50]}")
 
-        # Print results
         self.print_results()
 
     def print_results(self):
-        """Print detailed benchmark results."""
         print("\n" + "=" * 80)
         print("ACCURACY BENCHMARK RESULTS")
         print("=" * 80)
@@ -553,7 +529,6 @@ class AccuracyBenchmark:
             print("No results to display.")
             return
 
-        # Calculate model summaries
         model_summaries: Dict[str, ModelSummary] = {}
 
         for result in self.results:
@@ -569,14 +544,12 @@ class AccuracyBenchmark:
             if result.success:
                 summary.successful_tests += 1
 
-        # Calculate averages
         for summary in model_summaries.values():
             successful = [r for r in summary.results_by_sample.values() if r.success]
             if successful:
                 summary.avg_word_accuracy = sum(r.word_accuracy for r in successful) / len(successful)
                 summary.avg_char_accuracy = sum(r.character_accuracy for r in successful) / len(successful)
 
-        # Print detailed results by sample
         print("\n📊 Results by Sample Type")
         print("-" * 80)
 
@@ -602,7 +575,6 @@ class AccuracyBenchmark:
                           f"{'N/A':>10} "
                           f"{'❌':>10}")
 
-        # Print model rankings
         print("\n" + "=" * 80)
         print("📈 MODEL RANKINGS (by Average Word Accuracy)")
         print("=" * 80)
@@ -623,7 +595,6 @@ class AccuracyBenchmark:
                   f"{summary.avg_char_accuracy:>11.1f}% "
                   f"{summary.successful_tests}/{summary.total_tests:>7}")
 
-        # Print winner
         if ranked and ranked[0].avg_word_accuracy > 0:
             print("\n" + "=" * 80)
             winner = ranked[0]
@@ -631,14 +602,12 @@ class AccuracyBenchmark:
             print(f"   Average Word Accuracy: {winner.avg_word_accuracy:.1f}%")
             print(f"   Average Character Accuracy: {winner.avg_char_accuracy:.1f}%")
 
-        # Print sample transcription comparison for best model
         if ranked and ranked[0].successful_tests > 0:
             print("\n" + "=" * 80)
             print("📝 SAMPLE TRANSCRIPTION COMPARISON (Best Model)")
             print("=" * 80)
 
             best_model = ranked[0]
-            # Show first successful sample
             for sample_id, result in best_model.results_by_sample.items():
                 if result.success:
                     print(f"\nSample: {result.sample_name}")
@@ -652,7 +621,6 @@ class AccuracyBenchmark:
         print("\n" + "=" * 80)
 
     def cleanup(self):
-        """Clean up resources."""
         self.audio_generator.cleanup(self.generated_files)
 
         for backend_name, backend in self.backends.items():
@@ -663,7 +631,6 @@ class AccuracyBenchmark:
 
 
 def main(argv: Optional[List[str]] = None):
-    """Main entry point."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Model Accuracy Benchmark")

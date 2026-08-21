@@ -1,6 +1,4 @@
-"""
-Post-ASR transcript cleanup via OpenAI-compatible chat models.
-"""
+"""Post-ASR cleanup via OpenAI-compatible chat models."""
 import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -83,7 +81,6 @@ def provider_env_key(provider: str) -> str:
 
 
 def _provider_base_url(provider: str) -> Optional[str]:
-    """Return the API base URL for a provider (None = OpenAI default)."""
     profile = get_profile(provider)
     if profile is not None:
         return profile.base_url
@@ -93,7 +90,6 @@ def _provider_base_url(provider: str) -> Optional[str]:
 
 
 def _provider_headers(provider: str) -> Optional[dict]:
-    """Return extra default headers for a provider, if any."""
     profile = get_profile(provider)
     if profile is not None and profile.kind == TranscriptCleanupProvider.OPENROUTER:
         from services.text_llm import provider_headers
@@ -105,17 +101,7 @@ def _provider_headers(provider: str) -> Optional[dict]:
 
 
 def find_api_key(provider: str) -> Optional[str]:
-    """Get the provider's API key from environment variables or the .env file.
-
-    Auth-free custom endpoints return a dummy key the OpenAI client accepts.
-    Required keys that are missing return None.
-
-    Args:
-        provider: A text-LLM profile id.
-
-    Returns:
-        API key string, or None when a required key is unavailable.
-    """
+    """Resolve credentials, including a dummy key for auth-free endpoints."""
     profile = get_profile(provider)
     if profile is not None:
         return resolve_api_key(profile)
@@ -126,7 +112,6 @@ def find_api_key(provider: str) -> Optional[str]:
 
 
 def _filter_openai_chat_models(model_ids: List[str]) -> List[str]:
-    """Keep only OpenAI model ids usable with the chat completions API."""
     return filter_openai_chat_models(model_ids)
 
 
@@ -135,24 +120,7 @@ def list_cleanup_models(
     api_key: Optional[str] = None,
     sort: Optional[str] = None,
 ) -> List[str]:
-    """Fetch the provider's available chat model ids live from its API.
-
-    Args:
-        provider: A text-LLM profile id.
-        api_key: Optional explicit API key. Looked up from the environment /
-            .env file when omitted.
-        sort: Optional ``TranscriptCleanupModelSort`` value. OpenRouter
-            supports server-side ranking via its ``sort`` query parameter;
-            other endpoints ignore anything but alphabetical.
-
-    Returns:
-        List of model id strings — server ranking order when an OpenRouter
-        sort is requested, alphabetical otherwise.
-
-    Raises:
-        RuntimeError: When no API key is available for the provider.
-        Exception: Network/API errors from the underlying client.
-    """
+    """Fetch chat model IDs, preserving requested OpenRouter server ranking."""
     profile = get_profile(provider)
     if profile is not None:
         return list_chat_models(profile, api_key=api_key, sort=sort)
@@ -189,19 +157,7 @@ def polish_cleanup_rule(
     model: Optional[str] = None,
     reasoning: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Rewrite a raw user instruction into a short imperative cleanup rule.
-
-    Args:
-        instruction: The user's raw typed or dictated instruction.
-        provider: Optional text-LLM profile id. Config default when omitted.
-        model: Optional chat model id. Provider default when omitted.
-        reasoning: Optional ``TranscriptCleanupReasoning`` value.
-
-    Returns:
-        Tuple of (rule_text, error). ``rule_text`` is the polished rule on
-        success, or the stripped original instruction when polish is
-        unavailable or failed; ``error`` is None only on success.
-    """
+    """Return ``(rule, error)``, falling back to the stripped instruction."""
     instruction = instruction.strip()
     if not instruction:
         return "", "empty instruction"
@@ -225,14 +181,6 @@ class TranscriptCleanup:
         api_key: Optional[str] = None,
         reasoning: Optional[str] = None,
     ):
-        """Initialize the cleanup client.
-
-        Args:
-            provider: Text-LLM profile id. Defaults to config.
-            model: Chat model id. Defaults to the provider's default model.
-            api_key: Provider API key. Uses environment / .env if None.
-            reasoning: ``TranscriptCleanupReasoning`` value ("off" disables).
-        """
         self.provider = self._normalize_provider(provider)
         self.model = model or default_transcript_cleanup_model(self.provider)
         self.reasoning = (
@@ -256,7 +204,6 @@ class TranscriptCleanup:
         return config.TRANSCRIPT_CLEANUP_PROVIDER
 
     def _initialize_client(self) -> None:
-        """Initialize the chat client when a key is available."""
         profile = get_profile(self.provider)
         if profile is not None:
             key = self.api_key or find_api_key(self.provider)
@@ -321,17 +268,7 @@ class TranscriptCleanup:
     def configure(
         self, provider: str, model: str, reasoning: Optional[str] = None
     ) -> None:
-        """Apply the current provider/model selection, re-initializing if needed.
-
-        Cheap when nothing changed; a provider switch or a change to the
-        profile's URL/key rebuilds the client. Called before each cleanup so
-        settings changes take effect without restarting.
-
-        Args:
-            provider: Text-LLM profile id.
-            model: Chat model id to use for cleanup requests.
-            reasoning: ``TranscriptCleanupReasoning`` value ("off" disables).
-        """
+        """Apply settings, rebuilding only when endpoint or credentials change."""
         normalized = self._normalize_provider(provider)
         profile = get_profile(normalized)
         fingerprint = (

@@ -257,9 +257,7 @@ def _check_timeline_data(data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-# ---------------------------------------------------------------------------
 # Item ops
-# ---------------------------------------------------------------------------
 
 def _op_add_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpResult:
     card = op.get("card")
@@ -449,9 +447,7 @@ def _op_confirm_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) ->
     )
 
 
-# ---------------------------------------------------------------------------
 # Topic / summary / title
-# ---------------------------------------------------------------------------
 
 def _op_set_topic(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpResult:
     reason = _check_text(op.get("text"), MAX_TOPIC_LEN) or _check_evidence(op, ctx)
@@ -529,9 +525,7 @@ def _op_set_cloud_enabled(state: MeetingState, op: Dict[str, Any],
     )
 
 
-# ---------------------------------------------------------------------------
 # Participants
-# ---------------------------------------------------------------------------
 
 def _op_upsert_participant(state: MeetingState, op: Dict[str, Any],
                            ctx: OpContext) -> OpResult:
@@ -641,9 +635,7 @@ def _op_rename_participant(state: MeetingState, op: Dict[str, Any],
     )
 
 
-# ---------------------------------------------------------------------------
 # Questions
-# ---------------------------------------------------------------------------
 
 def _op_ask_question(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> OpResult:
     reason = _check_text(op.get("text")) or _check_evidence(op, ctx)
@@ -774,9 +766,7 @@ def _op_reopen_question(state: MeetingState, op: Dict[str, Any],
     )
 
 
-# ---------------------------------------------------------------------------
 # Segment ops (validated here, applied by the store's segment handler)
-# ---------------------------------------------------------------------------
 
 def _op_reassign_segment_speaker(state: MeetingState, op: Dict[str, Any],
                                  ctx: OpContext) -> OpResult:
@@ -847,9 +837,7 @@ def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
     )
 
 
-# ---------------------------------------------------------------------------
 # Dispatch
-# ---------------------------------------------------------------------------
 
 _HANDLERS: Dict[str, Callable[[MeetingState, Dict[str, Any], OpContext], OpResult]] = {
     "add_item": _op_add_item,

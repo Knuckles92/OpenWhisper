@@ -1,13 +1,4 @@
-"""
-Shared base class for transcription tab widgets.
-
-TranscriptionTabBase builds the scaffolding common to the Quick Record and
-Upload File tabs: a centered content column holding the model-selection card
-(with local-engine controls), a status label, the collapsible transcription
-card, and the stats widget. Subclasses insert their unique widgets through
-the ``_build_content_before_status`` / ``_build_content_after_status`` hooks
-and extend ``_connect_signals`` via ``super()``.
-"""
+"""Shared model-selection and transcript tab scaffolding."""
 import logging
 from typing import Optional
 
@@ -37,7 +28,6 @@ class TranscriptionTabBase(QWidget):
     engine_settings_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
-    # Subclass configuration
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
     INITIAL_STATUS = ""
     TRANSCRIPT_PLACEHOLDER = "Transcription will appear here..."
@@ -53,7 +43,6 @@ class TranscriptionTabBase(QWidget):
         self.load_cleanup_setting()
 
     def _setup_ui(self):
-        """Build the shared tab scaffolding, calling the content hooks."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -77,7 +66,6 @@ class TranscriptionTabBase(QWidget):
 
         main_layout.addLayout(center_wrapper)
 
-        # Model selection card
         model_card = Card()
 
         model_label = QLabel("Transcription Engine")
@@ -113,7 +101,6 @@ class TranscriptionTabBase(QWidget):
 
         self._build_content_before_status(content_layout)
 
-        # Status label
         self.status_label = QLabel(self.INITIAL_STATUS)
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -122,7 +109,6 @@ class TranscriptionTabBase(QWidget):
 
         self._build_content_after_status(content_layout)
 
-        # Transcription display card (collapsible to reclaim vertical space)
         self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
         self.version_toggle = QWidget()
@@ -159,7 +145,6 @@ class TranscriptionTabBase(QWidget):
         # spare height and shrinks first when the window gets smaller.
         content_layout.addWidget(self.transcription_card, stretch=1)
 
-        # Transcription statistics display (hidden by default)
         self.stats_widget = TranscriptionStatsWidget()
         content_layout.addWidget(self.stats_widget)
 
@@ -171,8 +156,6 @@ class TranscriptionTabBase(QWidget):
         # Always start collapsed to keep the main window compact on launch.
         self.set_transcription_collapsed(True)
 
-    # ── Subclass hooks ─────────────────────────────────────────────
-
     def _build_content_before_status(self, layout: QVBoxLayout):
         """Insert tab-specific widgets between the model card and status label."""
 
@@ -180,7 +163,6 @@ class TranscriptionTabBase(QWidget):
         """Insert tab-specific widgets between the status label and transcription card."""
 
     def _connect_signals(self):
-        """Connect shared widget signals; subclasses extend via super()."""
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.local_engine.manage_models_requested.connect(self.manage_models_requested)
@@ -190,13 +172,11 @@ class TranscriptionTabBase(QWidget):
         self.raw_btn.toggled.connect(self._on_version_toggled)
 
     def _on_cleanup_toggled(self, checked: bool):
-        """Persist AI cleanup preference immediately."""
         settings_manager.save_setting(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, checked
         )
 
     def load_cleanup_setting(self):
-        """Sync the AI cleanup checkbox from persisted settings."""
         enabled = settings_manager.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
             config.TRANSCRIPT_CLEANUP_ENABLED,
@@ -206,7 +186,6 @@ class TranscriptionTabBase(QWidget):
         self.cleanup_check.blockSignals(False)
 
     def _on_version_toggled(self, checked: bool):
-        """Swap Fixed/Raw transcript content when the segmented control changes."""
         if not checked:
             return
         show_raw = self.raw_btn.isChecked()
@@ -216,19 +195,12 @@ class TranscriptionTabBase(QWidget):
         else:
             self.transcript_text.setText(self._fixed_text)
 
-    # ── Model selection ────────────────────────────────────────────
-
     def _on_model_changed(self, model_name: str):
-        """Handle model selection change."""
         self.current_model = model_name
         self.model_changed.emit(model_name)
 
     def set_model_selection(self, model_value: str):
-        """Set the model selection by internal value.
-
-        Args:
-            model_value: Internal model value (e.g., 'local_whisper')
-        """
+        """Select a model by its internal backend value."""
         for display_name, internal_value in config.MODEL_VALUE_MAP.items():
             if internal_value == model_value:
                 index = self.model_combo.findText(display_name)
@@ -239,10 +211,7 @@ class TranscriptionTabBase(QWidget):
                     self.model_combo.blockSignals(False)
                 break
 
-    # ── Status / engine panel ──────────────────────────────────────
-
     def set_status(self, status_text: str):
-        """Update the status label."""
         self.status_label.setText(status_text)
 
     def set_device_info(self, device_info: str):
@@ -258,23 +227,16 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.set_resolved_info(device_info)
 
     def set_local_engine_visible(self, visible: bool):
-        """Show/hide the local-engine sub-panel (only for Local Whisper)."""
         self.local_engine.setVisible(visible)
 
-    # ── Engine settings collapse ───────────────────────────────────
-
     def _on_engine_settings_toggled(self, collapsed: bool, delta: int):
-        """User toggled engine settings: request a window resize."""
         self.engine_settings_collapsed.emit(collapsed, delta)
 
     def set_engine_settings_collapsed(self, collapsed: bool):
         """Apply collapsed state without emitting (sync/restore)."""
         self.local_engine.set_collapsed(collapsed, emit=False)
 
-    # ── Transcription collapse ─────────────────────────────────────
-
     def _apply_transcription_stretch(self, collapsed: bool):
-        """Hand the spare vertical space to the card or the bottom spacer."""
         if collapsed:
             self.content_layout.setStretchFactor(self.transcription_card, 0)
             self.content_layout.setStretch(self._bottom_stretch_index, 1)
@@ -283,7 +245,6 @@ class TranscriptionTabBase(QWidget):
             self.content_layout.setStretch(self._bottom_stretch_index, 0)
 
     def _on_transcription_toggled(self, collapsed: bool):
-        """User toggled the card: rebalance and request a resize."""
         self.transcription_collapsed.emit(collapsed, self.transcription_card.content_height)
         QTimer.singleShot(
             SECTION_COLLAPSE_DURATION_MS,
@@ -299,15 +260,8 @@ class TranscriptionTabBase(QWidget):
         """Whether the transcription card is currently collapsed."""
         return self.transcription_card.is_collapsed
 
-    # ── Transcript / stats ─────────────────────────────────────────
-
     def set_transcript(self, text: str, raw: Optional[str] = None):
-        """Set the transcript text, optionally with a distinct raw ASR version.
-
-        Args:
-            text: Fixed/display transcript (cleaned when cleanup ran).
-            raw: Unprocessed ASR text when different from ``text``.
-        """
+        """Display fixed text and an optional distinct raw ASR version."""
         self._fixed_text = text or ""
         self._raw_text = raw if raw and raw != text else None
         self._showing_raw = False
@@ -324,7 +278,6 @@ class TranscriptionTabBase(QWidget):
         self.transcript_text.setText(self._fixed_text)
 
     def clear_transcription(self):
-        """Clear the transcript text."""
         self._fixed_text = ""
         self._raw_text = None
         self._showing_raw = False
@@ -337,15 +290,7 @@ class TranscriptionTabBase(QWidget):
         audio_duration: float,
         file_size: int,
     ):
-        """Set the transcription statistics display.
-
-        Args:
-            transcription_time: Time taken to transcribe in seconds.
-            audio_duration: Duration of the audio in seconds.
-            file_size: Size of the audio file in bytes.
-        """
         self.stats_widget.set_stats(transcription_time, audio_duration, file_size)
 
     def clear_transcription_stats(self):
-        """Clear and hide the transcription statistics display."""
         self.stats_widget.clear()

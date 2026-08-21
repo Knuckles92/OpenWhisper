@@ -117,7 +117,6 @@ SHUTDOWN_JOIN_TIMEOUT_S = 5.0
 
 
 def _with_history_target(url: str, meeting_id: str) -> str:
-    """Add a past-meeting deep link without changing the capability path."""
     parts = urlsplit(url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     query["history"] = meeting_id
@@ -133,12 +132,6 @@ def redact_meeting_url(url: Optional[str]) -> str:
     authority over the live meeting. Log files get attached to bug reports, so
     only the origin is ever written out.
 
-    Args:
-        url: Dashboard URL, or None.
-
-    Returns:
-        ``scheme://host:port/<redacted>``, or an empty string when no URL was
-        given.
     """
     if not url:
         return ""
@@ -182,10 +175,6 @@ class MeetingRuntime:
         # pattern in ApplicationController.
         self._consent_pending_kind: Optional[str] = None
 
-    # ------------------------------------------------------------------
-    # Startup
-    # ------------------------------------------------------------------
-
     def setup(self) -> None:
         """Kick off the startup crash-recovery scan for interrupted meetings.
 
@@ -205,7 +194,6 @@ class MeetingRuntime:
         ).start()
 
     def _recovery_scan_worker(self) -> None:
-        """Scan for interrupted meetings off the Qt thread; report via signal."""
         try:
             from meeting.recovery import find_recoverable_meetings
         except Exception as exc:
@@ -223,7 +211,6 @@ class MeetingRuntime:
             self.controller.meeting_recovery_found.emit(list(meetings))
 
     def _restore_last_finalization_worker(self) -> None:
-        """Reload the most recent meeting's checklist onto the Meeting Mode tab."""
         if self.is_active or self.controller.meeting_active:
             return
         try:
@@ -245,16 +232,7 @@ class MeetingRuntime:
         *,
         reveal: bool = False,
     ) -> bool:
-        """Show a persisted meeting's finalization payload on the desktop tab.
-
-        Args:
-            meeting: Repository meeting row.
-            reveal: When True, clear a persisted Keep-for-later flag and show
-                the card even if the user previously dismissed it.
-
-        Returns:
-            True when a card payload was emitted.
-        """
+        """Emit a persisted finalization card, optionally clearing deferral."""
         meeting_id = str(meeting.get("id") or "")
         raw = meeting.get("state_json")
         data: Dict[str, Any] = {}
@@ -305,16 +283,6 @@ class MeetingRuntime:
         return True
 
     def _persist_card_deferred(self, meeting_id: str, deferred: bool) -> bool:
-        """Write the desktop-card deferral flag without changing insights.
-
-        Args:
-            meeting_id: Persisted meeting session id.
-            deferred: True hides the card across restarts until the meeting is
-                selected from Past Meetings.
-
-        Returns:
-            True when the flag was persisted.
-        """
         from meeting.state.schema import FinalizationState, MeetingState
 
         engine = self._engine
@@ -371,7 +339,6 @@ class MeetingRuntime:
             return False
 
     def _hide_finalization_card(self) -> None:
-        """Clear the in-memory Final Insights card and refresh Past Meetings."""
         with self._lock:
             self._finalization = None
             self._card_meeting_id = None
@@ -383,7 +350,6 @@ class MeetingRuntime:
         self._refresh_past_meetings()
 
     def _refresh_past_meetings(self) -> None:
-        """Reload the Past Meetings sidebar on the Qt GUI thread."""
         try:
             self.controller.past_meetings_refresh_requested.emit()
         except Exception:
@@ -434,12 +400,7 @@ class MeetingRuntime:
         return True
 
     def start_new_meeting(self, cloud_enabled: Optional[bool]) -> None:
-        """Defer the shown incomplete card, then start a new session.
-
-        Args:
-            cloud_enabled: Explicit cloud-intelligence choice, or None to use
-                the remembered per-meeting toggle.
-        """
+        """Defer the shown incomplete card, then start a new session."""
         with self._lock:
             finalizing = self._finalizing
             status = str((self._finalization or {}).get("status") or "")
@@ -452,10 +413,6 @@ class MeetingRuntime:
             if not self.defer_finalization_card():
                 return
         self._begin_start(cloud_enabled, demo=False)
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     @property
     def is_active(self) -> bool:
@@ -483,12 +440,7 @@ class MeetingRuntime:
             return self._finalizing
 
     def start_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
-        """Start a meeting session (UI/tray callback target).
-
-        Args:
-            cloud_enabled: Explicit cloud-intelligence choice, or None to use
-                the remembered per-meeting toggle.
-        """
+        """Start a meeting using the explicit or remembered cloud setting."""
         self._begin_start(cloud_enabled, demo=False)
 
     def start_demo_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
@@ -509,13 +461,6 @@ class MeetingRuntime:
         *,
         demo: bool,
     ) -> None:
-        """Claim exclusive mode, resolve consent, and launch the engine.
-
-        Args:
-            cloud_enabled: Explicit cloud-intelligence choice, or None to use
-                the remembered per-meeting toggle.
-            demo: When True, seed a fake transcript instead of capturing audio.
-        """
         # ``is_active`` is engine-derived and stays False for the seconds
         # ``_start_worker`` takes, so the authoritative guard is the
         # controller's exclusive-mode flag plus a claim held across the consent
@@ -564,11 +509,7 @@ class MeetingRuntime:
         self._launch(cloud, demo=demo)
 
     def on_consent_result(self, granted: bool) -> None:
-        """Continue the pending action after the consent dialog resolves.
-
-        Args:
-            granted: True when the user enabled cloud intelligence.
-        """
+        """Continue the pending meeting action after consent resolves."""
         kind, self._consent_pending_kind = self._consent_pending_kind, None
         if kind in ("start", "start_demo"):
             # A declined consent still starts the meeting — transcript-only.
@@ -605,9 +546,6 @@ class MeetingRuntime:
         ``_starting`` claim excludes dictation without telling the UI that a
         meeting is active before required startup checks have passed.
 
-        Args:
-            cloud: Whether cloud intelligence should start with the meeting.
-            demo: When True, seed canned transcript data instead of capturing.
         """
         try:
             settings_manager.save_setting(
@@ -636,7 +574,6 @@ class MeetingRuntime:
         ).start()
 
     def _start_worker(self, cloud: bool, demo: bool = False) -> None:
-        """Build and start the engine off the Qt thread; report via signals."""
         engine = None
         try:
             from meeting.engine import MeetingEngine
@@ -731,12 +668,6 @@ class MeetingRuntime:
             self.controller.meeting_error.emit(message)
 
     def _build_options(self, cloud: bool, *, demo: bool = False):
-        """Compose ``MeetingEngineOptions`` from settings, config, and components.
-
-        Args:
-            cloud: Whether cloud intelligence is enabled for this session.
-            demo: When True, skip live audio and seed canned transcript data.
-        """
         from meeting.engine import MeetingEngineOptions
 
         settings = settings_manager.load_all_settings()
@@ -784,7 +715,6 @@ class MeetingRuntime:
         )
 
     def pause_meeting(self) -> None:
-        """Pause the active meeting (UI callback target)."""
         engine = self._engine
         if engine is None or not self.is_active:
             return
@@ -800,7 +730,6 @@ class MeetingRuntime:
         )
 
     def resume_meeting(self) -> None:
-        """Resume a paused meeting (UI callback target)."""
         engine = self._engine
         if engine is None or not self.is_active:
             return
@@ -839,7 +768,6 @@ class MeetingRuntime:
         )
 
     def cancel_meeting(self) -> None:
-        """Discard the active meeting session (UI callback target)."""
         engine = self._engine
         if engine is None:
             return
@@ -849,7 +777,6 @@ class MeetingRuntime:
         ).start()
 
     def _cancel_worker(self) -> None:
-        """Cancel and tear the engine down off the Qt thread."""
         try:
             engine = self._engine
             if engine is not None:
@@ -865,20 +792,13 @@ class MeetingRuntime:
             )
 
     def retry_insights(self) -> None:
-        """Retry every failed post-meeting step for the card's meeting."""
         self.retry_finalization("failed")
 
     def retry_speakers(self) -> None:
-        """Re-run speaker identification for the card's meeting."""
         self.retry_finalization("speaker_id")
 
     def retry_finalization(self, from_step: str = "failed") -> None:
-        """Retry post-meeting steps from ``from_step`` through dependents.
-
-        Args:
-            from_step: Checklist step id, or ``failed`` for the earliest
-                failed/skipped step.
-        """
+        """Retry finalization from a step, or from the earliest failed step."""
         step_key = str(from_step or "failed").strip() or "failed"
         with self._lock:
             if (
@@ -1035,7 +955,6 @@ class MeetingRuntime:
         *,
         engine: Any = None,
     ) -> None:
-        """Persist-aware UI/engine broadcast for a finalization snapshot."""
         payload = dict(finalization or {})
         payload["content_summary"] = self._meeting_content_summary(meeting_id)
         if (
@@ -1065,7 +984,6 @@ class MeetingRuntime:
         })
 
     def open_dashboard(self) -> None:
-        """Open the host dashboard in the default browser (UI callback target)."""
         url = self._host_url
         if not url:
             # A retained finalization card may outlive its original server.
@@ -1113,7 +1031,6 @@ class MeetingRuntime:
         ).start()
 
     def _open_past_meeting_worker(self, meeting_id: str) -> None:
-        """Resolve or start a host dashboard server and open the history view."""
         try:
             repository = self._repository()
             meeting = repository.get_meeting(meeting_id)
@@ -1184,15 +1101,10 @@ class MeetingRuntime:
                 self._archive_starting = False
 
     def _report_dashboard_error(self, message: str) -> None:
-        """Surface dashboard failures consistently for every UI entry point."""
         self.controller.meeting_error.emit(str(message))
 
     def copy_guest_link(self) -> None:
-        """Announce the guest URL for clipboard copy (UI callback target).
-
-        The actual clipboard write happens on the Qt main thread via the
-        ``meeting_guest_link_ready`` signal.
-        """
+        """Emit the guest URL so the Qt thread can copy it."""
         url = self._guest_url
         if not url:
             self.controller.meeting_status_update.emit("No guest link available yet")
@@ -1200,11 +1112,6 @@ class MeetingRuntime:
         self.controller.meeting_guest_link_ready.emit(url)
 
     def toggle_cloud(self, enabled: bool) -> None:
-        """Enable or disable cloud intelligence (UI callback target).
-
-        Args:
-            enabled: Desired cloud-intelligence state.
-        """
         enabled = bool(enabled)
         if enabled and not self._cloud_consent_given():
             self._consent_pending_kind = "toggle"
@@ -1213,7 +1120,6 @@ class MeetingRuntime:
         self._apply_cloud(enabled)
 
     def _apply_cloud(self, enabled: bool) -> None:
-        """Persist and apply the cloud-intelligence toggle."""
         try:
             settings_manager.save_setting(
                 SettingsKey.MEETING_CLOUD_LAST_ENABLED, enabled
@@ -1243,16 +1149,8 @@ class MeetingRuntime:
             settings_manager.get(SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, False)
         )
 
-    # ------------------------------------------------------------------
-    # Crash recovery actions (recovery dialog targets)
-    # ------------------------------------------------------------------
-
     def finalize_recovered(self, meeting_id: str) -> None:
-        """Finalize an interrupted meeting from the recovery dialog.
-
-        Args:
-            meeting_id: Interrupted meeting session id.
-        """
+        """Finalize an interrupted meeting from the recovery dialog."""
         threading.Thread(
             target=self._finalize_recovered_worker, args=(meeting_id,),
             name="meeting-recover", daemon=True,
@@ -1287,11 +1185,7 @@ class MeetingRuntime:
             )
 
     def discard_recovered(self, meeting_id: str) -> None:
-        """Delete an interrupted meeting and its audio spool.
-
-        Args:
-            meeting_id: Interrupted meeting session id.
-        """
+        """Delete an interrupted meeting and its audio spool."""
         threading.Thread(
             target=self._discard_recovered_worker, args=(meeting_id,),
             name="meeting-discard", daemon=True,
@@ -1319,10 +1213,6 @@ class MeetingRuntime:
             self.controller.meeting_error.emit(
                 f"Could not discard the meeting: {exc}"
             )
-
-    # ------------------------------------------------------------------
-    # Engine event bridge (invoked from engine threads)
-    # ------------------------------------------------------------------
 
     def _on_engine_event(self, kind: str, payload: Dict[str, Any]) -> None:
         """Bridge one engine listener event to controller signals.
@@ -1411,12 +1301,6 @@ class MeetingRuntime:
         finalization: Dict[str, Any],
         state_payload: Dict[str, Any],
     ) -> None:
-        """Track finalization and attach it to a meeting-state payload.
-
-        Args:
-            finalization: Mapping from the engine status event.
-            state_payload: Mutable payload being built for the UI.
-        """
         status = str(finalization.get("status") or "")
         message = str(finalization.get("message") or "")
         meeting_id = getattr(self._engine, "meeting_id", None)
@@ -1452,12 +1336,7 @@ class MeetingRuntime:
             # Persistent non-modal feedback; never a meeting_error dialog.
             self.controller.meeting_status_update.emit(message)
 
-    # ------------------------------------------------------------------
-    # Teardown
-    # ------------------------------------------------------------------
-
     def _shutdown_archive_dashboard(self) -> None:
-        """Stop and discard the lightweight archived-meeting dashboard."""
         archive, self._archive_dashboard = self._archive_dashboard, None
         if archive is None:
             return
@@ -1506,7 +1385,6 @@ class MeetingRuntime:
             )
 
     def _repository(self):
-        """Lazily build the shared SQL meeting repository."""
         if self._repo is None:
             from meeting.persist.repository import SqlMeetingRepository
 
@@ -1519,7 +1397,6 @@ class MeetingRuntime:
         *,
         meeting: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Derive durable audio/transcript capabilities for desktop cards."""
         if not meeting_id:
             return {}
         from meeting.content import summarize_meeting_content

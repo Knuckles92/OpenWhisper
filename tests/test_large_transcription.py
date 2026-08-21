@@ -23,13 +23,10 @@ import tempfile
 import shutil
 from typing import Tuple, Optional
 
-# Add project root to path
-
 from services.audio_processor import audio_processor
 from config import config
 from transcriber import LocalWhisperBackend
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(levelname)s - %(message)s'
@@ -53,7 +50,6 @@ def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float =
 
     logger.info(f"Generating large audio file with TTS (~{target_size_mb} MB)...")
 
-    # Known text that we'll use for validation
     base_text = """
     This is a comprehensive test of the audio chunking functionality in our transcription system.
     We need to generate a very long audio file that will exceed the twenty-three megabyte limit
@@ -130,17 +126,14 @@ def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float =
     individually, and the results being combined into a single coherent transcription.
     """
 
-    # Clean up the text (remove extra whitespace)
     base_text = ' '.join(base_text.split())
 
-    # Repeat text to reach target size (estimate ~5MB per repetition)
     repetitions = max(1, int(target_size_mb / 5))
     full_text = (base_text + ' ') * repetitions
 
     logger.info(f"  Text length: {len(full_text)} characters")
     logger.info(f"  Repetitions: {repetitions}")
 
-    # Generate TTS audio
     temp_dir = tempfile.mkdtemp()
     mp3_file = os.path.join(temp_dir, "temp_speech.mp3")
 
@@ -148,12 +141,10 @@ def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float =
     tts = gTTS(text=full_text, lang='en', slow=False)
     tts.save(mp3_file)
 
-    # Convert MP3 to WAV
     logger.info("  Converting to WAV format...")
     audio = AudioSegment.from_mp3(mp3_file)
     audio.export(output_path, format="wav")
 
-    # Cleanup temp MP3
     try:
         os.remove(mp3_file)
         shutil.rmtree(temp_dir)
@@ -166,7 +157,6 @@ def generate_large_audio_file_with_tts(output_path: str, target_size_mb: float =
     return output_path, full_text
 
 def normalize_text_for_comparison(text: str) -> str:
-    """Normalize text for comparison (lowercase, remove extra spaces)."""
     return ' '.join(text.lower().split())
 
 def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
@@ -179,11 +169,9 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     orig_norm = normalize_text_for_comparison(original)
     trans_norm = normalize_text_for_comparison(transcribed)
 
-    # Simple word-based comparison
     orig_words = set(orig_norm.split())
     trans_words = set(trans_norm.split())
 
-    # Calculate overlap
     common_words = orig_words & trans_words
     total_unique_words = len(orig_words | trans_words)
 
@@ -192,7 +180,6 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
 
     similarity = len(common_words) / total_unique_words if total_unique_words > 0 else 0.0
 
-    # Generate analysis message
     orig_word_count = len(orig_norm.split())
     trans_word_count = len(trans_norm.split())
 
@@ -306,17 +293,14 @@ def run_large_file_workflow(audio_file: str, original_text: str):
     return True
 
 def main():
-    """Main test function."""
     logger.info("=" * 60)
     logger.info("Large File Transcription Test")
     logger.info("=" * 60)
 
-    # Create temporary audio file
     temp_dir = tempfile.mkdtemp()
     test_audio_file = os.path.join(temp_dir, "test_large_audio.wav")
 
     try:
-        # Generate large audio file with TTS
         test_audio_file, original_text = generate_large_audio_file_with_tts(
             test_audio_file, target_size_mb=30.0
         )
@@ -324,7 +308,6 @@ def main():
         logger.info(f"\nOriginal text length: {len(original_text)} characters")
         logger.info(f"Original text preview: {original_text[:150]}...\n")
 
-        # Test the workflow
         success = run_large_file_workflow(test_audio_file, original_text)
 
         return 0 if success else 1
@@ -342,7 +325,6 @@ def main():
         return 1
 
     finally:
-        # Cleanup temp directory
         try:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)

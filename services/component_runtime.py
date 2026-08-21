@@ -1,13 +1,4 @@
-"""Activate installed components at process start.
-
-Must run before anything that depends on a component is imported, and before
-Qt is loaded. Called from ``app_qt.py``.
-
-Currently only ``gpu-accel`` exists, which contributes DLLs and never Python
-packages, so activation is purely a matter of making its ``bin`` directory
-visible to two different loaders. Nothing here ever raises: a damaged
-component must degrade to "GPU unavailable", never prevent startup.
-"""
+"""Activate installed components before dependent imports and Qt startup."""
 
 from __future__ import annotations
 
@@ -30,7 +21,7 @@ class ActivationReport:
     """Outcome of activating installed components."""
 
     activated: Tuple[str, ...] = ()
-    rejected: Tuple[Tuple[str, str], ...] = ()  # (component_id, reason)
+    rejected: Tuple[Tuple[str, str], ...] = ()
 
 
 def register_dll_directory(path: str) -> bool:
@@ -48,11 +39,6 @@ def register_dll_directory(path: str) -> bool:
     present. This mirrors the behavior of ``_register_cuda_dll_directories``
     in ``app_qt.py`` for source installs.
 
-    Args:
-        path: Directory containing DLLs.
-
-    Returns:
-        True when the directory was registered.
     """
     if sys.platform != "win32" or not os.path.isdir(path):
         return False
@@ -77,12 +63,6 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
     directory now makes the component work without restarting the app.
     Never raises.
 
-    Args:
-        component_id: Component to activate.
-
-    Returns:
-        ``(activated, reason)``: reason explains a False result and is empty
-        on success.
     """
     try:
         from services.components import (

@@ -1,5 +1,3 @@
-"""Compact recording controls for the small main-window mode."""
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout, QWidget
@@ -8,14 +6,11 @@ from ui_qt.widgets.buttons import DangerButton, SuccessButton, WarningButton
 
 
 class CompactRecordController(QWidget):
-    """Small recording surface that delegates actions to the full workspace."""
-
     record_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     cancel_requested = pyqtSignal()
 
     def __init__(self, parent=None):
-        """Initialize the compact recording controller."""
         super().__init__(parent)
         self.setObjectName("compactRecordController")
 
@@ -52,31 +47,15 @@ class CompactRecordController(QWidget):
         layout.addStretch()
 
     def set_recording_state(self, recording: bool) -> None:
-        """Update controls to reflect whether audio capture is active.
-
-        Args:
-            recording: Whether recording is active.
-        """
         self.record_button.set_active(not recording)
         self.record_button.setText("Recording" if recording else "Record")
         self.stop_button.set_active(recording)
         self.cancel_button.set_active(recording)
 
     def set_status(self, status_text: str) -> None:
-        """Display the current application status.
-
-        Args:
-            status_text: Status text to display.
-        """
         self.status_label.setText(status_text)
 
     def update_hotkeys(self, record_key: str, cancel_key: str) -> None:
-        """Update recording shortcut hints.
-
-        Args:
-            record_key: Shortcut used to start and stop recording.
-            cancel_key: Shortcut used to cancel recording.
-        """
         self.record_button.set_hotkey(record_key)
         self.stop_button.set_hotkey(record_key)
         self.cancel_button.set_hotkey(cancel_key)
