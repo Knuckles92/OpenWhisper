@@ -35,9 +35,14 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             side_effect=lambda key, default=None: default,
         )
         self.save_setting = patch.object(settings_manager, "save_setting")
+        self.intro = patch(
+            "ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro",
+            return_value=False,
+        )
         self.load_settings.start()
         self.get_setting.start()
         self.save_setting.start()
+        self.intro.start()
         self.window = MainWindow()
 
     def tearDown(self):
@@ -47,6 +52,7 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.save_setting.stop()
         self.get_setting.stop()
         self.load_settings.stop()
+        self.intro.stop()
 
     def test_meeting_mode_is_third_tab(self):
         self.assertEqual(TabbedContentWidget.TAB_MEETING_MODE, 2)
@@ -158,9 +164,14 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
             side_effect=lambda key, default=None: default,
         )
         self.save_setting = patch.object(settings_manager, "save_setting")
+        self.intro = patch(
+            "ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro",
+            return_value=False,
+        )
         self.load_settings.start()
         self.get_setting.start()
         self.save_setting.start()
+        self.intro.start()
 
         self.window = MainWindow()
         self.window.show()
@@ -182,6 +193,7 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self.save_setting.stop()
         self.get_setting.stop()
         self.load_settings.stop()
+        self.intro.stop()
 
     def _settle(self):
         for _ in range(10):

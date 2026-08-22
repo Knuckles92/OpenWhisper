@@ -69,6 +69,7 @@ class SettingsKey:
     MEETING_UNSUPPORTED_PLATFORM_ACK: Final[str] = (
         "meeting_unsupported_platform_ack"
     )
+    MEETING_MODE_INTRO_SEEN: Final[str] = "meeting_mode_intro_seen"
     MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
     MEETING_CONTEXT_FOLDER_ENABLED: Final[str] = (
         "meeting_context_folder_enabled"
@@ -685,6 +686,18 @@ def resolve_meeting_unsupported_platform_ack(
     """
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,
+    )
+
+
+def resolve_meeting_mode_intro_seen(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the first-visit Meeting Mode intro was dismissed.
+
+    Off by default. After Skip or Got it, later visits do not show it.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_MODE_INTRO_SEEN, False,
     )
 
 

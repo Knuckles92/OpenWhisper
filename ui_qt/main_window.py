@@ -10,7 +10,11 @@ from PyQt6.QtGui import QAction, QKeySequence
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_meeting_mode_intro_seen,
+    settings_manager,
+)
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
@@ -290,6 +294,7 @@ class MainWindow(QMainWindow):
         self._meeting_height_timer = QTimer(self)
         self._meeting_height_timer.setSingleShot(True)
         self._meeting_height_timer.timeout.connect(self._sync_meeting_mode_height)
+        self._meeting_intro_scheduled = False
 
         self._resize_margin = 8
         self._resizing = False
@@ -649,6 +654,44 @@ class MainWindow(QMainWindow):
 
         self._schedule_history_sidebar_refresh()
         self._schedule_meeting_mode_height_sync()
+        if meeting_mode:
+            self._schedule_meeting_mode_intro()
+
+    def _schedule_meeting_mode_intro(self) -> None:
+        """Queue the first-visit Meeting Mode overview after the tab is up."""
+        if self._meeting_intro_scheduled:
+            return
+        if self.tabbed_content.current_index() != (
+            TabbedContentWidget.TAB_MEETING_MODE
+        ):
+            return
+        if self.tabbed_content.meeting_tab_is_locked():
+            return
+        if resolve_meeting_mode_intro_seen():
+            return
+        self._meeting_intro_scheduled = True
+        QTimer.singleShot(0, self._maybe_show_meeting_mode_intro)
+
+    def _maybe_show_meeting_mode_intro(self) -> None:
+        self._meeting_intro_scheduled = False
+        if not self.isVisible():
+            return
+        if self.tabbed_content.current_index() != (
+            TabbedContentWidget.TAB_MEETING_MODE
+        ):
+            return
+        if self.tabbed_content.meeting_tab_is_locked():
+            return
+        if resolve_meeting_mode_intro_seen():
+            return
+        # Tray / hotkey start switches to this tab after capture is live.
+        if self.meeting_mode_tab.is_meeting_active:
+            return
+        from ui_qt.dialogs.meeting_intro_dialog import (
+            maybe_show_meeting_mode_intro,
+        )
+
+        maybe_show_meeting_mode_intro(self)
 
     def _schedule_history_sidebar_refresh(self) -> None:
         """Defer visible sidebar refreshes so tab clicks stay responsive."""
@@ -1520,6 +1563,7 @@ class MainWindow(QMainWindow):
         if not self._initial_show_complete:
             self._initial_show_complete = True
             self._schedule_meeting_mode_height_sync()
+            self._schedule_meeting_mode_intro()
             return
 
         if not self.isMaximized():

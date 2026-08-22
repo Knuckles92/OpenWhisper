@@ -1648,9 +1648,36 @@ QPushButton#meetingFinalizationStepAction {
 }
 
 QDialog#meetingConsentDialog,
-QDialog#meetingRecoveryDialog {
+QDialog#meetingRecoveryDialog,
+QDialog#meetingIntroDialog {
     background-color: #1c1c1e;
     color: #f5f5f7;
+}
+
+QLabel#meetingIntroLead {
+    color: #d1d1d6;
+    font-size: 14px;
+    background-color: transparent;
+}
+
+QFrame#meetingIntroSection {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 10px;
+}
+
+QLabel#meetingIntroBullet {
+    color: #0a84ff;
+    font-size: 14px;
+    font-weight: 700;
+    background-color: transparent;
+    min-width: 12px;
+}
+
+QLabel#meetingIntroItem {
+    color: #f5f5f7;
+    font-size: 13px;
+    background-color: transparent;
 }
 
 QLabel#consentBodyLabel {
@@ -1676,7 +1703,9 @@ QPushButton#meetingConsentNotNowButton,
 QPushButton#meetingConsentEnableButton,
 QPushButton#meetingRecoveryCloseButton,
 QPushButton#meetingRecoveryFinalizeButton,
-QPushButton#meetingRecoveryDiscardButton {
+QPushButton#meetingRecoveryDiscardButton,
+QPushButton#meetingIntroSkipButton,
+QPushButton#meetingIntroGotItButton {
     padding: 8px 16px;
     font-size: 13px;
 }
