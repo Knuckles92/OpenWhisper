@@ -1094,8 +1094,20 @@ class TestFinalizationState:
         ready = FinalizationState(status="completed")
         assert ready.history_pill(meeting_status="ended") == ("Ready", "success")
 
+        ready_deferred = FinalizationState(
+            status="completed", card_deferred=True,
+        )
+        assert ready_deferred.history_pill(meeting_status="ended") == (
+            "Ready", "success",
+        )
+
         off = FinalizationState(status="disabled")
         assert off.history_pill(meeting_status="ended") == ("Off", "neutral")
+
+        off_deferred = FinalizationState(status="disabled", card_deferred=True)
+        assert off_deferred.history_pill(meeting_status="ended") == (
+            "Off", "neutral",
+        )
 
         live = FinalizationState(status="failed", card_deferred=True)
         assert live.history_pill(meeting_status="active") is None

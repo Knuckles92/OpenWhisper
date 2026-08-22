@@ -515,6 +515,53 @@ def test_defer_persists_flag_and_hides_card(runtime):
     fake_repo.get_meeting.assert_called_with("m_card")
 
 
+def test_defer_completed_card_uses_saved_status(runtime):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    meeting = _ended_meeting("m_done", status="completed")
+    fake_repo = MagicMock()
+    fake_repo.get_meeting.return_value = meeting
+    persisted = []
+    fake_repo.persist_state.side_effect = lambda meeting_id, data: persisted.append(
+        (meeting_id, data)
+    )
+    rt._repo = fake_repo
+    rt._card_meeting_id = "m_done"
+    rt._finalization = {"status": "completed", "message": "ready"}
+
+    assert rt.defer_finalization_card() is True
+    assert rt._finalization is None
+    assert persisted[0][1]["finalization"]["card_deferred"] is True
+    assert any(
+        status == "Meeting saved. Open it from Past Meetings."
+        for status in statuses
+    )
+    assert not any("for later" in status for status in statuses)
+
+
+def test_begin_start_files_leftover_card(runtime, monkeypatch):
+    rt, controller = runtime
+    meeting = _ended_meeting("m_card", status="completed")
+    fake_repo = MagicMock()
+    fake_repo.get_meeting.return_value = meeting
+    persisted = []
+    fake_repo.persist_state.side_effect = lambda meeting_id, data: persisted.append(
+        (meeting_id, data)
+    )
+    rt._repo = fake_repo
+    rt._card_meeting_id = "m_card"
+    rt._finalization = {"status": "completed", "message": "ready"}
+    launched = _record_launch(rt, monkeypatch)
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: True)
+
+    rt.start_meeting(False)
+
+    assert persisted[0][1]["finalization"]["card_deferred"] is True
+    assert launched == [{"cloud": False, "demo": False}]
+    assert rt._card_meeting_id is None
+
+
 def test_defer_refused_while_finalizing(runtime):
     rt, controller = runtime
     statuses = []

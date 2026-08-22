@@ -393,14 +393,33 @@ class MeetingRuntime:
             )
             return False
         self._hide_finalization_card()
-        self.controller.meeting_status_update.emit(
-            "Meeting saved for later. Open it from Past Meetings when you "
-            "want to continue."
-        )
+        if status in {"completed", "disabled"}:
+            self.controller.meeting_status_update.emit(
+                "Meeting saved. Open it from Past Meetings."
+            )
+        else:
+            self.controller.meeting_status_update.emit(
+                "Meeting saved for later. Open it from Past Meetings when you "
+                "want to continue."
+            )
         return True
 
+    def _file_leftover_card(self) -> None:
+        """Persist leftover-card deferral without blocking a new start."""
+        with self._lock:
+            meeting_id = self._card_meeting_id
+            status = str((self._finalization or {}).get("status") or "")
+        if not meeting_id or status in {"", "running"}:
+            return
+        if not self._persist_card_deferred(meeting_id, True):
+            logger.warning(
+                "Could not persist leftover meeting card deferral for %s",
+                meeting_id,
+            )
+        self._hide_finalization_card()
+
     def start_new_meeting(self, cloud_enabled: Optional[bool]) -> None:
-        """Defer the shown incomplete card, then start a new session."""
+        """Defer any leftover card, then start a new session."""
         with self._lock:
             finalizing = self._finalizing
             status = str((self._finalization or {}).get("status") or "")
@@ -409,9 +428,7 @@ class MeetingRuntime:
                 "Final insights are still being prepared."
             )
             return
-        if self._card_meeting_id:
-            if not self.defer_finalization_card():
-                return
+        self._file_leftover_card()
         self._begin_start(cloud_enabled, demo=False)
 
     @property
@@ -469,8 +486,6 @@ class MeetingRuntime:
         with self._lock:
             finalizing = self._finalizing
             busy = self._starting or self.controller.meeting_active or self.is_active
-            if not busy and not finalizing:
-                self._starting = True
         if finalizing:
             self.controller.meeting_status_update.emit(
                 "Final insights are still being prepared."
@@ -481,6 +496,21 @@ class MeetingRuntime:
                 "A meeting is already in progress"
             )
             return
+        # File the leftover card before claiming start — defer refuses while
+        # ``_starting`` is True.
+        self._file_leftover_card()
+        with self._lock:
+            if (
+                self._starting
+                or self.controller.meeting_active
+                or self.is_active
+                or self._finalizing
+            ):
+                self.controller.meeting_status_update.emit(
+                    "A meeting is already in progress"
+                )
+                return
+            self._starting = True
         backend = getattr(self.controller, "current_backend", None)
         if (self.controller.recorder.is_recording
                 or bool(getattr(backend, "is_transcribing", False))):

@@ -326,6 +326,8 @@ The download policy lives in **Settings → Advanced → Hugging Face Downloads*
 - **Always allow downloads**: missing models download without prompting. Cached models are still never re-checked for updates.
 - **Never connect (fully offline)**: no downloads unless you explicitly approve a one-time override in the dialog.
 
+The **Downloads window** (opened from Model Manager) lists every Whisper model with its size and cache state. Each not-yet-downloaded row has a checkbox: tick a few and use **Download selected**, or use **Download all…** to queue everything that is missing. A confirmation dialog shows each model's estimated size, the total, and the destination folder before anything downloads; the queue then runs one model at a time, and **Stop after current** ends it once the in-flight model finishes.
+
 Setting `HF_HUB_OFFLINE=1` in the environment before launching is a hard override that disables downloads entirely (still supported for scripts and CI):
 
 ```bash

@@ -731,6 +731,56 @@ QFrame#downloadsComponentStrip {
     border-top: 1px solid #232d36;
 }
 
+/* Batch selection in the Downloads window: flat link actions, running
+   total, and the multi-model confirmation. */
+QPushButton#downloadsFlatButton {
+    color: #6fb1ff;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 4px;
+}
+
+QPushButton#downloadsFlatButton:hover {
+    color: #8ec2ff;
+}
+
+QPushButton#downloadsFlatButton:disabled {
+    color: #636366;
+}
+
+QLabel#downloadsSelectionSummary {
+    color: #8e99a6;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#batchModelList {
+    color: #b7c0cb;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#batchTotalLabel {
+    color: #f0f3f6;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#batchDestPath {
+    color: #aeb8c3;
+    background-color: #151c23;
+    border: 1px solid #35404a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+}
+
 /* Hotkey capture fields (HotkeyDialog) — the capturing state is toggled
    via a dynamic "capturing" property from Python */
 QLineEdit#hotkeyInput {

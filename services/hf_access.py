@@ -270,4 +270,29 @@ class HuggingFaceAccessCoordinator:
         with self._lock:
             self._active_requests.discard(model_name)
 
+    @property
+    def requests_in_flight(self) -> int:
+        """Number of currently claimed consent/download slots."""
+        with self._lock:
+            return len(self._active_requests)
+
+    def claim_batch(self, model_names: list) -> list:
+        """Claim request slots for every model a batch download may fetch.
+
+        Skips models already fully cached (stale catalog rows), duplicates,
+        and models with an in-flight request. The caller owns one claimed
+        slot per returned name and must release each via ``end_request``.
+        One-time grants are deliberately NOT issued here: the download
+        worker grants each model immediately before fetching it so a queue
+        stopped early leaves no unconsumed consents behind.
+        """
+        claimed = []
+        for model_name in model_names:
+            if model_name in claimed or is_model_cached(model_name):
+                continue
+            if not self.begin_request(model_name):
+                continue
+            claimed.append(model_name)
+        return claimed
+
 hf_access_coordinator = HuggingFaceAccessCoordinator()

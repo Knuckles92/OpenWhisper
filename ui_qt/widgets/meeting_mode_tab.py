@@ -58,6 +58,16 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
     return subtitle, hint
 
 
+def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:
+    """True when the idle platform sentence should stay visible as a warning."""
+    platform = platform or sys.platform
+    if platform.startswith("win"):
+        return False
+    if platform == "darwin" and meeting_mode_supported(platform):
+        return False
+    return True
+
+
 class MeetingModeTab(QWidget):
     """Full-page tab with Meeting Mode session controls."""
 
@@ -166,15 +176,17 @@ class MeetingModeTab(QWidget):
         intro_card.layout.addWidget(title)
 
         subtitle_copy, platform_copy = meeting_audio_support_copy()
-        subtitle = WrappedLabel(subtitle_copy)
-        subtitle.setObjectName("meetingModeSubtitle")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setFont(QFont("Segoe UI", 11))
-        intro_card.layout.addWidget(subtitle)
+        self.subtitle = WrappedLabel(subtitle_copy)
+        self.subtitle.setObjectName("meetingModeSubtitle")
+        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subtitle.setFont(QFont("Segoe UI", 11))
+        self.subtitle.setToolTip(platform_copy)
+        intro_card.layout.addWidget(self.subtitle)
         self.platform_hint = WrappedLabel(platform_copy)
         self.platform_hint.setObjectName("meetingModePlatformHint")
         self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.platform_hint.setFont(QFont("Segoe UI", 10))
+        self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
         intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
 
@@ -371,6 +383,20 @@ class MeetingModeTab(QWidget):
             self.open_dashboard_requested
         )
         fin_buttons_row.addWidget(self.finalization_dashboard_button)
+
+        self.finalization_done_button = SuccessButton("Done")
+        self.finalization_done_button.setObjectName(
+            "meetingFinalizationDoneButton"
+        )
+        self.finalization_done_button.setToolTip(
+            "This meeting is already in Past Meetings. Hide this card and "
+            "return to idle."
+        )
+        self.finalization_done_button.clicked.connect(
+            self.defer_insights_requested.emit
+        )
+        self.finalization_done_button.hide()
+        fin_buttons_row.addWidget(self.finalization_done_button)
         self.finalization_card.layout.addLayout(fin_buttons_row)
 
         self.finalization_keep_hint = WrappedLabel(
@@ -547,6 +573,14 @@ class MeetingModeTab(QWidget):
         self.finalization_keep_hint.setVisible(visible)
         self.finalization_keep_later_button.setVisible(visible)
         self.finalization_start_new_button.setVisible(visible)
+
+    def _set_done_visible(self, visible: bool) -> None:
+        """Show or hide Done on a completed or disabled leftover card.
+
+        Args:
+            visible: True on clean completed / disabled leftovers only.
+        """
+        self.finalization_done_button.setVisible(visible)
 
     def _set_finalization(self, value: Any) -> None:
         """Store a finalization payload or clear it.
@@ -738,6 +772,7 @@ class MeetingModeTab(QWidget):
             self.finalization_retry_button.hide()
             self.finalization_retry_speakers_button.hide()
             self._set_incomplete_actions_visible(False)
+            self._set_done_visible(False)
             self.finalization_active_box.show()
 
             if total_steps > 0:
@@ -788,6 +823,7 @@ class MeetingModeTab(QWidget):
                     self._can_rerun_speakers
                 )
                 self._set_incomplete_actions_visible(False)
+                self._set_done_visible(True)
                 # Header + checklist already cover a successful finish; the
                 # stats recap lives on the dashboard instead.
                 self.finalization_active_box.setVisible(empty_meeting)
@@ -817,6 +853,7 @@ class MeetingModeTab(QWidget):
                     self._can_rerun_speakers
                 )
                 self._set_incomplete_actions_visible(True)
+                self._set_done_visible(False)
                 self.finalization_active_box.show()
 
                 if step_details and step_details != message:
@@ -845,6 +882,7 @@ class MeetingModeTab(QWidget):
                     self._can_rerun_speakers
                 )
                 self._set_incomplete_actions_visible(False)
+                self._set_done_visible(True)
 
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.

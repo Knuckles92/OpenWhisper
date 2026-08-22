@@ -12,6 +12,7 @@ from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
 from ui_qt.widgets.meeting_mode_tab import (
     MeetingModeTab,
+    meeting_audio_shows_platform_warning,
     meeting_audio_support_copy,
 )
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
@@ -302,7 +303,24 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIn("Screen Recording permission", mac_hint)
         self.assertNotIn("not a supported", mac_hint)
         _, expected = meeting_audio_support_copy()
+        self.assertEqual(self.tab.subtitle.toolTip(), expected)
         self.assertEqual(self.tab.platform_hint.text(), expected)
+        self.assertEqual(
+            self.tab.platform_hint.isHidden(),
+            not meeting_audio_shows_platform_warning(),
+        )
+        self.assertFalse(meeting_audio_shows_platform_warning("win32"))
+        self.assertTrue(meeting_audio_shows_platform_warning("linux"))
+        with patch(
+            "ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",
+            return_value=True,
+        ):
+            self.assertFalse(meeting_audio_shows_platform_warning("darwin"))
+        with patch(
+            "ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",
+            return_value=False,
+        ):
+            self.assertTrue(meeting_audio_shows_platform_warning("darwin"))
 
     def test_platform_copy_marks_pre_screencapturekit_macos_unsupported(self):
         with patch("ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",
@@ -384,6 +402,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(self.tab.finalization_progress.minimum(), 0)
         self.assertEqual(self.tab.finalization_progress.maximum(), 0)
         self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
+        self.assertTrue(self.tab.finalization_done_button.isHidden())
 
     def test_completed_and_disabled_restore_start(self):
         """Terminal info outcomes keep the card and restore Start Meeting."""
@@ -408,6 +427,8 @@ class TestMeetingModeTabState(unittest.TestCase):
                     self.tab.finalization_active_box.isHidden(),
                     status == "completed",
                 )
+                self.assertFalse(self.tab.finalization_done_button.isHidden())
+                self.assertTrue(self.tab.finalization_keep_later_button.isHidden())
 
     def test_empty_meeting_stays_visible_and_disables_speaker_rerun(self):
         """A zero-content result cannot look successful or rerun speakers."""
@@ -459,6 +480,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.idle_card.isHidden())
         self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
         self.assertFalse(self.tab.finalization_start_new_button.isHidden())
+        self.assertTrue(self.tab.finalization_done_button.isHidden())
         self.assertIn(
             "stay in Past Meetings",
             self.tab.finalization_keep_hint.text(),
@@ -713,8 +735,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(deferred, [True])
         self.assertEqual(started, [True])
 
-    def test_completed_card_keeps_idle_start_without_defer_actions(self):
-        """A clean completed card still uses the idle Start Meeting control."""
+    def test_completed_card_keeps_idle_start_and_emits_done(self):
+        """A clean completed card keeps idle Start and offers Done."""
+        deferred = []
+        self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
         self.tab.set_meeting_state({
             "active": False,
             "status": "ended",
@@ -727,6 +751,27 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.start_button.isHidden())
         self.assertTrue(self.tab.finalization_keep_later_button.isHidden())
         self.assertTrue(self.tab.finalization_start_new_button.isHidden())
+        self.assertFalse(self.tab.finalization_done_button.isHidden())
+        self.tab.finalization_done_button.click()
+        self.assertEqual(deferred, [True])
+
+    def test_disabled_card_emits_done(self):
+        """A cloud-off leftover card can be dismissed with Done."""
+        deferred = []
+        self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {
+                "status": "disabled",
+                "message": "Cloud intelligence is off for this meeting.",
+            },
+        })
+        self.app.processEvents()
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertFalse(self.tab.finalization_done_button.isHidden())
+        self.tab.finalization_done_button.click()
+        self.assertEqual(deferred, [True])
 
 
 if __name__ == "__main__":

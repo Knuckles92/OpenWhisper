@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
@@ -28,6 +28,7 @@ from services.hf_access import (
     delete_model_from_cache,
     download_model_files,
     hf_access_coordinator,
+    is_hf_hub_offline_env_set,
     resolve_model_repo,
 )
 from services.recorder import AudioRecorder
@@ -78,6 +79,10 @@ class ApplicationController(QObject):
     model_download_finished = pyqtSignal(str, bool)
     model_deleted = pyqtSignal(str, bool, str)
     model_cache_changed = pyqtSignal()
+    # Batched fetch-only downloads (Downloads window): the approved plan up
+    # front, then started/finished per model, then (completed, planned).
+    batch_download_planned = pyqtSignal(list)
+    batch_download_finished = pyqtSignal(int, int)
     # Downloadable components (emitted possibly from worker threads).
     # (component_id, phase, done_units, total_units); throttled in the worker
     # so a multi-gigabyte download cannot flood the Qt event queue.
@@ -130,6 +135,9 @@ class ApplicationController(QObject):
         self.hotkey_manager = None
         self.streaming_transcriber = None
         self._streaming_backend = None
+        # Set from the Qt thread, read in the batch download worker; a plain
+        # bool flag is enough because stopping is only checked between models.
+        self._batch_stop_requested = False
 
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
@@ -205,6 +213,10 @@ class ApplicationController(QObject):
         self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
         self.ui_controller.on_model_download_requested = self.request_model_download
         self.ui_controller.on_model_delete_requested = self.request_model_delete
+        self.ui_controller.on_model_batch_download = (
+            self.request_model_batch_download
+        )
+        self.ui_controller.on_model_batch_stop = self.cancel_model_batch_download
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
         self.ui_controller.get_meeting_active = self.is_meeting_active
@@ -501,6 +513,39 @@ class ApplicationController(QObject):
             self.hf_consent_requested.emit(model_name, True, False)
         else:  # NEEDS_CONSENT
             self.hf_consent_requested.emit(model_name, False, False)
+
+    def request_model_batch_download(self, model_names: List[str]) -> None:
+        """Fetch several models back-to-back via the Downloads window.
+
+        The window's confirmation dialog acts as consent for every listed
+        model, so no per-model consent dialogs appear; the worker grants
+        each model immediately before fetching it. Runs strictly
+        sequentially on the shared executor — parallel multi-gigabyte
+        extractions thrash disk and network without finishing sooner.
+        """
+        if is_hf_hub_offline_env_set():
+            self.status_update.emit("Downloads are disabled by HF_HUB_OFFLINE")
+            return
+        if hf_access_coordinator.requests_in_flight:
+            # Keep the app's one-download-at-a-time invariant even when the
+            # request came from another window (e.g. Model Manager).
+            self.status_update.emit(
+                "Another model request is in progress — try again when it finishes"
+            )
+            return
+        pending = hf_access_coordinator.claim_batch(model_names)
+        if not pending:
+            # Everything requested is already cached or in flight; rescan so
+            # stale rows correct themselves.
+            self.model_cache_changed.emit()
+            return
+        self._batch_stop_requested = False
+        self.batch_download_planned.emit(pending)
+        self.executor.submit(self._hf_batch_worker, pending)
+
+    def cancel_model_batch_download(self) -> None:
+        """Stop the queue once the model currently downloading finishes."""
+        self._batch_stop_requested = True
 
     def request_model_delete(self, model_name: str) -> None:
         """Delete a model's files from the local HF cache (Model Manager).
@@ -815,63 +860,34 @@ class ApplicationController(QObject):
         backend = self.transcription_backends.get("local_whisper")
         success = False
         try:
-            decision = hf_access_coordinator.evaluate_access(model_name)
             if not load_into_engine:
-                if decision not in (
-                    AccessDecision.LOAD_CACHED,
-                    AccessDecision.DOWNLOAD_ALLOWED,
-                ):
-                    logger.warning(
-                        f"Fetch of '{model_name}' aborted: access decision {decision}"
-                    )
-                    self.status_update.emit(f"Model '{model_name}' is unavailable")
-                    return
-                if decision == AccessDecision.DOWNLOAD_ALLOWED:
+                success = self._download_model_to_cache(model_name)
+            else:
+                decision = hf_access_coordinator.evaluate_access(model_name)
+                if decision == AccessDecision.LOAD_CACHED:
+                    self.status_update.emit(f"Loading model '{model_name}'...")
+                    backend.reload_model(model_name)
+                elif decision == AccessDecision.DOWNLOAD_ALLOWED:
                     self.status_update.emit(
                         f"Downloading model '{model_name}' from Hugging Face..."
                     )
-                    download_model_files(model_name)
-                    self.status_update.emit(f"Model '{model_name}' downloaded")
-                success = True
-                # Bridge: fetching the currently-missing selected model also
-                # revives the engine (now a pure cache hit, no consent re-entry).
-                if (
-                    backend is not None
-                    and getattr(backend, "is_model_missing", False)
-                    and backend.model_name == model_name
-                ):
-                    backend.reload_model(model_name)
-                    if backend.is_available():
-                        self.device_info_update.emit(backend.device_info)
-                        self.status_update.emit("Whisper engine ready")
-                    if getattr(backend, "gpu_fallback_note", None):
-                        self.gpu_fallback_detected.emit()
-                return
+                    backend.download_and_load()
+                else:
+                    logger.warning(
+                        f"Model task for '{model_name}' aborted: access decision {decision}"
+                    )
+                    self.status_update.emit(f"Model '{model_name}' is unavailable")
+                    return
 
-            if decision == AccessDecision.LOAD_CACHED:
-                self.status_update.emit(f"Loading model '{model_name}'...")
-                backend.reload_model(model_name)
-            elif decision == AccessDecision.DOWNLOAD_ALLOWED:
-                self.status_update.emit(
-                    f"Downloading model '{model_name}' from Hugging Face..."
-                )
-                backend.download_and_load()
-            else:
-                logger.warning(
-                    f"Model task for '{model_name}' aborted: access decision {decision}"
-                )
-                self.status_update.emit(f"Model '{model_name}' is unavailable")
-                return
-
-            if backend.is_available():
-                success = True
-                self.device_info_update.emit(backend.device_info)
-                self.status_update.emit("Whisper engine ready")
-                logger.info(f"Model '{model_name}' ready: {backend.device_info}")
-            else:
-                self.status_update.emit(f"Model '{model_name}' failed to load")
-            if getattr(backend, "gpu_fallback_note", None):
-                self.gpu_fallback_detected.emit()
+                if backend.is_available():
+                    success = True
+                    self.device_info_update.emit(backend.device_info)
+                    self.status_update.emit("Whisper engine ready")
+                    logger.info(f"Model '{model_name}' ready: {backend.device_info}")
+                else:
+                    self.status_update.emit(f"Model '{model_name}' failed to load")
+                if getattr(backend, "gpu_fallback_note", None):
+                    self.gpu_fallback_detected.emit()
         except Exception as exc:
             logger.error(f"Model download/load failed for '{model_name}': {exc}")
             self.status_update.emit(f"Model download failed: {exc}")
@@ -882,6 +898,87 @@ class ApplicationController(QObject):
                 self.model_cache_changed.emit()
             if load_into_engine:
                 self.engine_busy_changed.emit(False)
+
+    def _download_model_to_cache(self, model_name: str) -> bool:
+        """Fetch-only worker body shared by single and batched downloads.
+
+        The caller owns the coordinator request slot and the
+        started/finished signals; this only evaluates access (consuming any
+        grant), downloads, and bridges the engine revival when the fetched
+        model happens to be the missing selected one. Returns True when the
+        files are present afterwards.
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        decision = hf_access_coordinator.evaluate_access(model_name)
+        if decision not in (
+            AccessDecision.LOAD_CACHED,
+            AccessDecision.DOWNLOAD_ALLOWED,
+        ):
+            logger.warning(
+                f"Fetch of '{model_name}' aborted: access decision {decision}"
+            )
+            self.status_update.emit(f"Model '{model_name}' is unavailable")
+            return False
+        if decision == AccessDecision.DOWNLOAD_ALLOWED:
+            self.status_update.emit(
+                f"Downloading model '{model_name}' from Hugging Face..."
+            )
+            download_model_files(model_name)
+            self.status_update.emit(f"Model '{model_name}' downloaded")
+        # Bridge: fetching the currently-missing selected model also
+        # revives the engine (now a pure cache hit, no consent re-entry).
+        if (
+            backend is not None
+            and getattr(backend, "is_model_missing", False)
+            and backend.model_name == model_name
+        ):
+            backend.reload_model(model_name)
+            if backend.is_available():
+                self.device_info_update.emit(backend.device_info)
+                self.status_update.emit("Whisper engine ready")
+            if getattr(backend, "gpu_fallback_note", None):
+                self.gpu_fallback_detected.emit()
+        return True
+
+    def _hf_batch_worker(self, model_names: List[str]) -> None:
+        """Download a confirmed queue of models strictly sequentially.
+
+        Each model is granted and announced right before its own download;
+        stopping between models releases the remaining slots so no consent
+        or request claim outlives the queue.
+        """
+        processed = 0
+        succeeded = 0
+        try:
+            for model_name in model_names:
+                if self._batch_stop_requested:
+                    break
+                hf_access_coordinator.grant_once(model_name)
+                self.model_download_started.emit(model_name)
+                success = False
+                try:
+                    success = self._download_model_to_cache(model_name)
+                except Exception as exc:
+                    logger.error(f"Model download failed for '{model_name}': {exc}")
+                    self.status_update.emit(f"Model download failed: {exc}")
+                finally:
+                    self.model_download_finished.emit(model_name, success)
+                    if success:
+                        self.model_cache_changed.emit()
+                processed += 1
+                if success:
+                    succeeded += 1
+        finally:
+            stopped = self._batch_stop_requested
+            self._batch_stop_requested = False
+            for model_name in model_names[processed:]:
+                hf_access_coordinator.end_request(model_name)
+            if stopped:
+                logger.info(
+                    f"Batch download stopped after {succeeded} of "
+                    f"{len(model_names)} models"
+                )
+            self.batch_download_finished.emit(succeeded, len(model_names))
 
     def change_audio_device(self, device_id: Optional[int]) -> None:
         logger.info(f"Changing audio device to: {device_id}")
@@ -1075,6 +1172,12 @@ class ApplicationController(QObject):
         )
         self.model_download_finished.connect(
             self.ui_controller.on_model_download_finished
+        )
+        self.batch_download_planned.connect(
+            self.ui_controller.on_model_batch_planned
+        )
+        self.batch_download_finished.connect(
+            self.ui_controller.on_model_batch_finished
         )
         self.model_deleted.connect(self.ui_controller.on_model_deleted)
         self.model_cache_changed.connect(self.ui_controller.refresh_model_manager)

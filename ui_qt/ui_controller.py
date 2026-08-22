@@ -59,6 +59,8 @@ class UIController(QObject):
         self.on_hf_policy_changed: Optional[Callable] = None
         self.on_model_download_requested: Optional[Callable] = None
         self.on_model_delete_requested: Optional[Callable] = None
+        self.on_model_batch_download: Optional[Callable] = None
+        self.on_model_batch_stop: Optional[Callable] = None
         self.on_dictation_transcribe: Optional[Callable] = None
         self.get_loaded_local_model: Optional[Callable] = None
 
@@ -591,6 +593,8 @@ class UIController(QObject):
             )
             dialog.on_download_requested = self.on_model_download_requested
             dialog.on_delete_requested = self.on_model_delete_requested
+            dialog.on_batch_download_requested = self.on_model_batch_download
+            dialog.on_batch_cancel_requested = self.request_model_batch_stop
             dialog.component_install_requested.connect(
                 self.on_component_install_requested
             )
@@ -661,6 +665,18 @@ class UIController(QObject):
         # A newly cached model becomes assignable, so the manager's pickers
         # need the fresh cache scan even when Downloads is the focused window.
         self.refresh_model_manager()
+
+    def on_model_batch_planned(self, model_names):
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.begin_batch(list(model_names))
+
+    def on_model_batch_finished(self, completed: int, planned: int):
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_batch(completed, planned)
+
+    def request_model_batch_stop(self):
+        if self.on_model_batch_stop:
+            self.on_model_batch_stop()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
         if self._downloads_dialog is not None:

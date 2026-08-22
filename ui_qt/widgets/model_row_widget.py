@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -98,6 +99,15 @@ _ROW_STYLE = """
         color: #32d74b;
         border: 1px solid rgba(48, 209, 88, 0.28);
     }
+    QLabel#modelRowBadge[tone="queued"] {
+        background-color: rgba(10, 132, 255, 0.08);
+        color: #8e99a6;
+        border: 1px solid rgba(10, 132, 255, 0.18);
+    }
+    QCheckBox#modelSelectCheckbox {
+        background-color: transparent;
+        border: none;
+    }
     QLabel#modelRowUsage {
         background-color: rgba(10, 132, 255, 0.10);
         color: #8eb8ff;
@@ -168,6 +178,7 @@ class ModelRowWidget(QFrame):
     delete_clicked = pyqtSignal(str)
     set_active_clicked = pyqtSignal(str)
     details_requested = pyqtSignal(str)
+    selection_toggled = pyqtSignal(str, bool)
 
     def __init__(self, model_name: str, parent=None):
         """Represent one concrete faster-whisper catalog model.
@@ -197,6 +208,15 @@ class ModelRowWidget(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(12)
+
+        self.select_checkbox = QCheckBox()
+        self.select_checkbox.setObjectName("modelSelectCheckbox")
+        self.select_checkbox.setToolTip("Select for batch download")
+        self.select_checkbox.setAccessibleName(f"Select {self.model_name} for download")
+        self.select_checkbox.toggled.connect(
+            lambda checked: self.selection_toggled.emit(self.model_name, checked)
+        )
+        layout.addWidget(self.select_checkbox)
 
         identity = QVBoxLayout()
         identity.setSpacing(2)
@@ -301,6 +321,8 @@ class ModelRowWidget(QFrame):
         downloading: bool,
         downloads_blocked: bool = False,
         download_slot_busy: bool = False,
+        queued: bool = False,
+        selection_enabled: bool = True,
     ) -> None:
         """Render the row for the current cache/engine state.
 
@@ -315,6 +337,9 @@ class ModelRowWidget(QFrame):
                 downloads.
             download_slot_busy: True while any model is downloading (only one
                 download runs at a time).
+            queued: True while this model waits in a batch download queue.
+            selection_enabled: False while downloads are busy or blocked; the
+                batch checkbox then cannot be toggled.
         """
         cached = info is not None
         self.is_cached = cached
@@ -338,6 +363,8 @@ class ModelRowWidget(QFrame):
 
         if downloading:
             self._set_badge("Downloading…", "downloading")
+        elif queued:
+            self._set_badge("Queued", "queued")
         elif is_active and cached:
             self._set_badge("Active", "active")
         elif cached:
@@ -345,6 +372,8 @@ class ModelRowWidget(QFrame):
         else:
             self._set_badge("Not downloaded", "idle")
 
+        self.select_checkbox.setVisible(not cached)
+        self.select_checkbox.setEnabled(selection_enabled and not downloading)
         self.download_button.setVisible(not cached)
         self.download_button.setEnabled(
             not downloading and not downloads_blocked and not download_slot_busy

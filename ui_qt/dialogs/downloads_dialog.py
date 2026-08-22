@@ -7,7 +7,7 @@ the only scroller here: the header, toolbar, and component strip stay put.
 Non-modal, like Model Manager, because a multi-gigabyte download must not lock
 the user out of recording.
 """
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -28,7 +28,9 @@ from PyQt6.QtWidgets import (
 from config import config
 from services.components import component_coordinator
 from services.hf_access import (
+    MODEL_DOWNLOAD_SIZE_MB,
     CachedModelInfo,
+    format_download_size,
     format_size_bytes,
     get_hf_cache_dir,
     resolve_model_repo,
@@ -42,10 +44,96 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.widgets import Button, ElidingLabel
+from ui_qt.widgets import Button, ElidingLabel, PrimaryButton
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+
+class BatchDownloadDialog(QDialog):
+    """Confirmation for a multi-model download.
+
+    Lists each model with its bundled size estimate, the estimated total,
+    and the cache directory the files land in. Accepting here is the consent
+    for every listed model; ApplicationController grants each one just
+    before its download starts.
+    """
+
+    def __init__(self, model_names: List[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Download models")
+        self.setWindowIcon(app_icon())
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 16)
+        layout.setSpacing(10)
+
+        count = len(model_names)
+        noun = "model" if count == 1 else "models"
+        title = QLabel(f"Download {count} {noun}?")
+        title.setObjectName("downloadsTitle")
+        layout.addWidget(title)
+
+        lines = []
+        total_bytes = 0
+        for name in model_names:
+            estimate_mb = MODEL_DOWNLOAD_SIZE_MB.get(name)
+            if estimate_mb is not None:
+                total_bytes += estimate_mb * 1_000_000
+            lines.append(
+                f"{name}  \u00b7  {format_download_size(name) or 'size unknown'}"
+            )
+        list_label = QLabel("\n".join(lines))
+        list_label.setObjectName("batchModelList")
+        list_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(list_label)
+        self.model_list_label = list_label
+
+        total_label = QLabel(
+            f"Estimated total: ~{format_size_bytes(total_bytes)}"
+        )
+        total_label.setObjectName("batchTotalLabel")
+        layout.addWidget(total_label)
+        self.total_label = total_label
+
+        destination_caption = QLabel("Destination")
+        destination_caption.setObjectName("downloadsEyebrow")
+        layout.addWidget(destination_caption)
+        # Eliding keeps a long cache path from stretching the window; the
+        # full path stays on the tooltip.
+        destination_path = ElidingLabel(get_hf_cache_dir())
+        destination_path.setObjectName("batchDestPath")
+        destination_path.setToolTip(get_hf_cache_dir())
+        destination_path.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(destination_path)
+        self.destination_path_label = destination_path
+
+        note = WrappedLabel(
+            "Models download one at a time, in the order listed. You can "
+            "stop after the current model from the Downloads window while "
+            "the queue runs."
+        )
+        note.setObjectName("downloadsSourceNote")
+        layout.addWidget(note)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.addStretch()
+        cancel_button = Button("Cancel")
+        DownloadsDialog._compact_button(cancel_button, 100)
+        cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(cancel_button)
+        download_button = PrimaryButton(f"Download {count} {noun}\u2026")
+        DownloadsDialog._compact_button(download_button, 0)
+        download_button.clicked.connect(self.accept)
+        buttons.addWidget(download_button)
+        layout.addLayout(buttons)
 
 
 class DownloadsDialog(QDialog):
@@ -65,6 +153,9 @@ class DownloadsDialog(QDialog):
     #: Assigned by UIController; called with the model name.
     on_download_requested: Optional[Callable[[str], None]] = None
     on_delete_requested: Optional[Callable[[str], None]] = None
+    #: Assigned by UIController; called with the confirmed model list.
+    on_batch_download_requested: Optional[Callable[[List[str]], None]] = None
+    on_batch_cancel_requested: Optional[Callable[[], None]] = None
 
     def __init__(
         self,
@@ -83,6 +174,11 @@ class DownloadsDialog(QDialog):
         self._downloading_model: Optional[str] = None
         self._component_rows: Dict[str, ComponentRowWidget] = {}
         self._selected_model: Optional[str] = None
+        self._selected_models: Set[str] = set()
+        self._batch_queue: List[str] = []
+        self._batch_done = 0
+        self._batch_failed = 0
+        self._downloads_blocked = False
 
         self.setWindowTitle("Downloads — Model Manager")
         self.setWindowIcon(app_icon())
@@ -123,6 +219,14 @@ class DownloadsDialog(QDialog):
         header_row.addLayout(title_block)
         header_row.addStretch()
 
+        self.download_all_button = Button("Download all…")
+        self._compact_button(self.download_all_button, 0)
+        self.download_all_button.setToolTip(
+            "Queue every model that is not downloaded yet"
+        )
+        self.download_all_button.clicked.connect(self._on_download_all_clicked)
+        header_row.addWidget(self.download_all_button)
+
         open_folder_btn = Button("Open folder")
         self._compact_button(open_folder_btn, 110)
         open_folder_btn.setToolTip(
@@ -154,9 +258,20 @@ class DownloadsDialog(QDialog):
         split.addWidget(self._build_inspector())
         layout.addLayout(split, stretch=1)
 
+        self.message_row = QHBoxLayout()
+        self.message_row.setSpacing(8)
         self.message_label = QLabel("")
         self.message_label.setObjectName("downloadsMessage")
-        layout.addWidget(self.message_label)
+        self.message_row.addWidget(self.message_label, stretch=1)
+        self.stop_batch_button = Button("Stop after current")
+        self._compact_button(self.stop_batch_button, 0)
+        self.stop_batch_button.setToolTip(
+            "Finish the model now downloading, then stop the queue"
+        )
+        self.stop_batch_button.clicked.connect(self._on_stop_batch_clicked)
+        self.stop_batch_button.setVisible(False)
+        self.message_row.addWidget(self.stop_batch_button)
+        layout.addLayout(self.message_row)
 
         layout.addWidget(self._build_component_strip())
 
@@ -197,8 +312,41 @@ class DownloadsDialog(QDialog):
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.sort_combo)
         column_layout.addLayout(toolbar)
+        column_layout.addWidget(self._build_selection_bar())
         column_layout.addWidget(self._build_list(), stretch=1)
         return column
+
+    def _build_selection_bar(self) -> QWidget:
+        """Build the batch-selection bar between the filters and the rows."""
+        bar = QWidget()
+        bar.setObjectName("downloadsSelectionBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(0, 0, 0, 0)
+        bar_layout.setSpacing(10)
+
+        self.select_all_button = Button("Select all")
+        self.select_all_button.setObjectName("downloadsFlatButton")
+        self._compact_button(self.select_all_button, 0)
+        self.select_all_button.clicked.connect(self._on_select_all_clicked)
+        bar_layout.addWidget(self.select_all_button)
+
+        self.clear_selection_button = Button("Clear")
+        self.clear_selection_button.setObjectName("downloadsFlatButton")
+        self._compact_button(self.clear_selection_button, 0)
+        self.clear_selection_button.clicked.connect(self._on_clear_selection_clicked)
+        bar_layout.addWidget(self.clear_selection_button)
+
+        self.selection_summary = ElidingLabel("")
+        self.selection_summary.setObjectName("downloadsSelectionSummary")
+        bar_layout.addWidget(self.selection_summary, stretch=1)
+
+        self.download_selected_button = PrimaryButton("Download selected")
+        self._compact_button(self.download_selected_button, 0)
+        self.download_selected_button.clicked.connect(
+            self._on_download_selected_clicked
+        )
+        bar_layout.addWidget(self.download_selected_button)
+        return bar
 
     def _build_list(self) -> QWidget:
         self.library_scroll_area = QScrollArea()
@@ -222,6 +370,7 @@ class DownloadsDialog(QDialog):
             row.download_clicked.connect(self._on_download_clicked)
             row.delete_clicked.connect(self._on_delete_clicked)
             row.details_requested.connect(self.select_model)
+            row.selection_toggled.connect(self._on_selection_toggled)
             self.rows[model_name] = row
             self.list_layout.addWidget(row)
 
@@ -555,6 +704,82 @@ class DownloadsDialog(QDialog):
         if reply == QMessageBox.StandardButton.Yes and self.on_delete_requested:
             self.on_delete_requested(model_name)
 
+    # ---- batch selection ----
+
+    def _on_selection_toggled(self, model_name: str, checked: bool) -> None:
+        if checked:
+            self._selected_models.add(model_name)
+        else:
+            self._selected_models.discard(model_name)
+        self._update_selection_bar()
+
+    def _on_select_all_clicked(self) -> None:
+        """Check every row that still needs a download (cached rows excluded)."""
+        for row in self.rows.values():
+            row.select_checkbox.setChecked(not row.is_cached)
+
+    def _on_clear_selection_clicked(self) -> None:
+        for row in self.rows.values():
+            row.select_checkbox.setChecked(False)
+
+    def _selected_names(self) -> List[str]:
+        """Selection in catalog order — the order the batch downloads in."""
+        return [name for name in self.rows if name in self._selected_models]
+
+    def _missing_names(self) -> List[str]:
+        """Every catalog model without local files, in catalog order."""
+        return [name for name, row in self.rows.items() if not row.is_cached]
+
+    def _download_slot_busy(self) -> bool:
+        return self._downloading_model is not None or bool(self._batch_queue)
+
+    def _update_selection_bar(self) -> None:
+        names = self._selected_names()
+        count = len(names)
+        total_bytes = sum(self.rows[name].sort_size_bytes for name in names)
+        self.selection_summary.setText(
+            f"{count} selected · ~{format_size_bytes(total_bytes)} to download"
+            if count
+            else ""
+        )
+        noun = "model" if count == 1 else "models"
+        self.download_selected_button.setText(
+            f"Download {count} {noun}…" if count else "Download selected"
+        )
+        busy = self._download_slot_busy()
+        selectable = bool(names) and not busy and not self._downloads_blocked
+        self.download_selected_button.setEnabled(selectable)
+        self.clear_selection_button.setEnabled(bool(names) and not busy)
+        any_selectable = (
+            bool(self._missing_names())
+            and not busy
+            and not self._downloads_blocked
+        )
+        self.select_all_button.setEnabled(any_selectable)
+        self.download_all_button.setEnabled(any_selectable)
+        self.download_all_button.setVisible(bool(self._missing_names()))
+
+    def _request_batch(self, model_names: List[str]) -> None:
+        """Confirm sizes and destination, then hand the plan to the app."""
+        dialog = BatchDownloadDialog(model_names, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if self.on_batch_download_requested:
+                self.on_batch_download_requested(list(model_names))
+
+    def _on_download_selected_clicked(self) -> None:
+        names = self._selected_names()
+        if names:
+            self._request_batch(names)
+
+    def _on_download_all_clicked(self) -> None:
+        names = self._missing_names()
+        if names:
+            self._request_batch(names)
+
+    def _on_stop_batch_clicked(self) -> None:
+        if self.on_batch_cancel_requested:
+            self.on_batch_cancel_requested()
+
     def _confirm_component_removal(self, component_id: str) -> None:
         """Ask before deleting a multi-gigabyte component."""
         info = component_coordinator.describe(component_id)
@@ -587,8 +812,12 @@ class DownloadsDialog(QDialog):
             dictation_resolved = loaded_model
         loaded_repo = resolve_model_repo(loaded_model) if loaded_model else None
         downloads_blocked = is_hf_hub_offline_env_set()
+        self._downloads_blocked = downloads_blocked
         self.env_banner.setVisible(downloads_blocked)
 
+        queued_names = set(self._batch_queue)
+        slot_busy = self._download_slot_busy()
+        selection_locked = slot_busy or downloads_blocked
         seen_repos: Dict[str, CachedModelInfo] = {}
         for model_name, row in self.rows.items():
             info = cached.get(row.repo_id)
@@ -600,13 +829,20 @@ class DownloadsDialog(QDialog):
                 is_loaded=(row.repo_id == loaded_repo),
                 downloading=(model_name == self._downloading_model),
                 downloads_blocked=downloads_blocked,
-                download_slot_busy=(self._downloading_model is not None),
+                download_slot_busy=slot_busy,
+                queued=(model_name in queued_names
+                        and model_name != self._downloading_model),
+                selection_enabled=not selection_locked,
             )
             # Assignment lives in Model Manager; this window only downloads.
             row.set_active_button.setVisible(False)
             row.set_usage(
                 self._usage_for(model_name, dictation_resolved, meeting_model)
             )
+            if cached.get(row.repo_id) is not None:
+                # A model that gained files elsewhere must not stay checked.
+                row.select_checkbox.setChecked(False)
+                self._selected_models.discard(model_name)
 
         total_bytes = sum(info.size_bytes for info in seen_repos.values())
         self.stats_label.setText(
@@ -622,6 +858,8 @@ class DownloadsDialog(QDialog):
                 )
             )
             self.inspector_usage.setVisible(bool(self.inspector_usage.text()))
+        self.stop_batch_button.setVisible(bool(self._batch_queue))
+        self._update_selection_bar()
 
     def refresh_components(self) -> None:
         for component_id, row in self._component_rows.items():
@@ -646,15 +884,62 @@ class DownloadsDialog(QDialog):
 
     def set_downloading(self, model_name: str) -> None:
         self._downloading_model = model_name
-        self.message_label.setText(f'Downloading "{model_name}"…')
+        if self._batch_queue:
+            position = self._batch_done + 1
+            total = self._batch_done + len(self._batch_queue)
+            self.message_label.setText(
+                f"Downloading model {position} of {total}: {model_name}…"
+            )
+        else:
+            self.message_label.setText(f'Downloading "{model_name}"…')
         self.refresh()
 
     def finish_download(self, model_name: str, success: bool) -> None:
         if self._downloading_model == model_name:
             self._downloading_model = None
+        if model_name in self._batch_queue:
+            self._batch_queue.remove(model_name)
+            self._batch_done += 1
+            if not success:
+                self._batch_failed += 1
+            self.refresh()
+            if not self._batch_queue:
+                # finish_batch reports the closing summary for the queue.
+                return
+            self.message_label.setText("")
+            return
+        elif success:
+            self.message_label.setText("")
+        else:
+            self.message_label.setText(f'Download of "{model_name}" failed')
+        self.refresh()
+
+    def begin_batch(self, model_names: List[str]) -> None:
+        """Enter batch mode with the controller-approved download plan."""
+        self._batch_queue = [name for name in model_names if name in self.rows]
+        self._batch_done = 0
+        self._batch_failed = 0
         self.message_label.setText(
-            "" if success else f'Download of "{model_name}" failed'
+            f"Downloading {len(self._batch_queue)} models…"
         )
+        self.refresh()
+
+    def finish_batch(self, completed: int, planned: int) -> None:
+        """Close the batch with a summary of what actually downloaded."""
+        failed = self._batch_failed
+        self._batch_queue = []
+        self._batch_failed = 0
+        if completed < planned and not failed:
+            self.message_label.setText(
+                f"Stopped — downloaded {completed} of {planned} models"
+            )
+        elif failed or completed < planned:
+            self.message_label.setText(
+                f"Downloaded {completed} of {planned} models — {failed} failed"
+            )
+        else:
+            noun = "model" if planned == 1 else "models"
+            self.message_label.setText(f"Downloaded {planned} {noun}")
         self.refresh()
 
     def show_delete_result(self, model_name: str, success: bool, error: str) -> None:

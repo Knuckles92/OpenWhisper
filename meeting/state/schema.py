@@ -237,12 +237,13 @@ class FinalizationState:
         """
         if meeting_status in {"active", "paused", "ending"}:
             return None
-        if self.card_deferred:
-            return ("Saved for later", "warning")
         failed_steps = any(
             str(step.get("status") or "") == "failed"
             for step in (self.steps or [])
         )
+        incomplete = bool(failed_steps) or self.status in {"failed", "unavailable"}
+        if self.card_deferred and incomplete:
+            return ("Saved for later", "warning")
         if self.status == "failed" or (self.status == "completed" and failed_steps):
             return ("Incomplete", "warning")
         if self.status == "unavailable":

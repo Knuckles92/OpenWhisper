@@ -221,3 +221,36 @@ class TestRequestDeduplication:
         assert self.coordinator.begin_request("never-claimed")
 
 
+@patch("services.hf_access.is_model_cached", return_value=False)
+class TestClaimBatch:
+    """Batch planning: skip cached/duplicate/in-flight models, hold slots."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.coordinator = HuggingFaceAccessCoordinator()
+
+    def test_claims_every_downloadable_model(self, _mock_cached):
+        claimed = self.coordinator.claim_batch(["tiny", "base", "small"])
+        assert claimed == ["tiny", "base", "small"]
+        # Slots stay held so a concurrent request cannot double-download.
+        assert not self.coordinator.begin_request("base")
+
+    def test_skips_cached_models(self, mock_cached):
+        mock_cached.side_effect = lambda name: name == "tiny"
+        assert self.coordinator.claim_batch(["tiny", "base"]) == ["base"]
+
+    def test_skips_duplicates_in_the_request(self, _mock_cached):
+        assert self.coordinator.claim_batch(["tiny", "tiny"]) == ["tiny"]
+
+    def test_skips_models_already_in_flight(self, _mock_cached):
+        assert self.coordinator.begin_request("base")
+        assert self.coordinator.claim_batch(["base", "tiny"]) == ["tiny"]
+
+    def test_requests_in_flight_counts_claimed_slots(self, _mock_cached):
+        assert self.coordinator.requests_in_flight == 0
+        self.coordinator.claim_batch(["tiny", "base"])
+        assert self.coordinator.requests_in_flight == 2
+        self.coordinator.end_request("tiny")
+        assert self.coordinator.requests_in_flight == 1
+
+

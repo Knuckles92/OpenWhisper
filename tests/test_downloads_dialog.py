@@ -12,13 +12,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea
 
 from services.components import ComponentInfo, ComponentState
-from services.hf_access import CachedModelInfo
+from services.hf_access import CachedModelInfo, get_hf_cache_dir
 from services.settings import SettingsKey
 from ui_qt.dialogs import downloads_dialog as dialog_module
-from ui_qt.dialogs.downloads_dialog import DownloadsDialog
+from ui_qt.dialogs.downloads_dialog import BatchDownloadDialog, DownloadsDialog
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets import Button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
@@ -559,6 +559,148 @@ class TestRowActivation(_DialogTestCase):
         assert downloads == ["small"]
         assert deletes == ["small"]
         assert selected == []
+
+
+class TestBatchSelection(_DialogTestCase):
+    """Multi-model selection: checkboxes, running total, confirmation."""
+
+    def test_uncached_rows_offer_selection_cached_do_not(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        assert dialog.rows["tiny"].select_checkbox.isVisibleTo(dialog)
+        assert not dialog.rows["base"].select_checkbox.isVisibleTo(dialog)
+
+    def test_toggling_updates_summary_and_button(self):
+        dialog, _values = self._make_dialog()
+        dialog.rows["tiny"].select_checkbox.setChecked(True)
+        assert "1 selected" in dialog.selection_summary.text()
+        assert "~76 MB" in dialog.selection_summary.text()
+        assert dialog.download_selected_button.text() == "Download 1 model…"
+
+        dialog.rows["base"].select_checkbox.setChecked(True)
+        assert "2 selected" in dialog.selection_summary.text()
+        assert "~221 MB" in dialog.selection_summary.text()
+        assert dialog.download_selected_button.text() == "Download 2 models…"
+
+    def test_clear_empties_the_selection(self):
+        dialog, _values = self._make_dialog()
+        dialog.rows["tiny"].select_checkbox.setChecked(True)
+        dialog._on_clear_selection_clicked()
+        assert not dialog.rows["tiny"].select_checkbox.isChecked()
+        assert dialog.selection_summary.text() == ""
+        assert not dialog.download_selected_button.isEnabled()
+
+    def test_select_all_checks_only_missing_models(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog._on_select_all_clicked()
+        assert dialog.rows["tiny"].select_checkbox.isChecked()
+        assert not dialog.rows["base"].select_checkbox.isChecked()
+
+    def test_download_selected_confirms_and_requests_in_catalog_order(self):
+        requested = []
+        dialog, _values = self._make_dialog()
+        dialog.on_batch_download_requested = requested.append
+        dialog.rows["base"].select_checkbox.setChecked(True)
+        dialog.rows["tiny"].select_checkbox.setChecked(True)
+
+        with patch.object(
+            BatchDownloadDialog,
+            "exec",
+            return_value=QDialog.DialogCode.Accepted,
+        ):
+            dialog.download_selected_button.click()
+
+        assert requested == [["tiny", "base"]]
+
+    def test_canceled_confirmation_requests_nothing(self):
+        requested = []
+        dialog, _values = self._make_dialog()
+        dialog.on_batch_download_requested = requested.append
+        dialog.rows["tiny"].select_checkbox.setChecked(True)
+
+        with patch.object(
+            BatchDownloadDialog,
+            "exec",
+            return_value=QDialog.DialogCode.Rejected,
+        ):
+            dialog.download_selected_button.click()
+
+        assert requested == []
+
+    def test_confirmation_lists_sizes_total_and_destination(self):
+        box = BatchDownloadDialog(["tiny", "base"])
+        assert "tiny  \u00b7  ~76 MB" in box.model_list_label.text()
+        assert "base  \u00b7  ~145 MB" in box.model_list_label.text()
+        assert box.total_label.text() == "Estimated total: ~221 MB"
+        assert box.destination_path_label.text() == get_hf_cache_dir()
+
+
+class TestBatchLifecycle(_DialogTestCase):
+    """Queue bookkeeping between begin_batch and finish_batch."""
+
+    def test_begin_batch_locks_selection_and_downloads(self):
+        dialog, _values = self._make_dialog()
+        dialog.begin_batch(["tiny", "base"])
+
+        assert dialog.stop_batch_button.isVisibleTo(dialog)
+        assert not dialog.rows["small"].select_checkbox.isEnabled()
+        assert not dialog.rows["small"].download_button.isEnabled()
+        assert not dialog.select_all_button.isEnabled()
+        assert not dialog.download_all_button.isEnabled()
+
+    def test_progress_counts_each_model(self):
+        dialog, _values = self._make_dialog()
+        dialog.begin_batch(["tiny", "base"])
+
+        dialog.set_downloading("tiny")
+        assert "Downloading model 1 of 2: tiny" in dialog.message_label.text()
+        assert dialog.rows["base"].badge.text() == "Queued"
+
+        dialog.finish_download("tiny", success=True)
+        dialog.set_downloading("base")
+        assert "Downloading model 2 of 2: base" in dialog.message_label.text()
+
+    def test_finish_batch_summarizes_failures_and_unlocks(self):
+        dialog, _values = self._make_dialog()
+        dialog.begin_batch(["tiny", "base"])
+        dialog.set_downloading("tiny")
+        dialog.finish_download("tiny", success=True)
+        dialog.set_downloading("base")
+        dialog.finish_download("base", success=False)
+
+        dialog.finish_batch(1, 2)
+
+        assert "failed" in dialog.message_label.text()
+        assert not dialog.stop_batch_button.isVisibleTo(dialog)
+        assert dialog.rows["small"].download_button.isEnabled()
+        assert dialog.select_all_button.isEnabled()
+
+    def test_stopped_queue_is_reported(self):
+        dialog, _values = self._make_dialog()
+        dialog.begin_batch(["tiny", "base", "small"])
+        dialog.set_downloading("tiny")
+        dialog.finish_download("tiny", success=True)
+
+        dialog.finish_batch(1, 3)
+
+        assert "Stopped" in dialog.message_label.text()
+        assert not dialog.stop_batch_button.isVisibleTo(dialog)
+
+    def test_single_download_message_is_unchanged(self):
+        dialog, _values = self._make_dialog()
+        dialog.set_downloading("tiny")
+        assert 'Downloading "tiny"' in dialog.message_label.text()
+        assert not dialog.stop_batch_button.isVisibleTo(dialog)
+
+    def test_env_blocked_disables_selection_actions(self):
+        dialog, _values = self._make_dialog(env_blocked=True)
+        assert not dialog.rows["tiny"].select_checkbox.isEnabled()
+        assert not dialog.select_all_button.isEnabled()
+        assert not dialog.download_all_button.isEnabled()
+        assert not dialog.download_selected_button.isEnabled()
 
 
 class TestComponents(_DialogTestCase):

@@ -392,6 +392,8 @@ class DummyUIController:
         self.model_manager_refreshes = 0
         self.download_started = []
         self.download_finished = []
+        self.batch_planned = []
+        self.batch_finished = []
         self.deleted_models = []
         self.component_progress_events = []
         self.component_state_changes = 0
@@ -483,6 +485,12 @@ class DummyUIController:
 
     def on_model_download_finished(self, model_name, success):
         self.download_finished.append((model_name, success))
+
+    def on_model_batch_planned(self, model_names):
+        self.batch_planned = list(model_names)
+
+    def on_model_batch_finished(self, completed, planned):
+        self.batch_finished.append((completed, planned))
 
     def on_model_deleted(self, model_name, success, error):
         self.deleted_models.append((model_name, success, error))
@@ -623,6 +631,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hf_access_module.resolve_model_repo = lambda name: name
     hf_access_module.download_model_files = lambda name: f"/cache/{name}"
     hf_access_module.delete_model_from_cache = lambda name: None
+    hf_access_module.is_hf_hub_offline_env_set = lambda: False
     # Inert coordinator: never grants downloads, never touches disk/network.
     hf_access_module.hf_access_coordinator = types.SimpleNamespace(
         begin_request=lambda model: True,
@@ -633,6 +642,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         grant_once=lambda model: None,
         get_policy=lambda: _RealHFPolicy.ASK,
         set_policy=lambda policy: None,
+        claim_batch=lambda models: [],
     )
 
     history_module = types.ModuleType("services.history_manager")
