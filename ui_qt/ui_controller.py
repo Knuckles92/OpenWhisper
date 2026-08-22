@@ -89,6 +89,7 @@ class UIController(QObject):
         self._meeting_urls: dict = {}
 
         self._model_manager_dialog = None
+        self._downloads_dialog = None
 
         self.cancel_animation_timer = QTimer()
         self.cancel_animation_timer.setSingleShot(True)
@@ -543,10 +544,28 @@ class UIController(QObject):
         """Show the non-modal Model Manager (single instance, re-raised).
 
         Args:
-            tab: ``\"ondemand\"``, ``\"meeting\"``, ``\"library\"``, or the
-                legacy values ``\"voice\"`` (Library) and ``\"text\"``
-                (On-demand, scrolled to cleanup).
+            tab: Rail destination alias — ``\"ondemand\"``, ``\"text\"``,
+                ``\"meeting\"``, or ``\"runtime\"``. ``\"downloads\"`` and the
+                legacy ``\"library\"`` / ``\"voice\"`` open the Downloads
+                window, which now owns the catalog and components.
         """
+        if tab in ("downloads", "library", "voice"):
+            self.open_downloads_dialog()
+            return
+
+        dialog = self._ensure_model_manager_dialog()
+        dialog.refresh()
+        if tab == "text":
+            dialog.show_text_tab()
+        elif tab == "meeting":
+            dialog.show_meeting_tab()
+        elif tab == "runtime":
+            dialog.show_runtime()
+        else:
+            dialog.show_ondemand_tab()
+        self._raise_dialog(dialog)
+
+    def _ensure_model_manager_dialog(self):
         from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 
         if self._model_manager_dialog is None:
@@ -554,11 +573,24 @@ class UIController(QObject):
                 get_loaded_model=self.get_loaded_local_model,
                 parent=self.main_window,
             )
-            dialog.on_download_requested = self.on_model_download_requested
-            dialog.on_delete_requested = self.on_model_delete_requested
             dialog.on_set_active_requested = self._on_manager_set_active
             dialog.on_backend_changed = self.select_transcription_backend
             dialog.on_runtime_settings_changed = self._on_manager_runtime_changed
+            dialog.downloads_requested.connect(self.open_downloads_dialog)
+            self._model_manager_dialog = dialog
+        return self._model_manager_dialog
+
+    def open_downloads_dialog(self):
+        """Show the non-modal Downloads window (single instance, re-raised)."""
+        from ui_qt.dialogs.downloads_dialog import DownloadsDialog
+
+        if self._downloads_dialog is None:
+            dialog = DownloadsDialog(
+                get_loaded_model=self.get_loaded_local_model,
+                parent=self.main_window,
+            )
+            dialog.on_download_requested = self.on_model_download_requested
+            dialog.on_delete_requested = self.on_model_delete_requested
             dialog.component_install_requested.connect(
                 self.on_component_install_requested
             )
@@ -568,21 +600,16 @@ class UIController(QObject):
             dialog.component_remove_requested.connect(
                 self.on_component_remove_requested
             )
-            self._model_manager_dialog = dialog
+            self._downloads_dialog = dialog
 
-        self._model_manager_dialog.refresh()
-        if tab in ("text", "ondemand"):
-            if tab == "text":
-                self._model_manager_dialog.show_text_tab()
-            else:
-                self._model_manager_dialog.show_ondemand_tab()
-        elif tab == "meeting":
-            self._model_manager_dialog.show_meeting_tab()
-        elif tab in ("library", "voice"):
-            self._model_manager_dialog.show_library_tab()
-        self._model_manager_dialog.show()
-        self._model_manager_dialog.raise_()
-        self._model_manager_dialog.activateWindow()
+        self._downloads_dialog.refresh()
+        self._raise_dialog(self._downloads_dialog)
+
+    @staticmethod
+    def _raise_dialog(dialog) -> None:
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def select_transcription_backend(self, display_name: str) -> None:
         """Select a dictation backend through the main-window combo path.
@@ -621,18 +648,25 @@ class UIController(QObject):
     def refresh_model_manager(self):
         if self._model_manager_dialog is not None and self._model_manager_dialog.isVisible():
             self._model_manager_dialog.refresh()
+        if self._downloads_dialog is not None and self._downloads_dialog.isVisible():
+            self._downloads_dialog.refresh()
 
     def on_model_download_started(self, model_name: str):
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.set_downloading(model_name)
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.set_downloading(model_name)
 
     def on_model_download_finished(self, model_name: str, success: bool):
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.finish_download(model_name, success)
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_download(model_name, success)
+        # A newly cached model becomes assignable, so the manager's pickers
+        # need the fresh cache scan even when Downloads is the focused window.
+        self.refresh_model_manager()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.show_delete_result(model_name, success, error)
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.show_delete_result(model_name, success, error)
+            self._downloads_dialog.refresh()
+        self.refresh_model_manager()
 
     def on_component_install_requested(self, component_id: str):
         if self.on_component_install:
@@ -649,22 +683,26 @@ class UIController(QObject):
     def on_component_progress(
         self, component_id: str, phase: str, done: int, total: int
     ):
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.set_component_progress(
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.set_component_progress(
                 component_id, phase, done, total
             )
 
     def on_component_state_changed(self):
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.refresh_components()
         if self._model_manager_dialog is not None:
-            self._model_manager_dialog.refresh_components()
+            self._model_manager_dialog.refresh_component_state()
 
     def on_component_install_finished(
         self, component_id: str, success: bool, message: str
     ):
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.finish_component_install(
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_component_install(
                 component_id, success, message
             )
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.refresh_component_state()
 
     def ensure_meeting_platform_ack(self) -> bool:
         """Clear both platform gates before Meeting Mode opens or starts.

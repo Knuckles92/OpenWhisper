@@ -384,7 +384,7 @@ class MainWindow(QMainWindow):
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
             tab.manage_models_requested.connect(
-                lambda: self.model_manager_requested.emit("library")
+                lambda: self.model_manager_requested.emit("downloads")
             )
             tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)

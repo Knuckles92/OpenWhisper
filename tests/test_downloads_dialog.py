@@ -1,0 +1,636 @@
+"""Qt tests for the Downloads window: catalog, filters, actions, inspector.
+
+Split out of ``test_model_manager_dialog`` when the sixteen-row Whisper catalog
+moved out of the assignment surface.
+"""
+import os
+from unittest.mock import patch
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QMessageBox, QScrollArea
+
+from services.components import ComponentInfo, ComponentState
+from services.hf_access import CachedModelInfo
+from services.settings import SettingsKey
+from ui_qt.dialogs import downloads_dialog as dialog_module
+from ui_qt.dialogs.downloads_dialog import DownloadsDialog
+from ui_qt.utils.theme_manager import ThemeManager
+from ui_qt.widgets import Button
+from ui_qt.widgets.component_row_widget import ComponentRowWidget
+from ui_qt.widgets.model_row_widget import ModelRowWidget
+
+
+def _cached(repo_id, size_bytes):
+    return CachedModelInfo(
+        repo_id=repo_id,
+        size_bytes=size_bytes,
+        path=f"/hub/models--{repo_id.replace('/', '--')}",
+        revision_hashes=("abc",),
+    )
+
+
+BASE_REPO = "Systran/faster-whisper-base"
+TINY_REPO = "Systran/faster-whisper-tiny"
+
+
+class _FakeSettings:
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def save_setting(self, key, value):
+        self.values[key] = value
+
+    def load_all_settings(self):
+        return dict(self.values)
+
+    def save_all_settings(self, settings):
+        self.values.clear()
+        self.values.update(settings)
+
+
+class _DialogTestCase:
+    @pytest.fixture(scope="class", autouse=True)
+    @classmethod
+    def _qapp(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    @pytest.fixture(autouse=True)
+    def _patch_stack(self):
+        self._started = []
+        yield
+        for patcher in reversed(self._started):
+            patcher.stop()
+
+    def _make_dialog(
+        self,
+        cached=None,
+        active_model="base",
+        meeting_model="auto",
+        loaded_model=None,
+        env_blocked=False,
+    ):
+        values = {
+            SettingsKey.WHISPER_MODEL: active_model,
+            SettingsKey.MEETING_WHISPER_MODEL: meeting_model,
+        }
+        patchers = [
+            patch.object(
+                dialog_module, "scan_cached_models", return_value=cached or {}
+            ),
+            patch.object(
+                dialog_module, "settings_manager", _FakeSettings(values)
+            ),
+            patch.object(
+                dialog_module,
+                "is_hf_hub_offline_env_set",
+                return_value=env_blocked,
+            ),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self._started.append(patcher)
+        return DownloadsDialog(get_loaded_model=lambda: loaded_model), values
+
+
+class TestWindowShell(_DialogTestCase):
+    """The window is resizable; only the two content columns scroll."""
+
+    def test_default_and_minimum_size_allow_a_row_beside_the_inspector(self):
+        dialog, _values = self._make_dialog()
+        assert (dialog.width(), dialog.height()) == (1060, 680)
+        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (980, 560)
+        assert dialog.isSizeGripEnabled()
+        assert not dialog.isModal()
+
+    def test_rows_are_not_clipped_at_the_minimum_window_width(self):
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            dialog.resize(dialog.MINIMUM_SIZE)
+            self.app.processEvents()
+
+            container = dialog.library_scroll_area.widget()
+            assert (
+                container.minimumSizeHint().width()
+                <= dialog.library_scroll_area.viewport().width()
+            )
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_only_the_catalog_and_inspector_body_scroll(self):
+        dialog, _values = self._make_dialog()
+        scrollers = dialog.findChildren(QScrollArea)
+        assert set(scrollers) == {
+            dialog.library_scroll_area,
+            dialog.inspector_detail_scroll,
+        }
+        assert dialog.library_scroll_area.widgetResizable()
+        assert dialog.inspector_detail_scroll.widgetResizable()
+
+    def test_rows_share_the_right_edge_with_the_toolbar(self):
+        """The list's scroll bar must not pull its rows in past the filters."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            self.app.processEvents()
+
+            def right_edge(widget):
+                return widget.mapTo(dialog, QPoint(widget.width(), 0)).x()
+
+            assert dialog.library_scroll_area.verticalScrollBar().isVisible()
+            assert (
+                abs(right_edge(dialog.rows["tiny"]) - right_edge(dialog.sort_combo))
+                <= 1
+            )
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_open_folder_button_fits_its_label(self):
+        dialog, _values = self._make_dialog()
+        open_folder = next(
+            button
+            for button in dialog.findChildren(Button)
+            if button.text() == "Open folder"
+        )
+        open_folder.ensurePolished()
+        needed = open_folder.sizeHint().width()
+        assert open_folder.minimumWidth() >= needed
+        assert open_folder.minimumWidth() == open_folder.maximumWidth()
+
+
+class TestModelRows(_DialogTestCase):
+    """Per-row status, size, and action availability."""
+
+    def test_catalog_excludes_auto(self):
+        dialog, _values = self._make_dialog()
+        assert "auto" not in dialog.rows
+        assert "base" in dialog.rows
+
+    def test_uncached_row_offers_download_with_estimate(self):
+        dialog, _values = self._make_dialog()
+        row = dialog.rows["tiny"]
+        assert row.download_button.isVisibleTo(dialog)
+        assert not row.delete_button.isVisibleTo(dialog)
+        assert row.badge.text() == "Not downloaded"
+        assert row.size_label.text() == "~76 MB"
+
+    def test_cached_row_shows_real_size_and_delete(self):
+        dialog, _values = self._make_dialog(
+            cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)}
+        )
+        row = dialog.rows["tiny"]
+        assert not row.download_button.isVisibleTo(dialog)
+        assert row.delete_button.isEnabled()
+        assert row.badge.text() == "Downloaded"
+        assert row.size_label.text() == "76 MB"
+
+    def test_assignment_is_reported_but_not_offered(self):
+        """Set Active belongs to Model Manager; this window only shows usage."""
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            active_model="base",
+        )
+        row = dialog.rows["base"]
+        assert not row.set_active_button.isVisibleTo(dialog)
+        assert row.usage_label.text() == "On-demand"
+        assert row.usage_label.isVisibleTo(dialog)
+        assert not dialog.rows["tiny"].usage_label.isVisibleTo(dialog)
+
+    def test_usage_chip_combines_both_modes(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            active_model="base",
+            meeting_model="base",
+        )
+        assert dialog.rows["base"].usage_label.text() == "On-demand · Meetings"
+
+    def test_loaded_model_delete_is_disabled(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            loaded_model="base",
+        )
+        row = dialog.rows["base"]
+        assert not row.delete_button.isEnabled()
+        assert "In use" in row.delete_button.toolTip()
+
+    def test_refresh_moves_delete_lock_when_loaded_model_changes(self):
+        """After a Set Active reload, Delete must follow the newly loaded model."""
+        loaded = {"name": "base"}
+        dialog, _values = self._make_dialog(
+            cached={
+                BASE_REPO: _cached(BASE_REPO, 145_000_000),
+                TINY_REPO: _cached(TINY_REPO, 76_000_000),
+            },
+            active_model="tiny",
+            loaded_model="base",
+        )
+        dialog._get_loaded_model = lambda: loaded["name"]
+        dialog.refresh()
+        assert not dialog.rows["base"].delete_button.isEnabled()
+        assert dialog.rows["tiny"].delete_button.isEnabled()
+
+        loaded["name"] = "tiny"
+        dialog.refresh()
+        assert dialog.rows["base"].delete_button.isEnabled()
+        assert not dialog.rows["tiny"].delete_button.isEnabled()
+
+    def test_header_reports_count_disk_usage_and_folder(self):
+        dialog, _values = self._make_dialog(
+            cached={
+                BASE_REPO: _cached(BASE_REPO, 145_000_000),
+                TINY_REPO: _cached(TINY_REPO, 76_000_000),
+            }
+        )
+        text = dialog.stats_label.text()
+        assert text.startswith("2 of 16 Whisper models")
+        assert "221 MB used" in text
+
+
+class TestDownloadingState(_DialogTestCase):
+    """Indeterminate download state: badge + one download at a time."""
+
+    def test_downloading_row_and_other_downloads_blocked(self):
+        dialog, _values = self._make_dialog()
+        dialog.set_downloading("tiny")
+
+        assert dialog.rows["tiny"].badge.text() == "Downloading…"
+        assert not dialog.rows["tiny"].download_button.isEnabled()
+        assert not dialog.rows["small"].download_button.isEnabled()
+
+        dialog.finish_download("tiny", success=True)
+        assert dialog.rows["small"].download_button.isEnabled()
+
+    def test_failed_download_reports_in_message(self):
+        dialog, _values = self._make_dialog()
+        dialog.set_downloading("tiny")
+        dialog.finish_download("tiny", success=False)
+        assert "failed" in dialog.message_label.text()
+
+
+class TestEnvBlocked(_DialogTestCase):
+    """HF_HUB_OFFLINE disables downloads but not deletion."""
+
+    def test_banner_shown_and_downloads_disabled(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            env_blocked=True,
+        )
+        assert dialog.env_banner.isVisibleTo(dialog)
+        assert not dialog.rows["tiny"].download_button.isEnabled()
+        assert dialog.rows["base"].delete_button.isEnabled()
+
+
+class TestFilter(_DialogTestCase):
+    """Search and status filters hide rows and show the empty state."""
+
+    def test_filter_matches_name_and_repo(self):
+        dialog, _values = self._make_dialog()
+        dialog.filter_edit.setText("tiny")
+        assert dialog.rows["tiny"].isVisibleTo(dialog)
+        assert dialog.rows["tiny.en"].isVisibleTo(dialog)
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+
+    def test_no_match_shows_empty_state(self):
+        dialog, _values = self._make_dialog()
+        dialog.filter_edit.setText("no-such-model")
+        assert dialog.empty_label.isVisibleTo(dialog)
+        dialog.filter_edit.setText("")
+        assert not dialog.empty_label.isVisibleTo(dialog)
+
+    def test_status_filter_downloaded_only(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("downloaded")
+        )
+        assert dialog.rows["base"].isVisibleTo(dialog)
+        assert not dialog.rows["tiny"].isVisibleTo(dialog)
+
+    def test_status_filter_not_downloaded_only(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("not_downloaded")
+        )
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+        assert dialog.rows["tiny"].isVisibleTo(dialog)
+
+    def test_status_filter_combines_with_search(self):
+        dialog, _values = self._make_dialog(
+            cached={
+                BASE_REPO: _cached(BASE_REPO, 145_000_000),
+                TINY_REPO: _cached(TINY_REPO, 76_000_000),
+            }
+        )
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("downloaded")
+        )
+        dialog.filter_edit.setText("tiny")
+        assert dialog.rows["tiny"].isVisibleTo(dialog)
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+        assert not dialog.rows["tiny.en"].isVisibleTo(dialog)
+
+    def test_status_filter_all_shows_everything(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("all")
+        )
+        assert dialog.rows["base"].isVisibleTo(dialog)
+        assert dialog.rows["tiny"].isVisibleTo(dialog)
+
+
+class TestSorting(_DialogTestCase):
+    """Built-in sort choices make common catalog scans one step."""
+
+    @staticmethod
+    def _row_order(dialog):
+        order = []
+        for index in range(dialog.list_layout.count()):
+            widget = dialog.list_layout.itemAt(index).widget()
+            if widget in dialog.rows.values():
+                order.append(widget.model_name)
+        return order
+
+    def test_default_keeps_assigned_model_in_place(self):
+        """Recommended sort must not pin the assigned model to the top."""
+        dialog, _values = self._make_dialog(active_model="medium")
+        assert self._row_order(dialog)[0] == "tiny"
+
+    def test_downloaded_first_groups_cached_models(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("downloaded"))
+        assert self._row_order(dialog)[0] == "base"
+
+    def test_smallest_first_uses_catalog_estimates(self):
+        dialog, _values = self._make_dialog(active_model="medium")
+        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("size"))
+        assert self._row_order(dialog)[0] == "tiny"
+
+    def test_name_sort_is_alphabetical(self):
+        dialog, _values = self._make_dialog()
+        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("name"))
+        order = self._row_order(dialog)
+        assert order == sorted(order, key=str.casefold)
+
+
+class TestActions(_DialogTestCase):
+    """Row actions route through the dialog callbacks."""
+
+    def test_download_click_invokes_callback(self):
+        dialog, _values = self._make_dialog()
+        requested = []
+        dialog.on_download_requested = requested.append
+        dialog.rows["tiny"].download_button.click()
+        assert requested == ["tiny"]
+
+    def test_delete_confirm_default_no_does_nothing(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        requested = []
+        dialog.on_delete_requested = requested.append
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ):
+            dialog.rows["base"].delete_button.click()
+        assert requested == []
+
+    def test_delete_confirm_yes_invokes_callback(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        requested = []
+        dialog.on_delete_requested = requested.append
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            dialog.rows["base"].delete_button.click()
+        assert requested == ["base"]
+
+    def test_delete_result_is_reported_in_the_message_line(self):
+        dialog, _values = self._make_dialog()
+        dialog.show_delete_result("base", success=False, error="locked")
+        assert "locked" in dialog.message_label.text()
+
+
+class TestInspector(_DialogTestCase):
+    """The side inspector replaced the separate Model Details dialog."""
+
+    def test_inspector_is_empty_until_a_model_is_selected(self):
+        dialog, _values = self._make_dialog()
+        assert dialog.inspector_name.text() == "—"
+        assert not dialog.inspector_repo_button.isVisibleTo(dialog)
+        assert "Select a model" in dialog.inspector_description.text()
+
+    def test_selecting_a_row_shows_its_bundled_profile(self):
+        dialog, _values = self._make_dialog()
+        dialog.select_model("base")
+
+        assert dialog.inspector_name.text() == "base"
+        assert dialog.inspector_repo_button.isVisibleTo(dialog)
+        assert dialog.inspector_description.text()
+        assert dialog.fact_labels["Repository"].text() == BASE_REPO
+        assert dialog.fact_labels["Local format"].text()
+        assert dialog.inspector_tradeoffs.text().startswith("•")
+
+    def test_row_click_signal_selects_that_model(self):
+        dialog, _values = self._make_dialog()
+        dialog.rows["small"].details_requested.emit("small")
+
+        assert dialog.inspector_name.text() == "small"
+        assert dialog.rows["small"].property("selected")
+        assert not dialog.rows["base"].property("selected")
+
+    def test_auto_has_no_profile_to_show(self):
+        dialog, _values = self._make_dialog()
+        dialog.select_model("auto")
+        assert dialog.inspector_name.text() == "—"
+
+    def test_inspector_reports_the_selected_model_usage(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)},
+            active_model="base",
+        )
+        dialog.select_model("base")
+        dialog.refresh()
+        assert dialog.inspector_usage.text() == "On-demand"
+        assert dialog.inspector_usage.isVisibleTo(dialog)
+
+    def test_representative_profiles_render_expected_facts(self):
+        dialog, _values = self._make_dialog()
+        expected = {
+            "base": ("OpenAI Whisper", "74 million", "Multilingual"),
+            "base.en": ("OpenAI Whisper", "74 million", "English only"),
+            "distil-large-v3": ("Distil-Whisper", "756 million", "English only"),
+            "turbo": ("OpenAI Whisper", "809 million", "Multilingual"),
+        }
+        for model_name, (family, parameters, languages) in expected.items():
+            dialog.select_model(model_name)
+            assert dialog.fact_labels["Family"].text() == family, model_name
+            assert dialog.fact_labels["Parameters"].text() == parameters, model_name
+            assert dialog.fact_labels["Languages"].text() == languages, model_name
+            assert "CTranslate2" in dialog.fact_labels["Local format"].text()
+            assert dialog.fact_labels["License"].text() == "MIT"
+
+    def test_profile_needs_no_network_under_the_hf_override(self):
+        with (
+            patch.dict(os.environ, {"HF_HUB_OFFLINE": "1"}),
+            patch(
+                "huggingface_hub.HfApi",
+                side_effect=AssertionError("network metadata must not be requested"),
+            ) as hf_api,
+        ):
+            dialog, _values = self._make_dialog()
+            dialog.select_model("tiny")
+
+        assert dialog.fact_labels["Origin"].text() == "openai/whisper-tiny"
+        hf_api.assert_not_called()
+
+    def test_repository_links_open_the_bundled_urls(self):
+        dialog, _values = self._make_dialog()
+        dialog.select_model("base")
+        opened = []
+        with patch.object(
+            dialog_module.QDesktopServices,
+            "openUrl",
+            side_effect=lambda url: opened.append(url.toString()),
+        ):
+            dialog.inspector_repo_button.click()
+            dialog.inspector_origin_button.click()
+        assert opened[0].endswith(BASE_REPO)
+        assert opened[1].startswith("http")
+
+
+class TestRowActivation(_DialogTestCase):
+    """Selecting a row must stay separate from its actions."""
+
+    def test_row_body_click_selects_the_model(self):
+        row = ModelRowWidget("base")
+        row.resize(720, 64)
+        row.show()
+        requested = []
+        row.details_requested.connect(requested.append)
+
+        QTest.mouseClick(row, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+
+        assert requested == ["base"]
+        row.close()
+
+    def test_enter_and_space_select_the_model(self):
+        row = ModelRowWidget("tiny")
+        requested = []
+        row.details_requested.connect(requested.append)
+
+        QTest.keyClick(row, Qt.Key.Key_Return)
+        QTest.keyClick(row, Qt.Key.Key_Space)
+
+        assert requested == ["tiny", "tiny"]
+
+    def test_action_buttons_do_not_select_the_model(self):
+        row = ModelRowWidget("small")
+        selected = []
+        downloads = []
+        deletes = []
+        row.details_requested.connect(selected.append)
+        row.download_clicked.connect(downloads.append)
+        row.delete_clicked.connect(deletes.append)
+
+        row.download_button.click()
+        row.delete_button.click()
+
+        assert downloads == ["small"]
+        assert deletes == ["small"]
+        assert selected == []
+
+
+class TestComponents(_DialogTestCase):
+    """Optional components install from this window, not from Settings."""
+
+    @staticmethod
+    def _info(state, download_bytes=0, reason=""):
+        return ComponentInfo(
+            component_id="gpu-accel",
+            display_name="GPU Acceleration",
+            summary="CUDA runtime",
+            state=state,
+            installed_version=None,
+            available_version="test",
+            download_bytes=download_bytes,
+            install_bytes=0,
+            reason=reason,
+        )
+
+    def test_missing_component_has_enabled_install_button(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.update_state(
+            self._info(ComponentState.NOT_INSTALLED, download_bytes=1_000_000),
+            installing=False,
+        )
+
+        assert not row.install_button.isHidden()
+        assert row.install_button.isEnabled()
+        assert row.install_button.text() == "Install"
+
+    def test_existing_cuda_setup_is_not_reported_missing(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.update_state(
+            self._info(
+                ComponentState.EXTERNAL,
+                reason="CUDA libraries are already available.",
+            ),
+            installing=False,
+        )
+
+        assert row.badge.text() == "Available"
+        assert row.size_label.text() == "Existing setup"
+        assert row.install_button.isHidden()
+        assert row.remove_button.isHidden()
+
+    def test_component_progress_and_result_reach_the_row_and_message(self):
+        dialog, _values = self._make_dialog()
+        if not dialog._component_rows:
+            pytest.skip("no installable components on this platform")
+        component_id = next(iter(dialog._component_rows))
+
+        dialog.set_component_progress(component_id, "Downloading", 1, 2)
+        dialog.finish_component_install(component_id, True, "Installed")
+
+        assert dialog.message_label.text() == "Installed"
+
+    def test_component_removal_asks_before_deleting(self):
+        dialog, _values = self._make_dialog()
+        if not dialog._component_rows:
+            pytest.skip("no installable components on this platform")
+        component_id = next(iter(dialog._component_rows))
+        requested = []
+        dialog.component_remove_requested.connect(requested.append)
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ):
+            dialog._confirm_component_removal(component_id)
+        assert requested == []
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            dialog._confirm_component_removal(component_id)
+        assert requested == [component_id]

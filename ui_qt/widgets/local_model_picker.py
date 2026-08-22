@@ -12,14 +12,14 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.hf_access import CachedModelInfo, resolve_model_repo
-from ui_qt.widgets.no_wheel import NoWheelComboBox
+from ui_qt.widgets.no_wheel import ElidingComboBox
 
 
 class LocalModelPicker(QWidget):
     """Assign a local Whisper model from ``auto`` plus downloaded sizes.
 
-    The Library tab owns download and delete. Each mode page uses this
-    picker to choose which cached model that mode should load.
+    The Downloads window owns download and delete. Each Model Manager
+    destination uses this picker to choose which cached model it should load.
     """
 
     model_changed = pyqtSignal(str)
@@ -41,9 +41,9 @@ class LocalModelPicker(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
 
-        self.model_combo = NoWheelComboBox()
+        self.model_combo = ElidingComboBox()
         self.model_combo.setObjectName("localModelPickerCombo")
-        self.model_combo.setMinimumHeight(36)
+        self.model_combo.setMinimumHeight(40)
         self.model_combo.currentIndexChanged.connect(self._on_combo_changed)
         row.addWidget(self.model_combo, stretch=1)
 
@@ -52,7 +52,7 @@ class LocalModelPicker(QWidget):
         self.manage_button.setFlat(True)
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.manage_button.setToolTip(
-            "Open the Library tab to download or delete Whisper models"
+            "Open Downloads to add or delete Whisper models"
         )
         self.manage_button.clicked.connect(self.manage_downloads_requested)
         row.addWidget(self.manage_button)

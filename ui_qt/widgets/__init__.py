@@ -29,7 +29,12 @@ from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
 from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
 from ui_qt.widgets.compact_record_controller import CompactRecordController
-from ui_qt.widgets.no_wheel import NoWheelComboBox, NoWheelSpinBox
+from ui_qt.widgets.no_wheel import (
+    ElidingComboBox,
+    NoWheelComboBox,
+    NoWheelSpinBox,
+)
+from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.searchable_combo import SearchableComboBox
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -60,6 +65,8 @@ __all__ = [
     "UploadFileTab",
     "MeetingModeTab",
     "CompactRecordController",
+    "ElidingComboBox",
+    "ElidingLabel",
     "NoWheelComboBox",
     "NoWheelSpinBox",
     "SearchableComboBox",

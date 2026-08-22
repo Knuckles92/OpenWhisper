@@ -1,3 +1,9 @@
+"""Single-column endpoint + model picker for Model Manager destinations.
+
+The picker is stacked vertically because it lives inside a rail destination
+that must fit the window without scrolling. Provider prose that used to sit in
+its own identity card is now carried by the combo's tooltip.
+"""
 from pathlib import Path
 from typing import List, Optional
 
@@ -23,11 +29,10 @@ from services.text_llm import (
     builtin_profiles,
     credential_status,
     get_profile,
-    list_profiles,
 )
 from services.transcript_cleanup import find_api_key
 from ui_qt.widgets.buttons import Button
-from ui_qt.widgets.no_wheel import NoWheelComboBox
+from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
 
 
@@ -65,7 +70,7 @@ class TextModelPicker(QWidget):
     def __init__(
         self,
         parent=None,
-        idle_status: str = "Open this tab to load the model catalog.",
+        idle_status: str = "Open this destination to load the model catalog.",
     ):
         super().__init__(parent)
         self.provider = TranscriptCleanupProvider.OPENAI
@@ -79,42 +84,42 @@ class TextModelPicker(QWidget):
         }
         self._setup_ui()
 
-    @staticmethod
-    def _step_heading(number: str, title: str) -> QHBoxLayout:
-        heading = QHBoxLayout()
-        heading.setSpacing(10)
-        step = QLabel(number)
-        step.setObjectName("textModelStepNumber")
-        step.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        step.setFixedSize(28, 28)
-        title_label = QLabel(title)
-        title_label.setObjectName("textModelStepTitle")
-        heading.addWidget(step)
-        heading.addWidget(title_label)
-        heading.addStretch()
-        return heading
-
     def _setup_ui(self) -> None:
         self.setObjectName("textModelPicker")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 0)
-        layout.setSpacing(12)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-        self.provider_card = QFrame()
-        self.provider_card.setObjectName("textModelSectionCard")
-        provider_layout = QVBoxLayout(self.provider_card)
-        provider_layout.setContentsMargins(16, 14, 16, 14)
-        provider_layout.setSpacing(10)
-        provider_layout.addLayout(self._step_heading("1", "Choose an endpoint"))
+        endpoint_label = QLabel("Endpoint")
+        endpoint_label.setObjectName("textModelFieldLabel")
+        layout.addWidget(endpoint_label)
 
-        self.provider_combo = NoWheelComboBox()
+        self.provider_combo = ElidingComboBox()
         self.provider_combo.setObjectName("textModelProviderCombo")
-        self.provider_combo.setMinimumHeight(44)
-        self.provider_combo.setIconSize(QSize(22, 22))
+        self.provider_combo.setMinimumHeight(40)
+        self.provider_combo.setIconSize(QSize(20, 20))
         self.provider_combo.currentIndexChanged.connect(
             self._on_provider_combo_changed
         )
-        provider_layout.addWidget(self.provider_combo)
+        layout.addWidget(self.provider_combo)
+
+        credential_row = QHBoxLayout()
+        credential_row.setSpacing(8)
+        self.provider_credential_icon = QLabel()
+        self.provider_credential_icon.setObjectName("textProviderCredentialIcon")
+        self.provider_credential_icon.setFixedSize(16, 16)
+        self.provider_requirement = QLabel("")
+        self.provider_requirement.setObjectName("textProviderRequirement")
+        # Wrapped so the credential copy cannot set the window's width floor.
+        self.provider_requirement.setWordWrap(True)
+        credential_row.addWidget(
+            self.provider_credential_icon, alignment=Qt.AlignmentFlag.AlignTop
+        )
+        credential_row.addWidget(self.provider_requirement, stretch=1)
+        self.provider_url = QLabel("")
+        self.provider_url.setObjectName("textProviderUrl")
+        credential_row.addWidget(self.provider_url)
+        layout.addLayout(credential_row)
 
         manage_row = QHBoxLayout()
         manage_row.setSpacing(8)
@@ -130,57 +135,76 @@ class TextModelPicker(QWidget):
         self.delete_endpoint_button = Button("Delete")
         self.delete_endpoint_button.setObjectName("textEndpointDeleteButton")
         self.delete_endpoint_button.clicked.connect(self._emit_delete)
-        manage_row.addWidget(self.add_endpoint_button)
-        manage_row.addWidget(self.edit_endpoint_button)
-        manage_row.addWidget(self.delete_endpoint_button)
+        for button in (
+            self.add_endpoint_button,
+            self.edit_endpoint_button,
+            self.delete_endpoint_button,
+        ):
+            button.set_base_minimum_size(0, 28)
+            button.setMaximumHeight(28)
+            manage_row.addWidget(button)
         manage_row.addStretch()
-        provider_layout.addLayout(manage_row)
+        layout.addLayout(manage_row)
 
-        self.provider_identity_card = QFrame()
-        self.provider_identity_card.setObjectName("textProviderIdentityCard")
-        identity_card_layout = QVBoxLayout(self.provider_identity_card)
-        identity_card_layout.setContentsMargins(12, 10, 12, 10)
-        identity_card_layout.setSpacing(10)
+        separator = QFrame()
+        separator.setObjectName("textModelGroupSeparator")
+        separator.setFixedHeight(1)
+        layout.addWidget(separator)
 
-        identity_row = QHBoxLayout()
-        identity_row.setSpacing(12)
-        self.provider_mark = QLabel("OAI")
-        self.provider_mark.setObjectName("textProviderMark")
-        self.provider_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.provider_mark.setFixedSize(44, 44)
-        identity_row.addWidget(
-            self.provider_mark, alignment=Qt.AlignmentFlag.AlignTop
+        model_label_row = QHBoxLayout()
+        model_label_row.setSpacing(10)
+        model_label = QLabel("Model")
+        model_label.setObjectName("textModelFieldLabel")
+        model_label_row.addWidget(model_label)
+        model_label_row.addStretch()
+        self.sort_label = QLabel("Sort catalog")
+        self.sort_label.setObjectName("textModelFieldLabel")
+        model_label_row.addWidget(self.sort_label)
+        self.sort_combo = ElidingComboBox()
+        self.sort_combo.setObjectName("textModelSort")
+        for label, value in self._SORT_OPTIONS:
+            self.sort_combo.addItem(label, value)
+        self.sort_combo.setMinimumHeight(26)
+        self.sort_combo.setMaximumHeight(26)
+        self.sort_combo.currentIndexChanged.connect(
+            lambda: self.sort_changed.emit(self.provider)
         )
+        model_label_row.addWidget(self.sort_combo)
+        layout.addLayout(model_label_row)
 
-        copy = QVBoxLayout()
-        copy.setSpacing(3)
-        self.provider_title = QLabel("OpenAI")
-        self.provider_title.setObjectName("textProviderTitle")
-        self.provider_description = QLabel("")
-        self.provider_description.setObjectName("textProviderDescription")
-        self.provider_description.setWordWrap(True)
-        self.provider_url = QLabel("")
-        self.provider_url.setObjectName("textProviderUrl")
-        self.provider_url.setWordWrap(True)
-        self.provider_requirement = QLabel("")
-        self.provider_requirement.setObjectName("textProviderRequirement")
-        credential_row = QHBoxLayout()
-        credential_row.setSpacing(6)
-        self.provider_credential_icon = QLabel()
-        self.provider_credential_icon.setObjectName("textProviderCredentialIcon")
-        self.provider_credential_icon.setFixedSize(16, 16)
-        credential_row.addWidget(self.provider_credential_icon)
-        credential_row.addWidget(self.provider_requirement)
-        credential_row.addStretch()
-        copy.addWidget(self.provider_title)
-        copy.addWidget(self.provider_description)
-        copy.addWidget(self.provider_url)
-        copy.addLayout(credential_row)
-        identity_row.addLayout(copy, stretch=1)
-        identity_card_layout.addLayout(identity_row)
-        provider_layout.addWidget(self.provider_identity_card)
-        provider_layout.addStretch()
+        model_row = QHBoxLayout()
+        model_row.setSpacing(10)
+        self.model_combo = SearchableComboBox()
+        self.model_combo.setObjectName("textModelCombo")
+        self.model_combo.setMinimumHeight(40)
+        self._model_icon = _design_icon("box-blue.svg")
+        self.model_combo.setIconSize(QSize(20, 20))
+        self.model_combo.setToolTip(
+            "Choose from the provider catalog or enter a model id directly"
+        )
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        model_row.addWidget(self.model_combo, stretch=1)
 
+        self.refresh_button = Button("Refresh")
+        self.refresh_button.setObjectName("textModelRefreshButton")
+        self.refresh_button.setIcon(_design_icon("refresh-blue.svg"))
+        self.refresh_button.setIconSize(QSize(16, 16))
+        self.refresh_button.set_base_minimum_size(100, 40)
+        self.refresh_button.setMaximumHeight(40)
+        self.refresh_button.setToolTip("Reload the selected provider's catalog")
+        self.refresh_button.clicked.connect(
+            lambda: self.refresh_requested.emit(self.provider)
+        )
+        model_row.addWidget(self.refresh_button)
+        layout.addLayout(model_row)
+
+        self.status_label = QLabel(self._idle_status)
+        self.status_label.setObjectName("textModelStatus")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        active_row = QHBoxLayout()
+        active_row.setSpacing(10)
         self.active_summary_card = QFrame()
         self.active_summary_card.setObjectName("textModelActiveCard")
         self.active_summary_card.setMinimumHeight(56)
@@ -198,121 +222,22 @@ class TextModelPicker(QWidget):
         self.active_summary.setWordWrap(True)
         active_layout.addWidget(self.active_summary_icon)
         active_layout.addWidget(self.active_summary, stretch=1)
-        provider_layout.addWidget(self.active_summary_card)
-        layout.addWidget(self.provider_card, stretch=1)
-
-        self.model_card = QFrame()
-        self.model_card.setObjectName("textModelSectionCard")
-        model_card_layout = QVBoxLayout(self.model_card)
-        model_card_layout.setContentsMargins(16, 14, 16, 14)
-        model_card_layout.setSpacing(10)
-        model_card_layout.addLayout(self._step_heading("2", "Choose a model"))
-
-        sort_row = QHBoxLayout()
-        sort_row.setSpacing(10)
-        self.sort_label = QLabel("Sort catalog")
-        self.sort_label.setObjectName("textModelFieldLabel")
-        sort_row.addWidget(self.sort_label)
-        self.sort_combo = NoWheelComboBox()
-        self.sort_combo.setObjectName("textModelSort")
-        for label, value in self._SORT_OPTIONS:
-            self.sort_combo.addItem(label, value)
-        self.sort_combo.setMinimumHeight(36)
-        self.sort_combo.currentIndexChanged.connect(
-            lambda: self.sort_changed.emit(self.provider)
-        )
-        sort_row.addWidget(self.sort_combo, stretch=1)
-        model_card_layout.addLayout(sort_row)
-
-        model_row = QHBoxLayout()
-        model_row.setSpacing(10)
-        self.model_combo = SearchableComboBox()
-        self.model_combo.setObjectName("textModelCombo")
-        self.model_combo.setMinimumHeight(44)
-        self._model_icon = _design_icon("box-blue.svg")
-        self.model_combo.setIconSize(QSize(20, 20))
-        self.model_combo.setToolTip(
-            "Choose from the provider catalog or enter a model id directly"
-        )
-        self.model_combo.currentTextChanged.connect(self._on_model_changed)
-        model_row.addWidget(self.model_combo, stretch=1)
-
-        self.refresh_button = Button("Refresh")
-        self.refresh_button.setObjectName("textModelRefreshButton")
-        self.refresh_button.setIcon(_design_icon("refresh-blue.svg"))
-        self.refresh_button.setIconSize(QSize(16, 16))
-        self.refresh_button.set_base_minimum_size(104, 44)
-        self.refresh_button.setToolTip("Reload the selected provider's catalog")
-        self.refresh_button.clicked.connect(
-            lambda: self.refresh_requested.emit(self.provider)
-        )
-        model_row.addWidget(self.refresh_button)
-        model_card_layout.addLayout(model_row)
-
-        self.catalog_summary = QFrame()
-        self.catalog_summary.setObjectName("textModelCatalogSummary")
-        summary_layout = QHBoxLayout(self.catalog_summary)
-        summary_layout.setContentsMargins(10, 6, 10, 6)
-        summary_layout.setSpacing(10)
-        self.catalog_status_icon = QLabel()
-        self.catalog_status_icon.setObjectName("textModelCatalogIcon")
-        self.catalog_status_icon.setFixedSize(20, 20)
-        self.catalog_status_icon.setPixmap(
-            _design_icon("stack-slate.svg").pixmap(20, 20)
-        )
-        summary_layout.addWidget(self.catalog_status_icon)
-
-        self.status_label = QLabel(self._idle_status)
-        self.status_label.setObjectName("textModelStatus")
-        self.status_label.setWordWrap(True)
-        summary_layout.addWidget(self.status_label)
-        catalog_separator = QFrame()
-        catalog_separator.setObjectName("textModelCatalogSeparator")
-        catalog_separator.setFixedHeight(1)
-        summary_layout.addWidget(catalog_separator, stretch=1)
-        model_card_layout.addWidget(self.catalog_summary)
-        model_card_layout.addStretch()
-
-        action_row = QHBoxLayout()
-        action_row.setSpacing(10)
-        self.current_model_card = QFrame()
-        self.current_model_card.setObjectName("textCurrentModelCard")
-        current_layout = QHBoxLayout(self.current_model_card)
-        current_layout.setContentsMargins(10, 6, 10, 6)
-        current_layout.setSpacing(8)
-        self.current_model_icon = QLabel()
-        self.current_model_icon.setObjectName("textCurrentModelIcon")
-        self.current_model_icon.setFixedSize(24, 24)
-        self.current_model_icon.setPixmap(
-            _design_icon("box-blue.svg").pixmap(22, 22)
-        )
-        current_layout.addWidget(self.current_model_icon)
-        current_copy = QVBoxLayout()
-        current_copy.setSpacing(0)
-        current_eyebrow = QLabel("Current model")
-        current_eyebrow.setObjectName("textCurrentModelEyebrow")
-        self.current_model_value = QLabel("")
-        self.current_model_value.setObjectName("textCurrentModelValue")
-        current_copy.addWidget(current_eyebrow)
-        current_copy.addWidget(self.current_model_value)
-        current_layout.addLayout(current_copy)
-        action_row.addWidget(self.current_model_card)
-        action_row.addStretch()
+        active_row.addWidget(self.active_summary_card, stretch=1)
 
         self.activate_button = Button("Use This Model")
         self.activate_button.setObjectName("textModelActivateButton")
         self.activate_button.setIcon(_design_icon("check-green.svg"))
         self.activate_button.setIconSize(QSize(18, 18))
-        self.activate_button.set_base_minimum_size(150, 44)
+        self.activate_button.set_base_minimum_size(150, 40)
+        self.activate_button.setMaximumHeight(40)
         self.activate_button.clicked.connect(
             lambda: self.activation_requested.emit(self.provider)
         )
-        action_row.addWidget(
-            self.activate_button, alignment=Qt.AlignmentFlag.AlignBottom
+        active_row.addWidget(
+            self.activate_button, alignment=Qt.AlignmentFlag.AlignVCenter
         )
-        model_card_layout.addLayout(action_row)
+        layout.addLayout(active_row)
 
-        layout.addWidget(self.model_card, stretch=1)
         self._reload_provider_combo()
         self._render_provider()
 
@@ -372,6 +297,12 @@ class TextModelPicker(QWidget):
         for profile in self._profiles:
             icon = icons.get(profile.id, custom_icon)
             self.provider_combo.addItem(icon, profile.name, profile.id)
+            description = self._profile_copy(profile)[1]
+            self.provider_combo.setItemData(
+                self.provider_combo.count() - 1,
+                f"{profile.name} — {description}",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self.provider_combo.blockSignals(False)
 
     def _on_provider_combo_changed(self, _index: int) -> None:
@@ -409,15 +340,21 @@ class TextModelPicker(QWidget):
 
     def _render_provider(self) -> None:
         profile = self.current_profile()
-        mark, description, requirement = self._profile_copy(profile)
-        self.provider_mark.setText(mark)
-        self.provider_title.setText(profile.name if profile else "Endpoint")
-        self.provider_description.setText(description)
+        _mark, description, requirement = self._profile_copy(profile)
+        name = profile.name if profile else "Endpoint"
+        self.provider_combo.setToolTip(f"{name} — {description}")
         if profile is not None and profile.base_url:
-            self.provider_url.setText(profile.base_url)
+            metrics = self.provider_url.fontMetrics()
+            self.provider_url.setText(
+                metrics.elidedText(
+                    profile.base_url, Qt.TextElideMode.ElideMiddle, 220
+                )
+            )
+            self.provider_url.setToolTip(profile.base_url)
             self.provider_url.setVisible(True)
         else:
             self.provider_url.setText("")
+            self.provider_url.setToolTip("")
             self.provider_url.setVisible(False)
         self._update_credential_status(requirement)
         show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
@@ -543,21 +480,24 @@ class TextModelPicker(QWidget):
         return self._active_provider or "Endpoint"
 
     def _update_active_summary(self) -> None:
-        """Show the Active now badge only for the currently selected provider."""
+        """Always report the saved assignment, highlighted when it is on screen.
+
+        Browsing another endpoint must not hide which model is actually in use,
+        so the row stays visible and only its emphasis follows the selection.
+        """
         provider_name = self._active_profile_name()
         self.active_summary.setText(
             f"Active now: {provider_name} · {self._active_model}"
         )
-        self.active_summary_card.setVisible(
-            bool(self._active_provider)
-            and self.provider == self._active_provider
+        matches = bool(self._active_provider) and (
+            self.provider == self._active_provider
         )
-        value = self._active_model or "Not selected"
-        metrics = self.current_model_value.fontMetrics()
-        self.current_model_value.setText(
-            metrics.elidedText(value, Qt.TextElideMode.ElideMiddle, 240)
-        )
-        self.current_model_value.setToolTip(self._active_model)
+        for widget in (self.active_summary_card, self.active_summary):
+            widget.setProperty("matches", matches)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
+        self.active_summary_icon.setVisible(matches)
         self._update_activation_button()
 
     def _update_activation_button(self, _text: str = "") -> None:

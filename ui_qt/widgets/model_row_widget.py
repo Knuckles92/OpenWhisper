@@ -26,6 +26,7 @@ from services.hf_access import (
     resolve_model_repo,
 )
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
+from ui_qt.widgets.eliding_label import ElidingLabel
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ _ROW_STYLE = """
     QFrame#modelRow:focus {
         border: 1px solid rgba(10, 132, 255, 0.65);
         outline: none;
+    }
+    QFrame#modelRow[selected="true"] {
+        background-color: rgba(58, 58, 60, 0.85);
+        border: 1px solid rgba(10, 132, 255, 0.55);
     }
     QFrame#modelRow[active="true"] {
         background-color: rgba(10, 132, 255, 0.12);
@@ -203,7 +208,9 @@ class ModelRowWidget(QFrame):
         name_label.setFont(name_font)
         identity.addWidget(name_label)
 
-        self.repo_label = QLabel(self._model_summary())
+        # Elides: this secondary line is long enough that a plain QLabel would
+        # raise the whole window's minimum width past the list column.
+        self.repo_label = ElidingLabel(self._model_summary())
         self.repo_label.setObjectName("modelRowSummary")
         self.repo_label.setFont(QFont("Segoe UI", 8))
         self.repo_label.setToolTip(self.repo_id)

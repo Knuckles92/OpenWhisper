@@ -193,42 +193,130 @@ QLineEdit:focus {
     border: 1px solid #0a84ff;
 }
 
-/* Model Manager — dense dark desktop treatment */
-QDialog#modelManagerDialog {
+/* Model Manager — rail and stack; Downloads shares the same surfaces */
+QDialog#modelManagerDialog,
+QDialog#downloadsDialog {
     background-color: #10161c;
 }
 
-QWidget#modelManagerMeetingTab,
-QWidget#modelManagerOndemandTab,
-QWidget#modelManagerLibraryTab {
-    background-color: #10161c;
+QWidget#modelManagerBody,
+QWidget#modelManagerStack {
+    background-color: transparent;
 }
 
 /* Let the page surface show through the scroll area, its viewport, and the
    scrolled content (the three-level selector Qt needs for the latter two).
    Otherwise the default widget grey frames every card in a lighter inset. */
-#modelManagerDialog QScrollArea,
-#modelManagerDialog QScrollArea > QWidget,
-#modelManagerDialog QScrollArea > QWidget > QWidget {
+#downloadsDialog QScrollArea,
+#downloadsDialog QScrollArea > QWidget,
+#downloadsDialog QScrollArea > QWidget > QWidget {
     background-color: transparent;
 }
 
-QFrame#modelManagerModeCard,
-QFrame#modelManagerRuntimeCard {
-    background-color: #141b22;
-    border: 1px solid #35404a;
-    border-radius: 12px;
+/* The rail sits a shade darker than the body, so the page reads as the
+   working surface and the rail as chrome. */
+QWidget#modelManagerRailPane {
+    background-color: #0c1116;
+    border-right: 1px solid #232d36;
 }
 
-QLabel#modelManagerModeCardTitle {
-    color: #f1f4f7;
+QLabel#modelManagerRailBrand {
+    color: #eaeff4;
     background-color: transparent;
     border: none;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 700;
 }
 
-QLabel#modelManagerModeCardSubtitle,
+QListWidget#modelManagerRail {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    padding: 0px 11px;
+}
+
+/* Item widgets paint the selection, so the view's own item states must not. */
+QListWidget#modelManagerRail::item,
+QListWidget#modelManagerRail::item:selected,
+QListWidget#modelManagerRail::item:hover {
+    background: transparent;
+    border: none;
+}
+
+QLabel#modelManagerRailGroup {
+    color: #6b7885;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QWidget#modelManagerRailItem {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+}
+
+QWidget#modelManagerRailItem:hover {
+    background-color: #141d26;
+    border-color: #263240;
+}
+
+QWidget#modelManagerRailItem[selected="true"] {
+    background-color: #172b45;
+    border-color: #318dff;
+}
+
+QLabel#modelManagerRailIcon {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#modelManagerRailName {
+    color: #c3ccd6;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#modelManagerRailName[selected="true"] {
+    color: #edf6ff;
+}
+
+QLabel#modelManagerRailValue {
+    color: #79858f;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#modelManagerRailValue[selected="true"] {
+    color: #8fc2ff;
+}
+
+QLabel#modelManagerRailFootnote {
+    color: #6b7885;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QPushButton#modelManagerDownloadsButton {
+    color: #cfd8e2;
+    background-color: #151d25;
+    border: 1px solid #3b4752;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#modelManagerDownloadsButton:hover {
+    color: #f2f5f8;
+    background-color: #1c2731;
+    border-color: #52606d;
+}
+
 QLabel#localModelPickerCaption {
     color: #98a3b0;
     background-color: transparent;
@@ -252,8 +340,7 @@ QComboBox#libraryComputeCombo {
     padding-right: 32px;
 }
 
-QPushButton#localModelPickerManage,
-QPushButton#modelManagerInlineLink {
+QPushButton#localModelPickerManage {
     color: #0a84ff;
     background: transparent;
     border: none;
@@ -261,8 +348,7 @@ QPushButton#modelManagerInlineLink {
     padding: 2px 4px;
 }
 
-QPushButton#localModelPickerManage:hover,
-QPushButton#modelManagerInlineLink:hover {
+QPushButton#localModelPickerManage:hover {
     text-decoration: underline;
 }
 
@@ -283,13 +369,13 @@ QWidget#textModelPicker {
 QLabel#modelManagerHeaderIcon {
     background-color: #121d28;
     border: 1px solid #268cff;
-    border-radius: 13px;
-    padding: 3px;
+    border-radius: 8px;
+    padding: 1px;
 }
 
 QLabel#modelManagerTitle {
     color: #f2f5f8;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     background-color: transparent;
     border: none;
@@ -298,128 +384,6 @@ QLabel#modelManagerTitle {
 QLabel#modelManagerSubtitle {
     color: #9da8b5;
     font-size: 13px;
-    background-color: transparent;
-    border: none;
-}
-
-QTabWidget#modelManagerTabs::pane {
-    border: none;
-    border-top: 1px solid #29333d;
-    background-color: transparent;
-    top: -1px;
-}
-
-/* The strip around the segments is dialog surface, not widget grey. */
-QTabWidget#modelManagerTabs,
-#modelManagerTabs QTabBar {
-    background-color: transparent;
-}
-
-#modelManagerTabs QTabBar::tab {
-    background-color: #141b22;
-    color: #a8b1bd;
-    border: 1px solid #35404a;
-    min-width: 160px;
-    min-height: 32px;
-    padding: 5px 16px;
-    margin: 8px 0px 10px 0px;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-#modelManagerTabs QTabBar::tab:first {
-    border-top-left-radius: 11px;
-    border-bottom-left-radius: 11px;
-}
-
-/* Segments share one divider instead of stacking two 1px borders. */
-#modelManagerTabs QTabBar::tab:!first {
-    margin-left: -1px;
-}
-
-#modelManagerTabs QTabBar::tab:last {
-    border-top-right-radius: 11px;
-    border-bottom-right-radius: 11px;
-}
-
-#modelManagerTabs QTabBar::tab:selected {
-    background-color: #172b45;
-    color: #edf6ff;
-    border-color: #318dff;
-}
-
-#modelManagerTabs QTabBar::tab:hover:!selected {
-    background-color: #1a232c;
-    color: #f2f5f8;
-    border-color: #52606d;
-}
-
-QFrame#textTabAccent,
-QFrame#meetingTabAccent {
-    background-color: #2793ff;
-    border: none;
-    border-radius: 1px;
-}
-
-QLabel#textTabTitle,
-QLabel#meetingTabTitle {
-    color: #f1f4f7;
-    background-color: transparent;
-    border: none;
-    font-size: 18px;
-    font-weight: 700;
-}
-
-QLabel#textTabSubtitle,
-QLabel#meetingTabSubtitle {
-    color: #98a3b0;
-    background-color: transparent;
-    border: none;
-    font-size: 13px;
-}
-
-QFrame#textModelSectionCard {
-    background-color: #141b22;
-    border: 1px solid #35404a;
-    border-radius: 12px;
-}
-
-QLabel#textModelStepNumber {
-    color: #eaf4ff;
-    background-color: #152130;
-    border: 1px solid #2d91ff;
-    border-radius: 14px;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QLabel#textModelStepTitle {
-    color: #f0f3f6;
-    background-color: transparent;
-    border: none;
-    font-size: 15px;
-    font-weight: 700;
-}
-
-QFrame#textProviderIdentityCard {
-    background-color: #111820;
-    border: 1px solid #242e37;
-    border-radius: 11px;
-}
-
-QLabel#textProviderMark {
-    color: #ffffff;
-    background-color: #5e5ce6;
-    border: 1px solid #827fff;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 700;
-}
-
-QLabel#textProviderTitle {
-    color: #f0f3f6;
-    font-size: 15px;
-    font-weight: 700;
     background-color: transparent;
     border: none;
 }
@@ -468,7 +432,6 @@ QLabel#textEndpointError {
     border: none;
 }
 
-QLabel#textProviderDescription,
 QLabel#textModelStatus,
 QLabel#textModelFootnote {
     color: #98a3b0;
@@ -479,8 +442,6 @@ QLabel#textModelFootnote {
 
 QLabel#textProviderCredentialIcon,
 QLabel#textModelActiveIcon,
-QLabel#textModelCatalogIcon,
-QLabel#textCurrentModelIcon,
 QLabel#textModelFootnoteIcon {
     background-color: transparent;
     border: none;
@@ -498,22 +459,32 @@ QLabel#textProviderRequirement[available="true"] {
     color: #30d158;
 }
 
+/* Neutral until the endpoint on screen is the one actually in use, so the
+   green "Active now" read never contradicts the endpoint being browsed. */
 QFrame#textModelActiveCard {
-    background-color: #0f2a21;
-    border: 1px solid #217353;
+    background-color: #131a21;
+    border: 1px solid #2c3742;
     border-radius: 10px;
 }
 
+QFrame#textModelActiveCard[matches="true"] {
+    background-color: #0f2a21;
+    border-color: #217353;
+}
+
 QLabel#textModelActiveSummary {
-    color: #42df91;
+    color: #94a1ae;
     background-color: transparent;
     border: none;
     font-size: 13px;
     font-weight: 600;
 }
 
-QWidget#modelManagerFieldGroup,
-QWidget#modelManagerStat {
+QLabel#textModelActiveSummary[matches="true"] {
+    color: #42df91;
+}
+
+QWidget#modelManagerFieldGroup {
     background-color: transparent;
 }
 
@@ -547,9 +518,10 @@ QComboBox#textModelCombo:focus {
     border-color: #0a84ff;
 }
 
-QComboBox#textModelProviderCombo::down-arrow,
-QComboBox#textModelSort::down-arrow,
-QComboBox#textModelCombo::down-arrow {
+/* Every combo in these two windows. The global fallback draws its arrow from
+   two borders, which reads as a stray corner mark beside a real chevron. */
+QDialog#modelManagerDialog QComboBox::down-arrow,
+QDialog#downloadsDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
     border: none;
     width: 16px;
@@ -557,38 +529,10 @@ QComboBox#textModelCombo::down-arrow {
     margin-right: 10px;
 }
 
-QFrame#textModelCatalogSummary {
-    background-color: #111820;
-    border: 1px solid #242e37;
-    border-radius: 10px;
-}
-
-QFrame#textModelCatalogSeparator {
+QFrame#textModelGroupSeparator {
     background-color: transparent;
     border: none;
-    border-top: 1px dashed #3a4651;
-}
-
-QFrame#textCurrentModelCard {
-    min-width: 140px;
-    background-color: #12231f;
-    border: 1px solid #204438;
-    border-radius: 9px;
-}
-
-QLabel#textCurrentModelEyebrow {
-    color: #a7b0bb;
-    background-color: transparent;
-    border: none;
-    font-size: 11px;
-}
-
-QLabel#textCurrentModelValue {
-    color: #f0f5f3;
-    background-color: transparent;
-    border: none;
-    font-size: 14px;
-    font-weight: 600;
+    border-top: 1px solid #232d36;
 }
 
 QPushButton#textModelRefreshButton {
@@ -653,32 +597,6 @@ QPushButton#modelManagerCloseButton:hover {
     border-color: #4b5966;
 }
 
-QLabel#modelManagerCachePath {
-    color: #636366;
-    font-size: 10px;
-    background-color: transparent;
-    border: none;
-}
-
-QLabel#modelManagerStatValue {
-    color: #f5f5f7;
-    font-size: 12px;
-    font-weight: 700;
-    background-color: transparent;
-    border: none;
-}
-
-QLabel#modelManagerStatLabel {
-    color: #8e8e93;
-    font-size: 11px;
-    background-color: transparent;
-    border: none;
-}
-
-QWidget#modelManagerStat {
-    background-color: transparent;
-}
-
 QLineEdit#modelManagerSearch,
 QComboBox#modelManagerSort,
 QComboBox#modelManagerStatusFilter {
@@ -699,12 +617,118 @@ QComboBox#modelManagerStatusFilter {
     padding-right: 28px;
 }
 
-QLabel#modelManagerEnvBanner {
+QLabel#downloadsEnvBanner {
     color: #ff9f0a;
     background-color: rgba(255, 159, 10, 0.1);
     border: 1px solid rgba(255, 159, 10, 0.35);
     border-radius: 8px;
     padding: 8px 12px;
+}
+
+/* Downloads window — catalog list plus the model profile inspector that
+   replaced the separate Model Details dialog. */
+QLabel#downloadsTitle {
+    color: #f2f5f8;
+    background-color: transparent;
+    border: none;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+QLabel#downloadsSubtitle,
+QLabel#downloadsMessage {
+    color: #8e99a6;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QFrame#downloadsInspector {
+    background-color: #141b22;
+    border: 1px solid #35404a;
+    border-radius: 12px;
+}
+
+QLabel#downloadsEyebrow {
+    color: #6b7885;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QLabel#downloadsInspectorName {
+    color: #f1f4f7;
+    background-color: transparent;
+    border: none;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#downloadsInspectorTags,
+QLabel#downloadsInspectorUsage {
+    color: #6fb1ff;
+    background-color: rgba(10, 132, 255, 0.12);
+    border: 1px solid rgba(10, 132, 255, 0.25);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#downloadsSectionTitle {
+    color: #f0f3f6;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#downloadsInspectorBody,
+QLabel#downloadsFactValue {
+    color: #b7c0cb;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#downloadsFactLabel {
+    color: #7b8794;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#downloadsSourceNote {
+    color: #67717c;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+}
+
+QPushButton#downloadsRepoButton,
+QPushButton#downloadsOriginButton,
+QPushButton#downloadsCloseButton {
+    color: #aeb8c3;
+    background-color: #151c23;
+    border: 1px solid #35404a;
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+QPushButton#downloadsRepoButton:hover,
+QPushButton#downloadsOriginButton:hover,
+QPushButton#downloadsCloseButton:hover {
+    color: #f0f3f6;
+    background-color: #1b252e;
+    border-color: #4b5966;
+}
+
+QFrame#downloadsComponentStrip {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid #232d36;
 }
 
 /* Hotkey capture fields (HotkeyDialog) — the capturing state is toggled

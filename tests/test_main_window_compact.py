@@ -12,8 +12,9 @@ from ui_qt.main_window import MainWindow
 
 
 class TestMainWindowCompactMode:
+    @pytest.fixture(scope="class", autouse=True)
     @classmethod
-    def setUpClass(cls):
+    def _qapp(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     @pytest.fixture(autouse=True)

@@ -17,7 +17,8 @@ class TestModelCatalog:
         with pytest.raises(KeyError):
             get_model_details("auto")
 
-    def test_every_entry_is_complete_and_uses_https_sources(self):
+    @pytest.mark.parametrize("model_name", sorted(MODEL_CATALOG))
+    def test_every_entry_is_complete_and_uses_https_sources(self, model_name):
         required_text_fields = (
             "model_name",
             "description",
@@ -36,23 +37,22 @@ class TestModelCatalog:
             "license",
             "best_for",
         )
-        for model_name, details in MODEL_CATALOG.items():
-            with self.subTest(model=model_name):
-                assert details.model_name == model_name
-                for field in required_text_fields:
-                    assert getattr(details, field).strip(), field
-                assert details.download_size_mb > 0
-                assert details.limitations
-                assert len(details.source_urls) >= 2
-                assert details.origin_url.startswith("https://")
-                assert details.repository_url.startswith("https://")
-                assert all(url.startswith("https://") for url in details.source_urls)
+        details = MODEL_CATALOG[model_name]
+        assert details.model_name == model_name
+        for field in required_text_fields:
+            assert getattr(details, field).strip(), field
+        assert details.download_size_mb > 0
+        assert details.limitations
+        assert len(details.source_urls) >= 2
+        assert details.origin_url.startswith("https://")
+        assert details.repository_url.startswith("https://")
+        assert all(url.startswith("https://") for url in details.source_urls)
 
-    def test_repository_and_size_match_download_configuration(self):
-        for model_name, details in MODEL_CATALOG.items():
-            with self.subTest(model=model_name):
-                assert details.repository_id == resolve_model_repo(model_name)
-                assert details.download_size_mb == MODEL_DOWNLOAD_SIZE_MB[model_name]
+    @pytest.mark.parametrize("model_name", sorted(MODEL_CATALOG))
+    def test_repository_and_size_match_download_configuration(self, model_name):
+        details = MODEL_CATALOG[model_name]
+        assert details.repository_id == resolve_model_repo(model_name)
+        assert details.download_size_mb == MODEL_DOWNLOAD_SIZE_MB[model_name]
 
     def test_parameter_counts_match_published_model_families(self):
         expected = {
