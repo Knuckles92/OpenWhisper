@@ -1079,6 +1079,21 @@ QTabBar#contentTabBar::tab:disabled {
     color: #48484a;
 }
 
+/* Meeting Mode is the last tab. Grey it on macOS/Linux without disabling
+   the tab, so a selected unsupported session is not stolen by Qt. */
+QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last {
+    color: #48484a;
+}
+
+QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last:hover {
+    color: #636366;
+}
+
+QTabBar#contentTabBar[unsupportedMeeting="true"]::tab:last:selected {
+    color: #636366;
+    border-bottom: 2px solid #545456;
+}
+
 /* Tooltips — elevated surface so they read against the dark window.
    The window is made translucent by RoundedTooltipFilter so the
    border-radius renders with transparent corners. */

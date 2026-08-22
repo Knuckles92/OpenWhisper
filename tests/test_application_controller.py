@@ -403,6 +403,8 @@ class DummyUIController:
         self.meeting_guest_links = []
         self.meeting_consent_requests = 0
         self.meeting_consent_result = False
+        self.platform_ack_requests = 0
+        self.platform_ack_result = True
         self.meeting_recovery_requests = []
         self.update_checks = []
         self.update_download_progress_events = []
@@ -444,6 +446,10 @@ class DummyUIController:
     def show_meeting_consent_dialog(self):
         self.meeting_consent_requests += 1
         return self.meeting_consent_result
+
+    def ensure_meeting_platform_ack(self):
+        self.platform_ack_requests += 1
+        return self.platform_ack_result
 
     def show_meeting_recovery_dialog(self, meetings, on_finalize, on_discard):
         self.meeting_recovery_requests.append(meetings)
@@ -1029,6 +1035,24 @@ class TestApplicationController:
         controller.current_backend = _Backend()
         with pytest.raises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
+
+    def test_hotkey_toggle_requires_unsupported_platform_ack(self):
+        """A declined Mac/Linux warning must not start a meeting."""
+        controller = self._create_controller()
+        started = []
+        controller.meeting_runtime.start_meeting = (
+            lambda *args, **kwargs: started.append(True)
+        )
+        controller.ui_controller.platform_ack_result = False
+
+        controller.toggle_meeting_mode()
+
+        assert started == []
+        assert controller.ui_controller.platform_ack_requests == 1
+
+        controller.ui_controller.platform_ack_result = True
+        controller.toggle_meeting_mode()
+        assert started == [True]
 
     def test_second_meeting_start_is_refused_while_one_is_running(self):
         """Exclusive mode, not engine state, guards against a second engine."""

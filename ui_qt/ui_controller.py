@@ -666,11 +666,33 @@ class UIController(QObject):
                 component_id, success, message
             )
 
+    def ensure_meeting_platform_ack(self) -> bool:
+        """Require the unsupported-platform warning before Meeting Mode.
+
+        Windows returns immediately. On macOS/Linux the first call shows the
+        acknowledgement dialog; later calls reuse the persisted answer.
+
+        Returns:
+            True when a meeting may start or the Meeting Mode tab may open.
+        """
+        from ui_qt.dialogs.meeting_unsupported_dialog import (
+            acknowledge_unsupported_meeting_mode,
+        )
+
+        if not acknowledge_unsupported_meeting_mode(self.main_window):
+            return False
+        self.main_window.tabbed_content.unlock_meeting_tab()
+        return True
+
     def _on_meeting_start_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
         if self.on_meeting_start:
             self.on_meeting_start(cloud_enabled)
 
     def _on_meeting_demo_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
         if self.on_meeting_start_demo:
             self.on_meeting_start_demo(cloud_enabled)
 
@@ -699,6 +721,8 @@ class UIController(QObject):
             self.on_meeting_defer_insights()
 
     def _on_meeting_start_new_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
         if self.on_meeting_start_new:
             self.on_meeting_start_new(cloud_enabled)
 
@@ -710,7 +734,7 @@ class UIController(QObject):
         if self._meeting_active:
             if self.on_meeting_end:
                 self.on_meeting_end()
-        elif self.on_meeting_start:
+        elif self.ensure_meeting_platform_ack() and self.on_meeting_start:
             self.on_meeting_start(None)
 
     def on_meeting_state_changed(self, payload: Any) -> None:

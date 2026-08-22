@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from meeting.platform import meeting_unsupported_os_name
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
 from ui_qt.widgets.cards import Card
@@ -41,15 +42,12 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
     )
     if platform.startswith("win"):
         hint = "System audio uses Windows WASAPI loopback when available."
-    elif platform.startswith("linux"):
-        hint = (
-            "Linux captures microphone audio only; system-audio loopback "
-            "requires the Windows Meeting Mode path."
-        )
     else:
+        os_name = meeting_unsupported_os_name(platform)
         hint = (
-            "System-audio capture may be unavailable on this platform; "
-            "Meeting Mode can continue microphone-only."
+            f"{os_name} is not a supported Meeting Mode platform. "
+            "System-audio loopback requires Windows. Meetings here capture "
+            "microphone audio only and are unsupported."
         )
     return subtitle, hint
 

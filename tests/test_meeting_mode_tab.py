@@ -287,11 +287,19 @@ class TestMeetingModeTabState(unittest.TestCase):
 
     def test_platform_copy_does_not_promise_unavailable_system_audio(self):
         subtitle, linux_hint = meeting_audio_support_copy("linux")
+        _, mac_hint = meeting_audio_support_copy("darwin")
+        _, win_hint = meeting_audio_support_copy("win32")
 
         self.assertIn("when supported", subtitle)
+        self.assertIn("not a supported", linux_hint)
         self.assertIn("microphone audio only", linux_hint)
         self.assertIn("Windows", linux_hint)
-        self.assertEqual(self.tab.platform_hint.text(), linux_hint)
+        self.assertIn("Linux", linux_hint)
+        self.assertIn("macOS", mac_hint)
+        self.assertIn("not a supported", mac_hint)
+        self.assertIn("WASAPI", win_hint)
+        _, expected = meeting_audio_support_copy()
+        self.assertEqual(self.tab.platform_hint.text(), expected)
 
     def test_developer_mode_shows_demo_meeting_control(self):
         """Developer mode reveals the demo loader on the idle Meeting tab."""

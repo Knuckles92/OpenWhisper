@@ -101,6 +101,9 @@ class ApplicationController(QObject):
     # consent dialog on the Qt main thread and routes the result back into
     # MeetingRuntime.on_consent_result (mirrors hf_consent_requested).
     meeting_consent_requested = pyqtSignal()
+    # Unsupported-platform acknowledgement before a hotkey start; hops to
+    # the Qt main thread the same way meeting_consent_requested does.
+    meeting_platform_ack_requested = pyqtSignal()
     # Guest URL ready for clipboard copy (clipboard access is main-thread only).
     meeting_guest_link_ready = pyqtSignal(str)
     # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
@@ -969,7 +972,7 @@ class ApplicationController(QObject):
         if self.meeting_runtime.is_active:
             self.meeting_runtime.end_meeting()
         elif not self.meeting_runtime.is_claimed:
-            self.meeting_runtime.start_meeting()
+            self.meeting_platform_ack_requested.emit()
 
     def transcribe_clip(self, audio_path: str) -> str:
         """Transcribe a short audio clip outside the main recording flow.
@@ -1015,6 +1018,16 @@ class ApplicationController(QObject):
 
     def update_status_with_auto_hide(self, status: str) -> None:
         self.hotkey_runtime.update_status_with_auto_hide(status)
+
+    def _on_meeting_platform_ack_requested(self) -> None:
+        """Show the unsupported-platform warning, then start if allowed."""
+        allowed = False
+        try:
+            allowed = self.ui_controller.ensure_meeting_platform_ack()
+        except Exception as exc:
+            logger.error(f"Meeting platform acknowledgement failed: {exc}")
+        if allowed:
+            self.meeting_runtime.start_meeting()
 
     def _on_meeting_consent_requested(self) -> None:
         """Show the meeting cloud-consent dialog and act on it (Qt main thread).
@@ -1090,6 +1103,9 @@ class ApplicationController(QObject):
         )
         self.meeting_recovery_found.connect(self._on_meeting_recovery_found)
         self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
+        self.meeting_platform_ack_requested.connect(
+            self._on_meeting_platform_ack_requested
+        )
         self.meeting_guest_link_ready.connect(
             self.ui_controller.copy_meeting_guest_link
         )

@@ -241,6 +241,7 @@ class TestMeetingSettings:
             SettingsKey,
             resolve_meeting_agent_core,
             resolve_meeting_audio_upload_consent,
+            resolve_meeting_unsupported_platform_ack,
             resolve_meeting_context_folder_enabled,
             resolve_meeting_context_folder_path,
             resolve_meeting_past_recall_enabled,
@@ -272,6 +273,7 @@ class TestMeetingSettings:
         self.resolve_agent_core = resolve_meeting_agent_core
         self.resolve_speaker_id = resolve_meeting_speaker_id_backend
         self.resolve_audio_consent = resolve_meeting_audio_upload_consent
+        self.resolve_platform_ack = resolve_meeting_unsupported_platform_ack
         self.resolve_past_recall = resolve_meeting_past_recall_enabled
         self.resolve_context_folder = resolve_meeting_context_folder_enabled
         self.resolve_context_folder_path = resolve_meeting_context_folder_path
@@ -296,6 +298,7 @@ class TestMeetingSettings:
         assert self.resolve_speaker_id({}) == config.MEETING_SPEAKER_ID_BACKEND
         assert config.MEETING_SPEAKER_ID_BACKEND == self.speaker_backends.LOCAL
         assert not self.resolve_audio_consent({})
+        assert not self.resolve_platform_ack({})
         assert not self.resolve_past_recall({})
         assert not self.resolve_context_folder({})
         assert self.resolve_context_folder_path({}) == ""
@@ -319,6 +322,7 @@ class TestMeetingSettings:
             self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
             self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
             self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
+            self.keys.MEETING_UNSUPPORTED_PLATFORM_ACK: True,
             self.keys.MEETING_PAST_RECALL_ENABLED: True,
             self.keys.MEETING_CONTEXT_FOLDER_ENABLED: True,
             self.keys.MEETING_CONTEXT_FOLDER_PATH: "  ~/Notes  ",
@@ -338,6 +342,7 @@ class TestMeetingSettings:
         assert self.resolve_agent_core(saved) == self.agent_cores.DIRECT
         assert self.resolve_speaker_id(saved) == self.speaker_backends.OPENAI
         assert self.resolve_audio_consent(saved)
+        assert self.resolve_platform_ack(saved)
         assert self.resolve_past_recall(saved)
         assert self.resolve_context_folder(saved)
         assert self.resolve_context_folder_path(saved) == os.path.normpath(os.path.expanduser("~/Notes"))
@@ -384,6 +389,9 @@ class TestMeetingSettings:
         assert self.resolve_bind(saved) == config.MEETING_SERVER_BIND
         assert not self.resolve_context_folder(
             {self.keys.MEETING_CONTEXT_FOLDER_ENABLED: "yes"}
+        )
+        assert not self.resolve_platform_ack(
+            {self.keys.MEETING_UNSUPPORTED_PLATFORM_ACK: "yes"}
         )
         assert self.resolve_context_folder_path(
                 {self.keys.MEETING_CONTEXT_FOLDER_PATH: 12}

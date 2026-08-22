@@ -66,6 +66,9 @@ class SettingsKey:
     MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: Final[str] = (
         "meeting_audio_upload_consent_given"
     )
+    MEETING_UNSUPPORTED_PLATFORM_ACK: Final[str] = (
+        "meeting_unsupported_platform_ack"
+    )
     MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
     MEETING_CONTEXT_FOLDER_ENABLED: Final[str] = (
         "meeting_context_folder_enabled"
@@ -649,6 +652,19 @@ def resolve_meeting_audio_upload_consent(
     """Return whether the user has approved uploading meeting audio."""
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, False,
+    )
+
+
+def resolve_meeting_unsupported_platform_ack(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the user acknowledged unsupported-platform Meeting Mode.
+
+    Off by default. On macOS and Linux the Meeting Mode tab stays muted
+    until this is granted once; later launches skip the warning.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,
     )
 
 
