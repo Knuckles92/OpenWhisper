@@ -468,34 +468,58 @@ def default_transcript_cleanup_model(provider: str) -> str:
     return config.TRANSCRIPT_CLEANUP_MODEL
 
 
+def _resolve_text_llm_assignment(
+    provider_key: str,
+    model_key: str,
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str]:
+    """Return a known provider/model pair, or the OpenRouter fallback.
+
+    The last chosen assignment is kept only when both halves are present
+    and the provider is still a known profile. A leftover model after a
+    deleted custom endpoint is discarded with the missing provider.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    provider = settings.get(provider_key)
+    model = settings.get(model_key)
+    known = _known_text_llm_profile_ids(settings)
+    if (
+        isinstance(provider, str)
+        and provider in known
+        and isinstance(model, str)
+        and model.strip()
+    ):
+        return provider, model.strip()
+    return (
+        TranscriptCleanupProvider.OPENROUTER,
+        config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
+    )
+
+
 def resolve_transcript_cleanup_provider(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Return a known cleanup profile ID or the configured default."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
-    if isinstance(provider, str) and provider in _known_text_llm_profile_ids(
-        settings
-    ):
-        return provider
-    return config.TRANSCRIPT_CLEANUP_PROVIDER
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
+    )
+    return provider
 
 
 def resolve_transcript_cleanup_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the cleanup model ID or its provider default."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    return default_transcript_cleanup_model(
-        resolve_transcript_cleanup_provider(settings)
+    """Return the last chosen cleanup model, or the OpenRouter fallback."""
+    _provider, model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
     )
+    return model
 
 
 def resolve_transcript_cleanup_reasoning(
@@ -569,15 +593,12 @@ def resolve_meeting_llm_provider(
     resolve through the same plumbing.
 
     """
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    provider = settings.get(SettingsKey.MEETING_LLM_PROVIDER)
-    if isinstance(provider, str) and provider in _known_text_llm_profile_ids(
-        settings
-    ):
-        return provider
-    return config.MEETING_LLM_PROVIDER
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return provider
 
 
 def resolve_meeting_llm_profile(
@@ -610,14 +631,13 @@ def resolve_meeting_llm_endpoint(
 def resolve_meeting_llm_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return a non-empty meeting intelligence model ID."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    model = settings.get(SettingsKey.MEETING_LLM_MODEL)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    return config.MEETING_LLM_MODEL
+    """Return the last chosen meeting model, or the OpenRouter fallback."""
+    _provider, model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return model
 
 
 def resolve_meeting_agent_core(

@@ -1084,8 +1084,8 @@ class SettingsDialog(QDialog):
             saved_model = resolve_transcript_cleanup_model(settings)
         except Exception:
             settings = {}
-            saved_provider = "openai"
-            saved_model = config.TRANSCRIPT_CLEANUP_MODEL
+            saved_provider = config.TRANSCRIPT_CLEANUP_PROVIDER
+            saved_model = config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
         provider_name = profile_display_name(saved_provider, settings)
         self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
@@ -1590,7 +1590,7 @@ class SettingsDialog(QDialog):
             self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
             self.cleanup_rules_list.clear()
             self.cleanup_model_summary.setText(
-                f"OpenAI · {config.TRANSCRIPT_CLEANUP_MODEL}"
+                f"OpenRouter · {config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL}"
             )
             self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()

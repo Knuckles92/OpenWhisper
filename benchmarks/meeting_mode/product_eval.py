@@ -935,7 +935,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     provider = config.MEETING_LLM_PROVIDER
-    model = config.MEETING_LLM_MODEL
+    model = "deepseek/deepseek-v4-flash-0731"
     api_key = find_provider_api_key(provider)
     if not api_key:
         print(f"No {provider} API key; cannot run the product judge.", file=sys.stderr)

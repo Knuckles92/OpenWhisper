@@ -415,7 +415,9 @@ class TestMeetingSettings:
                 }
             ],
             self.keys.MEETING_LLM_PROVIDER: "custom_abcd1234",
+            self.keys.MEETING_LLM_MODEL: "local-qwen",
             self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+            self.keys.TRANSCRIPT_CLEANUP_MODEL: "local-qwen",
         }
         assert self.resolve_provider(settings) == "custom_abcd1234"
         assert resolve_transcript_cleanup_provider(settings) == "custom_abcd1234"
@@ -429,6 +431,56 @@ class TestMeetingSettings:
         }
         assert self.resolve_provider(settings) == config.MEETING_LLM_PROVIDER
         assert resolve_transcript_cleanup_provider(settings) == config.TRANSCRIPT_CLEANUP_PROVIDER
+
+    def test_text_llm_assignment_is_a_pair(self):
+        """Last chosen is kept only when the provider is still known."""
+        from services.settings import (
+            resolve_meeting_llm_model,
+            resolve_meeting_llm_provider,
+            resolve_transcript_cleanup_model,
+            resolve_transcript_cleanup_provider,
+        )
+
+        leftover = {
+            self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+            self.keys.TRANSCRIPT_CLEANUP_MODEL: "other-local",
+            self.keys.MEETING_LLM_PROVIDER: "custom_abcd1234",
+            self.keys.MEETING_LLM_MODEL: "other-local",
+        }
+        assert resolve_transcript_cleanup_provider(leftover) == "openrouter"
+        assert resolve_transcript_cleanup_model(leftover) == "openrouter/free"
+        assert resolve_meeting_llm_provider(leftover) == "openrouter"
+        assert resolve_meeting_llm_model(leftover) == "openrouter/free"
+
+        custom = {
+            self.keys.TEXT_LLM_PROFILES: [
+                {
+                    "id": "custom_abcd1234",
+                    "name": "LM Studio",
+                    "base_url": "http://127.0.0.1:1234/v1",
+                    "api_key_env": "",
+                }
+            ],
+            self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+            self.keys.TRANSCRIPT_CLEANUP_MODEL: "local-qwen",
+            self.keys.MEETING_LLM_PROVIDER: "custom_abcd1234",
+            self.keys.MEETING_LLM_MODEL: "local-qwen",
+        }
+        assert resolve_transcript_cleanup_provider(custom) == "custom_abcd1234"
+        assert resolve_transcript_cleanup_model(custom) == "local-qwen"
+        assert resolve_meeting_llm_provider(custom) == "custom_abcd1234"
+        assert resolve_meeting_llm_model(custom) == "local-qwen"
+
+        openai = {
+            self.keys.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
+            self.keys.TRANSCRIPT_CLEANUP_MODEL: "gpt-4o-mini",
+            self.keys.MEETING_LLM_PROVIDER: "openai",
+            self.keys.MEETING_LLM_MODEL: "gpt-4o-mini",
+        }
+        assert resolve_transcript_cleanup_provider(openai) == "openai"
+        assert resolve_transcript_cleanup_model(openai) == "gpt-4o-mini"
+        assert resolve_meeting_llm_provider(openai) == "openai"
+        assert resolve_meeting_llm_model(openai) == "gpt-4o-mini"
 
 
 class TestUpdatePreferences:

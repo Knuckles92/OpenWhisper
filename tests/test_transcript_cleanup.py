@@ -118,7 +118,7 @@ class TestTranscriptCleanupProviders:
     def test_default_models_per_provider(self):
         from config import config
 
-        openai_cleaner = TranscriptCleanup(api_key="k")
+        openai_cleaner = TranscriptCleanup(provider="openai", api_key="k")
         assert openai_cleaner.model == config.TRANSCRIPT_CLEANUP_MODEL
 
         router_cleaner = TranscriptCleanup(provider="openrouter", api_key="k")
@@ -134,7 +134,7 @@ class TestTranscriptCleanupProviders:
         assert "reasoning_effort" not in kwargs
 
     def test_reasoning_openai_sends_reasoning_effort(self):
-        cleaner = TranscriptCleanup(api_key="k", reasoning="high")
+        cleaner = TranscriptCleanup(provider="openai", api_key="k", reasoning="high")
         cleaner.client = self._mock_client()
 
         cleaner.cleanup("raw text")
@@ -165,7 +165,7 @@ class TestTranscriptCleanupProviders:
         assert cleaner.is_available()
 
     def test_configure_same_provider_keeps_client(self):
-        cleaner = TranscriptCleanup(api_key="openai-key")
+        cleaner = TranscriptCleanup(provider="openai", api_key="openai-key")
         original_client = cleaner.client
         cleaner.configure("openai", "gpt-4.1-mini")
         assert cleaner.client is original_client
@@ -241,19 +241,28 @@ class TestTranscriptCleanupSettings:
             ) == config.TRANSCRIPT_CLEANUP_PROVIDER
         assert resolve_transcript_cleanup_provider({}) == config.TRANSCRIPT_CLEANUP_PROVIDER
 
-    def test_resolve_model_falls_back_per_provider(self):
+    def test_resolve_model_keeps_a_complete_pair(self):
         from config import config
         from services.settings import (
             SettingsKey,
             resolve_transcript_cleanup_model,
+            resolve_transcript_cleanup_provider,
         )
 
-        assert resolve_transcript_cleanup_model(
-                {SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "  my-model  "}
-            ) == "my-model"
-        assert resolve_transcript_cleanup_model({}) == config.TRANSCRIPT_CLEANUP_MODEL
+        saved = {
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openai",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "  gpt-4o-mini  ",
+        }
+        assert resolve_transcript_cleanup_provider(saved) == "openai"
+        assert resolve_transcript_cleanup_model(saved) == "gpt-4o-mini"
+        assert resolve_transcript_cleanup_model({}) == (
+            config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
+        )
         assert resolve_transcript_cleanup_model(
                 {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter"}
+            ) == config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
+        assert resolve_transcript_cleanup_model(
+                {SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "  my-model  "}
             ) == config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
 
     def test_resolve_reasoning_validates_and_falls_back(self):
@@ -428,6 +437,7 @@ class TestCleanupCustomEndpoints:
     def test_resolve_accepts_saved_custom_profile(self):
         from services.settings import (
             SettingsKey,
+            resolve_transcript_cleanup_model,
             resolve_transcript_cleanup_provider,
         )
 
@@ -441,8 +451,10 @@ class TestCleanupCustomEndpoints:
                 }
             ],
             SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "custom_abcd1234",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "local-qwen",
         }
         assert resolve_transcript_cleanup_provider(settings) == "custom_abcd1234"
+        assert resolve_transcript_cleanup_model(settings) == "local-qwen"
 
 
 

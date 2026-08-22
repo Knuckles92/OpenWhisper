@@ -231,9 +231,9 @@ class AppConfig:
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
     TRANSCRIPT_CLEANUP_TIMEOUT_S: float = 8.0
-    TRANSCRIPT_CLEANUP_PROVIDER: str = "openai"
+    TRANSCRIPT_CLEANUP_PROVIDER: str = "openrouter"
     TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"
-    TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openrouter/free"
     # Model-list ordering in Model Manager. "alphabetical" sorts client-side;
     # other values are OpenRouter /models sort params.
     TRANSCRIPT_CLEANUP_MODEL_SORT: str = "alphabetical"
@@ -278,7 +278,7 @@ class AppConfig:
     MEETING_WHISPER_MODEL: str = "auto"
     MEETING_LANGUAGE: str = "auto"
     MEETING_LLM_PROVIDER: str = "openrouter"
-    MEETING_LLM_MODEL: str = "deepseek/deepseek-v4-flash-0731"
+    MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
     MEETING_SPEAKER_ID_BACKEND: str = "local"
     MEETING_END_REDECODE: bool = False
