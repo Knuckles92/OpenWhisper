@@ -423,5 +423,70 @@ class TestMeetingSettings:
         assert resolve_transcript_cleanup_provider(settings) == config.TRANSCRIPT_CLEANUP_PROVIDER
 
 
+class TestUpdatePreferences:
+    """Resolvers for automatic update check / notify preferences."""
+
+    def test_defaults_are_on(self):
+        from services.settings import (
+            resolve_update_check_enabled,
+            resolve_update_notify_enabled,
+            resolve_update_skipped_version,
+        )
+
+        assert config.UPDATE_CHECK_ENABLED is True
+        assert config.UPDATE_NOTIFY_ENABLED is True
+        assert resolve_update_check_enabled({})
+        assert resolve_update_notify_enabled({})
+        assert resolve_update_skipped_version({}) == ""
+
+    def test_saved_false_round_trips(self):
+        from services.settings import (
+            SettingsKey,
+            resolve_update_check_enabled,
+            resolve_update_notify_enabled,
+        )
+
+        saved = {
+            SettingsKey.UPDATE_CHECK_ENABLED: False,
+            SettingsKey.UPDATE_NOTIFY_ENABLED: False,
+        }
+        assert not resolve_update_check_enabled(saved)
+        assert not resolve_update_notify_enabled(saved)
+
+    def test_notify_off_with_check_on(self):
+        from services.settings import (
+            SettingsKey,
+            resolve_update_check_enabled,
+            resolve_update_notify_enabled,
+        )
+
+        saved = {
+            SettingsKey.UPDATE_CHECK_ENABLED: True,
+            SettingsKey.UPDATE_NOTIFY_ENABLED: False,
+        }
+        assert resolve_update_check_enabled(saved)
+        assert not resolve_update_notify_enabled(saved)
+
+    def test_non_bool_falls_back_to_default(self):
+        from services.settings import (
+            SettingsKey,
+            resolve_update_check_enabled,
+            resolve_update_notify_enabled,
+            resolve_update_skipped_version,
+        )
+
+        saved = {
+            SettingsKey.UPDATE_CHECK_ENABLED: "yes",
+            SettingsKey.UPDATE_NOTIFY_ENABLED: 0,
+            SettingsKey.UPDATE_SKIPPED_VERSION: 2,
+        }
+        assert resolve_update_check_enabled(saved)
+        assert resolve_update_notify_enabled(saved)
+        assert resolve_update_skipped_version(saved) == ""
+        assert resolve_update_skipped_version(
+            {SettingsKey.UPDATE_SKIPPED_VERSION: "  2.2.0  "}
+        ) == "2.2.0"
+
+
 if __name__ == '__main__':
     unittest.main()

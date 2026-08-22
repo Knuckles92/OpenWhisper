@@ -91,6 +91,7 @@ Download **OpenWhisper-Setup-2.1.1.exe** from [openwhisper.fiorilabs.tech](https
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
 - A speech model (~150 MB) downloads on first use, with a consent prompt.
+- **Help → Check for Updates** fetches the latest GitHub release and can download the next setup exe (SHA-256 verified) then reopen the installer. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
@@ -148,6 +149,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+**Help → Check for Updates** still works from a source checkout: it tells you when a newer GitHub release exists and offers the release notes. It will not overwrite the tree. Update with `git pull --ff-only` and `pip install -r requirements.txt` if dependencies changed. Automatic checks and notifications can be turned off in **Settings → General**.
 
 ### Building the installer yourself
 

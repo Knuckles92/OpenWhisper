@@ -1,18 +1,27 @@
 import logging
 from typing import Any, Callable, Dict, List, Optional
-from PyQt6.QtCore import QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from config import config
+from services.app_update import (
+    UpdateCheckResult,
+    UpdateStatus,
+    channel_label,
+    detect_channel,
+    should_auto_notify,
+)
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
+from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.widgets import TabbedContentWidget
-from services.settings import SettingsKey
+from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +65,10 @@ class UIController(QObject):
         self.on_component_install: Optional[Callable] = None
         self.on_component_cancel: Optional[Callable] = None
         self.on_component_remove: Optional[Callable] = None
+        self.on_check_for_updates: Optional[Callable] = None
+        self.on_update_download: Optional[Callable] = None
+        self._last_update_result: Optional[UpdateCheckResult] = None
+        self._update_dialog: Optional[AppUpdateDialog] = None
 
         self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
         self.on_meeting_start_demo: Optional[Callable] = None  # (cloud: Optional[bool])
@@ -92,6 +105,9 @@ class UIController(QObject):
         self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
         self.main_window.about_requested.connect(self.show_about_dialog)
+        self.main_window.check_for_updates_requested.connect(
+            self._on_check_for_updates_requested
+        )
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
         self.main_window.meeting_dashboard_requested.connect(
@@ -891,11 +907,116 @@ class UIController(QObject):
             record_key, cancel_key, enable_disable_key, minimize_key
         )
 
+    def _on_check_for_updates_requested(self) -> None:
+        """Help → Check for Updates. Always hits GitHub."""
+        if self.on_check_for_updates:
+            self.on_check_for_updates()
+
+    def on_update_check_finished(
+        self,
+        result: Optional[UpdateCheckResult],
+        error: str = "",
+        manual: bool = False,
+    ) -> None:
+        """Show the update dialog for a manual check or an allowed auto-notify."""
+        if result is not None:
+            self._last_update_result = result
+        if not manual:
+            if result is None or error:
+                return
+            latest = result.release.version if result.release else ""
+            if not should_auto_notify(
+                result.status, latest, settings_manager.load_all_settings()
+            ):
+                return
+            if self.is_recording or (
+                self.get_meeting_active and self.get_meeting_active()
+            ):
+                return
+        self.show_app_update_dialog(result, error=error)
+
+    def show_app_update_dialog(
+        self,
+        result: Optional[UpdateCheckResult],
+        error: str = "",
+    ) -> None:
+        """Open the update dialog and handle Download / Open release notes."""
+        dialog = AppUpdateDialog(result, error=error, parent=self.main_window)
+        self._update_dialog = dialog
+        dialog.on_download_requested = self._on_update_download_requested
+        dialog.exec()
+        if (
+            dialog.result_action == AppUpdateDialog.RESULT_PRIMARY
+            and result is not None
+            and result.release is not None
+            and not result.can_apply
+        ):
+            QDesktopServices.openUrl(QUrl(result.release.html_url))
+        if self._update_dialog is dialog and dialog.result_action != (
+            AppUpdateDialog.RESULT_PRIMARY
+        ):
+            self._update_dialog = None
+
+    def _on_update_download_requested(self, result: UpdateCheckResult) -> None:
+        if self.on_update_download:
+            self.on_update_download(result)
+
+    def on_update_download_progress(self, phase: str, done: int, total: int) -> None:
+        """Forward installer-download progress to the open dialog."""
+        if self._update_dialog is not None:
+            self._update_dialog.set_progress(phase, done, total)
+
+    def on_update_download_finished(self, path: str, error: str) -> None:
+        """Launch the verified Inno setup and quit, or show the error."""
+        if error:
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(error)
+            else:
+                QMessageBox.warning(
+                    self.main_window, "Update failed", error
+                )
+            return
+        from PyQt6.QtCore import QProcess
+
+        launched = QProcess.startDetached(path, [])
+        if not launched:
+            message = "The installer could not be started."
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(message)
+            else:
+                QMessageBox.warning(self.main_window, "Update failed", message)
+            return
+        QApplication.instance().quit()
+
     def show_about_dialog(self):
+        channel = channel_label(detect_channel())
+        status_line = ""
+        result = self._last_update_result
+        if result is not None:
+            if (
+                result.status == UpdateStatus.UPDATE_AVAILABLE
+                and result.release is not None
+            ):
+                status_line = f"Update available: {result.release.version}"
+            elif result.status == UpdateStatus.DEVELOPMENT:
+                latest = result.release.version if result.release else ""
+                status_line = (
+                    f"Development build, newer than {latest}"
+                    if latest
+                    else "Development build"
+                )
+            else:
+                status_line = "Up to date"
+        status_html = (
+            f"<p>Update status: {status_line}</p>" if status_line else ""
+        )
         QMessageBox.about(
             self.main_window,
             "About OpenWhisper",
             "<p><b>OpenWhisper - Speech-to-Text Application</b></p>"
+            f"<p>Version {config.VERSION}<br>"
+            f"Install: {channel}</p>"
+            f"{status_html}"
             "<p>Record audio and turn it into text. Works offline with local "
             "Whisper or online with OpenAI.</p>"
             "<p>Features:<br>"

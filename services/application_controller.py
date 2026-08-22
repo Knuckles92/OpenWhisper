@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
 
@@ -104,6 +105,10 @@ class ApplicationController(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
     past_meetings_refresh_requested = pyqtSignal()
+    # App updater: (result_or_none, error, manual).
+    update_check_finished = pyqtSignal(object, str, bool)
+    update_download_progress = pyqtSignal(str, int, int)
+    update_download_finished = pyqtSignal(str, str)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -141,6 +146,11 @@ class ApplicationController(QObject):
         self._reload_timer = QTimer()
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._do_reload_whisper_model)
+
+        self._update_check_timer = QTimer()
+        self._update_check_timer.setSingleShot(True)
+        self._update_check_timer.timeout.connect(self._maybe_start_update_check)
+        self._update_cancel = threading.Event()
 
         # Exclusive mode: True while a meeting session runs; dictation start
         # paths and engine reloads refuse while set (owned by MeetingRuntime).
@@ -198,6 +208,10 @@ class ApplicationController(QObject):
         self.ui_controller.on_component_install = self.request_component_install
         self.ui_controller.on_component_cancel = self.cancel_component_install
         self.ui_controller.on_component_remove = self.request_component_uninstall
+        self.ui_controller.on_check_for_updates = (
+            lambda: self.request_update_check(manual=True)
+        )
+        self.ui_controller.on_update_download = self.request_update_download
         self.ui_controller.on_meeting_start = self.meeting_runtime.start_meeting
         self.ui_controller.on_meeting_start_demo = (
             self.meeting_runtime.start_demo_meeting
@@ -309,6 +323,72 @@ class ApplicationController(QObject):
             self._reload_in_flight = False
             self.engine_busy_changed.emit(False)
 
+    def request_update_check(self, manual: bool = True) -> None:
+        """Run a GitHub latest-release check on a worker thread."""
+        self.executor.submit(self._update_check_worker, manual)
+
+    def _maybe_start_update_check(self) -> None:
+        """Automatic check: skip while busy, or when prefs/throttle say no."""
+        from services.app_update import should_auto_check
+
+        if getattr(self.recorder, "is_recording", False) or self.is_meeting_active():
+            self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+            return
+        try:
+            settings = settings_manager.load_all_settings()
+        except Exception as exc:
+            logger.warning("Could not load update-check settings: %s", exc)
+            return
+        if not should_auto_check(settings):
+            return
+        self.request_update_check(manual=False)
+
+    def _update_check_worker(self, manual: bool) -> None:
+        from services.app_update import AppUpdateError, check_for_update
+
+        try:
+            result = check_for_update()
+        except Exception as exc:
+            logger.warning("Update check failed: %s", exc)
+            message = str(exc) if isinstance(exc, AppUpdateError) else (
+                "Could not check for updates."
+            )
+            self.update_check_finished.emit(None, message, manual)
+            return
+        self.update_check_finished.emit(result, "", manual)
+
+    def _on_update_check_finished(self, result, error: str, manual: bool) -> None:
+        handler = getattr(self.ui_controller, "on_update_check_finished", None)
+        if handler:
+            handler(result, error, manual)
+
+    def request_update_download(self, result) -> None:
+        """Download the verified setup exe on the long-running worker."""
+        self._update_cancel.clear()
+        self.component_executor.submit(self._update_download_worker, result)
+
+    def _update_download_worker(self, result) -> None:
+        release = getattr(result, "release", None)
+        if release is None:
+            self.update_download_finished.emit("", "No installer is available.")
+            return
+
+        def progress(phase: str, done: int, total: int) -> None:
+            self.update_download_progress.emit(phase, done, total)
+
+        from services.app_update import download_installer
+
+        try:
+            path = download_installer(
+                release, progress=progress, cancel=self._update_cancel
+            )
+        except Exception as exc:
+            logger.warning("Update download failed: %s", exc)
+            message = str(exc) if str(exc) else "The download failed."
+            self.update_download_finished.emit("", message)
+            return
+        self.update_download_finished.emit(path, "")
+
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.
 
@@ -327,6 +407,9 @@ class ApplicationController(QObject):
         # Meeting crash recovery: scan now that there is a UI to show the
         # recovery dialog over.
         QTimer.singleShot(0, self.meeting_runtime.setup)
+        # Defer the GitHub metadata check so HF consent / recovery win the
+        # first modal slot, and so a recording or meeting can start first.
+        self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.
@@ -1013,6 +1096,13 @@ class ApplicationController(QObject):
         self.past_meetings_refresh_requested.connect(
             self.ui_controller.main_window.refresh_past_meetings
         )
+        self.update_check_finished.connect(self._on_update_check_finished)
+        self.update_download_progress.connect(
+            self.ui_controller.on_update_download_progress
+        )
+        self.update_download_finished.connect(
+            self.ui_controller.on_update_download_finished
+        )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
@@ -1065,6 +1155,10 @@ class ApplicationController(QObject):
                 self._watchdog_timer.stop()
             if hasattr(self, "_periodic_refresh_timer") and self._periodic_refresh_timer:
                 self._periodic_refresh_timer.stop()
+            if hasattr(self, "_update_check_timer") and self._update_check_timer:
+                self._update_check_timer.stop()
+            if hasattr(self, "_update_cancel"):
+                self._update_cancel.set()
         except Exception as exc:
             logger.debug(f"Error stopping watchdog timers: {exc}")
 

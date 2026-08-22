@@ -42,6 +42,8 @@ from services.settings import (
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
     resolve_developer_mode,
+    resolve_update_check_enabled,
+    resolve_update_notify_enabled,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
@@ -168,10 +170,18 @@ class SettingsDialog(QDialog):
         self.auto_paste_check = QCheckBox("Auto-paste transcription to active window")
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
+        self.update_check_check = QCheckBox("Check for updates automatically")
+        self.update_check_check.setObjectName("updateCheckEnabledCheck")
+        self.update_notify_check = QCheckBox(
+            "Notify me when an update is available"
+        )
+        self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
         for box in (
             self.auto_paste_check,
             self.copy_clipboard_check,
             self.minimize_tray_check,
+            self.update_check_check,
+            self.update_notify_check,
         ):
             box.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
@@ -180,6 +190,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.copy_clipboard_check)
         layout.addSpacing(12)
         layout.addWidget(self.minimize_tray_check)
+
+        layout.addSpacing(24)
+        updates_label = QLabel("Updates")
+        updates_label.setObjectName("sectionLabel")
+        layout.addWidget(updates_label)
+        layout.addSpacing(8)
+        layout.addWidget(self.update_check_check)
+        layout.addWidget(self.update_notify_check)
+        self.update_check_check.toggled.connect(self._on_update_check_toggled)
 
         layout.addSpacing(24)
         recordings_label = QLabel("Saved Recordings")
@@ -1107,6 +1126,10 @@ class SettingsDialog(QDialog):
         threshold = value / 1000.0
         self.threshold_value_label.setText(f"{threshold:.3f}")
 
+    def _on_update_check_toggled(self, checked: bool) -> None:
+        """Notify is meaningless when automatic checks are off."""
+        self.update_notify_check.setEnabled(bool(checked))
+
     def _update_recording_retention_ui(self):
         is_custom = (
             self.recording_retention_combo.currentData()
@@ -1511,6 +1534,9 @@ class SettingsDialog(QDialog):
 
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
+            self.update_check_check.setChecked(resolve_update_check_enabled(settings))
+            self.update_notify_check.setChecked(resolve_update_notify_enabled(settings))
+            self._on_update_check_toggled(self.update_check_check.isChecked())
 
             retention_mode = settings.get(
                 SettingsKey.RECORDING_RETENTION_MODE,
@@ -1569,6 +1595,9 @@ class SettingsDialog(QDialog):
             self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(True)
+            self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
+            self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
+            self._on_update_check_toggled(self.update_check_check.isChecked())
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM
             )
@@ -1626,6 +1655,12 @@ class SettingsDialog(QDialog):
                 self._staged_cleanup_rules()
             )
             settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
+            settings[SettingsKey.UPDATE_CHECK_ENABLED] = (
+                self.update_check_check.isChecked()
+            )
+            settings[SettingsKey.UPDATE_NOTIFY_ENABLED] = (
+                self.update_notify_check.isChecked()
+            )
             settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
             settings[SettingsKey.STREAMING_OVERLAY_FONT_SIZE] = (
                 self.streaming_font_size_spinbox.value()

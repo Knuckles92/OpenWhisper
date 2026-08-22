@@ -63,6 +63,7 @@ sidecar/dist/
 .vscode/settings.json
 .cursor/worktrees.json
 .pi/
+.piview/
 .codex/
 .shots/
 

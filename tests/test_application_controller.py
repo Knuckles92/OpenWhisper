@@ -404,6 +404,9 @@ class DummyUIController:
         self.meeting_consent_requests = 0
         self.meeting_consent_result = False
         self.meeting_recovery_requests = []
+        self.update_checks = []
+        self.update_download_progress_events = []
+        self.update_download_results = []
         self.on_record_start = None
 
     def start_recording(self):
@@ -444,6 +447,15 @@ class DummyUIController:
 
     def show_meeting_recovery_dialog(self, meetings, on_finalize, on_discard):
         self.meeting_recovery_requests.append(meetings)
+
+    def on_update_check_finished(self, result, error, manual):
+        self.update_checks.append((result, error, manual))
+
+    def on_update_download_progress(self, phase, done, total):
+        self.update_download_progress_events.append((phase, done, total))
+
+    def on_update_download_finished(self, path, error):
+        self.update_download_results.append((path, error))
 
     def refresh_local_engine_controls(self):
         self.engine_controls_refreshes += 1

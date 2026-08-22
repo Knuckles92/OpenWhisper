@@ -73,6 +73,11 @@ class SettingsKey:
     MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    # In-app updater. Absent keys mean both automatic check and notify are on.
+    UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
+    UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
+    UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
+    UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
 
 
 class RecordingRetentionMode:
@@ -717,6 +722,38 @@ def resolve_developer_mode(
     return _resolve_bool_setting(
         settings, SettingsKey.DEVELOPER_MODE, config.DEVELOPER_MODE,
     )
+
+
+def resolve_update_check_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether background GitHub update checks are allowed."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.UPDATE_CHECK_ENABLED, config.UPDATE_CHECK_ENABLED,
+    )
+
+
+def resolve_update_notify_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether an update-available dialog may be shown automatically."""
+    return _resolve_bool_setting(
+        settings,
+        SettingsKey.UPDATE_NOTIFY_ENABLED,
+        config.UPDATE_NOTIFY_ENABLED,
+    )
+
+
+def resolve_update_skipped_version(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the release version the user dismissed with Later, if any."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.UPDATE_SKIPPED_VERSION, "")
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
 
 
 def resolve_meeting_end_redecode(

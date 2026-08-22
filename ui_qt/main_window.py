@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
     model_manager_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
+    check_for_updates_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
     meeting_dashboard_requested = pyqtSignal()
@@ -615,6 +616,10 @@ class MainWindow(QMainWindow):
         )
 
         help_menu = menubar.addMenu("Help")
+        updates_action = help_menu.addAction(
+            "Check for Updates...", self.check_for_updates
+        )
+        updates_action.setMenuRole(QAction.MenuRole.NoRole)
         about_action = help_menu.addAction("About", self.show_about)
         about_action.setMenuRole(QAction.MenuRole.NoRole)
 
@@ -939,6 +944,10 @@ class MainWindow(QMainWindow):
     def open_hotkey_settings(self):
         logger.info("Opening hotkey settings")
         self.hotkeys_requested.emit()
+
+    def check_for_updates(self):
+        logger.info("Check for updates requested")
+        self.check_for_updates_requested.emit()
 
     def show_about(self):
         logger.info("Showing about dialog")
