@@ -258,6 +258,7 @@ def fakes(monkeypatch):
     sd_stream.SdCaptureSource = FakeSource
 
     soundcard_stream = types.ModuleType("meeting.capture.soundcard_stream")
+    sck_stream = types.ModuleType("meeting.capture.sck_stream")
 
     class _UnavailableLoopback:
         @staticmethod
@@ -265,6 +266,7 @@ def fakes(monkeypatch):
             return False
 
     soundcard_stream.SoundcardLoopbackSource = _UnavailableLoopback
+    sck_stream.ScreenCaptureKitLoopbackSource = _UnavailableLoopback
 
     spool = types.ModuleType("meeting.capture.spool")
     spool.SpoolWriter = FakeSpool
@@ -300,6 +302,7 @@ def fakes(monkeypatch):
         "meeting.capture.devices": capture_devices,
         "meeting.capture.sd_stream": sd_stream,
         "meeting.capture.soundcard_stream": soundcard_stream,
+        "meeting.capture.sck_stream": sck_stream,
         "meeting.capture.spool": spool,
         "meeting.asr.engine": asr_engine,
         "meeting.asr.audio": asr_audio,

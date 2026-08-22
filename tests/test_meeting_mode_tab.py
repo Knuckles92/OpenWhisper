@@ -293,13 +293,23 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIn("when supported", subtitle)
         self.assertIn("not a supported", linux_hint)
         self.assertIn("microphone audio only", linux_hint)
-        self.assertIn("Windows", linux_hint)
+        self.assertIn("macOS 13+", linux_hint)
         self.assertIn("Linux", linux_hint)
-        self.assertIn("macOS", mac_hint)
-        self.assertIn("not a supported", mac_hint)
         self.assertIn("WASAPI", win_hint)
+        # macOS captures system audio, but only once the user grants it, so
+        # the copy must name the permission rather than promise the channel.
+        self.assertIn("ScreenCaptureKit", mac_hint)
+        self.assertIn("Screen Recording permission", mac_hint)
+        self.assertNotIn("not a supported", mac_hint)
         _, expected = meeting_audio_support_copy()
         self.assertEqual(self.tab.platform_hint.text(), expected)
+
+    def test_platform_copy_marks_pre_screencapturekit_macos_unsupported(self):
+        with patch("ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",
+                   return_value=False):
+            _, mac_hint = meeting_audio_support_copy("darwin")
+        self.assertIn("macOS is not a supported", mac_hint)
+        self.assertIn("microphone audio only", mac_hint)
 
     def test_developer_mode_shows_demo_meeting_control(self):
         """Developer mode reveals the demo loader on the idle Meeting tab."""

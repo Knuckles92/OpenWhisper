@@ -12,6 +12,7 @@ backend) instead of crashing.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,53 @@ def _device_dict(index: int, dev: Dict[str, Any]) -> Dict[str, Any]:
         "samplerate": int(dev["default_samplerate"]),
         "channels": int(dev["max_input_channels"]),
     }
+
+
+def _as_device_index(value: Any) -> Optional[int]:
+    """Coerce a sounddevice device selector to a non-negative index."""
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return index if index >= 0 else None
+
+
+def _is_usable_input(dev: Dict[str, Any]) -> bool:
+    """True when ``dev`` can back the microphone channel."""
+    return (
+        int(dev.get("max_input_channels") or 0) > 0
+        and LOOPBACK_MARKER not in str(dev.get("name") or "")
+    )
+
+
+def _default_io_indexes(sd) -> tuple[Optional[int], Optional[int]]:
+    """Return ``(input_index, output_index)`` from ``sd.default.device``.
+
+    sounddevice exposes this as ``_InputOutputPair``. It is indexable but is
+    neither a list nor a tuple, so ``isinstance(..., (tuple, list))`` misses
+    the real default and Meeting Mode used to fall through to device 0.
+    """
+    try:
+        default = sd.default.device
+        return _as_device_index(default[0]), _as_device_index(default[1])
+    except Exception:
+        return None, None
+
+
+def _hostapi_default_input_index(sd) -> Optional[int]:
+    """Default input index advertised by the current host API, if any."""
+    try:
+        host_index = getattr(sd.default, "hostapi", None)
+        if host_index is None:
+            hostapis = list(sd.query_hostapis())
+            host = hostapis[0] if hostapis else None
+        else:
+            host = sd.query_hostapis(int(host_index))
+        if host is None:
+            return None
+        return _as_device_index(host.get("default_input_device", -1))
+    except Exception:
+        return None
 
 
 def _wasapi_hostapi_index(sd) -> Optional[int]:
@@ -63,7 +111,11 @@ def find_loopback_device() -> Optional[Dict[str, Any]]:
     try:
         wasapi = _wasapi_hostapi_index(sd)
         if wasapi is None:
-            logger.warning("No WASAPI host API found; loopback capture unavailable")
+            # Expected on macOS/Linux; the watchdog polls this every few
+            # seconds, so a warning here drowns the log on every meeting.
+            log = (logger.warning if sys.platform.startswith("win")
+                   else logger.debug)
+            log("No WASAPI host API found; loopback capture unavailable")
             return None
         devices = list(sd.query_devices())
         candidates = [
@@ -98,11 +150,10 @@ def _default_output_name(sd, devices, wasapi_index: int) -> Optional[str]:
     """Name of the default render device (WASAPI-preferred), or None."""
     try:
         hostapi = sd.query_hostapis(wasapi_index)
-        out_index = hostapi.get("default_output_device", -1)
-        if not isinstance(out_index, int) or out_index < 0:
-            default = sd.default.device
-            out_index = default[1] if isinstance(default, (tuple, list)) else -1
-        if isinstance(out_index, int) and 0 <= out_index < len(devices):
+        out_index = _as_device_index(hostapi.get("default_output_device", -1))
+        if out_index is None:
+            _, out_index = _default_io_indexes(sd)
+        if out_index is not None and out_index < len(devices):
             return str(devices[out_index]["name"])
     except Exception:
         logger.debug("Could not resolve default output device", exc_info=True)
@@ -127,28 +178,39 @@ def find_mic_device(preferred_index: Optional[int] = None) -> Optional[Dict[str,
     try:
         devices = list(sd.query_devices())
 
+        def _choose(index: int) -> Optional[Dict[str, Any]]:
+            if not (0 <= index < len(devices) and _is_usable_input(devices[index])):
+                return None
+            chosen = _device_dict(index, devices[index])
+            logger.info(
+                "Microphone device: %s (index %d, %d Hz, %d ch)",
+                chosen["name"], chosen["index"],
+                chosen["samplerate"], chosen["channels"],
+            )
+            return chosen
+
         if preferred_index is not None:
-            if (0 <= preferred_index < len(devices)
-                    and devices[preferred_index]["max_input_channels"] > 0):
-                return _device_dict(preferred_index, devices[preferred_index])
+            chosen = _choose(preferred_index)
+            if chosen is not None:
+                return chosen
             logger.warning(
                 "Preferred mic device index %s is not a valid input device; "
                 "falling back to default", preferred_index,
             )
 
-        try:
-            default = sd.default.device
-            in_index = default[0] if isinstance(default, (tuple, list)) else -1
-        except Exception:
-            in_index = -1
-        if (isinstance(in_index, int) and 0 <= in_index < len(devices)
-                and devices[in_index]["max_input_channels"] > 0
-                and LOOPBACK_MARKER not in devices[in_index]["name"]):
-            return _device_dict(in_index, devices[in_index])
+        default_in, _ = _default_io_indexes(sd)
+        hostapi_in = _hostapi_default_input_index(sd)
+        for in_index in (default_in, hostapi_in):
+            if in_index is None:
+                continue
+            chosen = _choose(in_index)
+            if chosen is not None:
+                return chosen
 
-        for i, dev in enumerate(devices):
-            if dev["max_input_channels"] > 0 and LOOPBACK_MARKER not in dev["name"]:
-                return _device_dict(i, dev)
+        for i, _dev in enumerate(devices):
+            chosen = _choose(i)
+            if chosen is not None:
+                return chosen
         logger.warning("No microphone input device found")
         return None
     except Exception:

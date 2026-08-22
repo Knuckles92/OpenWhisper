@@ -667,19 +667,27 @@ class UIController(QObject):
             )
 
     def ensure_meeting_platform_ack(self) -> bool:
-        """Require the unsupported-platform warning before Meeting Mode.
+        """Clear both platform gates before Meeting Mode opens or starts.
 
-        Windows returns immediately. On macOS/Linux the first call shows the
-        acknowledgement dialog; later calls reuse the persisted answer.
+        Windows returns immediately. Linux shows the unsupported-platform
+        acknowledgement on the first call and reuses the persisted answer
+        afterwards. macOS is supported but needs the Screen Recording grant,
+        so it is asked for here rather than discovered as a silent mic-only
+        recording.
 
         Returns:
             True when a meeting may start or the Meeting Mode tab may open.
         """
+        from ui_qt.dialogs.meeting_system_audio_dialog import (
+            ensure_meeting_system_audio_permission,
+        )
         from ui_qt.dialogs.meeting_unsupported_dialog import (
             acknowledge_unsupported_meeting_mode,
         )
 
         if not acknowledge_unsupported_meeting_mode(self.main_window):
+            return False
+        if not ensure_meeting_system_audio_permission(self.main_window):
             return False
         self.main_window.tabbed_content.unlock_meeting_tab()
         return True

@@ -1806,12 +1806,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Failed to open WASAPI loopback stream")
         if not loop_ok:
-            try:
-                from meeting.capture.soundcard_stream import SoundcardLoopbackSource
-                if SoundcardLoopbackSource.available():
-                    loop_ok = self._start_source(SoundcardLoopbackSource())
-            except Exception:
-                logger.exception("soundcard loopback fallback unavailable")
+            loop_ok = self._start_fallback_loopback()
         if not loop_ok:
             logger.warning("No loopback source available; meeting continues mic-only")
 
@@ -1832,6 +1827,31 @@ class MeetingEngine:
         self._update_capture_status(note or "")
         self._start_capture_watchdog()
         return note
+
+    def _start_fallback_loopback(self) -> bool:
+        """Open system audio through the best fallback for this OS.
+
+        Reached when no WASAPI ``[Loopback]`` *input* device could be opened,
+        which is always the case off Windows. ScreenCaptureKit is tried first
+        because it is the only macOS path; each backend's ``available()``
+        rules itself out elsewhere, so the order is a preference rather than a
+        platform switch.
+
+        Returns:
+            True when a loopback source is delivering audio; False degrades
+            the meeting to mic-only rather than failing it.
+        """
+        from meeting.capture.sck_stream import ScreenCaptureKitLoopbackSource
+        from meeting.capture.soundcard_stream import SoundcardLoopbackSource
+
+        for backend in (ScreenCaptureKitLoopbackSource, SoundcardLoopbackSource):
+            try:
+                if backend.available() and self._start_source(backend()):
+                    return True
+            except Exception:
+                logger.exception("%s loopback fallback unavailable",
+                                 backend.__name__)
+        return False
 
     def _start_source(self, source: Any) -> bool:
         """Start one capture source and verify it is really delivering audio.
@@ -2027,9 +2047,7 @@ class MeetingEngine:
                 )):
                     return True
             if channel == CHANNEL_LOOPBACK:
-                from meeting.capture.soundcard_stream import SoundcardLoopbackSource
-                if SoundcardLoopbackSource.available():
-                    return self._start_source(SoundcardLoopbackSource())
+                return self._start_fallback_loopback()
         except Exception:
             logger.exception("Could not restart %s capture", channel)
         return False

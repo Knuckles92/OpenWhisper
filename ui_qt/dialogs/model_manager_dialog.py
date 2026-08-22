@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QScrollArea,
+    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -107,6 +108,37 @@ def _display_name_for_backend(model_value: str) -> str:
     return config.MODEL_CHOICES[0]
 
 
+class _ModeTabBar(QTabBar):
+    """Segmented tab bar that spans its ``QTabWidget`` on every platform.
+
+    ``QTabWidget`` gives the bar ``min(sizeHint().width(), available)`` and then
+    places that inside the pane using the style's tab-bar alignment hint, which
+    macOS reports as centered. A bar narrower than the pane therefore floats in
+    the middle of the dialog while every other element is edge-aligned. Asking
+    for more width than any dialog can offer makes the bar take the full pane
+    width instead, so the tabs share the page content's left and right edges.
+    """
+
+    #: Wider than any usable dialog, so the layout always clamps to the pane.
+    _GREEDY_WIDTH = 10_000
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setExpanding(True)
+        self.setUsesScrollButtons(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The segments are free-standing pills, so the base line Qt draws
+        # across the strip (broken by the selected tab) has nothing to join.
+        self.setDrawBase(False)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._GREEDY_WIDTH, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        """Keep the greedy width out of the dialog's own minimum size."""
+        return QSize(0, super().minimumSizeHint().height())
+
+
 class _CompactStat(QWidget):
     def __init__(self, label: str, value: str, parent=None):
         super().__init__(parent)
@@ -129,6 +161,13 @@ class ModelManagerDialog(QDialog):
     DEFAULT_SIZE = QSize(900, 620)
     MINIMUM_SIZE = QSize(720, 480)
     COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
+
+    #: Width of the themed vertical scroll bar (``QScrollBar:vertical`` in
+    #: theme.qss). A scrolled page loses this much of its right edge, so pages
+    #: add it to their left margin, and widgets above a scrolled list keep it
+    #: free on the right, so everything shares one right edge.
+    SCROLLBAR_GUTTER = 12
+    PAGE_SIDE_MARGIN = 4
 
     # Re-emitted for the controller; the dialog never installs anything itself.
     component_install_requested = pyqtSignal(str)
@@ -285,9 +324,7 @@ class ModelManagerDialog(QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("modelManagerTabs")
-        self.tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
-        self.tabs.tabBar().setExpanding(True)
-        self.tabs.tabBar().setFixedWidth(750)
+        self.tabs.setTabBar(_ModeTabBar())
         self.tabs.setIconSize(QSize(20, 20))
         self.ondemand_tab = self._build_ondemand_tab()
         self.meeting_tab = self._build_meeting_tab()
@@ -340,7 +377,12 @@ class ModelManagerDialog(QDialog):
         content = QWidget()
         content.setObjectName(f"{object_name}Content")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 12, 8, 4)
+        layout.setContentsMargins(
+            self.PAGE_SIDE_MARGIN + self.SCROLLBAR_GUTTER,
+            12,
+            self.PAGE_SIDE_MARGIN,
+            4,
+        )
         layout.setSpacing(14)
         scroll.setWidget(content)
         tab_layout.addWidget(scroll)
@@ -380,6 +422,7 @@ class ModelManagerDialog(QDialog):
 
     def _labeled_combo(self, label: str, combo: QComboBox) -> QWidget:
         wrapper = QWidget()
+        wrapper.setObjectName("modelManagerFieldGroup")
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(4)
@@ -658,8 +701,19 @@ class ModelManagerDialog(QDialog):
         tab = QWidget()
         tab.setObjectName("modelManagerLibraryTab")
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 12, 4, 4)
+        layout.setContentsMargins(
+            self.PAGE_SIDE_MARGIN + self.SCROLLBAR_GUTTER,
+            12,
+            self.PAGE_SIDE_MARGIN,
+            4,
+        )
         layout.setSpacing(10)
+
+        # Only the model list scrolls, so everything above it keeps the list's
+        # scroll-bar width free on the right and shares its right edge.
+        head = QVBoxLayout()
+        head.setContentsMargins(0, 0, self.SCROLLBAR_GUTTER, 0)
+        head.setSpacing(10)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
@@ -680,13 +734,13 @@ class ModelManagerDialog(QDialog):
         )
         open_folder_btn.clicked.connect(self._on_open_cache_folder)
         header_row.addWidget(open_folder_btn)
-        layout.addLayout(header_row)
+        head.addLayout(header_row)
 
         cache_path = get_hf_cache_dir()
         cache_path_label = QLabel(f"Cache: {cache_path}")
         cache_path_label.setObjectName("modelManagerCachePath")
         cache_path_label.setToolTip(cache_path)
-        layout.addWidget(cache_path_label)
+        head.addWidget(cache_path_label)
 
         self.env_banner = QLabel(
             "Downloads are disabled by the HF_HUB_OFFLINE environment "
@@ -695,7 +749,7 @@ class ModelManagerDialog(QDialog):
         self.env_banner.setObjectName("modelManagerEnvBanner")
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
-        layout.addWidget(self.env_banner)
+        head.addWidget(self.env_banner)
 
         runtime_card, runtime_layout = self._make_mode_card(
             "Shared runtime",
@@ -722,9 +776,9 @@ class ModelManagerDialog(QDialog):
         runtime_row.addWidget(self._labeled_combo("Device", self.device_combo))
         runtime_row.addWidget(self._labeled_combo("Quant", self.compute_combo))
         runtime_layout.addLayout(runtime_row)
-        layout.addWidget(runtime_card)
+        head.addWidget(runtime_card)
 
-        layout.addLayout(self._build_components_section())
+        head.addLayout(self._build_components_section())
 
         stats_row = QHBoxLayout()
         stats_row.setSpacing(8)
@@ -736,7 +790,7 @@ class ModelManagerDialog(QDialog):
         stats_row.addWidget(divider)
         stats_row.addWidget(self.disk_stat)
         stats_row.addStretch()
-        layout.addLayout(stats_row)
+        head.addLayout(stats_row)
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
@@ -765,7 +819,8 @@ class ModelManagerDialog(QDialog):
         self.sort_combo.setToolTip("Sort model list")
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.sort_combo)
-        layout.addLayout(toolbar)
+        head.addLayout(toolbar)
+        layout.addLayout(head)
 
         self.library_scroll_area = QScrollArea()
         self.library_scroll_area.setObjectName("modelManagerLibraryScroll")

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QApplication, QFrame, QMessageBox
 
 from services.components import ComponentInfo, ComponentState
@@ -166,6 +166,45 @@ class TestModelRows(_DialogTestCase):
             self.app.processEvents()
 
             assert (dialog.width(), dialog.height()) == (740, 500)
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_tab_strip_spans_the_page_at_every_width(self):
+        """Styles that center the tab bar (macOS) must not float it mid-dialog."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            bar = dialog.tabs.tabBar()
+            for width in (720, 900, 1500):
+                dialog.resize(width, 620)
+                self.app.processEvents()
+
+                assert bar.width() == dialog.tabs.width()
+                last = bar.tabRect(bar.count() - 1)
+                assert abs(bar.width() - last.right()) <= 2
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_library_rows_share_the_right_edge_with_the_toolbar(self):
+        """The list's scroll bar must not pull its rows in past the filters."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            self.app.processEvents()
+
+            def right_edge(widget):
+                return widget.mapTo(
+                    dialog, QPoint(widget.width(), 0)
+                ).x()
+
+            assert dialog.library_scroll_area.verticalScrollBar().isVisible()
+            assert abs(
+                right_edge(dialog.rows["tiny"]) - right_edge(dialog.sort_combo)
+            ) <= 1
         finally:
             self.app.setStyleSheet(previous_stylesheet)
 

@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from meeting.platform import meeting_unsupported_os_name
+from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
 from ui_qt.widgets.cards import Card
@@ -42,12 +42,18 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
     )
     if platform.startswith("win"):
         hint = "System audio uses Windows WASAPI loopback when available."
+    elif platform == "darwin" and meeting_mode_supported(platform):
+        hint = (
+            "System audio uses macOS ScreenCaptureKit, which needs Screen "
+            "Recording permission. Without it, meetings capture microphone "
+            "audio only."
+        )
     else:
         os_name = meeting_unsupported_os_name(platform)
         hint = (
             f"{os_name} is not a supported Meeting Mode platform. "
-            "System-audio loopback requires Windows. Meetings here capture "
-            "microphone audio only and are unsupported."
+            "System-audio capture needs Windows or macOS 13+. Meetings here "
+            "capture microphone audio only and are unsupported."
         )
     return subtitle, hint
 

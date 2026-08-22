@@ -1,8 +1,9 @@
-"""First-time acknowledgement that Meeting Mode is unsupported off Windows.
+"""First-time acknowledgement that Meeting Mode is unsupported on this OS.
 
-Shown when a macOS or Linux user opens Meeting Mode (or starts a meeting
-from the tray / hotkey) before they have accepted the warning. Continue
-stays disabled until every explicit checkbox is ticked.
+Shown when a user on a platform with no system-audio path -- Linux, or a Mac
+too old for ScreenCaptureKit -- opens Meeting Mode or starts a meeting from
+the tray or a hotkey, before they have accepted the warning. Continue stays
+disabled until every explicit checkbox is ticked.
 """
 from __future__ import annotations
 
@@ -58,9 +59,9 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         layout.addWidget(title)
 
         body = QLabel(
-            "Meeting Mode v1 records microphone and system audio on Windows. "
-            f"{self.os_name} has no supported capture path. System audio will "
-            "not be captured, and a meeting here may fail or run "
+            "Meeting Mode records microphone and system audio on Windows and "
+            f"macOS 13+. {self.os_name} has no supported capture path. System "
+            "audio will not be captured, and a meeting here may fail or run "
             "microphone-only.\n\n"
             "This is unsupported. Check every box below if you still want "
             "to try it."

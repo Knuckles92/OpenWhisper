@@ -19,13 +19,28 @@ from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
 class TestMeetingPlatformPolicy(unittest.TestCase):
-    def test_only_windows_is_supported(self):
+    def test_windows_and_modern_macos_are_supported(self):
         self.assertTrue(meeting_mode_supported("win32"))
         self.assertTrue(meeting_mode_supported("win64"))
-        self.assertFalse(meeting_mode_supported("darwin"))
+        self.assertTrue(meeting_mode_supported("darwin"))
         self.assertFalse(meeting_mode_supported("linux"))
         self.assertFalse(meeting_mode_supported("linux2"))
         self.assertFalse(meeting_mode_supported("freebsd14"))
+
+    def test_macos_before_screencapturekit_audio_is_unsupported(self):
+        with patch("meeting.platform.platform_module.mac_ver",
+                   return_value=("12.7.1", ("", "", ""), "x86_64")):
+            self.assertFalse(meeting_mode_supported("darwin"))
+        with patch("meeting.platform.platform_module.mac_ver",
+                   return_value=("13.0", ("", "", ""), "arm64")):
+            self.assertTrue(meeting_mode_supported("darwin"))
+
+    def test_undetectable_macos_version_is_allowed(self):
+        # Refusing to open the tab is worse than letting ScreenCaptureKit
+        # rule itself out at capture time.
+        with patch("meeting.platform.platform_module.mac_ver",
+                   return_value=("", ("", "", ""), "")):
+            self.assertTrue(meeting_mode_supported("darwin"))
 
     def test_os_display_names(self):
         self.assertEqual(meeting_unsupported_os_name("darwin"), "macOS")

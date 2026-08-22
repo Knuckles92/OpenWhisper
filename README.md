@@ -33,9 +33,10 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** – Real-time transcription preview while recording
-- **Meeting Mode (Windows v1)** – Record microphone and system audio into a
-  durable, searchable meeting transcript; share a tokenized live dashboard,
-  review evidence-linked insights, play the recording, and export the result
+- **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio
+  into a durable, searchable meeting transcript; share a tokenized live
+  dashboard, review evidence-linked insights, play the recording, and export
+  the result
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
@@ -49,6 +50,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
+| Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Not available — meetings are microphone-only |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
@@ -200,8 +202,11 @@ Custom OpenAI-compatible text endpoints (LM Studio, vLLM, Ollama `/v1`, LiteLLM,
 macOS gates some features behind privacy permissions. Grant these to the app identity that is actually running OpenWhisper:
 
 - **Microphone** — needed to record audio (System Settings > Privacy & Security > Microphone). You'll be prompted on first recording.
+- **Screen & System Audio Recording** — needed for **Meeting Mode** to capture the other side of a call. macOS has no loopback input device, so system audio comes from a ScreenCaptureKit stream; only its audio is read and every video frame is discarded. Without this grant a meeting still runs, but records your microphone only, so you would be the only speaker in the transcript. OpenWhisper asks for it when you start a meeting.
 - **Accessibility** — needed only for **auto-paste** (the synthetic `Cmd+V` that inserts transcription into the focused app). Without it, transcriptions are still copied to the clipboard and you can paste manually. Global hotkeys work without Accessibility (Carbon `RegisterEventHotKey`).
 - **Input Monitoring** *(optional)* — may be required when **remapping hotkeys** in Settings > Hotkeys (the capture dialog uses a `pynput` listener). Normal hotkey use does not need this.
+
+To check the system-audio path independently of the app, run `.venv/bin/python scripts/probe_macos_loopback.py` with something playing. It reports the grant, verifies audio actually flows, and prints the captured level.
 
 For packaged builds, this should appear as the OpenWhisper app. For development launches from a virtualenv, use `scripts/openwhisper` or `ow`; on macOS the launcher runs through the framework `Python.app` so Accessibility has an app bundle it can select. If the list does not populate automatically, use the `+` button in Accessibility and add the app bundle shown in OpenWhisper's startup prompt, then fully quit and relaunch the app.
 

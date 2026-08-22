@@ -151,6 +151,7 @@ QLabel#headerLabel {
     color: #ffffff;
     font-weight: 700;
     font-size: 18px; /* Larger headers */
+    background-color: transparent;
 }
 
 QLabel#statusLabel {
@@ -174,6 +175,7 @@ QLabel#sectionLabel {
 QLabel#infoLabel {
     color: #8e8e93;
     font-size: 12px;
+    background-color: transparent;
 }
 
 /* Text input fields */
@@ -200,6 +202,15 @@ QWidget#modelManagerMeetingTab,
 QWidget#modelManagerOndemandTab,
 QWidget#modelManagerLibraryTab {
     background-color: #10161c;
+}
+
+/* Let the page surface show through the scroll area, its viewport, and the
+   scrolled content (the three-level selector Qt needs for the latter two).
+   Otherwise the default widget grey frames every card in a lighter inset. */
+#modelManagerDialog QScrollArea,
+#modelManagerDialog QScrollArea > QWidget,
+#modelManagerDialog QScrollArea > QWidget > QWidget {
+    background-color: transparent;
 }
 
 QFrame#modelManagerModeCard,
@@ -298,6 +309,12 @@ QTabWidget#modelManagerTabs::pane {
     top: -1px;
 }
 
+/* The strip around the segments is dialog surface, not widget grey. */
+QTabWidget#modelManagerTabs,
+#modelManagerTabs QTabBar {
+    background-color: transparent;
+}
+
 #modelManagerTabs QTabBar::tab {
     background-color: #141b22;
     color: #a8b1bd;
@@ -313,6 +330,11 @@ QTabWidget#modelManagerTabs::pane {
 #modelManagerTabs QTabBar::tab:first {
     border-top-left-radius: 11px;
     border-bottom-left-radius: 11px;
+}
+
+/* Segments share one divider instead of stacking two 1px borders. */
+#modelManagerTabs QTabBar::tab:!first {
+    margin-left: -1px;
 }
 
 #modelManagerTabs QTabBar::tab:last {
@@ -488,6 +510,11 @@ QLabel#textModelActiveSummary {
     border: none;
     font-size: 13px;
     font-weight: 600;
+}
+
+QWidget#modelManagerFieldGroup,
+QWidget#modelManagerStat {
+    background-color: transparent;
 }
 
 QLabel#textModelFieldLabel {
@@ -854,8 +881,14 @@ QTabBar::tab:hover {
     font-weight: 600;
 }
 
+/* Inset the strip from the dialog edge on styles that left-align it, in equal
+   amounts so the styles that center it (macOS) stay centered. */
 #settingsTabs QTabBar::tab:first {
     margin-left: 16px;
+}
+
+#settingsTabs QTabBar::tab:last {
+    margin-right: 16px;
 }
 
 #settingsTabs QTabBar::tab:selected {
