@@ -135,7 +135,52 @@ def _activate_downloadable_components() -> None:
         pass
 
 
+_QT_ICU_DLL_HANDLES = []
+
+
+def _register_qt_icu_directories() -> None:
+    """Make Qt able to resolve ``icuuc.dll`` before ``PyQt6`` is imported.
+
+    Qt 6.11's ``Qt6Core.dll`` imports ``icuuc.dll``, but the PyQt6 6.11
+    wheel does not ship ICU. Windows 10+ provides the libraries in
+    System32; a frozen onedir also keeps copies next to ``Qt6Core.dll``
+    when the installer build can collect them. Either path must be on
+    the Python 3.8+ DLL search list or a clean launch dies in the
+    Windows loader before Python starts.
+    """
+    if sys.platform != "win32":
+        return
+
+    roots = []
+    if getattr(sys, "frozen", False):
+        executable_root = Path(sys.executable).resolve().parent
+        meipass = Path(getattr(sys, "_MEIPASS", executable_root))
+        roots.extend((
+            meipass / "PyQt6" / "Qt6" / "bin",
+            executable_root / "_internal" / "PyQt6" / "Qt6" / "bin",
+        ))
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    roots.append(Path(system_root) / "System32")
+
+    existing = os.environ.get("PATH", "")
+    path_parts = existing.split(os.pathsep)
+    prepend = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        path = str(root)
+        try:
+            _QT_ICU_DLL_HANDLES.append(os.add_dll_directory(path))
+        except OSError:
+            continue
+        if path not in path_parts and path not in prepend:
+            prepend.append(path)
+    if prepend:
+        os.environ["PATH"] = os.pathsep.join(prepend) + os.pathsep + existing
+
+
 _register_cuda_dll_directories()
+_register_qt_icu_directories()
 _preload_cuda_libraries()
 _activate_downloadable_components()
 _patch_subprocess_for_windows()

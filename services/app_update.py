@@ -40,6 +40,14 @@ GITHUB_REPO: Final[str] = "Knuckles92/OpenWhisper"
 LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
+RELEASES_PAGE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}/releases"
+_RATE_LIMIT_STATUS: Final[str] = (
+    "Could not check for updates (GitHub rate limit)."
+)
+_RATE_LIMIT_MESSAGE: Final[str] = (
+    "GitHub rate-limited this update check. Try again later, or open "
+    f"{RELEASES_PAGE_URL}."
+)
 _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _NETWORK_TIMEOUT_S: Final[int] = 30
 _CHUNK_BYTES: Final[int] = 1 << 20
@@ -551,6 +559,14 @@ def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
     return urllib.request.urlopen(request, timeout=_NETWORK_TIMEOUT_S)
 
 
+def update_check_failure_status(error: str) -> str:
+    """Short status-bar copy for a failed automatic update check."""
+    text = (error or "").lower()
+    if "rate-limited" in text or "rate limit" in text:
+        return _RATE_LIMIT_STATUS
+    return "Could not check for updates."
+
+
 def _describe_network_error(exc: Exception) -> str:
     """Translate a urllib failure into something a user can act on."""
     import ssl
@@ -562,6 +578,8 @@ def _describe_network_error(exc: Exception) -> str:
             "traffic. Ask your IT team to allow api.github.com and github.com."
         )
     if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (403, 429):
+            return _RATE_LIMIT_MESSAGE
         return f"The update server returned an error ({exc.code} {exc.reason})."
     if isinstance(exc, urllib.error.URLError):
         return f"Could not reach the update server ({exc.reason})."

@@ -119,6 +119,17 @@ class TestAppUpdateDialog(_QtTestCase):
         )
         assert dialog.result_action == AppUpdateDialog.RESULT_PRIMARY
 
+    def test_failed_check_offers_releases_page(self):
+        dialog = AppUpdateDialog(
+            None, error="GitHub rate-limited this update check."
+        )
+        assert dialog.title_label.text() == "Could not check for updates"
+        assert "rate-limited" in dialog.body_label.text()
+        assert self._button(dialog, "updatePrimaryButton").text() == (
+            "Open releases page"
+        )
+        assert not self._button(dialog, "updatePrimaryButton").isHidden()
+
     def test_up_to_date_has_no_primary_and_does_not_skip(self):
         dialog = AppUpdateDialog(
             _result(status=UpdateStatus.UP_TO_DATE, version="2.1.1")

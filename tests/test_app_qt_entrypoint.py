@@ -73,6 +73,38 @@ def test_frozen_startup_reuses_cuda_dlls_from_an_older_bundle(
     assert str(bin_dir) in app_qt.os.environ["PATH"].split(app_qt.os.pathsep)
 
 
+def test_frozen_startup_registers_system32_for_qt_icu(tmp_path, monkeypatch):
+    import app_qt
+
+    system32 = tmp_path / "System32"
+    system32.mkdir()
+    qt_bin = tmp_path / "_internal" / "PyQt6" / "Qt6" / "bin"
+    qt_bin.mkdir(parents=True)
+
+    registered = []
+
+    def add_dll_directory(path):
+        registered.append(path)
+        return object()
+
+    monkeypatch.setattr(app_qt.sys, "platform", "win32")
+    monkeypatch.setattr(app_qt.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app_qt.sys, "_MEIPASS", str(tmp_path / "_internal"), raising=False)
+    monkeypatch.setattr(app_qt.sys, "executable", str(tmp_path / "OpenWhisper.exe"))
+    monkeypatch.setattr(app_qt.os, "add_dll_directory", add_dll_directory, raising=False)
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setenv("PATH", "C:\\Windows\\System32")
+    app_qt._QT_ICU_DLL_HANDLES.clear()
+
+    app_qt._register_qt_icu_directories()
+
+    assert str(qt_bin) in registered
+    assert str(system32) in registered
+    path_parts = app_qt.os.environ["PATH"].split(app_qt.os.pathsep)
+    assert str(qt_bin) in path_parts
+    assert str(system32) in path_parts
+
+
 def _linux_nvidia_tree(tmp_path, monkeypatch, *, libraries):
     """Stage a fake site-packages/nvidia tree and pretend we are on Linux."""
     import app_qt

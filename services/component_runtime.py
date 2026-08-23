@@ -56,17 +56,22 @@ def register_dll_directory(path: str) -> bool:
 
 
 def activate_component(component_id: str) -> Tuple[bool, str]:
-    """Put one installed component on the native search path.
+    """Put one installed component into use in this process.
 
-    Also usable mid-session, right after an install: the Windows loader
-    resolves DLL names fresh on every load attempt, so registering the
-    directory now makes the component work without restarting the app.
-    Never raises.
+    GPU Acceleration registers its ``bin`` directory on the Windows loader
+    path. Meeting-agent and speaker-id have no native ``bin`` tree — a
+    completed install is already usable, so activation succeeds without
+    ``os.add_dll_directory``. Also usable mid-session, right after an
+    install. Never raises.
 
     """
     try:
         from services.components import (
-            check_compatibility, component_dir, is_installed, read_manifest,
+            ComponentId,
+            check_compatibility,
+            component_dir,
+            is_installed,
+            read_manifest,
         )
 
         if not is_installed(component_id):
@@ -79,7 +84,10 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
             return False, reason
 
         bin_dir = os.path.join(component_dir(component_id), "bin")
-        if not register_dll_directory(bin_dir):
+        if os.path.isdir(bin_dir):
+            if not register_dll_directory(bin_dir):
+                return False, "Its library folder is missing."
+        elif component_id == ComponentId.GPU_ACCEL:
             return False, "Its library folder is missing."
 
         logger.info(

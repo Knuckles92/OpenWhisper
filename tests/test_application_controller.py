@@ -683,7 +683,8 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     database_module = types.ModuleType("services.database")
     database_module.db = types.SimpleNamespace(
-        close=lambda: db_state.__setitem__("closed", True)
+        close=lambda: db_state.__setitem__("closed", True),
+        ensure_initialized=lambda: None,
     )
 
     keyboard_module = types.ModuleType("keyboard")
@@ -1418,6 +1419,34 @@ class TestApplicationController:
         assert "Restart OpenWhisper" in message
         assert self.settings.all_settings["whisper_device"] == "cpu"
         assert reload_requests == []
+
+    def test_meeting_agent_install_does_not_ask_for_restart(self):
+        import threading
+
+        controller = self._create_controller()
+        with patch.object(
+            self.app_controller_module, "install_component", lambda *a, **k: None
+        ), patch.object(
+            self.app_controller_module, "activate_component", lambda cid: (True, "")
+        ):
+            controller._component_install_worker("meeting-agent", threading.Event())
+
+        component_id, success, message = (
+            controller.ui_controller.component_install_results[-1]
+        )
+        assert component_id == "meeting-agent"
+        assert success
+        assert "Restart" not in message
+
+    def test_auto_update_check_failure_sets_status(self):
+        controller = self._create_controller()
+        controller._on_update_check_finished(
+            None, "GitHub rate-limited this update check.", False
+        )
+        assert any("rate limit" in status.lower() for status in controller.ui_controller.statuses)
+        assert controller.ui_controller.update_checks[-1] == (
+            None, "GitHub rate-limited this update check.", False
+        )
 
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
         controller = self._create_controller()

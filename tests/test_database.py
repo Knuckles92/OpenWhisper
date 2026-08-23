@@ -454,5 +454,38 @@ class TestJsonMigration:
         finally:
             config.config.HISTORY_FILE = original_history
 
+class TestLazyDatabaseManager:
+    def test_concurrent_first_access_creates_schema_once(self, tmp_path, monkeypatch):
+        import threading
+
+        from services import database
+
+        db_path = str(tmp_path / "race.db")
+        monkeypatch.setattr(database.config, "DATABASE_FILE", db_path)
+        lazy = database._LazyDatabaseManager()
+        errors = []
+
+        def worker():
+            try:
+                with lazy.get_session() as session:
+                    from services.models import SchemaVersion
+
+                    assert session.query(SchemaVersion).count() >= 1
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        from sqlalchemy import inspect
+
+        assert "schema_version" in inspect(lazy.engine).get_table_names()
+        lazy.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

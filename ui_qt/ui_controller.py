@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from config import config
 from services.app_update import (
+    RELEASES_PAGE_URL,
     UpdateCheckResult,
     UpdateStatus,
     channel_label,
@@ -1111,13 +1112,15 @@ class UIController(QObject):
         self._update_dialog = dialog
         dialog.on_download_requested = self._on_update_download_requested
         dialog.exec()
-        if (
-            dialog.result_action == AppUpdateDialog.RESULT_PRIMARY
-            and result is not None
-            and result.release is not None
-            and not result.can_apply
-        ):
-            QDesktopServices.openUrl(QUrl(result.release.html_url))
+        if dialog.result_action == AppUpdateDialog.RESULT_PRIMARY:
+            if (
+                result is not None
+                and result.release is not None
+                and not result.can_apply
+            ):
+                QDesktopServices.openUrl(QUrl(result.release.html_url))
+            elif result is None:
+                QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
         if self._update_dialog is dialog and dialog.result_action != (
             AppUpdateDialog.RESULT_PRIMARY
         ):

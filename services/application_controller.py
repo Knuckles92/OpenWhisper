@@ -380,6 +380,10 @@ class ApplicationController(QObject):
         self.update_check_finished.emit(result, "", manual)
 
     def _on_update_check_finished(self, result, error: str, manual: bool) -> None:
+        if error and not manual:
+            from services.app_update import update_check_failure_status
+
+            self.status_update.emit(update_check_failure_status(error))
         handler = getattr(self.ui_controller, "on_update_check_finished", None)
         if handler:
             handler(result, error, manual)
@@ -427,7 +431,12 @@ class ApplicationController(QObject):
             if backend is not None and getattr(backend, "gpu_fallback_note", None):
                 self.gpu_fallback_detected.emit()
         # Meeting crash recovery: scan now that there is a UI to show the
-        # recovery dialog over.
+        # recovery dialog over. Initialize SQLite on this thread first so
+        # the two setup workers do not race create_all on a missing file.
+        try:
+            db.ensure_initialized()
+        except Exception:
+            logger.exception("Could not initialize the database")
         QTimer.singleShot(0, self.meeting_runtime.setup)
         # Defer the GitHub metadata check so HF consent / recovery win the
         # first modal slot, and so a recording or meeting can start first.

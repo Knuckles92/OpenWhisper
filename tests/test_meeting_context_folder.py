@@ -229,6 +229,8 @@ class TestPackaging:
         ).read_text(encoding="utf-8")
         for name in ("pypdf", "docx", "pptx", "openpyxl", "lxml"):
             assert name in spec
+        assert "_qt_icu_binaries" in spec
+        assert "icuuc.dll" in spec
         assert docx.__name__ == "docx"
         assert openpyxl.__name__ == "openpyxl"
         assert pptx.__name__ == "pptx"

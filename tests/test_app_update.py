@@ -10,6 +10,7 @@ from services import app_update
 from services.app_update import (
     AppUpdateError,
     InstallChannel,
+    RELEASES_PAGE_URL,
     ReleaseAsset,
     ReleaseInfo,
     UpdateStatus,
@@ -26,6 +27,7 @@ from services.app_update import (
     should_auto_check,
     should_auto_notify,
     source_update_hint,
+    update_check_failure_status,
 )
 from services.settings import SettingsKey, SettingsManager
 
@@ -263,6 +265,44 @@ class TestFetchLatestRelease:
         assert "github.com" in captured["url"]
         assert "fiorilabs" not in captured["url"]
         assert release.version == "2.1.1"
+
+
+class TestNetworkErrorCopy:
+    def test_http_403_is_rate_limit(self):
+        import urllib.error
+
+        exc = urllib.error.HTTPError(
+            app_update.LATEST_RELEASE_URL, 403, "Forbidden", hdrs=None, fp=None
+        )
+        message = app_update._describe_network_error(exc)
+        assert "rate-limited" in message.lower()
+        assert RELEASES_PAGE_URL in message
+
+    def test_http_429_is_rate_limit(self):
+        import urllib.error
+
+        exc = urllib.error.HTTPError(
+            app_update.LATEST_RELEASE_URL, 429, "Too Many Requests", hdrs=None, fp=None
+        )
+        assert "rate-limited" in app_update._describe_network_error(exc).lower()
+
+    def test_other_http_error_keeps_status_code(self):
+        import urllib.error
+
+        exc = urllib.error.HTTPError(
+            app_update.LATEST_RELEASE_URL, 500, "Server Error", hdrs=None, fp=None
+        )
+        message = app_update._describe_network_error(exc)
+        assert "500" in message
+        assert "rate-limited" not in message.lower()
+
+    def test_failure_status_distinguishes_rate_limit(self):
+        assert update_check_failure_status(
+            "GitHub rate-limited this update check."
+        ) == "Could not check for updates (GitHub rate limit)."
+        assert update_check_failure_status(
+            "Could not reach the update server."
+        ) == "Could not check for updates."
 
 
 class TestCheckForUpdate:

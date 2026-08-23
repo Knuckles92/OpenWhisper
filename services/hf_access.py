@@ -109,42 +109,34 @@ def is_model_cached(model_name: str) -> bool:
 
 
 def _progress_tqdm_class(progress_callback: Callable[[int, int], None]):
-    """Build a huggingface_hub-compatible tqdm class that reports bytes."""
+    """Build a huggingface_hub-compatible tqdm class that reports progress.
 
-    class _CallbackTqdm:
+    Must subclass real tqdm: ``snapshot_download`` / ``thread_map`` call
+    ``tqdm_class.get_lock()`` and iterate the bar. A duck-typed stub raises
+    ``AttributeError`` and an empty ``__iter__`` would skip every file.
+    """
+    from faster_whisper.utils import disabled_tqdm
+
+    class _CallbackTqdm(disabled_tqdm):
         def __init__(self, iterable=None, *args, **kwargs):
-            self.n = 0
-            self.total = kwargs.get("total") or 0
+            # huggingface_hub injects these; vanilla tqdm rejects them.
+            kwargs.pop("name", None)
+            kwargs.pop("lock_name", None)
+            super().__init__(iterable, *args, **kwargs)
             if progress_callback is not None:
-                progress_callback(0, int(self.total or 0))
+                progress_callback(int(self.n or 0), int(self.total or 0))
 
         def update(self, n=1):
-            self.n += n
+            # disabled_tqdm sets disable=True, so tqdm.update is a no-op.
+            increment = 0 if n is None else n
+            self.n = (self.n or 0) + increment
             if progress_callback is not None:
                 progress_callback(int(self.n), int(self.total or 0))
 
         def close(self):
+            super().close()
             if progress_callback is not None:
-                progress_callback(int(self.n), int(self.total or 0))
-
-        def set_description(self, *args, **kwargs):
-            return None
-
-        def set_postfix(self, *args, **kwargs):
-            return None
-
-        def refresh(self):
-            return None
-
-        def __iter__(self):
-            return iter(())
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            self.close()
-            return False
+                progress_callback(int(self.n or 0), int(self.total or 0))
 
     return _CallbackTqdm
 

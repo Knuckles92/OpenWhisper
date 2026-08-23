@@ -188,7 +188,7 @@ class AppUpdateDialog(QDialog):
 
     def _primary_label(self) -> str:
         if self._result is None:
-            return ""
+            return "Open releases page"
         if self._result.status != UpdateStatus.UPDATE_AVAILABLE:
             return ""
         if self._result.can_apply:

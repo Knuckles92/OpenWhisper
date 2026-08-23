@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import threading
 from contextlib import contextmanager
 from typing import List, Optional
 
@@ -417,18 +418,26 @@ class DatabaseManager:
 class _LazyDatabaseManager:
     def __init__(self) -> None:
         self._instance: Optional[DatabaseManager] = None
+        self._lock = threading.Lock()
 
     def _get_instance(self) -> DatabaseManager:
         if self._instance is None:
-            self._instance = DatabaseManager()
+            with self._lock:
+                if self._instance is None:
+                    self._instance = DatabaseManager()
         return self._instance
+
+    def ensure_initialized(self) -> None:
+        """Construct the manager on this thread before concurrent first use."""
+        self._get_instance()
 
     def __getattr__(self, name: str):
         return getattr(self._get_instance(), name)
 
     def close(self) -> None:
-        if self._instance is not None:
-            self._instance.close()
-            self._instance = None
+        with self._lock:
+            if self._instance is not None:
+                self._instance.close()
+                self._instance = None
 
 db = _LazyDatabaseManager()

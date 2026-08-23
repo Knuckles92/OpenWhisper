@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Whisper model downloads crashed on every new-user path** - Hugging Face's parallel ``snapshot_download`` calls ``tqdm_class.get_lock()``. The custom progress bar was a duck-typed stub, so Downloads of ``tiny`` / ``base`` died with ``_CallbackTqdm has no attribute get_lock``. The bar now subclasses faster-whisper's real tqdm and still reports bytes to the UI
+- **Meeting Intelligence Agent asked for a restart after a successful install** - Activation treated every component as a CUDA ``bin/`` tree. The Pi payload is a flat ``node.exe`` + ``bundle.cjs`` extract, so same-session enable logged ``Its library folder is missing`` and showed "Restart OpenWhisper to enable this component." Non-DLL components now activate from the completed install
+- **Qt ICU DLLs were not in the Windows installer** - ``Qt6Core`` 6.11 imports ``icuuc.dll`` but the PyQt6 6.11 wheel does not ship ICU, so a clean launch can die in the Windows loader before Python starts. The freeze copies the Windows system ICU next to Qt6Core when the wheel has none, the installer build fails if ``icuuc.dll`` is still missing, and startup registers that folder (and System32) on the DLL search path
+- **Meeting restore could fail with ``schema_version already exists``** - Two startup workers raced the lazy SQLite singleton on a missing database and both ran ``create_all``. First access is now locked, and the main thread initializes the database before those workers start
+- **Check for Updates was silent on a GitHub 403** - Unauthenticated ``/releases/latest`` is 60 requests per hour. A rate-limit response now explains the limit, offers Open releases page on a manual check, and writes a status line on an automatic check instead of swallowing the error
+
 ## [2.3.0] - 2026-08-23
 
 ### Added

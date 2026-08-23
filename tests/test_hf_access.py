@@ -59,6 +59,19 @@ class TestHelpers:
         assert events[0] == (0, 100)
         assert events[-1] == (100, 100)
 
+    def test_progress_tqdm_exposes_hub_lock_api(self):
+        """Older huggingface_hub thread_map calls get_lock / set_lock."""
+        tqdm_cls = _progress_tqdm_class(lambda *_: None)
+        lock = tqdm_cls.get_lock()
+        assert lock is not None
+        assert hasattr(lock, "acquire")
+        tqdm_cls.set_lock(lock)
+        assert tqdm_cls.get_lock() is lock
+
+    def test_progress_tqdm_iterates_the_wrapped_iterable(self):
+        tqdm_cls = _progress_tqdm_class(lambda *_: None)
+        assert list(tqdm_cls(iterable=["a", "b", "c"])) == ["a", "b", "c"]
+
     def test_download_model_files_forwards_progress_and_allow_patterns(self):
         captured = {}
 

@@ -11,6 +11,7 @@ antivirus false positives. Inno Setup packs the directory afterwards, so the
 user still downloads a single file.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -65,6 +66,43 @@ for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
+
+
+def _qt_icu_binaries():
+    """Collect the ICU DLLs ``Qt6Core`` imports as ``icuuc.dll``.
+
+    PyQt6 6.11 wheels omit these files even though Qt6Core's import table
+    names ``icuuc.dll``. Prefer copies already sitting in ``Qt6/bin``; if
+    the wheel has none, take the Windows 10+ system ICU so a frozen
+    onedir does not depend on a restricted DLL search path.
+    """
+    collected = []
+    try:
+        import PyQt6
+        qt_bin = Path(PyQt6.__file__).resolve().parent / "Qt6" / "bin"
+    except Exception:
+        return collected
+
+    names = ("icuuc.dll", "icuin.dll", "icudt.dll", "icu.dll")
+    found = {}
+    for name in names:
+        src = qt_bin / name
+        if src.is_file():
+            found[name] = src
+
+    if "icuuc.dll" not in found and sys.platform == "win32":
+        system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+        for name in names:
+            src = system32 / name
+            if name not in found and src.is_file():
+                found[name] = src
+
+    for name, src in found.items():
+        collected.append((str(src), "PyQt6/Qt6/bin"))
+    return collected
+
+
+binaries += _qt_icu_binaries()
 
 # Exclusions
 #

@@ -146,7 +146,10 @@ $RequiredAssets = @(
     '_internal\ctranslate2\ctranslate2.dll',
     '_internal\onnxruntime\capi\onnxruntime.dll',
     '_internal\PyQt6\Qt6\plugins\platforms\qwindows.dll',
-    '_internal\PyQt6\Qt6\bin\Qt6Svg.dll'
+    '_internal\PyQt6\Qt6\bin\Qt6Svg.dll',
+    # Qt 6.11 imports icuuc.dll; PyQt6 6.11 wheels omit it. The spec copies
+    # the Windows system ICU next to Qt6Core when the wheel has none.
+    '_internal\PyQt6\Qt6\bin\icuuc.dll'
 )
 foreach ($asset in $RequiredAssets) {
     if (-not (Test-Path (Join-Path $DistDir $asset))) {
