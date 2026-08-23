@@ -79,6 +79,7 @@ class UIController(QObject):
         self.on_meeting_resume: Optional[Callable] = None
         self.on_meeting_open_dashboard: Optional[Callable] = None
         self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
+        self.on_meeting_open_report: Optional[Callable] = None
         self.on_meeting_copy_guest_link: Optional[Callable] = None
         self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
         self.on_meeting_retry_insights: Optional[Callable] = None
@@ -133,6 +134,7 @@ class UIController(QObject):
             lambda: self.on_meeting_end and self.on_meeting_end()
         )
         meeting_tab.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
+        meeting_tab.open_report_requested.connect(self._on_meeting_open_report)
         meeting_tab.copy_guest_link_requested.connect(
             lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
         )
@@ -766,6 +768,10 @@ class UIController(QObject):
         if self.on_meeting_open_dashboard:
             self.on_meeting_open_dashboard()
 
+    def _on_meeting_open_report(self):
+        if self.on_meeting_open_report:
+            self.on_meeting_open_report()
+
     def _on_meeting_retry_insights(self):
         if self.on_meeting_retry_insights:
             self.on_meeting_retry_insights()
@@ -819,6 +825,13 @@ class UIController(QObject):
         tab_payload = dict(payload)
         tab_payload.setdefault("dashboard_available", has_dashboard)
         self.main_window.meeting_mode_tab.set_meeting_state(tab_payload)
+        if payload.get("active"):
+            self.main_window.history_sidebar.set_selected_past_meeting(None)
+        elif "meeting_id" in payload:
+            meeting_id = payload.get("meeting_id")
+            self.main_window.history_sidebar.set_selected_past_meeting(
+                str(meeting_id) if meeting_id else None
+            )
         if (
             payload.get("active") is False
             and str(payload.get("status") or "")

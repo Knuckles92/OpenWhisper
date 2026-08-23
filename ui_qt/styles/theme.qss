@@ -1490,12 +1490,24 @@ QLabel#meetingElapsedLabel {
     padding: 0 4px;
 }
 
+/* Start and End keep the accent colors their SuccessButton / DangerButton
+   classes imply; the meeting-specific object names replace the class ones. */
 QPushButton#meetingStartButton {
+    background-color: #30d158;
+    color: #ffffff;
     padding: 12px 28px;
     font-size: 15px;
     font-weight: 600;
     border-radius: 10px;
     min-width: 220px;
+}
+
+QPushButton#meetingStartButton:hover {
+    background-color: #28cd41;
+}
+
+QPushButton#meetingStartButton:pressed {
+    background-color: #1fb34a;
 }
 
 QPushButton#meetingPauseButton,
@@ -1507,9 +1519,24 @@ QPushButton#meetingGuestLinkButton {
 }
 
 QPushButton#meetingEndButton {
+    background-color: #ff453a;
+    color: #ffffff;
     padding: 8px 16px;
     font-size: 13px;
     border-radius: 8px;
+}
+
+QPushButton#meetingEndButton:hover {
+    background-color: #ff3b30;
+}
+
+QPushButton#meetingEndButton:pressed {
+    background-color: #d70015;
+}
+
+QPushButton#meetingEndButton:disabled {
+    background-color: #2c2c2e;
+    color: #636366;
 }
 
 QCheckBox#meetingCloudCheckbox {
@@ -1540,6 +1567,47 @@ QWidget#meetingFinalizationCard[finalizationTone="warning"] {
 QWidget#meetingFinalizationCard[finalizationTone="info"],
 QWidget#meetingFinalizationCard[finalizationTone="neutral"] {
     border: 1px solid #0a84ff;
+}
+
+QLabel#meetingFinalizationIdentityTitle {
+    color: #f5f5f7;
+    background-color: transparent;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#meetingFinalizationIdentityMeta {
+    color: #98989d;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+QLabel#meetingFinalizationIdentityPill {
+    color: #98989d;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#meetingFinalizationIdentityPill[pillTone="warning"] {
+    color: #ff9f0a;
+    background-color: rgba(255, 159, 10, 0.15);
+    border: 1px solid rgba(255, 159, 10, 0.35);
+}
+
+QLabel#meetingFinalizationIdentityPill[pillTone="success"] {
+    color: #30d158;
+    background-color: rgba(48, 209, 88, 0.15);
+    border: 1px solid rgba(48, 209, 88, 0.35);
+}
+
+QLabel#meetingFinalizationIdentityPill[pillTone="neutral"] {
+    color: #98989d;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 QLabel#meetingFinalizationTitle {
@@ -1629,12 +1697,90 @@ QProgressBar#meetingFinalizationProgress::chunk {
     border-radius: 3px;
 }
 
-QPushButton#meetingFinalizationRetryButton,
-QPushButton#meetingFinalizationDashboardButton {
-    padding: 8px 16px;
-    font-size: 13px;
+QFrame#meetingFinalizationDivider {
+    background-color: #3a3a3c;
+    border: none;
+    max-height: 1px;
+}
+
+QWidget#meetingFinalizationFooter,
+QWidget#meetingFinalizationLinksRow,
+QWidget#meetingFinalizationDecisionsRow {
+    background-color: transparent;
+}
+
+/* First footer tier: flat links that open or repeat something. */
+QPushButton[meetingFooterLink="true"] {
+    color: #0a84ff;
+    background-color: transparent;
+    border: none;
+    padding: 2px 0;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 0;
+    min-height: 0;
+}
+
+QPushButton[meetingFooterLink="true"]:hover {
+    color: #4aa8ff;
+    background-color: transparent;
+}
+
+QPushButton[meetingFooterLink="true"]:pressed {
+    color: #0062cc;
+    background-color: transparent;
+}
+
+QPushButton[meetingFooterLink="true"]:disabled {
+    color: #636366;
+    background-color: transparent;
+}
+
+/* Second footer tier: filled decisions, right-aligned. */
+QPushButton[meetingFooterDecision="true"] {
+    background-color: #3a3a3c;
+    color: #f5f5f7;
+    border: none;
     border-radius: 8px;
-    min-width: 140px;
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 0;
+    min-height: 0;
+}
+
+QPushButton[meetingFooterDecision="true"]:hover {
+    background-color: #48484a;
+}
+
+QPushButton[meetingFooterDecision="true"]:pressed {
+    background-color: #2c2c2e;
+}
+
+QPushButton#meetingFinalizationRetryButton {
+    background-color: #0a84ff;
+    color: #ffffff;
+}
+
+QPushButton#meetingFinalizationRetryButton:hover {
+    background-color: #339dff;
+}
+
+QPushButton#meetingFinalizationRetryButton:pressed {
+    background-color: #0062cc;
+}
+
+QPushButton#meetingFinalizationDoneButton {
+    background-color: #30d158;
+    color: #ffffff;
+}
+
+QPushButton#meetingFinalizationDoneButton:hover {
+    background-color: #28cd41;
+}
+
+QPushButton#meetingFinalizationDoneButton:pressed {
+    background-color: #1fb34a;
 }
 
 QPushButton#meetingFinalizationStepAction {

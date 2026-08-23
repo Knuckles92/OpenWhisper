@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, tzinfo
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 
 def utc_now_iso() -> str:
@@ -63,3 +63,38 @@ def seconds_since(value: Any) -> Optional[float]:
     return (
         datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
     ).total_seconds()
+
+
+def format_meeting_started_at(value: Any) -> str:
+    """Format a meeting start time for Qt history and leftover identity."""
+    started = as_local_time(value)
+    return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
+
+
+def format_meeting_duration(meeting: Dict[str, Any]) -> str:
+    """Format elapsed meeting time minus pause credit."""
+    elapsed = elapsed_seconds(
+        meeting.get("started_at"), meeting.get("ended_at")
+    )
+    if elapsed is None:
+        return ""
+    try:
+        seconds = max(
+            0,
+            int(elapsed)
+            - int(float(meeting.get("paused_total_s") or 0)),
+        )
+    except (TypeError, ValueError):
+        return ""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    if not hours and not minutes:
+        return f"{remaining_seconds} sec"
+    return f"{hours}h {minutes}m" if hours else f"{minutes} min"
+
+
+def format_meeting_identity_meta(meeting: Dict[str, Any]) -> str:
+    """Join start time and duration for the leftover identity line."""
+    started = format_meeting_started_at(meeting.get("started_at"))
+    duration = format_meeting_duration(meeting)
+    return f"{started} · {duration}" if duration else started

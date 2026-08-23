@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { ExportFormat, MeetingRow, MeetingStateDoc, SearchRow } from '../types';
 import type { Segment } from '../types';
@@ -31,6 +31,11 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const reportRef = useRef<HTMLDivElement | null>(null);
+  const focusReport = useMemo(
+    () => new URLSearchParams(location.search).get('view') === 'report',
+    [],
+  );
 
   const loadMeetings = useCallback(async () => {
     setLoading(true);
@@ -112,6 +117,11 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   useEffect(() => {
     if (selected) setRenameDraft(String(selected.title ?? ''));
   }, [selected]);
+
+  useEffect(() => {
+    if (!focusReport || !detail || !reportRef.current) return;
+    reportRef.current.scrollIntoView({ block: 'start' });
+  }, [focusReport, detail, selectedId]);
 
   const renameMeeting = async () => {
     if (!selectedId) return;
@@ -379,14 +389,16 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     Loading…
                   </p>
                 ) : (
-                  <ReportTabs
-                    state={detail}
-                    segments={detailSegments}
-                    meeting={selected}
-                    onEvidenceClick={handleEvidenceClick}
-                    onSeek={seekTo}
-                    transcriptComplete={transcriptComplete}
-                  />
+                  <div ref={reportRef} id="history-report">
+                    <ReportTabs
+                      state={detail}
+                      segments={detailSegments}
+                      meeting={selected}
+                      onEvidenceClick={handleEvidenceClick}
+                      onSeek={seekTo}
+                      transcriptComplete={transcriptComplete}
+                    />
+                  </div>
                 )}
 
                 <section className="panel no-print" style={{ marginTop: 16 }}>

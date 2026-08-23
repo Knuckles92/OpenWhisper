@@ -5,9 +5,11 @@ from datetime import datetime, timedelta
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
-from meeting.state.schema import FinalizationState, MeetingState
+from meeting.state.schema import FinalizationState, MeetingState, TopicState
 from ui_qt.widgets.past_meetings_panel import (
     PastMeetingItem,
     PastMeetingsPanel,
@@ -62,8 +64,10 @@ def test_panel_filters_live_sessions_and_emits_selected_meeting():
     assert [card.meeting_id for card in cards] == ["m_done"]
     assert cards[0].title_label.text() == "Planning review"
     assert "40 min" in cards[0].detail_label.text()
-    cards[0].open_button.click()
+    assert cards[0].findChild(QPushButton, "pastMeetingOpenButton") is None
+    QTest.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     assert selected == ["m_done"]
+    assert cards[0].property("selected") is True
 
     panel.deleteLater()
     app.processEvents()
@@ -135,6 +139,27 @@ def test_failed_and_empty_meetings_are_labeled_honestly():
     assert card.content_label.text() == "Meeting failed to start"
     assert "Failed" in card.detail_label.text()
     assert card.insights_pill.text() == "Failed start"
+
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_untitled_row_shows_topic_as_title():
+    app = QApplication.instance() or QApplication([])
+    row = _meeting("m_topic", title="")
+    state = MeetingState(
+        meeting_id="m_topic",
+        title="",
+        topic=TopicState(current="Quarterly roadmap"),
+    )
+    row["state_json"] = json.dumps(state.to_dict())
+    panel = PastMeetingsPanel(meeting_provider=lambda: [row])
+
+    panel.refresh()
+    card = panel.findChild(PastMeetingItem)
+
+    assert card is not None
+    assert card.title_label.text() == "Quarterly roadmap"
 
     panel.deleteLater()
     app.processEvents()

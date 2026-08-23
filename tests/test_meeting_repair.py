@@ -7,7 +7,8 @@ from meeting.state.repair import (
     build_topic_backfill_ops,
     repair_meeting_state,
 )
-from meeting.state.schema import MeetingState
+from meeting.content import build_untitled_title_ops
+from meeting.state.schema import MeetingState, TopicState
 from meeting.state.store import MeetingStateStore
 
 
@@ -143,6 +144,44 @@ def test_repair_meeting_state_applies_through_store():
     assert timeline[0]["data"]["start_s"] == 3.0
     assert timeline[0]["author_type"] == "system"
     assert "Ship Friday" in snap["rolling_summary"]
+    assert snap["title"] == ""
+
+
+def test_build_untitled_title_ops_copies_topic_when_blank():
+    assert build_untitled_title_ops({
+        "title": "",
+        "topic": {"current": "Q3 roadmap and hiring"},
+    }) == [{"op": "set_title", "text": "Q3 roadmap and hiring"}]
+    assert build_untitled_title_ops({
+        "title": "Planning sync",
+        "topic": {"current": "Q3 roadmap"},
+    }) == []
+
+
+def test_repair_copies_topic_into_blank_title_when_ended():
+    state = MeetingState(
+        meeting_id="m_named",
+        status="ended",
+        title="",
+        topic=TopicState(current="Q3 roadmap"),
+    )
+    store = MeetingStateStore(state)
+    applied = repair_meeting_state(store, [])
+    assert applied == 1
+    assert store.snapshot()["title"] == "Q3 roadmap"
+
+
+def test_repair_does_not_overwrite_human_title():
+    state = MeetingState(
+        meeting_id="m_named",
+        status="ended",
+        title="Planning sync",
+        topic=TopicState(current="Q3 roadmap"),
+    )
+    store = MeetingStateStore(state)
+    applied = repair_meeting_state(store, [])
+    assert applied == 0
+    assert store.snapshot()["title"] == "Planning sync"
 
 
 def test_build_keypoint_coverage_promotes_uncovered_timeline_beats():

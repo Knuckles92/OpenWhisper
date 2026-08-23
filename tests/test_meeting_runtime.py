@@ -640,6 +640,69 @@ def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
     assert refreshed == [True]
 
 
+def test_show_past_meeting_hydrates_without_opening_browser(runtime, monkeypatch):
+    rt, controller = runtime
+    states = []
+    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    meeting = _ended_meeting("m_saved", deferred=True)
+    meeting["title"] = ""
+    meeting["started_at"] = "2025-01-02T09:30:00"
+    meeting["ended_at"] = "2025-01-02T10:12:00"
+    meeting["paused_total_s"] = 120
+    fake_repo = MagicMock()
+    fake_repo.get_meeting.return_value = meeting
+    fake_repo.persist_state.side_effect = lambda *args, **kwargs: None
+    rt._repo = fake_repo
+    opened = []
+    monkeypatch.setattr(
+        "services.runtime.meeting.webbrowser.open",
+        lambda url: opened.append(url),
+    )
+
+    rt.show_past_meeting("m_saved")
+
+    assert opened == []
+    assert rt._card_meeting_id == "m_saved"
+    assert states[-1]["meeting_id"] == "m_saved"
+    assert states[-1]["display_title"]
+    assert states[-1]["started_at"] == "2025-01-02T09:30:00"
+
+
+def test_open_report_targets_history_report_view(runtime, monkeypatch):
+    rt, _controller = runtime
+    called = []
+
+    def fake_open(meeting_id, *, view=""):
+        called.append((meeting_id, view))
+
+    rt._card_meeting_id = "m_done"
+    monkeypatch.setattr(rt, "open_past_meeting", fake_open)
+
+    rt.open_report()
+
+    assert called == [("m_done", "report")]
+
+
+def test_show_past_meeting_refuses_while_live(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.meeting_active = True
+    fake_repo = MagicMock()
+    rt._repo = fake_repo
+    opened = []
+    monkeypatch.setattr(
+        "services.runtime.meeting.webbrowser.open",
+        lambda url: opened.append(url),
+    )
+
+    rt.show_past_meeting("m_saved")
+
+    assert opened == []
+    fake_repo.get_meeting.assert_not_called()
+    assert statuses == ["Finish the current meeting first."]
+
+
 def test_open_past_meeting_clears_deferral(runtime):
     rt, controller = runtime
     states = []

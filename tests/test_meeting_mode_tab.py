@@ -785,6 +785,60 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.finalization_done_button.click()
         self.assertEqual(deferred, [True])
 
+    def test_leftover_card_shows_identity_and_report_button(self):
+        """A selected past meeting shows title, time, and Open report."""
+        opened = []
+        self.tab.open_report_requested.connect(lambda: opened.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "meeting_id": "m_done",
+            "display_title": "Quarterly roadmap",
+            "started_at": "2025-01-02T09:30:00",
+            "ended_at": "2025-01-02T10:12:00",
+            "paused_total_s": 120,
+            "insights_pill": "Ready",
+            "insights_tone": "success",
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+            },
+        })
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.identity_box.isHidden())
+        self.assertEqual(self.tab.identity_title.text(), "Quarterly roadmap")
+        self.assertIn("Jan 02, 2025", self.tab.identity_meta.text())
+        self.assertIn("40 min", self.tab.identity_meta.text())
+        self.assertEqual(self.tab.identity_pill.text(), "Ready")
+        self.assertFalse(self.tab.finalization_report_button.isHidden())
+        self.assertTrue(self.tab.finalization_report_button.isEnabled())
+        self.tab.finalization_report_button.click()
+        self.assertEqual(opened, [True])
+
+    def test_empty_meeting_disables_open_report(self):
+        """Empty leftover meetings have no report to open."""
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "failed",
+            "display_title": "Failed meeting",
+            "finalization": {
+                "status": "completed",
+                "message": "Final cloud insights are ready.",
+                "content_summary": {
+                    "meeting_status": "failed",
+                    "is_empty": True,
+                    "has_audio": False,
+                    "has_transcript": False,
+                    "can_rerun_speakers": False,
+                },
+            },
+        })
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.finalization_report_button.isEnabled())
+        self.assertIn("No report", self.tab.finalization_report_button.toolTip())
+
 
 if __name__ == "__main__":
     unittest.main()

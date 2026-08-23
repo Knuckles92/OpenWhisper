@@ -589,6 +589,19 @@ def repair_meeting_state(store: Any, segments: List[Dict[str, Any]]) -> int:
         + build_topic_backfill_ops(snapshot, segments),
         "summary/topic",
     )
+    # Copy topic into a blank title only after the meeting is terminal so
+    # the immediate end-of-capture repair does not lock in a live draft.
+    try:
+        snapshot = store.snapshot()
+    except Exception:
+        logger.exception("State repair could not re-snapshot after topic")
+        return applied
+    if str(snapshot.get("status") or "") in {
+        "ended", "needs_recovery", "failed",
+    }:
+        from meeting.content import build_untitled_title_ops
+
+        _apply(build_untitled_title_ops(snapshot), "title")
     if applied:
         logger.info("State repair applied %d op(s)", applied)
     return applied

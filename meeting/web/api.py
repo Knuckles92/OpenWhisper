@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config
-from meeting.content import summarize_meeting_content
+from meeting.content import meeting_display_title, summarize_meeting_content
 from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
@@ -81,26 +81,6 @@ def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
         raise HTTPException(status_code=400, detail="invalid transcript cursor") from exc
 
 
-def _meeting_display_title(meeting: Dict[str, Any]) -> str:
-    """Return the best persisted label available for a history row."""
-    title = str(meeting.get("title") or "").strip()
-    if title:
-        return title
-    try:
-        state = json.loads(meeting.get("state_json") or "{}")
-    except (TypeError, ValueError):
-        return ""
-    if not isinstance(state, dict):
-        return ""
-    state_title = str(state.get("title") or "").strip()
-    if state_title:
-        return state_title
-    topic = state.get("topic")
-    if isinstance(topic, dict):
-        return str(topic.get("current") or "").strip()
-    return ""
-
-
 def _public_meeting(
     meeting: Optional[Dict[str, Any]],
     repository: Optional[Any] = None,
@@ -109,7 +89,7 @@ def _public_meeting(
     if not meeting:
         return {}
     public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
-    public["display_title"] = _meeting_display_title(meeting)
+    public["display_title"] = meeting_display_title(meeting)
     public.update(compact_finalization_list_fields(meeting))
     if repository is not None:
         summary = summarize_meeting_content(

@@ -215,3 +215,41 @@ def test_history_target_preserves_existing_query_and_capability_path():
         "http://127.0.0.1:9000/m/secret-token"
         "?source=qt&history=m_review%2Fone"
     )
+
+
+def test_history_target_can_focus_report_view():
+    from services.runtime.meeting import _with_history_target
+
+    url = _with_history_target(
+        "http://127.0.0.1:9000/m/secret-token?source=qt",
+        "m_review/one",
+        view="report",
+    )
+
+    assert url == (
+        "http://127.0.0.1:9000/m/secret-token"
+        "?source=qt&history=m_review%2Fone&view=report"
+    )
+
+
+def test_runtime_opens_report_view_on_history_url():
+    from services.runtime.meeting import MeetingRuntime
+
+    controller = type("Controller", (), {
+        "meeting_status_update": FakeSignal(),
+        "meeting_error": FakeSignal(),
+        "meeting_state_changed": FakeSignal(),
+    })()
+    runtime = MeetingRuntime(controller)
+    runtime._repo = type("Repository", (), {
+        "get_meeting": lambda self, meeting_id: {"id": meeting_id},
+    })()
+    runtime._host_url = "http://127.0.0.1:9000/m/host-token"
+
+    with patch("services.runtime.meeting.webbrowser.open") as browser_open:
+        runtime._open_past_meeting_worker("m_selected", "report")
+
+    browser_open.assert_called_once_with(
+        "http://127.0.0.1:9000/m/host-token?history=m_selected&view=report"
+    )
+    assert controller.meeting_status_update.values == ["Opening meeting report"]

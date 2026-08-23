@@ -330,9 +330,24 @@ class MeetingEngine:
                 # Ephemeral unlock/warn only — do not claim durable success.
                 self._emit_ephemeral_finalization(finalization)
             return False
+        if terminal:
+            self._adopt_untitled_title_from_topic()
         if emit:
             self._emit_status()
         return True
+
+    def _adopt_untitled_title_from_topic(self) -> None:
+        """Copy topic.current into title when the host never named the meeting."""
+        if self.store is None:
+            return
+        try:
+            from meeting.content import build_untitled_title_ops
+
+            ops = build_untitled_title_ops(self.store.snapshot())
+            if ops:
+                self.store.apply("system", "title_from_topic", ops)
+        except Exception:
+            logger.exception("Could not adopt untitled meeting title from topic")
 
     def _emit_ephemeral_finalization(self, finalization: Any) -> None:
         """Broadcast a non-persisted finalization override for UI unlock.

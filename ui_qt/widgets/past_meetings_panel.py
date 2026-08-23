@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional
 
-from meeting.content import summarize_meeting_content
-from meeting.state.schema import finalization_from_meeting_row
-from meeting.time_utils import as_local_time, elapsed_seconds, parse_meeting_time
+from meeting.content import (
+    fallback_meeting_title,
+    meeting_insights_pill,
+    summarize_meeting_content,
+)
+from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -26,56 +28,15 @@ logger = logging.getLogger(__name__)
 
 _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
 
-
-def _parse_datetime(value: Any) -> Optional[datetime]:
-    """Parse one repository timestamp, including UTC ``Z`` values."""
-    return parse_meeting_time(value)
-
-
-def _format_started_at(value: Any) -> str:
-    started = as_local_time(value)
-    return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
-
-
-def _format_duration(meeting: Dict[str, Any]) -> str:
-    elapsed = elapsed_seconds(
-        meeting.get("started_at"), meeting.get("ended_at")
-    )
-    if elapsed is None:
-        return ""
-    try:
-        seconds = max(
-            0,
-            int(elapsed)
-            - int(float(meeting.get("paused_total_s") or 0)),
-        )
-    except (TypeError, ValueError):
-        return ""
-    hours, remainder = divmod(seconds, 3600)
-    minutes, remaining_seconds = divmod(remainder, 60)
-    if not hours and not minutes:
-        return f"{remaining_seconds} sec"
-    return f"{hours}h {minutes}m" if hours else f"{minutes} min"
-
-
-def _insights_pill(meeting: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Return the compact insights pill for a past-meeting row."""
-    if str(meeting.get("status") or "").lower() == "failed":
-        return ("Failed start", "warning")
-    if bool((meeting.get("content_summary") or {}).get("is_empty", False)):
-        return ("Empty", "warning")
-    try:
-        fin = finalization_from_meeting_row(meeting)
-    except Exception:
-        logger.debug("Could not derive insights pill for a past meeting", exc_info=True)
-        return None
-    return fin.history_pill(meeting_status=str(meeting.get("status") or "ended"))
+# Test-facing aliases for the shared formatters.
+_format_started_at = format_meeting_started_at
+_format_duration = format_meeting_duration
 
 
 class PastMeetingItem(QFrame):
     """Compact card for one persisted meeting session."""
 
-    open_requested = pyqtSignal(str)
+    meeting_selected = pyqtSignal(str)
 
     def __init__(self, meeting: Dict[str, Any], parent=None):
         super().__init__(parent)
@@ -83,25 +44,26 @@ class PastMeetingItem(QFrame):
         self.meeting_id = str(meeting.get("id") or "")
         self.setObjectName("pastMeetingItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setProperty("selected", False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(7)
 
-        status = str(meeting.get("status") or "").lower()
-        title = str(meeting.get("title") or "").strip()
-        if not title:
-            title = "Failed meeting" if status == "failed" else "Untitled meeting"
+        title = fallback_meeting_title(meeting)
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("pastMeetingTitle")
         self.title_label.setWordWrap(True)
         self.title_label.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         layout.addWidget(self.title_label)
 
-        self.date_label = QLabel(_format_started_at(meeting.get("started_at")), self)
+        self.date_label = QLabel(
+            format_meeting_started_at(meeting.get("started_at")), self
+        )
         self.date_label.setObjectName("pastMeetingMeta")
         layout.addWidget(self.date_label)
 
+        status = str(meeting.get("status") or "").lower()
         content = dict(meeting.get("content_summary") or {})
         content_note = ""
         if status == "failed":
@@ -122,15 +84,18 @@ class PastMeetingItem(QFrame):
         footer.setContentsMargins(0, 2, 0, 0)
         footer.setSpacing(8)
 
-        duration = _format_duration(meeting)
+        duration = format_meeting_duration(meeting)
         if status not in {"", "ended"}:
-            lifecycle = "Failed" if status == "failed" else status.replace("_", " ").title()
+            lifecycle = (
+                "Failed" if status == "failed"
+                else status.replace("_", " ").title()
+            )
             duration = f"{duration} · {lifecycle}" if duration else lifecycle
         self.detail_label = QLabel(duration, self)
         self.detail_label.setObjectName("pastMeetingMeta")
         footer.addWidget(self.detail_label)
 
-        pill = _insights_pill(meeting)
+        pill = meeting_insights_pill(meeting)
         self.insights_pill = QLabel("", self)
         self.insights_pill.setObjectName("pastMeetingInsightsPill")
         self.insights_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -148,25 +113,25 @@ class PastMeetingItem(QFrame):
         else:
             self.insights_pill.hide()
         footer.addStretch()
-
-        self.open_button = QPushButton("Open", self)
-        self.open_button.setObjectName("pastMeetingOpenButton")
-        self.open_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.open_button.setToolTip("Load this meeting in the web dashboard")
-        self.open_button.clicked.connect(self._emit_open)
-        footer.addWidget(self.open_button)
         layout.addLayout(footer)
 
-    def _emit_open(self) -> None:
+    def set_selected(self, selected: bool) -> None:
+        """Mark this tile as the meeting shown on the Meeting Mode tab."""
+        self.setProperty("selected", bool(selected))
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        self.update()
+
+    def _emit_selected(self) -> None:
         if self.meeting_id:
-            self.open_requested.emit(self.meeting_id)
+            self.meeting_selected.emit(self.meeting_id)
 
     def mousePressEvent(self, event) -> None:
-        """Open the meeting when the card itself is clicked."""
+        """Load the meeting in Qt when the card itself is clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.position().toPoint())
-            if not isinstance(child, QPushButton):
-                self._emit_open()
+            self._emit_selected()
         super().mousePressEvent(event)
 
 
@@ -184,10 +149,25 @@ class PastMeetingsPanel(QWidget):
         super().__init__(parent)
         self._meeting_provider = meeting_provider
         self._repository = None
+        self._selected_id: Optional[str] = None
         self.setObjectName("pastMeetingsContent")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._setup_ui()
         self._apply_style()
+
+    def set_selected_meeting_id(self, meeting_id: Optional[str]) -> None:
+        """Highlight the tile that matches the leftover card, if listed."""
+        self._selected_id = str(meeting_id) if meeting_id else None
+        self._apply_selection()
+
+    def _apply_selection(self) -> None:
+        for card in self.findChildren(PastMeetingItem):
+            card.set_selected(card.meeting_id == self._selected_id)
+
+    def _on_card_selected(self, meeting_id: str) -> None:
+        self._selected_id = meeting_id
+        self._apply_selection()
+        self.meeting_selected.emit(meeting_id)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -210,7 +190,7 @@ class PastMeetingsPanel(QWidget):
         header.addWidget(self.refresh_button)
         layout.addLayout(header)
 
-        hint = QLabel("Open a previous meeting in the web dashboard.")
+        hint = QLabel("Select a meeting to review it here.")
         hint.setObjectName("pastMeetingsHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -281,13 +261,14 @@ class PastMeetingsPanel(QWidget):
 
         for meeting in meetings[: self.MAX_MEETINGS]:
             card = PastMeetingItem(meeting, self.scroll_area.widget())
-            card.open_requested.connect(self.meeting_selected.emit)
+            card.meeting_selected.connect(self._on_card_selected)
             self.meetings_layout.addWidget(card)
 
         if len(meetings) > self.MAX_MEETINGS:
             self.meetings_layout.addWidget(
                 self._placeholder(f"Showing the newest {self.MAX_MEETINGS} meetings")
             )
+        self._apply_selection()
 
     @staticmethod
     def _placeholder(message: str) -> QLabel:
@@ -329,6 +310,10 @@ class PastMeetingsPanel(QWidget):
                 background-color: rgba(58, 58, 60, 0.6);
                 border: 1px solid rgba(10, 132, 255, 0.35);
             }
+            QFrame#pastMeetingItem[selected="true"] {
+                background-color: rgba(10, 132, 255, 0.16);
+                border: 1px solid rgba(10, 132, 255, 0.55);
+            }
             QLabel#pastMeetingTitle { color: #e5e5e7; }
             QLabel#pastMeetingMeta { color: #98989d; font-size: 11px; }
             QLabel#pastMeetingContentWarning {
@@ -358,19 +343,6 @@ class PastMeetingsPanel(QWidget):
                 color: #98989d;
                 background-color: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-            }
-            QPushButton#pastMeetingOpenButton {
-                background-color: rgba(10, 132, 255, 0.14);
-                color: #6fb1ff;
-                border: 1px solid rgba(10, 132, 255, 0.3);
-                border-radius: 7px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton#pastMeetingOpenButton:hover {
-                background-color: rgba(10, 132, 255, 0.26);
-                color: #ffffff;
             }
             QPushButton#pastMeetingsRefreshButton {
                 background-color: transparent;

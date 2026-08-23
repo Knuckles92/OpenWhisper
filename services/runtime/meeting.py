@@ -116,10 +116,12 @@ logger = logging.getLogger(__name__)
 SHUTDOWN_JOIN_TIMEOUT_S = 5.0
 
 
-def _with_history_target(url: str, meeting_id: str) -> str:
+def _with_history_target(url: str, meeting_id: str, *, view: str = "") -> str:
     parts = urlsplit(url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     query["history"] = meeting_id
+    if view:
+        query["view"] = view
     return urlunsplit(
         (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
     )
@@ -274,13 +276,41 @@ class MeetingRuntime:
             self._card_meeting_id = meeting_id
             self._finalization = payload
             self._finalizing = False
-        self.controller.meeting_state_changed.emit({
+        emit = {
             "active": False,
             "meeting_id": meeting_id,
             "status": str(meeting.get("status") or "ended"),
             "finalization": payload,
-        })
+        }
+        emit.update(self._meeting_identity_fields(meeting, payload))
+        self.controller.meeting_state_changed.emit(emit)
         return True
+
+    def _meeting_identity_fields(
+        self,
+        meeting: Dict[str, Any],
+        finalization: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Title, time, and insights pill for the leftover identity header."""
+        from meeting.content import fallback_meeting_title, meeting_insights_pill
+
+        row = dict(meeting)
+        if finalization is not None and "content_summary" in finalization:
+            row["content_summary"] = finalization.get("content_summary")
+        pill = meeting_insights_pill(row)
+        fields = {
+            "title": str(meeting.get("title") or "").strip(),
+            "display_title": fallback_meeting_title(meeting),
+            "started_at": meeting.get("started_at"),
+            "ended_at": meeting.get("ended_at"),
+            "paused_total_s": meeting.get("paused_total_s"),
+        }
+        if pill:
+            fields["insights_pill"], fields["insights_tone"] = pill
+        else:
+            fields["insights_pill"] = ""
+            fields["insights_tone"] = ""
+        return fields
 
     def _persist_card_deferred(self, meeting_id: str, deferred: bool) -> bool:
         from meeting.state.schema import FinalizationState, MeetingState
@@ -1007,21 +1037,33 @@ class MeetingRuntime:
                 logger.exception(
                     "Could not publish finalization on the live engine"
                 )
-        self.controller.meeting_state_changed.emit({
+        emit = {
             "active": False,
             "meeting_id": meeting_id,
             "finalization": payload,
-        })
+        }
+        try:
+            meeting = self._repository().get_meeting(meeting_id)
+        except Exception:
+            meeting = None
+        if meeting:
+            emit["status"] = str(meeting.get("status") or "ended")
+            emit.update(self._meeting_identity_fields(meeting, payload))
+        self.controller.meeting_state_changed.emit(emit)
 
     def open_dashboard(self) -> None:
         url = self._host_url
+        card_id = self._card_meeting_id
+        live_id = getattr(self._engine, "meeting_id", None) if self._engine else None
+        # A leftover from a different past meeting must not reuse the live URL
+        # without a history target — that would open the wrong session.
+        if not self.is_active and card_id and card_id != live_id:
+            self.open_past_meeting(card_id)
+            return
         if not url:
             # A retained finalization card may outlive its original server.
-            # Reuse the archive path so the tab button and Past Meetings Open
-            # have identical startup/dependency handling.
-            meeting_id = self._card_meeting_id
-            if meeting_id:
-                self.open_past_meeting(meeting_id)
+            if card_id:
+                self.open_past_meeting(card_id)
                 return
             self._report_dashboard_error(
                 "No meeting dashboard is available. Start a meeting or open "
@@ -1033,7 +1075,44 @@ class MeetingRuntime:
         logger.info(f"Opening meeting dashboard: {redact_meeting_url(url)}")
         webbrowser.open(url)
 
-    def open_past_meeting(self, meeting_id: str) -> None:
+    def show_past_meeting(self, meeting_id: str) -> None:
+        """Load one persisted meeting onto the Meeting Mode leftover card.
+
+        Does not start the archive server or open a browser. Refuse while a
+        live meeting is running so hydrate cannot emit ``active: False``.
+        """
+        target_id = str(meeting_id or "").strip()
+        if not target_id:
+            return
+        if self.is_active or self.controller.meeting_active:
+            self.controller.meeting_status_update.emit(
+                "Finish the current meeting first."
+            )
+            return
+        try:
+            meeting = self._repository().get_meeting(target_id)
+            if meeting is None:
+                self._report_dashboard_error("That meeting no longer exists")
+                return
+            self._hydrate_finalization_card(meeting, reveal=True)
+        except Exception as exc:
+            logger.error("Failed to show past meeting", exc_info=True)
+            self._report_dashboard_error(
+                f"Could not load the past meeting: {exc}"
+            )
+
+    def open_report(self) -> None:
+        """Open the leftover meeting's final report in the web dashboard."""
+        meeting_id = self._card_meeting_id
+        if not meeting_id:
+            self._report_dashboard_error(
+                "No meeting report is available. Select a meeting from "
+                "Past Meetings."
+            )
+            return
+        self.open_past_meeting(meeting_id, view="report")
+
+    def open_past_meeting(self, meeting_id: str, *, view: str = "") -> None:
         """Open one persisted meeting in the host web dashboard.
 
         Reuses the live/most-recent meeting server when available. After an
@@ -1042,6 +1121,7 @@ class MeetingRuntime:
 
         Args:
             meeting_id: Persisted meeting session id selected in the sidebar.
+            view: Optional dashboard view query (``report`` focuses report tabs).
         """
         target_id = str(meeting_id or "").strip()
         if not target_id:
@@ -1055,12 +1135,12 @@ class MeetingRuntime:
             self._archive_starting = True
         threading.Thread(
             target=self._open_past_meeting_worker,
-            args=(target_id,),
+            args=(target_id, view),
             name="meeting-history-dashboard",
             daemon=True,
         ).start()
 
-    def _open_past_meeting_worker(self, meeting_id: str) -> None:
+    def _open_past_meeting_worker(self, meeting_id: str, view: str = "") -> None:
         try:
             repository = self._repository()
             meeting = repository.get_meeting(meeting_id)
@@ -1114,12 +1194,15 @@ class MeetingRuntime:
                 )
                 return
 
-            history_url = _with_history_target(url, meeting_id)
+            history_url = _with_history_target(url, meeting_id, view=view)
             logger.info(
                 "Opening past meeting dashboard: %s",
                 redact_meeting_url(history_url),
             )
-            self.controller.meeting_status_update.emit("Opening past meeting")
+            self.controller.meeting_status_update.emit(
+                "Opening meeting report" if view == "report"
+                else "Opening past meeting"
+            )
             webbrowser.open(history_url)
         except Exception as exc:
             logger.error("Failed to open past meeting", exc_info=True)

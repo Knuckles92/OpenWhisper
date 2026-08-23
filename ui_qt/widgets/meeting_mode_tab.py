@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -27,8 +28,9 @@ from PyQt6.QtWidgets import (
 )
 
 from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
+from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SettingsKey, settings_manager
-from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton, SuccessButton
+from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -77,6 +79,7 @@ class MeetingModeTab(QWidget):
     resume_requested = pyqtSignal()
     end_requested = pyqtSignal()
     open_dashboard_requested = pyqtSignal()
+    open_report_requested = pyqtSignal()
     copy_guest_link_requested = pyqtSignal()
     cloud_toggled = pyqtSignal(bool)
     retry_insights_requested = pyqtSignal()
@@ -98,6 +101,7 @@ class MeetingModeTab(QWidget):
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
         self._finalization: Optional[Dict[str, Any]] = None
+        self._identity: Dict[str, Any] = {}
         self._meeting_id: Optional[str] = None
         self._has_dashboard = False
         self._can_rerun_speakers = False
@@ -128,6 +132,53 @@ class MeetingModeTab(QWidget):
             widget.sizePolicy().horizontalPolicy(),
             QSizePolicy.Policy.Minimum,
         )
+
+    @staticmethod
+    def _link_button(text: str, object_name: str, tooltip: str = "") -> QPushButton:
+        """Build a flat text action for the finalization footer's first tier.
+
+        Args:
+            text: Button label.
+            object_name: QSS object name.
+            tooltip: Optional hover text.
+
+        Returns:
+            A borderless button that reads as a link, not a filled control.
+        """
+        button = QPushButton(text)
+        button.setObjectName(object_name)
+        button.setProperty("meetingFooterLink", True)
+        button.setFlat(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if tooltip:
+            button.setToolTip(tooltip)
+        return button
+
+    @staticmethod
+    def _decision_button(
+        text: str, object_name: str, tooltip: str = ""
+    ) -> QPushButton:
+        """Build a filled action for the finalization footer's second tier.
+
+        Args:
+            text: Button label.
+            object_name: QSS object name; the theme gives the retry, start-new,
+                and done names their accent colors.
+            tooltip: Optional hover text.
+
+        Returns:
+            A hidden button sized to its label, for the right-aligned row.
+        """
+        button = QPushButton(text)
+        button.setObjectName(object_name)
+        button.setProperty("meetingFooterDecision", True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if tooltip:
+            button.setToolTip(tooltip)
+        button.hide()
+        return button
 
     def _setup_ui(self):
         """Build the full-tab layout."""
@@ -295,6 +346,34 @@ class MeetingModeTab(QWidget):
         self._keep_natural_height(self.finalization_card)
         self.finalization_card.setProperty("finalizationTone", "neutral")
 
+        self.identity_box = QWidget()
+        self.identity_box.setObjectName("meetingFinalizationIdentity")
+        identity_layout = QVBoxLayout(self.identity_box)
+        identity_layout.setContentsMargins(0, 0, 0, 8)
+        identity_layout.setSpacing(4)
+
+        self.identity_title = WrappedLabel("")
+        self.identity_title.setObjectName("meetingFinalizationIdentityTitle")
+        self.identity_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        identity_layout.addWidget(self.identity_title)
+
+        identity_meta_row = QHBoxLayout()
+        identity_meta_row.setContentsMargins(0, 0, 0, 0)
+        identity_meta_row.setSpacing(8)
+        self.identity_meta = QLabel("")
+        self.identity_meta.setObjectName("meetingFinalizationIdentityMeta")
+        self.identity_meta.setFont(QFont("Segoe UI", 11))
+        identity_meta_row.addWidget(self.identity_meta)
+        self.identity_pill = QLabel("")
+        self.identity_pill.setObjectName("meetingFinalizationIdentityPill")
+        self.identity_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.identity_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        identity_meta_row.addWidget(self.identity_pill)
+        identity_meta_row.addStretch()
+        identity_layout.addLayout(identity_meta_row)
+        self.identity_box.hide()
+        self.finalization_card.layout.addWidget(self.identity_box)
+
         # Header row with title and step badge
         fin_header_layout = QHBoxLayout()
         fin_header_layout.setContentsMargins(0, 0, 0, 0)
@@ -351,94 +430,121 @@ class MeetingModeTab(QWidget):
         self._keep_natural_height(self.finalization_steps_widget)
         self.finalization_card.layout.addWidget(self.finalization_steps_widget)
 
-        # Buttons row
-        fin_buttons_row = QHBoxLayout()
-        fin_buttons_row.setSpacing(10)
+        # Action footer: quiet links that open something, then the decisions
+        # that dismiss or repeat work. Two tiers keep five possible actions
+        # from reading as one undifferentiated strip of buttons.
+        self.finalization_footer = QWidget()
+        self.finalization_footer.setObjectName("meetingFinalizationFooter")
+        footer_layout = QVBoxLayout(self.finalization_footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(10)
 
-        self.finalization_retry_button = PrimaryButton("Retry failed steps")
-        self.finalization_retry_button.setObjectName(
-            "meetingFinalizationRetryButton"
-        )
-        self.finalization_retry_button.clicked.connect(
-            self._on_retry_failed_clicked
-        )
-        self.finalization_retry_button.hide()
-        fin_buttons_row.addWidget(self.finalization_retry_button)
+        footer_divider = QFrame()
+        footer_divider.setObjectName("meetingFinalizationDivider")
+        footer_divider.setFrameShape(QFrame.Shape.HLine)
+        footer_divider.setFixedHeight(1)
+        footer_layout.addWidget(footer_divider)
 
-        self.finalization_retry_speakers_button = Button("Re-run speakers")
-        self.finalization_retry_speakers_button.setObjectName(
-            "meetingFinalizationRetrySpeakersButton"
+        self.finalization_links_row = QWidget()
+        self.finalization_links_row.setObjectName("meetingFinalizationLinksRow")
+        links_layout = QHBoxLayout(self.finalization_links_row)
+        links_layout.setContentsMargins(10, 0, 10, 0)
+        links_layout.setSpacing(18)
+
+        self.finalization_dashboard_button = self._link_button(
+            "Open dashboard",
+            "meetingFinalizationDashboardButton",
+            "Open this meeting in the web dashboard",
+        )
+        self.finalization_dashboard_button.clicked.connect(
+            self.open_dashboard_requested
+        )
+        links_layout.addWidget(self.finalization_dashboard_button)
+
+        self.finalization_report_button = self._link_button(
+            "Open report",
+            "meetingFinalizationReportButton",
+            "Open the final report in the web dashboard",
+        )
+        self.finalization_report_button.clicked.connect(
+            self.open_report_requested
+        )
+        links_layout.addWidget(self.finalization_report_button)
+
+        self.finalization_retry_speakers_button = self._link_button(
+            "Re-run speakers",
+            "meetingFinalizationRetrySpeakersButton",
         )
         self.finalization_retry_speakers_button.clicked.connect(
             self.retry_speakers_requested.emit
         )
         self.finalization_retry_speakers_button.hide()
-        fin_buttons_row.addWidget(self.finalization_retry_speakers_button)
-
-        self.finalization_dashboard_button = Button("Open dashboard")
-        self.finalization_dashboard_button.setObjectName(
-            "meetingFinalizationDashboardButton"
-        )
-        self.finalization_dashboard_button.clicked.connect(
-            self.open_dashboard_requested
-        )
-        fin_buttons_row.addWidget(self.finalization_dashboard_button)
-
-        self.finalization_done_button = SuccessButton("Done")
-        self.finalization_done_button.setObjectName(
-            "meetingFinalizationDoneButton"
-        )
-        self.finalization_done_button.setToolTip(
-            "This meeting is already in Past Meetings. Hide this card and "
-            "return to idle."
-        )
-        self.finalization_done_button.clicked.connect(
-            self.defer_insights_requested.emit
-        )
-        self.finalization_done_button.hide()
-        fin_buttons_row.addWidget(self.finalization_done_button)
-        self.finalization_card.layout.addLayout(fin_buttons_row)
+        links_layout.addWidget(self.finalization_retry_speakers_button)
+        links_layout.addStretch()
+        footer_layout.addWidget(self.finalization_links_row)
 
         self.finalization_keep_hint = WrappedLabel(
             "This meeting, transcript, and audio stay in Past Meetings. "
             "Nothing is deleted."
         )
         self.finalization_keep_hint.setObjectName("meetingFinalizationKeepHint")
-        self.finalization_keep_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.finalization_keep_hint.setFont(QFont("Segoe UI", 10))
         self.finalization_keep_hint.hide()
-        self.finalization_card.layout.addWidget(self.finalization_keep_hint)
+        footer_layout.addWidget(self.finalization_keep_hint)
 
-        keep_row = QHBoxLayout()
-        keep_row.setSpacing(10)
-
-        self.finalization_keep_later_button = Button("Keep for later")
-        self.finalization_keep_later_button.setObjectName(
-            "meetingFinalizationKeepLaterButton"
+        self.finalization_decisions_row = QWidget()
+        self.finalization_decisions_row.setObjectName(
+            "meetingFinalizationDecisionsRow"
         )
-        self.finalization_keep_later_button.setToolTip(
+        decisions_layout = QHBoxLayout(self.finalization_decisions_row)
+        decisions_layout.setContentsMargins(0, 0, 0, 0)
+        decisions_layout.setSpacing(10)
+        decisions_layout.addStretch()
+
+        self.finalization_keep_later_button = self._decision_button(
+            "Keep for later",
+            "meetingFinalizationKeepLaterButton",
             "Hide this card and return to idle. The meeting stays in Past "
-            "Meetings until you open it again."
+            "Meetings until you open it again.",
         )
         self.finalization_keep_later_button.clicked.connect(
             self.defer_insights_requested.emit
         )
-        self.finalization_keep_later_button.hide()
-        keep_row.addWidget(self.finalization_keep_later_button)
+        decisions_layout.addWidget(self.finalization_keep_later_button)
 
-        self.finalization_start_new_button = SuccessButton("Start new meeting")
-        self.finalization_start_new_button.setObjectName(
-            "meetingFinalizationStartNewButton"
-        )
-        self.finalization_start_new_button.setToolTip(
-            "Save this meeting in Past Meetings, then start a fresh session."
+        self.finalization_start_new_button = self._decision_button(
+            "Start new meeting",
+            "meetingFinalizationStartNewButton",
+            "Save this meeting in Past Meetings, then start a fresh session.",
         )
         self.finalization_start_new_button.clicked.connect(
             self._on_start_new_clicked
         )
-        self.finalization_start_new_button.hide()
-        keep_row.addWidget(self.finalization_start_new_button)
-        self.finalization_card.layout.addLayout(keep_row)
+        decisions_layout.addWidget(self.finalization_start_new_button)
+
+        self.finalization_retry_button = self._decision_button(
+            "Retry failed steps",
+            "meetingFinalizationRetryButton",
+            "Run every failed post-meeting step again.",
+        )
+        self.finalization_retry_button.clicked.connect(
+            self._on_retry_failed_clicked
+        )
+        decisions_layout.addWidget(self.finalization_retry_button)
+
+        self.finalization_done_button = self._decision_button(
+            "Done",
+            "meetingFinalizationDoneButton",
+            "This meeting is already in Past Meetings. Hide this card and "
+            "return to idle.",
+        )
+        self.finalization_done_button.clicked.connect(
+            self.defer_insights_requested.emit
+        )
+        decisions_layout.addWidget(self.finalization_done_button)
+
+        footer_layout.addWidget(self.finalization_decisions_row)
+        self.finalization_card.layout.addWidget(self.finalization_footer)
         content_layout.addWidget(self.finalization_card)
 
         content_layout.addStretch()
@@ -511,6 +617,7 @@ class MeetingModeTab(QWidget):
             # A new meeting start clears any previous finalization result.
             if status == "starting":
                 self._finalization = None
+                self._identity = {}
 
         if "dashboard_available" in payload:
             self._has_dashboard = bool(payload["dashboard_available"])
@@ -518,6 +625,15 @@ class MeetingModeTab(QWidget):
         if "meeting_id" in payload:
             meeting_id = payload.get("meeting_id")
             self._meeting_id = str(meeting_id) if meeting_id else None
+
+        identity_keys = (
+            "title", "display_title", "started_at", "ended_at",
+            "paused_total_s", "insights_pill", "insights_tone",
+        )
+        if any(key in payload for key in identity_keys):
+            for key in identity_keys:
+                if key in payload:
+                    self._identity[key] = payload.get(key)
 
         if "finalization" in payload:
             self._set_finalization(payload.get("finalization"))
@@ -592,6 +708,7 @@ class MeetingModeTab(QWidget):
         """
         if value is None:
             self._finalization = None
+            self._identity = {}
             return
         if not isinstance(value, dict):
             return
@@ -621,6 +738,7 @@ class MeetingModeTab(QWidget):
             self._starting = False
             # Starting a live session replaces any prior finalization result.
             self._finalization = None
+            self._identity = {}
             if self._running_since is None:
                 self._elapsed_base_s = 0.0
                 self._running_since = time.monotonic()
@@ -679,7 +797,10 @@ class MeetingModeTab(QWidget):
         self.guest_link_button.setEnabled(self._active and self._has_dashboard)
 
         if show_finalization and finalization is not None:
+            self._render_identity()
             self._render_finalization(finalization)
+        else:
+            self.identity_box.hide()
 
         dashboard_enabled = self._active or self._has_dashboard or show_finalization
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
@@ -687,8 +808,50 @@ class MeetingModeTab(QWidget):
             self._has_dashboard or self._active or show_finalization
         )
         self.finalization_dashboard_button.setVisible(dashboard_enabled)
+        self.finalization_report_button.setVisible(show_finalization)
+        self._sync_footer_rows()
 
         self.content_height_changed.emit()
+
+    def _sync_footer_rows(self) -> None:
+        """Collapse footer tiers that have no visible action left."""
+        def has_action(row: QWidget) -> bool:
+            return any(
+                not button.isHidden() for button in row.findChildren(QPushButton)
+            )
+
+        has_links = has_action(self.finalization_links_row)
+        has_decisions = has_action(self.finalization_decisions_row)
+        self.finalization_links_row.setVisible(has_links)
+        self.finalization_decisions_row.setVisible(has_decisions)
+        self.finalization_footer.setVisible(
+            has_links or has_decisions or not self.finalization_keep_hint.isHidden()
+        )
+
+    def _render_identity(self) -> None:
+        """Show title, date, duration, and insights pill on the leftover card."""
+        identity = self._identity
+        title = str(
+            identity.get("display_title") or identity.get("title") or ""
+        ).strip()
+        meta = format_meeting_identity_meta(identity) if identity else ""
+        if meta == "Unknown date" and not identity.get("started_at"):
+            meta = ""
+        pill_label = str(identity.get("insights_pill") or "").strip()
+        pill_tone = str(identity.get("insights_tone") or "")
+        has_identity = bool(title or meta or pill_label)
+        self.identity_box.setVisible(has_identity)
+        self.identity_title.setText(title)
+        self.identity_title.setVisible(bool(title))
+        self.identity_meta.setText(meta)
+        self.identity_meta.setVisible(bool(meta))
+        self.identity_pill.setText(pill_label)
+        self.identity_pill.setProperty("pillTone", pill_tone)
+        style = self.identity_pill.style()
+        if style is not None:
+            style.unpolish(self.identity_pill)
+            style.polish(self.identity_pill)
+        self.identity_pill.setVisible(bool(pill_label))
 
     def _render_finalization(self, finalization: Dict[str, Any]) -> None:
         """Update finalization card copy, tone, and step visibility.
@@ -708,6 +871,15 @@ class MeetingModeTab(QWidget):
         self._can_rerun_speakers = bool(
             content.get("can_rerun_speakers", False)
         )
+        no_report = empty_meeting or meeting_failed or status == "running"
+        self.finalization_report_button.setEnabled(not no_report)
+        if empty_meeting or meeting_failed:
+            report_tip = "No report for this meeting"
+        elif status == "running":
+            report_tip = "The final report is still being prepared"
+        else:
+            report_tip = "Open the final report in the web dashboard"
+        self.finalization_report_button.setToolTip(report_tip)
         if empty_meeting:
             message = (
                 "No audio or transcript was captured. The meeting failed "

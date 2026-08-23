@@ -474,6 +474,10 @@ class HistorySidebar(QWidget):
         )
         self.meetings_content_widget.hide()
 
+    def set_selected_past_meeting(self, meeting_id: str | None) -> None:
+        """Highlight the Past Meetings tile that matches the leftover card."""
+        self.meetings_content_widget.set_selected_meeting_id(meeting_id)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         geometry = (0, 0, self.EXPANDED_WIDTH, self.height())

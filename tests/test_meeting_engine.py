@@ -1240,6 +1240,24 @@ def test_engine_module_has_no_dead_recent_text_api():
 
     assert not hasattr(MeetingEngine, "get_recent_text")
 
+
+def test_terminal_finalization_adopts_topic_as_title(make_engine):
+    engine = make_engine(cloud_enabled=False)
+    engine.start()
+    engine.store.with_state(lambda state: setattr(state, "title", ""))
+    engine.store.apply("system", "seed", [
+        {"op": "set_topic", "text": "Q3 roadmap"},
+    ])
+    assert engine.store.snapshot()["title"] == ""
+
+    engine._set_finalization(
+        "completed",
+        "Final cloud insights are ready.",
+        emit=False,
+    )
+
+    assert engine.store.snapshot()["title"] == "Q3 roadmap"
+
 class TestDirectAgentCapabilities:
     def test_json_mode_retries_without_response_format(self):
         from unittest.mock import MagicMock
