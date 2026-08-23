@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QVBoxLayout,
 )
 
@@ -163,6 +164,17 @@ _ROW_STYLE = """
         color: #636366;
         border: 1px solid rgba(255, 255, 255, 0.06);
     }
+    QProgressBar#modelRowProgress {
+        background-color: rgba(255, 255, 255, 0.08);
+        border: none;
+        border-radius: 3px;
+        min-height: 6px;
+        max-height: 6px;
+    }
+    QProgressBar#modelRowProgress::chunk {
+        background-color: #0a84ff;
+        border-radius: 3px;
+    }
 """
 
 
@@ -221,7 +233,7 @@ class ModelRowWidget(QFrame):
         identity = QVBoxLayout()
         identity.setSpacing(2)
 
-        name_label = QLabel(self.model_name)
+        name_label = ElidingLabel(self.model_name)
         name_label.setObjectName("modelRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
@@ -283,6 +295,14 @@ class ModelRowWidget(QFrame):
             lambda: self.delete_clicked.emit(self.model_name)
         )
         layout.addWidget(self.delete_button)
+
+        # Overlay, not a layout child: a hidden QProgressBar still inflates
+        # the catalog column's minimum width past the Downloads viewport.
+        self.progress = QProgressBar(self)
+        self.progress.setObjectName("modelRowProgress")
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 0)
+        self.progress.hide()
 
     def _model_summary(self) -> str:
         language = "English only" if self.model_name.endswith(".en") else "Multilingual"
@@ -363,14 +383,17 @@ class ModelRowWidget(QFrame):
 
         if downloading:
             self._set_badge("Downloading…", "downloading")
-        elif queued:
-            self._set_badge("Queued", "queued")
-        elif is_active and cached:
-            self._set_badge("Active", "active")
-        elif cached:
-            self._set_badge("Downloaded", "downloaded")
+            self._show_progress()
         else:
-            self._set_badge("Not downloaded", "idle")
+            self._hide_progress()
+            if queued:
+                self._set_badge("Queued", "queued")
+            elif is_active and cached:
+                self._set_badge("Active", "active")
+            elif cached:
+                self._set_badge("Downloaded", "downloaded")
+            else:
+                self._set_badge("Not downloaded", "idle")
 
         self.select_checkbox.setVisible(not cached)
         self.select_checkbox.setEnabled(selection_enabled and not downloading)
@@ -394,6 +417,42 @@ class ModelRowWidget(QFrame):
         self.delete_button.setEnabled(not is_loaded and not downloading)
         self.delete_button.setToolTip(
             "In use — switch models first" if is_loaded else ""
+        )
+
+    def _show_progress(self) -> None:
+        self.progress.show()
+        self._place_progress()
+
+    def _hide_progress(self) -> None:
+        self.progress.hide()
+        self.progress.setValue(0)
+
+    def _place_progress(self) -> None:
+        if not self.progress.isVisible():
+            return
+        margins = self.layout().contentsMargins()
+        height = 6
+        self.progress.setGeometry(
+            margins.left(),
+            self.height() - margins.bottom() - height,
+            max(0, self.width() - margins.left() - margins.right()),
+            height,
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place_progress()
+
+    def set_progress(self, done: int, total: int) -> None:
+        """Update the in-row download bar with bytes or an indeterminate state."""
+        self._show_progress()
+        if total <= 0:
+            self.progress.setRange(0, 0)
+            return
+        self.progress.setRange(0, 100)
+        self.progress.setValue(int(done * 100 / total))
+        self.size_label.setText(
+            f"{format_size_bytes(done)} of {format_size_bytes(total)}"
         )
 
     def set_usage(self, text: str) -> None:

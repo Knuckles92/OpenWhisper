@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QCheckBox, QPushButton,
     QSlider, QFrame, QScrollArea, QTextEdit,
     QLineEdit, QListWidget, QStackedWidget, QSizePolicy,
-    QFileDialog,
+    QFileDialog, QFormLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -58,7 +58,7 @@ from services.text_llm import profile_display_name
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.widgets import (
-    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button,
+    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button, WrappedLabel,
 )
 
 logger = logging.getLogger(__name__)
@@ -218,26 +218,32 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.recording_retention_combo)
 
-        custom_count_layout = QHBoxLayout()
-        custom_count_layout.setSpacing(8)
         self.max_recordings_label = QLabel("Number to keep:")
-        custom_count_layout.addWidget(self.max_recordings_label)
-
         self.max_recordings_spinbox = NoWheelSpinBox()
         self.max_recordings_spinbox.setMinimum(1)
         self.max_recordings_spinbox.setMaximum(1000)
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
         self.max_recordings_spinbox.setMinimumHeight(36)
-        custom_count_layout.addWidget(self.max_recordings_spinbox)
-        custom_count_layout.addStretch()
-        layout.addLayout(custom_count_layout)
+        self.max_recordings_spinbox.setMinimumWidth(110)
+        retention_form = QFormLayout()
+        retention_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        retention_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        retention_form.setHorizontalSpacing(16)
+        retention_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
+        retention_form.addRow(self.max_recordings_label, self.max_recordings_spinbox)
+        layout.addLayout(retention_form)
 
-        retention_info = QLabel(
+        retention_info = WrappedLabel(
             "Older audio files are deleted automatically when the limit is exceeded. "
             "Transcription history text is kept separately."
         )
         retention_info.setObjectName("infoLabel")
-        retention_info.setWordWrap(True)
         layout.addWidget(retention_info)
 
         layout.addSpacing(24)
@@ -246,36 +252,45 @@ class SettingsDialog(QDialog):
         layout.addWidget(streaming_label)
 
         layout.addSpacing(8)
-        self.streaming_enabled_check = QCheckBox("Enable real-time transcription preview (while recording)")
+        self.streaming_enabled_check = QCheckBox(
+            "Enable real-time transcription preview (while recording)"
+        )
         self.streaming_enabled_check.toggled.connect(self._update_streaming_font_ui)
         layout.addWidget(self.streaming_enabled_check)
 
-        font_size_layout = QHBoxLayout()
-        font_size_layout.setSpacing(8)
         self.streaming_font_size_label = QLabel("Preview font size:")
-        font_size_layout.addWidget(self.streaming_font_size_label)
-
         self.streaming_font_size_spinbox = NoWheelSpinBox()
         self.streaming_font_size_spinbox.setMinimum(10)
         self.streaming_font_size_spinbox.setMaximum(48)
         self.streaming_font_size_spinbox.setSuffix(" pt")
         self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
         self.streaming_font_size_spinbox.setMinimumHeight(36)
-        font_size_layout.addWidget(self.streaming_font_size_spinbox)
-        font_size_layout.addStretch()
-        layout.addLayout(font_size_layout)
+        self.streaming_font_size_spinbox.setMinimumWidth(110)
+        font_form = QFormLayout()
+        font_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        font_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        font_form.setHorizontalSpacing(16)
+        font_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
+        font_form.addRow(
+            self.streaming_font_size_label, self.streaming_font_size_spinbox
+        )
+        layout.addLayout(font_form)
 
-        streaming_info = QLabel(
+        streaming_info = WrappedLabel(
             "Shows transcribed text as you speak on the near-cursor overlay using a dedicated "
             "tiny.en preview model. Requires Local Whisper backend. Final transcription still "
             "uses your selected model and normal auto-paste / clipboard settings."
         )
         streaming_info.setObjectName("infoLabel")
-        streaming_info.setWordWrap(True)
         layout.addWidget(streaming_info)
 
         self._update_streaming_font_ui()
-
         layout.addStretch()
         self._add_scrollable_tab(tab, "General")
 

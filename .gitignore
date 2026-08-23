@@ -65,6 +65,7 @@ sidecar/dist/
 .pi/
 .piview/
 .codex/
+.zcode/
 .shots/
 
 # Design mockups (local planning artifacts, not shipped)

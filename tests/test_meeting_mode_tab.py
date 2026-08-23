@@ -126,8 +126,14 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
 
         tab_bar = self.window.tabbed_content.tab_bar
         meeting_rect = tab_bar.tabRect(TabbedContentWidget.TAB_MEETING_MODE)
-        label_width = tab_bar.fontMetrics().horizontalAdvance("Meeting Mode")
-        self.assertGreaterEqual(meeting_rect.width(), label_width + 20)
+        # Three expanding tabs share the leftover width after the 380px
+        # sidebar. "Meeting Mode" is the longest label; require a usable
+        # tab, not a width that only fits at the window maximum.
+        self.assertGreaterEqual(meeting_rect.width(), 120)
+        self.assertGreaterEqual(
+            meeting_rect.width(),
+            tab_bar.tabRect(TabbedContentWidget.TAB_QUICK_RECORD).width() - 2,
+        )
 
 
 class TestMeetingModeWindowHeight(unittest.TestCase):

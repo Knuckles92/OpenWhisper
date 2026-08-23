@@ -7,8 +7,6 @@ import os
 import time
 from typing import TYPE_CHECKING, Optional
 
-import pyperclip
-
 from config import config
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
@@ -58,6 +56,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
+
 
 class TranscriptionRuntime:
     """Owns recording flow and transcription job orchestration."""
@@ -81,8 +81,13 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit("Recording...")
         else:
+            reason = getattr(
+                self.controller.recorder, "last_start_error", None
+            ) or "Could not open the audio stream"
+            logger.error("Failed to start recording: %s", reason)
+            self.controller.recording_state_changed.emit(False)
             self.controller.overlay_state_update.emit(OverlayState.NONE)
-            self.controller.status_update.emit("Failed to start recording")
+            self.controller.status_update.emit(f"Failed to start recording: {reason}")
 
     def stop_recording(self) -> None:
         """Stop audio recording and start transcription."""
@@ -135,6 +140,7 @@ class TranscriptionRuntime:
             self.controller.recorder.get_recording_duration()
         )
         self.controller._pending_file_size = file_size
+        self.controller._pending_source_name = "Quick Record"
 
         try:
             self._submit_transcription_job(config.RECORDED_AUDIO_FILE)
@@ -199,6 +205,7 @@ class TranscriptionRuntime:
 
         logger.info("Re-transcribing audio file: %s", audio_path)
         self.controller._pending_audio_path = None
+        self.controller._pending_source_name = os.path.basename(audio_path)
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
 
@@ -210,7 +217,9 @@ class TranscriptionRuntime:
             logger.error(f"Failed to start re-transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
 
-    def upload_audio_file(self, audio_path: str) -> None:
+    def upload_audio_file(
+        self, audio_path: str, duration_seconds: Optional[float] = None
+    ) -> None:
         """Transcribe an uploaded audio file."""
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
@@ -225,12 +234,13 @@ class TranscriptionRuntime:
 
         logger.info(f"Processing uploaded audio file: {audio_path}")
         self.controller._pending_audio_path = None
+        self.controller._pending_source_name = os.path.basename(audio_path)
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing uploaded file...")
 
         try:
             self.controller._pending_file_size = os.path.getsize(audio_path)
-            self.controller._pending_audio_duration = None
+            self.controller._pending_audio_duration = duration_seconds
             self._submit_transcription_job(audio_path)
         except Exception as exc:
             logger.error(f"Failed to process uploaded audio: {exc}")
@@ -351,8 +361,11 @@ class TranscriptionRuntime:
         raw_text: Optional[str] = None,
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
-        self.controller.ui_controller.set_transcript(transcript, raw=raw_text)
-        self.controller.ui_controller.set_status("Transcription complete!")
+        is_empty = not (transcript or "").strip()
+        display_text = transcript if not is_empty else EMPTY_ASR_MESSAGE
+        self.controller.ui_controller.set_transcript(
+            display_text, raw=raw_text
+        )
         self.controller.overlay_state_update.emit(OverlayState.NONE)
 
         transcription_time = None
@@ -366,6 +379,16 @@ class TranscriptionRuntime:
                 self.controller._pending_audio_duration or 0.0,
                 self.controller._pending_file_size or 0,
             )
+
+        source_name = getattr(self.controller, "_pending_source_name", None)
+
+        if is_empty:
+            logger.info(
+                "Empty ASR result; skipping history, clipboard, and paste"
+            )
+            self.controller.ui_controller.set_status(EMPTY_ASR_MESSAGE)
+            self._clear_pending_audio_metadata()
+            return
 
         try:
             model_info = self.controller._current_model_name
@@ -384,16 +407,26 @@ class TranscriptionRuntime:
                 raw_text=raw_text,
                 cleanup_provider=cleanup_info.provider if cleanup_info else None,
                 cleanup_model=cleanup_info.model if cleanup_info else None,
+                source_name=source_name,
             )
             self.controller.ui_controller.refresh_history()
             logger.info("Transcription saved to history")
         except Exception as exc:
             logger.error(f"Failed to save transcription to history: {exc}")
         finally:
-            self.controller._pending_audio_path = None
-            self.controller._pending_audio_duration = None
-            self.controller._pending_file_size = None
+            self._clear_pending_audio_metadata()
 
+        self._apply_clipboard_and_paste(transcript)
+
+    def _clear_pending_audio_metadata(self) -> None:
+        """Drop one-shot metadata attached to the current transcription job."""
+        self.controller._pending_audio_path = None
+        self.controller._pending_audio_duration = None
+        self.controller._pending_file_size = None
+        self.controller._pending_source_name = None
+
+    def _apply_clipboard_and_paste(self, transcript: str) -> None:
+        """Copy and optionally paste only after a successful clipboard write."""
         settings = settings_manager.load_all_settings()
         copy_clipboard = settings.get(SettingsKey.COPY_CLIPBOARD, True)
         auto_paste = settings.get(SettingsKey.AUTO_PASTE, True)
@@ -402,15 +435,23 @@ class TranscriptionRuntime:
         # permission. Without it, degrade to clipboard so the text isn't lost and
         # the user can paste manually with Cmd+V.
         paste_blocked = auto_paste and not is_accessibility_trusted()
-
-        if copy_clipboard or paste_blocked:
-            try:
-                pyperclip.copy(transcript)
+        should_copy = copy_clipboard or auto_paste or paste_blocked
+        copy_ok = False
+        if should_copy:
+            copy_ok = bool(
+                self.controller.ui_controller.copy_to_clipboard(transcript)
+            )
+            if copy_ok:
                 logger.info("Transcription copied to clipboard")
-            except Exception as exc:
-                logger.error(f"Failed to copy to clipboard: {exc}")
+            else:
+                logger.error("Failed to copy to clipboard")
 
         if auto_paste and not paste_blocked:
+            if not copy_ok:
+                self.controller.ui_controller.set_status(
+                    "Transcription complete (copy failed)"
+                )
+                return
             try:
                 send_paste()
                 logger.info("Transcription auto-pasted")
@@ -420,15 +461,30 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.set_status(
                     "Transcription complete (paste failed)"
                 )
-        elif paste_blocked:
-            logger.warning(
-                "Auto-paste skipped: macOS Accessibility permission not granted."
-            )
+            return
+
+        if paste_blocked:
+            if copy_ok:
+                logger.warning(
+                    "Auto-paste skipped: macOS Accessibility permission not granted."
+                )
+                self.controller.ui_controller.set_status(
+                    "Copied to clipboard — press Cmd+V "
+                    "(enable Accessibility to auto-paste)"
+                )
+            else:
+                self.controller.ui_controller.set_status(
+                    "Transcription complete (copy failed)"
+                )
+            return
+
+        if copy_clipboard and not copy_ok:
             self.controller.ui_controller.set_status(
-                "Copied to clipboard — press Cmd+V (enable Accessibility to auto-paste)"
+                "Transcription complete (copy failed)"
             )
-        else:
-            self.controller.ui_controller.set_status("Ready")
+            return
+
+        self.controller.ui_controller.set_status("Ready")
 
     def on_transcription_error(self, error_message: str) -> None:
         self.controller.ui_controller.set_status(f"Error: {error_message}")

@@ -133,7 +133,6 @@ class TestDatabaseManager:
             assert "meeting_insights" not in tables
             assert "meeting_chunks" not in tables
             assert "meetings" not in tables
-            # Fresh Meeting Mode tables use different names.
             assert "meeting_sessions" in tables
             assert version == SCHEMA_VERSION
         finally:
@@ -203,7 +202,8 @@ class TestDatabaseManager:
             assert "raw_text" in columns
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 11
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
         finally:
             manager.close()
 
@@ -273,7 +273,76 @@ class TestDatabaseManager:
 
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 11
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
+        finally:
+            manager.close()
+
+    def test_history_source_name_crud(self, temp_db):
+        """History entries can store an uploaded filename as source_name."""
+        entry_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+
+        temp_db.add_history_entry(
+            entry_id=entry_id,
+            text="Hello",
+            timestamp=timestamp,
+            model="local_whisper",
+            source_name="sample.wav",
+        )
+
+        entry = temp_db.get_history_entry_by_id(entry_id)
+        assert entry is not None
+        assert entry.source_name == "sample.wav"
+
+    def test_migration_adds_source_name_column(self, tmp_path):
+        """Verify schema v12 adds source_name to a v9 DB."""
+        db_path = str(tmp_path / "legacy_v9.db")
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version(version) VALUES (9)")
+            conn.execute(
+                """
+                CREATE TABLE transcription_history (
+                    id TEXT PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    raw_text TEXT,
+                    timestamp TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    audio_file TEXT,
+                    transcription_time REAL,
+                    audio_duration REAL,
+                    file_size INTEGER,
+                    cleanup_provider TEXT,
+                    cleanup_model TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        from services.database import DatabaseManager, SCHEMA_VERSION
+
+        manager = DatabaseManager(db_path=db_path)
+        try:
+            with manager.engine.connect() as connection:
+                columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        "PRAGMA table_info(transcription_history)"
+                    )
+                }
+                version = connection.exec_driver_sql(
+                    "SELECT version FROM schema_version"
+                ).scalar_one()
+
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
         finally:
             manager.close()
 
@@ -332,7 +401,7 @@ class TestDatabaseManager:
                 ).scalar_one()
 
             assert "agent_endpoint_json" in columns
-            assert version == SCHEMA_VERSION == 11
+            assert version == SCHEMA_VERSION == 12
         finally:
             manager.close()
 

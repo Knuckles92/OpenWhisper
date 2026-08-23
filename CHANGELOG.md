@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reproducible real-meeting ASR benchmark** - A resumable harness runs the production chunking and persistence paths against ten naturally occurring AMI meetings with manual references, strict time-constrained WER, overlap diagnostics, runtime factor, and an explicit release-quality gate
 
 ### Fixed
+- **Help → About crashed** - `config.VERSION` is restored from `_version.py`, so the About dialog shows the app version again instead of raising `AttributeError`
 - **Meeting Mode's post-meeting buttons all looked the same** - Up to five actions sat in two equal-width rows of identical grey buttons, so Retry, Open dashboard, Keep for later, and Start new meeting competed for the same emphasis and ran together. The card now ends in a two-tier footer: Open dashboard / Open report / Re-run speakers as quiet links, then a right-aligned decision row where Retry failed steps is the blue primary and Done is green. Empty tiers collapse instead of leaving a gap. Start Meeting and End also get their intended green and red back — the meeting-specific object names had been silently replacing the ones that carry those colors
 - **Leftover text-model ids after a missing custom endpoint** - Deleting a named chat endpoint, or a settings file that still pointed at a vanished ``custom_…`` profile, used to keep the old model string (``other-local`` showed up on OpenAI and OpenRouter and then failed at the API). Cleanup and Meeting intelligence now treat last-chosen as a pair: if the provider is gone or the model is blank, both fall back to OpenRouter · ``openrouter/free``
 - **Model rows ended short of the filters above them** - The scrolled model list reserved no room for its scroll bar, so every row's right edge stopped short of the search and sort row. The Downloads list now measures its own scroll bar and keeps the filters on that same right edge, including when a filter result no longer needs the bar. Model rows also stop widening the window: the secondary line under each name elides instead of reporting its full text as a minimum width, and the window's floor is the width the widest row actually needs. Settings tabs are inset by the same amount on both ends so they stay centered
@@ -43,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Meeting links could not be revoked** - Hosts can regenerate both capability links; old REST tokens stop working immediately and existing WebSockets are disconnected for re-authentication
 - **Capture loss looked like silence forever** - A per-channel watchdog restarts failed streams and follows default microphone/system-audio changes without interrupting the healthy channel, while persisting a visible degradation status
 - **Meeting deletion could orphan either database rows or recordings** - Spools are tombstoned before database deletion, restored on transaction failure, and purged only after the database commit succeeds
+- **Recording Start no longer fakes success** - Opening the microphone now happens before the UI enters Recording. A missing device fails Start with a readable error and never enables Stop for a session that did not open
+- **Empty transcriptions no longer claim Pasted or write History** - Zero-character / VAD-stripped results show "No speech detected (empty after VAD)" in the pane, keep measured stats, and skip clipboard, paste, and History
+- **Clipboard status is truthful** - Copy uses the Qt clipboard. Paste and "Ready (Pasted)" only happen after the write succeeds. Upload File has an explicit Copy button for non-empty results
+- **File-transcribe stats show the real duration** - Upload File preview duration is carried into the stats row and History, formatted as `3.7s` instead of a truncated `3s`
+- **History timestamps use the local timezone** - New rows store aware UTC and display with `astimezone()`. History rows also show the uploaded filename (or "Empty transcript")
+- **Enabling streaming consents for tiny.en first** - Preview warmup no longer calls `transcribe` on a missing model. Model downloads report percent/bytes, including when Model Manager is closed
+- **Saving Settings no longer overwrites a completed-transcription status**
+- **Short screens keep the footer reachable** - Geometry restore and transcript expand clamp to the available screen so Model Manager / Quit stay visible at 1280×800. Settings → General no longer overlaps labels and spin boxes. Idle Stop/Cancel look unavailable
+- **Fresh Linux installs fail with the package command** - Missing `libEGL.so.1` and the other documented Qt/audio libraries print the matching apt/dnf/pacman line instead of a raw ImportError
 
 ### Changed
 - **Meeting Mode idle platform copy is a tooltip** - The WASAPI / ScreenCaptureKit sentence moves onto the grey subtitle tooltip. The orange warning line stays only on unsupported OS (Linux / old macOS)
@@ -53,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Meeting Mode desktop tab drops the completed-insights recap** - After finalization succeeds, the desktop card keeps the checklist and Open dashboard control. The stats-summary line and the Segments / Words / Key Points / Decisions / Action Items row are gone; those counts still feed the dashboard banner and persisted meeting state
 - **Meeting dashboard header owns report view, Download, and Copy guest link** - After a meeting ends, Ribbon / Brief / Signal is a header dropdown (left of Download) instead of an in-page tab bar. Download sits next to it; the guest URL field is gone and hosts copy the invite with a single header button. History still keeps the view switcher and Download on the selected meeting's report
 - **Meeting dashboard uses a three-column workspace** - Conversation, the live summary or finished report (with the host-only Pi activity strip on top), and Captured sit side by side at about 20 / 60 / 20 on a wider shell. The header stays put while the workspace scrolls; the center column sets page length and the side rails stick and scroll if they outgrow it. Narrow viewports stack summary first, then conversation, then captured
+- **Clipboard no longer depends on pyperclip / xclip** - Copy uses Qt on every platform
 
 ## [2.1.1] - 2026-08-05
 

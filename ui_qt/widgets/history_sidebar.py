@@ -208,6 +208,17 @@ class HistoryItemWidget(QFrame):
             cleanup_row.addStretch()
             layout.addLayout(cleanup_row)
 
+        source_name = (getattr(self.entry, "source_name", None) or "").strip()
+        if source_name:
+            self.title_label = QLabel(source_name)
+            self.title_label.setObjectName("historyTitle")
+            self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+            self.title_label.setWordWrap(True)
+            self.title_label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
+            layout.addWidget(self.title_label)
+
         # Preview text is already truncated by HistoryEntry.preview_text, so
         # let it size naturally — a hard maxHeight was clipping glyphs mid-line
         # and making the footer button look like it was cutting the text off.
@@ -284,6 +295,10 @@ class HistoryItemWidget(QFrame):
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
+            }
+            QLabel#historyTitle {
+                color: #f5f5f7;
+                background-color: transparent;
             }
             QLabel#historyPreview {
                 color: #e5e5e7;

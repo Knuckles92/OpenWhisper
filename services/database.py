@@ -15,7 +15,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class DatabaseManager:
@@ -281,6 +281,35 @@ class DatabaseManager:
                 logger.error("Migration v10->v11 failed: %s", e)
                 raise
 
+        if from_version < 12:
+            try:
+                table_exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='transcription_history'"
+                    )
+                ).fetchone()
+                if table_exists:
+                    columns = {
+                        row[1]
+                        for row in conn.execute(
+                            text("PRAGMA table_info(transcription_history)")
+                        ).fetchall()
+                    }
+                    if "source_name" not in columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE transcription_history "
+                                "ADD COLUMN source_name TEXT"
+                            )
+                        )
+                logger.info(
+                    "Migration v11->v12: Added source_name to transcription_history"
+                )
+            except Exception as e:
+                logger.error("Migration v11->v12 failed: %s", e)
+                raise
+
         conn.execute(text("UPDATE schema_version SET version = :v"), {"v": SCHEMA_VERSION})
         logger.info(f"Database migrated to schema version {SCHEMA_VERSION}")
 
@@ -335,6 +364,7 @@ class DatabaseManager:
         raw_text: Optional[str] = None,
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
+        source_name: Optional[str] = None,
     ) -> None:
         with self.get_session() as session:
             session.add(TranscriptionHistory(
@@ -343,6 +373,7 @@ class DatabaseManager:
                 audio_file=audio_file, transcription_time=transcription_time,
                 audio_duration=audio_duration, file_size=file_size,
                 cleanup_provider=cleanup_provider, cleanup_model=cleanup_model,
+                source_name=source_name,
             ))
 
     def get_history_entries(self, limit: Optional[int] = None) -> List[TranscriptionHistory]:

@@ -140,6 +140,12 @@ _preload_cuda_libraries()
 _activate_downloadable_components()
 _patch_subprocess_for_windows()
 
+if sys.platform.startswith("linux"):
+    from services.linux_deps import check_linux_dependencies
+
+    if check_linux_dependencies() != 0:
+        sys.exit(1)
+
 from ui_qt.bootstrap import main
 
 __all__ = ["main"]

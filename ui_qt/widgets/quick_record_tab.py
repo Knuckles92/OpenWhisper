@@ -70,21 +70,16 @@ class QuickRecordTab(TranscriptionTabBase):
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
 
     def _on_record_clicked(self):
-        self.is_recording = True
-        self._update_recording_state()
-
+        """Request a start; Recording chrome waits for a successful stream."""
+        self.record_button.set_active(False)
         self.record_toggled.emit(True)
 
     def _on_stop_clicked(self):
-        self.is_recording = False
-        self._update_recording_state()
-
+        """Request a stop; button state waits for recording_state_changed."""
         self.record_toggled.emit(False)
 
     def _on_cancel_clicked(self):
-        self.is_recording = False
-        self._update_recording_state()
-
+        """Request a cancel; chrome is reset by the cancel path."""
         self.record_canceled.emit()
 
     def _update_recording_state(self):

@@ -332,7 +332,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         )
         return True
 
-    def download_and_load(self) -> None:
+    def download_and_load(self, progress_callback=None) -> None:
         """Download the model from Hugging Face, then load it from the cache.
 
         Only call this after the access policy or an explicit user consent
@@ -343,7 +343,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         """
         from services.hf_access import download_model_files
 
-        download_model_files(self.model_name)
+        download_model_files(self.model_name, progress_callback=progress_callback)
         self._load_model()
         if not self.is_available():
             raise Exception(

@@ -29,6 +29,7 @@ from services.hf_access import (
     download_model_files,
     hf_access_coordinator,
     is_hf_hub_offline_env_set,
+    is_model_cached,
     resolve_model_repo,
 )
 from services.recorder import AudioRecorder
@@ -76,6 +77,7 @@ class ApplicationController(QObject):
     # Model Manager fetch-only downloads.
     hf_consent_requested = pyqtSignal(str, bool, bool)
     model_download_started = pyqtSignal(str)
+    model_download_progress = pyqtSignal(str, int, int)
     model_download_finished = pyqtSignal(str, bool)
     model_deleted = pyqtSignal(str, bool, str)
     model_cache_changed = pyqtSignal()
@@ -148,6 +150,7 @@ class ApplicationController(QObject):
         self._pending_audio_path: Optional[str] = None
         self._pending_audio_duration: Optional[float] = None
         self._pending_file_size: Optional[int] = None
+        self._pending_source_name: Optional[str] = None
         self._transcription_start_time: Optional[float] = None
 
         # Debounced, background whisper reload. The ~1s model swap (cleanup +
@@ -176,8 +179,9 @@ class ApplicationController(QObject):
         self._setup_ui_callbacks()
         self.hotkey_runtime.setup_hotkeys()
         self.streaming_runtime.setup_audio_level_callback()
-        self.streaming_runtime.setup_streaming()
         self._connect_signals()
+        # After signals so a missing tiny.en can raise the consent dialog.
+        self.streaming_runtime.setup_streaming()
         self.hotkey_runtime.setup_hook_watchdog()
 
     def _setup_transcription_backends(
@@ -841,6 +845,39 @@ class ApplicationController(QObject):
             )
         return "GPU failed to load — using CPU. See openwhisper.log for details."
 
+    def _hf_download_progress(self, model_name: str):
+        """Return a throttled byte-progress callback for one model download."""
+        import time
+
+        last_emit = [0.0]
+        last_percent = [-1]
+
+        def progress(done: int, total: int) -> None:
+            now = time.monotonic()
+            percent = int(done * 100 / total) if total > 0 else -1
+            is_final = total > 0 and done >= total
+            if (
+                now - last_emit[0] < 0.1
+                and percent == last_percent[0]
+                and not is_final
+            ):
+                return
+            last_emit[0] = now
+            last_percent[0] = percent
+            self.model_download_progress.emit(model_name, done, total)
+
+        return progress
+
+    def _on_model_download_finished(self, model_name: str, success: bool) -> None:
+        """Activate streaming preview once tiny.en is cached."""
+        if not success or model_name != "tiny.en":
+            return
+        if not is_model_cached("tiny.en"):
+            return
+        settings = settings_manager.load_all_settings()
+        if settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED):
+            self.streaming_runtime.reconfigure_streaming()
+
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
         """Run an approved load or fetch-only download on a worker."""
         if load_into_engine:
@@ -856,9 +893,6 @@ class ApplicationController(QObject):
         leaves the model unavailable — it is never treated as cached and never
         falls back to another model.
 
-        Download progress is indeterminate today (coarse status strings only);
-        a determinate bar would require hooking huggingface_hub's tqdm_class
-        into a Qt signal relay.
         """
         backend = self.transcription_backends.get("local_whisper")
         success = False
@@ -874,7 +908,9 @@ class ApplicationController(QObject):
                     self.status_update.emit(
                         f"Downloading model '{model_name}' from Hugging Face..."
                     )
-                    backend.download_and_load()
+                    backend.download_and_load(
+                        progress_callback=self._hf_download_progress(model_name)
+                    )
                 else:
                     logger.warning(
                         f"Model task for '{model_name}' aborted: access decision {decision}"
@@ -926,7 +962,10 @@ class ApplicationController(QObject):
             self.status_update.emit(
                 f"Downloading model '{model_name}' from Hugging Face..."
             )
-            download_model_files(model_name)
+            download_model_files(
+                model_name,
+                progress_callback=self._hf_download_progress(model_name),
+            )
             self.status_update.emit(f"Model '{model_name}' downloaded")
         # Bridge: fetching the currently-missing selected model also
         # revives the engine (now a pure cache hit, no consent re-entry).
@@ -1108,9 +1147,13 @@ class ApplicationController(QObject):
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.retranscribe_audio(audio_path)
 
-    def upload_audio_file(self, audio_path: str) -> None:
+    def upload_audio_file(
+        self, audio_path: str, duration_seconds: Optional[float] = None
+    ) -> None:
         if not self._refuse_dictation_during_meeting():
-            self.transcription_runtime.upload_audio_file(audio_path)
+            self.transcription_runtime.upload_audio_file(
+                audio_path, duration_seconds=duration_seconds
+            )
 
     def on_model_changed(self, model_name: str) -> None:
         if not self._refuse_dictation_during_meeting():
@@ -1173,6 +1216,9 @@ class ApplicationController(QObject):
         self.model_download_started.connect(
             self.ui_controller.on_model_download_started
         )
+        self.model_download_progress.connect(
+            self.ui_controller.on_model_download_progress
+        )
         self.model_download_finished.connect(
             self.ui_controller.on_model_download_finished
         )
@@ -1182,6 +1228,7 @@ class ApplicationController(QObject):
         self.batch_download_finished.connect(
             self.ui_controller.on_model_batch_finished
         )
+        self.model_download_finished.connect(self._on_model_download_finished)
         self.model_deleted.connect(self.ui_controller.on_model_deleted)
         self.model_cache_changed.connect(self.ui_controller.refresh_model_manager)
         self.model_cache_changed.connect(
@@ -1247,9 +1294,8 @@ class ApplicationController(QObject):
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
         self.ui_controller.is_recording = is_recording
-        if self.ui_controller.main_window.is_recording != is_recording:
-            self.ui_controller.main_window.is_recording = is_recording
-            self.ui_controller.main_window._update_recording_state()
+        self.ui_controller.main_window.is_recording = is_recording
+        self.ui_controller.main_window._update_recording_state()
 
     def _on_transcription_complete(
         self, transcript: str, raw_text=None, cleanup_info=None

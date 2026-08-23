@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Tuple, Optional, Dict, Any
 from pathlib import Path
 from config import config
+from services.format_utils import format_audio_duration
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,8 @@ class AudioFilePreview:
 
     @property
     def duration_formatted(self) -> str:
-        """Get duration as formatted string (e.g., '2m 30s' or '45s')."""
-        minutes = int(self.duration_seconds // 60)
-        seconds = int(self.duration_seconds % 60)
-        if minutes > 0:
-            return f"{minutes}m {seconds}s"
-        return f"{seconds}s"
+        """Get duration as formatted string (e.g., '2m 30s' or '3.7s')."""
+        return format_audio_duration(self.duration_seconds)
 
     @property
     def file_size_formatted(self) -> str:

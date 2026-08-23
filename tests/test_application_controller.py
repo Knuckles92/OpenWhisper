@@ -118,6 +118,8 @@ class FakeRecorder:
         self.audio_level_callback = None
         self.streaming_callback = None
         self.cleaned_up = False
+        self.last_start_error = None
+        self.start_should_fail = False
 
     def set_audio_level_callback(self, callback):
         self.audio_level_callback = callback
@@ -126,6 +128,10 @@ class FakeRecorder:
         self.streaming_callback = callback
 
     def start_recording(self):
+        if self.start_should_fail:
+            self.is_recording = False
+            self.last_start_error = self.last_start_error or "No audio device available"
+            return False
         self.is_recording = True
         return True
 
@@ -186,6 +192,7 @@ class FakeLocalBackend:
         self.last_loaded_model = self.model_name
         self.gpu_fallback_note = None
         self.gpu_fallback_cause = None
+        self.model = object()
 
     def is_available(self):
         return not self.is_model_missing
@@ -379,8 +386,11 @@ class DummyUIController:
         self.hotkeys = None
         self.refreshed_history = False
         self.transcription_text = None
+        self.transcription_raw = None
         self.stats = None
         self.cleaned_up = False
+        self.copied = []
+        self.copy_succeeds = True
         self.streaming_overlay_shown = 0
         self.streaming_overlay_hidden = 0
         self.caret_shown = 0
@@ -391,6 +401,7 @@ class DummyUIController:
         self.settings_dialog_opened_with = None
         self.model_manager_refreshes = 0
         self.download_started = []
+        self.download_progress = []
         self.download_finished = []
         self.batch_planned = []
         self.batch_finished = []
@@ -483,6 +494,9 @@ class DummyUIController:
     def on_model_download_started(self, model_name):
         self.download_started.append(model_name)
 
+    def on_model_download_progress(self, model_name, done, total):
+        self.download_progress.append((model_name, done, total))
+
     def on_model_download_finished(self, model_name, success):
         self.download_finished.append((model_name, success))
 
@@ -537,6 +551,12 @@ class DummyUIController:
         self.transcription_text = text
         self.transcription_raw = raw
 
+    def copy_to_clipboard(self, text):
+        if not self.copy_succeeds:
+            return False
+        self.copied.append(text)
+        return True
+
     def set_transcription_stats(self, transcription_time, audio_duration, file_size):
         self.stats = (transcription_time, audio_duration, file_size)
 
@@ -550,7 +570,7 @@ class DummyUIController:
         self.cleaned_up = True
 
 
-def _install_module_stubs(settings_manager, history_manager, audio_processor, keyboard, pyperclip, db_state):
+def _install_module_stubs(settings_manager, history_manager, audio_processor, keyboard, db_state):
     qtcore_module = types.ModuleType("PyQt6.QtCore")
     qtcore_module.QObject = _QObject
     qtcore_module.QTimer = _QTimer
@@ -629,9 +649,12 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hf_access_module.AccessDecision = _RealAccessDecision
     hf_access_module.ConsentAction = _RealConsentAction
     hf_access_module.resolve_model_repo = lambda name: name
-    hf_access_module.download_model_files = lambda name: f"/cache/{name}"
+    hf_access_module.download_model_files = (
+        lambda name, progress_callback=None: f"/cache/{name}"
+    )
     hf_access_module.delete_model_from_cache = lambda name: None
     hf_access_module.is_hf_hub_offline_env_set = lambda: False
+    hf_access_module.is_model_cached = lambda name: True
     # Inert coordinator: never grants downloads, never touches disk/network.
     hf_access_module.hf_access_coordinator = types.SimpleNamespace(
         begin_request=lambda model: True,
@@ -667,9 +690,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     keyboard_module.send = keyboard.send
     keyboard_module.write = keyboard.write
 
-    pyperclip_module = types.ModuleType("pyperclip")
-    pyperclip_module.copy = pyperclip.copy
-
     return {
         "PyQt6": pyqt_module,
         "PyQt6.QtCore": qtcore_module,
@@ -683,7 +703,6 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         "services.streaming_transcriber": streaming_module,
         "services.database": database_module,
         "keyboard": keyboard_module,
-        "pyperclip": pyperclip_module,
     }
 
 
@@ -694,7 +713,6 @@ class TestApplicationController:
         self.history_manager = FakeHistoryManager()
         self.audio_processor = FakeAudioProcessor()
         self.keyboard = FakeKeyboard()
-        self.pyperclip = FakePyperclip()
         self.db_state = {"closed": False}
 
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -706,7 +724,6 @@ class TestApplicationController:
             self.history_manager,
             self.audio_processor,
             self.keyboard,
-            self.pyperclip,
             self.db_state,
         )
         self.module_patcher = patch.dict(sys.modules, module_stubs)
@@ -869,7 +886,15 @@ class TestApplicationController:
 
         assert controller.streaming_transcriber is None
         assert not controller._streaming_enabled
-        assert "Streaming mode disabled" in controller.ui_controller.statuses
+        assert "Streaming mode disabled" not in controller.ui_controller.statuses
+
+    def test_streaming_defers_when_tiny_en_is_missing(self):
+        sys.modules["services.hf_access"].is_model_cached = lambda name: False
+        controller = self._create_controller()
+
+        assert controller.streaming_transcriber is None
+        assert not controller._streaming_enabled
+        assert controller.ui_controller.consent_requests[-1][0] == "tiny.en"
 
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
         controller = self._create_controller()
@@ -907,10 +932,11 @@ class TestApplicationController:
         assert entry["audio_duration"] == 9.5
         assert entry["file_size"] == 2048
         assert controller.ui_controller.refreshed_history
-        assert self.pyperclip.copied[-1] == "hello world"
+        assert controller.ui_controller.copied[-1] == "hello world"
         assert controller._pending_audio_path is None
         assert controller._pending_audio_duration is None
         assert controller._pending_file_size is None
+        assert controller._pending_source_name is None
 
     def test_transcription_complete_stores_raw_and_fixed_text(self):
         controller = self._create_controller()
@@ -923,7 +949,79 @@ class TestApplicationController:
         assert entry["raw_text"] == "um fixed sentence"
         assert controller.ui_controller.transcription_text == "Fixed sentence."
         assert controller.ui_controller.transcription_raw == "um fixed sentence"
-        assert self.pyperclip.copied[-1] == "Fixed sentence."
+        assert controller.ui_controller.copied[-1] == "Fixed sentence."
+
+    def test_start_recording_failure_stays_idle(self):
+        controller = self._create_controller()
+        controller.recorder.start_should_fail = True
+        controller.recorder.last_start_error = "No audio device available"
+
+        controller.start_recording()
+
+        assert not controller.recorder.is_recording
+        assert not controller.ui_controller.is_recording
+        assert not controller.ui_controller.main_window.is_recording
+        assert any(
+            "Failed to start recording" in status
+            for status in controller.ui_controller.statuses
+        )
+        assert any(
+            "No audio device available" in status
+            for status in controller.ui_controller.statuses
+        )
+
+    def test_empty_asr_skips_history_clipboard_and_paste(self):
+        controller = self._create_controller()
+        controller._pending_audio_path = "source.wav"
+        controller._pending_audio_duration = 3.7
+        controller._pending_file_size = 2048
+        controller._pending_source_name = "sample.wav"
+        controller._transcription_start_time = time.time() - 1.0
+        self.settings.all_settings["auto_paste"] = True
+
+        controller._on_transcription_complete("   ", None)
+
+        assert self.history_manager.entries == []
+        assert controller.ui_controller.copied == []
+        assert self.keyboard.sent == []
+        assert (
+            controller.ui_controller.transcription_text
+            == "No speech detected (empty after VAD)"
+        )
+        assert (
+            controller.ui_controller.statuses[-1]
+            == "No speech detected (empty after VAD)"
+        )
+        assert controller.ui_controller.stats is not None
+        assert controller.ui_controller.stats[1] == 3.7
+        assert controller._pending_audio_path is None
+        assert controller._pending_source_name is None
+
+    def test_copy_failure_does_not_claim_pasted(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        controller.ui_controller.copy_succeeds = False
+
+        controller._on_transcription_complete("hello world", None)
+
+        assert controller.ui_controller.copied == []
+        assert self.keyboard.sent == []
+        assert (
+            controller.ui_controller.statuses[-1]
+            == "Transcription complete (copy failed)"
+        )
+        assert len(self.history_manager.entries) == 1
+
+    def test_upload_audio_file_uses_preview_duration(self):
+        controller = self._create_controller()
+        clip_path = str(Path(self.temp_dir.name) / "upload.wav")
+        Path(clip_path).write_bytes(b"x" * 256)
+
+        controller.upload_audio_file(clip_path, duration_seconds=3.72)
+
+        assert controller._pending_audio_duration == 3.72
+        assert controller._pending_source_name == "upload.wav"
+        assert len(controller.executor.submissions) == 1
 
     def test_transcribe_audio_file_applies_cleanup_when_enabled(self):
         controller = self._create_controller()
@@ -944,7 +1042,7 @@ class TestApplicationController:
         entry = self.history_manager.entries[0]
         assert entry["text"] == "Cleaned text."
         assert entry["raw_text"] == "um cleaned text"
-        assert entry["cleanup_provider"] == "openai"
+        assert entry["cleanup_provider"] == "openrouter"
         assert entry["cleanup_model"]
 
     def test_transcribe_audio_file_skips_cleanup_when_disabled(self):
@@ -1185,7 +1283,9 @@ class TestApplicationController:
         with patch.object(
             self.app_controller_module,
             "download_model_files",
-            side_effect=lambda name: fetched.append(name) or f"/cache/{name}",
+            side_effect=lambda name, progress_callback=None: (
+                fetched.append(name) or f"/cache/{name}"
+            ),
         ):
             busy_before = list(controller.ui_controller.engine_busy_states)
 

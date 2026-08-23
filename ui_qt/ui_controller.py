@@ -2,7 +2,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from config import config
 from services.app_update import (
@@ -93,6 +93,7 @@ class UIController(QObject):
 
         self._model_manager_dialog = None
         self._downloads_dialog = None
+        self._download_progress_dialog = None
 
         self.cancel_animation_timer = QTimer()
         self.cancel_animation_timer.setSingleShot(True)
@@ -114,6 +115,7 @@ class UIController(QObject):
         )
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
+        self.main_window.upload_copy_requested.connect(self._on_upload_copy)
         self.main_window.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
         )
@@ -231,9 +233,12 @@ class UIController(QObject):
 
     def _display_transcript(self, text: str, raw=None):
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
-            self.main_window.upload_file_tab.set_transcript(text, raw=raw)
+            tab = self.main_window.upload_file_tab
+            tab.set_transcript(text, raw=raw)
         else:
+            tab = self.main_window.quick_record_tab
             self.main_window.set_transcript(text, raw=raw)
+        tab.expand_transcription()
         self.hide_overlay()
 
     def _apply_status_to_main_window(self, status: str):
@@ -246,21 +251,8 @@ class UIController(QObject):
         self.overlay.update_audio_levels(levels)
 
     def start_recording(self):
-        """Start recording.
-
-        Returns:
-            False when the application layer refused the start (e.g. Meeting
-            Mode is active) and the recording UI was rolled back; True
-            otherwise.
-        """
-        self.is_recording = True
+        """Request a recording start; UI flips only after the stream opens."""
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
-        logger.info("Recording started")
-
-        if not self.main_window.is_recording:
-            self.main_window.is_recording = True
-            self.main_window._update_recording_state()
-
         if self.on_record_start:
             if self.on_record_start() is False:
                 self._revert_refused_record_start()
@@ -270,26 +262,14 @@ class UIController(QObject):
         return True
 
     def _revert_refused_record_start(self):
-        """Undo the recording UI after a refused start.
-
-        The record button, window, and tab lock all flip to "recording" before
-        the callback runs, so a refusal two layers down has to be unwound here
-        — otherwise the UI shows a red, captureless recording state.
-        """
+        """Undo optimistic Recording chrome after a refused start."""
         logger.info("Recording start refused; reverting recording state")
         self.is_recording = False
         self.main_window.is_recording = False
         self.main_window._update_recording_state()
 
     def stop_recording(self):
-        self.is_recording = False
-        logger.info("Recording stopped")
-
-        if self.main_window.is_recording:
-            self.main_window.is_recording = False
-            self.main_window._update_recording_state()
-            logger.info("Main window recording state updated")
-
+        """Request a recording stop; UI flips via recording_state_changed."""
         if self.on_record_stop:
             self.on_record_stop()
         else:
@@ -416,6 +396,19 @@ class UIController(QObject):
 
     def show_copied_animation(self):
         self.overlay.show_at_cursor(self.overlay.STATE_COPIED)
+
+    def copy_to_clipboard(self, text: str) -> bool:
+        """Copy text to the Qt clipboard. Returns True if the write succeeded."""
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                logger.error("No Qt clipboard available")
+                return False
+            clipboard.setText(text or "")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to copy to clipboard: {exc}")
+            return False
 
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
@@ -660,12 +653,34 @@ class UIController(QObject):
     def on_model_download_started(self, model_name: str):
         if self._downloads_dialog is not None:
             self._downloads_dialog.set_downloading(model_name)
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.set_downloading(model_name)
+        downloads_visible = (
+            self._downloads_dialog is not None
+            and self._downloads_dialog.isVisible()
+        )
+        manager_visible = (
+            self._model_manager_dialog is not None
+            and self._model_manager_dialog.isVisible()
+        )
+        if not downloads_visible and not manager_visible:
+            self._show_download_progress(model_name)
+
+    def on_model_download_progress(self, model_name: str, done: int, total: int):
+        if self._downloads_dialog is not None and hasattr(
+            self._downloads_dialog, "set_download_progress"
+        ):
+            self._downloads_dialog.set_download_progress(model_name, done, total)
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.set_download_progress(model_name, done, total)
+        self._update_download_progress(model_name, done, total)
 
     def on_model_download_finished(self, model_name: str, success: bool):
         if self._downloads_dialog is not None:
             self._downloads_dialog.finish_download(model_name, success)
-        # A newly cached model becomes assignable, so the manager's pickers
-        # need the fresh cache scan even when Downloads is the focused window.
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.finish_download(model_name, success)
+        self._hide_download_progress()
         self.refresh_model_manager()
 
     def on_model_batch_planned(self, model_names):
@@ -679,6 +694,48 @@ class UIController(QObject):
     def request_model_batch_stop(self):
         if self.on_model_batch_stop:
             self.on_model_batch_stop()
+
+    def _show_download_progress(self, model_name: str) -> None:
+        dialog = QProgressDialog(
+            f'Downloading "{model_name}"…',
+            None,
+            0,
+            0,
+            self.main_window,
+        )
+        dialog.setWindowTitle("Downloading model")
+        dialog.setMinimumDuration(0)
+        dialog.setCancelButton(None)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumWidth(360)
+        dialog.show()
+        self._download_progress_dialog = dialog
+
+    def _update_download_progress(
+        self, model_name: str, done: int, total: int
+    ) -> None:
+        dialog = self._download_progress_dialog
+        if dialog is None:
+            return
+        if total <= 0:
+            dialog.setRange(0, 0)
+            dialog.setLabelText(f'Downloading "{model_name}"…')
+            return
+        dialog.setRange(0, 100)
+        dialog.setValue(int(done * 100 / total))
+        from services.format_utils import format_size_bytes
+
+        dialog.setLabelText(
+            f'Downloading "{model_name}"… '
+            f"{format_size_bytes(done)} of {format_size_bytes(total)}"
+        )
+
+    def _hide_download_progress(self) -> None:
+        dialog = self._download_progress_dialog
+        self._download_progress_dialog = None
+        if dialog is not None:
+            dialog.close()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
         if self._downloads_dialog is not None:
@@ -977,11 +1034,21 @@ class UIController(QObject):
         dialog.on_hotkeys_save = on_hotkeys_save
         dialog.exec()
 
-    def _on_upload_file_transcribe(self, audio_path: str):
+    def _on_upload_file_transcribe(
+        self, audio_path: str, duration_seconds: float = 0.0
+    ):
         self._transcription_source_tab = TabbedContentWidget.TAB_UPLOAD_FILE
         logger.info(f"Upload tab transcription started: {audio_path}")
         if self.on_upload_audio:
-            self.on_upload_audio(audio_path)
+            self.on_upload_audio(audio_path, duration_seconds)
+
+    def _on_upload_copy(self, text: str):
+        """Copy Upload File transcript text through the shared clipboard path."""
+        if self.copy_to_clipboard(text):
+            self.main_window.upload_file_tab.set_status("Copied to clipboard")
+            self.show_copied_animation()
+        else:
+            self.main_window.upload_file_tab.set_status("Copy failed")
 
     def switch_to_tab(self, index: int):
         self.main_window.tabbed_content.set_current_index(index)

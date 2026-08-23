@@ -278,6 +278,17 @@ class TestDownloadingState(_DialogTestCase):
         dialog.finish_download("tiny", success=False)
         assert "failed" in dialog.message_label.text()
 
+    def test_download_progress_updates_row_and_footer(self):
+        dialog, _values = self._make_dialog()
+        dialog.set_downloading("tiny")
+        dialog.set_download_progress("tiny", 40_000_000, 80_000_000)
+
+        row = dialog.rows["tiny"]
+        assert row.progress.isVisibleTo(dialog)
+        assert row.progress.value() == 50
+        assert "of" in row.size_label.text()
+        assert "tiny" in dialog.message_label.text()
+
 
 class TestEnvBlocked(_DialogTestCase):
     """HF_HUB_OFFLINE disables downloads but not deletion."""

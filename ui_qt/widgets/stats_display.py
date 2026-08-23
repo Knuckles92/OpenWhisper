@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from services.format_utils import format_file_size
+from services.format_utils import format_audio_duration, format_file_size
 
 
 class TranscriptionStatsWidget(QWidget):
@@ -79,21 +79,12 @@ class TranscriptionStatsWidget(QWidget):
         audio_duration: float,
         file_size: int
     ):
-        if transcription_time < 60:
-            time_str = f"{transcription_time:.1f}s"
-        else:
-            minutes = int(transcription_time // 60)
-            seconds = transcription_time % 60
-            time_str = f"{minutes}m {seconds:.0f}s"
-        self.transcription_time_widget.value_label.setText(time_str)
-
-        if audio_duration < 60:
-            duration_str = f"{audio_duration:.1f}s"
-        else:
-            minutes = int(audio_duration // 60)
-            seconds = int(audio_duration % 60)
-            duration_str = f"{minutes}:{seconds:02d}"
-        self.audio_duration_widget.value_label.setText(duration_str)
+        self.transcription_time_widget.value_label.setText(
+            format_audio_duration(transcription_time)
+        )
+        self.audio_duration_widget.value_label.setText(
+            format_audio_duration(audio_duration)
+        )
 
         self.file_size_widget.value_label.setText(format_file_size(file_size))
 

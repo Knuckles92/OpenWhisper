@@ -1181,6 +1181,15 @@ class ModelManagerDialog(QDialog):
         self._update_cache_summary(cached)
         self._refresh_rail_values()
 
+    def set_downloading(self, model_name: str) -> None:
+        self.refresh()
+
+    def set_download_progress(self, model_name: str, done: int, total: int) -> None:
+        return
+
+    def finish_download(self, model_name: str, success: bool) -> None:
+        self.refresh()
+
     def _update_cache_summary(self, cached: Dict[str, CachedModelInfo]) -> None:
         """Report cache totals in the rail footer, next to the Downloads button."""
         catalog_repos = {

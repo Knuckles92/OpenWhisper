@@ -260,6 +260,11 @@ class TranscriptionTabBase(QWidget):
         """Whether the transcription card is currently collapsed."""
         return self.transcription_card.is_collapsed
 
+    def expand_transcription(self) -> None:
+        """Expand the transcript card through the normal user-toggle path."""
+        if self.is_transcription_collapsed():
+            self.transcription_card.set_collapsed(False, emit=True)
+
     def set_transcript(self, text: str, raw: Optional[str] = None):
         """Display fixed text and an optional distinct raw ASR version."""
         self._fixed_text = text or ""

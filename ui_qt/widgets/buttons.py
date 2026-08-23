@@ -212,6 +212,10 @@ class Button(QPushButton):
         if self._active == active:
             return
         self._active = active
+        self.setProperty("inactive", not active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
         self.setCursor(
             Qt.CursorShape.PointingHandCursor if active else Qt.CursorShape.ArrowCursor
         )

@@ -60,7 +60,7 @@ hiddenimports = [
 #                   os.add_dll_directory() on ../av.libs to find FFmpeg
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
 for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
-                "tokenizers", "sounddevice", "lxml"):
+                "tokenizers", "sounddevice", "lxml", "uvicorn", "soundcard"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries

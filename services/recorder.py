@@ -45,6 +45,7 @@ class AudioRecorder:
         self._stop_requested: bool = False
         self._post_roll_until: float = 0.0
         self._recording_complete_event = threading.Event()
+        self.last_start_error: Optional[str] = None
 
         self.chunk = config.CHUNK_SIZE
         self.dtype = config.AUDIO_FORMAT
@@ -71,11 +72,12 @@ class AudioRecorder:
         self.streaming_callback = callback
 
     def start_recording(self) -> bool:
-        """Start recording and return whether startup succeeded."""
+        """Open the input stream before marking the session as recording."""
         if self.is_recording:
             logger.warning("Recording already in progress")
             return False
 
+        self.last_start_error = None
         try:
             self._recording_complete_event = threading.Event()
 
@@ -89,20 +91,67 @@ class AudioRecorder:
                 except Exception as e:
                     logger.warning(f"Could not delete old audio file: {e}")
 
+            self.stream = sd.InputStream(
+                device=self.device_id,
+                samplerate=self.rate,
+                channels=self.channels,
+                dtype=self.dtype,
+                blocksize=self.chunk,
+                callback=self._audio_callback,
+            )
+            self.stream.start()
+
             self.is_recording = True
             self._stop_requested = False
             self._post_roll_until = 0.0
 
-            self.recording_thread = threading.Thread(target=self._record_audio, daemon=True)
+            self.recording_thread = threading.Thread(
+                target=self._wait_for_stop, daemon=True
+            )
             self.recording_thread.start()
 
-            logger.info("Recording started - frames cleared, old file removed")
+            logger.info("Recording started - audio stream open")
             return True
 
         except Exception as e:
+            self.last_start_error = self._format_start_error(e)
             logger.error(f"Failed to start recording: {e}")
+            self._unwind_failed_stream()
             self.is_recording = False
             return False
+
+    @staticmethod
+    def _format_start_error(exc: Exception) -> str:
+        """Turn a PortAudio/sounddevice exception into a user-facing reason."""
+        message = str(exc)
+        lowered = message.lower()
+        if any(
+            token in lowered
+            for token in (
+                "querying device",
+                "no such device",
+                "invalid device",
+                "device unavailable",
+                "no default input",
+                "portaudio",
+            )
+        ):
+            return "No audio device available"
+        return message or "Could not open the audio stream"
+
+    def _unwind_failed_stream(self) -> None:
+        """Close a stream that failed during start and drop the reference."""
+        if not self.stream:
+            return
+        try:
+            self.stream.stop()
+        except Exception:
+            pass
+        try:
+            self.stream.close()
+        except Exception:
+            pass
+        self.stream = None
 
     def stop_recording(self) -> bool:
         """Request stop after the configured post-roll window."""
@@ -154,28 +203,16 @@ class AudioRecorder:
         except Exception as e:
             logger.error(f"Error in audio callback: {e}")
 
-    def _record_audio(self):
+    def _wait_for_stop(self):
+        """Keep the open stream alive until stop plus post-roll complete."""
         try:
-            self.stream = sd.InputStream(
-                device=self.device_id,
-                samplerate=self.rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk,
-                callback=self._audio_callback
-            )
-
-            self.stream.start()
             logger.info("Audio stream started")
-
             while True:
                 time.sleep(0.01)
-
                 if self._stop_requested and time.time() >= self._post_roll_until:
                     break
-
         except Exception as e:
-            logger.error(f"Error opening audio stream: {e}")
+            logger.error(f"Error while recording audio: {e}")
         finally:
             if self.stream:
                 try:
@@ -184,6 +221,7 @@ class AudioRecorder:
                     logger.info("Audio stream stopped and closed")
                 except Exception as e:
                     logger.error(f"Error closing audio stream: {e}")
+                self.stream = None
             self.is_recording = False
             self._stop_requested = False
             self._post_roll_until = 0.0

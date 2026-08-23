@@ -245,9 +245,10 @@ class MainWindow(QMainWindow):
     about_requested = pyqtSignal()
     check_for_updates_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # audio_path
-    upload_file_requested = pyqtSignal(str)  # audio_path from upload tab Transcribe button
+    upload_file_requested = pyqtSignal(str, float)
+    upload_copy_requested = pyqtSignal(str)
     meeting_dashboard_requested = pyqtSignal()
-    past_meeting_requested = pyqtSignal(str)  # meeting_id
+    past_meeting_requested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -398,6 +399,7 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
+        self.upload_file_tab.copy_requested.connect(self.upload_copy_requested.emit)
 
         main_area_layout.addWidget(self.tabbed_content)
         main_area_layout.addWidget(self.compact_controller)
@@ -705,17 +707,7 @@ class MainWindow(QMainWindow):
             self.history_sidebar.refresh()
 
     def _on_quick_record_toggled(self, is_recording: bool):
-        self.is_recording = is_recording
-        self.compact_controller.set_recording_state(is_recording)
-        self.compact_controller.set_status(
-            "Recording in progress..." if is_recording else "Ready to record"
-        )
-
-        if is_recording:
-            self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
-        elif not self.meeting_mode_tab.is_meeting_active:
-            self.tabbed_content.set_recording_state(False, -1)
-
+        """Forward a record/stop request; chrome follows recording_state_changed."""
         self.record_toggled.emit(is_recording)
 
     def _on_quick_record_canceled(self):
@@ -761,8 +753,10 @@ class MainWindow(QMainWindow):
             tab.local_engine.load_from_settings()
         self.whisper_engine_changed.emit()
 
-    def _on_upload_file_transcribe(self, audio_path: str):
-        self.upload_file_requested.emit(audio_path)
+    def _on_upload_file_transcribe(
+        self, audio_path: str, duration_seconds: float = 0.0
+    ):
+        self.upload_file_requested.emit(audio_path, duration_seconds)
 
     def _update_recording_state(self):
         self.quick_record_tab.is_recording = self.is_recording
@@ -1186,7 +1180,56 @@ class MainWindow(QMainWindow):
 
         target_width = min(self.maximumWidth(), base + sidebar_width)
         geo = self.geometry()
-        self.setGeometry(geo.x(), geo.y(), target_width, geo.height())
+        self.setGeometry(
+            self._clamp_geometry(geo.x(), geo.y(), target_width, geo.height())
+        )
+
+    def _available_screen_rect(self) -> QRect:
+        """Return the available geometry of the screen that contains this window."""
+        from PyQt6.QtWidgets import QApplication
+
+        screen = (
+            QApplication.screenAt(self.frameGeometry().center())
+            or QApplication.primaryScreen()
+        )
+        if screen is None:
+            return QRect(0, 0, 1280, 800)
+        return screen.availableGeometry()
+
+    def _clamp_geometry(self, x: int, y: int, width: int, height: int) -> QRect:
+        """Clamp a candidate window rect so it stays fully on the current screen.
+
+        Args:
+            x: Proposed left edge.
+            y: Proposed top edge.
+            width: Proposed width.
+            height: Proposed height.
+
+        Returns:
+            A ``QRect`` that fits inside the available screen area.
+        """
+        avail = self._available_screen_rect()
+        max_width = min(self.maximumWidth(), avail.width())
+        max_height = avail.height()
+        width = max(self.minimumWidth(), min(width, max_width))
+        height = max(self.minimumHeight(), min(height, max_height))
+        max_x = avail.x() + avail.width() - width
+        max_y = avail.y() + avail.height() - height
+        x = min(max(x, avail.x()), max(avail.x(), max_x))
+        y = min(max(y, avail.y()), max(avail.y(), max_y))
+        return QRect(x, y, width, height)
+
+    def _center_on_screen(self) -> None:
+        """Place the window in the center of the available screen area."""
+        avail = self._available_screen_rect()
+        self.setGeometry(
+            self._clamp_geometry(
+                avail.x() + (avail.width() - self.width()) // 2,
+                avail.y() + (avail.height() - self.height()) // 2,
+                self.width(),
+                self.height(),
+            )
+        )
 
     def _on_sidebar_animation_finished(self) -> None:
         if (
@@ -1206,15 +1249,15 @@ class MainWindow(QMainWindow):
             target_width: Target window width.
             target_height: Target window height.
         """
-        from PyQt6.QtCore import QRect
-
         if not hasattr(self, '_resize_animation'):
             self._resize_animation = QPropertyAnimation(self, b"geometry")
             self._resize_animation.setDuration(SECTION_COLLAPSE_DURATION_MS)
             self._resize_animation.setEasingCurve(SECTION_COLLAPSE_EASING)
 
         current_geo = self.geometry()
-        target_geo = QRect(current_geo.x(), current_geo.y(), target_width, target_height)
+        target_geo = self._clamp_geometry(
+            current_geo.x(), current_geo.y(), target_width, target_height
+        )
 
         # Continue smoothly from the current frame when interrupting a resize.
         if self._resize_animation.state() == QPropertyAnimation.State.Running:
@@ -1434,6 +1477,8 @@ class MainWindow(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def _schedule_geometry_save(self):
+        if not self._initial_show_complete:
+            return
         if self._geometry_save_timer is None:
             self._geometry_save_timer = QTimer(self)
             self._geometry_save_timer.setSingleShot(True)
@@ -1534,13 +1579,18 @@ class MainWindow(QMainWindow):
                                 self.maximumWidth(),
                                 width + self._sidebar_width,
                             )
-                        self.setGeometry(geo['x'], geo['y'], restore_width, height)
+                        clamped = self._clamp_geometry(
+                            geo["x"], geo["y"], restore_width, height
+                        )
+                        self.setGeometry(clamped)
                         logger.info(f"Restored window geometry: {geo}")
                         return
 
             logger.debug("No valid saved geometry, using default")
+            self._center_on_screen()
         except Exception as e:
             logger.warning(f"Failed to restore window geometry: {e}")
+            self._center_on_screen()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -36,20 +36,14 @@ def _visible_rows(combo):
 
 
 class TestSearchableComboBox:
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     @pytest.fixture(autouse=True)
     def _setup(self):
+        self.app = QApplication.instance() or QApplication([])
         self.combo = SearchableComboBox()
         self.combo.addItems(MODELS)
         self.combo.setCurrentText("openai/gpt-4o")
         self.combo.show()
         self.app.processEvents()
-
-    @pytest.fixture(autouse=True)
-    def _teardown(self):
         yield
         self.combo.close()
         self.combo.deleteLater()

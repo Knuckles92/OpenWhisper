@@ -91,7 +91,7 @@ class TestMainWindowCompactMode:
 
         self.window.compact_controller.record_button.click()
         assert toggles == [True]
-        assert self.window.is_recording
+        assert not self.window.is_recording
 
         self.window.compact_controller.cancel_button.click()
         assert canceled == [True]
@@ -137,5 +137,32 @@ class TestMainWindowCompactMode:
         assert self.window.quick_record_tab.is_transcription_collapsed()
         assert self.window.height() == config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
         assert self.window.width() == saved_geometry["width"]
+
+    def test_clamp_keeps_footer_on_short_screen(self):
+        """1280x800 available geometry must not grow the window to 840px."""
+        from PyQt6.QtCore import QRect
+
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1280, 800)
+        clamped = self.window._clamp_geometry(0, 0, 605, 840)
+        assert clamped.height() == 800
+        assert clamped.width() == 605
+        assert clamped.x() >= 0
+        assert clamped.y() >= 0
+
+    def test_geometry_save_waits_until_initial_show(self):
+        self.window._initial_show_complete = False
+        self.window._geometry_save_timer = None
+        self.window._schedule_geometry_save()
+        assert self.window._geometry_save_timer is None
+
+    def test_history_toggle_preserves_height(self):
+        from PyQt6.QtCore import QRect
+
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1280, 800)
+        self.window.setGeometry(40, 40, 605, 580)
+        self.window._sidebar_base_width = 605
+        before = self.window.height()
+        self.window._on_sidebar_width_animated(380)
+        assert self.window.height() == before
 
 

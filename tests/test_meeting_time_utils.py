@@ -1,6 +1,5 @@
 """Tests for Meeting Mode UTC storage and local display compatibility."""
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from meeting.time_utils import (
     as_local_time,
@@ -13,7 +12,7 @@ from meeting.time_utils import (
 def test_utc_timestamp_converts_to_requested_local_timezone():
     local = as_local_time(
         "2026-08-20T16:55:00Z",
-        local_tz=ZoneInfo("America/Los_Angeles"),
+        local_tz=timezone(timedelta(hours=-7)),
     )
 
     assert local is not None
@@ -23,7 +22,7 @@ def test_utc_timestamp_converts_to_requested_local_timezone():
 def test_legacy_naive_timestamp_keeps_its_wall_time():
     legacy = as_local_time(
         "2026-08-20T09:55:00",
-        local_tz=ZoneInfo("America/New_York"),
+        local_tz=timezone(timedelta(hours=-4)),
     )
 
     assert legacy == datetime(2026, 8, 20, 9, 55)

@@ -104,6 +104,27 @@ QPushButton#warningButton:pressed {
     background-color: #cc7700;
 }
 
+QPushButton#successButton[inactive="true"],
+QPushButton#successButton[inactive="true"]:hover,
+QPushButton#successButton[inactive="true"]:pressed {
+    background-color: rgba(48, 209, 88, 0.28);
+    color: rgba(255, 255, 255, 0.55);
+}
+
+QPushButton#dangerButton[inactive="true"],
+QPushButton#dangerButton[inactive="true"]:hover,
+QPushButton#dangerButton[inactive="true"]:pressed {
+    background-color: rgba(255, 69, 58, 0.28);
+    color: rgba(255, 255, 255, 0.55);
+}
+
+QPushButton#warningButton[inactive="true"],
+QPushButton#warningButton[inactive="true"]:hover,
+QPushButton#warningButton[inactive="true"]:pressed {
+    background-color: rgba(255, 159, 10, 0.28);
+    color: rgba(255, 255, 255, 0.55);
+}
+
 /* ComboBox (Model selector) */
 QComboBox {
     background-color: #2c2c2e;

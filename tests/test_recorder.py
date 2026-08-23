@@ -52,6 +52,15 @@ class TestAudioRecorder:
         result = self.recorder.start_recording()
         assert not result
 
+    def test_start_recording_fails_when_stream_cannot_open(self):
+        """Start must fail before Recording if the input stream cannot open."""
+        self.mock_sd_stream.side_effect = Exception("Error querying device -1")
+        result = self.recorder.start_recording()
+        assert not result
+        assert not self.recorder.is_recording
+        assert self.recorder.last_start_error == "No audio device available"
+        assert self.recorder.stream is None
+
     def test_stop_recording(self):
         self.recorder.start_recording()
 

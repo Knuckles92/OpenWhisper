@@ -1,6 +1,6 @@
 """SQLAlchemy persistence models."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
@@ -39,6 +39,7 @@ class TranscriptionHistory(Base):
     # Set only when post-ASR cleanup ran successfully on this entry.
     cleanup_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cleanup_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
@@ -56,13 +57,14 @@ class TranscriptionHistory(Base):
         raw_text: Optional[str] = None,
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
+        source_name: Optional[str] = None,
     ) -> 'TranscriptionHistory':
-        """Create a new entry with auto-generated id and timestamp."""
+        """Create a new entry with auto-generated id and UTC timestamp."""
         return cls(
             id=str(uuid.uuid4()),
             text=text,
             raw_text=raw_text,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             model=model,
             audio_file=audio_file,
             transcription_time=transcription_time,
@@ -70,6 +72,7 @@ class TranscriptionHistory(Base):
             file_size=file_size,
             cleanup_provider=cleanup_provider,
             cleanup_model=cleanup_model,
+            source_name=source_name,
         )
 
     @property
@@ -78,10 +81,13 @@ class TranscriptionHistory(Base):
 
     @property
     def preview_text(self) -> str:
+        body = (self.text or "").strip()
+        if not body:
+            return "Empty transcript"
         max_len = 100
-        if len(self.text) <= max_len:
-            return self.text
-        return self.text[:max_len].rsplit(' ', 1)[0] + "..."
+        if len(body) <= max_len:
+            return body
+        return body[:max_len].rsplit(' ', 1)[0] + "..."
 
 
 # Meeting Mode

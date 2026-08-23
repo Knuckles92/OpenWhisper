@@ -111,6 +111,8 @@ class StreamingRuntime:
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
+            from services.hf_access import is_model_cached
+
             settings = settings_manager.load_all_settings()
             self.controller._streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
@@ -120,6 +122,14 @@ class StreamingRuntime:
                 self.controller._streaming_enabled
                 and isinstance(self.controller.current_backend, LocalWhisperBackend)
             ):
+                if not is_model_cached("tiny.en"):
+                    logger.info(
+                        "tiny.en is not in the local cache; waiting for download consent"
+                    )
+                    self.controller._streaming_enabled = False
+                    self.controller.request_model_download("tiny.en")
+                    return
+
                 chunk_duration = settings.get(
                     SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
                 )
@@ -129,6 +139,12 @@ class StreamingRuntime:
                     model_name="tiny.en"
                 )
                 streaming_backend = self.controller._streaming_backend
+                if getattr(streaming_backend, "model", None) is None:
+                    logger.warning(
+                        "Streaming preview inactive: tiny.en did not load"
+                    )
+                    self.controller._streaming_enabled = False
+                    return
 
                 self.controller.streaming_transcriber = StreamingTranscriber(
                     backend=streaming_backend,
@@ -139,8 +155,6 @@ class StreamingRuntime:
                 logger.info(
                     f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
                 )
-                if not initial_setup:
-                    self.controller.ui_controller.set_status("Streaming mode enabled")
             else:
                 if self.controller._streaming_enabled:
                     logger.info(
@@ -153,8 +167,6 @@ class StreamingRuntime:
                         )
                 else:
                     logger.info("Streaming transcription disabled")
-                    if not initial_setup:
-                        self.controller.ui_controller.set_status("Streaming mode disabled")
 
                 self.controller._streaming_enabled = False
         except Exception as exc:
@@ -166,6 +178,10 @@ class StreamingRuntime:
     def _warmup_streaming_backend(self, backend) -> None:
         try:
             import numpy as np
+
+            if getattr(backend, "model", None) is None:
+                logger.warning("Streaming warmup skipped: model is not loaded")
+                return
 
             silence = np.zeros(
                 max(1, config.WHISPER_TARGET_SAMPLE_RATE // 2),

@@ -171,7 +171,12 @@ class TestSafety:
         outside = tmp_path / "outside.md"
         outside.write_text("leaked budget secret", encoding="utf-8")
         link = folder / "link.md"
-        link.symlink_to(outside)
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip("Creating symlinks requires a privilege this account lacks")
+            raise
         enabled, path = _enable(folder)
         with enabled, path:
             result = search_context_files(query="budget")

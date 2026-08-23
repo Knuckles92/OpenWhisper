@@ -9,7 +9,9 @@ from services.hf_access import (
     AccessDecision,
     CachedModelInfo,
     HuggingFaceAccessCoordinator,
+    _progress_tqdm_class,
     delete_model_from_cache,
+    download_model_files,
     format_download_size,
     format_size_bytes,
     is_model_cached,
@@ -46,6 +48,35 @@ class TestHelpers:
         """A local model directory counts as cached without any lookup."""
         with tempfile.TemporaryDirectory() as tmp:
             assert is_model_cached(tmp)
+
+    def test_progress_tqdm_reports_bytes(self):
+        events = []
+        tqdm_cls = _progress_tqdm_class(lambda done, total: events.append((done, total)))
+        bar = tqdm_cls(total=100)
+        bar.update(40)
+        bar.update(60)
+        bar.close()
+        assert events[0] == (0, 100)
+        assert events[-1] == (100, 100)
+
+    def test_download_model_files_forwards_progress_and_allow_patterns(self):
+        captured = {}
+
+        def fake_snapshot(repo_id, **kwargs):
+            captured["repo_id"] = repo_id
+            captured["kwargs"] = kwargs
+            return "/cache/base"
+
+        with patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot), patch(
+            "faster_whisper.utils._MODELS", {"base": "Systran/faster-whisper-base"}
+        ):
+            path = download_model_files("base", progress_callback=lambda *_: None)
+
+        assert path == "/cache/base"
+        assert captured["repo_id"] == "Systran/faster-whisper-base"
+        assert "model.bin" in captured["kwargs"]["allow_patterns"]
+        assert captured["kwargs"]["local_files_only"] is False
+        assert captured["kwargs"]["tqdm_class"] is not None
 
 
 @patch("services.hf_access.is_hf_hub_offline_env_set", return_value=False)

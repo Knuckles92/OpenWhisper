@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QMouseEvent
 
 from services.audio_processor import AudioFilePreview, audio_processor
+from services.runtime.transcription import EMPTY_ASR_MESSAGE
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.buttons import PrimaryButton, Button
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
@@ -137,6 +138,7 @@ class FileInfoCard(Card):
 
     transcribe_clicked = pyqtSignal()
     remove_clicked = pyqtSignal()
+    copy_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -172,6 +174,11 @@ class FileInfoCard(Card):
         self.remove_btn = Button("Remove")
         self.remove_btn.clicked.connect(self.remove_clicked.emit)
         btn_layout.addWidget(self.remove_btn)
+
+        self.copy_btn = Button("Copy")
+        self.copy_btn.set_active(False)
+        self.copy_btn.clicked.connect(self.copy_clicked.emit)
+        btn_layout.addWidget(self.copy_btn)
 
         btn_layout.addStretch()
 
@@ -213,15 +220,21 @@ class FileInfoCard(Card):
         self.transcribe_btn.setEnabled(not active)
         self.remove_btn.setEnabled(not active)
         if active:
+            self.copy_btn.set_active(False)
             self.transcribe_btn.setText("Transcribing...")
         else:
             self.transcribe_btn.setText("Transcribe")
+
+    def set_copy_enabled(self, enabled: bool):
+        """Enable Copy only when a non-empty transcript is available."""
+        self.copy_btn.set_active(enabled)
 
 
 class UploadFileTab(TranscriptionTabBase):
     """Tab widget for uploading and transcribing audio files."""
 
-    upload_requested = pyqtSignal(str)
+    upload_requested = pyqtSignal(str, float)
+    copy_requested = pyqtSignal(str)
 
     CONTENT_OBJECT_NAME = "uploadFileContent"
     INITIAL_STATUS = "Select an audio file to transcribe"
@@ -251,6 +264,7 @@ class UploadFileTab(TranscriptionTabBase):
         self.drop_zone.file_selected.connect(self._on_file_selected)
         self.file_info_card.transcribe_clicked.connect(self._on_transcribe)
         self.file_info_card.remove_clicked.connect(self.clear_file)
+        self.file_info_card.copy_clicked.connect(self._on_copy)
 
     def _on_file_selected(self, path: str):
         try:
@@ -286,19 +300,30 @@ class UploadFileTab(TranscriptionTabBase):
         self.model_combo.setEnabled(False)
         self.local_engine.set_busy(True)
         self.set_status("Transcribing...")
-        self.upload_requested.emit(self._audio_path)
+        duration = self._preview.duration_seconds if self._preview else 0.0
+        self.upload_requested.emit(self._audio_path, duration)
 
     def set_transcript(self, text: str, raw=None):
         super().set_transcript(text, raw=raw)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)
+        stripped = (text or "").strip()
+        copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not stripped.startswith("Error:")
+        self.file_info_card.set_copy_enabled(copyable)
+
+    def _on_copy(self):
+        """Emit the current display transcript for the shared clipboard path."""
+        text = (self._fixed_text or "").strip()
+        if text:
+            self.copy_requested.emit(text)
 
     def clear_file(self):
         self._audio_path = None
         self._preview = None
         self.file_info_card.hide()
         self.file_info_card.set_transcribing(False)
+        self.file_info_card.set_copy_enabled(False)
         self.drop_zone.show()
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)

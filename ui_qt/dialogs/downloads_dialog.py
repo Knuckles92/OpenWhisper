@@ -894,6 +894,16 @@ class DownloadsDialog(QDialog):
             self.message_label.setText(f'Downloading "{model_name}"…')
         self.refresh()
 
+    def set_download_progress(self, model_name: str, done: int, total: int) -> None:
+        row = self.rows.get(model_name)
+        if row is not None:
+            row.set_progress(done, total)
+        if total > 0:
+            self.message_label.setText(
+                f'Downloading "{model_name}"… '
+                f"{format_size_bytes(done)} of {format_size_bytes(total)}"
+            )
+
     def finish_download(self, model_name: str, success: bool) -> None:
         if self._downloading_model == model_name:
             self._downloading_model = None

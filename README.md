@@ -120,7 +120,7 @@ sudo apt install -y \
   libxcb-icccm4 libxcb-keysyms1 libxcb-xkb1
 ```
 
-`libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*.
+`libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*. `./install.sh`, `scripts/openwhisper`, and `python app_qt.py` probe these libraries on Linux and print the matching `apt` / `dnf` / `pacman` command instead of a raw `ImportError`. Clipboard copy uses Qt and does not require `xclip` or `wl-clipboard`.
 
 **Fedora / RHEL:**
 

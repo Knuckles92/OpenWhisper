@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import Dict, Final, Optional, Set, Tuple
+from typing import Callable, Dict, Final, Optional, Set, Tuple
 
 # Re-exported: callers have long imported format_size_bytes from here, and it
 # is used throughout this module's own messages.
@@ -108,19 +108,90 @@ def is_model_cached(model_name: str) -> bool:
         return False
 
 
-def download_model_files(model_name: str) -> str:
+def _progress_tqdm_class(progress_callback: Callable[[int, int], None]):
+    """Build a huggingface_hub-compatible tqdm class that reports bytes."""
+
+    class _CallbackTqdm:
+        def __init__(self, iterable=None, *args, **kwargs):
+            self.n = 0
+            self.total = kwargs.get("total") or 0
+            if progress_callback is not None:
+                progress_callback(0, int(self.total or 0))
+
+        def update(self, n=1):
+            self.n += n
+            if progress_callback is not None:
+                progress_callback(int(self.n), int(self.total or 0))
+
+        def close(self):
+            if progress_callback is not None:
+                progress_callback(int(self.n), int(self.total or 0))
+
+        def set_description(self, *args, **kwargs):
+            return None
+
+        def set_postfix(self, *args, **kwargs):
+            return None
+
+        def refresh(self):
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
+    return _CallbackTqdm
+
+
+def download_model_files(
+    model_name: str,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> str:
     """Download a model from Hugging Face into the local cache.
 
     Only call this after the access policy or an explicit user consent has
     permitted the download. Runs synchronously; callers are responsible for
-    keeping it off the Qt thread.
+    keeping it off the Qt thread. Uses the same allow-patterns and cache
+    behavior as faster-whisper's ``download_model``.
 
     Failures must leave the model missing, never silently substituted.
     """
-    from faster_whisper.utils import download_model
+    from faster_whisper.utils import _MODELS, disabled_tqdm
+    from huggingface_hub import snapshot_download
+
+    if "/" in model_name:
+        repo_id = model_name
+    else:
+        repo_id = _MODELS.get(model_name)
+        if repo_id is None:
+            raise ValueError(f"Invalid model size '{model_name}'")
+
+    allow_patterns = [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+    tqdm_class = (
+        _progress_tqdm_class(progress_callback)
+        if progress_callback is not None
+        else disabled_tqdm
+    )
+    kwargs = {
+        "local_files_only": False,
+        "allow_patterns": allow_patterns,
+        "tqdm_class": tqdm_class,
+    }
 
     logger.info(f"Downloading model '{model_name}' from Hugging Face...")
-    path = download_model(model_name, local_files_only=False)
+    path = snapshot_download(repo_id, **kwargs)
     logger.info(f"Model '{model_name}' downloaded to {path}")
     return path
 

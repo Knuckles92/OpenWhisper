@@ -78,6 +78,7 @@ class HistoryManager:
         raw_text: Optional[str] = None,
         cleanup_provider: Optional[str] = None,
         cleanup_model: Optional[str] = None,
+        source_name: Optional[str] = None,
     ) -> HistoryEntry:
         """Persist a transcription and optionally retain its source audio."""
         saved_audio_path = None
@@ -95,6 +96,7 @@ class HistoryManager:
             raw_text=raw_text,
             cleanup_provider=cleanup_provider,
             cleanup_model=cleanup_model,
+            source_name=source_name,
         )
 
         db.add_history_entry(
@@ -109,6 +111,7 @@ class HistoryManager:
             raw_text=entry.raw_text,
             cleanup_provider=entry.cleanup_provider,
             cleanup_model=entry.cleanup_model,
+            source_name=entry.source_name,
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")
