@@ -1,6 +1,4 @@
-"""
-Settings management for the OpenWhisper application.
-"""
+"""Persistent application settings and validated resolvers."""
 import json
 import os
 import logging
@@ -12,16 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsKey:
-    """String keys used in the settings JSON file. Avoids magic strings at call sites."""
+    """Keys persisted in the settings JSON file."""
     HOTKEYS: Final[str] = "hotkeys"
     SELECTED_MODEL: Final[str] = "selected_model"
     AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
-    CURRENT_WAVEFORM_STYLE: Final[str] = "current_waveform_style"
-    WAVEFORM_STYLE_CONFIGS: Final[str] = "waveform_style_configs"
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
-    STREAMING_OVERLAY_POSITION: Final[str] = "streaming_overlay_position"
     AUTO_PASTE: Final[str] = "auto_paste"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
     TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
@@ -30,6 +25,8 @@ class SettingsKey:
     TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
     TRANSCRIPT_CLEANUP_MODEL_SORT: Final[str] = "transcript_cleanup_model_sort"
     TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
+    # Named OpenAI-compatible endpoints (custom profiles only; builtins omitted).
+    TEXT_LLM_PROFILES: Final[str] = "text_llm_profiles"
     # JSON list of user-taught rule strings appended to the cleanup prompt
     TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
@@ -46,10 +43,45 @@ class SettingsKey:
     # Legacy boolean replaced by HF_ACCESS_POLICY; kept for migration only.
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
+    DEVELOPER_MODE: Final[str] = "developer_mode"
     # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
+    # Meeting Mode
+    MEETING_WHISPER_MODEL: Final[str] = "meeting_whisper_model"
+    MEETING_LANGUAGE: Final[str] = "meeting_language"
+    MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
+    MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
+    MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
+    MEETING_END_POLISH: Final[str] = "meeting_end_polish"
+    MEETING_END_REPORT: Final[str] = "meeting_end_report"
+    MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
+    MEETING_REPORT_BRIEF: Final[str] = "meeting_report_brief"
+    MEETING_REPORT_SIGNAL: Final[str] = "meeting_report_signal"
+    MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
+    MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
+    MEETING_SPEAKER_ID_BACKEND: Final[str] = "meeting_speaker_id_backend"
+    MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: Final[str] = (
+        "meeting_audio_upload_consent_given"
+    )
+    MEETING_UNSUPPORTED_PLATFORM_ACK: Final[str] = (
+        "meeting_unsupported_platform_ack"
+    )
+    MEETING_MODE_INTRO_SEEN: Final[str] = "meeting_mode_intro_seen"
+    MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
+    MEETING_CONTEXT_FOLDER_ENABLED: Final[str] = (
+        "meeting_context_folder_enabled"
+    )
+    MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
+    MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
+    MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    # In-app updater. Absent keys mean both automatic check and notify are on.
+    UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
+    UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
+    UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
+    UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
 
 
 class RecordingRetentionMode:
@@ -59,7 +91,12 @@ class RecordingRetentionMode:
 
 
 class TranscriptCleanupProvider:
-    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``."""
+    """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
+
+    Custom OpenAI-compatible endpoints use ``custom_…`` profile ids stored in
+    ``SettingsKey.TEXT_LLM_PROFILES``. Resolvers accept either a built-in id
+    or a known custom profile id.
+    """
     OPENAI: Final[str] = "openai"
     OPENROUTER: Final[str] = "openrouter"
 
@@ -111,6 +148,73 @@ class TranscriptCleanupReasoning:
     ALL: Final[Tuple[str, ...]] = (OFF, LOW, MEDIUM, HIGH)
 
 
+class MeetingAgentCore:
+    """Values for ``SettingsKey.MEETING_AGENT_CORE``."""
+    PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
+    DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
+
+    ALL: Final[Tuple[str, ...]] = (PI, DIRECT)
+
+
+class MeetingSpeakerIdBackend:
+    """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
+    LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
+    OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize
+
+    ALL: Final[Tuple[str, ...]] = (LOCAL, OPENAI)
+
+
+class MeetingLanguage:
+    """Spoken-language choices exposed by Meeting Mode settings."""
+
+    AUTO: Final[str] = "auto"
+    CHOICES: Final[Tuple[Tuple[str, str], ...]] = (
+        (AUTO, "Detect automatically"),
+        ("en", "English"),
+        ("es", "Spanish"),
+        ("fr", "French"),
+        ("de", "German"),
+        ("it", "Italian"),
+        ("pt", "Portuguese"),
+        ("nl", "Dutch"),
+        ("pl", "Polish"),
+        ("ru", "Russian"),
+        ("uk", "Ukrainian"),
+        ("tr", "Turkish"),
+        ("ar", "Arabic"),
+        ("he", "Hebrew"),
+        ("hi", "Hindi"),
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("vi", "Vietnamese"),
+        ("th", "Thai"),
+        ("id", "Indonesian"),
+        ("sv", "Swedish"),
+        ("da", "Danish"),
+        ("no", "Norwegian"),
+        ("fi", "Finnish"),
+        ("cs", "Czech"),
+        ("el", "Greek"),
+        ("ro", "Romanian"),
+        ("hu", "Hungarian"),
+    )
+    ALL: Final[Tuple[str, ...]] = (
+        "auto", "en", "es", "fr", "de", "it", "pt", "nl", "pl",
+        "ru", "uk", "tr", "ar", "he", "hi", "zh", "ja", "ko",
+        "vi", "th", "id", "sv", "da", "no", "fi", "cs", "el",
+        "ro", "hu",
+    )
+
+
+class MeetingServerBind:
+    """Values for ``SettingsKey.MEETING_SERVER_BIND``."""
+    LOCALHOST: Final[str] = "localhost"  # Dashboard reachable on this machine only
+    LAN: Final[str] = "lan"              # Explicitly shared on the local network
+
+    ALL: Final[Tuple[str, ...]] = (LOCALHOST, LAN)
+
+
 class HuggingFaceAccessPolicy:
     """Values for ``SettingsKey.HF_ACCESS_POLICY``.
 
@@ -132,20 +236,11 @@ class SettingsManager:
     """Handles loading and saving application settings."""
 
     def __init__(self, settings_file: str = None):
-        """Initialize the settings manager.
-
-        Args:
-            settings_file: Path to settings file. Uses config default if None.
-        """
         self.settings_file = settings_file or config.SETTINGS_FILE
         self._lock = threading.Lock()
 
     def load_all_settings(self) -> Dict[str, Any]:
-        """Load all settings from file.
-
-        Returns:
-            Dictionary containing all settings, or empty dict on error.
-        """
+        """Load settings, returning an empty dict on failure."""
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
@@ -156,14 +251,7 @@ class SettingsManager:
         return {}
 
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
-        """Save all settings to file.
-
-        Args:
-            settings: Dictionary of all settings to save.
-
-        Raises:
-            Exception: If saving fails.
-        """
+        """Persist the complete settings mapping."""
         try:
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
@@ -173,28 +261,9 @@ class SettingsManager:
             raise
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Read a single value from settings, with a default.
-
-        Args:
-            key: Setting key to read.
-            default: Value to return when the key is missing.
-
-        Returns:
-            The stored value, or ``default`` if the key is absent or the file
-            cannot be read.
-        """
         return self.load_all_settings().get(key, default)
 
     def save_setting(self, key: str, value: Any) -> None:
-        """Save a single setting value.
-
-        Args:
-            key: Setting key to save.
-            value: Value to save for the key.
-
-        Raises:
-            Exception: If saving fails.
-        """
         try:
             settings = self.load_all_settings()
             settings[key] = value
@@ -205,11 +274,7 @@ class SettingsManager:
             raise
 
     def load_hotkey_settings(self) -> Dict[str, str]:
-        """Load hotkey settings from file, return defaults if file doesn't exist.
-
-        Returns:
-            Dictionary of hotkey mappings.
-        """
+        """Load saved hotkeys or platform defaults."""
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
@@ -221,14 +286,6 @@ class SettingsManager:
         return config.DEFAULT_HOTKEYS.copy()
 
     def save_hotkey_settings(self, hotkeys: Dict[str, str]) -> None:
-        """Save hotkey settings to file.
-
-        Args:
-            hotkeys: Dictionary of hotkey mappings to save.
-
-        Raises:
-            Exception: If saving fails.
-        """
         try:
             settings = self.load_all_settings()
             settings[SettingsKey.HOTKEYS] = hotkeys
@@ -239,44 +296,8 @@ class SettingsManager:
             logger.error(f"Failed to save settings: {e}")
             raise
 
-    def load_waveform_style_settings(self) -> Tuple[str, Dict[str, Dict]]:
-        """Load waveform style settings from file.
-
-        Returns:
-            Tuple containing (current_style, all_style_configs).
-            Falls back to defaults if file doesn't exist or is corrupted.
-        """
-        with self._lock:
-            try:
-                if os.path.exists(self.settings_file):
-                    with open(self.settings_file, 'r') as f:
-                        settings = json.load(f)
-
-                    current_style = settings.get(SettingsKey.CURRENT_WAVEFORM_STYLE, config.CURRENT_WAVEFORM_STYLE)
-                    saved_configs = settings.get(SettingsKey.WAVEFORM_STYLE_CONFIGS, {})
-
-                    all_configs = config.WAVEFORM_STYLE_CONFIGS.copy()
-                    for style_name, saved_config in saved_configs.items():
-                        if style_name in all_configs and isinstance(saved_config, dict):
-                            all_configs[style_name].update(saved_config)
-
-                    if current_style not in all_configs:
-                        logger.warning(f"Invalid current style '{current_style}', falling back to default")
-                        current_style = config.CURRENT_WAVEFORM_STYLE
-
-                    return current_style, all_configs
-
-            except Exception as e:
-                logger.warning(f"Failed to load waveform style settings: {e}")
-
-            return config.CURRENT_WAVEFORM_STYLE, config.WAVEFORM_STYLE_CONFIGS.copy()
-
     def load_model_selection(self) -> str:
-        """Load the saved model selection.
-
-        Returns:
-            The saved model selection internal value, or default if not found.
-        """
+        """Load a valid backend selection or the default."""
         try:
             selected_model = self.get(SettingsKey.SELECTED_MODEL)
             if selected_model and selected_model in config.MODEL_VALUE_MAP.values():
@@ -287,15 +308,7 @@ class SettingsManager:
         return config.MODEL_VALUE_MAP[config.MODEL_CHOICES[0]]
 
     def save_model_selection(self, model_value: str) -> None:
-        """Save the current model selection.
-
-        Args:
-            model_value: The internal model value to save (e.g., 'local_whisper')
-
-        Raises:
-            ValueError: If model_value is invalid
-            Exception: If saving fails
-        """
+        """Validate and save a backend selection."""
         if not isinstance(model_value, str) or not model_value:
             raise ValueError("model_value must be a non-empty string")
 
@@ -342,15 +355,7 @@ class SettingsManager:
         return migrated
 
     def save_hf_access_policy(self, policy: str) -> None:
-        """Persist the Hugging Face access policy.
-
-        Args:
-            policy: One of ``HuggingFaceAccessPolicy.ALL``.
-
-        Raises:
-            ValueError: If ``policy`` is not a recognized value.
-            Exception: If saving fails.
-        """
+        """Validate and persist the Hugging Face access policy."""
         if policy not in HuggingFaceAccessPolicy.ALL:
             raise ValueError(
                 f"Invalid HF access policy '{policy}'. "
@@ -363,11 +368,7 @@ class SettingsManager:
         logger.info(f"HuggingFace access policy saved: {policy}")
 
     def load_audio_input_device(self) -> Optional[int]:
-        """Load the saved audio input device ID.
-
-        Returns:
-            The saved device ID, or None to use system default.
-        """
+        """Load the device ID, or None for the system default."""
         try:
             device_id = self.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if device_id is not None and isinstance(device_id, int):
@@ -386,21 +387,13 @@ def is_hf_hub_offline_env_set() -> bool:
     return os.environ.get(_HF_HUB_OFFLINE_ENV, "").strip().lower() in _HF_HUB_OFFLINE_TRUTHY
 
 
-# Global settings manager instance
 settings_manager = SettingsManager()
 
 
 def resolve_max_saved_recordings(
     settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[int]:
-    """Return how many saved recordings to keep, or ``None`` for unlimited.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        Positive int when retention mode is custom, or ``None`` to keep all.
-    """
+    """Return a positive retention count, or None to keep all."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -422,14 +415,7 @@ def resolve_max_saved_recordings(
 def resolve_streaming_overlay_font_size(
     settings: Optional[Dict[str, Any]] = None,
 ) -> int:
-    """Return the live streaming preview font size in points.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        Font size clamped to a sensible range for the near-cursor overlay.
-    """
+    """Return the preview font size clamped to 10–48 points."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -447,16 +433,7 @@ def resolve_streaming_overlay_font_size(
 def resolve_transcript_cleanup_prompt(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the system prompt used for post-ASR transcript cleanup.
-
-    Empty or missing values fall back to the built-in default prompt.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        Non-empty cleanup system prompt string.
-    """
+    """Return a non-empty cleanup prompt, falling back to the built-in."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -466,98 +443,90 @@ def resolve_transcript_cleanup_prompt(
     return config.TRANSCRIPT_CLEANUP_PROMPT
 
 
+def _known_text_llm_profile_ids(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    try:
+        from services.text_llm import known_profile_ids
+
+        return known_profile_ids(settings)
+    except Exception:
+        return TranscriptCleanupProvider.ALL
+
+
 def default_transcript_cleanup_model(provider: str) -> str:
-    """Return the built-in default cleanup model for a provider.
+    """Return the provider default; custom endpoints have no default."""
+    try:
+        from services.text_llm import default_model_for_profile, get_profile
 
-    Args:
-        provider: A ``TranscriptCleanupProvider`` value.
-
-    Returns:
-        Default chat model id for that provider.
-    """
+        profile = get_profile(provider)
+        if profile is not None:
+            return default_model_for_profile(profile)
+    except Exception:
+        pass
     if provider == TranscriptCleanupProvider.OPENROUTER:
         return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
     return config.TRANSCRIPT_CLEANUP_MODEL
 
 
-def resolve_transcript_cleanup_provider(
+def _resolve_text_llm_assignment(
+    provider_key: str,
+    model_key: str,
     settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return the validated provider used for post-ASR transcript cleanup.
+) -> Tuple[str, str]:
+    """Return a known provider/model pair, or the OpenRouter fallback.
 
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        A ``TranscriptCleanupProvider`` value, falling back to the config
-        default when the stored value is missing or unknown.
+    The last chosen assignment is kept only when both halves are present
+    and the provider is still a known profile. A leftover model after a
+    deleted custom endpoint is discarded with the missing provider.
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
-    if provider in TranscriptCleanupProvider.ALL:
-        return provider
-    return config.TRANSCRIPT_CLEANUP_PROVIDER
+    provider = settings.get(provider_key)
+    model = settings.get(model_key)
+    known = _known_text_llm_profile_ids(settings)
+    if (
+        isinstance(provider, str)
+        and provider in known
+        and isinstance(model, str)
+        and model.strip()
+    ):
+        return provider, model.strip()
+    return (
+        TranscriptCleanupProvider.OPENROUTER,
+        config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
+    )
+
+
+def resolve_transcript_cleanup_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a known cleanup profile ID or the configured default."""
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
+    )
+    return provider
 
 
 def resolve_transcript_cleanup_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the chat model id used for post-ASR transcript cleanup.
-
-    Empty or missing values fall back to the provider's default model.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        Non-empty model id string.
-    """
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    return default_transcript_cleanup_model(
-        resolve_transcript_cleanup_provider(settings)
+    """Return the last chosen cleanup model, or the OpenRouter fallback."""
+    _provider, model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
     )
-
-
-def resolve_transcript_cleanup_model_sort(
-    settings: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Return the validated model-list sort order for Model Manager's Text tab.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        A ``TranscriptCleanupModelSort`` value, falling back to the config
-        default when the stored value is missing or unknown.
-    """
-    if settings is None:
-        settings = settings_manager.load_all_settings()
-
-    sort = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT)
-    if sort in TranscriptCleanupModelSort.ALL:
-        return sort
-    return config.TRANSCRIPT_CLEANUP_MODEL_SORT
+    return model
 
 
 def resolve_transcript_cleanup_reasoning(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return the validated reasoning level for post-ASR transcript cleanup.
-
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        A ``TranscriptCleanupReasoning`` value, falling back to the config
-        default when the stored value is missing or unknown.
-    """
+    """Return a valid cleanup reasoning level."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -576,11 +545,6 @@ def resolve_transcript_cleanup_rules(
     dropped, remaining entries are stripped, and the list is capped at
     ``config.MAX_TRANSCRIPT_CLEANUP_RULES``.
 
-    Args:
-        settings: Optional loaded settings dict. Loads from disk when omitted.
-
-    Returns:
-        List of non-empty rule strings (possibly empty).
     """
     if settings is None:
         settings = settings_manager.load_all_settings()
@@ -592,17 +556,361 @@ def resolve_transcript_cleanup_rules(
     return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
 
 
-def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str:
-    """Append numbered learned rules to the base cleanup prompt.
+def resolve_meeting_whisper_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid Meeting Mode Whisper model."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
 
-    Args:
-        base_prompt: The base cleanup system prompt.
-        rules: Learned rule strings (already validated).
+    model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
+    if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
+        return model
+    return config.MEETING_WHISPER_MODEL
 
-    Returns:
-        ``base_prompt`` unchanged when ``rules`` is empty; otherwise the base
-        prompt followed by a numbered "user-taught rules" section.
+
+def resolve_meeting_language(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return ``auto`` or a supported Whisper language code."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    language = settings.get(SettingsKey.MEETING_LANGUAGE)
+    if isinstance(language, str):
+        language = language.strip().lower()
+        if language in MeetingLanguage.ALL:
+            return language
+    return config.MEETING_LANGUAGE
+
+
+def resolve_meeting_llm_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated LLM provider for meeting intelligence.
+
+    Reuses the text-LLM profile vocabulary (built-in ``openai`` /
+    ``openrouter`` plus custom ``custom_…`` ids) so API keys and base URLs
+    resolve through the same plumbing.
+
     """
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return provider
+
+
+def resolve_meeting_llm_profile(
+    settings: Optional[Dict[str, Any]] = None,
+):
+    """Return the ``TextLLMProfile`` used for meeting intelligence."""
+    from services.text_llm import builtin_profile, get_profile
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    profile_id = resolve_meeting_llm_provider(settings)
+    return get_profile(profile_id, settings) or builtin_profile(profile_id)
+
+
+def resolve_meeting_llm_endpoint(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return a non-secret meeting endpoint snapshot dict."""
+    from services.text_llm import (
+        builtin_profiles,
+        snapshot_from_profile,
+    )
+
+    profile = resolve_meeting_llm_profile(settings)
+    if profile is None:
+        profile = builtin_profiles()[1]
+    return snapshot_from_profile(profile).to_dict()
+
+
+def resolve_meeting_llm_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the last chosen meeting model, or the OpenRouter fallback."""
+    _provider, model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return model
+
+
+def resolve_meeting_agent_core(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid meeting agent core kind."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    core = settings.get(SettingsKey.MEETING_AGENT_CORE)
+    if core in MeetingAgentCore.ALL:
+        return core
+    return config.MEETING_AGENT_CORE
+
+
+def resolve_meeting_speaker_id_backend(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid speaker-identification backend."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    backend = settings.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND)
+    if backend in MeetingSpeakerIdBackend.ALL:
+        return backend
+    return config.MEETING_SPEAKER_ID_BACKEND
+
+
+def resolve_meeting_audio_upload_consent(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the user has approved uploading meeting audio."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, False,
+    )
+
+
+def resolve_meeting_unsupported_platform_ack(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the user acknowledged unsupported-platform Meeting Mode.
+
+    Off by default. On macOS and Linux the Meeting Mode tab stays muted
+    until this is granted once; later launches skip the warning.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,
+    )
+
+
+def resolve_meeting_mode_intro_seen(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the first-visit Meeting Mode intro was dismissed.
+
+    Off by default. After Skip or Got it, later visits do not show it.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_MODE_INTRO_SEEN, False,
+    )
+
+
+def resolve_meeting_past_recall_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether meeting agents may search past transcripts.
+
+    Off by default. When enabled, cloud intelligence may send excerpts from
+    earlier meetings to the model. Distinct from cloud-intelligence consent,
+    which covers only the current meeting.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_PAST_RECALL_ENABLED, False,
+    )
+
+
+def resolve_meeting_context_folder_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether meeting agents may search a local knowledge folder.
+
+    Off by default. When enabled, cloud intelligence may send excerpts from
+    files in the configured folder to the model. Distinct from both
+    cloud-intelligence consent and past-meeting recall.
+    """
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, False,
+    )
+
+
+def resolve_meeting_context_folder_path(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the normalized knowledge-folder path, or empty when unset.
+
+    Expands ``~`` and makes the path absolute. Does not require the folder
+    to exist; the search module treats a missing directory as unavailable.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, "")
+    if not isinstance(raw, str):
+        return ""
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+    expanded = os.path.expanduser(cleaned)
+    if not os.path.isabs(expanded):
+        expanded = os.path.abspath(expanded)
+    return os.path.normpath(expanded)
+
+
+def _resolve_bool_setting(
+    settings: Optional[Dict[str, Any]],
+    key: str,
+    default: bool,
+) -> bool:
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    return default
+
+
+def resolve_developer_mode(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether developer tools (demo meeting, etc.) are unlocked."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.DEVELOPER_MODE, config.DEVELOPER_MODE,
+    )
+
+
+def resolve_update_check_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether background GitHub update checks are allowed."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.UPDATE_CHECK_ENABLED, config.UPDATE_CHECK_ENABLED,
+    )
+
+
+def resolve_update_notify_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether an update-available dialog may be shown automatically."""
+    return _resolve_bool_setting(
+        settings,
+        SettingsKey.UPDATE_NOTIFY_ENABLED,
+        config.UPDATE_NOTIFY_ENABLED,
+    )
+
+
+def resolve_update_skipped_version(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the release version the user dismissed with Later, if any."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.UPDATE_SKIPPED_VERSION, "")
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
+def resolve_meeting_end_redecode(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should re-decode session audio with longer pauses."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_REDECODE, config.MEETING_END_REDECODE,
+    )
+
+
+def resolve_meeting_end_polish(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should run the LLM transcript polish."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_POLISH, config.MEETING_END_POLISH,
+    )
+
+
+def resolve_meeting_end_report(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether End should run the sidecar final report."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_END_REPORT, config.MEETING_END_REPORT,
+    )
+
+
+DEFAULT_REPORT_VIEWS: Final[Tuple[str, ...]] = ("ribbon", "brief", "signal")
+
+
+def resolve_meeting_report_ribbon(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Ribbon report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON,
+    )
+
+
+def resolve_meeting_report_brief(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Brief report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF,
+    )
+
+
+def resolve_meeting_report_signal(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the Signal report view is enabled."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL,
+    )
+
+
+def resolve_meeting_report_views(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return the enabled post-meeting report views, in display order.
+
+    Falls back to ``("ribbon",)`` when every view is off so a meeting never
+    ends with an empty report.
+    """
+    views = tuple(
+        name for name, key, default in (
+            ("ribbon", SettingsKey.MEETING_REPORT_RIBBON, config.MEETING_REPORT_RIBBON),
+            ("brief", SettingsKey.MEETING_REPORT_BRIEF, config.MEETING_REPORT_BRIEF),
+            ("signal", SettingsKey.MEETING_REPORT_SIGNAL, config.MEETING_REPORT_SIGNAL),
+        )
+        if _resolve_bool_setting(settings, key, default)
+    )
+    return views or ("ribbon",)
+
+
+def resolve_meeting_server_bind(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid dashboard bind mode."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    bind = settings.get(SettingsKey.MEETING_SERVER_BIND)
+    if bind in MeetingServerBind.ALL:
+        return bind
+    return config.MEETING_SERVER_BIND
+
+
+def resolve_meeting_server_port(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return a dashboard port clamped to 0–65535."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.MEETING_SERVER_PORT, config.MEETING_SERVER_PORT)
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        port = config.MEETING_SERVER_PORT
+    return max(0, min(65535, port))
+
+
+def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str:
+    """Append validated learned rules to the base prompt."""
     if not rules:
         return base_prompt
     numbered = "\n".join(f"{i}. {rule}" for i, rule in enumerate(rules, start=1))

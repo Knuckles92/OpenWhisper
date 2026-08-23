@@ -95,6 +95,13 @@ fi
 
 chmod +x "$SCRIPTS_DIR/openwhisper" "$SCRIPTS_DIR/ow"
 
+if [ "$(uname -s)" = "Linux" ]; then
+    if ! (cd "$REPO" && "$VENV_PYTHON" -c "from services.linux_deps import check_linux_dependencies; raise SystemExit(check_linux_dependencies())"); then
+        echo "[error] Missing system libraries. Install them (command above), then re-run ./install.sh."
+        exit 1
+    fi
+fi
+
 updated_files=()
 while IFS= read -r profile; do
     case "$profile" in

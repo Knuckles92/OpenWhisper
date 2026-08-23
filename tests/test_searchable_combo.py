@@ -1,6 +1,6 @@
 """Qt tests for the SearchableComboBox type-to-filter dropdown."""
+import pytest
 import os
-import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -35,19 +35,16 @@ def _visible_rows(combo):
     ]
 
 
-class TestSearchableComboBox(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-    def setUp(self):
+class TestSearchableComboBox:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.app = QApplication.instance() or QApplication([])
         self.combo = SearchableComboBox()
         self.combo.addItems(MODELS)
         self.combo.setCurrentText("openai/gpt-4o")
         self.combo.show()
         self.app.processEvents()
-
-    def tearDown(self):
+        yield
         self.combo.close()
         self.combo.deleteLater()
         self.app.processEvents()
@@ -65,21 +62,19 @@ class TestSearchableComboBox(unittest.TestCase):
         """Typing while the dropdown is open narrows it live."""
         self.combo.showPopup()
         self._type_search("claude")
-        self.assertEqual(self.combo.currentText(), "claude")
-        self.assertEqual(_visible_rows(self.combo), CLAUDE_MODELS)
-        self.assertTrue(self.combo.view().window().isVisible())
-        self.assertTrue(self.combo.lineEdit().hasFocus())
+        assert self.combo.currentText() == "claude"
+        assert _visible_rows(self.combo) == CLAUDE_MODELS
+        assert self.combo.view().window().isVisible()
+        assert self.combo.lineEdit().hasFocus()
         self.combo.hidePopup()
 
     def test_typing_replaces_instead_of_appending(self):
         """The first keystroke replaces the current item text."""
         self.combo.showPopup()
         self._type_search("llama")
-        self.assertEqual(self.combo.currentText(), "llama")
-        self.assertEqual(
-            _visible_rows(self.combo), ["meta-llama/llama-3.1-70b"]
-        )
-        self.assertTrue(self.combo.lineEdit().hasFocus())
+        assert self.combo.currentText() == "llama"
+        assert _visible_rows(self.combo) == ["meta-llama/llama-3.1-70b"]
+        assert self.combo.lineEdit().hasFocus()
         self.combo.hidePopup()
 
     def test_focus_stays_on_line_edit_while_typing(self):
@@ -90,26 +85,22 @@ class TestSearchableComboBox(unittest.TestCase):
         for ch in "claude":
             QTest.keyClick(line_edit, ch)
             self.app.processEvents()
-            self.assertTrue(
-                line_edit.hasFocus(), f"editor lost focus after typing {ch!r}"
-            )
-        self.assertEqual(self.combo.currentText(), "claude")
-        self.assertEqual(_visible_rows(self.combo), CLAUDE_MODELS)
+            assert line_edit.hasFocus(), f"editor lost focus after typing {ch!r}"
+        assert self.combo.currentText() == "claude"
+        assert _visible_rows(self.combo) == CLAUDE_MODELS
         self.combo.hidePopup()
 
     def test_backspace_widens_filter(self):
         """Deleting characters broadens the visible rows again."""
         self.combo.showPopup()
         self._type_search("claude-3-h")
-        self.assertEqual(
-            _visible_rows(self.combo), ["anthropic/claude-3-haiku"]
-        )
+        assert _visible_rows(self.combo) == ["anthropic/claude-3-haiku"]
         line_edit = self.combo.lineEdit()
         QTest.keyClick(line_edit, Qt.Key.Key_Backspace)
         QTest.keyClick(line_edit, Qt.Key.Key_Backspace)
         QTest.qWait(50)
-        self.assertEqual(_visible_rows(self.combo), CLAUDE_MODELS)
-        self.assertTrue(line_edit.hasFocus())
+        assert _visible_rows(self.combo) == CLAUDE_MODELS
+        assert line_edit.hasFocus()
         self.combo.hidePopup()
 
     def test_fresh_open_resets_filter(self):
@@ -118,7 +109,7 @@ class TestSearchableComboBox(unittest.TestCase):
         self._type_search("claude")
         self.combo.hidePopup()
         self.combo.showPopup()
-        self.assertEqual(len(_visible_rows(self.combo)), len(MODELS))
+        assert len(_visible_rows(self.combo)) == len(MODELS)
         self.combo.hidePopup()
 
     def test_typing_with_dropdown_closed_opens_filtered(self):
@@ -132,13 +123,10 @@ class TestSearchableComboBox(unittest.TestCase):
             target = self.app.focusWidget() or self.combo
             QTest.keyClick(target, char)
             self.app.processEvents()
-            self.assertEqual(self.combo.currentText(), prefix)
+            assert self.combo.currentText() == prefix
 
-        self.assertTrue(self.combo.view().window().isVisible())
-        self.assertEqual(
-            _visible_rows(self.combo),
-            ["openai/gpt-4o", "openai/gpt-4o-mini"],
-        )
+        assert self.combo.view().window().isVisible()
+        assert _visible_rows(self.combo) == ["openai/gpt-4o", "openai/gpt-4o-mini"]
         self.combo.hidePopup()
 
     def test_combo_frame_typing_never_activates_an_intermediate_match(self):
@@ -153,11 +141,11 @@ class TestSearchableComboBox(unittest.TestCase):
             prefix += char
             QTest.keyClick(self.combo, char)
             self.app.processEvents()
-            self.assertEqual(self.combo.currentText(), prefix)
-            self.assertEqual(activated, [])
-            self.assertTrue(self.combo.view().window().isVisible())
+            assert self.combo.currentText() == prefix
+            assert activated == []
+            assert self.combo.view().window().isVisible()
 
-        self.assertEqual(_visible_rows(self.combo), CLAUDE_MODELS)
+        assert _visible_rows(self.combo) == CLAUDE_MODELS
         self.combo.hidePopup()
 
     def test_typing_from_closed_combo_replaces_current_selection(self):
@@ -166,19 +154,16 @@ class TestSearchableComboBox(unittest.TestCase):
         QTest.keyClicks(self.combo, "gpt")
         self.app.processEvents()
 
-        self.assertEqual(self.combo.currentText(), "gpt")
-        self.assertEqual(
-            _visible_rows(self.combo),
-            ["openai/gpt-4o", "openai/gpt-4o-mini"],
-        )
-        self.assertTrue(self.combo.view().window().isVisible())
+        assert self.combo.currentText() == "gpt"
+        assert _visible_rows(self.combo) == ["openai/gpt-4o", "openai/gpt-4o-mini"]
+        assert self.combo.view().window().isVisible()
         self.combo.hidePopup()
 
     def test_filter_is_case_insensitive(self):
         """Matching ignores letter case."""
         self.combo.showPopup()
         self._type_search("CLAUDE")
-        self.assertEqual(_visible_rows(self.combo), CLAUDE_MODELS)
+        assert _visible_rows(self.combo) == CLAUDE_MODELS
         self.combo.hidePopup()
 
     def test_enter_activates_first_visible_match(self):
@@ -187,10 +172,8 @@ class TestSearchableComboBox(unittest.TestCase):
         self._type_search("claude")
         QTest.keyClick(self.combo.lineEdit(), Qt.Key.Key_Return)
         QTest.qWait(50)
-        self.assertEqual(
-            self.combo.currentText(), "anthropic/claude-3.5-sonnet"
-        )
-        self.assertFalse(self.combo.view().window().isVisible())
+        assert self.combo.currentText() == "anthropic/claude-3.5-sonnet"
+        assert not self.combo.view().window().isVisible()
 
     def test_repopulate_keeps_plain_combo_semantics(self):
         """clear/addItems/setCurrentText behave like a plain QComboBox."""
@@ -200,10 +183,8 @@ class TestSearchableComboBox(unittest.TestCase):
         self.combo.setCurrentText("openai/o4-mini")
         self.combo.blockSignals(False)
         self.app.processEvents()
-        self.assertEqual(self.combo.currentText(), "openai/o4-mini")
-        self.assertEqual(len(_visible_rows(self.combo)), len(MODELS))
-        self.assertFalse(self.combo.view().window().isVisible())
+        assert self.combo.currentText() == "openai/o4-mini"
+        assert len(_visible_rows(self.combo)) == len(MODELS)
+        assert not self.combo.view().window().isVisible()
 
 
-if __name__ == "__main__":
-    unittest.main()

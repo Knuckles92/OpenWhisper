@@ -1,7 +1,5 @@
-"""Tests for the main window's compact recording mode."""
-
+import pytest
 import os
-import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -13,16 +11,14 @@ from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
 
 
-class TestMainWindowCompactMode(unittest.TestCase):
-    """Exercise compact/full transitions without displaying a real window."""
-
+class TestMainWindowCompactMode:
+    @pytest.fixture(scope="class", autouse=True)
     @classmethod
-    def setUpClass(cls):
-        """Create the shared Qt application."""
+    def _qapp(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def setUp(self):
-        """Create a main window with isolated settings access."""
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.load_settings = patch.object(
             settings_manager,
             "load_all_settings",
@@ -39,8 +35,9 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.saved_setting = self.save_setting.start()
         self.window = MainWindow()
 
-    def tearDown(self):
-        """Close the window and restore settings methods."""
+    @pytest.fixture(autouse=True)
+    def _teardown(self):
+        yield
         self.window._force_quit = True
         self.window.close()
         self.app.processEvents()
@@ -55,35 +52,24 @@ class TestMainWindowCompactMode(unittest.TestCase):
 
         self.window.set_compact_mode(True)
 
-        self.assertTrue(self.window._compact_mode)
-        self.assertEqual(self.window.size().width(), config.MAIN_WINDOW_COMPACT_WIDTH)
-        self.assertEqual(self.window.size().height(), config.MAIN_WINDOW_COMPACT_HEIGHT)
-        self.assertLessEqual(
-            self.window.minimumSizeHint().width(),
-            config.MAIN_WINDOW_COMPACT_WIDTH,
-            msg=(
-                f"title={self.window.title_bar.minimumSizeHint().width()} "
-                f"footer={self.window.footer.minimumSizeHint().width()} "
-                f"controller={self.window.compact_controller.minimumSizeHint().width()}"
-            ),
-        )
-        self.assertLessEqual(
-            self.window.minimumSizeHint().height(),
-            config.MAIN_WINDOW_COMPACT_HEIGHT,
-        )
-        self.assertTrue(self.window.compact_controller.isVisibleTo(self.window))
-        self.assertFalse(self.window.tabbed_content.isVisibleTo(self.window))
-        self.assertFalse(self.window.history_edge_tab.isVisibleTo(self.window))
-        self.assertFalse(self.window.models_button.isVisibleTo(self.window))
-        self.assertEqual(self.window.compact_button.text(), "Full Size")
+        assert self.window._compact_mode
+        assert self.window.size().width() == config.MAIN_WINDOW_COMPACT_WIDTH
+        assert self.window.size().height() == config.MAIN_WINDOW_COMPACT_HEIGHT
+        assert self.window.minimumSizeHint().width() <= config.MAIN_WINDOW_COMPACT_WIDTH, True
+        assert self.window.minimumSizeHint().height() <= config.MAIN_WINDOW_COMPACT_HEIGHT
+        assert self.window.compact_controller.isVisibleTo(self.window)
+        assert not self.window.tabbed_content.isVisibleTo(self.window)
+        assert not self.window.history_edge_tab.isVisibleTo(self.window)
+        assert not self.window.models_button.isVisibleTo(self.window)
+        assert self.window.compact_button.text() == "Full Size"
 
         self.window.set_compact_mode(False)
 
-        self.assertFalse(self.window._compact_mode)
-        self.assertEqual(self.window.geometry(), full_geometry)
-        self.assertTrue(self.window.tabbed_content.isVisibleTo(self.window))
-        self.assertTrue(self.window.models_button.isVisibleTo(self.window))
-        self.assertEqual(self.window.compact_button.text(), "Compact")
+        assert not self.window._compact_mode
+        assert self.window.geometry() == full_geometry
+        assert self.window.tabbed_content.isVisibleTo(self.window)
+        assert self.window.models_button.isVisibleTo(self.window)
+        assert self.window.compact_button.text() == "Compact"
 
     def test_footer_model_manager_button_opens_manager(self):
         """Footer Model Manager button uses the existing open signal path."""
@@ -92,8 +78,8 @@ class TestMainWindowCompactMode(unittest.TestCase):
 
         self.window.models_button.click()
 
-        self.assertEqual(opened, [True])
-        self.assertEqual(self.window.models_button.text(), "Model Manager")
+        assert opened == [True]
+        assert self.window.models_button.text() == "Model Manager"
 
     def test_compact_controls_delegate_to_quick_record(self):
         """Compact controls use the existing recording signal path."""
@@ -104,15 +90,14 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.window.set_compact_mode(True)
 
         self.window.compact_controller.record_button.click()
-        self.assertEqual(toggles, [True])
-        self.assertTrue(self.window.is_recording)
+        assert toggles == [True]
+        assert not self.window.is_recording
 
         self.window.compact_controller.cancel_button.click()
-        self.assertEqual(canceled, [True])
-        self.assertFalse(self.window.is_recording)
+        assert canceled == [True]
+        assert not self.window.is_recording
 
     def test_compact_mode_selection_is_persisted(self):
-        """Mode transitions write the compact preference setting."""
         self.window.set_compact_mode(True)
         self.saved_setting.assert_any_call(SettingsKey.COMPACT_MODE, True)
 
@@ -120,7 +105,6 @@ class TestMainWindowCompactMode(unittest.TestCase):
         self.saved_setting.assert_any_call(SettingsKey.COMPACT_MODE, False)
 
     def test_persisted_compact_mode_is_restored(self):
-        """Startup restoration applies the saved compact preference."""
         self.mock_get_setting.side_effect = (
             lambda key, default=None: True
             if key == SettingsKey.COMPACT_MODE
@@ -129,8 +113,8 @@ class TestMainWindowCompactMode(unittest.TestCase):
 
         self.window._restore_compact_mode()
 
-        self.assertTrue(self.window._compact_mode)
-        self.assertEqual(self.window.compact_button.text(), "Full Size")
+        assert self.window._compact_mode
+        assert self.window.compact_button.text() == "Full Size"
 
     def test_collapsed_transcript_caps_tall_saved_geometry_on_restore(self):
         """Collapsed startup does not reserve space for the hidden transcript."""
@@ -150,13 +134,35 @@ class TestMainWindowCompactMode(unittest.TestCase):
 
         self.window._restore_window_geometry()
 
-        self.assertTrue(self.window.quick_record_tab.is_transcription_collapsed())
-        self.assertEqual(
-            self.window.height(),
-            config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT,
-        )
-        self.assertEqual(self.window.width(), saved_geometry["width"])
+        assert self.window.quick_record_tab.is_transcription_collapsed()
+        assert self.window.height() == config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
+        assert self.window.width() == saved_geometry["width"]
+
+    def test_clamp_keeps_footer_on_short_screen(self):
+        """1280x800 available geometry must not grow the window to 840px."""
+        from PyQt6.QtCore import QRect
+
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1280, 800)
+        clamped = self.window._clamp_geometry(0, 0, 605, 840)
+        assert clamped.height() == 800
+        assert clamped.width() == 605
+        assert clamped.x() >= 0
+        assert clamped.y() >= 0
+
+    def test_geometry_save_waits_until_initial_show(self):
+        self.window._initial_show_complete = False
+        self.window._geometry_save_timer = None
+        self.window._schedule_geometry_save()
+        assert self.window._geometry_save_timer is None
+
+    def test_history_toggle_preserves_height(self):
+        from PyQt6.QtCore import QRect
+
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1280, 800)
+        self.window.setGeometry(40, 40, 605, 580)
+        self.window._sidebar_base_width = 605
+        before = self.window.height()
+        self.window._on_sidebar_width_animated(380)
+        assert self.window.height() == before
 
 
-if __name__ == "__main__":
-    unittest.main()

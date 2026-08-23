@@ -47,7 +47,6 @@ class ClickableLineEdit(QLineEdit):
     clicked = pyqtSignal()
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Emit clicked signal on mouse press."""
         self.clicked.emit()
         super().mousePressEvent(event)
 
@@ -71,7 +70,6 @@ if USE_PYNPUT_BACKEND:
             self._canceled = False
 
         def run(self):
-            """Run the capture."""
             self._canceled = False
             pressed_modifiers = set()
             result = {"hotkey": None}
@@ -117,7 +115,6 @@ if USE_PYNPUT_BACKEND:
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
         def stop(self):
-            """Stop the underlying listener (cancels an in-progress capture)."""
             self._canceled = True
             listener = self._listener
             if listener is not None:
@@ -134,7 +131,6 @@ else:
         failed = pyqtSignal(str)
 
         def run(self):
-            """Run the capture."""
             try:
                 events = []
                 queue = keyboard._queue.Queue()
@@ -153,7 +149,6 @@ else:
                 self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
         def stop(self):
-            """Stop the capture by unhooking and terminating the thread."""
             try:
                 keyboard.unhook_all()
             except Exception:
@@ -167,35 +162,29 @@ class HotkeyDialog(QDialog):
     hotkeys_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
-        """Initialize hotkey dialog."""
         super().__init__(parent)
         self.setWindowTitle("Hotkey Configuration")
         self.setMinimumSize(500, 500)
 
-        # State
         self.current_hotkeys: Dict[str, str] = {}
         self.capturing = None
         self.capture_thread: Optional[HotkeyCaptureThread] = None
         self.current_input_field: Optional[ClickableLineEdit] = None
 
-        # Callbacks
         self.on_hotkeys_save: Optional[Callable] = None
 
         self._setup_ui()
         self._load_hotkeys()
 
     def _setup_ui(self):
-        """Setup the user interface."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Header
         title = QLabel("Hotkey Configuration")
         title.setObjectName("headerLabel")
         layout.addWidget(title)
 
-        # Instructions
         if USE_PYNPUT_BACKEND:
             instructions_text = (
                 "Click on a field to record a new hotkey.\n"
@@ -214,7 +203,6 @@ class HotkeyDialog(QDialog):
 
         layout.addSpacing(12)
 
-        # Record toggle hotkey
         record_label = QLabel("Record Toggle:")
         layout.addWidget(record_label)
 
@@ -224,7 +212,6 @@ class HotkeyDialog(QDialog):
 
         layout.addSpacing(12)
 
-        # Cancel hotkey
         cancel_label = QLabel("Cancel Recording:")
         layout.addWidget(cancel_label)
 
@@ -234,7 +221,6 @@ class HotkeyDialog(QDialog):
 
         layout.addSpacing(12)
 
-        # Enable/Disable hotkey
         enable_label = QLabel("Enable/Disable:")
         layout.addWidget(enable_label)
 
@@ -244,7 +230,6 @@ class HotkeyDialog(QDialog):
 
         layout.addSpacing(12)
 
-        # Minimize-to-tray hotkey
         minimize_label = QLabel("Minimize to Tray:")
         layout.addWidget(minimize_label)
 
@@ -252,9 +237,23 @@ class HotkeyDialog(QDialog):
         self.minimize_input.clicked.connect(lambda: self._start_capture("minimize_tray", self.minimize_input))
         layout.addWidget(self.minimize_input)
 
+        layout.addSpacing(12)
+
+        meeting_label = QLabel("Meeting Toggle (optional):")
+        layout.addWidget(meeting_label)
+        meeting_row = QHBoxLayout()
+        self.meeting_input = self._create_hotkey_input()
+        self.meeting_input.clicked.connect(
+            lambda: self._start_capture("meeting_toggle", self.meeting_input)
+        )
+        meeting_row.addWidget(self.meeting_input)
+        clear_meeting = Button("Clear")
+        clear_meeting.clicked.connect(self._clear_meeting_hotkey)
+        meeting_row.addWidget(clear_meeting)
+        layout.addLayout(meeting_row)
+
         layout.addSpacing(16)
 
-        # Reset button
         reset_btn = Button("Reset to Defaults")
         reset_btn.setMaximumWidth(200)
         reset_btn.clicked.connect(self._reset_to_defaults)
@@ -262,7 +261,6 @@ class HotkeyDialog(QDialog):
 
         layout.addStretch()
 
-        # Button layout
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
 
@@ -279,7 +277,6 @@ class HotkeyDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _create_hotkey_input(self) -> ClickableLineEdit:
-        """Create a hotkey input field styled by the app-wide theme."""
         input_field = ClickableLineEdit()
         input_field.setObjectName("hotkeyInput")
         input_field.setReadOnly(True)
@@ -289,15 +286,12 @@ class HotkeyDialog(QDialog):
 
     @staticmethod
     def _set_capturing_state(input_field: QWidget, capturing: bool):
-        """Toggle the QSS ``capturing`` property and re-polish the widget."""
         input_field.setProperty("capturing", capturing)
         input_field.style().unpolish(input_field)
         input_field.style().polish(input_field)
 
     def _start_capture(self, hotkey_type: str, input_field: ClickableLineEdit):
-        """Start capturing a hotkey."""
         try:
-            # If already capturing, stop previous capture
             if self.capture_thread and self.capture_thread.isRunning():
                 self.capture_thread.stop()
                 self.capture_thread.wait(1000)  # Wait with timeout
@@ -311,7 +305,6 @@ class HotkeyDialog(QDialog):
 
             logger.info(f"Capturing hotkey for: {hotkey_type}")
 
-            # Start capture thread
             self.capture_thread = HotkeyCaptureThread()
             self.capture_thread.captured.connect(self._on_hotkey_captured)
             self.capture_thread.failed.connect(self._on_hotkey_capture_failed)
@@ -325,23 +318,19 @@ class HotkeyDialog(QDialog):
             QMessageBox.warning(self, "Hotkey Capture Failed", HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
     def _on_hotkey_captured(self, hotkey: str):
-        """Handle captured hotkey."""
         if not self.capturing or not self.current_input_field:
             return
 
         logger.info(f"Captured hotkey: {hotkey}")
 
-        # Update state
         self.current_hotkeys[self.capturing] = hotkey
         self.current_input_field.setText(format_hotkey_display(hotkey))
 
-        # Reset UI
         self._reset_input_styles()
         self.capturing = None
         self.current_input_field = None
 
     def _on_hotkey_capture_failed(self, message: str):
-        """Handle hotkey capture failures."""
         logger.warning(message)
         self._reset_input_styles()
         self._update_displays()
@@ -350,19 +339,21 @@ class HotkeyDialog(QDialog):
         QMessageBox.warning(self, "Hotkey Capture Failed", message)
 
     def _reset_input_styles(self):
-        """Reset all input fields to the default (non-capturing) style."""
         for input_field in (self.record_input, self.cancel_input,
-                            self.enable_input, self.minimize_input):
+                            self.enable_input, self.minimize_input,
+                            self.meeting_input):
             self._set_capturing_state(input_field, False)
 
     def _reset_to_defaults(self):
-        """Reset hotkeys to default values."""
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
         self._update_displays()
         logger.info("Hotkeys reset to defaults")
 
+    def _clear_meeting_hotkey(self) -> None:
+        self.current_hotkeys["meeting_toggle"] = ""
+        self.meeting_input.clear()
+
     def _load_hotkeys(self):
-        """Load current hotkey settings."""
         self.current_hotkeys = config.DEFAULT_HOTKEYS.copy()
         # Load saved overrides on top of the platform defaults.
         try:
@@ -375,7 +366,6 @@ class HotkeyDialog(QDialog):
         self._update_displays()
 
     def _update_displays(self):
-        """Update the input field displays."""
         defaults = config.DEFAULT_HOTKEYS
         self.record_input.setText(
             format_hotkey_display(self.current_hotkeys.get("record_toggle", defaults["record_toggle"]))
@@ -389,9 +379,13 @@ class HotkeyDialog(QDialog):
         self.minimize_input.setText(
             format_hotkey_display(self.current_hotkeys.get("minimize_tray", defaults["minimize_tray"]))
         )
+        self.meeting_input.setText(
+            format_hotkey_display(
+                self.current_hotkeys.get("meeting_toggle", "")
+            )
+        )
 
     def _save_hotkeys(self):
-        """Save hotkey settings."""
         if self.on_hotkeys_save:
             self.on_hotkeys_save(self.current_hotkeys)
 
@@ -400,7 +394,6 @@ class HotkeyDialog(QDialog):
         self.accept()
 
     def closeEvent(self, event):
-        """Handle close event."""
         try:
             if self.capture_thread and self.capture_thread.isRunning():
                 self.capture_thread.stop()

@@ -1,13 +1,4 @@
-"""
-``keyboard``-based hotkey backend (Windows).
-
-Uses the ``keyboard`` library, which supports per-key suppression so that
-configured hotkeys are swallowed before reaching the focused application. This
-backend is selected on Windows; macOS and Linux use the pynput backend.
-
-This module is imported only by ``services.hotkey_manager`` when the active
-platform selects the keyboard backend; nothing else should import it directly.
-"""
+"""Windows hotkeys with per-key suppression via ``keyboard``."""
 import keyboard
 import logging
 from typing import Dict, Callable, Optional, Tuple
@@ -21,8 +12,6 @@ from services._hotkey_common import (
 
 logger = logging.getLogger(__name__)
 
-
-# --- Key naming / parsing helpers (shared with the hotkey capture dialog) ----
 
 _MODIFIER_ALIASES: Dict[str, str] = {
     "ctrl": "ctrl",
@@ -39,11 +28,7 @@ _ALL_MODIFIERS = ("ctrl", "alt", "shift", "win")
 
 
 def parse_hotkey(hotkey_string: str) -> Tuple[frozenset, Optional[str]]:
-    """Parse a hotkey string into ``(modifier_set, main_key_name)``.
-
-    The main key keeps its raw form (including a ``"kp "`` numpad prefix), since
-    the ``keyboard`` library matches on event names directly.
-    """
+    """Parse a hotkey while preserving ``keyboard`` event key names."""
     return parse_hotkey_string(hotkey_string, _MODIFIER_ALIASES)
 
 
@@ -110,79 +95,70 @@ class HotkeyManager:
     """Manages global hotkeys and keyboard event handling."""
 
     def __init__(self, hotkeys: Dict[str, str] = None):
-        """Initialize the hotkey manager.
-
-        Args:
-            hotkeys: Dictionary of hotkey mappings. Uses defaults if None.
-        """
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
 
-        # Callback functions
         self.on_record_toggle: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
+        self.on_meeting_toggle: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
 
-        # Setup keyboard hook
         self._setup_keyboard_hook()
 
     def _setup_keyboard_hook(self):
-        """Setup the global keyboard hook."""
         keyboard.hook(self._handle_keyboard_event, suppress=True)
 
     def _handle_keyboard_event(self, event):
-        """Global keyboard event handler with suppression."""
         if event.event_type == keyboard.KEY_DOWN:
-            # Check enable/disable hotkey
             if self._matches_hotkey(event, self.hotkeys['enable_disable']):
                 self._toggle_program_enabled()
-                return False  # Suppress the key combination
+                return False
 
-            # If program is disabled, only allow enable/disable hotkey
             if not self.program_enabled:
                 if not self._matches_hotkey(event, self.hotkeys['enable_disable']):
                     return True
 
-            # Check record toggle hotkey
             elif self._matches_hotkey(event, self.hotkeys['record_toggle']):
-                # Always suppress record toggle key first
                 suppress = False
                 if self._should_trigger_record_toggle():
                     if self.on_record_toggle:
-                        # Run callback in a separate thread to avoid blocking
                         import threading
                         threading.Thread(target=self.on_record_toggle, daemon=True).start()
-                return False  # Always suppress record toggle key
+                return False
 
-            # Check cancel hotkey
+            elif (self.hotkeys.get('meeting_toggle')
+                  and self._matches_hotkey(
+                      event, self.hotkeys.get('meeting_toggle')
+                  )):
+                if self.on_meeting_toggle:
+                    import threading
+                    threading.Thread(
+                        target=self.on_meeting_toggle, daemon=True
+                    ).start()
+                return False
+
             elif self._matches_hotkey(event, self.hotkeys['cancel']):
                 if self.on_cancel:
-                    # Run callback in a separate thread to avoid blocking
                     import threading
                     threading.Thread(target=self.on_cancel, daemon=True).start()
-                return False  # Suppress cancel key when handling
+                return False
 
-            # Check minimize-to-tray hotkey
             elif self._matches_hotkey(event, self.hotkeys.get('minimize_tray')):
                 if self.on_minimize_tray:
-                    # Run callback in a separate thread to avoid blocking
                     import threading
                     threading.Thread(target=self.on_minimize_tray, daemon=True).start()
-                return False  # Suppress minimize key when handling
+                return False
 
-        # Let all other keys pass through
         return True
 
     def _toggle_program_enabled(self):
-        """Toggle the program enabled state."""
         self.program_enabled = not self.program_enabled
 
-        # Reset debounce timing when toggling to avoid stale state.
         self._debouncer.reset()
 
         notify_stt_toggle(
@@ -190,40 +166,25 @@ class HotkeyManager:
         )
 
     def _should_trigger_record_toggle(self) -> bool:
-        """Check if record toggle should trigger (with debounce)."""
         return self._debouncer.should_trigger()
 
     def _matches_hotkey(self, event, hotkey_string: str) -> bool:
-        """Check if the current event matches a hotkey string.
-
-        Args:
-            event: Keyboard event from the keyboard library.
-            hotkey_string: Hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1", "ctrl+kp *").
-
-        Returns:
-            True if the event matches the hotkey string.
-        """
         if not hotkey_string:
             return False
 
-        # Parse hotkey string (e.g., "ctrl+alt+*", "*", "shift+f1")
         parts = hotkey_string.lower().split('+')
-        main_key = parts[-1]  # Last part is the main key
-        modifiers = parts[:-1]  # Everything else are modifiers
+        main_key = parts[-1]
+        modifiers = parts[:-1]
 
-        # Check if main key is a numpad key (starts with "kp ")
         is_numpad_hotkey = main_key.startswith('kp ')
         expected_key_name = main_key[3:] if is_numpad_hotkey else main_key
 
-        # Check if main key matches
         if not event.name or event.name.lower() != expected_key_name:
             return False
 
-        # Check if numpad status matches
         if (is_numpad_hotkey and not event.is_keypad) or (not is_numpad_hotkey and event.is_keypad):
             return False
 
-        # Check modifiers
         for modifier in modifiers:
             if modifier == 'ctrl' and not keyboard.is_pressed('ctrl'):
                 return False
@@ -234,7 +195,6 @@ class HotkeyManager:
             elif modifier == 'win' and not keyboard.is_pressed('win'):
                 return False
 
-        # Check that no extra modifiers are pressed
         if 'ctrl' not in modifiers and keyboard.is_pressed('ctrl'):
             return False
         if 'alt' not in modifiers and keyboard.is_pressed('alt'):
@@ -264,13 +224,8 @@ class HotkeyManager:
             logger.error(f"Failed to re-register keyboard hook: {e}")
 
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
-        """Update the hotkey mappings.
-
-        Args:
-            new_hotkeys: Dictionary of new hotkey mappings.
-        """
+        """Replace the configured hotkey mappings."""
         self.hotkeys.update(new_hotkeys)
-        # Restart keyboard hook with new hotkeys
         self.cleanup()
         self._setup_keyboard_hook()
         logger.info("Hotkeys updated successfully")
@@ -286,7 +241,7 @@ class HotkeyManager:
                 # If called from non-main thread, just log a warning
                 logger.warning("Hotkey cleanup called from non-main thread, skipping unhook")
         except RuntimeError as e:
-            # Ignore "cannot join current thread" errors - they're harmless during shutdown
+            # Joining the current hook thread is harmless during shutdown.
             if "cannot join" not in str(e).lower():
                 logger.error(f"Error cleaning up keyboard hooks: {e}")
         except Exception as e:
@@ -297,24 +252,16 @@ class HotkeyManager:
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
+                     on_meeting_toggle: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
                      is_transcribing_fn: Callable[[], bool] = None):
-        """Set callback functions for hotkey events.
-
-        Args:
-            on_record_toggle: Called when record toggle hotkey is pressed.
-            on_cancel: Called when cancel hotkey is pressed.
-            on_enable_toggle: Called when enable/disable hotkey is pressed.
-            on_minimize_tray: Called when minimize-to-tray hotkey is pressed.
-            on_status_update: Called to update status display.
-            on_status_update_auto_hide: Called to update status with auto-hide.
-            is_transcribing_fn: Function to check if transcription is in progress.
-        """
+        """Set callbacks invoked by hotkey events."""
         self.on_record_toggle = on_record_toggle
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
+        self.on_meeting_toggle = on_meeting_toggle
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

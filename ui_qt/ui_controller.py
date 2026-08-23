@@ -1,81 +1,100 @@
-"""
-UI Controller for PyQt6 Application.
-Manages the main window, overlay, and dialogs.
-Bridges between UI and application logic.
-"""
 import logging
-from typing import Callable, List, Optional
-from PyQt6.QtCore import QTimer, pyqtSignal, QObject
-from PyQt6.QtWidgets import QMessageBox
+from typing import Any, Callable, Dict, List, Optional
+from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from config import config
+from services.app_update import (
+    UpdateCheckResult,
+    UpdateStatus,
+    channel_label,
+    detect_channel,
+    should_auto_notify,
+)
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
+from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
-from ui_qt.widgets import QuickRecordTab, UploadFileTab, TabbedContentWidget
-from services.settings import SettingsKey
+from ui_qt.widgets import TabbedContentWidget
+from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
 
 
 class UIController(QObject):
-    """Controls the UI components and manages their interactions."""
-
-    # Signals
     record_started = pyqtSignal()
     record_stopped = pyqtSignal()
-    record_canceled = pyqtSignal()
-    model_changed = pyqtSignal(str)
     transcription_received = pyqtSignal(str, object)  # fixed text, optional raw
     status_changed = pyqtSignal(str)
     audio_levels_updated = pyqtSignal(list)
 
     def __init__(self):
-        """Initialize UI controller."""
         super().__init__()
 
-        # Create UI components
         self.main_window = MainWindow()
         self.overlay = WaveformOverlay()
         self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
 
-        # State
         self.is_recording = False
         self.audio_levels: List[float] = [0.0] * 20
         self.streaming_flow_active = False
         self._transcription_source_tab: int = TabbedContentWidget.TAB_QUICK_RECORD
 
-        # Callbacks for external handlers
         self.on_record_start: Optional[Callable] = None
         self.on_record_stop: Optional[Callable] = None
         self.on_record_cancel: Optional[Callable] = None
         self.on_model_changed: Optional[Callable] = None
         self.on_hotkeys_changed: Optional[Callable] = None
         self.on_retranscribe: Optional[Callable] = None
-        self.on_upload_audio: Optional[Callable] = None  # Callback for audio file upload
-        self.on_whisper_settings_changed: Optional[Callable] = None  # Callback for whisper engine reload
-        self.on_audio_device_changed: Optional[Callable] = None  # Callback for audio input device change
-        self.on_streaming_settings_changed: Optional[Callable] = None  # Callback for streaming mode change
-        self.on_hf_policy_changed: Optional[Callable] = None  # Callback for HuggingFace access policy change
-        self.on_model_download_requested: Optional[Callable] = None  # Model Manager: fetch a model
-        self.on_model_delete_requested: Optional[Callable] = None  # Model Manager: delete cached files
-        self.on_dictation_transcribe: Optional[Callable] = None  # Settings dialog: transcribe a dictated clip
-        self.get_loaded_local_model: Optional[Callable] = None  # Provider: currently loaded model name
+        self.on_upload_audio: Optional[Callable] = None
+        self.on_whisper_settings_changed: Optional[Callable] = None
+        self.on_audio_device_changed: Optional[Callable] = None
+        self.on_streaming_settings_changed: Optional[Callable] = None
+        self.on_hf_policy_changed: Optional[Callable] = None
+        self.on_model_download_requested: Optional[Callable] = None
+        self.on_model_delete_requested: Optional[Callable] = None
+        self.on_model_batch_download: Optional[Callable] = None
+        self.on_model_batch_stop: Optional[Callable] = None
+        self.on_dictation_transcribe: Optional[Callable] = None
+        self.get_loaded_local_model: Optional[Callable] = None
 
-        # Downloadable components (assigned by ApplicationController)
         self.on_component_install: Optional[Callable] = None
         self.on_component_cancel: Optional[Callable] = None
         self.on_component_remove: Optional[Callable] = None
+        self.on_check_for_updates: Optional[Callable] = None
+        self.on_update_download: Optional[Callable] = None
+        self._last_update_result: Optional[UpdateCheckResult] = None
+        self._update_dialog: Optional[AppUpdateDialog] = None
 
-        # Non-modal Model Manager dialog (single instance, created lazily)
+        self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
+        self.on_meeting_start_demo: Optional[Callable] = None  # (cloud: Optional[bool])
+        self.on_meeting_end: Optional[Callable] = None
+        self.on_meeting_pause: Optional[Callable] = None
+        self.on_meeting_resume: Optional[Callable] = None
+        self.on_meeting_open_dashboard: Optional[Callable] = None
+        self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
+        self.on_meeting_open_report: Optional[Callable] = None
+        self.on_meeting_copy_guest_link: Optional[Callable] = None
+        self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
+        self.on_meeting_retry_insights: Optional[Callable] = None
+        self.on_meeting_retry_speakers: Optional[Callable] = None
+        self.on_meeting_retry_step: Optional[Callable] = None  # (step_id: str)
+        self.on_meeting_defer_insights: Optional[Callable] = None
+        self.on_meeting_start_new: Optional[Callable] = None  # (cloud: Optional[bool])
+        self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
+        self._meeting_active = False
+        self._meeting_urls: dict = {}
+
         self._model_manager_dialog = None
+        self._downloads_dialog = None
+        self._download_progress_dialog = None
 
-        # Timer to hide overlay after cancel animation completes
         self.cancel_animation_timer = QTimer()
         self.cancel_animation_timer.setSingleShot(True)
         self.cancel_animation_timer.timeout.connect(self._on_cancel_animation_finished)
@@ -83,8 +102,6 @@ class UIController(QObject):
         self._setup_connections()
 
     def _setup_connections(self):
-        """Setup signal connections between UI components."""
-        # Main window signals
         self.main_window.record_toggled.connect(self._on_record_toggled)
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
@@ -93,22 +110,66 @@ class UIController(QObject):
         self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
         self.main_window.about_requested.connect(self.show_about_dialog)
+        self.main_window.check_for_updates_requested.connect(
+            self._on_check_for_updates_requested
+        )
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
+        self.main_window.upload_copy_requested.connect(self._on_upload_copy)
+        self.main_window.meeting_dashboard_requested.connect(
+            self._on_meeting_open_dashboard
+        )
+        self.main_window.past_meeting_requested.connect(
+            self._on_past_meeting_requested
+        )
 
-        # Set up the copied animation callback
+        meeting_tab = self.main_window.meeting_mode_tab
+        meeting_tab.start_requested.connect(self._on_meeting_start_requested)
+        meeting_tab.demo_requested.connect(self._on_meeting_demo_requested)
+        meeting_tab.pause_requested.connect(
+            lambda: self.on_meeting_pause and self.on_meeting_pause()
+        )
+        meeting_tab.resume_requested.connect(
+            lambda: self.on_meeting_resume and self.on_meeting_resume()
+        )
+        meeting_tab.end_requested.connect(
+            lambda: self.on_meeting_end and self.on_meeting_end()
+        )
+        meeting_tab.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
+        meeting_tab.open_report_requested.connect(self._on_meeting_open_report)
+        meeting_tab.copy_guest_link_requested.connect(
+            lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
+        )
+        meeting_tab.cloud_toggled.connect(self._on_meeting_cloud_toggled)
+        meeting_tab.retry_insights_requested.connect(
+            self._on_meeting_retry_insights
+        )
+        meeting_tab.retry_speakers_requested.connect(
+            self._on_meeting_retry_speakers
+        )
+        meeting_tab.retry_step_requested.connect(self._on_meeting_retry_step)
+        meeting_tab.defer_insights_requested.connect(
+            self._on_meeting_defer_insights
+        )
+        meeting_tab.start_new_meeting_requested.connect(
+            self._on_meeting_start_new_requested
+        )
+
         self.main_window.on_show_copied_animation = self.show_copied_animation
 
-        # Tray manager signals
         self.tray_manager.show_requested.connect(self._on_tray_show)
         self.tray_manager.hide_requested.connect(self._on_tray_hide)
         self.tray_manager.exit_requested.connect(self._on_tray_exit)
         self.tray_manager.toggle_recording.connect(self._on_tray_toggle_recording)
+        self.tray_manager.meeting_toggle_requested.connect(
+            self._on_tray_meeting_toggle
+        )
+        self.tray_manager.meeting_dashboard_requested.connect(
+            self._on_meeting_open_dashboard
+        )
 
-        # Overlay signals
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
 
-        # Internal signals
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
         self.transcription_received.connect(self._display_transcript)
@@ -116,18 +177,15 @@ class UIController(QObject):
         self.audio_levels_updated.connect(self._apply_audio_levels_to_overlay)
 
     def _on_record_toggled(self, is_recording: bool):
-        """Handle record button toggle from main window."""
         if is_recording:
             self.start_recording()
         else:
             self.stop_recording()
 
     def _on_model_changed(self, model_name: str):
-        """Handle model selection change."""
         logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
-        self.model_changed.emit(model_name)
 
     def _on_whisper_engine_changed(self):
         """Handle a local-engine (model/device/quant) change from the main GUI.
@@ -140,32 +198,26 @@ class UIController(QObject):
             self.on_whisper_settings_changed()
 
     def _on_tray_show(self):
-        """Handle show from tray."""
         self.main_window.restore_from_tray()
         logger.debug("Window shown from tray")
 
     def _on_tray_hide(self):
-        """Handle hide from tray."""
         self.main_window.hide()
         logger.debug("Window hidden to tray")
 
     def _on_tray_exit(self):
-        """Handle exit from tray."""
         logger.info("Exit requested from tray")
 
     def _on_tray_toggle_recording(self):
-        """Handle toggle recording from tray."""
         if self.is_recording:
             self.stop_recording()
         else:
             self.start_recording()
 
     def _on_overlay_state_changed(self, state: str):
-        """Handle overlay state change."""
         logger.debug(f"Overlay state changed to: {state}")
 
     def _show_recording_overlay(self):
-        """Show the waveform overlay in recording state."""
         self.tray_manager.set_recording(True)
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_RECORDING)
@@ -173,7 +225,6 @@ class UIController(QObject):
             self.overlay.set_state(self.overlay.STATE_RECORDING)
 
     def _show_processing_overlay(self):
-        """Show the waveform overlay in processing state."""
         self.tray_manager.set_recording(False)
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_PROCESSING)
@@ -181,62 +232,53 @@ class UIController(QObject):
             self.overlay.set_state(self.overlay.STATE_PROCESSING)
 
     def _display_transcript(self, text: str, raw=None):
-        """Display the completed transcript in the tab that started transcription."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
-            self.main_window.upload_file_tab.set_transcript(text, raw=raw)
+            tab = self.main_window.upload_file_tab
+            tab.set_transcript(text, raw=raw)
         else:
+            tab = self.main_window.quick_record_tab
             self.main_window.set_transcript(text, raw=raw)
+        tab.expand_transcription()
         self.hide_overlay()
 
     def _apply_status_to_main_window(self, status: str):
-        """Forward a status string to the active transcription tab."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_status(status)
         else:
             self.main_window.set_status(status)
 
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
-        """Forward audio level updates to the waveform overlay."""
         self.overlay.update_audio_levels(levels)
 
     def start_recording(self):
-        """Start recording."""
-        self.is_recording = True
+        """Request a recording start; UI flips only after the stream opens."""
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
-        logger.info("Recording started")
-
-        # Sync main window state (important for hotkey-triggered recordings)
-        if not self.main_window.is_recording:
-            self.main_window.is_recording = True
-            self.main_window._update_recording_state()
-
         if self.on_record_start:
-            self.on_record_start()
+            if self.on_record_start() is False:
+                self._revert_refused_record_start()
+                return False
         else:
             self.record_started.emit()
+        return True
+
+    def _revert_refused_record_start(self):
+        """Undo optimistic Recording chrome after a refused start."""
+        logger.info("Recording start refused; reverting recording state")
+        self.is_recording = False
+        self.main_window.is_recording = False
+        self.main_window._update_recording_state()
 
     def stop_recording(self):
-        """Stop recording."""
-        self.is_recording = False
-        logger.info("Recording stopped")
-
-        # Sync main window state (important for hotkey-triggered recordings)
-        if self.main_window.is_recording:
-            self.main_window.is_recording = False
-            self.main_window._update_recording_state()
-            logger.info("Main window recording state updated")
-
+        """Request a recording stop; UI flips via recording_state_changed."""
         if self.on_record_stop:
             self.on_record_stop()
         else:
             self.record_stopped.emit()
 
     def cancel_recording(self):
-        """Cancel recording."""
         self.is_recording = False
         logger.info("Recording canceled")
 
-        # Sync main window state (important for hotkey-triggered cancellations)
         if self.main_window.is_recording:
             self.main_window.is_recording = False
             self.main_window._update_recording_state()
@@ -246,24 +288,12 @@ class UIController(QObject):
             self.on_record_cancel()
             logger.info("Record cancel callback called")
 
-        self.record_canceled.emit()
         self.main_window.clear_transcription()
 
     def set_transcript(self, text: str, raw=None):
-        """Set transcript text.
-
-        Args:
-            text: Fixed/display transcript.
-            raw: Optional unprocessed ASR text when distinct from ``text``.
-        """
         self.transcription_received.emit(text, raw)
 
     def set_device_info(self, device_info: str):
-        """Set the persistent device info display (e.g., 'cuda (float16)').
-
-        Args:
-            device_info: Device information string to display.
-        """
         self.main_window.set_device_info(device_info)
 
     def set_engine_busy(self, busy: bool):
@@ -287,7 +317,6 @@ class UIController(QObject):
         audio_duration: float,
         file_size: int
     ):
-        """Set the transcription statistics display on the active transcription tab."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_transcription_stats(
                 transcription_time, audio_duration, file_size
@@ -298,12 +327,10 @@ class UIController(QObject):
             )
 
     def clear_transcription_stats(self):
-        """Clear and hide the transcription statistics display."""
         self.main_window.clear_transcription_stats()
         self.main_window.upload_file_tab.clear_transcription_stats()
 
     def set_status(self, status: str):
-        """Update only the human-readable status text."""
         self.status_changed.emit(status)
 
     def set_overlay_state(self, state: OverlayState) -> None:
@@ -328,7 +355,6 @@ class UIController(QObject):
         if state is OverlayState.RECORDING:
             self.tray_manager.set_recording(True)
             if self.streaming_flow_active:
-                # Live preview uses the same cursor-anchored waveform chrome.
                 if not self.overlay.isVisible():
                     self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
                 elif self.overlay.current_state != self.overlay.STATE_STREAMING:
@@ -350,85 +376,68 @@ class UIController(QObject):
             self._show_or_set_overlay(self.overlay.STATE_STT_DISABLE)
 
     def _dismiss_streaming_preview_for_waveform(self, waveform_state: str) -> None:
-        """Clear live preview text and show the classic waveform state.
-
-        Args:
-            waveform_state: Waveform overlay state to show (processing/transcribing).
-        """
         self.streaming_flow_active = False
         self.hide_caret_paste_indicator()
         self.overlay.clear_streaming_text()
         self._show_or_set_overlay(waveform_state)
 
     def _show_or_set_overlay(self, overlay_state: str) -> None:
-        """Show overlay at cursor if hidden, otherwise just transition its state."""
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(overlay_state)
         else:
             self.overlay.set_state(overlay_state)
 
     def update_audio_levels(self, levels: List[float]):
-        """Update audio level display."""
         self.audio_levels = levels
         self.audio_levels_updated.emit(levels)
 
-    def show_overlay(self):
-        """Show the overlay."""
-        self.overlay.show_at_cursor()
-
     def hide_overlay(self):
-        """Hide the overlay."""
         self.overlay.hide()
 
     def show_copied_animation(self):
-        """Show the copied to clipboard animation overlay."""
         self.overlay.show_at_cursor(self.overlay.STATE_COPIED)
 
-    # Streaming preview methods (reuse the cursor-anchored waveform overlay)
+    def copy_to_clipboard(self, text: str) -> bool:
+        """Copy text to the Qt clipboard. Returns True if the write succeeded."""
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                logger.error("No Qt clipboard available")
+                return False
+            clipboard.setText(text or "")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to copy to clipboard: {exc}")
+            return False
+
     def show_streaming_overlay(self):
-        """Show live preview on the waveform overlay near the cursor."""
         self.streaming_flow_active = True
         self.overlay.clear_streaming_text()
         self.overlay.show_at_cursor(self.overlay.STATE_STREAMING)
         logger.debug("Streaming preview shown on waveform overlay")
 
     def update_streaming_text(self, text: str, is_final: bool):
-        """Update the streaming text display.
-
-        Args:
-            text: The transcription text chunk
-            is_final: Whether this chunk is finalized
-        """
         self.overlay.update_streaming_text(text, is_final)
 
     def hide_streaming_overlay(self):
-        """Clear streaming preview mode on the waveform overlay."""
         self.streaming_flow_active = False
         self.overlay.clear_streaming_text()
         logger.debug("Streaming preview cleared")
 
-    def set_streaming_overlay_finalizing(self):
-        """No-op kept for compatibility; processing uses the waveform states."""
-        return
-
     def show_caret_paste_indicator(self):
-        """Show the caret paste indicator."""
         self.caret_paste_indicator.show_indicator()
         logger.debug("Caret paste indicator shown")
 
     def hide_caret_paste_indicator(self):
-        """Hide the caret paste indicator."""
         self.caret_paste_indicator.hide_indicator()
         logger.debug("Caret paste indicator hidden")
 
     def _start_cancel_animation(self):
-        """Show the cancel animation and schedule hide."""
         self.cancel_animation_timer.stop()
         self.hide_caret_paste_indicator()
         self.streaming_flow_active = False
         self.overlay.clear_streaming_text()
 
-        # Use waveform overlay cancel animation
         if not self.overlay.isVisible():
             self.overlay.show_at_cursor(self.overlay.STATE_CANCELING)
         else:
@@ -439,7 +448,6 @@ class UIController(QObject):
         )
 
     def _on_cancel_animation_finished(self):
-        """Cleanup after cancel animation completes."""
         if self.overlay.current_state not in {
             self.overlay.STATE_CANCELING,
             self.overlay.STATE_IDLE
@@ -448,12 +456,7 @@ class UIController(QObject):
         self.hide_overlay()
 
     def show_main_window(self):
-        """Show the main window."""
         self.main_window.restore_from_tray()
-
-    def hide_main_window(self):
-        """Hide the main window."""
-        self.main_window.hide()
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
         """Open the settings dialog.
@@ -465,16 +468,18 @@ class UIController(QObject):
         """
         dialog = SettingsDialog(self.main_window)
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
+        dialog.get_meeting_active = self.get_meeting_active
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:
             dialog.tabs.setCurrentIndex(0)  # Default to general
 
-        # Connect settings changed signal
         def on_settings_changed(settings: dict):
             self.overlay.refresh_streaming_font_size()
-            # Keep main-UI AI cleanup checkboxes in sync with Settings.
             self.refresh_cleanup_controls()
+            self.main_window.meeting_mode_tab.set_developer_mode(
+                bool(settings.get(SettingsKey.DEVELOPER_MODE, False))
+            )
             if settings.get('_audio_device_changed', False):
                 if self.on_audio_device_changed:
                     new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
@@ -492,9 +497,10 @@ class UIController(QObject):
         dialog.exec()
         # Open only after Settings' modal loop ends — showing the non-modal
         # Model Manager during exec() stacks behind the main window on Windows.
-        if dialog.open_model_manager_on_close:
+        manager_tab = dialog.open_model_manager_on_close
+        if manager_tab:
             QTimer.singleShot(
-                0, lambda: self.open_model_manager_dialog(tab="text")
+                0, lambda tab=manager_tab: self.open_model_manager_dialog(tab=tab)
             )
 
     def refresh_local_engine_controls(self):
@@ -507,7 +513,6 @@ class UIController(QObject):
         self.main_window.upload_file_tab.local_engine.load_from_settings()
 
     def refresh_cleanup_controls(self):
-        """Re-sync the main-UI AI cleanup checkboxes with persisted settings."""
         self.main_window.quick_record_tab.load_cleanup_setting()
         self.main_window.upload_file_tab.load_cleanup_setting()
 
@@ -532,12 +537,32 @@ class UIController(QObject):
         dialog.exec()
         return dialog.result_action
 
-    def open_model_manager_dialog(self, tab: str = "voice"):
+    def open_model_manager_dialog(self, tab: str = "ondemand"):
         """Show the non-modal Model Manager (single instance, re-raised).
 
         Args:
-            tab: ``\"voice\"`` or ``\"text\"`` — which manager tab to show.
+            tab: Rail destination alias — ``\"ondemand\"``, ``\"text\"``,
+                ``\"meeting\"``, or ``\"runtime\"``. ``\"downloads\"`` and the
+                legacy ``\"library\"`` / ``\"voice\"`` open the Downloads
+                window, which now owns the catalog and components.
         """
+        if tab in ("downloads", "library", "voice"):
+            self.open_downloads_dialog()
+            return
+
+        dialog = self._ensure_model_manager_dialog()
+        dialog.refresh()
+        if tab == "text":
+            dialog.show_text_tab()
+        elif tab == "meeting":
+            dialog.show_meeting_tab()
+        elif tab == "runtime":
+            dialog.show_runtime()
+        else:
+            dialog.show_ondemand_tab()
+        self._raise_dialog(dialog)
+
+    def _ensure_model_manager_dialog(self):
         from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 
         if self._model_manager_dialog is None:
@@ -545,9 +570,26 @@ class UIController(QObject):
                 get_loaded_model=self.get_loaded_local_model,
                 parent=self.main_window,
             )
+            dialog.on_set_active_requested = self._on_manager_set_active
+            dialog.on_backend_changed = self.select_transcription_backend
+            dialog.on_runtime_settings_changed = self._on_manager_runtime_changed
+            dialog.downloads_requested.connect(self.open_downloads_dialog)
+            self._model_manager_dialog = dialog
+        return self._model_manager_dialog
+
+    def open_downloads_dialog(self):
+        """Show the non-modal Downloads window (single instance, re-raised)."""
+        from ui_qt.dialogs.downloads_dialog import DownloadsDialog
+
+        if self._downloads_dialog is None:
+            dialog = DownloadsDialog(
+                get_loaded_model=self.get_loaded_local_model,
+                parent=self.main_window,
+            )
             dialog.on_download_requested = self.on_model_download_requested
             dialog.on_delete_requested = self.on_model_delete_requested
-            dialog.on_set_active_requested = self._on_manager_set_active
+            dialog.on_batch_download_requested = self.on_model_batch_download
+            dialog.on_batch_cancel_requested = self.request_model_batch_stop
             dialog.component_install_requested.connect(
                 self.on_component_install_requested
             )
@@ -557,17 +599,39 @@ class UIController(QObject):
             dialog.component_remove_requested.connect(
                 self.on_component_remove_requested
             )
-            self._model_manager_dialog = dialog
+            self._downloads_dialog = dialog
 
-        self._model_manager_dialog.refresh()
-        if tab == "text":
-            self._model_manager_dialog.show_text_tab()
-        self._model_manager_dialog.show()
-        self._model_manager_dialog.raise_()
-        self._model_manager_dialog.activateWindow()
+        self._downloads_dialog.refresh()
+        self._raise_dialog(self._downloads_dialog)
+
+    @staticmethod
+    def _raise_dialog(dialog) -> None:
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def select_transcription_backend(self, display_name: str) -> None:
+        """Select a dictation backend through the main-window combo path.
+
+        Args:
+            display_name: A ``config.MODEL_CHOICES`` label such as
+                ``\"Local Whisper\"``.
+        """
+        tabs = getattr(self.main_window, "transcription_tabs", None)
+        if not display_name or not tabs:
+            return
+        tab = tabs[0]
+        if tab.model_combo.currentText() == display_name:
+            return
+        tab.model_combo.setCurrentText(display_name)
+
+    def _on_manager_runtime_changed(self) -> None:
+        self.refresh_local_engine_controls()
+        if self.on_whisper_settings_changed:
+            self.on_whisper_settings_changed()
 
     def _on_manager_set_active(self, model_name: str):
-        """Persist a Model Manager 'Set Active' choice and reload the engine.
+        """Persist a Model Manager Whisper assignment and reload the engine.
 
         Identical contract to ``LocalEngineControls._on_changed``: write the
         setting, re-sync the inline combos (signal-safe), then fire the same
@@ -581,123 +645,418 @@ class UIController(QObject):
             self.on_whisper_settings_changed()
 
     def refresh_model_manager(self):
-        """Refresh the Model Manager if it is open (cache-changed target)."""
         if self._model_manager_dialog is not None and self._model_manager_dialog.isVisible():
             self._model_manager_dialog.refresh()
+        if self._downloads_dialog is not None and self._downloads_dialog.isVisible():
+            self._downloads_dialog.refresh()
 
     def on_model_download_started(self, model_name: str):
-        """Reflect a started model download in the Model Manager."""
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.set_downloading(model_name)
         if self._model_manager_dialog is not None:
             self._model_manager_dialog.set_downloading(model_name)
+        downloads_visible = (
+            self._downloads_dialog is not None
+            and self._downloads_dialog.isVisible()
+        )
+        manager_visible = (
+            self._model_manager_dialog is not None
+            and self._model_manager_dialog.isVisible()
+        )
+        if not downloads_visible and not manager_visible:
+            self._show_download_progress(model_name)
+
+    def on_model_download_progress(self, model_name: str, done: int, total: int):
+        if self._downloads_dialog is not None and hasattr(
+            self._downloads_dialog, "set_download_progress"
+        ):
+            self._downloads_dialog.set_download_progress(model_name, done, total)
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.set_download_progress(model_name, done, total)
+        self._update_download_progress(model_name, done, total)
 
     def on_model_download_finished(self, model_name: str, success: bool):
-        """Reflect a finished model download in the Model Manager."""
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_download(model_name, success)
         if self._model_manager_dialog is not None:
             self._model_manager_dialog.finish_download(model_name, success)
+        self._hide_download_progress()
+        self.refresh_model_manager()
+
+    def on_model_batch_planned(self, model_names):
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.begin_batch(list(model_names))
+
+    def on_model_batch_finished(self, completed: int, planned: int):
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_batch(completed, planned)
+
+    def request_model_batch_stop(self):
+        if self.on_model_batch_stop:
+            self.on_model_batch_stop()
+
+    def _show_download_progress(self, model_name: str) -> None:
+        dialog = QProgressDialog(
+            f'Downloading "{model_name}"…',
+            None,
+            0,
+            0,
+            self.main_window,
+        )
+        dialog.setWindowTitle("Downloading model")
+        dialog.setMinimumDuration(0)
+        dialog.setCancelButton(None)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumWidth(360)
+        dialog.show()
+        self._download_progress_dialog = dialog
+
+    def _update_download_progress(
+        self, model_name: str, done: int, total: int
+    ) -> None:
+        dialog = self._download_progress_dialog
+        if dialog is None:
+            return
+        if total <= 0:
+            dialog.setRange(0, 0)
+            dialog.setLabelText(f'Downloading "{model_name}"…')
+            return
+        dialog.setRange(0, 100)
+        dialog.setValue(int(done * 100 / total))
+        from services.format_utils import format_size_bytes
+
+        dialog.setLabelText(
+            f'Downloading "{model_name}"… '
+            f"{format_size_bytes(done)} of {format_size_bytes(total)}"
+        )
+
+    def _hide_download_progress(self) -> None:
+        dialog = self._download_progress_dialog
+        self._download_progress_dialog = None
+        if dialog is not None:
+            dialog.close()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
-        """Reflect a model delete outcome in the Model Manager."""
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.show_delete_result(model_name, success, error)
-
-    # ── Downloadable components ────────────────────────────────────
-    #
-    # Callbacks are assigned by ApplicationController, matching the pattern
-    # used for recording and model actions.
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.show_delete_result(model_name, success, error)
+            self._downloads_dialog.refresh()
+        self.refresh_model_manager()
 
     def on_component_install_requested(self, component_id: str):
-        """Forward a component install request to the application controller."""
         if self.on_component_install:
             self.on_component_install(component_id)
 
     def on_component_cancel_requested(self, component_id: str):
-        """Forward a component cancel request to the application controller."""
         if self.on_component_cancel:
             self.on_component_cancel(component_id)
 
     def on_component_remove_requested(self, component_id: str):
-        """Forward a component removal request to the application controller."""
         if self.on_component_remove:
             self.on_component_remove(component_id)
 
     def on_component_progress(
         self, component_id: str, phase: str, done: int, total: int
     ):
-        """Reflect component install progress in the Model Manager."""
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.set_component_progress(
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.set_component_progress(
                 component_id, phase, done, total
             )
 
     def on_component_state_changed(self):
-        """Re-render component rows after an install, cancel, or removal."""
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.refresh_components()
         if self._model_manager_dialog is not None:
-            self._model_manager_dialog.refresh_components()
+            self._model_manager_dialog.refresh_component_state()
 
     def on_component_install_finished(
         self, component_id: str, success: bool, message: str
     ):
-        """Reflect a finished component install in the Model Manager."""
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.finish_component_install(
+        if self._downloads_dialog is not None:
+            self._downloads_dialog.finish_component_install(
                 component_id, success, message
             )
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.refresh_component_state()
+
+    def ensure_meeting_platform_ack(self) -> bool:
+        """Clear both platform gates before Meeting Mode opens or starts.
+
+        Windows returns immediately. Linux shows the unsupported-platform
+        acknowledgement on the first call and reuses the persisted answer
+        afterwards. macOS is supported but needs the Screen Recording grant,
+        so it is asked for here rather than discovered as a silent mic-only
+        recording.
+
+        Returns:
+            True when a meeting may start or the Meeting Mode tab may open.
+        """
+        from ui_qt.dialogs.meeting_system_audio_dialog import (
+            ensure_meeting_system_audio_permission,
+        )
+        from ui_qt.dialogs.meeting_unsupported_dialog import (
+            acknowledge_unsupported_meeting_mode,
+        )
+
+        if not acknowledge_unsupported_meeting_mode(self.main_window):
+            return False
+        if not ensure_meeting_system_audio_permission(self.main_window):
+            return False
+        self.main_window.tabbed_content.unlock_meeting_tab()
+        return True
+
+    def _on_meeting_start_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
+        if self.on_meeting_start:
+            self.on_meeting_start(cloud_enabled)
+
+    def _on_meeting_demo_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
+        if self.on_meeting_start_demo:
+            self.on_meeting_start_demo(cloud_enabled)
+
+    def _on_meeting_cloud_toggled(self, enabled: bool):
+        if self.on_meeting_toggle_cloud:
+            self.on_meeting_toggle_cloud(enabled)
+
+    def _on_meeting_open_dashboard(self):
+        if self.on_meeting_open_dashboard:
+            self.on_meeting_open_dashboard()
+
+    def _on_meeting_open_report(self):
+        if self.on_meeting_open_report:
+            self.on_meeting_open_report()
+
+    def _on_meeting_retry_insights(self):
+        if self.on_meeting_retry_insights:
+            self.on_meeting_retry_insights()
+
+    def _on_meeting_retry_speakers(self):
+        if self.on_meeting_retry_speakers:
+            self.on_meeting_retry_speakers()
+
+    def _on_meeting_retry_step(self, step_id: str):
+        if self.on_meeting_retry_step:
+            self.on_meeting_retry_step(step_id)
+
+    def _on_meeting_defer_insights(self):
+        if self.on_meeting_defer_insights:
+            self.on_meeting_defer_insights()
+
+    def _on_meeting_start_new_requested(self, cloud_enabled: bool):
+        if not self.ensure_meeting_platform_ack():
+            return
+        if self.on_meeting_start_new:
+            self.on_meeting_start_new(cloud_enabled)
+
+    def _on_past_meeting_requested(self, meeting_id: str) -> None:
+        if self.on_meeting_open_past:
+            self.on_meeting_open_past(meeting_id)
+
+    def _on_tray_meeting_toggle(self):
+        if self._meeting_active:
+            if self.on_meeting_end:
+                self.on_meeting_end()
+        elif self.ensure_meeting_platform_ack() and self.on_meeting_start:
+            self.on_meeting_start(None)
+
+    def on_meeting_state_changed(self, payload: Any) -> None:
+        """Apply a meeting-state payload to the Meeting Mode tab and tray.
+
+        Args:
+            payload: Partial meeting-state dict from MeetingRuntime
+                (``active``, ``paused``, ``status``, ``cloud_enabled``,
+                ``elapsed_s``, ``finalization``). Dashboard URLs are retained
+                after capture ends so Open Dashboard stays available during
+                and after finalization.
+        """
+        if not isinstance(payload, dict):
+            return
+        has_dashboard = bool(
+            self._meeting_urls.get("host_url") or self._meeting_urls.get("url")
+        )
+        # Always tell the tab whether Open Dashboard can work, including during
+        # post-meeting finalization when capture is already inactive.
+        tab_payload = dict(payload)
+        tab_payload.setdefault("dashboard_available", has_dashboard)
+        self.main_window.meeting_mode_tab.set_meeting_state(tab_payload)
+        if payload.get("active"):
+            self.main_window.history_sidebar.set_selected_past_meeting(None)
+        elif "meeting_id" in payload:
+            meeting_id = payload.get("meeting_id")
+            self.main_window.history_sidebar.set_selected_past_meeting(
+                str(meeting_id) if meeting_id else None
+            )
+        if (
+            payload.get("active") is False
+            and str(payload.get("status") or "")
+            in {"ended", "failed", "needs_recovery", "canceled"}
+        ):
+            self.main_window.refresh_past_meetings()
+        if "active" in payload:
+            self._meeting_active = bool(payload["active"])
+            self.tray_manager.set_meeting_active(
+                self._meeting_active, dashboard_available=has_dashboard
+            )
+            if self._meeting_active:
+                self.switch_to_meeting_mode()
+                self.main_window.tabbed_content.set_recording_state(
+                    True, TabbedContentWidget.TAB_MEETING_MODE
+                )
+            else:
+                # Unlock other tabs once capture ends; finalization stays on
+                # the Meeting Mode tab without blocking Quick Record.
+                if not self.main_window.is_recording:
+                    self.main_window.tabbed_content.set_recording_state(False, -1)
+        elif has_dashboard:
+            self.tray_manager.set_meeting_active(
+                self._meeting_active, dashboard_available=True
+            )
+
+    def set_meeting_status(self, status: str) -> None:
+        if not status:
+            return
+        self.main_window.meeting_mode_tab.set_status_text(status)
+        self.set_status(status)
+
+    def on_meeting_error(self, message: str) -> None:
+        """Surface a meeting error in status and a modal warning.
+
+        Args:
+            message: Error description from MeetingRuntime.
+        """
+        text = message or "Meeting error"
+        self.set_meeting_status(text)
+        QMessageBox.warning(self.main_window, "Meeting Error", text)
+
+    def on_meeting_server_started(self, result: Any) -> None:
+        """Store session URLs after the meeting web server starts.
+
+        Args:
+            result: Dict with ``meeting_id``, ``url``, ``host_url``,
+                ``guest_url`` from MeetingEngine.start().
+        """
+        if not isinstance(result, dict):
+            return
+        self._meeting_urls = dict(result)
+        has_dashboard = bool(
+            self._meeting_urls.get("host_url") or self._meeting_urls.get("url")
+        )
+        self.tray_manager.set_meeting_active(
+            self._meeting_active, dashboard_available=has_dashboard
+        )
+        self.main_window.meeting_mode_tab.set_dashboard_available(has_dashboard)
+        if self.on_meeting_open_dashboard:
+            self.on_meeting_open_dashboard()
+
+    def show_meeting_consent_dialog(self) -> bool:
+        """Show the one-time cloud-intelligence consent dialog.
+
+        Returns:
+            True when the user enables cloud intelligence.
+        """
+        from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
+
+        destination = None
+        remote = None
+        try:
+            from services.settings import (
+                resolve_meeting_llm_profile,
+                settings_manager,
+            )
+            from services.text_llm import (
+                consent_destination,
+                destination_is_remote,
+            )
+
+            profile = resolve_meeting_llm_profile(
+                settings_manager.load_all_settings()
+            )
+            destination = consent_destination(profile)
+            remote = destination_is_remote(profile)
+        except Exception:
+            logger.debug(
+                "Could not resolve meeting endpoint for consent copy",
+                exc_info=True,
+            )
+
+        dialog = MeetingConsentDialog(
+            parent=self.main_window,
+            destination=destination,
+            remote=remote,
+        )
+        dialog.exec()
+        return dialog.result_action == MeetingConsentDialog.RESULT_ENABLE
+
+    def show_meeting_recovery_dialog(
+        self,
+        meetings: List[Dict[str, Any]],
+        on_finalize: Optional[Callable[[str], None]] = None,
+        on_discard: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Show the interrupted-meeting recovery dialog.
+
+        Args:
+            meetings: Interrupted meeting dicts from the recovery scan.
+            on_finalize: Callback receiving a meeting id to finalize.
+            on_discard: Callback receiving a meeting id to discard.
+        """
+        from ui_qt.dialogs.meeting_recovery_dialog import MeetingRecoveryDialog
+
+        dialog = MeetingRecoveryDialog(list(meetings or []), parent=self.main_window)
+        dialog.on_finalize = on_finalize
+        dialog.on_discard = on_discard
+        dialog.exec()
+
+    def copy_meeting_guest_link(self, url: str) -> None:
+        """Copy the guest dashboard URL to the clipboard.
+
+        Args:
+            url: Guest join URL for the active meeting.
+        """
+        if not url:
+            return
+        QApplication.clipboard().setText(url)
+        self._meeting_urls["guest_url"] = url
+        self.set_meeting_status("Guest link copied")
+        self.show_copied_animation()
 
     def open_hotkey_dialog(self):
-        """Open the hotkey configuration dialog."""
         dialog = HotkeyDialog(self.main_window)
 
         def on_hotkeys_save(hotkeys):
             if self.on_hotkeys_changed:
                 self.on_hotkeys_changed(hotkeys)
-            # Update the hotkey display in the main window
             self.update_hotkey_display(hotkeys)
 
         dialog.on_hotkeys_save = on_hotkeys_save
         dialog.exec()
 
-    def _on_upload_file_transcribe(self, audio_path: str):
-        """Handle Transcribe from the Upload File tab."""
+    def _on_upload_file_transcribe(
+        self, audio_path: str, duration_seconds: float = 0.0
+    ):
         self._transcription_source_tab = TabbedContentWidget.TAB_UPLOAD_FILE
         logger.info(f"Upload tab transcription started: {audio_path}")
         if self.on_upload_audio:
-            self.on_upload_audio(audio_path)
+            self.on_upload_audio(audio_path, duration_seconds)
 
-    def get_quick_record_tab(self) -> QuickRecordTab:
-        """Get the Quick Record tab widget.
-
-        Returns:
-            The QuickRecordTab instance
-        """
-        return self.main_window.quick_record_tab
-
-    def get_upload_file_tab(self) -> UploadFileTab:
-        """Get the Upload File tab widget."""
-        return self.main_window.upload_file_tab
+    def _on_upload_copy(self, text: str):
+        """Copy Upload File transcript text through the shared clipboard path."""
+        if self.copy_to_clipboard(text):
+            self.main_window.upload_file_tab.set_status("Copied to clipboard")
+            self.show_copied_animation()
+        else:
+            self.main_window.upload_file_tab.set_status("Copy failed")
 
     def switch_to_tab(self, index: int):
-        """Switch to a specific tab.
-
-        Args:
-            index: Tab index.
-        """
         self.main_window.tabbed_content.set_current_index(index)
 
-    def switch_to_quick_record(self):
-        """Switch to the Quick Record tab."""
-        self.switch_to_tab(TabbedContentWidget.TAB_QUICK_RECORD)
-
-    def switch_to_upload_file(self):
-        """Switch to the Upload File tab."""
-        self.switch_to_tab(TabbedContentWidget.TAB_UPLOAD_FILE)
+    def switch_to_meeting_mode(self):
+        self.switch_to_tab(TabbedContentWidget.TAB_MEETING_MODE)
 
     def update_hotkey_display(self, hotkeys: dict):
-        """
-        Update the hotkey display in the main window.
-
-        Args:
-            hotkeys: Dictionary with hotkey mappings
-        """
         record_key = format_hotkey_display(
             hotkeys.get('record_toggle', config.DEFAULT_HOTKEYS['record_toggle'])
         )
@@ -714,12 +1073,116 @@ class UIController(QObject):
             record_key, cancel_key, enable_disable_key, minimize_key
         )
 
+    def _on_check_for_updates_requested(self) -> None:
+        """Help → Check for Updates. Always hits GitHub."""
+        if self.on_check_for_updates:
+            self.on_check_for_updates()
+
+    def on_update_check_finished(
+        self,
+        result: Optional[UpdateCheckResult],
+        error: str = "",
+        manual: bool = False,
+    ) -> None:
+        """Show the update dialog for a manual check or an allowed auto-notify."""
+        if result is not None:
+            self._last_update_result = result
+        if not manual:
+            if result is None or error:
+                return
+            latest = result.release.version if result.release else ""
+            if not should_auto_notify(
+                result.status, latest, settings_manager.load_all_settings()
+            ):
+                return
+            if self.is_recording or (
+                self.get_meeting_active and self.get_meeting_active()
+            ):
+                return
+        self.show_app_update_dialog(result, error=error)
+
+    def show_app_update_dialog(
+        self,
+        result: Optional[UpdateCheckResult],
+        error: str = "",
+    ) -> None:
+        """Open the update dialog and handle Download / Open release notes."""
+        dialog = AppUpdateDialog(result, error=error, parent=self.main_window)
+        self._update_dialog = dialog
+        dialog.on_download_requested = self._on_update_download_requested
+        dialog.exec()
+        if (
+            dialog.result_action == AppUpdateDialog.RESULT_PRIMARY
+            and result is not None
+            and result.release is not None
+            and not result.can_apply
+        ):
+            QDesktopServices.openUrl(QUrl(result.release.html_url))
+        if self._update_dialog is dialog and dialog.result_action != (
+            AppUpdateDialog.RESULT_PRIMARY
+        ):
+            self._update_dialog = None
+
+    def _on_update_download_requested(self, result: UpdateCheckResult) -> None:
+        if self.on_update_download:
+            self.on_update_download(result)
+
+    def on_update_download_progress(self, phase: str, done: int, total: int) -> None:
+        """Forward installer-download progress to the open dialog."""
+        if self._update_dialog is not None:
+            self._update_dialog.set_progress(phase, done, total)
+
+    def on_update_download_finished(self, path: str, error: str) -> None:
+        """Launch the verified Inno setup and quit, or show the error."""
+        if error:
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(error)
+            else:
+                QMessageBox.warning(
+                    self.main_window, "Update failed", error
+                )
+            return
+        from PyQt6.QtCore import QProcess
+
+        launched = QProcess.startDetached(path, [])
+        if not launched:
+            message = "The installer could not be started."
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(message)
+            else:
+                QMessageBox.warning(self.main_window, "Update failed", message)
+            return
+        QApplication.instance().quit()
+
     def show_about_dialog(self):
-        """Show the about dialog."""
+        channel = channel_label(detect_channel())
+        status_line = ""
+        result = self._last_update_result
+        if result is not None:
+            if (
+                result.status == UpdateStatus.UPDATE_AVAILABLE
+                and result.release is not None
+            ):
+                status_line = f"Update available: {result.release.version}"
+            elif result.status == UpdateStatus.DEVELOPMENT:
+                latest = result.release.version if result.release else ""
+                status_line = (
+                    f"Development build, newer than {latest}"
+                    if latest
+                    else "Development build"
+                )
+            else:
+                status_line = "Up to date"
+        status_html = (
+            f"<p>Update status: {status_line}</p>" if status_line else ""
+        )
         QMessageBox.about(
             self.main_window,
             "About OpenWhisper",
             "<p><b>OpenWhisper - Speech-to-Text Application</b></p>"
+            f"<p>Version {config.VERSION}<br>"
+            f"Install: {channel}</p>"
+            f"{status_html}"
             "<p>Record audio and turn it into text. Works offline with local "
             "Whisper or online with OpenAI.</p>"
             "<p>Features:<br>"
@@ -733,36 +1196,26 @@ class UIController(QObject):
             "Open source and free to use.</p>"
         )
 
-    def get_model_value(self) -> str:
-        """Get the selected model value."""
-        return self.main_window.get_model_value()
-
     def refresh_history(self):
-        """Refresh the history sidebar."""
         self.main_window.refresh_history()
 
     def _on_retranscribe_requested(self, audio_path: str):
-        """Handle re-transcription request from main window signal."""
         self._request_retranscription(audio_path)
 
     def _request_retranscription(self, audio_path: str):
-        """Request re-transcription for an existing audio file."""
         logger.info("Re-transcribe requested: %s", audio_path)
         if self.on_retranscribe:
             self.on_retranscribe(audio_path)
 
     def cleanup(self):
-        """Cleanup resources."""
         logger.info("Starting UI Controller cleanup...")
 
-        # Stop the cancel animation timer
         try:
             if self.cancel_animation_timer.isActive():
                 self.cancel_animation_timer.stop()
         except Exception as e:
             logger.debug(f"Error stopping cancel animation timer: {e}")
 
-        # Stop overlay timer and close
         try:
             if hasattr(self.overlay, 'timer') and self.overlay.timer.isActive():
                 self.overlay.timer.stop()
@@ -777,14 +1230,12 @@ class UIController(QObject):
         except Exception as e:
             logger.debug(f"Error closing caret indicator: {e}")
 
-        # Hide and cleanup system tray
         try:
             self.tray_manager.hide()
             self.tray_manager.setParent(None)
         except Exception as e:
             logger.debug(f"Error hiding system tray: {e}")
 
-        # Close main window (force quit to bypass minimize to tray)
         try:
             self.main_window._force_quit = True
             self.main_window.close()

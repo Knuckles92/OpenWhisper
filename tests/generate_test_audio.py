@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Test audio generation script for testing chunking functionality.
-Generates large audio files (>23MB) to test the audio splitting and chunked transcription.
-"""
+"""Generate large audio fixtures for chunking tests."""
 
 import os
 import sys
@@ -12,16 +9,12 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
 class TestAudioGenerator:
-    """Generates test audio files for chunking tests."""
-
     def __init__(self):
-        """Initialize the audio generator."""
         self.temp_dir = tempfile.mkdtemp(prefix="test_audio_")
         logger.info(f"Created temp directory: {self.temp_dir}")
 
@@ -46,7 +39,6 @@ class TestAudioGenerator:
             logger.error("Missing dependencies. Install with: pip install gtts pydub")
             return None
 
-        # Long text content that will generate >23MB of audio
         long_text = """
         This is a comprehensive test of the audio chunking functionality in our transcription system.
         We need to generate a very long audio file that will exceed the twenty-three megabyte limit
@@ -123,23 +115,19 @@ class TestAudioGenerator:
         individually, and the results being combined into a single coherent transcription.
         """
 
-        # Repeat the text multiple times to reach target size
         repetitions = max(1, int(target_size_mb / 5))  # Estimate ~5MB per repetition
         full_text = long_text * repetitions
 
         logger.info(f"Generating speech from {len(full_text)} characters ({repetitions} repetitions)")
 
         try:
-            # Generate speech
             tts = gTTS(text=full_text, lang='en', slow=False)
             mp3_file = os.path.join(self.temp_dir, "temp_speech.mp3")
             tts.save(mp3_file)
 
-            # Convert to WAV format
             audio = AudioSegment.from_mp3(mp3_file)
             audio.export(output_file, format="wav")
 
-            # Check file size
             file_size_mb = os.path.getsize(output_file) / (1024 * 1024)
             logger.info(f"Generated audio file: {output_file} ({file_size_mb:.1f} MB)")
 
@@ -173,20 +161,16 @@ class TestAudioGenerator:
 
             logger.info(f"Generating synthetic audio: {duration_seconds}s at {sample_rate}Hz")
 
-            # Generate a simple test signal (combination of tones and noise)
             t = np.linspace(0, duration_seconds, int(sample_rate * duration_seconds), False)
 
-            # Create a mix of different frequencies to simulate speech-like content
             signal = (
                 0.3 * np.sin(2 * np.pi * 440 * t) +  # A4 note
                 0.2 * np.sin(2 * np.pi * 880 * t) +  # A5 note
                 0.1 * np.random.normal(0, 1, len(t))  # Add some noise
             )
 
-            # Normalize to 16-bit range
             signal = np.int16(signal / np.max(np.abs(signal)) * 32767)
 
-            # Save as WAV
             with wave.open(output_file, 'wb') as wav_file:
                 wav_file.setnchannels(1)  # Mono
                 wav_file.setsampwidth(2)  # 16-bit
@@ -227,21 +211,17 @@ class TestAudioGenerator:
             import pydub
             from pydub import AudioSegment
 
-            # Load source audio
             audio = AudioSegment.from_file(source_file)
 
-            # Calculate how many copies we need
             source_size_mb = len(audio) / 1000 / 60  # Rough estimate: 1 minute ≈ 10MB for MP3
             repetitions = max(1, int(target_size_mb / source_size_mb))
 
             logger.info(f"Concatenating {source_file} {repetitions} times")
 
-            # Concatenate
             combined = audio
             for i in range(repetitions - 1):
                 combined += audio
 
-            # Export as WAV
             combined.export(output_file, format="wav")
 
             file_size_mb = os.path.getsize(output_file) / (1024 * 1024)
@@ -257,7 +237,6 @@ class TestAudioGenerator:
             return None
 
     def cleanup(self):
-        """Clean up temporary files."""
         try:
             import shutil
             if os.path.exists(self.temp_dir):
@@ -268,7 +247,6 @@ class TestAudioGenerator:
 
 
 def main():
-    """Main function to generate test audio."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate test audio files for chunking tests")

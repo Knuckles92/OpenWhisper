@@ -1,6 +1,3 @@
-"""
-Simple multi-line editor dialog for the AI transcript cleanup prompt.
-"""
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
 )
@@ -10,15 +7,7 @@ from ui_qt.widgets import PrimaryButton, Button
 
 
 class CleanupPromptDialog(QDialog):
-    """Popup editor for a longer cleanup system prompt."""
-
     def __init__(self, prompt: str, parent=None):
-        """Initialize the prompt editor.
-
-        Args:
-            prompt: Initial prompt text to edit.
-            parent: Optional parent widget.
-        """
         super().__init__(parent)
         self.setWindowTitle("Edit Cleanup Prompt")
         self.setMinimumSize(520, 420)
@@ -26,7 +15,6 @@ class CleanupPromptDialog(QDialog):
         self._setup_ui(prompt)
 
     def _setup_ui(self, prompt: str) -> None:
-        """Build the editor layout."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
@@ -65,5 +53,4 @@ class CleanupPromptDialog(QDialog):
         layout.addLayout(buttons)
 
     def prompt_text(self) -> str:
-        """Return the edited prompt text."""
         return self.prompt_edit.toPlainText()

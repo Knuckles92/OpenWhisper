@@ -1,10 +1,4 @@
-"""Entry point for the Qt application.
-
-Delegates the app itself to :mod:`ui_qt.bootstrap`, but owns the native-library
-bootstrap that must run before anything imports CTranslate2 or Qt: registering
-the CUDA DLL directories on Windows, preloading them on Linux, and activating
-installed components.
-"""
+"""Qt entry point and pre-import native-library bootstrap."""
 
 import os
 import platform
@@ -33,12 +27,6 @@ CUDA_PRELOADED_LIBRARIES: list = []
 
 
 def _register_cuda_dll_directories() -> None:
-    """Register NVIDIA CUDA DLL directories for CTranslate2 on Windows.
-
-    Both the Windows DLL search path and ``PATH`` are updated because
-    CTranslate2 loads CUDA libraries through Win32 ``LoadLibrary``. Source
-    installs search ``site-packages``; frozen builds search bundle directories.
-    """
     if sys.platform != "win32":
         return
 
@@ -120,15 +108,12 @@ def _preload_cuda_libraries() -> None:
 
 
 def _patch_subprocess_for_windows() -> None:
-    """Patch subprocess.Popen to hide console windows on Windows."""
     if platform.system() != "Windows":
         return
 
     original_popen = subprocess.Popen
 
     class _NoConsolePopen(original_popen):
-        """Popen wrapper that adds CREATE_NO_WINDOW on Windows."""
-
         def __init__(self, *args, **kwargs):
             if "creationflags" not in kwargs:
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -140,12 +125,6 @@ def _patch_subprocess_for_windows() -> None:
 
 
 def _activate_downloadable_components() -> None:
-    """Register DLLs from installed components (packaged builds only).
-
-    Source installs get their CUDA runtime from ``requirements-gpu.txt`` via
-    the two functions above; packaged builds get it from the downloadable GPU
-    component instead.
-    """
     if not getattr(sys, "frozen", False):
         return
     try:
@@ -160,6 +139,12 @@ _register_cuda_dll_directories()
 _preload_cuda_libraries()
 _activate_downloadable_components()
 _patch_subprocess_for_windows()
+
+if sys.platform.startswith("linux"):
+    from services.linux_deps import check_linux_dependencies
+
+    if check_linux_dependencies() != 0:
+        sys.exit(1)
 
 from ui_qt.bootstrap import main
 

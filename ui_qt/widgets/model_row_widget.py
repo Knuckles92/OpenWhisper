@@ -12,9 +12,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QVBoxLayout,
 )
 
@@ -26,6 +28,7 @@ from services.hf_access import (
     resolve_model_repo,
 )
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
+from ui_qt.widgets.eliding_label import ElidingLabel
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,10 @@ _ROW_STYLE = """
     QFrame#modelRow:focus {
         border: 1px solid rgba(10, 132, 255, 0.65);
         outline: none;
+    }
+    QFrame#modelRow[selected="true"] {
+        background-color: rgba(58, 58, 60, 0.85);
+        border: 1px solid rgba(10, 132, 255, 0.55);
     }
     QFrame#modelRow[active="true"] {
         background-color: rgba(10, 132, 255, 0.12);
@@ -93,6 +100,24 @@ _ROW_STYLE = """
         color: #32d74b;
         border: 1px solid rgba(48, 209, 88, 0.28);
     }
+    QLabel#modelRowBadge[tone="queued"] {
+        background-color: rgba(10, 132, 255, 0.08);
+        color: #8e99a6;
+        border: 1px solid rgba(10, 132, 255, 0.18);
+    }
+    QCheckBox#modelSelectCheckbox {
+        background-color: transparent;
+        border: none;
+    }
+    QLabel#modelRowUsage {
+        background-color: rgba(10, 132, 255, 0.10);
+        color: #8eb8ff;
+        border: 1px solid rgba(10, 132, 255, 0.22);
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 600;
+    }
     QPushButton#modelDownloadButton,
     QPushButton#modelSetActiveButton,
     QPushButton#modelDeleteButton {
@@ -139,6 +164,17 @@ _ROW_STYLE = """
         color: #636366;
         border: 1px solid rgba(255, 255, 255, 0.06);
     }
+    QProgressBar#modelRowProgress {
+        background-color: rgba(255, 255, 255, 0.08);
+        border: none;
+        border-radius: 3px;
+        min-height: 6px;
+        max-height: 6px;
+    }
+    QProgressBar#modelRowProgress::chunk {
+        background-color: #0a84ff;
+        border-radius: 3px;
+    }
 """
 
 
@@ -154,9 +190,10 @@ class ModelRowWidget(QFrame):
     delete_clicked = pyqtSignal(str)
     set_active_clicked = pyqtSignal(str)
     details_requested = pyqtSignal(str)
+    selection_toggled = pyqtSignal(str, bool)
 
     def __init__(self, model_name: str, parent=None):
-        """Initialize the row for one catalog model.
+        """Represent one concrete faster-whisper catalog model.
 
         Args:
             model_name: Concrete faster-whisper model name (e.g. ``"base"``).
@@ -184,18 +221,28 @@ class ModelRowWidget(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(12)
 
-        # Identity column: model name over summary.
+        self.select_checkbox = QCheckBox()
+        self.select_checkbox.setObjectName("modelSelectCheckbox")
+        self.select_checkbox.setToolTip("Select for batch download")
+        self.select_checkbox.setAccessibleName(f"Select {self.model_name} for download")
+        self.select_checkbox.toggled.connect(
+            lambda checked: self.selection_toggled.emit(self.model_name, checked)
+        )
+        layout.addWidget(self.select_checkbox)
+
         identity = QVBoxLayout()
         identity.setSpacing(2)
 
-        name_label = QLabel(self.model_name)
+        name_label = ElidingLabel(self.model_name)
         name_label.setObjectName("modelRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
         name_label.setFont(name_font)
         identity.addWidget(name_label)
 
-        self.repo_label = QLabel(self._model_summary())
+        # Elides: this secondary line is long enough that a plain QLabel would
+        # raise the whole window's minimum width past the list column.
+        self.repo_label = ElidingLabel(self._model_summary())
         self.repo_label.setObjectName("modelRowSummary")
         self.repo_label.setFont(QFont("Segoe UI", 8))
         self.repo_label.setToolTip(self.repo_id)
@@ -211,6 +258,13 @@ class ModelRowWidget(QFrame):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         layout.addWidget(self.size_label)
+
+        self.usage_label = QLabel("")
+        self.usage_label.setObjectName("modelRowUsage")
+        self.usage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.usage_label.setFixedHeight(22)
+        self.usage_label.setVisible(False)
+        layout.addWidget(self.usage_label)
 
         self.badge = QLabel("")
         self.badge.setObjectName("modelRowBadge")
@@ -242,15 +296,21 @@ class ModelRowWidget(QFrame):
         )
         layout.addWidget(self.delete_button)
 
+        # Overlay, not a layout child: a hidden QProgressBar still inflates
+        # the catalog column's minimum width past the Downloads viewport.
+        self.progress = QProgressBar(self)
+        self.progress.setObjectName("modelRowProgress")
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 0)
+        self.progress.hide()
+
     def _model_summary(self) -> str:
-        """Return a compact, user-facing description of this model."""
         language = "English only" if self.model_name.endswith(".en") else "Multilingual"
         family = "Distilled" if self.model_name.startswith("distil-") else ""
         return " / ".join(part for part in (language, family) if part)
 
     @staticmethod
     def _compact_button(button, width: int) -> None:
-        """Apply dialog-sized dimensions to a shared application button."""
         button.set_base_minimum_size(width, 28)
         button.setMinimumWidth(width)
         button.setMaximumWidth(width)
@@ -268,7 +328,6 @@ class ModelRowWidget(QFrame):
         self.badge.update()
 
     def _set_active_style(self, active: bool) -> None:
-        """Tint the row when this model is the active selection."""
         self.setProperty("active", active)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -282,6 +341,8 @@ class ModelRowWidget(QFrame):
         downloading: bool,
         downloads_blocked: bool = False,
         download_slot_busy: bool = False,
+        queued: bool = False,
+        selection_enabled: bool = True,
     ) -> None:
         """Render the row for the current cache/engine state.
 
@@ -296,6 +357,9 @@ class ModelRowWidget(QFrame):
                 downloads.
             download_slot_busy: True while any model is downloading (only one
                 download runs at a time).
+            queued: True while this model waits in a batch download queue.
+            selection_enabled: False while downloads are busy or blocked; the
+                batch checkbox then cannot be toggled.
         """
         cached = info is not None
         self.is_cached = cached
@@ -319,13 +383,20 @@ class ModelRowWidget(QFrame):
 
         if downloading:
             self._set_badge("Downloading…", "downloading")
-        elif is_active and cached:
-            self._set_badge("Active", "active")
-        elif cached:
-            self._set_badge("Downloaded", "downloaded")
+            self._show_progress()
         else:
-            self._set_badge("Not downloaded", "idle")
+            self._hide_progress()
+            if queued:
+                self._set_badge("Queued", "queued")
+            elif is_active and cached:
+                self._set_badge("Active", "active")
+            elif cached:
+                self._set_badge("Downloaded", "downloaded")
+            else:
+                self._set_badge("Not downloaded", "idle")
 
+        self.select_checkbox.setVisible(not cached)
+        self.select_checkbox.setEnabled(selection_enabled and not downloading)
         self.download_button.setVisible(not cached)
         self.download_button.setEnabled(
             not downloading and not downloads_blocked and not download_slot_busy
@@ -348,17 +419,57 @@ class ModelRowWidget(QFrame):
             "In use — switch models first" if is_loaded else ""
         )
 
-    def matches_filter(self, text: str) -> bool:
-        """Return True when the row matches a filter string.
+    def _show_progress(self) -> None:
+        self.progress.show()
+        self._place_progress()
+
+    def _hide_progress(self) -> None:
+        self.progress.hide()
+        self.progress.setValue(0)
+
+    def _place_progress(self) -> None:
+        if not self.progress.isVisible():
+            return
+        margins = self.layout().contentsMargins()
+        height = 6
+        self.progress.setGeometry(
+            margins.left(),
+            self.height() - margins.bottom() - height,
+            max(0, self.width() - margins.left() - margins.right()),
+            height,
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place_progress()
+
+    def set_progress(self, done: int, total: int) -> None:
+        """Update the in-row download bar with bytes or an indeterminate state."""
+        self._show_progress()
+        if total <= 0:
+            self.progress.setRange(0, 0)
+            return
+        self.progress.setRange(0, 100)
+        self.progress.setValue(int(done * 100 / total))
+        self.size_label.setText(
+            f"{format_size_bytes(done)} of {format_size_bytes(total)}"
+        )
+
+    def set_usage(self, text: str) -> None:
+        """Show which mode pages currently assign this model.
 
         Args:
-            text: Lowercased substring to match against name and repo ID.
+            text: Usage chip copy such as ``"On-demand"`` or
+                ``"On-demand · Meetings"``. Empty hides the chip.
         """
+        self.usage_label.setText(text)
+        self.usage_label.setVisible(bool(text))
+
+    def matches_filter(self, text: str) -> bool:
         return text in self.model_name.lower() or text in self.repo_id.lower()
 
     @staticmethod
     def _is_action_child(widget) -> bool:
-        """Return whether a clicked descendant is one of the row buttons."""
         while widget is not None:
             if isinstance(widget, QAbstractButton):
                 return True
@@ -366,7 +477,6 @@ class ModelRowWidget(QFrame):
         return False
 
     def mouseReleaseEvent(self, event) -> None:
-        """Request details when the tile body is clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.position().toPoint())
             if not self._is_action_child(child):
@@ -376,7 +486,6 @@ class ModelRowWidget(QFrame):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        """Open details from the keyboard when the tile has focus."""
         if event.key() in (
             Qt.Key.Key_Return,
             Qt.Key.Key_Enter,

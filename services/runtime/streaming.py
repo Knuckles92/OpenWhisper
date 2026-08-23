@@ -35,8 +35,6 @@ class StreamingRuntime:
         self.controller = controller
 
     def setup_audio_level_callback(self) -> None:
-        """Setup audio level callback for waveform display."""
-
         def audio_level_callback(level: float) -> None:
             levels = [level] * 20
             self.controller.ui_controller.update_audio_levels(levels)
@@ -45,7 +43,6 @@ class StreamingRuntime:
         self.controller.recorder.set_audio_level_callback(callback)
 
     def setup_streaming(self) -> None:
-        """Initialize streaming transcriber if enabled."""
         self._configure_streaming(initial_setup=True)
 
     def reconfigure_streaming(self) -> None:
@@ -63,7 +60,6 @@ class StreamingRuntime:
         self._configure_streaming(initial_setup=False)
 
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
-        """Handle partial transcription from the streaming worker."""
         self.controller.partial_transcription.emit(text, is_final)
         if self.controller._streaming_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
@@ -111,11 +107,12 @@ class StreamingRuntime:
             self.controller.streaming_overlay_hide.emit()
 
     def cleanup(self) -> None:
-        """Release streaming resources."""
         self._cleanup_streaming_resources()
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
+            from services.hf_access import is_model_cached
+
             settings = settings_manager.load_all_settings()
             self.controller._streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
@@ -125,6 +122,14 @@ class StreamingRuntime:
                 self.controller._streaming_enabled
                 and isinstance(self.controller.current_backend, LocalWhisperBackend)
             ):
+                if not is_model_cached("tiny.en"):
+                    logger.info(
+                        "tiny.en is not in the local cache; waiting for download consent"
+                    )
+                    self.controller._streaming_enabled = False
+                    self.controller.request_model_download("tiny.en")
+                    return
+
                 chunk_duration = settings.get(
                     SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
                 )
@@ -134,6 +139,12 @@ class StreamingRuntime:
                     model_name="tiny.en"
                 )
                 streaming_backend = self.controller._streaming_backend
+                if getattr(streaming_backend, "model", None) is None:
+                    logger.warning(
+                        "Streaming preview inactive: tiny.en did not load"
+                    )
+                    self.controller._streaming_enabled = False
+                    return
 
                 self.controller.streaming_transcriber = StreamingTranscriber(
                     backend=streaming_backend,
@@ -144,8 +155,6 @@ class StreamingRuntime:
                 logger.info(
                     f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
                 )
-                if not initial_setup:
-                    self.controller.ui_controller.set_status("Streaming mode enabled")
             else:
                 if self.controller._streaming_enabled:
                     logger.info(
@@ -158,8 +167,6 @@ class StreamingRuntime:
                         )
                 else:
                     logger.info("Streaming transcription disabled")
-                    if not initial_setup:
-                        self.controller.ui_controller.set_status("Streaming mode disabled")
 
                 self.controller._streaming_enabled = False
         except Exception as exc:
@@ -169,15 +176,13 @@ class StreamingRuntime:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
 
     def _warmup_streaming_backend(self, backend) -> None:
-        """Run a short silent inference so the first live preview is not a cold start.
-
-        Args:
-            backend: Dedicated streaming LocalWhisperBackend instance.
-        """
         try:
             import numpy as np
 
-            # 0.5s of silence at Whisper's expected sample rate
+            if getattr(backend, "model", None) is None:
+                logger.warning("Streaming warmup skipped: model is not loaded")
+                return
+
             silence = np.zeros(
                 max(1, config.WHISPER_TARGET_SAMPLE_RATE // 2),
                 dtype=np.float32,

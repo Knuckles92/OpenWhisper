@@ -33,6 +33,10 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** – Real-time transcription preview while recording
+- **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio
+  into a durable, searchable meeting transcript; share a tokenized live
+  dashboard, review evidence-linked insights, play the recording, and export
+  the result
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
@@ -46,6 +50,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
+| Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Not available — meetings are microphone-only |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
@@ -83,15 +88,16 @@ With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming tran
 
 ### Windows — installer (recommended)
 
-Download **OpenWhisper-Setup-2.1.1.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
+Download **OpenWhisper-Setup-2.2.0.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
 
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
 - A speech model (~150 MB) downloads on first use, with a consent prompt.
+- **Help → Check for Updates** fetches the latest GitHub release and can download the next setup exe (SHA-256 verified) then reopen the installer. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
-> Get-FileHash .\OpenWhisper-Setup-2.1.1.exe -Algorithm SHA256
+> Get-FileHash .\OpenWhisper-Setup-2.2.0.exe -Algorithm SHA256
 > ```
 
 To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whether to keep your settings and history.
@@ -114,7 +120,7 @@ sudo apt install -y \
   libxcb-icccm4 libxcb-keysyms1 libxcb-xkb1
 ```
 
-`libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*.
+`libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*. `./install.sh`, `scripts/openwhisper`, and `python app_qt.py` probe these libraries on Linux and print the matching `apt` / `dnf` / `pacman` command instead of a raw `ImportError`. Clipboard copy uses Qt and does not require `xclip` or `wl-clipboard`.
 
 **Fedora / RHEL:**
 
@@ -146,6 +152,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+**Help → Check for Updates** still works from a source checkout: it tells you when a newer GitHub release exists and offers the release notes. It will not overwrite the tree. Update with `git pull --ff-only` and `pip install -r requirements.txt` if dependencies changed. Automatic checks and notifications can be turned off in **Settings → General**.
+
 ### Building the installer yourself
 
 ```powershell
@@ -171,25 +179,34 @@ That resolves what pip would install for `win_amd64`, records the SHA-256 pip re
 
 Two things not to skip: `install_bytes` drives the pre-install free-space check, so it must be the measured value the script prints rather than an estimate; and `GPU_COMPONENT_VERSION` is what the Model Manager compares against an installed manifest, so leaving it unchanged means nobody is told an update exists.
 
-OPTIONAL: For cloud transcription, set your API key:
+OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, set API keys in the environment or a `.env` file. Keys are never stored in settings.
+
 ```bash
 # Windows
 set OPENAI_API_KEY=your-key
+set OPENROUTER_API_KEY=your-key
 
 # macOS / Linux
 export OPENAI_API_KEY=your-key
+export OPENROUTER_API_KEY=your-key
 
 # Or create a .env file
 OPENAI_API_KEY=your-key
+OPENROUTER_API_KEY=your-key
 ```
+
+Custom OpenAI-compatible text endpoints (LM Studio, vLLM, Ollama `/v1`, LiteLLM, or a private gateway) are added in **Model Manager**. Each named profile stores only a display name, base URL, and optional API-key environment-variable name. Leave the variable blank for an auth-free local server. You can type a model id by hand if `/models` is unavailable.
 
 ## Required macOS permissions
 
 macOS gates some features behind privacy permissions. Grant these to the app identity that is actually running OpenWhisper:
 
 - **Microphone** — needed to record audio (System Settings > Privacy & Security > Microphone). You'll be prompted on first recording.
+- **Screen & System Audio Recording** — needed for **Meeting Mode** to capture the other side of a call. macOS has no loopback input device, so system audio comes from a ScreenCaptureKit stream; only its audio is read and every video frame is discarded. Without this grant a meeting still runs, but records your microphone only, so you would be the only speaker in the transcript. OpenWhisper asks for it when you start a meeting.
 - **Accessibility** — needed only for **auto-paste** (the synthetic `Cmd+V` that inserts transcription into the focused app). Without it, transcriptions are still copied to the clipboard and you can paste manually. Global hotkeys work without Accessibility (Carbon `RegisterEventHotKey`).
 - **Input Monitoring** *(optional)* — may be required when **remapping hotkeys** in Settings > Hotkeys (the capture dialog uses a `pynput` listener). Normal hotkey use does not need this.
+
+To check the system-audio path independently of the app, run `.venv/bin/python scripts/probe_macos_loopback.py` with something playing. It reports the grant, verifies audio actually flows, and prints the captured level.
 
 For packaged builds, this should appear as the OpenWhisper app. For development launches from a virtualenv, use `scripts/openwhisper` or `ow`; on macOS the launcher runs through the framework `Python.app` so Accessibility has an app bundle it can select. If the list does not populate automatically, use the `+` button in Accessibility and add the app bundle shown in OpenWhisper's startup prompt, then fully quit and relaunch the app.
 
@@ -309,6 +326,8 @@ The download policy lives in **Settings → Advanced → Hugging Face Downloads*
 - **Always allow downloads**: missing models download without prompting. Cached models are still never re-checked for updates.
 - **Never connect (fully offline)**: no downloads unless you explicitly approve a one-time override in the dialog.
 
+The **Downloads window** (opened from Model Manager) lists every Whisper model with its size and cache state. Each not-yet-downloaded row has a checkbox: tick a few and use **Download selected**, or use **Download all…** to queue everything that is missing. A confirmation dialog shows each model's estimated size, the total, and the destination folder before anything downloads; the queue then runs one model at a time, and **Stop after current** ends it once the in-flight model finishes.
+
 Setting `HF_HUB_OFFLINE=1` in the environment before launching is a hard override that disables downloads entirely (still supported for scripts and CI):
 
 ```bash
@@ -328,6 +347,10 @@ Upgrading from an older version: the previous **Skip HuggingFace network checks*
 - Windows, macOS, or Linux
 
 **Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository's comment and docstring policy.
 
 ## Credits
 

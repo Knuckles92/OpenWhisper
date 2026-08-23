@@ -1,6 +1,3 @@
-"""
-Confirm/edit dialog for a single learned cleanup rule.
-"""
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -13,8 +10,6 @@ from ui_qt.widgets import PrimaryButton, Button
 
 
 class CleanupRuleDialog(QDialog):
-    """Popup to confirm an AI-polished learned rule or edit an existing one."""
-
     def __init__(
         self,
         rule: str,
@@ -22,7 +17,7 @@ class CleanupRuleDialog(QDialog):
         notice: Optional[str] = None,
         parent=None,
     ):
-        """Initialize the rule dialog.
+        """Offer the polished rule and, when applicable, its original wording.
 
         Args:
             rule: Rule text to confirm or edit (polished text when confirming).
@@ -53,7 +48,6 @@ class CleanupRuleDialog(QDialog):
     def _setup_ui(
         self, rule: str, original: Optional[str], notice: Optional[str]
     ) -> None:
-        """Build the dialog layout."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
@@ -163,17 +157,14 @@ class CleanupRuleDialog(QDialog):
         layout.addLayout(buttons)
 
     def _accept_as_typed(self) -> None:
-        """Accept using the user's original wording."""
         self.rule_edit.setPlainText(self._original)
         self.accept()
 
     def _accept_polished(self) -> None:
-        """Accept the polished text, or the user's edits if they changed it."""
         text = self.rule_edit.toPlainText().strip()
         if not text:
             self.rule_edit.setPlainText(self._polished)
         self.accept()
 
     def rule_text(self) -> str:
-        """Return the edited rule text."""
         return self.rule_edit.toPlainText().strip()

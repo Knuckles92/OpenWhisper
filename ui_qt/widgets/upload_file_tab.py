@@ -1,9 +1,4 @@
-"""
-Upload File Tab widget.
-Provides drag-and-drop and browse-based audio file upload with inline
-file preview on top of the shared transcription tab scaffolding (model
-selection, status, transcript).
-"""
+"""Audio file upload and transcription tab."""
 import logging
 import os
 from PyQt6.QtWidgets import (
@@ -13,6 +8,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QMouseEvent
 
 from services.audio_processor import AudioFilePreview, audio_processor
+from services.runtime.transcription import EMPTY_ASR_MESSAGE
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.buttons import PrimaryButton, Button
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
@@ -130,7 +126,6 @@ class DropZoneWidget(QFrame):
             self.open_file_browser()
 
     def open_file_browser(self):
-        """Open the native file dialog for audio file selection."""
         audio_path, _ = QFileDialog.getOpenFileName(
             self, "Select Audio File", "", AUDIO_FILTERS
         )
@@ -143,6 +138,7 @@ class FileInfoCard(Card):
 
     transcribe_clicked = pyqtSignal()
     remove_clicked = pyqtSignal()
+    copy_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -179,6 +175,11 @@ class FileInfoCard(Card):
         self.remove_btn.clicked.connect(self.remove_clicked.emit)
         btn_layout.addWidget(self.remove_btn)
 
+        self.copy_btn = Button("Copy")
+        self.copy_btn.set_active(False)
+        self.copy_btn.clicked.connect(self.copy_clicked.emit)
+        btn_layout.addWidget(self.copy_btn)
+
         btn_layout.addStretch()
 
         self.transcribe_btn = PrimaryButton("Transcribe")
@@ -189,7 +190,6 @@ class FileInfoCard(Card):
         self.layout.addLayout(btn_layout)
 
     def set_preview(self, preview: AudioFilePreview):
-        """Populate the card with file preview data."""
         self._preview = preview
         self.filename_label.setText(preview.file_name)
         self.details_label.setText(
@@ -217,19 +217,24 @@ class FileInfoCard(Card):
             self.chunk_label.show()
 
     def set_transcribing(self, active: bool):
-        """Toggle button states during transcription."""
         self.transcribe_btn.setEnabled(not active)
         self.remove_btn.setEnabled(not active)
         if active:
+            self.copy_btn.set_active(False)
             self.transcribe_btn.setText("Transcribing...")
         else:
             self.transcribe_btn.setText("Transcribe")
+
+    def set_copy_enabled(self, enabled: bool):
+        """Enable Copy only when a non-empty transcript is available."""
+        self.copy_btn.set_active(enabled)
 
 
 class UploadFileTab(TranscriptionTabBase):
     """Tab widget for uploading and transcribing audio files."""
 
-    upload_requested = pyqtSignal(str)
+    upload_requested = pyqtSignal(str, float)
+    copy_requested = pyqtSignal(str)
 
     CONTENT_OBJECT_NAME = "uploadFileContent"
     INITIAL_STATUS = "Select an audio file to transcribe"
@@ -247,26 +252,21 @@ class UploadFileTab(TranscriptionTabBase):
         self._preview: AudioFilePreview | None = None
 
     def _build_content_before_status(self, layout: QVBoxLayout):
-        """Build the drop zone and file info card above the status label."""
         self.drop_zone = DropZoneWidget()
         layout.addWidget(self.drop_zone)
 
-        # File info card (hidden until a file is selected)
         self.file_info_card = FileInfoCard()
         self.file_info_card.hide()
         layout.addWidget(self.file_info_card)
 
     def _connect_signals(self):
-        """Connect file-selection signals in addition to the shared ones."""
         super()._connect_signals()
         self.drop_zone.file_selected.connect(self._on_file_selected)
         self.file_info_card.transcribe_clicked.connect(self._on_transcribe)
         self.file_info_card.remove_clicked.connect(self.clear_file)
-
-    # ── Internal handlers ──────────────────────────────────────────
+        self.file_info_card.copy_clicked.connect(self._on_copy)
 
     def _on_file_selected(self, path: str):
-        """Analyze the dropped/browsed file and show its info card."""
         try:
             preview = audio_processor.preview_file(path)
         except FileNotFoundError:
@@ -300,32 +300,37 @@ class UploadFileTab(TranscriptionTabBase):
         self.model_combo.setEnabled(False)
         self.local_engine.set_busy(True)
         self.set_status("Transcribing...")
-        self.upload_requested.emit(self._audio_path)
-
-    # ── Public API ─────────────────────────────────────────────────
+        duration = self._preview.duration_seconds if self._preview else 0.0
+        self.upload_requested.emit(self._audio_path, duration)
 
     def set_transcript(self, text: str, raw=None):
-        """Set the transcript text and reset transcribing state."""
         super().set_transcript(text, raw=raw)
         self.file_info_card.set_transcribing(False)
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)
+        stripped = (text or "").strip()
+        copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not stripped.startswith("Error:")
+        self.file_info_card.set_copy_enabled(copyable)
+
+    def _on_copy(self):
+        """Emit the current display transcript for the shared clipboard path."""
+        text = (self._fixed_text or "").strip()
+        if text:
+            self.copy_requested.emit(text)
 
     def clear_file(self):
-        """Reset to the empty drop-zone state."""
         self._audio_path = None
         self._preview = None
         self.file_info_card.hide()
         self.file_info_card.set_transcribing(False)
+        self.file_info_card.set_copy_enabled(False)
         self.drop_zone.show()
         self.model_combo.setEnabled(True)
         self.local_engine.set_busy(False)
         self.set_status("Select an audio file to transcribe")
 
     def set_file(self, audio_path: str):
-        """Programmatically set a file (e.g., from File menu redirect)."""
         self._on_file_selected(audio_path)
 
     def open_file_browser(self):
-        """Open the file browser dialog."""
         self.drop_zone.open_file_browser()

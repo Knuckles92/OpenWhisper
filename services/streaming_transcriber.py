@@ -1,10 +1,4 @@
-"""
-Real-time streaming transcription using faster-whisper with queue-based architecture.
-
-Provides a live preview while recording by transcribing short incremental audio
-chunks (with a small overlap for word boundaries). Preview text is approximate;
-final quality still comes from the full-file transcription after stop.
-"""
+"""Approximate faster-whisper previews during recording."""
 import queue
 import threading
 import logging
@@ -17,20 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def fft_resample(samples: np.ndarray, num_samples: int) -> np.ndarray:
-    """Resample a 1-D signal to ``num_samples`` via the frequency domain.
-
-    Equivalent to ``scipy.signal.resample`` for the mono float32 preview
-    chunks this module handles, without pulling scipy (110 MB) into the
-    distribution for a single call. Working in the frequency domain gives
-    implicit anti-aliasing on downsample, which naive interpolation does not.
-
-    Args:
-        samples: 1-D input signal.
-        num_samples: Desired output length; must be positive.
-
-    Returns:
-        The resampled signal as float32.
-    """
+    """Resample mono audio without adding SciPy's 110 MB dependency."""
     n_in = len(samples)
     spectrum = np.fft.rfft(samples).copy()
     n_out_bins = num_samples // 2 + 1
@@ -62,15 +43,7 @@ def fft_resample(samples: np.ndarray, num_samples: int) -> np.ndarray:
 
 
 def append_preview_text(existing: str, chunk_text: str) -> str:
-    """Append a new chunk's text to the accumulated preview.
-
-    Args:
-        existing: Preview text so far.
-        chunk_text: Newly transcribed chunk text.
-
-    Returns:
-        Combined preview string.
-    """
+    """Append non-empty chunk text to an accumulated preview."""
     chunk_text = (chunk_text or "").strip()
     if not chunk_text:
         return existing or ""
@@ -88,13 +61,6 @@ class StreamingTranscriber:
         chunk_duration_sec: float = 3.0,
         overlap_sec: float = None,
     ):
-        """Initialize the streaming transcriber.
-
-        Args:
-            backend: LocalWhisperBackend instance with loaded model
-            chunk_duration_sec: Duration of new audio to accumulate before transcribing
-            overlap_sec: Seconds of previous audio to include for word-boundary context
-        """
         self.backend = backend
         self.chunk_duration_sec = chunk_duration_sec
         self.overlap_sec = (
@@ -125,12 +91,7 @@ class StreamingTranscriber:
         )
 
     def start_streaming(self, sample_rate: int, callback: Callable[[str, bool], None]):
-        """Start the streaming worker thread.
-
-        Args:
-            sample_rate: Audio sample rate (Hz)
-            callback: Function(text, is_final) called with preview results
-        """
+        """Start previewing audio and report ``(text, is_final)`` to callback."""
         if self.is_streaming:
             logger.warning("Streaming already active")
             return
@@ -150,11 +111,7 @@ class StreamingTranscriber:
         logger.info("Streaming transcription started")
 
     def feed_audio(self, audio_chunk: np.ndarray):
-        """Feed audio chunk to transcription queue (called from recorder callback).
-
-        Args:
-            audio_chunk: NumPy array of audio data (int16 or float32)
-        """
+        """Queue an audio chunk without blocking the recorder callback."""
         if not self.is_streaming:
             return
 
@@ -164,11 +121,7 @@ class StreamingTranscriber:
             logger.debug("Audio queue full, dropping chunk (transcription can't keep up)")
 
     def stop_streaming(self) -> str:
-        """Stop streaming and return the accumulated preview text.
-
-        Returns:
-            Combined preview transcription text from all chunks
-        """
+        """Stop the worker and return accumulated preview text."""
         if not self.is_streaming:
             return ""
 
@@ -194,7 +147,6 @@ class StreamingTranscriber:
         return final_text
 
     def _worker_loop(self):
-        """Worker thread that processes audio chunks from queue."""
         logger.info("Streaming worker thread started")
 
         accumulated_audio: List[np.ndarray] = []
@@ -227,11 +179,6 @@ class StreamingTranscriber:
             logger.info("Streaming worker thread exiting")
 
     def _process_incremental_chunk(self, new_chunks: List[np.ndarray]):
-        """Transcribe only new audio (plus a short overlap tail).
-
-        Args:
-            new_chunks: Newly accumulated audio frames since the last cycle.
-        """
         if not new_chunks:
             return
 
@@ -295,7 +242,6 @@ class StreamingTranscriber:
             logger.error(f"Error in incremental transcription: {e}", exc_info=True)
 
     def _prepare_audio_for_whisper(self, audio_array: np.ndarray) -> Optional[np.ndarray]:
-        """Convert recorder audio to float32 mono at Whisper's sample rate."""
         if audio_array.dtype == np.int16:
             audio_array = audio_array.astype(np.float32) / 32768.0
         else:

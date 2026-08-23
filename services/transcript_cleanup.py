@@ -1,14 +1,23 @@
-"""
-Post-ASR transcript cleanup via OpenAI or OpenRouter chat models.
-"""
+"""Post-ASR cleanup via OpenAI-compatible chat models."""
 import logging
-import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from openai import OpenAI
 
 from config import config
+from services.text_llm import (
+    AUTH_FREE_API_KEY,
+    connection_fingerprint,
+    create_openai_client,
+    chat_request_options,
+    default_model_for_profile,
+    filter_openai_chat_models,
+    get_profile,
+    list_chat_models,
+    lookup_env_value,
+    resolve_api_key,
+)
 try:
     from services.settings import (
         TranscriptCleanupModelSort,
@@ -34,6 +43,9 @@ except ImportError:  # pragma: no cover - supports lightweight test stubs
         ALL = (OFF, LOW, MEDIUM, HIGH)
 
     def default_transcript_cleanup_model(provider):
+        profile = get_profile(provider)
+        if profile is not None:
+            return default_model_for_profile(profile)
         if provider == TranscriptCleanupProvider.OPENROUTER:
             return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
         return config.TRANSCRIPT_CLEANUP_MODEL
@@ -49,17 +61,6 @@ _PROVIDER_ENV_KEYS = {
     TranscriptCleanupProvider.OPENROUTER: "OPENROUTER_API_KEY",
 }
 
-# OpenRouter attributes traffic to the app via these optional headers.
-_OPENROUTER_HEADERS = {"X-Title": "OpenWhisper"}
-
-# OpenAI's /models endpoint returns every model family; only chat-completions
-# models make sense for cleanup. OpenRouter's catalog is already chat-only.
-_OPENAI_CHAT_PREFIXES = ("gpt-", "chatgpt-", "o1", "o3", "o4")
-_OPENAI_NON_CHAT_MARKERS = (
-    "audio", "realtime", "tts", "whisper", "embedding", "moderation",
-    "dall-e", "transcribe", "image", "search", "instruct",
-)
-
 
 @dataclass(frozen=True)
 class CleanupInfo:
@@ -71,63 +72,47 @@ class CleanupInfo:
 
 def provider_env_key(provider: str) -> str:
     """Return the environment variable name holding the provider's API key."""
+    profile = get_profile(provider)
+    if profile is not None:
+        return profile.api_key_env or ""
     return _PROVIDER_ENV_KEYS.get(
         provider, _PROVIDER_ENV_KEYS[TranscriptCleanupProvider.OPENAI]
     )
 
 
 def _provider_base_url(provider: str) -> Optional[str]:
-    """Return the API base URL for a provider (None = OpenAI default)."""
+    profile = get_profile(provider)
+    if profile is not None:
+        return profile.base_url
     if provider == TranscriptCleanupProvider.OPENROUTER:
         return config.OPENROUTER_BASE_URL
     return None
 
 
 def _provider_headers(provider: str) -> Optional[dict]:
-    """Return extra default headers for a provider, if any."""
+    profile = get_profile(provider)
+    if profile is not None and profile.kind == TranscriptCleanupProvider.OPENROUTER:
+        from services.text_llm import provider_headers
+
+        return provider_headers(profile)
     if provider == TranscriptCleanupProvider.OPENROUTER:
-        return dict(_OPENROUTER_HEADERS)
+        return {"X-Title": "OpenWhisper"}
     return None
 
 
 def find_api_key(provider: str) -> Optional[str]:
-    """Get the provider's API key from environment variables or the .env file.
-
-    Args:
-        provider: A ``TranscriptCleanupProvider`` value.
-
-    Returns:
-        API key string, or None when unavailable.
-    """
+    """Resolve credentials, including a dummy key for auth-free endpoints."""
+    profile = get_profile(provider)
+    if profile is not None:
+        return resolve_api_key(profile)
     env_key = provider_env_key(provider)
-    api_key = os.getenv(env_key)
-    if not api_key:
-        try:
-            from dotenv import load_dotenv
-            from config import env_file_path
-
-            load_dotenv(env_file_path())
-            api_key = os.getenv(env_key)
-        except ImportError:
-            logger.warning(
-                "python-dotenv not installed. Skipping .env file loading."
-            )
-        except Exception as exc:
-            logger.warning("Failed to load .env file: %s", exc)
-    return api_key
+    if not env_key:
+        return AUTH_FREE_API_KEY
+    return lookup_env_value(env_key)
 
 
 def _filter_openai_chat_models(model_ids: List[str]) -> List[str]:
-    """Keep only OpenAI model ids usable with the chat completions API."""
-    filtered = []
-    for model_id in model_ids:
-        lowered = model_id.lower()
-        if not lowered.startswith(_OPENAI_CHAT_PREFIXES):
-            continue
-        if any(marker in lowered for marker in _OPENAI_NON_CHAT_MARKERS):
-            continue
-        filtered.append(model_id)
-    return filtered
+    return filter_openai_chat_models(model_ids)
 
 
 def list_cleanup_models(
@@ -135,24 +120,10 @@ def list_cleanup_models(
     api_key: Optional[str] = None,
     sort: Optional[str] = None,
 ) -> List[str]:
-    """Fetch the provider's available chat model ids live from its API.
-
-    Args:
-        provider: A ``TranscriptCleanupProvider`` value.
-        api_key: Optional explicit API key. Looked up from the environment /
-            .env file when omitted.
-        sort: Optional ``TranscriptCleanupModelSort`` value. OpenRouter
-            supports server-side ranking via its ``sort`` query parameter;
-            OpenAI does not, so anything but alphabetical is ignored there.
-
-    Returns:
-        List of model id strings — server ranking order when an OpenRouter
-        sort is requested, alphabetical otherwise.
-
-    Raises:
-        RuntimeError: When no API key is available for the provider.
-        Exception: Network/API errors from the underlying client.
-    """
+    """Fetch chat model IDs, preserving requested OpenRouter server ranking."""
+    profile = get_profile(provider)
+    if profile is not None:
+        return list_chat_models(profile, api_key=api_key, sort=sort)
     key = api_key or find_api_key(provider)
     if not key:
         raise RuntimeError(
@@ -170,7 +141,6 @@ def list_cleanup_models(
         and sort != TranscriptCleanupModelSort.ALPHABETICAL
     )
     if server_sort:
-        # Preserve OpenRouter's ranking; sorting here would discard it.
         return [
             model.id
             for model in client.models.list(extra_query={"sort": sort})
@@ -187,20 +157,7 @@ def polish_cleanup_rule(
     model: Optional[str] = None,
     reasoning: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Rewrite a raw user instruction into a short imperative cleanup rule.
-
-    Args:
-        instruction: The user's raw typed or dictated instruction.
-        provider: Optional ``TranscriptCleanupProvider`` value. Config
-            default when omitted.
-        model: Optional chat model id. Provider default when omitted.
-        reasoning: Optional ``TranscriptCleanupReasoning`` value.
-
-    Returns:
-        Tuple of (rule_text, error). ``rule_text`` is the polished rule on
-        success, or the stripped original instruction when polish is
-        unavailable or failed; ``error`` is None only on success.
-    """
+    """Return ``(rule, error)``, falling back to the stripped instruction."""
     instruction = instruction.strip()
     if not instruction:
         return "", "empty instruction"
@@ -224,18 +181,7 @@ class TranscriptCleanup:
         api_key: Optional[str] = None,
         reasoning: Optional[str] = None,
     ):
-        """Initialize the cleanup client.
-
-        Args:
-            provider: ``TranscriptCleanupProvider`` value. Defaults to config.
-            model: Chat model id. Defaults to the provider's default model.
-            api_key: Provider API key. Uses environment / .env if None.
-            reasoning: ``TranscriptCleanupReasoning`` value ("off" disables).
-        """
-        self.provider = (
-            provider if provider in TranscriptCleanupProvider.ALL
-            else config.TRANSCRIPT_CLEANUP_PROVIDER
-        )
+        self.provider = self._normalize_provider(provider)
         self.model = model or default_transcript_cleanup_model(self.provider)
         self.reasoning = (
             reasoning if reasoning in TranscriptCleanupReasoning.ALL
@@ -246,10 +192,48 @@ class TranscriptCleanup:
         # None after a successful cleanup() run; reason string otherwise.
         # Lets callers distinguish "cleanup ran, no changes" from "failed".
         self.last_error: Optional[str] = "not run"
+        self._connection: Optional[tuple] = None
         self._initialize_client()
 
+    @staticmethod
+    def _normalize_provider(provider: Optional[str]) -> str:
+        if isinstance(provider, str) and get_profile(provider) is not None:
+            return provider
+        if provider in TranscriptCleanupProvider.ALL:
+            return provider
+        return config.TRANSCRIPT_CLEANUP_PROVIDER
+
     def _initialize_client(self) -> None:
-        """Initialize the chat client when a key is available."""
+        profile = get_profile(self.provider)
+        if profile is not None:
+            key = self.api_key or find_api_key(self.provider)
+            self.api_key = key
+            if not key:
+                logger.debug(
+                    "No %s API key; transcript cleanup unavailable",
+                    profile.api_key_env,
+                )
+                self.client = None
+                self._connection = None
+                return
+            try:
+                self.client = create_openai_client(
+                    profile,
+                    timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
+                    api_key=key,
+                )
+                self._connection = connection_fingerprint(profile)
+                logger.info(
+                    "Transcript cleanup client initialized (%s)", profile.id
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to initialize transcript cleanup client: %s", exc
+                )
+                self.client = None
+                self._connection = None
+            return
+
         if self.api_key:
             try:
                 self.client = OpenAI(
@@ -258,36 +242,44 @@ class TranscriptCleanup:
                     default_headers=_provider_headers(self.provider),
                     timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
                 )
+                self._connection = (
+                    self.provider,
+                    _provider_base_url(self.provider),
+                    provider_env_key(self.provider),
+                    self.api_key,
+                )
                 logger.info(
                     "Transcript cleanup client initialized (%s)", self.provider
                 )
             except Exception as exc:
-                logger.error("Failed to initialize transcript cleanup client: %s", exc)
+                logger.error(
+                    "Failed to initialize transcript cleanup client: %s", exc
+                )
                 self.client = None
+                self._connection = None
         else:
             logger.debug(
                 "No %s API key; transcript cleanup unavailable",
                 provider_env_key(self.provider),
             )
             self.client = None
+            self._connection = None
 
     def configure(
         self, provider: str, model: str, reasoning: Optional[str] = None
     ) -> None:
-        """Apply the current provider/model selection, re-initializing if needed.
-
-        Cheap when nothing changed; only a provider switch rebuilds the client
-        (new base URL and API key). Called before each cleanup so settings
-        changes take effect without restarting.
-
-        Args:
-            provider: ``TranscriptCleanupProvider`` value.
-            model: Chat model id to use for cleanup requests.
-            reasoning: ``TranscriptCleanupReasoning`` value ("off" disables).
-        """
-        if provider in TranscriptCleanupProvider.ALL and provider != self.provider:
-            self.provider = provider
-            self.api_key = find_api_key(provider)
+        """Apply settings, rebuilding only when endpoint or credentials change."""
+        normalized = self._normalize_provider(provider)
+        profile = get_profile(normalized)
+        fingerprint = (
+            connection_fingerprint(profile) if profile is not None else None
+        )
+        needs_rebuild = normalized != self.provider or (
+            fingerprint is not None and fingerprint != self._connection
+        )
+        if needs_rebuild:
+            self.provider = normalized
+            self.api_key = find_api_key(normalized)
             self._initialize_client()
         if model and model.strip():
             self.model = model.strip()
@@ -303,8 +295,12 @@ class TranscriptCleanup:
 
         Reasoning models reject an explicit ``temperature``, so it is only
         sent when reasoning is off. OpenAI takes ``reasoning_effort`` as a
-        first-class param; OpenRouter takes a ``reasoning`` object.
+        first-class param; OpenRouter takes a ``reasoning`` object. Custom
+        endpoints always use ``temperature=0``.
         """
+        profile = get_profile(self.provider)
+        if profile is not None:
+            return chat_request_options(profile, self.reasoning)
         if self.reasoning == TranscriptCleanupReasoning.OFF:
             return {"temperature": 0}
         if self.provider == TranscriptCleanupProvider.OPENROUTER:

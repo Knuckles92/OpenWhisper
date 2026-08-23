@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import Dict, Final, Optional, Set, Tuple
+from typing import Callable, Dict, Final, Optional, Set, Tuple
 
 # Re-exported: callers have long imported format_size_bytes from here, and it
 # is used throughout this module's own messages.
@@ -71,15 +71,7 @@ class ConsentAction:
 
 
 def resolve_model_repo(model_name: str) -> str:
-    """Return the Hugging Face repo ID a faster-whisper model name maps to.
-
-    Args:
-        model_name: faster-whisper model name (e.g. ``"turbo"``) or a full
-            repo ID / local path, which is returned unchanged.
-
-    Returns:
-        The Hugging Face repository ID for display purposes.
-    """
+    """Resolve a faster-whisper name to its Hugging Face repository ID."""
     try:
         from faster_whisper.utils import _MODELS
         return _MODELS.get(model_name, model_name)
@@ -88,15 +80,7 @@ def resolve_model_repo(model_name: str) -> str:
 
 
 def format_download_size(model_name: str) -> Optional[str]:
-    """Return a human-readable approximate download size, if one is bundled.
-
-    Args:
-        model_name: faster-whisper model name.
-
-    Returns:
-        A string like ``"~1.5 GB"`` / ``"~145 MB"``, or None when no estimate
-        is maintained for this model.
-    """
+    """Return the bundled approximate download size, if known."""
     size_mb = MODEL_DOWNLOAD_SIZE_MB.get(model_name)
     if size_mb is None:
         return None
@@ -112,11 +96,6 @@ def is_model_cached(model_name: str) -> bool:
     cache directory. Incomplete or corrupted cache entries (missing required
     files) raise and are treated as missing.
 
-    Args:
-        model_name: faster-whisper model name, repo ID, or local directory.
-
-    Returns:
-        True when the model can be loaded entirely from local files.
     """
     if os.path.isdir(model_name):
         return True
@@ -129,27 +108,90 @@ def is_model_cached(model_name: str) -> bool:
         return False
 
 
-def download_model_files(model_name: str) -> str:
+def _progress_tqdm_class(progress_callback: Callable[[int, int], None]):
+    """Build a huggingface_hub-compatible tqdm class that reports bytes."""
+
+    class _CallbackTqdm:
+        def __init__(self, iterable=None, *args, **kwargs):
+            self.n = 0
+            self.total = kwargs.get("total") or 0
+            if progress_callback is not None:
+                progress_callback(0, int(self.total or 0))
+
+        def update(self, n=1):
+            self.n += n
+            if progress_callback is not None:
+                progress_callback(int(self.n), int(self.total or 0))
+
+        def close(self):
+            if progress_callback is not None:
+                progress_callback(int(self.n), int(self.total or 0))
+
+        def set_description(self, *args, **kwargs):
+            return None
+
+        def set_postfix(self, *args, **kwargs):
+            return None
+
+        def refresh(self):
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
+    return _CallbackTqdm
+
+
+def download_model_files(
+    model_name: str,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> str:
     """Download a model from Hugging Face into the local cache.
 
     Only call this after the access policy or an explicit user consent has
     permitted the download. Runs synchronously; callers are responsible for
-    keeping it off the Qt thread.
+    keeping it off the Qt thread. Uses the same allow-patterns and cache
+    behavior as faster-whisper's ``download_model``.
 
-    Args:
-        model_name: faster-whisper model name or repo ID.
-
-    Returns:
-        Path to the downloaded model directory.
-
-    Raises:
-        Exception: If the download fails; the model must then be treated as
-            missing (never as cached, never silently substituted).
+    Failures must leave the model missing, never silently substituted.
     """
-    from faster_whisper.utils import download_model
+    from faster_whisper.utils import _MODELS, disabled_tqdm
+    from huggingface_hub import snapshot_download
+
+    if "/" in model_name:
+        repo_id = model_name
+    else:
+        repo_id = _MODELS.get(model_name)
+        if repo_id is None:
+            raise ValueError(f"Invalid model size '{model_name}'")
+
+    allow_patterns = [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+    tqdm_class = (
+        _progress_tqdm_class(progress_callback)
+        if progress_callback is not None
+        else disabled_tqdm
+    )
+    kwargs = {
+        "local_files_only": False,
+        "allow_patterns": allow_patterns,
+        "tqdm_class": tqdm_class,
+    }
 
     logger.info(f"Downloading model '{model_name}' from Hugging Face...")
-    path = download_model(model_name, local_files_only=False)
+    path = snapshot_download(repo_id, **kwargs)
     logger.info(f"Model '{model_name}' downloaded to {path}")
     return path
 
@@ -169,8 +211,6 @@ def get_hf_cache_dir() -> str:
     Honors ``HF_HOME`` / ``HF_HUB_CACHE`` overrides via huggingface_hub's own
     constants, falling back to the documented default location.
 
-    Returns:
-        Absolute path to the hub cache directory (may not exist yet).
     """
     try:
         from huggingface_hub.constants import HF_HUB_CACHE
@@ -184,13 +224,7 @@ def get_hf_cache_dir() -> str:
 def scan_cached_models() -> Dict[str, CachedModelInfo]:
     """Enumerate model repositories in the local HF cache. No network.
 
-    Returns:
-        Mapping of repo ID (e.g. ``"Systran/faster-whisper-base"``) to
-        :class:`CachedModelInfo`. Empty when the cache directory does not
-        exist or cannot be scanned. Callers resolve short model names to repo
-        IDs with :func:`resolve_model_repo` before looking up entries; the
-        reverse mapping is ambiguous (``turbo``/``large-v3-turbo`` share one
-        repository).
+    Keys are repository IDs because reverse mapping to short names is ambiguous.
     """
     try:
         from huggingface_hub import scan_cache_dir
@@ -218,12 +252,6 @@ def delete_model_from_cache(model_name: str) -> None:
     Uses huggingface_hub's delete strategy so snapshots, refs, and orphaned
     blobs are all cleaned up (never a manual directory removal).
 
-    Args:
-        model_name: faster-whisper model name or repo ID.
-
-    Raises:
-        ValueError: If the model is not present in the cache.
-        OSError: If files cannot be removed (e.g. locked by a loaded model).
     """
     from huggingface_hub import scan_cache_dir
 
@@ -239,10 +267,6 @@ def delete_model_from_cache(model_name: str) -> None:
     )
     strategy.execute()
     logger.info(f"Deleted '{repo_id}' from HF cache")
-
-
-
-
 class HuggingFaceAccessCoordinator:
     """Coordinates cache detection, policy evaluation, one-time grants, and
     download deduplication for Hugging Face model access.
@@ -278,14 +302,7 @@ class HuggingFaceAccessCoordinator:
         ``HF_HUB_OFFLINE`` env override blocks downloads even against a
         one-time grant; then grants and the persisted policy decide.
 
-        Args:
-            model_name: Resolved faster-whisper model name (not ``"auto"``).
-            consume_grant: When True (default), a matching one-time grant is
-                spent by this call. Pass False for advisory checks that do not
-                themselves lead directly to a download.
-
-        Returns:
-            One of the ``AccessDecision`` values.
+        Advisory checks can pass ``consume_grant=False``.
         """
         if is_model_cached(model_name):
             return AccessDecision.LOAD_CACHED
@@ -311,12 +328,6 @@ class HuggingFaceAccessCoordinator:
         requests for the same model are rejected so only one consent dialog
         and one download can exist per model.
 
-        Args:
-            model_name: Resolved model name being requested.
-
-        Returns:
-            True when the caller now owns the request; False when a request
-            for this model is already in flight.
         """
         with self._lock:
             if model_name in self._active_requests:
@@ -330,6 +341,29 @@ class HuggingFaceAccessCoordinator:
         with self._lock:
             self._active_requests.discard(model_name)
 
+    @property
+    def requests_in_flight(self) -> int:
+        """Number of currently claimed consent/download slots."""
+        with self._lock:
+            return len(self._active_requests)
 
-# Global coordinator instance
+    def claim_batch(self, model_names: list) -> list:
+        """Claim request slots for every model a batch download may fetch.
+
+        Skips models already fully cached (stale catalog rows), duplicates,
+        and models with an in-flight request. The caller owns one claimed
+        slot per returned name and must release each via ``end_request``.
+        One-time grants are deliberately NOT issued here: the download
+        worker grants each model immediately before fetching it so a queue
+        stopped early leaves no unconsumed consents behind.
+        """
+        claimed = []
+        for model_name in model_names:
+            if model_name in claimed or is_model_cached(model_name):
+                continue
+            if not self.begin_request(model_name):
+                continue
+            claimed.append(model_name)
+        return claimed
+
 hf_access_coordinator = HuggingFaceAccessCoordinator()

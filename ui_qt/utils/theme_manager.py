@@ -1,13 +1,9 @@
-"""
-Theme management for PyQt6 UI.
-Handles stylesheet loading and theme switching.
-"""
 import logging
 import re
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject
 
 from config import bundle_root
 
@@ -19,12 +15,7 @@ _RELATIVE_URL_RE = re.compile(r"url\(\s*(?!['\"]?[a-zA-Z]:)(?!['\"]?[:/])([^)]+?
 
 
 class ThemeManager(QObject):
-    """Manages application theme and stylesheet."""
-
-    theme_changed = pyqtSignal(str)  # Emitted when theme changes
-
     def __init__(self):
-        """Initialize theme manager."""
         super().__init__()
         self.current_theme = "dark"
         self._stylesheet = ""
@@ -53,16 +44,12 @@ class ThemeManager(QObject):
 
     @property
     def stylesheet(self) -> str:
-        """Get the current stylesheet."""
         return self._stylesheet
 
     def set_theme(self, theme_name: str):
-        """Set the application theme."""
         self.current_theme = theme_name
-        self.theme_changed.emit(theme_name)
 
     def get_color(self, color_name: str) -> str:
-        """Get a color value from the theme."""
         colors = {
             'primary': '#0a84ff',
             'primary_hover': '#007aff',

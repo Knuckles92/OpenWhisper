@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 import time
 import types
-import unittest
 from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "services" / "hotkey_manager.py"
@@ -39,18 +38,16 @@ HotkeyManager = hotkey_manager_module.HotkeyManager
 # whichever backend is active.
 
 
-class TestHotkeyManager(unittest.TestCase):
-    """Test cases for the HotkeyManager class."""
-
+class TestHotkeyManager:
     @patch.object(HotkeyManager, "_setup_keyboard_hook")
     def test_record_toggle_uses_monotonic_time(self, _mock_setup_keyboard_hook):
         """Record toggle debounce should not depend on wall-clock jumps."""
         manager = HotkeyManager()
 
         with patch.object(time, "monotonic", side_effect=[100.0, 100.05, 100.4]):
-            self.assertTrue(manager._should_trigger_record_toggle())
-            self.assertFalse(manager._should_trigger_record_toggle())
-            self.assertTrue(manager._should_trigger_record_toggle())
+            assert manager._should_trigger_record_toggle()
+            assert not manager._should_trigger_record_toggle()
+            assert manager._should_trigger_record_toggle()
 
     @patch.object(HotkeyManager, "_setup_keyboard_hook")
     def test_enable_toggle_clears_debounce_state(self, _mock_setup_keyboard_hook):
@@ -58,13 +55,13 @@ class TestHotkeyManager(unittest.TestCase):
         manager = HotkeyManager()
 
         with patch.object(time, "monotonic", return_value=100.0):
-            self.assertTrue(manager._should_trigger_record_toggle())
+            assert manager._should_trigger_record_toggle()
 
         manager._toggle_program_enabled()
-        self.assertIsNone(manager._debouncer._last_trigger_time)
+        assert manager._debouncer._last_trigger_time is None
 
         with patch.object(time, "monotonic", return_value=100.01):
-            self.assertTrue(manager._should_trigger_record_toggle())
+            assert manager._should_trigger_record_toggle()
 
 
     @patch.object(HotkeyManager, "_setup_keyboard_hook")
@@ -80,13 +77,9 @@ class TestHotkeyManager(unittest.TestCase):
             manager.rehook()
             mock_cleanup.assert_called_once()
 
-        # _setup_keyboard_hook: once in __init__, once in rehook
-        self.assertEqual(_mock_setup.call_count, 2)
-        # State preserved
-        self.assertFalse(manager.program_enabled)
-        self.assertEqual(manager.hotkeys, original_hotkeys)
-        self.assertIs(manager.on_record_toggle, callback)
+        assert _mock_setup.call_count == 2
+        assert not manager.program_enabled
+        assert manager.hotkeys == original_hotkeys
+        assert manager.on_record_toggle is callback
 
 
-if __name__ == "__main__":
-    unittest.main()

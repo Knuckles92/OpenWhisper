@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from services.format_utils import format_file_size
+from services.format_utils import format_audio_duration, format_file_size
 from services.history_manager import HistoryEntry, history_manager
 from ui_qt.widgets import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.history_sidebar import (
@@ -84,15 +84,6 @@ _DIALOG_STYLE = """
         font-size: 11px;
     }
 """
-
-
-def _format_seconds(seconds: float) -> str:
-    """Format a duration in seconds for compact display."""
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    minutes = int(seconds // 60)
-    remainder = seconds % 60
-    return f"{minutes}m {remainder:.0f}s"
 
 
 class HistoryEntryDialog(QDialog):
@@ -275,11 +266,11 @@ class HistoryEntryDialog(QDialog):
         facts: list[tuple[str, str]] = []
         if self.entry.audio_duration is not None:
             facts.append(
-                ("Audio duration", _format_seconds(self.entry.audio_duration))
+                ("Audio duration", format_audio_duration(self.entry.audio_duration))
             )
         if self.entry.transcription_time is not None:
             facts.append(
-                ("Transcription time", _format_seconds(self.entry.transcription_time))
+                ("Transcription time", format_audio_duration(self.entry.transcription_time))
             )
         if self.entry.file_size is not None:
             facts.append(("File size", format_file_size(self.entry.file_size)))

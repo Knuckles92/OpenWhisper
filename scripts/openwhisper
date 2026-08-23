@@ -69,6 +69,13 @@ PY
     fi
 fi
 
+if [ "$(uname -s)" = "Linux" ]; then
+    if ! "$PYTHON" -c "from services.linux_deps import check_linux_dependencies; raise SystemExit(check_linux_dependencies())"; then
+        echo "[error] Missing system libraries. Install them (command above), then retry." >&2
+        exit 1
+    fi
+fi
+
 run_openwhisper() {
     if [ "${OPENWHISPER_ATTACHED:-0}" = "1" ]; then
         exec "$@"

@@ -64,10 +64,7 @@ def _override_macos_bundle_name(name: str) -> None:
 
 
 class QtApplication:
-    """PyQt6 Application wrapper."""
-
     def __init__(self):
-        """Initialize the Qt application."""
         # Set before the QApplication is created so macOS shows the right name
         # in the menu bar and About panel.
         QApplication.setApplicationName(APP_NAME)
@@ -100,19 +97,15 @@ class QtApplication:
             self.app.setStyle(self._tooltip_style)
 
     def _setup_fonts(self):
-        """Setup default fonts for the application."""
-        # Set default font
         default_font = QFont("Segoe UI", 10)
         self.app.setFont(default_font)
 
     def _apply_theme(self):
-        """Apply the current theme stylesheet."""
         stylesheet = self.theme_manager.stylesheet
         if stylesheet:
             self.app.setStyleSheet(stylesheet)
 
     def set_theme(self, theme_name: str):
-        """Change the application theme."""
         self.theme_manager.set_theme(theme_name)
         self._apply_theme()
 

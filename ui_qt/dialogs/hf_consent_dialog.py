@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 class HuggingFaceConsentDialog(QDialog):
-    """Modal dialog asking the user to approve a Hugging Face model download."""
-
     RESULT_CANCEL: Final[str] = ConsentAction.CANCEL
     RESULT_DOWNLOAD_ONCE: Final[str] = ConsentAction.DOWNLOAD_ONCE
     RESULT_ALWAYS_ALLOW: Final[str] = ConsentAction.ALWAYS_ALLOW
@@ -31,7 +29,7 @@ class HuggingFaceConsentDialog(QDialog):
 
     def __init__(self, model_name: str, policy: str, env_blocked: bool = False,
                  parent=None):
-        """Initialize the consent dialog.
+        """Configure the actions allowed by policy and environment state.
 
         Args:
             model_name: Resolved faster-whisper model name to download.
@@ -54,7 +52,6 @@ class HuggingFaceConsentDialog(QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Build the dialog copy and the policy-dependent action buttons."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -118,7 +115,6 @@ class HuggingFaceConsentDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _body_text(self) -> str:
-        """Compose the explanatory copy for the current state."""
         repo = resolve_model_repo(self.model_name)
         lines = [
             f'The Whisper model "{self.model_name}" is not on this computer.',
@@ -146,6 +142,5 @@ class HuggingFaceConsentDialog(QDialog):
         return "\n\n".join(lines)
 
     def _finish(self, action: str):
-        """Record the chosen action and accept the dialog."""
         self.result_action = action
         self.accept()

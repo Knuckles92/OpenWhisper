@@ -1,6 +1,4 @@
-"""
-Card and container widgets for PyQt6 UI.
-"""
+"""Reusable card containers."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -14,14 +12,13 @@ from ui_qt.utils.collapse_animation import (
 
 
 class Card(QWidget):
-    """Modern card container with rounded corners and border."""
+    """Card container styled by the application theme."""
 
     def __init__(self, parent=None):
-        """Initialize card widget."""
         super().__init__(parent)
         self.setObjectName("card")
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 16, 16, 16) # Reduced from 20
+        self.layout.setContentsMargins(16, 16, 16, 16)
         self.layout.setSpacing(12)
         self.setMinimumHeight(100)
 
@@ -30,11 +27,10 @@ class ControlPanel(QWidget):
     """Control panel with buttons and controls."""
 
     def __init__(self, parent=None):
-        """Initialize control panel."""
         super().__init__(parent)
         self.setObjectName("controlPanel")
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(16, 16, 16, 16) # Reduced from 20
+        self.layout.setContentsMargins(16, 16, 16, 16)
         self.layout.setSpacing(12)
 
 
@@ -53,15 +49,12 @@ class HeaderCard(Card):
     _EXPANDED_MAX_HEIGHT = UNLIMITED_HEIGHT
 
     def __init__(self, title: str = "", parent=None, collapsible: bool = False):
-        """Initialize header card."""
         super().__init__(parent)
-        # Stylesheet removed to allow QSS to control appearance
 
         self.collapsible = collapsible
         self._collapsed = False
         self._content_height = 0
 
-        # Create header
         self.header_layout = QHBoxLayout()
         self.header_layout.setContentsMargins(0, 0, 0, 0)
         self.header_layout.setSpacing(8)
@@ -93,7 +86,6 @@ class HeaderCard(Card):
             self.header_layout.addWidget(self.title_label)
             self.header_layout.addStretch()
 
-        # Insert header at the beginning
         self.layout.insertLayout(0, self.header_layout)
         self.layout.insertSpacing(1, 12)
 
@@ -105,25 +97,17 @@ class HeaderCard(Card):
             self.layout.addWidget(self.content_widget)
             self.setMinimumHeight(0)
 
-    def add_header_widget(self, widget):
-        """Add a widget to the header."""
-        self.header_layout.addWidget(widget)
-
     def add_content_widget(self, widget):
-        """Add a widget to the card body (collapsible-aware)."""
         if self.collapsible:
             self.content_layout.addWidget(widget)
         else:
             self.layout.addWidget(widget)
 
     def set_title(self, title: str):
-        """Set the header title."""
         if self.section_toggle is not None:
             self.section_toggle.set_title(title)
         elif self.title_label is not None:
             self.title_label.setText(title)
-
-    # ── Collapse support ───────────────────────────────────────────
 
     @property
     def is_collapsed(self) -> bool:
@@ -136,11 +120,9 @@ class HeaderCard(Card):
         return self._content_height
 
     def toggle_collapsed(self):
-        """Flip the collapsed state (header click target)."""
         self.set_collapsed(not self._collapsed)
 
     def _on_section_toggled(self, expanded: bool):
-        """Handle user click on the shared section toggle."""
         self.set_collapsed(not expanded)
 
     def set_collapsed(self, collapsed: bool, emit: bool = True):
@@ -172,7 +154,6 @@ class HeaderCard(Card):
             self._apply_collapsed_immediate(collapsed)
 
     def _apply_collapsed_immediate(self, collapsed: bool):
-        """Apply collapsed state instantly (sync/initial setup)."""
         if hasattr(self, "_content_anim") and self._content_anim is not None:
             self._content_anim.stop()
         self.content_widget.setVisible(not collapsed)
@@ -185,7 +166,6 @@ class HeaderCard(Card):
         return self._content_anim
 
     def _content_natural_height(self) -> int:
-        """Natural height of the card body."""
         self.content_widget.setVisible(True)
         self.content_widget.adjustSize()
         return max(
@@ -194,7 +174,6 @@ class HeaderCard(Card):
         )
 
     def _apply_card_size_policy(self, collapsed: bool):
-        """Apply final card height clamps after animated transitions."""
         if collapsed:
             self.setMinimumHeight(0)
             self.layout.activate()
@@ -205,7 +184,6 @@ class HeaderCard(Card):
             self.updateGeometry()
 
     def _animate_content_visibility(self, collapsed: bool):
-        """Animate the body height in parallel with the window resize."""
         natural = self._content_natural_height()
         self.content_widget.setVisible(True)
         self.setMinimumHeight(0)
@@ -231,28 +209,3 @@ class HeaderCard(Card):
             end=end,
             on_finished=on_finished,
         )
-
-
-class StatCard(Card):
-    """Card for displaying statistics."""
-
-    def __init__(self, label: str = "", value: str = "", parent=None):
-        """Initialize stat card."""
-        super().__init__(parent)
-
-        self.label = QLabel(label)
-        self.label.setObjectName("statusLabel")
-
-        self.value = QLabel(value)
-        self.value.setObjectName("accentLabel")
-        self.value_font = QFont("Segoe UI", 24) # Increased size
-        self.value_font.setBold(True)
-        self.value.setFont(self.value_font)
-
-        self.layout.addWidget(self.label)
-        self.layout.addWidget(self.value)
-        self.layout.addStretch()
-
-    def set_value(self, value: str):
-        """Update the stat value."""
-        self.value.setText(value)

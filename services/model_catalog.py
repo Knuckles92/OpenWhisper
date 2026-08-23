@@ -45,14 +45,12 @@ class ModelDetails:
 
     @property
     def download_size(self) -> str:
-        """Return the approximate download size in a compact format."""
         if self.download_size_mb >= 1000:
             return f"~{self.download_size_mb / 1000:.1f} GB"
         return f"~{self.download_size_mb} MB"
 
     @property
     def compact_tags(self) -> str:
-        """Return the compact language/family summary used in the dialog."""
         parts = [self.language_support]
         if self.family == "Distil-Whisper":
             parts.append("Distilled")
@@ -74,7 +72,6 @@ def _standard_model(
     repository_url: str | None = None,
     maintainer: str = "Systran",
 ) -> ModelDetails:
-    """Build metadata shared by the original OpenAI Whisper family."""
     english_only = model_name.endswith(".en")
     upstream_name = origin_name or f"openai/whisper-{model_name}"
     repo_id = repository_id or f"Systran/faster-whisper-{model_name}"
@@ -133,7 +130,6 @@ def _distilled_model(
     best_for: str,
     limitations: Tuple[str, ...],
 ) -> ModelDetails:
-    """Build metadata shared by English-only Distil-Whisper models."""
     repo_id = f"Systran/faster-distil-whisper-{model_name.removeprefix('distil-')}"
     repo_url = f"https://huggingface.co/{repo_id}"
     origin_url = f"https://huggingface.co/{origin_name}"
@@ -385,15 +381,5 @@ MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 
 
 def get_model_details(model_name: str) -> ModelDetails:
-    """Return bundled metadata for a concrete faster-whisper model.
-
-    Args:
-        model_name: Concrete model name from ``config.WHISPER_MODEL_CHOICES``.
-
-    Returns:
-        Immutable technical details for ``model_name``.
-
-    Raises:
-        KeyError: If ``model_name`` is not part of the managed model catalog.
-    """
+    """Return bundled metadata, raising KeyError for unmanaged models."""
     return MODEL_CATALOG[model_name]

@@ -1,14 +1,4 @@
-"""Compact inline controls for the local Whisper engine (model / device / quant).
-
-Surfaces the three most useful local-backend knobs — Whisper model, device
-(GPU/CPU), and compute type (quantization) — directly on the main window so they
-no longer require opening Settings → Advanced.
-
-The widget is intentionally "dumb": on any user change it persists the three
-settings keys and emits ``engine_settings_changed``. It does NOT reload the
-backend itself — that stays a controller responsibility so all of the (slow,
-threaded) reload logic lives in one place.
-"""
+"""Local Whisper controls that persist settings and request controller reloads."""
 import logging
 import sys
 
@@ -80,14 +70,11 @@ class LocalEngineControls(QWidget):
         self._connect_signals()
         self.set_collapsed(True, emit=False)
 
-    # ── Construction ───────────────────────────────────────────────
-
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(6)
 
-        # Disclosure header (centered)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         self.section_toggle = CollapsibleSectionToggle(
@@ -102,7 +89,6 @@ class LocalEngineControls(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        # Collapsible body: combos row + resolved readout
         self._content_widget = QWidget()
         content_layout = QVBoxLayout(self._content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
@@ -195,8 +181,6 @@ class LocalEngineControls(QWidget):
         self.manage_models_button.clicked.connect(self.manage_models_requested)
         self.section_toggle.toggled_expanded.connect(self._on_section_toggled)
 
-    # ── Collapse support ───────────────────────────────────────────
-
     @property
     def is_collapsed(self) -> bool:
         """Whether the settings body is currently collapsed."""
@@ -208,11 +192,9 @@ class LocalEngineControls(QWidget):
         return self._content_height
 
     def _on_section_toggled(self, expanded: bool):
-        """Handle user click on the shared section toggle."""
         self.set_collapsed(not expanded)
 
     def _content_natural_height(self) -> int:
-        """Natural height of the combo row and resolved readout."""
         self._content_widget.setVisible(True)
         self._content_widget.adjustSize()
         return max(
@@ -221,7 +203,6 @@ class LocalEngineControls(QWidget):
         )
 
     def _header_block_height(self) -> int:
-        """Vertical space consumed by the disclosure header and outer margins."""
         margins = self.layout().contentsMargins()
         return (
             margins.top()
@@ -230,7 +211,6 @@ class LocalEngineControls(QWidget):
         )
 
     def _expanded_minimum_height(self) -> int:
-        """Minimum height when the settings body is fully expanded."""
         return (
             self._header_block_height()
             + self.layout().spacing()
@@ -238,18 +218,15 @@ class LocalEngineControls(QWidget):
         )
 
     def _collapsed_minimum_height(self) -> int:
-        """Minimum height when only the disclosure header is shown."""
         return self._header_block_height()
 
     def _measure_collapse_delta(self) -> int:
-        """Return the natural vertical space the collapsible body needs."""
         return max(
             self._expanded_minimum_height() - self._collapsed_minimum_height(),
             1,
         )
 
     def _apply_content_size_policy(self, collapsed: bool):
-        """Reserve enough vertical space so the body is never clipped."""
         self.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
         self._content_widget.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
 
@@ -289,7 +266,6 @@ class LocalEngineControls(QWidget):
             self._apply_collapsed_immediate(collapsed)
 
     def _apply_collapsed_immediate(self, collapsed: bool):
-        """Apply collapsed state instantly (sync/initial setup)."""
         if hasattr(self, "_content_anim") and self._content_anim is not None:
             self._content_anim.stop()
         self._content_widget.setVisible(not collapsed)
@@ -302,7 +278,6 @@ class LocalEngineControls(QWidget):
         return self._content_anim
 
     def _animate_content_visibility(self, collapsed: bool):
-        """Animate the body height in parallel with the window resize."""
         natural = self._content_natural_height()
         self._content_widget.setVisible(True)
         self.setMinimumHeight(0)
@@ -329,10 +304,7 @@ class LocalEngineControls(QWidget):
             on_finished=on_finished,
         )
 
-    # ── Internal handlers ──────────────────────────────────────────
-
     def _on_changed(self, _text: str):
-        """Persist the three keys and notify listeners of a user change."""
         settings = settings_manager.load_all_settings()
         settings[SettingsKey.WHISPER_MODEL] = self.model_combo.currentText()
         settings[SettingsKey.WHISPER_DEVICE] = self.device_combo.currentText()
@@ -346,8 +318,6 @@ class LocalEngineControls(QWidget):
         )
         self.engine_settings_changed.emit()
 
-    # ── Public API ─────────────────────────────────────────────────
-
     def load_from_settings(self):
         """Populate combos from the persisted settings (no signal emitted)."""
         settings = settings_manager.load_all_settings()
@@ -358,7 +328,7 @@ class LocalEngineControls(QWidget):
         )
 
     def set_values(self, model: str, device: str, compute: str):
-        """Reflect values without emitting (used to mirror the other tab)."""
+        """Reflect values without emitting signals."""
         for combo, value, fallback in (
             (self.model_combo, model, config.DEFAULT_WHISPER_MODEL),
             (self.device_combo, device, "auto"),
@@ -368,24 +338,13 @@ class LocalEngineControls(QWidget):
             self._select(combo, value, fallback)
             combo.blockSignals(False)
 
-    def current_values(self) -> tuple:
-        """Return the (model, device, compute) currently shown."""
-        return (
-            self.model_combo.currentText(),
-            self.device_combo.currentText(),
-            self.compute_combo.currentText(),
-        )
-
     def set_resolved_info(self, info: str):
-        """Update the small 'what auto resolved to' readout."""
         self.resolved_label.setText(info)
 
     def set_busy(self, busy: bool):
         """Disable combos while a reload is in flight or during recording."""
         for combo in (self.model_combo, self.device_combo, self.compute_combo):
             combo.setEnabled(not busy)
-
-    # ── Helpers ────────────────────────────────────────────────────
 
     @staticmethod
     def _select(combo: QComboBox, value: str, fallback: str = None):

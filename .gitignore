@@ -63,7 +63,9 @@ sidecar/dist/
 .vscode/settings.json
 .cursor/worktrees.json
 .pi/
+.piview/
 .codex/
+.zcode/
 .shots/
 
 # Design mockups (local planning artifacts, not shipped)

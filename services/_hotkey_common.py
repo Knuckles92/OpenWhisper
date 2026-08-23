@@ -1,16 +1,4 @@
-"""Shared helpers for the platform hotkey backends.
-
-The keyboard (Windows) and pynput (macOS/Linux) backends parse and format
-hotkey strings identically apart from their platform modifier vocabulary, so
-the shared logic lives here and each backend binds its own alias maps.
-Display formatting stays in each backend because presentation is genuinely
-platform-specific (plain "Ctrl+Alt+R" text vs macOS ⌃⌥R symbols), as does
-event matching (different input libraries).
-
-This module must stay dependency-light (stdlib only): it is imported by both
-backends, including under the test harness that stubs out ``keyboard`` and
-``config``.
-"""
+"""Dependency-light helpers shared by the platform hotkey backends."""
 import logging
 import time
 from typing import Dict, Optional, Sequence, Tuple
@@ -23,20 +11,7 @@ def parse_hotkey_string(
     modifier_aliases: Dict[str, str],
     main_key_aliases: Optional[Dict[str, str]] = None,
 ) -> Tuple[frozenset, Optional[str]]:
-    """Parse a hotkey string into ``(modifier_set, main_key_name)``.
-
-    Args:
-        hotkey_string: Hotkey string such as ``"ctrl+alt+r"``.
-        modifier_aliases: Modifier token -> canonical modifier name for the
-            calling backend's platform.
-        main_key_aliases: Optional main-key token -> canonical name map
-            (e.g. ``"escape"`` -> ``"esc"`` for pynput round-tripping).
-
-    Returns:
-        Tuple of the canonical modifier frozenset and the main key name, or
-        ``(frozenset(), None)`` for an empty string. Unknown modifier tokens
-        are ignored; the last token is always the main key.
-    """
+    """Return canonical modifiers and main key parsed from a hotkey string."""
     if not hotkey_string:
         return frozenset(), None
 
@@ -61,16 +36,7 @@ def format_hotkey_string(
     main_key: Optional[str],
     modifier_order: Sequence[str],
 ) -> str:
-    """Build a canonical hotkey string from a modifier set and a main key name.
-
-    Args:
-        modifiers: Iterable of canonical modifier names.
-        main_key: Main key name, or ``None`` for a modifiers-only string.
-        modifier_order: Canonical ordering of the platform's modifiers.
-
-    Returns:
-        ``"+"``-joined canonical hotkey string.
-    """
+    """Build a canonical hotkey string in platform modifier order."""
     ordered = [m for m in modifier_order if m in modifiers]
     if main_key:
         ordered.append(main_key)
@@ -78,18 +44,9 @@ def format_hotkey_string(
 
 
 class Debouncer:
-    """Debounce repeated triggers using a monotonic clock.
-
-    Wall-clock independent so system clock jumps (sleep/resume, NTP) cannot
-    swallow or double-fire hotkeys.
-    """
+    """Debounce triggers independently of wall-clock jumps."""
 
     def __init__(self, interval_ms: int):
-        """Initialize the debouncer.
-
-        Args:
-            interval_ms: Minimum interval between accepted triggers.
-        """
         self.interval_ms = interval_ms
         self._last_trigger_time: Optional[float] = None
 
@@ -115,13 +72,7 @@ def notify_stt_toggle(
     on_status_update_auto_hide,
     on_status_update,
 ) -> None:
-    """Emit the STT Enabled/Disabled status via the preferred callback.
-
-    Args:
-        program_enabled: New enabled state after the toggle.
-        on_status_update_auto_hide: Preferred auto-hiding status callback.
-        on_status_update: Plain status callback fallback.
-    """
+    """Emit the enabled state through the preferred status callback."""
     status = "STT Enabled" if program_enabled else "STT Disabled"
     if on_status_update_auto_hide:
         on_status_update_auto_hide(status)

@@ -1,4 +1,3 @@
-"""Shared disclosure toggle for collapsible UI sections."""
 from PyQt6.QtWidgets import QToolButton
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -28,16 +27,6 @@ class CollapsibleSectionToggle(QToolButton):
         collapse_tooltip: str = "Hide section",
         parent=None,
     ):
-        """Initialize the toggle.
-
-        Args:
-            title: Section title shown in the toggle label.
-            prefix: Optional prefix (e.g. an icon) before the title.
-            expanded: Initial expanded state.
-            expand_tooltip: Tooltip when collapsed.
-            collapse_tooltip: Tooltip when expanded.
-            parent: Optional parent widget.
-        """
         super().__init__(parent)
         self._title = title
         self._prefix = prefix
@@ -54,11 +43,9 @@ class CollapsibleSectionToggle(QToolButton):
         self.toggled.connect(self._on_toggled)
 
     def is_expanded(self) -> bool:
-        """Whether the section is currently expanded."""
         return self._expanded
 
     def set_title(self, title: str):
-        """Update the section title shown in the toggle label."""
         self._title = title
         self._update_display()
 
@@ -82,7 +69,6 @@ class CollapsibleSectionToggle(QToolButton):
             self.toggled_expanded.emit(expanded)
 
     def _on_toggled(self, checked: bool):
-        """Handle user click on the toggle."""
         if checked == self._expanded:
             return
         self._expanded = checked
@@ -90,7 +76,6 @@ class CollapsibleSectionToggle(QToolButton):
         self.toggled_expanded.emit(checked)
 
     def _update_display(self):
-        """Refresh label text and tooltip for the current state."""
         arrow = "▾" if self._expanded else "▸"
         self.setText(f"{self._prefix}{self._title}  {arrow}")
         self.setToolTip(

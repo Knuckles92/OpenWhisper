@@ -1,20 +1,10 @@
-"""
-Tests for SQLAlchemy database layer.
-"""
 import json
 import os
 import pytest
 import uuid
 from datetime import datetime
 
-# Add parent directory to path for imports
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 class TestDatabaseManager:
-    """Tests for the DatabaseManager class."""
-
     @pytest.fixture
     def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
@@ -40,7 +30,6 @@ class TestDatabaseManager:
         assert "meeting_insights" not in table_names
 
     def test_history_crud(self, temp_db):
-        """Test history entry create, read, update, delete."""
         entry_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
 
@@ -71,7 +60,7 @@ class TestDatabaseManager:
         assert entry is None
 
     def test_migration_removes_meeting_tables(self, tmp_path):
-        """Verify schema v7 drops all meeting-mode tables."""
+        """Legacy meeting tables stay dropped; schema reaches current version."""
         db_path = str(tmp_path / "legacy.db")
 
         import sqlite3
@@ -125,7 +114,7 @@ class TestDatabaseManager:
         finally:
             conn.close()
 
-        from services.database import DatabaseManager
+        from services.database import SCHEMA_VERSION, DatabaseManager
 
         manager = DatabaseManager(db_path=db_path)
         try:
@@ -140,10 +129,12 @@ class TestDatabaseManager:
                     "SELECT version FROM schema_version"
                 ).scalar_one()
 
+            # Legacy names must remain absent (startup drop + never recreated).
             assert "meeting_insights" not in tables
             assert "meeting_chunks" not in tables
             assert "meetings" not in tables
-            assert version == 9
+            assert "meeting_sessions" in tables
+            assert version == SCHEMA_VERSION
         finally:
             manager.close()
 
@@ -211,7 +202,8 @@ class TestDatabaseManager:
             assert "raw_text" in columns
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 9
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
         finally:
             manager.close()
 
@@ -281,16 +273,140 @@ class TestDatabaseManager:
 
             assert "cleanup_provider" in columns
             assert "cleanup_model" in columns
-            assert version == SCHEMA_VERSION == 9
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
         finally:
             manager.close()
 
+    def test_history_source_name_crud(self, temp_db):
+        """History entries can store an uploaded filename as source_name."""
+        entry_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+
+        temp_db.add_history_entry(
+            entry_id=entry_id,
+            text="Hello",
+            timestamp=timestamp,
+            model="local_whisper",
+            source_name="sample.wav",
+        )
+
+        entry = temp_db.get_history_entry_by_id(entry_id)
+        assert entry is not None
+        assert entry.source_name == "sample.wav"
+
+    def test_migration_adds_source_name_column(self, tmp_path):
+        """Verify schema v12 adds source_name to a v9 DB."""
+        db_path = str(tmp_path / "legacy_v9.db")
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version(version) VALUES (9)")
+            conn.execute(
+                """
+                CREATE TABLE transcription_history (
+                    id TEXT PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    raw_text TEXT,
+                    timestamp TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    audio_file TEXT,
+                    transcription_time REAL,
+                    audio_duration REAL,
+                    file_size INTEGER,
+                    cleanup_provider TEXT,
+                    cleanup_model TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        from services.database import DatabaseManager, SCHEMA_VERSION
+
+        manager = DatabaseManager(db_path=db_path)
+        try:
+            with manager.engine.connect() as connection:
+                columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        "PRAGMA table_info(transcription_history)"
+                    )
+                }
+                version = connection.exec_driver_sql(
+                    "SELECT version FROM schema_version"
+                ).scalar_one()
+
+            assert "source_name" in columns
+            assert version == SCHEMA_VERSION == 12
+        finally:
+            manager.close()
+
+    def test_migration_adds_agent_endpoint_json(self, tmp_path):
+        """Verify schema v11 adds agent_endpoint_json to a v10 meeting DB."""
+        db_path = str(tmp_path / "legacy_v10.db")
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)"
+            )
+            conn.execute("INSERT INTO schema_version(version) VALUES (10)")
+            conn.execute(
+                """
+                CREATE TABLE meeting_sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    paused_total_s REAL NOT NULL DEFAULT 0,
+                    host_token TEXT NOT NULL,
+                    guest_token TEXT NOT NULL,
+                    cloud_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    asr_model TEXT,
+                    agent_provider TEXT,
+                    agent_model TEXT,
+                    spool_dir TEXT NOT NULL,
+                    state_json TEXT,
+                    state_seq INTEGER NOT NULL DEFAULT 0,
+                    app_pid INTEGER,
+                    app_heartbeat_at TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        from services.database import DatabaseManager, SCHEMA_VERSION
+
+        manager = DatabaseManager(db_path=db_path)
+        try:
+            with manager.engine.connect() as connection:
+                columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        "PRAGMA table_info(meeting_sessions)"
+                    )
+                }
+                version = connection.exec_driver_sql(
+                    "SELECT version FROM schema_version"
+                ).scalar_one()
+
+            assert "agent_endpoint_json" in columns
+            assert version == SCHEMA_VERSION == 12
+        finally:
+            manager.close()
 
 class TestJsonMigration:
-    """Tests for JSON to SQLite migration."""
-
     def test_history_migration(self, tmp_path):
-        """Test migrating history from JSON file."""
         history_data = {
             "entries": [
                 {

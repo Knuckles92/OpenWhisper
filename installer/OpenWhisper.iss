@@ -91,7 +91,7 @@ begin
   Result := ExpandConstant('{localappdata}\{#AppName}');
 end;
 
-{ ---------------------------------------------------------------------------
+{
   Uninstall: offer to delete user data.
 
   Settings, history database, saved recordings, and any downloaded components
@@ -101,7 +101,7 @@ end;
 
   The Hugging Face model cache is deliberately NOT touched: it lives under
   ~\.cache\huggingface\hub and may be shared with other tools.
-  --------------------------------------------------------------------------- }
+}
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
