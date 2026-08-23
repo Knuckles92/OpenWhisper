@@ -591,6 +591,38 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert "Downloads" in dialog.speaker_id_status.text()
 
+    def test_refresh_component_state_enables_pi_after_install(self):
+        with patch.object(
+            dialog_module, "meeting_agent_payload_dir", return_value=None
+        ):
+            dialog, _values = self._make_meeting_dialog()
+        item = dialog.meeting_agent_core_combo.model().item(0)
+        assert item is not None
+        assert not item.isEnabled()
+        assert "not built" in dialog.meeting_agent_core_combo.itemText(0)
+
+        with patch.object(
+            dialog_module, "meeting_agent_payload_dir", return_value="C:/payload"
+        ):
+            dialog.refresh_component_state()
+        assert item.isEnabled()
+        assert dialog.meeting_agent_core_combo.itemText(0) == "Pi (sidecar)"
+
+    def test_refresh_component_state_restores_saved_pi_core(self):
+        with patch.object(
+            dialog_module, "meeting_agent_payload_dir", return_value=None
+        ):
+            dialog, _values = self._make_meeting_dialog(
+                extra={SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.PI}
+            )
+        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.DIRECT
+
+        with patch.object(
+            dialog_module, "meeting_agent_payload_dir", return_value="C:/payload"
+        ):
+            dialog.refresh_component_state()
+        assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
+
 
 class TestSharedRuntime(_DialogTestCase):
     """Device and quantization are shared, and say so on both surfaces."""

@@ -188,6 +188,21 @@ class TestParseReleasePayload:
         )
         assert release.asset.size_bytes == 91717696
 
+    def test_sidecar_zip_asset_is_ignored(self):
+        payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
+        payload["assets"].insert(0, {
+            "name": "meeting-agent-win_amd64-node22-pi1.zip",
+            "size": 4_000_000,
+            "digest": "sha256:" + ("ab" * 32),
+            "browser_download_url": (
+                "https://github.com/Knuckles92/OpenWhisper/releases/"
+                "download/v2.1.1/meeting-agent-win_amd64-node22-pi1.zip"
+            ),
+        })
+        release = parse_release_payload(payload)
+        assert release.asset is not None
+        assert release.asset.name == "OpenWhisper-Setup-2.1.1.exe"
+
     def test_missing_digest_allows_notify_but_not_apply(self):
         payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
         payload["assets"][0].pop("digest")

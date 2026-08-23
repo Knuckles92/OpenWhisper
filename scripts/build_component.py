@@ -3,41 +3,65 @@
 Usage::
 
     python scripts/build_component.py gpu-accel
+    python scripts/build_component.py meeting-agent
 
-Resolves the NVIDIA wheels that ``requirements-gpu.txt`` selects for the target
-platform, records the SHA-256 that pip reports for each, measures the payload, and
-prints a ready-to-paste ``_BUILTIN_GPU_ARCHIVES`` block plus the matching
-``install_bytes``. Nothing is uploaded and nothing needs hosting: the catalog
-entries point straight at PyPI, whose published wheels are immutable, and the
-application verifies the digest before extracting anything.
+``gpu-accel`` resolves the NVIDIA wheels that ``requirements-gpu.txt`` selects
+for the target platform, records the SHA-256 that pip reports for each,
+measures the payload, and prints a ready-to-paste ``_BUILTIN_GPU_ARCHIVES``
+block plus the matching ``install_bytes``. Entries point straight at PyPI,
+whose published wheels are immutable.
 
-An earlier version of this script repacked the DLLs into zips for hosting as
-GitHub Release assets, described by a JSON catalog on the project website. That
-indirection bought the ability to re-point a payload without an app release, but
-the website served its SPA shell for the catalog path so the fetch never once
-succeeded, and a CUDA bump changes ``requirements-gpu.txt`` anyway — which is an
-app release by definition.
+``meeting-agent`` pins the official Node.js win-x64 zip from nodejs.org
+(SHA-256 from that release's ``SHASUMS256.txt``), builds ``sidecar/dist/bundle.cjs``,
+zips the bundle into ``dist/components/``, and prints a ready-to-paste
+``_BUILTIN_MEETING_AGENT_ARCHIVES`` block. The bundle zip is attached to the
+same GitHub Release as the app installer; bump ``_version.py`` before running
+this builder so the emitted download URL matches the tag that will host it.
 
-The dependency closure is resolved with ``pip install --dry-run`` against the
-pinned requirements file rather than by reading the development venv. A dev venv
-carries torch, pytest, and ~170 other top-level entries, and a copy-based build
-silently drifts from what the app was tested against.
+An earlier version of this script repacked the GPU DLLs into zips for hosting
+as GitHub Release assets, described by a JSON catalog on the project website.
+That indirection bought the ability to re-point a payload without an app
+release, but the website served its SPA shell for the catalog path so the
+fetch never once succeeded, and a CUDA bump changes ``requirements-gpu.txt``
+anyway — which is an app release by definition.
+
+The GPU dependency closure is resolved with ``pip install --dry-run`` against
+the pinned requirements file rather than by reading the development venv. A
+dev venv carries torch, pytest, and ~170 other top-level entries, and a
+copy-based build silently drifts from what the app was tested against.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Dict, List
+from urllib.request import urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from services.components import COMPONENT_API, GPU_COMPONENT_VERSION  # noqa: E402
+from _version import __version__  # noqa: E402
+from services.app_update import GITHUB_REPO  # noqa: E402
+from services.components import (  # noqa: E402
+    COMPONENT_API,
+    GPU_COMPONENT_VERSION,
+    MEETING_AGENT_COMPONENT_VERSION,
+)
+
+# Official Node 22 LTS (Jod). Bump together with MEETING_AGENT_COMPONENT_VERSION
+# when the sidecar needs a newer runtime.
+NODE_VERSION = "22.23.2"
+NODE_DIST_FILENAME = f"node-v{NODE_VERSION}-win-x64.zip"
+NODE_DIST_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_DIST_FILENAME}"
+NODE_SHASUMS_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/SHASUMS256.txt"
 
 # Must match the interpreter the application is frozen with.
 TARGET_PYTHON = "3.12"
@@ -203,7 +227,181 @@ def build_gpu_accel() -> None:
     _emit(archives, sizes)
 
 
-BUILDERS = {"gpu-accel": build_gpu_accel}
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download(url: str, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(url) as response, destination.open("wb") as out:
+        while chunk := response.read(1 << 20):
+            out.write(chunk)
+
+
+def _node_sha256_from_shasums() -> str:
+    """Return the official digest for the pinned win-x64 zip."""
+    print(f"=> Fetching {NODE_SHASUMS_URL}")
+    with urlopen(NODE_SHASUMS_URL) as response:
+        text = response.read().decode("utf-8")
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        filename = parts[-1].lstrip("*")
+        if filename == NODE_DIST_FILENAME:
+            digest = parts[0].lower()
+            if len(digest) != 64:
+                raise SystemExit(f"Unexpected digest for {NODE_DIST_FILENAME}: {digest}")
+            return digest
+    raise SystemExit(
+        f"{NODE_DIST_FILENAME} was not listed in SHASUMS256.txt for v{NODE_VERSION}"
+    )
+
+
+def _pin_node() -> dict:
+    """Download, verify, and measure the official Node win-x64 zip."""
+    expected = _node_sha256_from_shasums()
+    with tempfile.TemporaryDirectory() as work:
+        archive_path = Path(work) / NODE_DIST_FILENAME
+        print(f"=> Downloading {NODE_DIST_FILENAME}")
+        _download(NODE_DIST_URL, archive_path)
+        digest = _sha256_file(archive_path)
+        if digest != expected:
+            raise SystemExit(
+                f"Node zip digest mismatch.\n  expected: {expected}\n  got     : {digest}"
+            )
+        size_bytes = archive_path.stat().st_size
+        node_exe_bytes = 0
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                name = member.filename.replace("\\", "/").lower()
+                if name.endswith("/node.exe") or name == "node.exe":
+                    node_exe_bytes = member.file_size
+                    break
+        if node_exe_bytes <= 0:
+            raise SystemExit(f"{NODE_DIST_FILENAME} did not contain node.exe")
+    return {
+        "name": NODE_DIST_FILENAME,
+        "url": NODE_DIST_URL,
+        "sha256": expected,
+        "size_bytes": size_bytes,
+        "install_bytes": node_exe_bytes,
+        "extract": "node-exe",
+    }
+
+
+def _npm() -> str:
+    npm = shutil.which("npm")
+    if not npm:
+        raise SystemExit("npm is required to build the sidecar bundle")
+    return npm
+
+
+def _run_npm(args: List[str], cwd: Path) -> None:
+    command = [_npm(), *args]
+    print("   $", " ".join(command))
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"npm {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}"
+        )
+
+
+def _build_sidecar_bundle_zip() -> dict:
+    """Build bundle.cjs and zip it for the GitHub Release asset."""
+    sidecar = REPO_ROOT / "sidecar"
+    print("=> Building sidecar bundle")
+    _run_npm(["ci"], sidecar)
+    _run_npm(["run", "build"], sidecar)
+    bundle = sidecar / "dist" / "bundle.cjs"
+    if not bundle.is_file():
+        raise SystemExit("sidecar build did not produce dist/bundle.cjs")
+
+    out_dir = REPO_ROOT / "dist" / "components"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    zip_name = f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
+    zip_path = out_dir / zip_name
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(bundle, "bundle.cjs")
+
+    return {
+        "name": zip_name,
+        "url": (
+            f"https://github.com/{GITHUB_REPO}/releases/download/"
+            f"v{__version__}/{zip_name}"
+        ),
+        "sha256": _sha256_file(zip_path),
+        "size_bytes": zip_path.stat().st_size,
+        "install_bytes": bundle.stat().st_size,
+        "extract": "zip",
+        "path": str(zip_path),
+    }
+
+
+def _split_url(url: str) -> tuple[str, str]:
+    head, tail = url.rsplit("/", 1)
+    return f"{head}/", tail
+
+
+def _emit_meeting_agent(archives: List[dict]) -> None:
+    """Print the block to paste into services/components.py."""
+    print()
+    print("=" * 78)
+    print("Paste into services/components.py, replacing _BUILTIN_MEETING_AGENT_ARCHIVES:")
+    print("=" * 78)
+    print()
+    print("_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = (")
+    for archive in archives:
+        head, tail = _split_url(archive["url"])
+        print("    {")
+        print(f'        "name": "{archive["name"]}",')
+        print('        "url": (')
+        print(f'            "{head}"')
+        print(f'            "{tail}"')
+        print("        ),")
+        print(f'        "sha256": "{archive["sha256"]}",')
+        print(f'        "size_bytes": {archive["size_bytes"]:_},')
+        print(f'        "extract": "{archive["extract"]}",')
+        print("    },")
+    print(")")
+    print()
+    install_bytes = sum(int(a["install_bytes"]) for a in archives)
+    download_total = sum(int(a["size_bytes"]) for a in archives)
+    print(f'    # In _BUILTIN_CATALOG: "install_bytes": {install_bytes:_},')
+    print(f"    # Download total: {download_total / 1e6:.0f} MB")
+    print(f"    # Installed     : {install_bytes / 1e6:.0f} MB")
+    print(
+        f'    # Version pin   : MEETING_AGENT_COMPONENT_VERSION = "{MEETING_AGENT_COMPONENT_VERSION}"'
+    )
+    print(f"    #                 (component_api {COMPONENT_API})")
+    print(f"    # Release tag   : v{__version__}")
+    print()
+    print("Attach the sidecar zip to the same GitHub Release as the app installer:")
+    for archive in archives:
+        if archive.get("path"):
+            print(f"  {archive['path']}")
+    print()
+    print("Bump MEETING_AGENT_COMPONENT_VERSION when Node or the sidecar bundle")
+    print("changes, so existing installs are offered the new payload.")
+
+
+def build_meeting_agent() -> None:
+    """Pin Node, build the sidecar zip, and emit the catalog entry."""
+    node = _pin_node()
+    bundle = _build_sidecar_bundle_zip()
+    _emit_meeting_agent([node, bundle])
+
+
+BUILDERS = {
+    "gpu-accel": build_gpu_accel,
+    "meeting-agent": build_meeting_agent,
+}
 
 
 def main() -> int:

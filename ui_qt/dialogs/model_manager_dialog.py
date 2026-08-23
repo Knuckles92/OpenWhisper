@@ -1058,13 +1058,7 @@ class ModelManagerDialog(QDialog):
         self.meeting_language_combo.setCurrentIndex(max(0, language_index))
         self.meeting_language_combo.blockSignals(blocker)
 
-        core = resolve_meeting_agent_core(settings)
-        if core == MeetingAgentCore.PI and not self._pi_payload_available:
-            core = MeetingAgentCore.DIRECT
-        core_index = self.meeting_agent_core_combo.findData(core)
-        blocker = self.meeting_agent_core_combo.blockSignals(True)
-        self.meeting_agent_core_combo.setCurrentIndex(max(0, core_index))
-        self.meeting_agent_core_combo.blockSignals(blocker)
+        self._sync_pi_core_availability(settings)
 
         backend_index = self.meeting_speaker_id_combo.findData(
             resolve_meeting_speaker_id_backend(settings)
@@ -1155,8 +1149,36 @@ class ModelManagerDialog(QDialog):
 
     # ---- refresh ----
 
+    def _sync_pi_core_availability(self, settings: Optional[dict] = None) -> None:
+        """Refresh the Pi combo after a meeting-agent install or remove.
+
+        The dialog is non-modal and cached, so ``_pi_payload_available`` cannot
+        stay as the value computed in ``__init__``.
+        """
+        self._pi_payload_available = meeting_agent_payload_dir() is not None
+        combo = getattr(self, "meeting_agent_core_combo", None)
+        if combo is None:
+            return
+        combo.setItemText(
+            0,
+            "Pi (sidecar)" if self._pi_payload_available else "Pi (sidecar not built)",
+        )
+        model = combo.model()
+        item = model.item(0) if hasattr(model, "item") else None
+        if item is not None:
+            item.setEnabled(self._pi_payload_available)
+        snapshot = settings if settings is not None else self._settings_snapshot()
+        core = resolve_meeting_agent_core(snapshot)
+        if core == MeetingAgentCore.PI and not self._pi_payload_available:
+            core = MeetingAgentCore.DIRECT
+        core_index = combo.findData(core)
+        blocker = combo.blockSignals(True)
+        combo.setCurrentIndex(max(0, core_index))
+        combo.blockSignals(blocker)
+
     def refresh_component_state(self) -> None:
         """Re-read component install state that this dialog reports on."""
+        self._sync_pi_core_availability()
         self._refresh_speaker_id_status()
 
     def refresh(self) -> None:

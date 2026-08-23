@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-23
+
+### Added
+- **Meeting Intelligence Agent is installable** - Downloads now offers the Pi sidecar the same way it offers GPU Acceleration: official Node 22 LTS from nodejs.org plus the sidecar bundle from this GitHub release, both SHA-256 verified. After install, Model Manager enables the Pi agent core without a restart. Speaker Identification stays unpublished.
+
 ## [2.2.0] - 2026-08-23
 
 ### Added
