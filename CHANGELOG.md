@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-23
+
 ### Added
 - **First-visit Meeting Mode overview** - Opening Meeting Mode the first time shows a short popup covering what the mode is, the main features, and where to change settings (Settings → Meeting and Model Manager). Skip or Got it dismisses it permanently; Escape and the window close button do the same
 - **Done on a finished leftover meeting card** - After insights complete (or cloud stays off), Meeting Mode shows Done next to Open dashboard. The meeting is already in Past Meetings; Done hides the leftover card and returns the tab to idle. Start Meeting, demo, tray, and hotkey file that leftover away the same way before a new session starts
