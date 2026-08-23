@@ -199,19 +199,38 @@ def test_available_component_ids_is_empty_off_windows():
     with patch.object(components.sys, "platform", "win32"):
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
+            ComponentId.MEETING_AGENT,
         )
 
 
-def test_unpublished_meeting_payloads_are_never_offered(component_root):
-    """Placeholder URLs/digests must stay unreachable until release artifacts exist."""
+def test_meeting_agent_catalog_is_published():
+    """The sidecar is offered from Downloads once its archives are pinned."""
+    assert components.component_is_published(ComponentId.MEETING_AGENT) is True
+    entry = components._BUILTIN_CATALOG["components"][ComponentId.MEETING_AGENT]
+    assert entry.get("published") is True
+    assert int(entry.get("install_bytes") or 0) > 0
+    extracts = []
+    for archive in entry["archives"]:
+        digest = str(archive["sha256"]).lower()
+        assert len(digest) == 64
+        assert digest != components._PLACEHOLDER_SHA256
+        int(digest, 16)
+        assert str(archive["url"]).startswith("https://")
+        assert int(archive["size_bytes"]) > 0
+        extracts.append(archive.get("extract"))
+    assert "node-exe" in extracts
+    assert "zip" in extracts
+    with patch.object(components.sys, "platform", "win32"):
+        assert ComponentId.MEETING_AGENT in components.available_component_ids()
+
+
+def test_unpublished_speaker_id_is_never_offered(component_root):
+    """Placeholder speaker-id URLs/digests must stay unreachable."""
     with patch.object(components.sys, "platform", "win32"), patch.object(
-        components, "_source_sidecar_payload_dir", return_value=None
-    ), patch.object(components, "_source_speaker_model_path", return_value=None):
-        assert components.component_is_published(ComponentId.MEETING_AGENT) is False
+        components, "_source_speaker_model_path", return_value=None
+    ):
         assert components.component_is_published(ComponentId.SPEAKER_ID) is False
-        assert ComponentId.MEETING_AGENT not in components.available_component_ids()
         assert ComponentId.SPEAKER_ID not in components.available_component_ids()
-        assert components.meeting_agent_payload_dir() is None
         assert components.speaker_model_path() is None
 
 
@@ -488,6 +507,156 @@ def test_validate_gpu_payload_rejects_missing_core_dlls(tmp_path):
 
     with pytest.raises(ComponentError, match="cublas64_12.dll"):
         components._validate_component_payload(ComponentId.GPU_ACCEL, str(tmp_path))
+
+
+def test_safe_extract_node_exe_flattens_nested_binary(tmp_path):
+    archive = tmp_path / "node.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("node-v22.23.2-win-x64/node.exe", b"node-binary")
+        zipped.writestr("node-v22.23.2-win-x64/README.md", "ignored")
+
+    out = tmp_path / "out"
+    out.mkdir()
+    components._safe_extract_node_exe(
+        str(archive), str(out), lambda *args: None, threading.Event()
+    )
+
+    assert (out / "node.exe").read_bytes() == b"node-binary"
+    assert not (out / "node-v22.23.2-win-x64").exists()
+
+
+def test_safe_extract_node_exe_rejects_unsafe_paths(tmp_path):
+    archive = _zip_with_member(tmp_path / "evil.zip", "../node.exe")
+    with pytest.raises(ComponentError, match="unsafe path"):
+        components._safe_extract_node_exe(
+            str(archive), str(tmp_path / "out"), lambda *a: None, threading.Event()
+        )
+
+
+def test_safe_extract_node_exe_errors_when_missing(tmp_path):
+    archive = _zip_with_member(tmp_path / "empty.zip", "README.md")
+    with pytest.raises(ComponentError, match="node.exe"):
+        components._safe_extract_node_exe(
+            str(archive), str(tmp_path / "out"), lambda *a: None, threading.Event()
+        )
+
+
+def test_validate_meeting_agent_payload_requires_node_and_bundle(tmp_path):
+    with pytest.raises(ComponentError, match="node.exe"):
+        components._validate_component_payload(
+            ComponentId.MEETING_AGENT, str(tmp_path)
+        )
+
+    (tmp_path / "node.exe").write_bytes(b"node")
+    with pytest.raises(ComponentError, match="bundle.cjs"):
+        components._validate_component_payload(
+            ComponentId.MEETING_AGENT, str(tmp_path)
+        )
+
+    (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+    components._validate_component_payload(ComponentId.MEETING_AGENT, str(tmp_path))
+
+
+def test_install_component_accepts_verified_meeting_agent_archives(
+    component_root, tmp_path, monkeypatch
+):
+    node_zip = tmp_path / "node.zip"
+    with zipfile.ZipFile(node_zip, "w") as archive:
+        archive.writestr("node-v22.23.2-win-x64/node.exe", b"node-binary")
+    bundle_zip = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(bundle_zip, "w") as archive:
+        archive.writestr("bundle.cjs", b"// sidecar")
+
+    sources = {
+        "node.zip": node_zip,
+        "bundle.zip": bundle_zip,
+    }
+
+    def fake_download(_url, _sha, _size, destination, *_args, **_kwargs):
+        source = sources[Path(destination).name]
+        Path(destination).write_bytes(source.read_bytes())
+
+    monkeypatch.setattr(components, "_download_verified", fake_download)
+    entry = {
+        "version": "node22-pi1",
+        "component_api": components.COMPONENT_API,
+        "platform": "win_amd64",
+        "install_bytes": 20,
+        "archives": [
+            {
+                "name": "node.zip",
+                "url": "https://example.invalid/node.zip",
+                "sha256": "unused",
+                "size_bytes": 10,
+                "extract": "node-exe",
+            },
+            {
+                "name": "bundle.zip",
+                "url": "https://example.invalid/bundle.zip",
+                "sha256": "unused",
+                "size_bytes": 10,
+                "extract": "zip",
+            },
+        ],
+    }
+
+    components.install_component(
+        ComponentId.MEETING_AGENT,
+        entry,
+        lambda *args: None,
+        threading.Event(),
+    )
+
+    installed = component_root / ComponentId.MEETING_AGENT
+    assert (installed / ".installed").read_text() == "node22-pi1"
+    assert (installed / "node.exe").read_bytes() == b"node-binary"
+    assert (installed / "bundle.cjs").read_bytes() == b"// sidecar"
+
+
+def test_install_component_rejects_meeting_agent_missing_bundle(
+    component_root, tmp_path, monkeypatch
+):
+    node_zip = tmp_path / "node.zip"
+    with zipfile.ZipFile(node_zip, "w") as archive:
+        archive.writestr("node-v22.23.2-win-x64/node.exe", b"node-binary")
+    empty_zip = tmp_path / "empty.zip"
+    with zipfile.ZipFile(empty_zip, "w") as archive:
+        archive.writestr("README.md", "no bundle")
+
+    sources = {"node.zip": node_zip, "empty.zip": empty_zip}
+
+    def fake_download(_url, _sha, _size, destination, *_args, **_kwargs):
+        Path(destination).write_bytes(sources[Path(destination).name].read_bytes())
+
+    monkeypatch.setattr(components, "_download_verified", fake_download)
+    entry = {
+        "version": "node22-pi1",
+        "install_bytes": 10,
+        "archives": [
+            {
+                "name": "node.zip",
+                "url": "https://example.invalid/node.zip",
+                "sha256": "unused",
+                "size_bytes": 5,
+                "extract": "node-exe",
+            },
+            {
+                "name": "empty.zip",
+                "url": "https://example.invalid/empty.zip",
+                "sha256": "unused",
+                "size_bytes": 5,
+                "extract": "zip",
+            },
+        ],
+    }
+
+    with pytest.raises(ComponentError, match="bundle.cjs"):
+        components.install_component(
+            ComponentId.MEETING_AGENT,
+            entry,
+            lambda *args: None,
+            threading.Event(),
+        )
 
 
 def test_validate_gpu_payload_does_not_require_cudnn(tmp_path):
