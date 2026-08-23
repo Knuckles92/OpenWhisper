@@ -556,5 +556,11 @@ class TestUpdatePreferences:
         ) == "2.2.0"
 
 
+def test_config_version_tracks_version_module():
+    from _version import __version__
+
+    assert config.VERSION == __version__
+
+
 if __name__ == '__main__':
     unittest.main()

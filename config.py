@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Dict, List, Tuple
 
+from _version import __version__
+
 try:
     import numpy as np
 except ImportError:  # pragma: no cover - lightweight fallback for test/import environments
@@ -109,6 +111,9 @@ def env_file_path() -> str:
 @dataclass
 class AppConfig:
     """Centralized configuration for the OpenWhisper application."""
+
+    # Application version (see _version.py)
+    VERSION: str = __version__
 
     # File paths. These resolve under %LOCALAPPDATA%\OpenWhisper in frozen
     # builds and stay CWD-relative when running from source.
