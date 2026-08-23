@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-23
+
 ### Fixed
 - **Whisper model downloads crashed on every new-user path** - Hugging Face's parallel ``snapshot_download`` calls ``tqdm_class.get_lock()``. The custom progress bar was a duck-typed stub, so Downloads of ``tiny`` / ``base`` died with ``_CallbackTqdm has no attribute get_lock``. The bar now subclasses faster-whisper's real tqdm and still reports bytes to the UI
 - **Meeting Intelligence Agent asked for a restart after a successful install** - Activation treated every component as a CUDA ``bin/`` tree. The Pi payload is a flat ``node.exe`` + ``bundle.cjs`` extract, so same-session enable logged ``Its library folder is missing`` and showed "Restart OpenWhisper to enable this component." Non-DLL components now activate from the completed install
