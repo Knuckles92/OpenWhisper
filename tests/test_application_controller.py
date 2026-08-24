@@ -182,7 +182,7 @@ class FakeHotkeyManager:
 class FakeLocalBackend:
     requires_file_splitting = False
 
-    def __init__(self, model_name=None):
+    def __init__(self, model_name=None, load=True, **_kwargs):
         self.model_name = model_name or "base"
         self.device_info = "cpu"
         self.device = "cpu"
@@ -192,9 +192,12 @@ class FakeLocalBackend:
         self.last_loaded_model = self.model_name
         self.gpu_fallback_note = None
         self.gpu_fallback_cause = None
-        self.model = object()
+        self.load_deferred = not load
+        self.model = None if not load else object()
 
     def is_available(self):
+        if self.load_deferred:
+            return False
         return not self.is_model_missing
 
     def transcribe(self, audio_path):
@@ -212,6 +215,8 @@ class FakeLocalBackend:
         self.device_info = "cpu-reloaded"
         # Mirrors a successful cache-only load, which resets fallback state
         self.is_model_missing = False
+        self.load_deferred = False
+        self.model = object()
         self.last_loaded_model = self.model_name
         self.gpu_fallback_note = None
         self.gpu_fallback_cause = None
@@ -612,6 +617,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
         resolve_transcript_cleanup_prompt as _resolve_cleanup_prompt,
         resolve_transcript_cleanup_provider as _resolve_cleanup_provider,
         resolve_transcript_cleanup_reasoning as _resolve_cleanup_reasoning,
+        resolve_update_check_enabled as _resolve_update_check_enabled,
+        resolve_update_notify_enabled as _resolve_update_notify_enabled,
+        resolve_update_skipped_version as _resolve_update_skipped_version,
     )
 
     settings_module = types.ModuleType("services.settings")
@@ -638,6 +646,15 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     )
     settings_module.resolve_transcript_cleanup_reasoning = _with_fake_settings(
         _resolve_cleanup_reasoning
+    )
+    settings_module.resolve_update_check_enabled = _with_fake_settings(
+        _resolve_update_check_enabled
+    )
+    settings_module.resolve_update_notify_enabled = _with_fake_settings(
+        _resolve_update_notify_enabled
+    )
+    settings_module.resolve_update_skipped_version = _with_fake_settings(
+        _resolve_update_skipped_version
     )
 
     from services.hf_access import (
@@ -877,6 +894,7 @@ class TestApplicationController:
 
     def test_streaming_reconfigure_can_disable_runtime(self):
         controller = self._create_controller()
+        controller.notify_main_ui_ready()
         assert controller.streaming_transcriber is not None
         assert controller._streaming_enabled
         assert controller._streaming_backend is not None
@@ -892,6 +910,7 @@ class TestApplicationController:
     def test_streaming_defers_when_tiny_en_is_missing(self):
         sys.modules["services.hf_access"].is_model_cached = lambda name: False
         controller = self._create_controller()
+        controller.notify_main_ui_ready()
 
         assert controller.streaming_transcriber is None
         assert not controller._streaming_enabled
@@ -1533,5 +1552,47 @@ class TestApplicationController:
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
         assert "Manage models" in controller.ui_controller.statuses[-1]
+
+    def test_notify_main_ui_ready_loads_deferred_local_backend(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.load_deferred = True
+        backend.model = None
+
+        controller.notify_main_ui_ready()
+
+        assert controller._reload_in_flight
+        assert controller.ui_controller.engine_busy_states[-1] is True
+        assert "Loading whisper engine..." in controller.ui_controller.statuses
+        assert len(controller.executor.submissions) == 1
+
+        fn, args = controller.executor.submissions[0]
+        fn(*args)
+
+        assert backend.load_deferred is False
+        assert backend.is_available()
+        assert "Whisper engine ready" in controller.ui_controller.statuses
+        assert controller.streaming_transcriber is not None
+
+    def test_notify_main_ui_ready_skips_local_load_for_api_backend(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.load_deferred = True
+        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+
+        controller.notify_main_ui_ready()
+
+        assert controller.executor.submissions == []
+        assert not controller._reload_in_flight
+        assert backend.load_deferred is True
+
+    def test_start_recording_refused_while_local_engine_loading(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.load_deferred = True
+
+        assert controller.start_recording() is False
+        assert "still loading" in controller.ui_controller.statuses[-1].lower()
+        assert controller.recorder.is_recording is False
 
 

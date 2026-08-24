@@ -72,6 +72,11 @@ class TranscriptionRuntime:
                 "Meeting Mode is active — end the meeting to use dictation"
             )
             return
+        loading = getattr(self.controller, "local_whisper_loading_message", None)
+        message = loading() if callable(loading) else None
+        if message:
+            self.controller.status_update.emit(message)
+            return
         if self.controller.recorder.start_recording():
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()

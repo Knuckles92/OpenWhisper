@@ -1258,6 +1258,22 @@ def test_terminal_finalization_adopts_topic_as_title(make_engine):
 
     assert engine.store.snapshot()["title"] == "Q3 roadmap"
 
+
+def test_set_finalization_preserves_card_deferred(make_engine):
+    engine = make_engine(cloud_enabled=False)
+    engine.start()
+    fin = engine.store.with_state(lambda state: state.finalization)
+    fin.card_deferred = True
+    engine.store.update_runtime_fields(finalization=fin)
+
+    engine._set_finalization(
+        "unavailable",
+        "Final cloud insights are unavailable.",
+        emit=False,
+    )
+
+    assert engine.store.with_state(lambda state: state.finalization.card_deferred) is True
+
 class TestDirectAgentCapabilities:
     def test_json_mode_retries_without_response_format(self):
         from unittest.mock import MagicMock

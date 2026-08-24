@@ -17,6 +17,16 @@ from ui_qt.widgets.past_meetings_panel import (
 )
 
 
+def _list_cards(panel):
+    cards = []
+    layout = panel.meetings_list_layout
+    for index in range(layout.count()):
+        widget = layout.itemAt(index).widget()
+        if isinstance(widget, PastMeetingItem):
+            cards.append(widget)
+    return cards
+
+
 def _meeting(
     meeting_id: str,
     status: str = "ended",
@@ -160,6 +170,51 @@ def test_untitled_row_shows_topic_as_title():
 
     assert card is not None
     assert card.title_label.text() == "Quarterly roadmap"
+
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_panel_search_filters_and_empty_copy():
+    app = QApplication.instance() or QApplication([])
+    planning = _meeting("m_plan", title="Planning review")
+    planning["content_summary"] = {
+        "has_transcript": True,
+        "preview_text": "We should ship the sidebar polish next.",
+    }
+    standup = _meeting("m_stand", title="Standup")
+    standup["content_summary"] = {
+        "has_transcript": False,
+        "preview_text": "",
+    }
+    panel = PastMeetingsPanel(meeting_provider=lambda: [planning, standup])
+    panel.refresh()
+
+    header = panel.findChild(QLabel, "sectionHeader")
+    assert header is not None
+    assert header.text() == "PAST MEETINGS (2)"
+
+    copied = []
+    panel.copy_transcript_requested.connect(copied.append)
+    cards = panel.findChildren(PastMeetingItem)
+    assert cards[0].preview_label.text().startswith("We should ship")
+    cards[0].copy_transcript_requested.emit(cards[0].meeting_id)
+    assert copied == ["m_plan"]
+
+    panel.search_input.blockSignals(True)
+    panel.search_input.setText("planning")
+    panel.search_input.blockSignals(False)
+    panel._rebuild_list()
+    assert [card.meeting_id for card in _list_cards(panel)] == ["m_plan"]
+
+    panel.search_input.blockSignals(True)
+    panel.search_input.setText("no-such-meeting")
+    panel.search_input.blockSignals(False)
+    panel._rebuild_list()
+    assert _list_cards(panel) == []
+    empty = panel.findChild(QLabel, "pastMeetingsEmpty")
+    assert empty is not None
+    assert empty.text() == "No matching meetings"
 
     panel.deleteLater()
     app.processEvents()

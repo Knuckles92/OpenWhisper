@@ -126,6 +126,7 @@ export default function HeaderBar({
     <header className="header-bar">
       <div className="header-brand">
         OpenWhisper <em>Meeting</em>
+        {showHistory && <span className="history-badge">Past Meetings</span>}
       </div>
 
       <div className="header-actions">
@@ -134,7 +135,9 @@ export default function HeaderBar({
             {socketStatus === 'connecting' ? 'Reconnecting…' : 'Offline'}
           </span>
         )}
-        {!state.cloud_enabled && <span className="status-chip">Transcript only</span>}
+        {!showHistory && !state.cloud_enabled && (
+          <span className="status-chip">Transcript only</span>
+        )}
         {showReportActions && (
           <>
             <ReportViewSelect
@@ -150,15 +153,15 @@ export default function HeaderBar({
             />
           </>
         )}
-        {isHost && (
+        {isHost && !showHistory && (
           <>
             {fullGuestUrl && (
               <button type="button" className="primary" onClick={copyGuestLink}>
                 {copied ? 'Copied' : 'Copy guest link'}
               </button>
             )}
-            <button type="button" className={showHistory ? 'primary' : 'ghost'} onClick={onToggleHistory}>
-              {showHistory ? 'Live view' : 'History'}
+            <button type="button" className="ghost" onClick={onToggleHistory}>
+              History
             </button>
             {!showActivity && (
               <button type="button" className="ghost" onClick={onToggleActivity}>
@@ -208,9 +211,14 @@ export default function HeaderBar({
             </button>
           </>
         )}
+        {isHost && showHistory && (meetingLive || state.status === 'paused' || meetingEnding) && (
+          <button type="button" className="primary" onClick={onToggleHistory}>
+            Back to live
+          </button>
+        )}
       </div>
 
-      {isHost && (
+      {isHost && !showHistory && (
         <div className="header-title-edit">
           <input
             value={titleDraft}
@@ -229,7 +237,7 @@ export default function HeaderBar({
         </div>
       )}
 
-      {showOfflineBanner && (
+      {!showHistory && showOfflineBanner && (
         <div className="banner warning" role="status">
           Intelligence offline — transcript continues; insights paused.
           {(finalizationStatus === 'unavailable' || finalizationStatus === 'failed') &&
@@ -241,19 +249,19 @@ export default function HeaderBar({
         </div>
       )}
 
-      {showDiarizationBanner && (
+      {!showHistory && showDiarizationBanner && (
         <div className="banner info" role="status">
           Speaker diarization unavailable — using Me / Others channels.
         </div>
       )}
 
-      {meetingEnding && (
+      {!showHistory && meetingEnding && (
         <div className="banner info" role="status">
           Ending meeting — finishing transcription…
         </div>
       )}
 
-      {finalizationStatus === 'running' && (
+      {!showHistory && finalizationStatus === 'running' && (
         <div className="banner info" role="status">
           {finalization?.total_steps && finalization?.current_step ? (
             <span>
@@ -271,19 +279,19 @@ export default function HeaderBar({
         </div>
       )}
 
-      {finalizationStatus === 'completed' && (
+      {!showHistory && finalizationStatus === 'completed' && (
         <div className="banner info" role="status">
           {finalizationMessage || 'Final cloud insights are ready.'}
         </div>
       )}
 
-      {finalizationStatus === 'disabled' && meetingEnded && (
+      {!showHistory && finalizationStatus === 'disabled' && meetingEnded && (
         <div className="banner info" role="status">
           {finalizationMessage || 'Cloud intelligence is off for this meeting.'}
         </div>
       )}
 
-      {showFinalizationWarning && (
+      {!showHistory && showFinalizationWarning && (
         <div className="banner warning" role="status">
           {finalizationMessage ||
             (finalizationStatus === 'failed'
@@ -292,7 +300,7 @@ export default function HeaderBar({
         </div>
       )}
 
-      {meetingLive && state.capture?.message && (
+      {!showHistory && meetingLive && state.capture?.message && (
         <div className="banner warning" role="status">
           {state.capture.message}
         </div>

@@ -162,11 +162,15 @@ def process_qt_events() -> None:
     QCoreApplication.processEvents()
 
 
-def load_local_whisper_backend():
-    """Load the local Whisper backend (safe to call off the UI thread)."""
+def create_deferred_local_whisper_backend():
+    """Construct the local Whisper backend without loading the model.
+
+    The main window is shown first; ``notify_main_ui_ready`` loads the model
+    on a worker when Local Whisper is the selected backend.
+    """
     from transcriber import LocalWhisperBackend
 
-    return LocalWhisperBackend()
+    return LocalWhisperBackend(load=False)
 
 
 def run_with_ui_pulse(fn):
@@ -281,21 +285,14 @@ def main() -> int:
         profiler.mark("ui_controller_created")
 
         loading_screen.update_status("Initializing audio system...")
-        loading_screen.update_progress("Loading transcription models...")
+        loading_screen.update_progress("Starting services...")
         process_qt_events()
 
-        local_backend = run_with_ui_pulse(load_local_whisper_backend)
+        local_backend = create_deferred_local_whisper_backend()
         app_controller = ApplicationController(
             ui_controller, local_backend=local_backend
         )
         profiler.mark("application_controller_created")
-
-        local_backend = app_controller.transcription_backends.get("local_whisper")
-        if local_backend and hasattr(local_backend, "device_info"):
-            device_info = local_backend.device_info
-            loading_screen.update_progress(f"Using {device_info}")
-            process_qt_events()
-            logging.info(f"Whisper device: {device_info}")
 
         loading_screen.destroy()
         loading_screen = None
@@ -303,11 +300,8 @@ def main() -> int:
         ui_controller.show_main_window()
         profiler.mark("main_window_shown")
 
-        if local_backend and hasattr(local_backend, "device_info"):
-            ui_controller.set_device_info(local_backend.device_info)
-
-        # Now that the main UI is available, a missing local model may request
-        # download consent (never during startup, never for API-only users).
+        # Whisper load, HF consent, meeting recovery, and streaming setup
+        # run after the window is visible — never on the splash path.
         app_controller.notify_main_ui_ready()
 
         profiler.log_summary()

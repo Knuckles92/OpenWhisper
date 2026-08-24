@@ -53,6 +53,7 @@ class LoadingScreen(QWidget):
         self._glow_timer.setInterval(33)
         self._glow_timer.timeout.connect(self.update)
         self._glow_timer.start()
+        self._drag_position = None
 
     def _glow_phase(self) -> float:
         elapsed = time.monotonic() - self._glow_started_at
@@ -147,6 +148,29 @@ class LoadingScreen(QWidget):
         painter.setPen(self.subtext_color)
         painter.setFont(QFont("Segoe UI", 9))
         painter.drawText(QRectF(0, h - 35, w, 20), Qt.AlignmentFlag.AlignCenter, self.progress_text)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_position = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_position:
+            self.move(event.globalPosition().toPoint() - self._drag_position)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_position = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def update_status(self, status_text: str):
         self.status_text = status_text

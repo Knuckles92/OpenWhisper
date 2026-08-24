@@ -265,6 +265,25 @@ def test_reload_after_fixing_the_gpu_clears_the_fallback_state(stub_backend):
     assert "GPU unavailable" not in backend.device_info
 
 
+def test_deferred_construction_skips_model_load(stub_backend):
+    built, probes = stub_backend()
+
+    backend = module.LocalWhisperBackend(model_name="turbo", load=False)
+
+    assert built == []
+    assert probes == []
+    assert backend.load_deferred is True
+    assert backend.is_available() is False
+    assert backend.model is None
+    assert backend.device_info == "Not initialized"
+
+    backend.reload_model()
+
+    assert backend.load_deferred is False
+    assert backend.is_available()
+    assert built
+
+
 def test_cpu_load_failure_still_reports_unavailable(stub_backend):
     """The fallback must not mask a genuine failure as a working backend."""
     def factory(device):

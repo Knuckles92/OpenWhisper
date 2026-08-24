@@ -70,6 +70,8 @@ class ApplicationController(QObject):
     # Emitted from the background reload worker (thread-safe UI updates).
     device_info_update = pyqtSignal(str)
     engine_busy_changed = pyqtSignal(bool)
+    # Hop streaming setup onto the Qt main thread after the first local load.
+    streaming_setup_requested = pyqtSignal()
     # Consent for Hugging Face model downloads: emitted (possibly from worker
     # threads) with (model_name, env_blocked, load_into_engine); the connected
     # slot shows the consent dialog on the Qt main thread. load_into_engine is
@@ -157,6 +159,7 @@ class ApplicationController(QObject):
         # load) must not run on the UI thread, and rapid combo changes are
         # coalesced into a single reload via this single-shot timer.
         self._reload_in_flight = False
+        self._pending_streaming_setup = False
         self._reload_timer = QTimer()
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._do_reload_whisper_model)
@@ -180,14 +183,14 @@ class ApplicationController(QObject):
         self.hotkey_runtime.setup_hotkeys()
         self.streaming_runtime.setup_audio_level_callback()
         self._connect_signals()
-        # After signals so a missing tiny.en can raise the consent dialog.
-        self.streaming_runtime.setup_streaming()
+        # Streaming (and its optional tiny.en load) waits until the main
+        # window is shown — see notify_main_ui_ready.
         self.hotkey_runtime.setup_hook_watchdog()
 
     def _setup_transcription_backends(
         self, local_backend: Optional[LocalWhisperBackend] = None
     ) -> None:
-        """Accept an optionally preloaded local backend from the splash worker."""
+        """Accept an optional local backend (may still be unloaded)."""
         logger.info("Setting up transcription backends...")
 
         self.transcription_backends["local_whisper"] = (
@@ -243,6 +246,12 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_meeting_open_past = (
             self.meeting_runtime.show_past_meeting
+        )
+        self.ui_controller.on_meeting_copy_transcript = (
+            self.meeting_runtime.copy_past_meeting_transcript
+        )
+        self.ui_controller.on_meeting_delete_past = (
+            self.meeting_runtime.delete_past_meeting
         )
         self.ui_controller.on_meeting_open_report = (
             self.meeting_runtime.open_report
@@ -344,6 +353,30 @@ class ApplicationController(QObject):
         finally:
             self._reload_in_flight = False
             self.engine_busy_changed.emit(False)
+            if self._pending_streaming_setup:
+                self._pending_streaming_setup = False
+                self.streaming_setup_requested.emit()
+
+    def _start_initial_whisper_load(self) -> None:
+        """Load the deferred local model after the main window is shown."""
+        if self._reload_in_flight:
+            return
+        self._reload_in_flight = True
+        self.engine_busy_changed.emit(True)
+        self.status_update.emit("Loading whisper engine...")
+        self.executor.submit(self._reload_worker)
+
+    def local_whisper_loading_message(self) -> Optional[str]:
+        """Status text when Local Whisper is selected but not yet loaded."""
+        if not isinstance(self.current_backend, LocalWhisperBackend):
+            return None
+        if self.current_backend.is_available():
+            return None
+        if getattr(self.current_backend, "is_model_missing", False):
+            return None
+        if getattr(self.current_backend, "load_deferred", False) or self._reload_in_flight:
+            return "Whisper engine is still loading..."
+        return None
 
     def request_update_check(self, manual: bool = True) -> None:
         """Run a GitHub latest-release check on a worker thread."""
@@ -418,18 +451,30 @@ class ApplicationController(QObject):
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.
 
+        Local Whisper loads here on a worker when the saved backend is local
+        and construction deferred the model. API-only users skip that load.
+        Streaming setup waits until after first paint (and after the local
+        load when one is in flight) so tiny.en cannot block the splash.
+
         For a new installation whose selected backend is Local Whisper with an
-        uncached model, this is the moment the consent dialog may first appear
-        — after the main UI is available, never during startup, and never for
-        API-only users. The same deferral applies to a GPU fallback from the
-        bootstrap-time model load: it is reported here, once there is a UI to
+        uncached model, this is also the moment the consent dialog may first
+        appear — after the main UI is available, never during startup, and
+        never for API-only users. The same deferral applies to a GPU fallback
+        from the model load: it is reported here, once there is a UI to
         report it to.
         """
         if isinstance(self.current_backend, LocalWhisperBackend):
-            QTimer.singleShot(0, self.ensure_local_model_available)
             backend = self.transcription_backends.get("local_whisper")
-            if backend is not None and getattr(backend, "gpu_fallback_note", None):
-                self.gpu_fallback_detected.emit()
+            if backend is not None and getattr(backend, "load_deferred", False):
+                self._pending_streaming_setup = True
+                self._start_initial_whisper_load()
+            else:
+                QTimer.singleShot(0, self.ensure_local_model_available)
+                if backend is not None and getattr(backend, "gpu_fallback_note", None):
+                    self.gpu_fallback_detected.emit()
+                QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
+        else:
+            QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
         # Meeting crash recovery: scan now that there is a UI to show the
         # recovery dialog over. Initialize SQLite on this thread first so
         # the two setup workers do not race create_all on a missing file.
@@ -1057,10 +1102,15 @@ class ApplicationController(QObject):
         """Start audio recording (UI callback target).
 
         Returns:
-            False when the start was refused because Meeting Mode is active,
-            so the caller can roll its recording UI back; True otherwise.
+            False when the start was refused (Meeting Mode is active, or the
+            local engine is still loading) so the caller can roll its
+            recording UI back; True otherwise.
         """
         if self._refuse_dictation_during_meeting():
+            return False
+        loading = self.local_whisper_loading_message()
+        if loading:
+            self.status_update.emit(loading)
             return False
         self.transcription_runtime.start_recording()
         return True
@@ -1077,6 +1127,11 @@ class ApplicationController(QObject):
         """
         if not self.recorder.is_recording and self._refuse_dictation_during_meeting():
             return False
+        if not self.recorder.is_recording:
+            loading = self.local_whisper_loading_message()
+            if loading:
+                self.status_update.emit(loading)
+                return False
         self.transcription_runtime.toggle_recording()
         return True
 
@@ -1222,6 +1277,7 @@ class ApplicationController(QObject):
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
+        self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
         self.model_download_started.connect(
             self.ui_controller.on_model_download_started
         )

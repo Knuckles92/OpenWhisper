@@ -39,7 +39,14 @@ class GpuFallbackCause:
 class LocalWhisperBackend(TranscriptionBackend):
     """Local Whisper model transcription backend using faster-whisper."""
 
-    def __init__(self, model_name: str = None, device: str = None, compute_type: str = None):
+    def __init__(
+        self,
+        model_name: str = None,
+        device: str = None,
+        compute_type: str = None,
+        *,
+        load: bool = True,
+    ):
         super().__init__()
         if model_name is None:
             from services.settings import SettingsKey, settings_manager
@@ -53,6 +60,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         self._override_compute_type = compute_type
         self._model_missing = False
         self._last_loaded_model: Optional[str] = None
+        # True until the first ``_load_model`` attempt. Bootstrap constructs
+        # the backend with ``load=False`` so the main window can appear before
+        # WhisperModel is built; ``reload_model`` clears this.
+        self._load_deferred = not load
         # Set when a GPU load failed and the model was loaded on the CPU instead,
         # so the UI can explain why acceleration is inactive. ``reason`` is the
         # raw error; ``note`` is the short, cause-specific status suffix;
@@ -60,7 +71,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         self.gpu_fallback_reason: Optional[str] = None
         self.gpu_fallback_note: Optional[str] = None
         self.gpu_fallback_cause: Optional[str] = None
-        self._load_model()
+        if load:
+            self._load_model()
 
     def _cuda_is_available(self) -> bool:
         """Probe with CTranslate2 because torch is not a required dependency."""
@@ -157,6 +169,11 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         return device, compute_type, model
 
+    @property
+    def load_deferred(self) -> bool:
+        """True when construction skipped ``_load_model`` and nothing has tried yet."""
+        return self._load_deferred
+
     def _load_model(self):
         """Load the faster-whisper model from the local cache only.
 
@@ -167,6 +184,7 @@ class LocalWhisperBackend(TranscriptionBackend):
         and the download must be approved through the consent flow (see
         ``download_and_load``).
         """
+        self._load_deferred = False
         try:
             # A reload is a fresh attempt: without this reset, a successful GPU
             # load after the user fixes the cause (e.g. installs the GPU

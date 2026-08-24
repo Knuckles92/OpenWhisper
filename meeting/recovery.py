@@ -114,7 +114,22 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to scan for interrupted meetings")
         return []
-    recoverable = [m for m in candidates if is_session_dead(m)]
+    from meeting.state.schema import finalization_from_meeting_row
+
+    recoverable = []
+    for meeting in candidates:
+        if not is_session_dead(meeting):
+            continue
+        try:
+            if finalization_from_meeting_row(meeting).card_deferred:
+                continue
+        except Exception:
+            logger.debug(
+                "Could not read finalization deferral for meeting %s",
+                meeting.get("id"),
+                exc_info=True,
+            )
+        recoverable.append(meeting)
     if recoverable:
         logger.info("Found %d recoverable meeting(s): %s",
                     len(recoverable), [m.get("id") for m in recoverable])

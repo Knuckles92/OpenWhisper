@@ -60,24 +60,24 @@ class DropZoneWidget(QFrame):
         self.setObjectName("dropZone")
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(190)
+        self.setMinimumHeight(150)
         self.setStyleSheet(self._IDLE_STYLE)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setContentsMargins(24, 28, 24, 28)
-        layout.setSpacing(4)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(3)
 
         icon_label = QLabel("\U0001F3B5")
-        icon_label.setFont(QFont("Segoe UI Emoji", 36))
+        icon_label.setFont(QFont("Segoe UI Emoji", 30))
         icon_label.setStyleSheet(self._LABEL_RESET)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
 
-        layout.addSpacing(6)
+        layout.addSpacing(4)
 
         title = QLabel("Drag and drop audio file here")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: #f5f5f7; {self._LABEL_RESET}")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
@@ -88,7 +88,7 @@ class DropZoneWidget(QFrame):
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
-        layout.addSpacing(8)
+        layout.addSpacing(6)
 
         formats = QLabel("WAV  ·  MP3  ·  M4A  ·  OGG  ·  FLAC  ·  WMA")
         formats.setFont(QFont("Segoe UI", 10))

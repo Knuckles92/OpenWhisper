@@ -95,7 +95,7 @@ class TestBootstrap:
         _FakeApplicationController.should_raise = False
 
     @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
-    @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "create_deferred_local_whisper_backend", return_value=None)
     @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")
@@ -136,7 +136,9 @@ class TestBootstrap:
         assert result == 123
         assert loading_screen.destroyed
         assert ui_controller.show_main_window_called
-        assert ui_controller.device_info == "cuda"
+        # Device info is filled in after the background Whisper load, not
+        # before the window appears.
+        assert ui_controller.device_info is None
         assert len(_FakeApplicationController.instances) == 1
         assert _FakeApplicationController.instances[0].cleaned_up
         assert _FakeApplicationController.instances[0].main_ui_ready_notified
@@ -144,7 +146,7 @@ class TestBootstrap:
         assert order.index("process_events") < order.index("late_imports")
 
     @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
-    @patch.object(bootstrap, "load_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "create_deferred_local_whisper_backend", return_value=None)
     @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
     @patch.object(bootstrap, "process_qt_events")
     @patch.object(bootstrap, "setup_logging")

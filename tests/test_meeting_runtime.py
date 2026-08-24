@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -203,6 +204,21 @@ def test_start_demo_meeting_blocked_while_finalizing(runtime):
     rt.start_demo_meeting(cloud_enabled=True)
     assert any("Final insights are still being prepared" in s for s in statuses)
     assert controller.meeting_active is False
+
+
+def test_start_meeting_blocked_while_whisper_loading(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.local_whisper_loading_message = (
+        lambda: "Whisper engine is still loading..."
+    )
+    launched = _record_launch(rt, monkeypatch)
+
+    rt.start_meeting(cloud_enabled=False)
+
+    assert launched == []
+    assert any("still loading" in s.lower() for s in statuses)
 
 
 def test_ended_unlocks_active_while_retaining_dashboard(runtime):
@@ -428,7 +444,7 @@ def _ended_meeting(meeting_id, *, deferred=False, status="failed", started_at="2
     }
 
 
-def test_restore_skips_deferred_and_hydrates_older(runtime):
+def test_restore_deferred_latest_leaves_idle_and_does_not_hydrate_older(runtime):
     rt, controller = runtime
     states = []
     controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
@@ -441,10 +457,9 @@ def test_restore_skips_deferred_and_hydrates_older(runtime):
 
     rt._restore_last_finalization_worker()
 
-    assert rt._card_meeting_id == "m_old"
-    assert states[-1]["meeting_id"] == "m_old"
-    assert states[-1]["finalization"]["status"] == "failed"
-    assert states[-1]["finalization"]["card_deferred"] is False
+    assert rt._card_meeting_id is None
+    assert rt._finalization is None
+    assert states == []
 
 
 def test_restore_all_deferred_leaves_idle(runtime):
@@ -995,4 +1010,79 @@ def test_discard_recovered_deletes_meeting_data(runtime, monkeypatch):
     assert deleted[0][0] is repo
     assert deleted[0][1] == "m_dead"
     assert "discarded" in statuses[-1].lower()
+
+
+def test_copy_past_meeting_transcript_exports_text(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    meeting = {
+        "id": "m_copy",
+        "title": "Planning",
+        "started_at": "2025-01-02T09:30:00",
+        "state_json": json.dumps({"title": "Planning", "participants": {}}),
+    }
+    repo = SimpleNamespace(
+        get_meeting=lambda meeting_id: meeting,
+        get_segments=lambda meeting_id: [
+            {"text": "Hello team", "start_s": 0.0, "channel": "mic"},
+        ],
+    )
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+
+    text = rt.copy_past_meeting_transcript("m_copy")
+
+    assert "Hello team" in text
+    assert "Planning" in text
+
+
+def test_copy_past_meeting_transcript_empty(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    repo = SimpleNamespace(
+        get_meeting=lambda meeting_id: {"id": meeting_id, "state_json": "{}"},
+        get_segments=lambda meeting_id: [],
+    )
+    monkeypatch.setattr(rt, "_repository", lambda: repo)
+
+    assert rt.copy_past_meeting_transcript("m_empty") is None
+    assert any("no transcript" in s.lower() for s in statuses)
+
+
+def test_delete_past_meeting_refuses_while_live(runtime):
+    rt, controller = runtime
+    statuses = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.meeting_active = True
+    rt._engine = SimpleNamespace(meeting_id="m_live")
+
+    rt.delete_past_meeting("m_live")
+
+    assert any("finish the current meeting" in s.lower() for s in statuses)
+
+
+def test_delete_past_meeting_hides_card_and_deletes(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    refreshed = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+    deleted = []
+
+    def fake_delete(repository, meeting_id, root):
+        deleted.append(meeting_id)
+
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.persist.data_lifecycle.delete_meeting_data", fake_delete
+    )
+    rt._card_meeting_id = "m_old"
+
+    rt._delete_past_meeting_worker("m_old")
+
+    assert deleted == ["m_old"]
+    assert rt._card_meeting_id is None
+    assert any("deleted" in s.lower() for s in statuses)
+
 

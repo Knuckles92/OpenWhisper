@@ -1,5 +1,5 @@
 """Tests for durable meeting content capability derivation."""
-from meeting.content import summarize_meeting_content
+from meeting.content import meeting_preview_text, summarize_meeting_content
 
 
 class _Repo:
@@ -21,6 +21,7 @@ def test_empty_meeting_has_no_content_capabilities():
     assert summary["has_audio"] is False
     assert summary["has_transcript"] is False
     assert summary["can_rerun_speakers"] is False
+    assert summary["preview_text"] == ""
 
 
 def test_speaker_rerun_requires_nonempty_loopback_audio():
@@ -39,6 +40,7 @@ def test_speaker_rerun_requires_nonempty_loopback_audio():
     assert summary["has_audio"] is True
     assert summary["has_transcript"] is True
     assert summary["can_rerun_speakers"] is True
+    assert summary["preview_text"] == "hello"
 
 
 def test_zero_duration_chunks_and_blank_segments_are_not_content():
@@ -53,3 +55,15 @@ def test_zero_duration_chunks_and_blank_segments_are_not_content():
     assert summary["is_empty"] is True
     assert summary["audio_chunks"] == 0
     assert summary["transcript_segments"] == 0
+    assert summary["preview_text"] == ""
+
+
+def test_meeting_preview_prefers_summary_then_topic():
+    assert meeting_preview_text({
+        "content_summary": {"preview_text": "Hello from ASR"},
+        "state_json": '{"topic": {"current": "Ignored topic"}}',
+    }) == "Hello from ASR"
+    assert meeting_preview_text({
+        "state_json": '{"topic": {"current": "Quarterly roadmap"}}',
+    }) == "Quarterly roadmap"
+    assert meeting_preview_text({}) == ""

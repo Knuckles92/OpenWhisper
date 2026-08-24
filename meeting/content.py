@@ -9,6 +9,8 @@ from meeting.state.patches import MAX_NAME_LEN
 
 logger = logging.getLogger(__name__)
 
+_PREVIEW_LIMIT = 100
+
 
 def _meeting_state_dict(meeting: Dict[str, Any]) -> Dict[str, Any]:
     """Return a meeting's persisted state mapping, when one is present."""
@@ -126,6 +128,19 @@ def summarize_meeting_content(repository: Any, meeting_id: str) -> Dict[str, Any
         for chunk in audio_chunks
     )
     has_transcript = bool(transcript_segments)
+    preview_parts: List[str] = []
+    used = 0
+    for segment in transcript_segments:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        preview_parts.append(text)
+        used += len(text)
+        if used >= _PREVIEW_LIMIT:
+            break
+    preview = " ".join(preview_parts).strip()
+    if len(preview) > _PREVIEW_LIMIT:
+        preview = preview[:_PREVIEW_LIMIT].rstrip() + "…"
     return {
         "has_audio": has_audio,
         "has_loopback_audio": has_loopback_audio,
@@ -134,4 +149,23 @@ def summarize_meeting_content(repository: Any, meeting_id: str) -> Dict[str, Any
         "audio_chunks": len(audio_chunks),
         "transcript_segments": len(transcript_segments),
         "can_rerun_speakers": has_loopback_audio,
+        "preview_text": preview,
     }
+
+
+def meeting_preview_text(meeting: Dict[str, Any]) -> str:
+    """Return a ~100-character list preview for a past-meeting card.
+
+    Prefers transcript text already derived in ``content_summary``, then the
+    persisted topic. Empty when neither is available.
+    """
+    summary = meeting.get("content_summary") or {}
+    if isinstance(summary, dict):
+        preview = str(summary.get("preview_text") or "").strip()
+        if preview:
+            return preview
+    state = _meeting_state_dict(meeting)
+    topic = state.get("topic")
+    if isinstance(topic, dict):
+        return str(topic.get("current") or "").strip()
+    return ""

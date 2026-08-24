@@ -249,6 +249,8 @@ class MainWindow(QMainWindow):
     upload_copy_requested = pyqtSignal(str)
     meeting_dashboard_requested = pyqtSignal()
     past_meeting_requested = pyqtSignal(str)
+    past_meeting_copy_requested = pyqtSignal(str)
+    past_meeting_delete_requested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -289,9 +291,9 @@ class MainWindow(QMainWindow):
 
         self._engine_collapse_freed_height = 0
 
-        # Height borrowed to fit the Meeting Mode page, returned once that
-        # content shrinks again (see _sync_meeting_mode_height).
-        self._meeting_height_growth = 0
+        self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
+        self._transcription_tab_height = config.MAIN_WINDOW_DEFAULT_HEIGHT
+
         self._meeting_height_timer = QTimer(self)
         self._meeting_height_timer.setSingleShot(True)
         self._meeting_height_timer.timeout.connect(self._sync_meeting_mode_height)
@@ -418,6 +420,12 @@ class MainWindow(QMainWindow):
         self.history_sidebar.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.history_sidebar.past_meeting_selected.connect(
             self.past_meeting_requested.emit
+        )
+        self.history_sidebar.past_meeting_copy_requested.connect(
+            self.past_meeting_copy_requested.emit
+        )
+        self.history_sidebar.past_meeting_delete_requested.connect(
+            self.past_meeting_delete_requested.emit
         )
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         self.history_sidebar.animation.finished.connect(
@@ -647,6 +655,11 @@ class MainWindow(QMainWindow):
         if self._compact_mode and index != TabbedContentWidget.TAB_QUICK_RECORD:
             self.set_compact_mode(False)
 
+        prev_index = getattr(
+            self, "_current_tab_index", TabbedContentWidget.TAB_QUICK_RECORD
+        )
+        self._current_tab_index = index
+
         meeting_mode = index == TabbedContentWidget.TAB_MEETING_MODE
         self.history_sidebar.set_meeting_mode(meeting_mode)
         panel_name = "Past Meetings" if meeting_mode else "History"
@@ -655,7 +668,30 @@ class MainWindow(QMainWindow):
             self.sidebar_action.setText(panel_name)
 
         self._schedule_history_sidebar_refresh()
-        self._schedule_meeting_mode_height_sync()
+
+        if prev_index != index:
+            if (
+                prev_index != TabbedContentWidget.TAB_MEETING_MODE
+                and meeting_mode
+            ):
+                if not self._compact_mode and self.isVisible():
+                    self._transcription_tab_height = self.height()
+                    self._schedule_meeting_mode_height_sync()
+            elif (
+                prev_index == TabbedContentWidget.TAB_MEETING_MODE
+                and not meeting_mode
+            ):
+                if not self._compact_mode and self.isVisible():
+                    target = (
+                        self._transcription_tab_height
+                        or config.MAIN_WINDOW_DEFAULT_HEIGHT
+                    )
+                    self._animate_resize(self.width(), target)
+            elif meeting_mode:
+                self._schedule_meeting_mode_height_sync()
+        elif meeting_mode:
+            self._schedule_meeting_mode_height_sync()
+
         if meeting_mode:
             self._schedule_meeting_mode_intro()
 
@@ -834,6 +870,7 @@ class MainWindow(QMainWindow):
             # "window keeps getting taller" bug.
             new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
             self._collapse_freed_height = current_height - new_height
+            self._transcription_tab_height = new_height
             self._animate_resize(self.width(), new_height)
         else:
             # Give back exactly what the matching collapse reclaimed. If we have
@@ -842,11 +879,13 @@ class MainWindow(QMainWindow):
             restore = self._collapse_freed_height
             self._collapse_freed_height = 0
             if restore > 0:
-                self._animate_resize(self.width(), current_height + restore)
+                target_height = current_height + restore
             elif current_height < config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT:
-                self._animate_resize(
-                    self.width(), config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
-                )
+                target_height = config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
+            else:
+                target_height = current_height
+            self._transcription_tab_height = target_height
+            self._animate_resize(self.width(), target_height)
 
     def _on_engine_settings_collapsed(self, collapsed: bool, delta: int):
         """Reclaim/restore window height when the Engine Settings panel toggles.
@@ -869,14 +908,19 @@ class MainWindow(QMainWindow):
                 return
             new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
             self._engine_collapse_freed_height = current_height - new_height
+            self._transcription_tab_height = new_height
             self._animate_resize(self.width(), new_height)
         else:
             restore = self._engine_collapse_freed_height
             self._engine_collapse_freed_height = 0
             if restore > 0:
-                self._animate_resize(self.width(), current_height + restore)
+                target_height = current_height + restore
             elif delta > 0:
-                self._animate_resize(self.width(), current_height + delta)
+                target_height = current_height + delta
+            else:
+                target_height = current_height
+            self._transcription_tab_height = target_height
+            self._animate_resize(self.width(), target_height)
 
     def _schedule_meeting_mode_height_sync(self) -> None:
         """Queue a Meeting Mode height check for the next event-loop pass.
@@ -886,64 +930,46 @@ class MainWindow(QMainWindow):
         """
         self._meeting_height_timer.start(0)
 
-    def _sync_meeting_mode_height(self) -> None:
-        """Hold the window tall enough for the Meeting Mode page.
-
-        Its finalization card grows as the pipeline reports step rows. The
-        window keeps a deliberately low explicit minimum
-        height so the collapsed recorder layout can shrink, and that same
-        minimum lets Qt squeeze the step rows together instead of honoring the
-        page's own minimum. While Meeting Mode is selected the window floor
-        tracks that minimum; height borrowed for it is given back once the
-        content shrinks or another tab is selected.
-        """
-        if self._compact_mode or not self.isVisible():
-            return
-
+    def _calculate_meeting_mode_window_height(self) -> int:
+        """Calculate the total window height needed to display Meeting Mode content."""
+        from PyQt6.QtCore import QEvent
         from PyQt6.QtWidgets import QApplication
 
-        # A widget that was just hidden still counts toward the layout minimum
-        # until its layout request is delivered.
         QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
 
-        floor = config.MAIN_WINDOW_MIN_HEIGHT
-        if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:
-            # Everything the window spends outside the page: title bar, tab
-            # bar, and footer. Unaffected by the borrowing below.
-            chrome = self.height() - self.tabbed_content.stack.height()
-            page_height = self._meeting_mode_page_min_height()
-            if chrome > 0 and page_height > 0:
-                floor = max(
-                    floor, min(chrome + page_height, self._max_usable_height())
-                )
+        chrome = self.height() - self.tabbed_content.stack.height()
+        if chrome <= 0:
+            chrome = 154
+        page_height = self._meeting_mode_page_needed_height()
+        return max(
+            config.MAIN_WINDOW_MIN_HEIGHT,
+            min(chrome + page_height, self._max_usable_height()),
+        )
 
-        height_before = self.height()
-        # Qt grows a window that is shorter than its new minimum.
-        self.setMinimumHeight(floor)
-        borrowed = self.height() - height_before
-        if borrowed > 0:
-            self._meeting_height_growth += borrowed
+    def _meeting_mode_page_needed_height(self) -> int:
+        if hasattr(self.meeting_mode_tab, "content_height"):
+            return self.meeting_mode_tab.content_height()
+        return self.meeting_mode_tab.sizeHint().height()
+
+    def _sync_meeting_mode_height(self) -> None:
+        """Hold and smoothly adjust the window height for the Meeting Mode page.
+
+        Its finalization card grows as the pipeline reports step rows, and
+        switches back to idle once completed or dismissed. When Meeting Mode
+        is selected, the window smoothly animates to fit the visible content
+        and controls without scrolling when possible.
+        """
+        if (
+            self._compact_mode
+            or not self.isVisible()
+            or self.tabbed_content.current_index() != TabbedContentWidget.TAB_MEETING_MODE
+            or self._resizing
+        ):
             return
 
-        if self._meeting_height_growth <= 0 or self._resizing:
-            return
-
-        target = max(floor, self.height() - self._meeting_height_growth)
-        returned = self.height() - target
-        if returned <= 0:
-            return
-
-        self._meeting_height_growth -= returned
-        self._animate_resize(self.width(), target)
-
-    def _meeting_mode_page_min_height(self) -> int:
-        page = self.meeting_mode_tab
-        needed = page.minimumSizeHint().height()
-
-        layout = page.layout()
-        if layout is not None and layout.hasHeightForWidth() and page.width() > 0:
-            needed = max(needed, layout.minimumHeightForWidth(page.width()))
-        return needed
+        target_height = self._calculate_meeting_mode_window_height()
+        if abs(target_height - self.height()) > 1:
+            self._animate_resize(self.width(), target_height)
 
     def _max_usable_height(self) -> int:
         from PyQt6.QtWidgets import QApplication
@@ -968,6 +994,7 @@ class MainWindow(QMainWindow):
                 current_height - stats_height,
             )
 
+        self._transcription_tab_height = new_height
         self._animate_resize(self.width(), new_height)
 
     def open_settings(self):
@@ -1504,6 +1531,15 @@ class MainWindow(QMainWindow):
             width = max(self.minimumWidth(), width - self._sidebar_width)
         self._collapsed_width = width
 
+        saved_height = (
+            self._transcription_tab_height
+            if hasattr(self, "tabbed_content")
+            and self.tabbed_content.current_index()
+            == TabbedContentWidget.TAB_MEETING_MODE
+            and getattr(self, "_transcription_tab_height", 0) > 0
+            else geo.height()
+        )
+
         try:
             settings_manager.save_setting(
                 SettingsKey.WINDOW_GEOMETRY,
@@ -1511,7 +1547,7 @@ class MainWindow(QMainWindow):
                     'x': geo.x(),
                     'y': geo.y(),
                     'width': width,
-                    'height': geo.height(),
+                    'height': saved_height,
                     'format': self._geometry_format,
                     'history_expanded': history_expanded,
                 },
@@ -1570,6 +1606,7 @@ class MainWindow(QMainWindow):
                             width = config.MAIN_WINDOW_DEFAULT_WIDTH
                         height = max(self.minimumHeight(), min(geo['height'], max_height))
                         self._collapsed_width = width
+                        self._transcription_tab_height = height
                         restore_width = width
                         if (
                             hasattr(self, "history_sidebar")
@@ -1594,6 +1631,20 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Update transcription tab height on manual resize when not in meeting mode
+        if (
+            not self._compact_mode
+            and hasattr(self, "tabbed_content")
+            and self.tabbed_content.current_index()
+            != TabbedContentWidget.TAB_MEETING_MODE
+            and not (
+                hasattr(self, "_resize_animation")
+                and self._resize_animation.state()
+                == QPropertyAnimation.State.Running
+            )
+        ):
+            self._transcription_tab_height = event.size().height()
+
         # A narrower window rewraps the Meeting Mode text, changing how much
         # height that page needs. Height-only changes cannot alter the wrap.
         if event.oldSize().width() != event.size().width():

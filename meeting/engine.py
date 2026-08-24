@@ -311,6 +311,9 @@ class MeetingEngine:
             payload["steps"] = [dict(s) for s in steps]
         if summary_stats is not None:
             payload["summary_stats"] = dict(summary_stats)
+        current = self.store.with_state(lambda state: state.finalization)
+        if current is not None and getattr(current, "card_deferred", False):
+            payload["card_deferred"] = True
 
         finalization = FinalizationState.coerce(
             payload,

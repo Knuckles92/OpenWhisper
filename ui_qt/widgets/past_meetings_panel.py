@@ -7,16 +7,20 @@ from typing import Any, Callable, Dict, Iterable, Optional
 from meeting.content import (
     fallback_meeting_title,
     meeting_insights_pill,
+    meeting_preview_text,
     summarize_meeting_content,
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -27,6 +31,32 @@ from PyQt6.QtWidgets import (
 logger = logging.getLogger(__name__)
 
 _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
+_MENU_STYLESHEET = """
+    QMenu {
+        background-color: rgba(44, 44, 46, 0.95);
+        color: #f5f5f7;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 6px;
+    }
+    QMenu::item {
+        padding: 8px 28px 8px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+    }
+    QMenu::item:selected {
+        background-color: #0a84ff;
+        color: #ffffff;
+    }
+    QMenu::separator {
+        background-color: rgba(255, 255, 255, 0.08);
+        height: 1px;
+        margin: 4px 8px;
+    }
+    QMenu::item:disabled {
+        color: #8e8e93;
+    }
+"""
 
 # Test-facing aliases for the shared formatters.
 _format_started_at = format_meeting_started_at
@@ -37,6 +67,8 @@ class PastMeetingItem(QFrame):
     """Compact card for one persisted meeting session."""
 
     meeting_selected = pyqtSignal(str)
+    copy_transcript_requested = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
 
     def __init__(self, meeting: Dict[str, Any], parent=None):
         super().__init__(parent)
@@ -45,23 +77,34 @@ class PastMeetingItem(QFrame):
         self.setObjectName("pastMeetingItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("selected", False)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(7)
+        layout.setSpacing(10)
 
         title = fallback_meeting_title(meeting)
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("pastMeetingTitle")
         self.title_label.setWordWrap(True)
-        self.title_label.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         layout.addWidget(self.title_label)
 
         self.date_label = QLabel(
             format_meeting_started_at(meeting.get("started_at")), self
         )
         self.date_label.setObjectName("pastMeetingMeta")
+        self.date_label.setFont(QFont("Segoe UI", 10))
         layout.addWidget(self.date_label)
+
+        preview = meeting_preview_text(meeting)
+        self.preview_label = QLabel(preview, self)
+        self.preview_label.setObjectName("pastMeetingPreview")
+        self.preview_label.setWordWrap(True)
+        self.preview_label.setFont(QFont("Segoe UI", 11))
+        layout.addWidget(self.preview_label)
+        self.preview_label.setVisible(bool(preview))
 
         status = str(meeting.get("status") or "").lower()
         content = dict(meeting.get("content_summary") or {})
@@ -100,6 +143,7 @@ class PastMeetingItem(QFrame):
         self.insights_pill.setObjectName("pastMeetingInsightsPill")
         self.insights_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.insights_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        self.insights_pill.setFixedHeight(20)
         footer.addWidget(self.insights_pill)
         if pill:
             label, tone = pill
@@ -124,6 +168,27 @@ class PastMeetingItem(QFrame):
             style.polish(self)
         self.update()
 
+    def _has_transcript(self) -> bool:
+        summary = dict(self.meeting.get("content_summary") or {})
+        if "has_transcript" in summary:
+            return bool(summary.get("has_transcript"))
+        return bool(meeting_preview_text(self.meeting))
+
+    def _show_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLESHEET)
+        copy_action = menu.addAction("Copy transcript")
+        copy_action.setEnabled(self._has_transcript())
+        copy_action.triggered.connect(
+            lambda: self.copy_transcript_requested.emit(self.meeting_id)
+        )
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete")
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(self.meeting_id)
+        )
+        menu.exec(self.mapToGlobal(pos))
+
     def _emit_selected(self) -> None:
         if self.meeting_id:
             self.meeting_selected.emit(self.meeting_id)
@@ -139,6 +204,8 @@ class PastMeetingsPanel(QWidget):
     """Sidebar page listing completed meetings from the meeting repository."""
 
     meeting_selected = pyqtSignal(str)
+    copy_transcript_requested = pyqtSignal(str)
+    delete_meeting_requested = pyqtSignal(str)
     MAX_MEETINGS = 100
 
     def __init__(
@@ -150,6 +217,7 @@ class PastMeetingsPanel(QWidget):
         self._meeting_provider = meeting_provider
         self._repository = None
         self._selected_id: Optional[str] = None
+        self._meetings: list[Dict[str, Any]] = []
         self.setObjectName("pastMeetingsContent")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._setup_ui()
@@ -175,25 +243,34 @@ class PastMeetingsPanel(QWidget):
         layout.setSpacing(12)
 
         header = QHBoxLayout()
+        header.setSpacing(8)
+
+        self.menu_btn = QPushButton("☰")
+        self.menu_btn.setObjectName("pastMeetingsMenuBtn")
+        self.menu_btn.setFixedSize(28, 28)
+        self.menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menu_btn.clicked.connect(self._show_header_menu)
+        header.addWidget(self.menu_btn)
+
         title = QLabel("Past Meetings")
         title.setObjectName("pastMeetingsHeader")
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         header.addWidget(title)
         header.addStretch()
-
-        self.refresh_button = QPushButton("↻")
-        self.refresh_button.setObjectName("pastMeetingsRefreshButton")
-        self.refresh_button.setFixedSize(28, 28)
-        self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_button.setToolTip("Refresh past meetings")
-        self.refresh_button.clicked.connect(self.refresh)
-        header.addWidget(self.refresh_button)
         layout.addLayout(header)
 
-        hint = QLabel("Select a meeting to review it here.")
-        hint.setObjectName("pastMeetingsHint")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("historySearchInput")
+        self.search_input.setPlaceholderText("Search meetings...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setFixedHeight(32)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        layout.addWidget(self.search_input)
+
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._rebuild_list)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("pastMeetingsScrollArea")
@@ -210,8 +287,28 @@ class PastMeetingsPanel(QWidget):
         self.meetings_layout.setContentsMargins(0, 0, 6, 0)
         self.meetings_layout.setSpacing(12)
         self.meetings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.section_header = QLabel("PAST MEETINGS")
+        self.section_header.setObjectName("sectionHeader")
+        self.section_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        self.meetings_layout.addWidget(self.section_header)
+
+        self.meetings_list_layout = QVBoxLayout()
+        self.meetings_list_layout.setSpacing(12)
+        self.meetings_layout.addLayout(self.meetings_list_layout)
+
         self.scroll_area.setWidget(scroll_content)
         layout.addWidget(self.scroll_area, stretch=1)
+
+    def _show_header_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLESHEET)
+        refresh = menu.addAction("Refresh")
+        refresh.triggered.connect(self.refresh)
+        menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
+
+    def _on_search_text_changed(self, _text: str) -> None:
+        self._search_timer.start()
 
     def _load_meetings(self) -> list[Dict[str, Any]]:
         if self._meeting_provider is not None:
@@ -237,38 +334,107 @@ class PastMeetingsPanel(QWidget):
             meetings.append(meeting)
         return meetings
 
+    def _filter_meetings(
+        self, meetings: list[Dict[str, Any]]
+    ) -> list[Dict[str, Any]]:
+        query = self.search_input.text().strip().lower()
+        if not query:
+            return meetings
+        matches = []
+        for meeting in meetings:
+            haystack = " ".join(
+                part for part in (
+                    fallback_meeting_title(meeting),
+                    format_meeting_started_at(meeting.get("started_at")),
+                    format_meeting_duration(meeting),
+                    meeting_preview_text(meeting),
+                    (meeting_insights_pill(meeting) or ("", ""))[0],
+                    str(meeting.get("status") or ""),
+                ) if part
+            ).lower()
+            if query in haystack:
+                matches.append(meeting)
+        return matches
+
     def refresh(self) -> None:
         """Reload persisted meetings and rebuild the card list."""
-        while self.meetings_layout.count():
-            item = self.meetings_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         try:
-            meetings = self._load_meetings()
+            self._meetings = self._load_meetings()
         except Exception as exc:
             logger.error("Failed to load past meetings: %s", exc)
-            self.meetings_layout.addWidget(
+            self._meetings = []
+            self._clear_list()
+            self.section_header.setText("PAST MEETINGS")
+            self.meetings_list_layout.addWidget(
                 self._placeholder("Past meetings could not be loaded")
             )
             return
+        self._rebuild_list()
 
-        if not meetings:
-            self.meetings_layout.addWidget(
+    def _rebuild_list(self) -> None:
+        self._clear_list()
+        meetings = self._filter_meetings(self._meetings)
+        query = self.search_input.text().strip()
+        total = len(self._meetings)
+        shown = min(len(meetings), self.MAX_MEETINGS)
+        self.section_header.setText(f"PAST MEETINGS ({shown})")
+
+        if not self._meetings:
+            self.meetings_list_layout.addWidget(
                 self._placeholder("No past meetings yet")
+            )
+            return
+        if query and not meetings:
+            self.meetings_list_layout.addWidget(
+                self._placeholder("No matching meetings")
             )
             return
 
         for meeting in meetings[: self.MAX_MEETINGS]:
             card = PastMeetingItem(meeting, self.scroll_area.widget())
             card.meeting_selected.connect(self._on_card_selected)
-            self.meetings_layout.addWidget(card)
+            card.copy_transcript_requested.connect(
+                self.copy_transcript_requested.emit
+            )
+            card.delete_requested.connect(self._confirm_delete)
+            self.meetings_list_layout.addWidget(card)
 
         if len(meetings) > self.MAX_MEETINGS:
-            self.meetings_layout.addWidget(
-                self._placeholder(f"Showing the newest {self.MAX_MEETINGS} meetings")
+            self.meetings_list_layout.addWidget(
+                self._placeholder(
+                    f"Showing 100 of {len(meetings)} — search to find older meetings"
+                )
+            )
+        elif not query and total > self.MAX_MEETINGS:
+            self.meetings_list_layout.addWidget(
+                self._placeholder(
+                    f"Showing 100 of {total} — search to find older meetings"
+                )
             )
         self._apply_selection()
+
+    def _confirm_delete(self, meeting_id: str) -> None:
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle("Delete Meeting")
+        confirmation.setText("Delete this meeting and its recordings?")
+        confirmation.setInformativeText("This cannot be undone.")
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+        if confirmation.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self.delete_meeting_requested.emit(meeting_id)
+
+    def _clear_list(self) -> None:
+        while self.meetings_list_layout.count():
+            item = self.meetings_list_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
 
     @staticmethod
     def _placeholder(message: str) -> QLabel:
@@ -284,15 +450,52 @@ class PastMeetingsPanel(QWidget):
                 background-color: #1c1c1e;
                 border-left: 1px solid rgba(255, 255, 255, 0.08);
             }
-            QLabel#pastMeetingsHeader { color: #ffffff; font-weight: 700; }
-            QLabel#pastMeetingsHint {
+            QLabel#pastMeetingsHeader {
+                color: #ffffff;
+                font-weight: 700;
+                background-color: transparent;
+            }
+            QLabel#sectionHeader {
+                color: #98989d;
+                padding-top: 4px;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                font-size: 10px;
+                font-weight: 600;
+                background-color: transparent;
+            }
+            QPushButton#pastMeetingsMenuBtn {
+                background-color: transparent;
                 color: #8e8e93;
+                border: none;
+                border-radius: 14px;
+                padding: 0px;
+                font-size: 15px;
+            }
+            QPushButton#pastMeetingsMenuBtn:hover {
+                background-color: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+            }
+            QLineEdit#historySearchInput {
+                background-color: rgba(44, 44, 46, 0.8);
+                color: #f5f5f7;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 4px 10px;
                 font-size: 12px;
+            }
+            QLineEdit#historySearchInput:focus {
+                border: 1px solid #0a84ff;
+                background-color: rgba(44, 44, 46, 1.0);
+            }
+            QLineEdit#historySearchInput::placeholder {
+                color: #636366;
             }
             QLabel#pastMeetingsEmpty {
                 color: #636366;
                 font-size: 12px;
-                padding: 18px 6px;
+                padding: 8px 0px;
+                background-color: transparent;
             }
             QScrollArea#pastMeetingsScrollArea {
                 background-color: transparent;
@@ -300,6 +503,27 @@ class PastMeetingsPanel(QWidget):
             }
             QScrollArea#pastMeetingsScrollArea > QWidget > QWidget {
                 background-color: transparent;
+            }
+            QScrollArea#pastMeetingsScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+                margin: 0px;
+            }
+            QScrollArea#pastMeetingsScrollArea QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.15);
+                border-radius: 4px;
+                min-height: 30px;
+            }
+            QScrollArea#pastMeetingsScrollArea QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 0.3);
+            }
+            QScrollArea#pastMeetingsScrollArea QScrollBar::add-line:vertical,
+            QScrollArea#pastMeetingsScrollArea QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollArea#pastMeetingsScrollArea QScrollBar::add-page:vertical,
+            QScrollArea#pastMeetingsScrollArea QScrollBar::sub-page:vertical {
+                background: transparent;
             }
             QFrame#pastMeetingItem {
                 background-color: rgba(44, 44, 46, 0.5);
@@ -314,18 +538,30 @@ class PastMeetingsPanel(QWidget):
                 background-color: rgba(10, 132, 255, 0.16);
                 border: 1px solid rgba(10, 132, 255, 0.55);
             }
-            QLabel#pastMeetingTitle { color: #e5e5e7; }
-            QLabel#pastMeetingMeta { color: #98989d; font-size: 11px; }
+            QLabel#pastMeetingTitle {
+                color: #f5f5f7;
+                background-color: transparent;
+            }
+            QLabel#pastMeetingMeta {
+                color: #98989d;
+                font-size: 10px;
+                background-color: transparent;
+            }
+            QLabel#pastMeetingPreview {
+                color: #e5e5e7;
+                background-color: transparent;
+            }
             QLabel#pastMeetingContentWarning {
                 color: #ff9f0a;
                 font-size: 11px;
+                background-color: transparent;
             }
             QLabel#pastMeetingInsightsPill {
                 color: #98989d;
                 background-color: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 10px;
-                padding: 2px 8px;
+                border-radius: 6px;
+                padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
             }
@@ -343,16 +579,5 @@ class PastMeetingsPanel(QWidget):
                 color: #98989d;
                 background-color: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-            }
-            QPushButton#pastMeetingsRefreshButton {
-                background-color: transparent;
-                color: #8e8e93;
-                border: none;
-                border-radius: 14px;
-                font-size: 18px;
-            }
-            QPushButton#pastMeetingsRefreshButton:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
             }
         """)

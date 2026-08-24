@@ -4,7 +4,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit,
-    QButtonGroup, QPushButton,
+    QButtonGroup, QPushButton, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
@@ -47,6 +47,23 @@ class TranscriptionTabBase(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("transcriptionTabScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_area.setStyleSheet(
+            "QScrollArea#transcriptionTabScrollArea { border: none; "
+            "background: transparent; }"
+        )
+
+        scroll_host = QWidget()
+        scroll_host.setObjectName("transcriptionTabScrollHost")
+        scroll_host_layout = QVBoxLayout(scroll_host)
+        scroll_host_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_host_layout.setSpacing(0)
+
         content_container = QWidget()
         content_container.setObjectName(self.CONTENT_OBJECT_NAME)
         content_layout = QVBoxLayout(content_container)
@@ -57,6 +74,8 @@ class TranscriptionTabBase(QWidget):
         self.content_layout = content_layout
 
         center_wrapper = QHBoxLayout()
+        center_wrapper.setContentsMargins(0, 0, 0, 0)
+        center_wrapper.setSpacing(0)
         center_wrapper.addStretch()
         center_wrapper.addWidget(content_container, stretch=1)
         center_wrapper.addStretch()
@@ -64,7 +83,9 @@ class TranscriptionTabBase(QWidget):
         content_container.setMaximumWidth(700)
         content_container.setMinimumWidth(500)
 
-        main_layout.addLayout(center_wrapper)
+        scroll_host_layout.addLayout(center_wrapper)
+        self.scroll_area.setWidget(scroll_host)
+        main_layout.addWidget(self.scroll_area)
 
         model_card = Card()
 

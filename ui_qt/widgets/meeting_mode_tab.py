@@ -60,6 +60,21 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
     return subtitle, hint
 
 
+def cloud_intelligence_tooltip() -> str:
+    """Return a formatted tooltip explaining Cloud Intelligence ON vs OFF."""
+    return (
+        "<b>Cloud Intelligence</b><br><br>"
+        "<b>When ON (Checked):</b><br>"
+        "• <b>Live Insights:</b> Real-time topics, key points, decisions, and action items on the dashboard.<br>"
+        "• <b>Post-Meeting:</b> AI cleans up transcript grammar and generates executive summary reports.<br>"
+        "• <b>Privacy:</b> Sends transcript text to the configured AI model. Audio is <b>never</b> uploaded.<br><br>"
+        "<b>When OFF (Unchecked):</b><br>"
+        "• <b>100% Local:</b> Recording, Whisper transcription, and speaker turns run entirely on-device.<br>"
+        "• <b>Transcript-Only:</b> Complete meeting audio and transcript are saved without AI summaries.<br>"
+        "• <b>Privacy:</b> Zero transcript text or data leaves your computer."
+    )
+
+
 def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:
     """True when the idle platform sentence should stay visible as a warning."""
     platform = platform or sys.platform
@@ -168,7 +183,7 @@ class MeetingModeTab(QWidget):
             tooltip: Optional hover text.
 
         Returns:
-            A hidden button sized to its label, for the right-aligned row.
+            A hidden button sized to its label, for the centered decision row.
         """
         button = QPushButton(text)
         button.setObjectName(object_name)
@@ -206,6 +221,7 @@ class MeetingModeTab(QWidget):
         content.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
+        self.content_widget = content
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 14, 24, 16)
         content_layout.setSpacing(16)
@@ -241,15 +257,27 @@ class MeetingModeTab(QWidget):
         intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
 
+        cloud_row = QHBoxLayout()
+        cloud_row.setSpacing(6)
+        cloud_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.cloud_checkbox = QCheckBox("Cloud intelligence")
         self.cloud_checkbox.setObjectName("meetingCloudCheckbox")
         self.cloud_checkbox.setChecked(
             bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
         )
         self.cloud_checkbox.toggled.connect(self.cloud_toggled)
-        content_layout.addWidget(
-            self.cloud_checkbox, alignment=Qt.AlignmentFlag.AlignCenter
-        )
+        cloud_row.addWidget(self.cloud_checkbox)
+
+        self.cloud_help_icon = QLabel("?")
+        self.cloud_help_icon.setObjectName("meetingCloudHelpIcon")
+        self.cloud_help_icon.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.cloud_help_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cloud_help_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cloud_help_icon.setToolTip(cloud_intelligence_tooltip())
+        cloud_row.addWidget(self.cloud_help_icon)
+
+        content_layout.addLayout(cloud_row)
 
         # Idle controls
         self.idle_card = Card()
@@ -448,18 +476,9 @@ class MeetingModeTab(QWidget):
         self.finalization_links_row = QWidget()
         self.finalization_links_row.setObjectName("meetingFinalizationLinksRow")
         links_layout = QHBoxLayout(self.finalization_links_row)
-        links_layout.setContentsMargins(10, 0, 10, 0)
+        links_layout.setContentsMargins(0, 0, 0, 0)
         links_layout.setSpacing(18)
-
-        self.finalization_dashboard_button = self._link_button(
-            "Open dashboard",
-            "meetingFinalizationDashboardButton",
-            "Open this meeting in the web dashboard",
-        )
-        self.finalization_dashboard_button.clicked.connect(
-            self.open_dashboard_requested
-        )
-        links_layout.addWidget(self.finalization_dashboard_button)
+        links_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.finalization_report_button = self._link_button(
             "Open report",
@@ -480,7 +499,6 @@ class MeetingModeTab(QWidget):
         )
         self.finalization_retry_speakers_button.hide()
         links_layout.addWidget(self.finalization_retry_speakers_button)
-        links_layout.addStretch()
         footer_layout.addWidget(self.finalization_links_row)
 
         self.finalization_keep_hint = WrappedLabel(
@@ -489,6 +507,7 @@ class MeetingModeTab(QWidget):
         )
         self.finalization_keep_hint.setObjectName("meetingFinalizationKeepHint")
         self.finalization_keep_hint.setFont(QFont("Segoe UI", 10))
+        self.finalization_keep_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.finalization_keep_hint.hide()
         footer_layout.addWidget(self.finalization_keep_hint)
 
@@ -499,7 +518,7 @@ class MeetingModeTab(QWidget):
         decisions_layout = QHBoxLayout(self.finalization_decisions_row)
         decisions_layout.setContentsMargins(0, 0, 0, 0)
         decisions_layout.setSpacing(10)
-        decisions_layout.addStretch()
+        decisions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.finalization_keep_later_button = self._decision_button(
             "Keep for later",
@@ -571,6 +590,27 @@ class MeetingModeTab(QWidget):
     def _on_retry_failed_clicked(self):
         """Retry every failed/skipped checklist step."""
         self.retry_insights_requested.emit()
+
+    def content_height(self) -> int:
+        """Return the pixel height needed to display all visible content without scrolling."""
+        if hasattr(self, "content_widget") and self.content_widget is not None:
+            from PyQt6.QtCore import QEvent
+            from PyQt6.QtWidgets import QApplication
+
+            QApplication.sendPostedEvents(self.content_widget, QEvent.Type.LayoutRequest)
+            layout = self.content_widget.layout()
+            if layout is not None:
+                w = self.content_widget.width()
+                if w <= 0:
+                    w = self.width()
+                if layout.hasHeightForWidth() and w > 0:
+                    return max(
+                        layout.minimumHeightForWidth(w),
+                        layout.heightForWidth(w),
+                        layout.sizeHint().height(),
+                    )
+                return max(layout.minimumSize().height(), layout.sizeHint().height())
+        return self.sizeHint().height()
 
     def set_developer_mode(self, enabled: bool) -> None:
         """Show or hide demo-meeting controls.
@@ -802,12 +842,7 @@ class MeetingModeTab(QWidget):
         else:
             self.identity_box.hide()
 
-        dashboard_enabled = self._active or self._has_dashboard or show_finalization
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
-        self.finalization_dashboard_button.setEnabled(
-            self._has_dashboard or self._active or show_finalization
-        )
-        self.finalization_dashboard_button.setVisible(dashboard_enabled)
         self.finalization_report_button.setVisible(show_finalization)
         self._sync_footer_rows()
 

@@ -221,12 +221,12 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   }, []);
 
   return (
-    <section className="panel" style={{ minHeight: '70vh' }}>
+    <section className="panel history-pane" style={{ minHeight: '70vh' }}>
       <div className="panel-header no-print">
-        <span>Meeting history</span>
-        <button type="button" className="ghost" onClick={onClose}>
-          Back to live
-        </button>
+        <div className="history-pane-title">
+          <span>Past Meetings</span>
+          {!loading && <span className="status-chip">{meetings.length}</span>}
+        </div>
       </div>
       <div className="panel-body">
         {error && (
@@ -235,159 +235,203 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
           </div>
         )}
 
-        <div className="history-search no-print" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <input
-            type="search"
-            placeholder="Search transcripts…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') runSearch();
-            }}
-          />
-          <button type="button" className="primary" onClick={runSearch}>
-            Search
-          </button>
-        </div>
-
-        {searchResults.length > 0 && (
-          <div className="search-results no-print">
-            <h3 className="card-section-title">Search results</h3>
-            {searchResults.map((row, i) => (
-              <button key={i} type="button" className="search-hit" onClick={() => selectSearchResult(row)}>
-                {Object.entries(row).map(([k, v]) => (
-                  <div key={k}>
-                    <strong>{k}:</strong> {String(v)}
-                  </div>
-                ))}
+        <div className="history-detail-grid" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20 }}>
+          <div className="history-sidebar-column no-print">
+            <div className="history-search" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <input
+                type="search"
+                placeholder="Search transcripts…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runSearch();
+                }}
+              />
+              <button type="button" className="primary" onClick={runSearch}>
+                Search
               </button>
-            ))}
-          </div>
-        )}
+            </div>
 
-        {loading ? (
-          <p className="empty-state">Loading meetings…</p>
-        ) : meetings.length === 0 ? (
-          <p className="empty-state">No past meetings.</p>
-        ) : (
-          <div className="history-detail-grid" style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16 }}>
-            <ul className="history-list no-print">
-              {meetings.map((m) => (
-                <li
-                  key={m.id}
-                  className={`history-item${selectedId === m.id ? ' active' : ''}`}
-                  onClick={() => setSelectedId(m.id)}
-                >
-                  <div
-                    className="history-item-title"
-                    title={String(
-                      m.display_title
-                      || m.title
-                      || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
-                    )}
+            {searchResults.length > 0 && (
+              <div className="search-results">
+                <h3 className="card-section-title">Search results ({searchResults.length})</h3>
+                {searchResults.map((row, i) => (
+                  <button key={i} type="button" className="search-hit" onClick={() => selectSearchResult(row)}>
+                    {Object.entries(row).map(([k, v]) => (
+                      <div key={k}>
+                        <strong>{k}:</strong> {String(v)}
+                      </div>
+                    ))}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {loading ? (
+              <p className="empty-state">Loading past meetings…</p>
+            ) : meetings.length === 0 ? (
+              <p className="empty-state">No past meetings recorded.</p>
+            ) : (
+              <ul className="history-list">
+                {meetings.map((m) => (
+                  <li
+                    key={m.id}
+                    className={`history-item${selectedId === m.id ? ' active' : ''}`}
+                    onClick={() => setSelectedId(m.id)}
                   >
-                    {String(
-                      m.display_title
-                      || m.title
-                      || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
-                    )}
-                  </div>
-                  <div className="history-item-meta">
-                    {m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}
-                  </div>
-                  {m.insights_pill && (
-                    <span
-                      className={`status-chip insights-pill${
-                        m.insights_tone ? ` insights-${m.insights_tone}` : ''
-                      }`}
+                    <div
+                      className="history-item-title"
+                      title={String(
+                        m.display_title
+                        || m.title
+                        || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                      )}
                     >
-                      {String(m.insights_pill)}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                      {String(
+                        m.display_title
+                        || m.title
+                        || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                      )}
+                    </div>
+                    <div className="history-item-meta">
+                      <span>{m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}</span>
+                      {m.insights_pill && (
+                        <span
+                          className={`status-chip insights-pill${
+                            m.insights_tone ? ` insights-${m.insights_tone}` : ''
+                          }`}
+                        >
+                          {String(m.insights_pill)}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
-            {selected && (
+          <div className="history-content-column">
+            {!selected ? (
+              <div className="history-empty-detail no-print">
+                <h3>Select a meeting</h3>
+                <p>Choose a meeting from the list on the left to view its report, audio recording, and transcript.</p>
+              </div>
+            ) : (
               <div>
-                <h3 className="no-print" style={{ marginTop: 0 }}>Details</h3>
+                <div className="history-header-box no-print">
+                  <div className="history-title-row">
+                    <input
+                      className="history-title-input"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') renameMeeting();
+                      }}
+                      placeholder="Meeting title"
+                      aria-label="Meeting title"
+                    />
+                    <button
+                      type="button"
+                      className={renameDraft !== (selected.title || '') ? 'primary' : 'ghost'}
+                      onClick={renameMeeting}
+                      disabled={!renameDraft.trim() || renameDraft === (selected.title || '')}
+                    >
+                      Save title
+                    </button>
+                  </div>
+                  <div className="history-meta-row">
+                    <span>
+                      📅 {selected.started_at ? new Date(String(selected.started_at)).toLocaleString() : 'Unknown date'}
+                    </span>
+                    {selected.insights_pill && (
+                      <span
+                        className={`status-chip insights-pill${
+                          selected.insights_tone ? ` insights-${selected.insights_tone}` : ''
+                        }`}
+                      >
+                        {String(selected.insights_pill)}
+                      </span>
+                    )}
+                    <span className="history-meta-id">ID: {selected.id}</span>
+                  </div>
+                </div>
+
+                <div className="history-actions-bar no-print">
+                  <div className="history-action-group">
+                    <span className="history-action-group-label">Export:</span>
+                    <button type="button" onClick={() => exportMeeting('md', selected.id)}>
+                      Markdown
+                    </button>
+                    <button type="button" onClick={() => exportMeeting('json', selected.id)}>
+                      JSON
+                    </button>
+                    <button type="button" onClick={() => exportMeeting('txt', selected.id)}>
+                      Transcript
+                    </button>
+                  </div>
+
+                  <div className="history-action-group">
+                    <span className="history-action-group-label">Intelligence:</span>
+                    <button
+                      type="button"
+                      onClick={() => rerunInsights(selected.id)}
+                      disabled={rerunning || rerunningSpeakers}
+                    >
+                      {rerunning ? 'Re-running insights…' : 'Re-run insights'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => rerunSpeakers(selected.id)}
+                      disabled={
+                        rerunning
+                        || rerunningSpeakers
+                        || selected.can_rerun_speakers === false
+                      }
+                      title={
+                        selected.can_rerun_speakers === false
+                          ? 'No system-audio recording is available for speaker identification'
+                          : undefined
+                      }
+                    >
+                      {rerunningSpeakers
+                        ? 'Re-running speakers…'
+                        : 'Re-run speaker identification'}
+                    </button>
+                  </div>
+
+                  <div className="history-action-group">
+                    <button type="button" className="danger" onClick={() => setPendingDeleteId(selected.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
                 {selected.content_summary?.is_empty && (
                   <div className="banner warning no-print" role="status">
                     No audio or transcript was captured for this meeting.
                   </div>
                 )}
-                <div className="no-print" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                  <input
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    aria-label="Meeting title"
-                  />
-                  <button type="button" onClick={renameMeeting}>
-                    Rename
-                  </button>
-                </div>
-                <div className="history-actions no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                  <button type="button" onClick={() => exportMeeting('md', selected.id)}>
-                    Export Markdown
-                  </button>
-                  <button type="button" onClick={() => exportMeeting('json', selected.id)}>
-                    Export JSON
-                  </button>
-                  <button type="button" onClick={() => exportMeeting('txt', selected.id)}>
-                    Export transcript
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => rerunInsights(selected.id)}
-                    disabled={rerunning || rerunningSpeakers}
-                  >
-                    {rerunning ? 'Re-running insights…' : 'Re-run insights'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => rerunSpeakers(selected.id)}
-                    disabled={
-                      rerunning
-                      || rerunningSpeakers
-                      || selected.can_rerun_speakers === false
-                    }
-                    title={
-                      selected.can_rerun_speakers === false
-                        ? 'No system-audio recording is available for speaker identification'
-                        : undefined
-                    }
-                  >
-                    {rerunningSpeakers
-                      ? 'Re-running speakers…'
-                      : 'Re-run speaker identification'}
-                  </button>
-                  <button type="button" className="danger" onClick={() => setPendingDeleteId(selected.id)}>
-                    Delete
-                  </button>
-                </div>
-
                 {(rerunning || rerunningSpeakers) && (
-                  <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
+                  <div className="banner info no-print" role="status">
                     {rerunningSpeakers
                       ? 'Relabeling speakers — this can take a minute.'
-                      : 'Re-analyzing the transcript — this can take a minute.'}
-                  </p>
+                      : 'Re-analyzing the transcript with cloud intelligence — this can take a minute.'}
+                  </div>
                 )}
                 {rerunNote && (
-                  <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>
+                  <div className="banner info no-print" role="status">
                     {rerunNote}
-                  </p>
+                  </div>
                 )}
                 {detailError && (
-                  <p className="no-print" style={{ color: 'var(--danger)', fontSize: 13, margin: '0 0 12px' }}>
+                  <div className="banner warning no-print" role="alert">
                     {detailError}
-                  </p>
+                  </div>
                 )}
 
                 {!detail ? (
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 16px' }}>
-                    Loading…
-                  </p>
+                  <p className="empty-state">Loading meeting report…</p>
                 ) : (
                   <div ref={reportRef} id="history-report">
                     <ReportTabs
@@ -401,40 +445,43 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 )}
 
-                <section className="panel no-print" style={{ marginTop: 16 }}>
-                  <div className="panel-header"><span>Recording</span></div>
+                <section className="panel no-print" style={{ marginTop: 20 }}>
+                  <div className="panel-header"><span>Audio Recording</span></div>
                   <div className="panel-body">
                     {selected.has_audio === false ? (
-                      <p className="empty-state">No audio was captured.</p>
+                      <p className="empty-state">No audio was captured for this meeting.</p>
                     ) : (
                       <audio
                         ref={audioRef}
                         controls
                         preload="metadata"
                         src={api.audioUrl(token, selected.id)}
+                        style={{ width: '100%' }}
                       />
                     )}
                   </div>
                 </section>
 
-                <div className="no-print">
-                  <TranscriptPane
-                    segments={detailSegments}
-                    participants={detail ? Object.values(detail.participants) : []}
-                    highlightSegmentId={highlightSegmentId}
-                    onHighlightClear={() => setHighlightSegmentId(null)}
-                    onReassignSpeaker={() => undefined}
-                    readOnly
-                  />
-                </div>
-
-                <p className="no-print" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                  ID: {selected.id}
-                </p>
+                <section className="panel no-print" style={{ marginTop: 20 }}>
+                  <div className="panel-header">
+                    <span>Full Transcript</span>
+                    <span className="status-chip">{detailSegments.length} segments</span>
+                  </div>
+                  <div className="panel-body">
+                    <TranscriptPane
+                      segments={detailSegments}
+                      participants={detail ? Object.values(detail.participants) : []}
+                      highlightSegmentId={highlightSegmentId}
+                      onHighlightClear={() => setHighlightSegmentId(null)}
+                      onReassignSpeaker={() => undefined}
+                      readOnly
+                    />
+                  </div>
+                </section>
               </div>
             )}
           </div>
-        )}
+        </div>
       </div>
 
       <ConfirmDialog

@@ -221,12 +221,13 @@ class MeetingRuntime:
         except Exception:
             logger.exception("Could not restore the last meeting checklist")
             return
-        for meeting in meetings:
-            status = str(meeting.get("status") or "")
-            if status in {"active", "paused", "ending"}:
-                continue
-            if self._hydrate_finalization_card(meeting):
-                return
+        if not meetings:
+            return
+        latest = meetings[0]
+        status = str(latest.get("status") or "")
+        if status in {"active", "paused", "ending"}:
+            return
+        self._hydrate_finalization_card(latest)
 
     def _hydrate_finalization_card(
         self,
@@ -525,6 +526,11 @@ class MeetingRuntime:
             self.controller.meeting_status_update.emit(
                 "A meeting is already in progress"
             )
+            return
+        loading = getattr(self.controller, "local_whisper_loading_message", None)
+        message = loading() if callable(loading) else None
+        if message:
+            self.controller.meeting_status_update.emit(message)
             return
         # File the leftover card before claiming start — defer refuses while
         # ``_starting`` is True.
@@ -1295,6 +1301,81 @@ class MeetingRuntime:
             logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}")
             self.controller.meeting_error.emit(
                 f"Could not finalize the meeting: {exc}"
+            )
+
+    def copy_past_meeting_transcript(self, meeting_id: str) -> Optional[str]:
+        """Return the exported transcript for a past meeting, or None."""
+        target_id = str(meeting_id or "").strip()
+        if not target_id:
+            return None
+        try:
+            from meeting.export.transcript_txt import export_transcript_txt
+
+            repo = self._repository()
+            meeting = repo.get_meeting(target_id)
+            if meeting is None:
+                self.controller.meeting_status_update.emit(
+                    "That meeting no longer exists"
+                )
+                return None
+            raw = meeting.get("state_json")
+            state: Dict[str, Any] = {}
+            if raw:
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(parsed, dict):
+                    state = parsed
+            segments = list(repo.get_segments(target_id) or [])
+            if not any(str(segment.get("text") or "").strip() for segment in segments):
+                self.controller.meeting_status_update.emit("No transcript to copy")
+                return None
+            return export_transcript_txt(meeting, state, segments)
+        except Exception as exc:
+            logger.exception("Could not copy transcript for meeting %s", target_id)
+            self.controller.meeting_error.emit(
+                f"Could not copy the transcript: {exc}"
+            )
+            return None
+
+    def delete_past_meeting(self, meeting_id: str) -> None:
+        """Delete a past meeting and its audio spool after UI confirmation."""
+        target_id = str(meeting_id or "").strip()
+        if not target_id:
+            return
+        live_id = getattr(self._engine, "meeting_id", None)
+        if (
+            (self.is_active or self.controller.meeting_active)
+            and live_id == target_id
+        ):
+            self.controller.meeting_status_update.emit(
+                "Finish the current meeting first."
+            )
+            return
+        threading.Thread(
+            target=self._delete_past_meeting_worker,
+            args=(target_id,),
+            name="meeting-delete",
+            daemon=True,
+        ).start()
+
+    def _delete_past_meeting_worker(self, meeting_id: str) -> None:
+        try:
+            from meeting.persist.data_lifecycle import delete_meeting_data
+
+            repository = self._repository()
+            delete_meeting_data(
+                repository, meeting_id, config.MEETINGS_FOLDER
+            )
+            with self._lock:
+                shown = self._card_meeting_id == meeting_id
+            if shown:
+                self._hide_finalization_card()
+            else:
+                self._refresh_past_meetings()
+            self.controller.meeting_status_update.emit("Meeting deleted")
+        except Exception as exc:
+            logger.error(f"Failed to delete meeting '{meeting_id}': {exc}")
+            self.controller.meeting_error.emit(
+                f"Could not delete the meeting: {exc}"
             )
 
     def discard_recovered(self, meeting_id: str) -> None:

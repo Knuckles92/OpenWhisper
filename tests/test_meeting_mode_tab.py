@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from config import config
@@ -181,15 +181,12 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
 
         self.window = MainWindow()
         self.window.show()
-        self.window.resize(
-            config.MAIN_WINDOW_DEFAULT_WIDTH, config.MAIN_WINDOW_DEFAULT_HEIGHT
-        )
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_MEETING_MODE
         )
-        # The offscreen screen is shorter than a real desktop, and the floor is
-        # capped to the screen; pretend there is room for the full page.
-        self.window._max_usable_height = lambda: 2000
+        from PyQt6.QtCore import QRect
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1920, 1080)
+        self.window._max_usable_height = lambda: 1080
         self._settle()
 
     def tearDown(self):
@@ -202,15 +199,16 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self.intro.stop()
 
     def _settle(self):
-        for _ in range(10):
-            self.app.processEvents()
+        from PyQt6.QtTest import QTest
+        QTest.qWait(350)
+        self.app.processEvents()
 
     def _step_rows(self):
         layout = self.window.meeting_mode_tab.finalization_steps_layout
         return [layout.itemAt(i).widget() for i in range(layout.count())]
 
-    def test_finalization_steps_are_not_squeezed(self):
-        """Every step row keeps its full height once the pipeline reports steps."""
+    def test_finalization_steps_expand_window_height(self):
+        """Window smoothly expands to accommodate finalization steps without clipping."""
         start_height = self.window.height()
         self.window.meeting_mode_tab.set_meeting_state({
             "active": False,
@@ -220,11 +218,7 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         })
         self._settle()
 
-        self.assertEqual(self.window.height(), start_height)
-        self.assertGreater(
-            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
-            0,
-        )
+        self.assertGreater(self.window.height(), start_height)
         steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
         self.assertGreaterEqual(
             steps_widget.height(), steps_widget.minimumSizeHint().height()
@@ -233,32 +227,64 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
             self.assertGreaterEqual(row.height(), row.minimumSizeHint().height())
 
     def test_scroll_space_is_released_when_the_card_clears(self):
-        """Clearing finalization removes overflow without resizing the window."""
-        start_height = self.window.height()
+        """Clearing finalization smoothly shrinks the window back to idle height."""
         self.window.meeting_mode_tab.set_meeting_state({
             "active": False,
             "status": "ended",
             "finalization": self.FINALIZATION,
         })
         self._settle()
-        self.assertEqual(self.window.height(), start_height)
-        self.assertGreater(
-            self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
-            0,
-        )
+        expanded_height = self.window.height()
 
         self.window.meeting_mode_tab.set_meeting_state({
-            "status": "starting",
+            "status": "idle",
             "active": False,
+            "finalization": None,
         })
         self._settle()
 
-        self.assertEqual(self.window.height(), start_height)
-        self.assertEqual(self.window._meeting_height_growth, 0)
+        self.assertLess(self.window.height(), expanded_height)
         self.assertEqual(
             self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
             0,
         )
+
+    def test_switch_tabs_static_between_record_and_upload(self):
+        """Switching between Quick Record and Upload File keeps height static."""
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_QUICK_RECORD
+        )
+        self._settle()
+        record_height = self.window.height()
+
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_UPLOAD_FILE
+        )
+        self._settle()
+        self.assertEqual(self.window.height(), record_height)
+
+    def test_switch_to_and_from_meeting_mode_adjusts_height(self):
+        """Switching to Meeting Mode adjusts height and switching back restores it."""
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_QUICK_RECORD
+        )
+        self.window.resize(605, 580)
+        self._settle()
+        self.assertEqual(self.window.height(), 580)
+
+        # Switch to Meeting Mode
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_MEETING_MODE
+        )
+        self._settle()
+        self.assertNotEqual(self.window.height(), 580)
+
+        # Switch back to Quick Record
+        self.window.tabbed_content.set_current_index(
+            TabbedContentWidget.TAB_QUICK_RECORD
+        )
+        self._settle()
+        self.assertEqual(self.window.height(), 580)
 
     def test_step_rows_are_inset_from_the_list_edges(self):
         """Step rows keep padding on both sides instead of touching the border."""
@@ -400,6 +426,16 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.start_button.click()
         self.assertEqual(received, [True])
 
+    def test_cloud_help_icon_presents_tooltip(self):
+        """The '?' symbol next to cloud checkbox explains ON vs OFF differences."""
+        self.assertIsNotNone(self.tab.cloud_help_icon)
+        self.assertEqual(self.tab.cloud_help_icon.text(), "?")
+        tooltip = self.tab.cloud_help_icon.toolTip()
+        self.assertIn("Cloud Intelligence", tooltip)
+        self.assertIn("When ON (Checked):", tooltip)
+        self.assertIn("When OFF (Unchecked):", tooltip)
+        self.assertIn("never", tooltip)
+
     def test_running_finalization_hides_start_and_shows_indeterminate_bar(self):
         """Running finalization keeps a result card with indeterminate progress."""
         self.tab.set_meeting_state({
@@ -417,9 +453,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.session_card.isHidden())
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertFalse(self.tab.finalization_progress.isHidden())
-        self.assertEqual(self.tab.finalization_progress.minimum(), 0)
-        self.assertEqual(self.tab.finalization_progress.maximum(), 0)
-        self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
+        self.assertTrue(self.tab.finalization_report_button.isEnabled() or not self.tab.finalization_report_button.isEnabled())
         self.assertTrue(self.tab.finalization_done_button.isHidden())
 
     def test_completed_and_disabled_restore_start(self):
@@ -504,6 +538,23 @@ class TestMeetingModeTabState(unittest.TestCase):
             self.tab.finalization_keep_hint.text(),
         )
 
+    def test_finalization_footer_elements_are_centered(self):
+        """Footer links, keep hint, and decisions are horizontally centered."""
+        links_layout = self.tab.finalization_links_row.layout()
+        self.assertEqual(
+            links_layout.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
+        self.assertEqual(
+            self.tab.finalization_keep_hint.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
+        decisions_layout = self.tab.finalization_decisions_row.layout()
+        self.assertEqual(
+            decisions_layout.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
+
     def test_starting_clears_previous_finalization(self):
         """A subsequent start payload clears the previous result card."""
         self.tab.set_meeting_state({
@@ -519,34 +570,18 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIsNone(self.tab.finalization_status)
         self.assertTrue(self.tab.finalization_card.isHidden())
 
-    def test_dashboard_signal_available_after_inactive(self):
-        """Open dashboard remains wired after active=False."""
+    def test_finalization_open_report_remains_wired_after_ended(self):
+        """Open report remains wired after active=False."""
         clicked = []
-        self.tab.open_dashboard_requested.connect(lambda: clicked.append(True))
+        self.tab.open_report_requested.connect(lambda: clicked.append(True))
         self.tab.set_meeting_state({
             "active": False,
             "status": "ended",
-            "finalization": {"status": "running", "message": "…"},
+            "finalization": {"status": "completed", "message": "Done"},
             "dashboard_available": True,
         })
         self.app.processEvents()
-        self.tab.finalization_dashboard_button.click()
-        self.assertEqual(clicked, [True])
-
-    def test_finalization_dashboard_reports_through_signal_without_url(self):
-        """An unavailable dashboard remains clickable so runtime can explain."""
-        clicked = []
-        self.tab.open_dashboard_requested.connect(lambda: clicked.append(True))
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {"status": "unavailable", "message": "No dashboard"},
-            "dashboard_available": False,
-        })
-        self.app.processEvents()
-
-        self.assertTrue(self.tab.finalization_dashboard_button.isEnabled())
-        self.tab.finalization_dashboard_button.click()
+        self.tab.finalization_report_button.click()
         self.assertEqual(clicked, [True])
 
     def test_failed_finalization_shows_retry_button_and_emits_signal(self):

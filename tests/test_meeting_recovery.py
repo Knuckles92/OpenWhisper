@@ -224,6 +224,33 @@ def test_find_recoverable_meetings_keeps_only_dead_sessions():
     assert [m["id"] for m in recovered] == ["m_dead", "m_no_beat"]
 
 
+def test_find_recoverable_meetings_skips_deferred_cards():
+    repo = FakeRepository()
+    state = MeetingState(
+        meeting_id="m_kept",
+        status="needs_recovery",
+        cloud_enabled=True,
+    )
+    payload = state.to_dict()
+    payload["finalization"] = {
+        "status": "unavailable",
+        "message": "ASR unfinished",
+        "card_deferred": True,
+    }
+    repo.interrupted = [
+        {
+            "id": "m_kept",
+            "status": "needs_recovery",
+            "state_json": json.dumps(payload),
+        },
+        {"id": "m_crash"},
+    ]
+
+    recovered = find_recoverable_meetings(repo)
+
+    assert [m["id"] for m in recovered] == ["m_crash"]
+
+
 def test_find_recoverable_meetings_returns_empty_on_scan_failure():
     repo = FakeRepository()
     repo.fail_list = True
