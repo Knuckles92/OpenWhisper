@@ -41,7 +41,7 @@ def add_transcript(repo, meeting_id):
     ])
 
 
-def seeded_state(meeting_id, steps, cloud_enabled=True):
+def seeded_state(meeting_id, steps, cloud_enabled=True, card_deferred=False):
     state = MeetingState(
         meeting_id=meeting_id,
         status="ended",
@@ -52,6 +52,7 @@ def seeded_state(meeting_id, steps, cloud_enabled=True):
             message="needs retry",
             steps=steps,
             total_steps=len(steps),
+            card_deferred=card_deferred,
         ),
     )
     return json.dumps(state.to_dict())
@@ -402,3 +403,27 @@ class TestEndpointSnapshot:
         snapshot = _meeting_endpoint({"agent_provider": "openai"})
         assert snapshot["profile_id"] == "openai"
         assert snapshot["kind"] == "openai"
+
+
+class TestCardDeferred:
+    def test_rerun_preserves_card_deferred(self, repo, monkeypatch):
+        make_meeting(
+            repo,
+            state_json=seeded_state(
+                "m_retry", DEFAULT_STEPS, card_deferred=True
+            ),
+        )
+        add_transcript(repo, "m_retry")
+        install_cores(monkeypatch, FakeAgentCore())
+
+        result = rerun_finalization(
+            repo, "m_retry",
+            from_step="redecode",
+            provider="openrouter",
+            model="m",
+            transcribe_fn=rich_decode,
+        )
+        assert result["finalization"]["card_deferred"] is True
+        assert result["state"]["finalization"]["card_deferred"] is True
+        stored = json.loads(repo.get_meeting("m_retry")["state_json"])
+        assert stored["finalization"]["card_deferred"] is True

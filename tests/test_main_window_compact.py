@@ -81,6 +81,21 @@ class TestMainWindowCompactMode:
         assert opened == [True]
         assert self.window.models_button.text() == "Model Manager"
 
+    def test_file_menu_downloads_opens_downloads(self):
+        """File → Downloads uses the existing downloads signal path."""
+        opened = []
+        self.window.model_manager_requested.connect(opened.append)
+
+        file_menu = self.window.title_bar.menu_bar.actions()[0].menu()
+        downloads_action = next(
+            action
+            for action in file_menu.actions()
+            if action.text() == "Downloads..."
+        )
+        downloads_action.trigger()
+
+        assert opened == ["downloads"]
+
     def test_compact_controls_delegate_to_quick_record(self):
         """Compact controls use the existing recording signal path."""
         toggles = []

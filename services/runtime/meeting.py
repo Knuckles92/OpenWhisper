@@ -235,7 +235,11 @@ class MeetingRuntime:
         *,
         reveal: bool = False,
     ) -> bool:
-        """Emit a persisted finalization card, optionally clearing deferral."""
+        """Emit a persisted finalization card, optionally revealing a deferred one.
+
+        ``reveal=True`` shows a saved-for-later card in this session only. The
+        stored ``card_deferred`` flag is left alone so the next startup stays idle.
+        """
         meeting_id = str(meeting.get("id") or "")
         raw = meeting.get("state_json")
         data: Dict[str, Any] = {}
@@ -264,9 +268,7 @@ class MeetingRuntime:
         if fin.card_deferred and not reveal:
             return False
         if reveal and fin.card_deferred:
-            self._persist_card_deferred(meeting_id, False)
             fin.card_deferred = False
-            self._refresh_past_meetings()
         if fin.status in {"pending"} and not fin.steps:
             return False
         payload = fin.to_dict()

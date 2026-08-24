@@ -376,6 +376,7 @@ def _persist_finalization(
     summary_stats: Optional[Dict[str, Any]] = None,
     progress_cb: Optional[ProgressCb] = None,
 ) -> Dict[str, Any]:
+    current = store.with_state(lambda state: state.finalization)
     payload = FinalizationState(
         status=status,
         message=message,
@@ -385,6 +386,7 @@ def _persist_finalization(
         step_details=step_details,
         steps=_copy_steps(steps),
         summary_stats=dict(summary_stats or {}),
+        card_deferred=bool(getattr(current, "card_deferred", False)),
     )
     store.update_runtime_fields(finalization=payload)
     data = payload.to_dict()

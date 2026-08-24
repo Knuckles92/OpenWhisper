@@ -718,7 +718,7 @@ def test_show_past_meeting_refuses_while_live(runtime, monkeypatch):
     assert statuses == ["Finish the current meeting first."]
 
 
-def test_open_past_meeting_clears_deferral(runtime):
+def test_open_past_meeting_reveals_without_persisting_deferral(runtime):
     rt, controller = runtime
     states = []
     controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
@@ -734,7 +734,7 @@ def test_open_past_meeting_clears_deferral(runtime):
     assert rt._hydrate_finalization_card(meeting, reveal=True) is True
     assert rt._card_meeting_id == "m_saved"
     assert states[-1]["finalization"]["card_deferred"] is False
-    assert persisted[0][1]["finalization"]["card_deferred"] is False
+    assert persisted == []
 
 
 def test_start_new_meeting_defers_then_starts(runtime, monkeypatch):

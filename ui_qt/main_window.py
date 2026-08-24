@@ -606,6 +606,8 @@ class MainWindow(QMainWindow):
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
         models_action = file_menu.addAction("Model Manager...", self.open_model_manager)
         models_action.setMenuRole(QAction.MenuRole.NoRole)
+        downloads_action = file_menu.addAction("Downloads...", self.open_downloads)
+        downloads_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
         file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
@@ -1004,6 +1006,10 @@ class MainWindow(QMainWindow):
     def open_model_manager(self):
         logger.info("Opening model manager")
         self.model_manager_requested.emit("ondemand")
+
+    def open_downloads(self):
+        logger.info("Opening downloads")
+        self.model_manager_requested.emit("downloads")
 
     def open_hotkey_settings(self):
         logger.info("Opening hotkey settings")
