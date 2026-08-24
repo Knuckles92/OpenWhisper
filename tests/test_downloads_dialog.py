@@ -14,10 +14,13 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea
 
-from services.components import ComponentInfo, ComponentState
+from services.component_catalog import PI_HOME_URL, get_component_details
+from services.components import ComponentId, ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
 from services.settings import SettingsKey
 from ui_qt.dialogs import downloads_dialog as dialog_module
+from ui_qt.dialogs import component_details_dialog as component_dialog_module
+from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.dialogs.downloads_dialog import BatchDownloadDialog, DownloadsDialog
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets import Button
@@ -787,3 +790,91 @@ class TestComponents(_DialogTestCase):
         ):
             dialog._confirm_component_removal(component_id)
         assert requested == [component_id]
+
+    def test_row_click_opens_the_component_profile(self):
+        dialog, _values = self._make_dialog()
+        if not dialog._component_rows:
+            pytest.skip("no installable components on this platform")
+        component_id = next(iter(dialog._component_rows))
+        opened = []
+
+        original_init = ComponentDetailsDialog.__init__
+
+        def _init(self, requested_id, parent=None):
+            opened.append(requested_id)
+            original_init(self, requested_id, parent)
+
+        with (
+            patch.object(ComponentDetailsDialog, "__init__", _init),
+            patch.object(ComponentDetailsDialog, "exec", return_value=0),
+        ):
+            dialog._component_rows[component_id].details_requested.emit(
+                component_id
+            )
+
+        assert opened == [component_id]
+        assert not dialog._component_rows[component_id].property("selected")
+
+    def test_component_body_click_requests_details(self):
+        row = ComponentRowWidget("gpu-accel")
+        row.resize(720, 72)
+        row.show()
+        requested = []
+        row.details_requested.connect(requested.append)
+
+        QTest.mouseClick(row, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+
+        assert requested == ["gpu-accel"]
+        row.close()
+
+    def test_enter_and_space_open_component_details(self):
+        row = ComponentRowWidget("meeting-agent")
+        requested = []
+        row.details_requested.connect(requested.append)
+
+        QTest.keyClick(row, Qt.Key.Key_Return)
+        QTest.keyClick(row, Qt.Key.Key_Space)
+
+        assert requested == ["meeting-agent", "meeting-agent"]
+
+    def test_action_buttons_do_not_open_component_details(self):
+        row = ComponentRowWidget("gpu-accel")
+        selected = []
+        installs = []
+        removes = []
+        row.details_requested.connect(selected.append)
+        row.install_clicked.connect(installs.append)
+        row.remove_clicked.connect(removes.append)
+        row.update_state(
+            self._info(ComponentState.BROKEN, download_bytes=1_000_000),
+            installing=False,
+        )
+
+        row.install_button.click()
+        row.remove_button.click()
+
+        assert installs == ["gpu-accel"]
+        assert removes == ["gpu-accel"]
+        assert selected == []
+
+    def test_component_profile_renders_bundled_facts_and_links(self):
+        details = get_component_details(ComponentId.MEETING_AGENT)
+        popup = ComponentDetailsDialog(ComponentId.MEETING_AGENT)
+        opened = []
+        with patch.object(
+            component_dialog_module.QDesktopServices,
+            "openUrl",
+            side_effect=lambda url: opened.append(url.toString()),
+        ):
+            popup.source_button.click()
+            popup.origin_button.click()
+
+        assert popup.name_label.text() == details.display_name
+        assert popup.description_label.text() == details.description
+        assert popup.fact_labels["Origin"].text() == details.origin_name
+        assert popup.fact_labels["Payload"].text()
+        assert popup.tradeoffs_label.text().startswith("•")
+        assert popup.source_button.toolTip() == details.source_url
+        assert popup.origin_button.toolTip() == details.origin_url
+        assert opened == [details.source_url, PI_HOME_URL]
+        popup.close()

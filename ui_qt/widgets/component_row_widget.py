@@ -1,8 +1,9 @@
-"""Single-component row for the Model Manager dialog.
+"""Single-component row for the Downloads dialog.
 
 Shows one downloadable component's identity, its install state, its size, and
 the actions that apply (Install / Cancel / Remove / Repair), plus a
-determinate progress bar while an install runs.
+determinate progress bar while an install runs. Clicking the row body opens
+the bundled profile popup; install and remove stay on the action buttons.
 
 Styling deliberately mirrors :mod:`ui_qt.widgets.model_row_widget` so the
 Components group and the model list read as one list.
@@ -13,6 +14,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -38,6 +40,14 @@ _ROW_STYLE = """
     QFrame#componentRow:hover {
         background-color: rgba(58, 58, 60, 0.65);
         border: 1px solid rgba(10, 132, 255, 0.28);
+    }
+    QFrame#componentRow:focus {
+        border: 1px solid rgba(10, 132, 255, 0.65);
+        outline: none;
+    }
+    QFrame#componentRow[selected="true"] {
+        background-color: rgba(58, 58, 60, 0.85);
+        border: 1px solid rgba(10, 132, 255, 0.55);
     }
     QLabel#componentRowName {
         color: #f5f5f7;
@@ -165,6 +175,7 @@ class ComponentRowWidget(QFrame):
     install_clicked = pyqtSignal(str)
     cancel_clicked = pyqtSignal(str)
     remove_clicked = pyqtSignal(str)
+    details_requested = pyqtSignal(str)
 
     def __init__(self, component_id: str, parent=None):
         """Initialize the row for one component.
@@ -178,6 +189,13 @@ class ComponentRowWidget(QFrame):
 
         self.setObjectName("componentRow")
         self.setStyleSheet(_ROW_STYLE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Click to view component details")
+        self.setAccessibleName(f"{component_id} component")
+        self.setAccessibleDescription(
+            "Open component details. Install and remove actions are separate."
+        )
         self._setup_ui()
 
     def _setup_ui(self):
@@ -361,3 +379,31 @@ class ComponentRowWidget(QFrame):
             )
         else:
             self.size_label.setText("")
+
+    @staticmethod
+    def _is_action_child(widget) -> bool:
+        while widget is not None:
+            if isinstance(widget, QAbstractButton):
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if not self._is_action_child(child):
+                self.details_requested.emit(self.component_id)
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Space,
+        ):
+            self.details_requested.emit(self.component_id)
+            event.accept()
+            return
+        super().keyPressEvent(event)

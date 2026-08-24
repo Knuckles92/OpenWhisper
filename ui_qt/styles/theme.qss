@@ -216,7 +216,8 @@ QLineEdit:focus {
 
 /* Model Manager — rail and stack; Downloads shares the same surfaces */
 QDialog#modelManagerDialog,
-QDialog#downloadsDialog {
+QDialog#downloadsDialog,
+QDialog#componentDetailsDialog {
     background-color: #10161c;
 }
 

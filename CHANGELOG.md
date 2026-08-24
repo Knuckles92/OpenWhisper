@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Component details popup** - Clicking a Downloads component tile opens a profile for that add-on (what it is, requirements, payload, sizes, license, best-for, and tradeoffs) with outbound links to the original project and the download source — NVIDIA / PyPI for GPU Acceleration, [pi.dev](https://pi.dev) / Node.js for the Meeting Intelligence Agent — matching the per-model inspector above the strip
+
 ## [2.3.1] - 2026-08-23
 
 ### Fixed

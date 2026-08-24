@@ -43,6 +43,7 @@ from services.settings import (
     resolve_meeting_whisper_model,
     settings_manager,
 )
+from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.widgets import Button, ElidingLabel, PrimaryButton
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
@@ -563,6 +564,7 @@ class DownloadsDialog(QDialog):
             row.install_clicked.connect(self.component_install_requested)
             row.cancel_clicked.connect(self.component_cancel_requested)
             row.remove_clicked.connect(self._confirm_component_removal)
+            row.details_requested.connect(self._show_component_details)
             self._component_rows[info.component_id] = row
             layout.addWidget(row)
 
@@ -779,6 +781,24 @@ class DownloadsDialog(QDialog):
     def _on_stop_batch_clicked(self) -> None:
         if self.on_batch_cancel_requested:
             self.on_batch_cancel_requested()
+
+    def _show_component_details(self, component_id: str) -> None:
+        """Open the bundled profile popup for one component row."""
+        if component_id not in self._component_rows:
+            return
+        for cid, row in self._component_rows.items():
+            row.setProperty("selected", cid == component_id)
+            row.style().unpolish(row)
+            row.style().polish(row)
+            row.update()
+        dialog = ComponentDetailsDialog(component_id, self)
+        dialog.exec()
+        selected = self._component_rows.get(component_id)
+        if selected is not None:
+            selected.setProperty("selected", False)
+            selected.style().unpolish(selected)
+            selected.style().polish(selected)
+            selected.update()
 
     def _confirm_component_removal(self, component_id: str) -> None:
         """Ask before deleting a multi-gigabyte component."""

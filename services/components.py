@@ -28,6 +28,7 @@ from typing import Callable, Dict, Final, Optional, Set, Tuple
 
 from _version import __version__
 from config import bundle_root, components_root, is_frozen, local_app_dir
+from services.component_catalog import get_component_details
 from services.format_utils import format_size_bytes
 
 logger = logging.getLogger(__name__)
@@ -265,32 +266,13 @@ class ComponentInfo:
         )
 
 
-# Static descriptions. The catalog supplies versions, sizes, and URLs; these
-# never change between releases and should not require a network round trip.
-COMPONENT_DESCRIPTIONS: Final[Dict[str, Dict[str, str]]] = {
-    ComponentId.GPU_ACCEL: {
-        "display_name": "GPU Acceleration",
-        "summary": (
-            "NVIDIA CUDA runtime (cuBLAS) for 2-4x faster local transcription. "
-            "Requires an NVIDIA graphics card."
-        ),
-    },
-    ComponentId.MEETING_AGENT: {
-        "display_name": "Meeting Intelligence Agent",
-        "summary": (
-            "Node runtime plus the Pi agent that maintains live meeting "
-            "insights (key points, decisions, action items) during Meeting "
-            "Mode. Requires an OpenRouter API key."
-        ),
-    },
-    ComponentId.SPEAKER_ID: {
-        "display_name": "Speaker Identification",
-        "summary": (
-            "Speaker-embedding model (WeSpeaker ONNX) that separates remote "
-            "voices into individual speakers during Meeting Mode."
-        ),
-    },
-}
+def _copy_for(component_id: str) -> Tuple[str, str]:
+    """Return the bundled display name and row summary for a component."""
+    try:
+        details = get_component_details(component_id)
+    except KeyError:
+        return component_id, ""
+    return details.display_name, details.summary
 
 
 def available_component_ids() -> Tuple[str, ...]:
@@ -1179,7 +1161,7 @@ class ComponentCoordinator:
         component with no catalog entry is therefore still reported as installed
         rather than missing.
         """
-        meta = COMPONENT_DESCRIPTIONS.get(component_id, {})
+        display_name, summary = _copy_for(component_id)
         entry = self.catalog_entry(component_id)
         available_version = entry.get("version") if entry else None
         download_bytes = (
@@ -1194,8 +1176,8 @@ class ComponentCoordinator:
             if component_id == ComponentId.GPU_ACCEL and gpu_runtime_available():
                 return ComponentInfo(
                     component_id=component_id,
-                    display_name=meta.get("display_name", component_id),
-                    summary=meta.get("summary", ""),
+                    display_name=display_name,
+                    summary=summary,
                     state=ComponentState.EXTERNAL,
                     installed_version=None,
                     available_version=available_version,
@@ -1216,8 +1198,8 @@ class ComponentCoordinator:
             reason = "The previous installation did not finish." if state == ComponentState.BROKEN else ""
             return ComponentInfo(
                 component_id=component_id,
-                display_name=meta.get("display_name", component_id),
-                summary=meta.get("summary", ""),
+                display_name=display_name,
+                summary=summary,
                 state=state,
                 installed_version=None,
                 available_version=available_version,
@@ -1257,8 +1239,8 @@ class ComponentCoordinator:
 
         return ComponentInfo(
             component_id=component_id,
-            display_name=meta.get("display_name", component_id),
-            summary=meta.get("summary", ""),
+            display_name=display_name,
+            summary=summary,
             state=state,
             installed_version=installed_version,
             available_version=available_version,
