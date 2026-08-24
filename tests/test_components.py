@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from _version import __version__
 from services import components
 from services.components import (
     ComponentCanceled,
@@ -218,6 +219,16 @@ def test_meeting_agent_catalog_is_published():
         assert str(archive["url"]).startswith("https://")
         assert int(archive["size_bytes"]) > 0
         extracts.append(archive.get("extract"))
+        if archive.get("extract") == "zip":
+            url = str(archive["url"])
+            tag = components.MEETING_AGENT_RELEASE_TAG
+            assert f"/releases/download/{tag}/" in url
+            assert (
+                f"meeting-agent-win_amd64-"
+                f"{components.MEETING_AGENT_COMPONENT_VERSION}.zip"
+            ) in url
+            if tag != f"v{__version__}":
+                assert f"/releases/download/v{__version__}/" not in url
     assert "node-exe" in extracts
     assert "zip" in extracts
     with patch.object(components.sys, "platform", "win32"):

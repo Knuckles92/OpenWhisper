@@ -28,8 +28,9 @@ external). The installed Pi SDK version is baked in and reported in the
 ## How OpenWhisper launches it
 
 The sidecar ships as the downloadable `MEETING_AGENT` component: a portable
-win-x64 Node runtime plus the bundle. The Python side
-(`meeting/agent/pi_sidecar.py`) spawns:
+win-x64 Node runtime plus the bundle. Download URLs and SHA-256 pins live in
+`services/components.py`. The Python side (`meeting/agent/pi_sidecar.py`)
+spawns:
 
 ```
 <payload_dir>/node.exe <payload_dir>/bundle.cjs

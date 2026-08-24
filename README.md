@@ -165,9 +165,20 @@ winget install -e --id JRSoftware.InnoSetup
 
 The result lands in `installer\Output\`. See [`OpenWhisper.spec`](OpenWhisper.spec) for what is and isn't bundled.
 
-### Updating the GPU component
+### Optional downloadable components
 
-The installer ships CPU-only; the CUDA runtime is a downloadable component. **Nothing is hosted for it** — the catalog lives in `services/components.py` and points straight at PyPI, whose published wheels are immutable, and every download's SHA-256 is verified before extraction.
+The Windows installer is CPU-only. GPU acceleration and the Meeting Intelligence Agent are installed later from **Downloads** inside the app. Those URLs live in [`services/components.py`](services/components.py) — not on `/releases/latest`, and not on the website (except an unpublished speaker-id placeholder). Every archive is SHA-256 verified before extract.
+
+| What | Where the bytes come from | Moves when |
+| --- | --- | --- |
+| App installer (`OpenWhisper-Setup-*.exe`) | Latest GitHub Release | Every app release |
+| `gpu-accel` | PyPI NVIDIA wheels | The CUDA pin in `requirements-gpu.txt` changes |
+| `meeting-agent` | nodejs.org + a zip on the GitHub tag in `MEETING_AGENT_RELEASE_TAG` | Node or the sidecar bundle changes |
+| `speaker-id` | Unpublished placeholder | — |
+
+An app patch updates the installer row only. Existing component pins stay put so Downloads keep working.
+
+#### Updating the GPU component
 
 To move to newer CUDA wheels, bump the pins in `requirements-gpu.txt`, then:
 
@@ -178,6 +189,16 @@ python scripts\build_component.py gpu-accel
 That resolves what pip would install for `win_amd64`, records the SHA-256 pip reports for each wheel, downloads them to measure the extracted payload, and prints a ready-to-paste `_BUILTIN_GPU_ARCHIVES` block plus the matching `install_bytes`. Paste both into `services/components.py` and bump `GPU_COMPONENT_VERSION` so existing installs are offered the new payload.
 
 Two things not to skip: `install_bytes` drives the pre-install free-space check, so it must be the measured value the script prints rather than an estimate; and `GPU_COMPONENT_VERSION` is what the Model Manager compares against an installed manifest, so leaving it unchanged means nobody is told an update exists.
+
+#### Updating the meeting-agent component
+
+Leave the catalog alone when only the app changed. Rebuild when Node or `sidecar/` changes:
+
+```powershell
+python scripts\build_component.py meeting-agent
+```
+
+That pins the official Node win-x64 zip from nodejs.org, builds `sidecar/dist/bundle.cjs`, zips it, and prints a ready-to-paste `_BUILTIN_MEETING_AGENT_ARCHIVES` block. Attach the new zip to the GitHub Release whose tag you set as `MEETING_AGENT_RELEASE_TAG`, paste the block, and bump `MEETING_AGENT_COMPONENT_VERSION` so existing installs are offered the new payload. Do not replace the zip on an older tag — GitHub assets are treated as immutable.
 
 OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, set API keys in the environment or a `.env` file. Keys are never stored in settings.
 

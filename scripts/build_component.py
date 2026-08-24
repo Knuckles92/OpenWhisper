@@ -14,9 +14,9 @@ whose published wheels are immutable.
 ``meeting-agent`` pins the official Node.js win-x64 zip from nodejs.org
 (SHA-256 from that release's ``SHASUMS256.txt``), builds ``sidecar/dist/bundle.cjs``,
 zips the bundle into ``dist/components/``, and prints a ready-to-paste
-``_BUILTIN_MEETING_AGENT_ARCHIVES`` block. The bundle zip is attached to the
-same GitHub Release as the app installer; bump ``_version.py`` before running
-this builder so the emitted download URL matches the tag that will host it.
+``_BUILTIN_MEETING_AGENT_ARCHIVES`` block. The emitted GitHub URL uses this
+checkout's ``_version.py``. Set ``MEETING_AGENT_RELEASE_TAG`` and paste only
+when attaching a new zip.
 
 An earlier version of this script repacked the GPU DLLs into zips for hosting
 as GitHub Release assets, described by a JSON catalog on the project website.
@@ -54,6 +54,7 @@ from services.components import (  # noqa: E402
     COMPONENT_API,
     GPU_COMPONENT_VERSION,
     MEETING_AGENT_COMPONENT_VERSION,
+    MEETING_AGENT_RELEASE_TAG,
 )
 
 # Official Node 22 LTS (Jod). Bump together with MEETING_AGENT_COMPONENT_VERSION
@@ -380,9 +381,12 @@ def _emit_meeting_agent(archives: List[dict]) -> None:
         f'    # Version pin   : MEETING_AGENT_COMPONENT_VERSION = "{MEETING_AGENT_COMPONENT_VERSION}"'
     )
     print(f"    #                 (component_api {COMPONENT_API})")
-    print(f"    # Release tag   : v{__version__}")
+    print(f"    # Catalog pin   : {MEETING_AGENT_RELEASE_TAG}  (MEETING_AGENT_RELEASE_TAG today)")
+    print(f"    # This URL tag  : v{__version__}  (from _version.py)")
     print()
-    print("Attach the sidecar zip to the same GitHub Release as the app installer:")
+    print("Payload unchanged: do not paste this block; leave the catalog as-is.")
+    print(f"New payload: attach the zip to the v{__version__} GitHub Release,")
+    print(f'set MEETING_AGENT_RELEASE_TAG = "v{__version__}", and paste this block.')
     for archive in archives:
         if archive.get("path"):
             print(f"  {archive['path']}")
