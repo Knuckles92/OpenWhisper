@@ -6,23 +6,23 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 
 <p align="center">
-  <img alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
+  <img width="720" alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
 </p>
 
 <p align="center">
-  <img alt="Waveform overlay cycling through recording, transcribing, copied, and live streaming preview" src="docs/screenshots/overlay-states.gif" />
+  <img width="450" alt="Waveform overlay cycling through recording, transcribing, copied, and live streaming preview" src="docs/screenshots/overlay-states.gif" />
 </p>
 
 <p align="center">
-  <img alt="Model Manager: assign on-demand voice, text cleanup, and meeting models" src="docs/screenshots/01-model-manager-voice.png" />
+  <img width="735" alt="Model Manager: assign on-demand voice, text cleanup, and meeting models" src="docs/screenshots/01-model-manager-voice.png" />
 </p>
 
 <p align="center">
-  <img alt="Downloads: Whisper catalog and per-model technical profile" src="docs/screenshots/06-downloads-model-profile.png" />
+  <img width="960" alt="Downloads: Whisper catalog and per-model technical profile" src="docs/screenshots/06-downloads-model-profile.png" />
 </p>
 
 <p align="center">
-  <img alt="Settings: General destination with auto-paste, clipboard, tray, and updates" src="docs/screenshots/01-general.png" />
+  <img width="720" alt="Settings: General destination with auto-paste, clipboard, tray, and updates" src="docs/screenshots/01-general.png" />
 </p>
 
 
