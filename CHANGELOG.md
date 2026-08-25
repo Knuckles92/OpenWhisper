@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-08-24
+
 ### Added
 - **Component details popup** - Clicking a Downloads component tile opens a profile for that add-on (what it is, requirements, payload, sizes, license, best-for, and tradeoffs) with outbound links to the original project and the download source — NVIDIA / PyPI for GPU Acceleration, [pi.dev](https://pi.dev) / Node.js for the Meeting Intelligence Agent — matching the per-model inspector above the strip
+- **Past meeting preview, copy, and delete** - Sidebar cards show a short transcript excerpt (or the topic when there is no excerpt). Right-click a card to Copy transcript or Delete. File → Downloads… opens the Downloads window from the main menu
+
+### Fixed
+- **Keep for later came back as a crash leftover** - Deferred leftover cards now persist ``card_deferred``, and startup recovery skips those sessions, so a Done / Keep for later meeting is not offered as an interrupted session again
+- **Startup held the splash until Whisper loaded** - The local backend is constructed without loading the model. The splash dismisses and the main window appears first; model load, Hugging Face consent, and meeting recovery run after the UI is ready
+
+### Changed
+- **Meeting leftover card identity** - Centered title, tighter spacing, and a divider above the checklist
+- **Loading splash can be dragged** - The frameless splash follows a click-and-drag so it is not stuck in the screen center
 
 ## [2.3.1] - 2026-08-23
 
