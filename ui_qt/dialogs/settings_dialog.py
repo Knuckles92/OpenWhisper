@@ -2,18 +2,33 @@ import logging
 import os
 import tempfile
 import threading
-from typing import Optional, Callable
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QWidget, QLabel, QCheckBox, QPushButton,
-    QSlider, QFrame, QScrollArea, QTextEdit,
-    QLineEdit, QListWidget, QStackedWidget, QSizePolicy,
-    QFileDialog, QFormLayout,
-)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from pathlib import Path
+from typing import Callable, Dict, Optional
 
-from config import config
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config import bundle_root, config
+from services.history_manager import history_manager
+from services.hotkey_manager import format_hotkey_display
+from services.recorder import AudioRecorder
 from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingAgentCore,
@@ -23,74 +38,114 @@ from services.settings import (
     RecordingRetentionMode,
     SettingsKey,
     TranscriptCleanupReasoning,
+    resolve_developer_mode,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
     resolve_meeting_context_folder_enabled,
     resolve_meeting_context_folder_path,
-    resolve_meeting_past_recall_enabled,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
     resolve_meeting_end_report,
+    resolve_meeting_language,
+    resolve_meeting_llm_model,
+    resolve_meeting_llm_provider,
+    resolve_meeting_past_recall_enabled,
     resolve_meeting_report_brief,
     resolve_meeting_report_ribbon,
     resolve_meeting_report_signal,
-    resolve_meeting_llm_model,
-    resolve_meeting_llm_provider,
-    resolve_meeting_language,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
-    resolve_developer_mode,
-    resolve_update_check_enabled,
-    resolve_update_notify_enabled,
     resolve_streaming_overlay_font_size,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
+    resolve_update_check_enabled,
+    resolve_update_notify_enabled,
     settings_manager,
 )
-from services.history_manager import history_manager
-from services.recorder import AudioRecorder
 from services.text_llm import profile_display_name
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
+from ui_qt.utils.app_icon import app_icon
 from ui_qt.widgets import (
-    NoWheelComboBox, NoWheelSpinBox, PrimaryButton, Button, WrappedLabel,
+    Button,
+    ElidingComboBox,
+    NoWheelSpinBox,
+    PrimaryButton,
+    WrappedLabel,
 )
+from ui_qt.widgets.nav_rail import NavRail
 
 logger = logging.getLogger(__name__)
 
+GENERAL = "general"
+RECORDING = "recording"
+CLEANUP = "cleanup"
+CLEANUP_RULES = "cleanup_rules"
+MEETING_INTELLIGENCE = "meeting_intelligence"
+MEETING_AFTER = "meeting_after"
+MEETING_DASHBOARD = "meeting_dashboard"
+HOTKEYS = "hotkeys"
+ADVANCED = "advanced"
+
+_HF_POLICY_RAIL = {
+    HuggingFaceAccessPolicy.ASK: "Ask first",
+    HuggingFaceAccessPolicy.ALWAYS: "Always allow",
+    HuggingFaceAccessPolicy.NEVER: "Offline",
+}
+
+
+def _design_icon(filename: str) -> QIcon:
+    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / filename
+    icon = QIcon(str(path))
+    icon.addPixmap(icon.pixmap(24, 24), QIcon.Mode.Disabled, QIcon.State.Off)
+    return icon
+
 
 class SettingsDialog(QDialog):
-    settings_changed = pyqtSignal(dict)
+    """Non-modal Settings window with a Model Manager-style rail.
 
-    #: Internal: emitted from the rule-polish worker thread
-    #: (raw instruction, polished rule, error).
+    Changes persist immediately. ``UIController`` holds a single instance and
+    re-raises it instead of stacking copies.
+    """
+
+    #: 760 clears the 566 px the Cleanup destination needs under themed
+    #: fonts, plus chrome. Learned rules is next at 493 once the empty
+    #: state and the rule list are mutually exclusive.
+    DEFAULT_SIZE = QSize(980, 760)
+    MINIMUM_SIZE = QSize(840, 700)
+
+    model_manager_requested = pyqtSignal(str)
     _cleanup_rule_polished = pyqtSignal(str, str, str)
-
-    #: Internal: emitted from the rule-dictation worker thread (text, error).
     _rule_dictation_finished = pyqtSignal(str, str)
+
+    on_audio_device_changed: Optional[Callable] = None
+    on_streaming_settings_changed: Optional[Callable] = None
+    on_streaming_font_changed: Optional[Callable] = None
+    on_hf_policy_changed: Optional[Callable] = None
+    on_developer_mode_changed: Optional[Callable] = None
+    on_cleanup_changed: Optional[Callable] = None
+    on_dictation_transcribe: Optional[Callable[[str], str]] = None
+    get_meeting_active: Optional[Callable[[], bool]] = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(600, 500)
-        self.setMaximumWidth(800)
+        self.setWindowIcon(app_icon())
+        self.setObjectName("settingsDialog")
+        self.setModal(False)
+        self.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setSizeGripEnabled(True)
 
-        self.on_settings_save: Optional[Callable] = None
-        # Transcribes a short dictated clip; wired by UIController.
-        self.on_dictation_transcribe: Optional[Callable[[str], str]] = None
-        # Reports whether Meeting Mode owns the mic; wired by UIController.
-        self.get_meeting_active: Optional[Callable[[], bool]] = None
-        # Set by Model Manager links; read after exec() returns ("text" /
-        # "meeting"), or None when Settings should not open the manager.
-        self.open_model_manager_on_close: Optional[str] = None
-
+        self._loading = False
+        self._saved_cleanup_prompt = ""
         self._rule_polishing = False
-        self._rule_dictation_state = "idle"  # idle | recording | transcribing
+        self._rule_dictation_state = "idle"
         self._rule_recorder: Optional[AudioRecorder] = None
         self._rule_recorder_device: Optional[int] = None
         self._rule_dictation_path = os.path.join(
@@ -102,72 +157,219 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
 
         self._setup_ui()
-        self._load_settings()
+        self.setMinimumSize(self.MINIMUM_SIZE)
+        self.resize(self.DEFAULT_SIZE)
 
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
         self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
         self.finished.connect(self._release_rule_recorder)
+        self.rail.select(GENERAL)
+        self.refresh()
 
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+    def _setup_ui(self) -> None:
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_rail_pane())
+        root.addWidget(self._build_body(), stretch=1)
 
-        # Tab widget: segmented-button tab styling lives in theme.qss
-        # under the #settingsTabs rules.
-        self.tabs = QTabWidget()
-        self.tabs.setObjectName("settingsTabs")
-        self.tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
+    def _build_rail_pane(self) -> QWidget:
+        pane = QWidget()
+        pane.setObjectName("modelManagerRailPane")
+        pane.setFixedWidth(NavRail.RAIL_WIDTH)
+        column = QVBoxLayout(pane)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
 
-        self._create_general_tab()
-        self._create_audio_tab()
-        self._create_hotkeys_tab()
-        self._create_cleanup_tab()
-        self._create_meeting_tab()
-        self._create_advanced_tab()
+        brand = QHBoxLayout()
+        brand.setContentsMargins(16, 16, 16, 12)
+        brand.setSpacing(10)
+        brand_icon = QLabel()
+        brand_icon.setObjectName("modelManagerHeaderIcon")
+        brand_icon.setPixmap(app_icon().pixmap(26, 26))
+        brand_icon.setFixedSize(28, 28)
+        brand.addWidget(brand_icon)
+        brand_title = QLabel("Settings")
+        brand_title.setObjectName("modelManagerRailBrand")
+        brand.addWidget(brand_title)
+        brand.addStretch()
+        column.addLayout(brand)
 
-        layout.addWidget(self.tabs)
-
-        button_layout = QHBoxLayout()
-        button_layout.setContentsMargins(16, 16, 16, 16)
-        button_layout.setSpacing(8)
-
-        button_layout.addStretch()
-
-        cancel_btn = Button("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-
-        save_btn = PrimaryButton("Save Settings")
-        save_btn.clicked.connect(self._save_settings)
-        button_layout.addWidget(save_btn)
-
-        layout.addLayout(button_layout)
-
-    def _add_scrollable_tab(self, inner: QWidget, title: str) -> None:
-        """Host a settings page in a scroll area so labels never overlap."""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        inner.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum
+        self.rail = NavRail()
+        self.rail.add_group("General")
+        self.rail.add_destination(GENERAL, "General", _design_icon("bolt-green.svg"))
+        self.rail.add_destination(
+            RECORDING, "Recording", _design_icon("microphone-blue.svg")
         )
-        scroll.setWidget(inner)
-        self.tabs.addTab(scroll, title)
+        self.rail.add_group("Dictation cleanup")
+        self.rail.add_destination(
+            CLEANUP, "Cleanup", _design_icon("stack-purple.svg")
+        )
+        self.rail.add_destination(
+            CLEANUP_RULES, "Learned rules", _design_icon("stack-slate.svg")
+        )
+        self.rail.add_group("Meeting Mode")
+        self.rail.add_destination(
+            MEETING_INTELLIGENCE, "Intelligence", _design_icon("stack-purple.svg")
+        )
+        self.rail.add_destination(
+            MEETING_AFTER, "After the meeting", _design_icon("check-green.svg")
+        )
+        self.rail.add_destination(
+            MEETING_DASHBOARD, "Dashboard", _design_icon("box-blue.svg")
+        )
+        self.rail.add_group("System")
+        self.rail.add_destination(HOTKEYS, "Hotkeys", _design_icon("bolt-green.svg"))
+        self.rail.add_destination(ADVANCED, "Advanced", _design_icon("box-blue.svg"))
+        self.rail.destination_changed.connect(self._on_destination_changed)
+        column.addWidget(self.rail, stretch=1)
+        return pane
 
-    def _create_general_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+    def _build_body(self) -> QWidget:
+        body = QWidget()
+        body.setObjectName("modelManagerBody")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(28, 20, 28, 16)
+        layout.setSpacing(14)
 
-        title = QLabel("General Settings")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
+        self.page_title = QLabel("")
+        self.page_title.setObjectName("modelManagerTitle")
+        self.page_subtitle = WrappedLabel("")
+        self.page_subtitle.setObjectName("modelManagerSubtitle")
+        layout.addWidget(self.page_title)
+        layout.addWidget(self.page_subtitle)
 
-        layout.addSpacing(12)
-        self.auto_paste_check = QCheckBox("Auto-paste transcription to active window")
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("modelManagerStack")
+        self._pages: Dict[str, QWidget] = {}
+        self._headings: Dict[str, tuple] = {}
+        self._add_page(
+            GENERAL,
+            "General",
+            "How finished transcriptions leave the app, and how the window "
+            "behaves when you close it.",
+            self._build_general_page,
+        )
+        self._add_page(
+            RECORDING,
+            "Recording",
+            "Microphone, saved audio retention, and the live preview overlay.",
+            self._build_recording_page,
+        )
+        self._add_page(
+            CLEANUP,
+            "AI transcript cleanup",
+            "Rewrite a finished dictation with a chat model. Provider and "
+            "model live in Model Manager.",
+            self._build_cleanup_page,
+        )
+        self._add_page(
+            CLEANUP_RULES,
+            "Learned rules",
+            "Teach OpenWhisper your preferred spellings, terminology, and "
+            "formatting. Applied whenever AI cleanup runs.",
+            self._build_cleanup_rules_page,
+        )
+        self._add_page(
+            MEETING_INTELLIGENCE,
+            "Meeting intelligence",
+            "What the meeting agent may search, and which models it uses. "
+            "Nothing is sent until you enable intelligence for a meeting.",
+            self._build_meeting_intelligence_page,
+        )
+        self._add_page(
+            MEETING_AFTER,
+            "After the meeting",
+            "Steps that run after End, once live captions have finished.",
+            self._build_meeting_after_page,
+        )
+        self._add_page(
+            MEETING_DASHBOARD,
+            "Dashboard access",
+            "Who can open the live meeting dashboard, and on which port.",
+            self._build_meeting_dashboard_page,
+        )
+        self._add_page(
+            HOTKEYS,
+            "Hotkeys",
+            "Global shortcuts for record, cancel, enable/disable, and "
+            "minimize.",
+            self._build_hotkeys_page,
+        )
+        self._add_page(
+            ADVANCED,
+            "Advanced",
+            "Developer tools and when Hugging Face may download a missing "
+            "model.",
+            self._build_advanced_page,
+        )
+        layout.addWidget(self.stack, stretch=1)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        self.message_label = WrappedLabel("")
+        self.message_label.setObjectName("modelManagerMessage")
+        footer.addWidget(self.message_label, stretch=1)
+        close_btn = Button("Close")
+        close_btn.setObjectName("modelManagerCloseButton")
+        self._compact_button(close_btn, 110)
+        close_btn.clicked.connect(self.close)
+        footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(footer)
+        return body
+
+    def _add_page(
+        self, key: str, title: str, subtitle: str, builder: Callable
+    ) -> None:
+        page = QWidget()
+        page.setObjectName(f"settingsPage_{key}")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        builder(layout)
+        layout.addStretch()
+        self._pages[key] = page
+        self._headings[key] = (title, subtitle)
+        self.stack.addWidget(page)
+
+    def _field(self, label: str, widget: QWidget) -> QWidget:
+        wrapper = QWidget()
+        wrapper.setObjectName("modelManagerFieldGroup")
+        col = QVBoxLayout(wrapper)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(5)
+        caption = QLabel(label)
+        caption.setObjectName("textModelFieldLabel")
+        col.addWidget(caption)
+        col.addWidget(widget)
+        return wrapper
+
+    @staticmethod
+    def _caption(text: str) -> WrappedLabel:
+        label = WrappedLabel(text)
+        label.setObjectName("infoLabel")
+        return label
+
+    @staticmethod
+    def _compact_button(button: Button, width: int) -> None:
+        button.set_base_minimum_size(width, 34)
+        button.ensurePolished()
+        height = max(34, button.sizeHint().height())
+        button.setMinimumHeight(height)
+        button.setMaximumHeight(height)
+        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
+        button.setMinimumWidth(fitted)
+        button.setMaximumWidth(fitted)
+
+    def _expanding_check(self, checkbox) -> None:
+        checkbox.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
+
+    def _build_general_page(self, layout: QVBoxLayout) -> None:
+        self.auto_paste_check = QCheckBox(
+            "Auto-paste transcription to active window"
+        )
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
         self.update_check_check = QCheckBox("Check for updates automatically")
@@ -183,40 +385,59 @@ class SettingsDialog(QDialog):
             self.update_check_check,
             self.update_notify_check,
         ):
-            box.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-            )
+            self._expanding_check(box)
+
         layout.addWidget(self.auto_paste_check)
         layout.addWidget(self.copy_clipboard_check)
-        layout.addSpacing(12)
         layout.addWidget(self.minimize_tray_check)
-
-        layout.addSpacing(24)
-        updates_label = QLabel("Updates")
-        updates_label.setObjectName("sectionLabel")
-        layout.addWidget(updates_label)
-        layout.addSpacing(8)
         layout.addWidget(self.update_check_check)
         layout.addWidget(self.update_notify_check)
-        self.update_check_check.toggled.connect(self._on_update_check_toggled)
 
-        layout.addSpacing(24)
-        recordings_label = QLabel("Saved Recordings")
-        recordings_label.setObjectName("sectionLabel")
-        layout.addWidget(recordings_label)
-
-        layout.addSpacing(8)
-        retention_label = QLabel("Keep recordings:")
-        layout.addWidget(retention_label)
-
-        self.recording_retention_combo = NoWheelComboBox()
-        self.recording_retention_combo.addItem("Keep all", RecordingRetentionMode.KEEP_ALL)
-        self.recording_retention_combo.addItem("Custom", RecordingRetentionMode.CUSTOM)
-        self.recording_retention_combo.setMinimumHeight(36)
-        self.recording_retention_combo.currentIndexChanged.connect(
-            self._update_recording_retention_ui
+        self.auto_paste_check.toggled.connect(
+            lambda checked: self._persist(SettingsKey.AUTO_PASTE, bool(checked))
         )
-        layout.addWidget(self.recording_retention_combo)
+        self.copy_clipboard_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.COPY_CLIPBOARD, bool(checked)
+            )
+        )
+        self.minimize_tray_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MINIMIZE_TRAY, bool(checked)
+            )
+        )
+        self.update_check_check.toggled.connect(self._on_update_check_toggled)
+        self.update_notify_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.UPDATE_NOTIFY_ENABLED, bool(checked)
+            )
+        )
+
+    def _build_recording_page(self, layout: QVBoxLayout) -> None:
+        self.audio_device_combo = ElidingComboBox()
+        self.audio_device_combo.setObjectName("settingsAudioDeviceCombo")
+        self.audio_device_combo.setMinimumHeight(40)
+        self._populate_audio_devices()
+        self.audio_device_combo.currentIndexChanged.connect(
+            self._on_audio_device_changed
+        )
+        layout.addWidget(self._field("Input device", self.audio_device_combo))
+        layout.addWidget(self._caption("Select the microphone used for recording."))
+
+        self.recording_retention_combo = ElidingComboBox()
+        self.recording_retention_combo.addItem(
+            "Keep all", RecordingRetentionMode.KEEP_ALL
+        )
+        self.recording_retention_combo.addItem(
+            "Custom", RecordingRetentionMode.CUSTOM
+        )
+        self.recording_retention_combo.setMinimumHeight(40)
+        self.recording_retention_combo.currentIndexChanged.connect(
+            self._on_retention_mode_changed
+        )
+        layout.addWidget(
+            self._field("Keep recordings", self.recording_retention_combo)
+        )
 
         self.max_recordings_label = QLabel("Number to keep:")
         self.max_recordings_spinbox = NoWheelSpinBox()
@@ -225,6 +446,9 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
         self.max_recordings_spinbox.setMinimumHeight(36)
         self.max_recordings_spinbox.setMinimumWidth(110)
+        self.max_recordings_spinbox.valueChanged.connect(
+            self._on_max_recordings_changed
+        )
         retention_form = QFormLayout()
         retention_form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -236,26 +460,23 @@ class SettingsDialog(QDialog):
         retention_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
         )
-        retention_form.addRow(self.max_recordings_label, self.max_recordings_spinbox)
-        layout.addLayout(retention_form)
-
-        retention_info = WrappedLabel(
-            "Older audio files are deleted automatically when the limit is exceeded. "
-            "Transcription history text is kept separately."
+        retention_form.addRow(
+            self.max_recordings_label, self.max_recordings_spinbox
         )
-        retention_info.setObjectName("infoLabel")
-        layout.addWidget(retention_info)
+        layout.addLayout(retention_form)
+        layout.addWidget(
+            self._caption(
+                "Older audio files are deleted automatically when the limit is "
+                "exceeded. Transcription history text is kept separately."
+            )
+        )
 
-        layout.addSpacing(24)
-        streaming_label = QLabel("Real-Time Transcription (Experimental)")
-        streaming_label.setObjectName("sectionLabel")
-        layout.addWidget(streaming_label)
-
-        layout.addSpacing(8)
         self.streaming_enabled_check = QCheckBox(
             "Enable real-time transcription preview (while recording)"
         )
-        self.streaming_enabled_check.toggled.connect(self._update_streaming_font_ui)
+        self.streaming_enabled_check.toggled.connect(
+            self._on_streaming_enabled_changed
+        )
         layout.addWidget(self.streaming_enabled_check)
 
         self.streaming_font_size_label = QLabel("Preview font size:")
@@ -266,6 +487,9 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
         self.streaming_font_size_spinbox.setMinimumHeight(36)
         self.streaming_font_size_spinbox.setMinimumWidth(110)
+        self.streaming_font_size_spinbox.valueChanged.connect(
+            self._on_streaming_font_changed
+        )
         font_form = QFormLayout()
         font_form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -281,165 +505,28 @@ class SettingsDialog(QDialog):
             self.streaming_font_size_label, self.streaming_font_size_spinbox
         )
         layout.addLayout(font_form)
-
-        streaming_info = WrappedLabel(
-            "Shows transcribed text as you speak on the near-cursor overlay using a dedicated "
-            "tiny.en preview model. Requires Local Whisper backend. Final transcription still "
-            "uses your selected model and normal auto-paste / clipboard settings."
+        layout.addWidget(
+            self._caption(
+                "Shows transcribed text as you speak on the near-cursor overlay "
+                "using a dedicated tiny.en preview model. Requires Local "
+                "Whisper. Final transcription still uses your selected model "
+                "and the General paste / clipboard settings."
+            )
         )
-        streaming_info.setObjectName("infoLabel")
-        layout.addWidget(streaming_info)
 
-        self._update_streaming_font_ui()
-        layout.addStretch()
-        self._add_scrollable_tab(tab, "General")
-
-    def _create_audio_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        title = QLabel("Audio Settings")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
-
-        layout.addSpacing(12)
-        sample_rate_label = QLabel("Sample Rate (Hz):")
-        layout.addWidget(sample_rate_label)
-
-        self.sample_rate_combo = NoWheelComboBox()
-        self.sample_rate_combo.addItems(["16000", "22050", "44100", "48000"])
-        self.sample_rate_combo.setMinimumHeight(36)
-        layout.addWidget(self.sample_rate_combo)
-
-        layout.addSpacing(12)
-        channels_label = QLabel("Channels:")
-        layout.addWidget(channels_label)
-
-        self.channels_combo = NoWheelComboBox()
-        self.channels_combo.addItems(["Mono (1)", "Stereo (2)"])
-        self.channels_combo.setMinimumHeight(36)
-        layout.addWidget(self.channels_combo)
-
-        layout.addSpacing(12)
-        threshold_label = QLabel("Silence Threshold:")
-        layout.addWidget(threshold_label)
-
-        threshold_layout = QHBoxLayout()
-        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
-        self.threshold_slider.setMinimum(0)
-        self.threshold_slider.setMaximum(100)
-        self.threshold_slider.setValue(10)
-
-        self.threshold_value_label = QLabel("0.01")
-        self.threshold_value_label.setObjectName("accentLabel")
-        self.threshold_value_label.setMaximumWidth(50)
-
-        self.threshold_slider.valueChanged.connect(self._update_threshold_display)
-
-        threshold_layout.addWidget(self.threshold_slider)
-        threshold_layout.addWidget(self.threshold_value_label)
-        layout.addLayout(threshold_layout)
-
-        layout.addSpacing(16)
-        device_label = QLabel("Input Device:")
-        layout.addWidget(device_label)
-
-        self.audio_device_combo = NoWheelComboBox()
-        self.audio_device_combo.setMinimumHeight(36)
-        self._populate_audio_devices()
-        layout.addWidget(self.audio_device_combo)
-
-        device_info = QLabel("Select microphone for recording")
-        device_info.setObjectName("infoLabel")
-        layout.addWidget(device_info)
-
-        layout.addStretch()
-        self.tabs.addTab(tab, "Audio")
-
-    def _create_hotkeys_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        title = QLabel("Hotkeys")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
-
-        layout.addSpacing(12)
-        info_label = QLabel("Configure global hotkeys for quick access")
-        info_label.setObjectName("infoLabel")
-        layout.addWidget(info_label)
-
-        layout.addSpacing(16)
-        hotkey_button = PrimaryButton("Configure Hotkeys...")
-        hotkey_button.setMinimumHeight(40)
-        hotkey_button.clicked.connect(self._open_hotkey_dialog)
-        layout.addWidget(hotkey_button)
-
-        layout.addStretch()
-        self.tabs.addTab(tab, "Hotkeys")
-
-    def _create_cleanup_tab(self):
-        """Create AI transcript cleanup (post-processing) settings tab.
-
-        Split into subtabs so the growing cleanup feature set stays
-        scannable: General holds behavior/prompt settings, while Learned Rules
-        holds the rule-teaching UI. Provider and model selection live in the
-        centralized Model Manager.
-        """
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        tab_layout.setSpacing(0)
-
-        subtabs = QTabWidget()
-        subtabs.setObjectName("cleanupSubTabs")
-        subtabs.addTab(self._create_cleanup_general_subtab(), "General")
-        subtabs.addTab(self._create_cleanup_rules_subtab(), "Learned Rules")
-        tab_layout.addWidget(subtabs)
-
-        self._cleanup_tab_index = self.tabs.addTab(tab, "Cleanup")
-
-    def _cleanup_subtab_scaffold(self):
-        """Create the scrollable scaffold shared by Cleanup subtabs.
-
-        Returns:
-            Tuple of (scroll_area, content_layout). The scroll area is the
-            widget to hand to addTab; the layout receives the content.
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        scroll_area.setWidget(content)
-        return scroll_area, layout
-
-    def _create_cleanup_general_subtab(self):
-        scroll_area, layout = self._cleanup_subtab_scaffold()
-
-        title = QLabel("AI Transcript Cleanup")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
-
-        layout.addSpacing(12)
+    def _build_cleanup_page(self, layout: QVBoxLayout) -> None:
         self.transcript_cleanup_check = QCheckBox(
             "Clean up transcript with AI after transcription"
         )
-        self.transcript_cleanup_check.toggled.connect(self._update_cleanup_prompt_ui)
+        self.transcript_cleanup_check.toggled.connect(
+            self._on_cleanup_enabled_changed
+        )
         layout.addWidget(self.transcript_cleanup_check)
 
         model_card = QFrame()
         model_card.setObjectName("cleanupModelSummaryCard")
         model_card_layout = QVBoxLayout(model_card)
-        model_card_layout.setContentsMargins(16, 14, 16, 14)
+        model_card_layout.setContentsMargins(16, 12, 16, 12)
         model_card_layout.setSpacing(6)
         model_header = QHBoxLayout()
         model_header.setContentsMargins(0, 0, 0, 0)
@@ -453,11 +540,11 @@ class SettingsDialog(QDialog):
         self.open_model_manager_btn.setFlat(True)
         self.open_model_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_model_manager_btn.setToolTip(
-            "Save settings and open Model Manager → On-demand to choose the "
-            "cleanup provider and chat model"
+            "Open Model Manager → On-demand to choose the cleanup provider "
+            "and chat model"
         )
         self.open_model_manager_btn.clicked.connect(
-            self._open_model_manager_from_cleanup
+            lambda: self.model_manager_requested.emit("text")
         )
         model_header.addWidget(self.open_model_manager_btn)
         model_card_layout.addLayout(model_header)
@@ -473,117 +560,94 @@ class SettingsDialog(QDialog):
         model_card_layout.addWidget(model_hint)
         layout.addWidget(model_card)
 
-        self.cleanup_reasoning_label = QLabel("Thinking level:")
-        layout.addWidget(self.cleanup_reasoning_label)
-
-        self.cleanup_reasoning_combo = NoWheelComboBox()
+        self.cleanup_reasoning_combo = ElidingComboBox()
         self.cleanup_reasoning_combo.addItem("Off", TranscriptCleanupReasoning.OFF)
         self.cleanup_reasoning_combo.addItem("Low", TranscriptCleanupReasoning.LOW)
         self.cleanup_reasoning_combo.addItem(
             "Medium", TranscriptCleanupReasoning.MEDIUM
         )
         self.cleanup_reasoning_combo.addItem("High", TranscriptCleanupReasoning.HIGH)
-        self.cleanup_reasoning_combo.setMinimumHeight(36)
-        layout.addWidget(self.cleanup_reasoning_combo)
-
-        reasoning_info = QLabel(
-            "Requests extra thinking effort from reasoning models (e.g. o4-mini). "
-            "Leave Off for regular chat models."
+        self.cleanup_reasoning_combo.setMinimumHeight(40)
+        self.cleanup_reasoning_combo.currentIndexChanged.connect(
+            self._on_cleanup_reasoning_changed
         )
-        reasoning_info.setObjectName("infoLabel")
-        reasoning_info.setWordWrap(True)
-        self.cleanup_reasoning_info = reasoning_info
-        layout.addWidget(reasoning_info)
-
-        layout.addSpacing(8)
-        self.cleanup_prompt_label = QLabel("Cleanup prompt:")
-        layout.addWidget(self.cleanup_prompt_label)
+        layout.addWidget(
+            self._field("Thinking level", self.cleanup_reasoning_combo)
+        )
+        self.cleanup_reasoning_info = self._caption(
+            "Requests extra thinking effort from reasoning models "
+            "(e.g. o4-mini). Leave Off for regular chat models."
+        )
+        layout.addWidget(self.cleanup_reasoning_info)
 
         self.cleanup_prompt_edit = QTextEdit()
         self.cleanup_prompt_edit.setAcceptRichText(False)
         self.cleanup_prompt_edit.setFont(QFont("Segoe UI", 11))
-        self.cleanup_prompt_edit.setMinimumHeight(140)
+        self.cleanup_prompt_edit.setMinimumHeight(80)
         self.cleanup_prompt_edit.setPlaceholderText(
             "Instructions for how the AI should clean up transcripts…"
         )
-        layout.addWidget(self.cleanup_prompt_edit)
+        self.cleanup_prompt_edit.installEventFilter(self)
+        layout.addWidget(self._field("Cleanup prompt", self.cleanup_prompt_edit))
 
         cleanup_btn_row = QHBoxLayout()
         cleanup_btn_row.setSpacing(8)
         self.cleanup_prompt_edit_btn = Button("Open editor…")
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
         cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
-
         self.cleanup_prompt_reset_btn = Button("Reset to default")
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
         cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
         cleanup_btn_row.addStretch()
         layout.addLayout(cleanup_btn_row)
 
-        cleanup_info = QLabel(
-            "Runs the selected chat model on each transcript after transcription. "
-            "Built-in OpenAI/OpenRouter keys and any custom endpoint variable "
-            "come from the environment or .env. Local servers can leave the "
-            "key variable blank. Edit the prompt to change cleanup style "
-            "(e.g. bullets, email tone)."
+        self.cleanup_prompt_info = self._caption(
+            "Runs the selected chat model on each transcript after "
+            "transcription. Built-in OpenAI/OpenRouter keys and any custom "
+            "endpoint variable come from the environment or .env. Edit the "
+            "prompt to change cleanup style (e.g. bullets, email tone)."
         )
-        cleanup_info.setObjectName("infoLabel")
-        cleanup_info.setWordWrap(True)
-        self.cleanup_prompt_info = cleanup_info
-        layout.addWidget(cleanup_info)
+        layout.addWidget(self.cleanup_prompt_info)
 
-        layout.addStretch()
-        return scroll_area
-
-    def _create_cleanup_rules_subtab(self):
-        scroll_area, layout = self._cleanup_subtab_scaffold()
-
+    def _build_cleanup_rules_page(self, layout: QVBoxLayout) -> None:
         hero = QFrame()
         hero.setObjectName("cleanupRulesHero")
         hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(20, 18, 20, 18)
-        hero_layout.setSpacing(16)
-
+        hero_layout.setContentsMargins(14, 10, 14, 10)
+        hero_layout.setSpacing(10)
         hero_copy = QVBoxLayout()
         hero_copy.setContentsMargins(0, 0, 0, 0)
-        hero_copy.setSpacing(5)
-
+        hero_copy.setSpacing(4)
         eyebrow = QLabel("PERSONAL CLEANUP PROFILE")
         eyebrow.setObjectName("cleanupRulesEyebrow")
         hero_copy.addWidget(eyebrow)
-
         title = QLabel("Make every transcript sound like you")
         title.setObjectName("cleanupRulesTitle")
         title.setWordWrap(True)
         hero_copy.addWidget(title)
-
         self.cleanup_rules_info = QLabel(
-            "Teach OpenWhisper your preferred spellings, terminology, and "
-            "formatting. These instructions are applied automatically whenever "
-            "AI cleanup runs."
+            "Teach preferred spellings, terminology, and formatting. These "
+            "instructions apply automatically whenever AI cleanup runs."
         )
         self.cleanup_rules_info.setObjectName("cleanupRulesDescription")
         self.cleanup_rules_info.setWordWrap(True)
         hero_copy.addWidget(self.cleanup_rules_info)
         hero_layout.addLayout(hero_copy, stretch=1)
-
         hero_mark = QLabel("AI")
         hero_mark.setObjectName("cleanupRulesHeroMark")
         hero_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hero_mark.setFixedSize(52, 52)
+        hero_mark.setFixedSize(44, 44)
         hero_layout.addWidget(hero_mark, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addWidget(hero)
 
         composer = QFrame()
         composer.setObjectName("cleanupRulesCard")
         composer_layout = QVBoxLayout(composer)
-        composer_layout.setContentsMargins(18, 16, 18, 18)
-        composer_layout.setSpacing(12)
-
+        composer_layout.setContentsMargins(14, 10, 14, 10)
+        composer_layout.setSpacing(6)
         composer_title = QLabel("Teach a new rule")
         composer_title.setObjectName("cleanupRulesSectionTitle")
         composer_layout.addWidget(composer_title)
-
         composer_hint = QLabel(
             "Write a natural instruction. The AI will turn it into a clear, "
             "reusable rule before saving."
@@ -593,32 +657,29 @@ class SettingsDialog(QDialog):
         composer_layout.addWidget(composer_hint)
 
         rule_input_row = QHBoxLayout()
-        rule_input_row.setSpacing(10)
+        rule_input_row.setSpacing(8)
         self.cleanup_rule_input = QLineEdit()
         self.cleanup_rule_input.setObjectName("cleanupRuleInput")
-        self.cleanup_rule_input.setMinimumHeight(44)
+        self.cleanup_rule_input.setMinimumHeight(40)
         self.cleanup_rule_input.setPlaceholderText(
             'Try: Always spell my name "Alex Rivera"'
         )
         self.cleanup_rule_input.returnPressed.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_input, stretch=1)
-
         self.cleanup_rule_mic_btn = Button("Dictate")
         self.cleanup_rule_mic_btn.setObjectName("cleanupRuleDictateButton")
-        self.cleanup_rule_mic_btn.set_base_minimum_size(92, 44)
+        self.cleanup_rule_mic_btn.set_base_minimum_size(92, 40)
         self.cleanup_rule_mic_btn.setToolTip(
             "Speak the instruction instead of typing it"
         )
         self.cleanup_rule_mic_btn.clicked.connect(self._toggle_rule_dictation)
         rule_input_row.addWidget(self.cleanup_rule_mic_btn)
-
         self.cleanup_rule_add_btn = PrimaryButton("+ Add rule")
         self.cleanup_rule_add_btn.setObjectName("cleanupRuleAddButton")
-        self.cleanup_rule_add_btn.set_base_minimum_size(112, 44)
+        self.cleanup_rule_add_btn.set_base_minimum_size(112, 40)
         self.cleanup_rule_add_btn.clicked.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_add_btn)
         composer_layout.addLayout(rule_input_row)
-
         self.cleanup_rule_status = QLabel("")
         self.cleanup_rule_status.setObjectName("cleanupRuleStatus")
         self.cleanup_rule_status.setWordWrap(True)
@@ -628,9 +689,8 @@ class SettingsDialog(QDialog):
         library = QFrame()
         library.setObjectName("cleanupRulesCard")
         library_layout = QVBoxLayout(library)
-        library_layout.setContentsMargins(18, 16, 18, 18)
-        library_layout.setSpacing(12)
-
+        library_layout.setContentsMargins(14, 10, 14, 10)
+        library_layout.setSpacing(6)
         library_header = QHBoxLayout()
         library_header.setContentsMargins(0, 0, 0, 0)
         self.cleanup_rules_label = QLabel("Your rule library")
@@ -647,7 +707,7 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_list.setObjectName("cleanupRulesList")
         self.cleanup_rules_list.setWordWrap(True)
         self.cleanup_rules_list.setSpacing(6)
-        self.cleanup_rules_list.setMinimumHeight(176)
+        self.cleanup_rules_list.setMinimumHeight(88)
         self.cleanup_rules_list.itemSelectionChanged.connect(
             self._update_cleanup_rule_controls
         )
@@ -657,13 +717,13 @@ class SettingsDialog(QDialog):
         library_layout.addWidget(self.cleanup_rules_list)
 
         self.cleanup_rules_empty = QLabel(
-            "No rules yet\n\nAdd your first instruction above to start building "
-            "a personal cleanup profile."
+            "No rules yet\n\nAdd your first instruction above to start "
+            "building a personal cleanup profile."
         )
         self.cleanup_rules_empty.setObjectName("cleanupRulesEmpty")
         self.cleanup_rules_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cleanup_rules_empty.setWordWrap(True)
-        self.cleanup_rules_empty.setMinimumHeight(176)
+        self.cleanup_rules_empty.setMinimumHeight(88)
         library_layout.addWidget(self.cleanup_rules_empty)
 
         interaction_hint = QLabel("Select a rule or double-click it to edit")
@@ -674,54 +734,25 @@ class SettingsDialog(QDialog):
         rule_btn_row = QHBoxLayout()
         rule_btn_row.setSpacing(8)
         rule_btn_row.addStretch()
-
         self.cleanup_rule_edit_btn = Button("Edit rule")
         self.cleanup_rule_edit_btn.setObjectName("cleanupRuleEditButton")
-        self.cleanup_rule_edit_btn.set_base_minimum_size(96, 38)
+        self.cleanup_rule_edit_btn.set_base_minimum_size(96, 34)
         self.cleanup_rule_edit_btn.clicked.connect(self._edit_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_edit_btn)
-
         self.cleanup_rule_delete_btn = Button("Delete")
         self.cleanup_rule_delete_btn.setObjectName("cleanupRuleDeleteButton")
-        self.cleanup_rule_delete_btn.set_base_minimum_size(88, 38)
+        self.cleanup_rule_delete_btn.set_base_minimum_size(88, 34)
         self.cleanup_rule_delete_btn.clicked.connect(self._delete_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_delete_btn)
         library_layout.addLayout(rule_btn_row)
         layout.addWidget(library)
+        self._update_cleanup_rule_controls()
 
-        layout.addStretch()
-        return scroll_area
-
-    def _create_meeting_tab(self):
-        """Create the Meeting Mode settings tab with scrollable content.
-
-        Model selection lives in Model Manager → Meeting Mode. This tab keeps
-        consent, knowledge-folder, report-view, and dashboard network
-        settings the engine still reads through ``resolve_meeting_*()``.
-        """
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        tab_layout.setSpacing(0)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        title = QLabel("Meeting Mode")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
-
-        layout.addSpacing(12)
+    def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
         model_card = QFrame()
         model_card.setObjectName("meetingModelSummaryCard")
         model_card_layout = QVBoxLayout(model_card)
-        model_card_layout.setContentsMargins(16, 14, 16, 14)
+        model_card_layout.setContentsMargins(16, 12, 16, 12)
         model_card_layout.setSpacing(6)
         model_header = QHBoxLayout()
         model_header.setContentsMargins(0, 0, 0, 0)
@@ -739,11 +770,11 @@ class SettingsDialog(QDialog):
             Qt.CursorShape.PointingHandCursor
         )
         self.open_meeting_model_manager_btn.setToolTip(
-            "Save settings and open Model Manager → Meeting Mode to choose "
-            "transcription, language, speaker ID, and intelligence models"
+            "Open Model Manager → Meeting Mode to choose transcription, "
+            "language, speaker ID, and intelligence models"
         )
         self.open_meeting_model_manager_btn.clicked.connect(
-            self._open_model_manager_from_meeting
+            lambda: self.model_manager_requested.emit("meeting")
         )
         model_header.addWidget(self.open_meeting_model_manager_btn)
         model_card_layout.addLayout(model_header)
@@ -751,7 +782,6 @@ class SettingsDialog(QDialog):
         self.meeting_model_summary.setObjectName("meetingModelSummary")
         self.meeting_model_summary.setWordWrap(True)
         model_card_layout.addWidget(self.meeting_model_summary)
-
         model_hint = QLabel(
             "Whisper, spoken language, speaker identification, the chat "
             "model, and the agent core live in Model Manager → Meeting Mode."
@@ -761,19 +791,12 @@ class SettingsDialog(QDialog):
         model_card_layout.addWidget(model_hint)
         layout.addWidget(model_card)
 
-        layout.addSpacing(12)
-        intelligence_title = QLabel("Intelligence")
-        intelligence_title.setObjectName("sectionLabel")
-        layout.addWidget(intelligence_title)
-
-        meeting_intelligence_info = QLabel(
-            "Transcript text and meeting state are sent to the provider — "
-            "cloud intelligence does not upload audio, and nothing is sent "
-            "until you enable it for a meeting."
+        layout.addWidget(
+            self._caption(
+                "Transcript text and meeting state are sent to the provider — "
+                "cloud intelligence does not upload audio."
+            )
         )
-        meeting_intelligence_info.setObjectName("infoLabel")
-        meeting_intelligence_info.setWordWrap(True)
-        layout.addWidget(meeting_intelligence_info)
 
         self.meeting_past_recall_check = QCheckBox(
             "Let the meeting agent search past transcripts"
@@ -783,15 +806,19 @@ class SettingsDialog(QDialog):
             "When enabled, cloud intelligence may send excerpts from earlier "
             "meetings to the model. Off by default."
         )
-        layout.addWidget(self.meeting_past_recall_check)
-        past_recall_info = QLabel(
-            "Off by default. The agent can then look up names and prior "
-            "decisions from stored meetings. Excerpts leave this machine "
-            "the same way the current transcript does."
+        self.meeting_past_recall_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MEETING_PAST_RECALL_ENABLED, bool(checked)
+            )
         )
-        past_recall_info.setObjectName("infoLabel")
-        past_recall_info.setWordWrap(True)
-        layout.addWidget(past_recall_info)
+        layout.addWidget(self.meeting_past_recall_check)
+        layout.addWidget(
+            self._caption(
+                "Off by default. The agent can then look up names and prior "
+                "decisions from stored meetings. Excerpts leave this machine "
+                "the same way the current transcript does."
+            )
+        )
 
         self.meeting_context_folder_check = QCheckBox(
             "Let the meeting agent search a knowledge folder"
@@ -803,6 +830,11 @@ class SettingsDialog(QDialog):
             "When enabled, cloud intelligence may send excerpts from files "
             "in the selected folder to the model. Off by default."
         )
+        self.meeting_context_folder_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, bool(checked)
+            )
+        )
         layout.addWidget(self.meeting_context_folder_check)
 
         folder_row = QHBoxLayout()
@@ -811,8 +843,9 @@ class SettingsDialog(QDialog):
         self.meeting_context_folder_path.setObjectName(
             "meetingContextFolderPath"
         )
-        self.meeting_context_folder_path.setPlaceholderText(
-            "No folder selected"
+        self.meeting_context_folder_path.setPlaceholderText("No folder selected")
+        self.meeting_context_folder_path.editingFinished.connect(
+            self._on_context_folder_path_finished
         )
         folder_row.addWidget(self.meeting_context_folder_path, 1)
         browse_btn = Button("Browse…")
@@ -824,108 +857,93 @@ class SettingsDialog(QDialog):
         clear_btn.clicked.connect(self._clear_context_folder)
         folder_row.addWidget(clear_btn)
         layout.addLayout(folder_row)
-
-        context_folder_info = QLabel(
-            "Off by default. Choose a local folder (for example an Obsidian "
-            "vault). The agent can search files there for names and project "
-            "context. Matched excerpts leave this machine the same way the "
-            "current transcript does. Images, audio, and video are not read."
+        layout.addWidget(
+            self._caption(
+                "Choose a local folder (for example an Obsidian vault). "
+                "Matched excerpts leave this machine the same way the current "
+                "transcript does. Images, audio, and video are not read."
+            )
         )
-        context_folder_info.setObjectName("infoLabel")
-        context_folder_info.setWordWrap(True)
-        layout.addWidget(context_folder_info)
 
-        layout.addSpacing(16)
-        after_title = QLabel("After the meeting")
-        after_title.setObjectName("sectionLabel")
-        layout.addWidget(after_title)
-
-        after_info = QLabel(
-            "Live captions stay on short chunks so text appears quickly. "
-            "These steps run after End, once you have time. Cloud "
-            "intelligence must be on for polish and the final report."
+    def _build_meeting_after_page(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(
+            self._caption(
+                "Live captions stay on short chunks so text appears quickly. "
+                "These steps run after End. Cloud intelligence must be on for "
+                "polish and the final report."
+            )
         )
-        after_info.setObjectName("infoLabel")
-        after_info.setWordWrap(True)
-        layout.addWidget(after_info)
-
         self.meeting_end_redecode_check = QCheckBox(
             "Re-transcribe with longer pauses (full recording)"
         )
         self.meeting_end_redecode_check.setToolTip(
             "After End, recut the continuous session audio on longer quiet "
-            "gaps and run Whisper again. Live capture is unchanged. This "
-            "can take a few minutes and did not beat live word error on AMI."
+            "gaps and run Whisper again. Live capture is unchanged."
+        )
+        self.meeting_end_redecode_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MEETING_END_REDECODE, bool(checked)
+            )
         )
         layout.addWidget(self.meeting_end_redecode_check)
 
         self.meeting_end_polish_check = QCheckBox(
             "Clean up the transcript with the LLM"
         )
+        self.meeting_end_polish_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MEETING_END_POLISH, bool(checked)
+            )
+        )
         layout.addWidget(self.meeting_end_polish_check)
 
         self.meeting_end_report_check = QCheckBox(
             "Write the final report (topic, summary, cards)"
         )
+        self.meeting_end_report_check.toggled.connect(
+            self._on_end_report_toggled
+        )
         layout.addWidget(self.meeting_end_report_check)
 
-        views_title = QLabel("Report views")
-        views_title.setObjectName("sectionLabel")
-        layout.addWidget(views_title)
-        self.meeting_report_views_title = views_title
-
-        views_info = QLabel(
-            "Each enabled view is generated at End. Turning Ribbon off "
-            "skips timeline beats and polished minutes, which is the "
-            "main token cost. Brief and Signal reuse the same cards."
+        self.meeting_report_views_title = QLabel("Report views")
+        self.meeting_report_views_title.setObjectName("sectionLabel")
+        layout.addWidget(self.meeting_report_views_title)
+        self.meeting_report_views_info = self._caption(
+            "Each enabled view is generated at End. Turning Ribbon off skips "
+            "timeline beats and polished minutes, which is the main token "
+            "cost. Brief and Signal reuse the same cards."
         )
-        views_info.setObjectName("infoLabel")
-        views_info.setWordWrap(True)
-        layout.addWidget(views_info)
-        self.meeting_report_views_info = views_info
+        layout.addWidget(self.meeting_report_views_info)
 
         self.meeting_report_ribbon_check = QCheckBox(
             "Ribbon — timeline walk (adds timeline beats and polished minutes)"
         )
-        layout.addWidget(self.meeting_report_ribbon_check)
-
         self.meeting_report_brief_check = QCheckBox(
             "Brief — one-page editorial summary"
         )
-        layout.addWidget(self.meeting_report_brief_check)
-
         self.meeting_report_signal_check = QCheckBox(
             "Signal — one-screen glance"
         )
-        layout.addWidget(self.meeting_report_signal_check)
+        for check, key in (
+            (self.meeting_report_ribbon_check, SettingsKey.MEETING_REPORT_RIBBON),
+            (self.meeting_report_brief_check, SettingsKey.MEETING_REPORT_BRIEF),
+            (self.meeting_report_signal_check, SettingsKey.MEETING_REPORT_SIGNAL),
+        ):
+            check.toggled.connect(
+                lambda checked, setting=key: self._on_report_view_toggled(
+                    setting, checked
+                )
+            )
+            layout.addWidget(check)
 
-        self.meeting_report_views_hint = QLabel(
+        self.meeting_report_views_hint = self._caption(
             "At least one view is required. Ribbon stays on."
         )
-        self.meeting_report_views_hint.setObjectName("infoLabel")
-        self.meeting_report_views_hint.setWordWrap(True)
         self.meeting_report_views_hint.hide()
         layout.addWidget(self.meeting_report_views_hint)
 
-        self.meeting_end_report_check.toggled.connect(
-            self._update_report_views_enabled
-        )
-        for check in (
-            self.meeting_report_ribbon_check,
-            self.meeting_report_brief_check,
-            self.meeting_report_signal_check,
-        ):
-            check.toggled.connect(self._guard_report_views)
-
-        layout.addSpacing(24)
-        meeting_server_title = QLabel("Dashboard Access")
-        meeting_server_title.setObjectName("sectionLabel")
-        layout.addWidget(meeting_server_title)
-
-        meeting_bind_label = QLabel("Who can open the meeting dashboard:")
-        layout.addWidget(meeting_bind_label)
-
-        self.meeting_bind_combo = NoWheelComboBox()
+    def _build_meeting_dashboard_page(self, layout: QVBoxLayout) -> None:
+        self.meeting_bind_combo = ElidingComboBox()
         self.meeting_bind_combo.setObjectName("meetingBindCombo")
         self.meeting_bind_combo.addItem(
             "Localhost only (this computer)", MeetingServerBind.LOCALHOST
@@ -933,11 +951,13 @@ class SettingsDialog(QDialog):
         self.meeting_bind_combo.addItem(
             "Share on local network", MeetingServerBind.LAN
         )
-        self.meeting_bind_combo.setMinimumHeight(36)
+        self.meeting_bind_combo.setMinimumHeight(40)
         self.meeting_bind_combo.currentIndexChanged.connect(
-            self._update_meeting_bind_ui
+            self._on_meeting_bind_changed
         )
-        layout.addWidget(self.meeting_bind_combo)
+        layout.addWidget(
+            self._field("Who can open the dashboard", self.meeting_bind_combo)
+        )
 
         self.meeting_bind_warning = QLabel(
             "Sharing on the local network serves the live meeting — running "
@@ -949,95 +969,45 @@ class SettingsDialog(QDialog):
         self.meeting_bind_warning.setWordWrap(True)
         layout.addWidget(self.meeting_bind_warning)
 
-        meeting_port_label = QLabel("Dashboard port:")
-        layout.addWidget(meeting_port_label)
-
-        meeting_port_row = QHBoxLayout()
-        meeting_port_row.setSpacing(8)
         self.meeting_port_spinbox = NoWheelSpinBox()
         self.meeting_port_spinbox.setMinimum(0)
         self.meeting_port_spinbox.setMaximum(65535)
         self.meeting_port_spinbox.setSpecialValueText("Automatic")
         self.meeting_port_spinbox.setValue(config.MEETING_SERVER_PORT)
         self.meeting_port_spinbox.setMinimumHeight(36)
-        meeting_port_row.addWidget(self.meeting_port_spinbox)
-        meeting_port_row.addStretch()
-        layout.addLayout(meeting_port_row)
-
-        meeting_port_info = QLabel(
-            "0 (Automatic) lets the meeting server pick a free port each "
-            "session. Pick a fixed port only if you need a stable link."
+        self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
+        layout.addWidget(self._field("Dashboard port", self.meeting_port_spinbox))
+        layout.addWidget(
+            self._caption(
+                "0 (Automatic) lets the meeting server pick a free port each "
+                "session. Pick a fixed port only if you need a stable link."
+            )
         )
-        meeting_port_info.setObjectName("infoLabel")
-        meeting_port_info.setWordWrap(True)
-        layout.addWidget(meeting_port_info)
 
-        layout.addStretch()
+    def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(
+            self._caption("Configure global hotkeys for quick access.")
+        )
+        hotkey_button = PrimaryButton("Configure Hotkeys…")
+        hotkey_button.setMinimumHeight(40)
+        hotkey_button.clicked.connect(self._open_hotkey_dialog)
+        layout.addWidget(hotkey_button)
 
-        scroll_area.setWidget(content)
-        tab_layout.addWidget(scroll_area)
-        self._meeting_tab_index = self.tabs.addTab(tab, "Meeting")
-
-    def _create_advanced_tab(self):
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        tab_layout.setSpacing(0)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        title = QLabel("Advanced Settings")
-        title.setObjectName("headerLabel")
-        layout.addWidget(title)
-
-        # Local engine knobs (model / device / quant) live in the main
-        # window's Engine Settings panel and the Model Manager, not here.
-
-        layout.addSpacing(12)
-        max_size_label = QLabel("Maximum File Size (MB):")
-        layout.addWidget(max_size_label)
-
-        self.max_size_spinbox = NoWheelSpinBox()
-        self.max_size_spinbox.setMinimum(1)
-        self.max_size_spinbox.setMaximum(500)
-        self.max_size_spinbox.setValue(23)
-        self.max_size_spinbox.setMinimumHeight(36)
-        layout.addWidget(self.max_size_spinbox)
-
-        layout.addSpacing(12)
-        self.logging_check = QCheckBox("Enable detailed logging")
-        layout.addWidget(self.logging_check)
-
-        layout.addSpacing(16)
+    def _build_advanced_page(self, layout: QVBoxLayout) -> None:
         self.developer_mode_check = QCheckBox("Developer mode")
         self.developer_mode_check.setObjectName("developerModeCheck")
+        self.developer_mode_check.toggled.connect(self._on_developer_mode_changed)
         layout.addWidget(self.developer_mode_check)
-        developer_info = QLabel(
-            "Unlocks a Load demo meeting control on the Meeting Mode tab. "
-            "The demo opens the dashboard with a fake transcript so you can "
-            "test end-of-meeting cleanup and the final report without "
-            "recording a real meeting."
+        layout.addWidget(
+            self._caption(
+                "Unlocks a Load demo meeting control on the Meeting Mode tab. "
+                "The demo opens the dashboard with a fake transcript so you "
+                "can test end-of-meeting cleanup and the final report without "
+                "recording a real meeting."
+            )
         )
-        developer_info.setObjectName("infoLabel")
-        developer_info.setWordWrap(True)
-        layout.addWidget(developer_info)
 
-        layout.addSpacing(16)
-        hf_title = QLabel("Hugging Face Downloads")
-        hf_title.setObjectName("sectionLabel")
-        layout.addWidget(hf_title)
-
-        hf_policy_label = QLabel("When a model is missing from this computer:")
-        layout.addWidget(hf_policy_label)
-
-        self.hf_policy_combo = NoWheelComboBox()
+        self.hf_policy_combo = ElidingComboBox()
         self.hf_policy_combo.setObjectName("hfPolicyCombo")
         self.hf_policy_combo.addItem(
             "Ask before downloading", HuggingFaceAccessPolicy.ASK
@@ -1048,51 +1018,318 @@ class SettingsDialog(QDialog):
         self.hf_policy_combo.addItem(
             "Never connect (fully offline)", HuggingFaceAccessPolicy.NEVER
         )
-        self.hf_policy_combo.setMinimumHeight(36)
-        layout.addWidget(self.hf_policy_combo)
-
-        hf_info = QLabel(
-            "Models already on this computer always load locally without any "
-            "network checks. Hugging Face is only contacted to download a "
-            "missing model, and only when this policy (or a one-time approval) "
-            "allows it. An external HF_HUB_OFFLINE=1 environment variable "
-            "disables downloads entirely."
+        self.hf_policy_combo.setMinimumHeight(40)
+        self.hf_policy_combo.currentIndexChanged.connect(self._on_hf_policy_changed)
+        layout.addWidget(
+            self._field(
+                "When a model is missing from this computer",
+                self.hf_policy_combo,
+            )
         )
-        hf_info.setObjectName("infoLabel")
-        hf_info.setWordWrap(True)
-        layout.addWidget(hf_info)
+        layout.addWidget(
+            self._caption(
+                "Models already on this computer always load locally without "
+                "any network checks. Hugging Face is only contacted to "
+                "download a missing model, and only when this policy (or a "
+                "one-time approval) allows it. An external HF_HUB_OFFLINE=1 "
+                "environment variable disables downloads entirely."
+            )
+        )
 
-        layout.addStretch()
+    def select_destination(self, key: str) -> None:
+        """Show one rail destination by stable key."""
+        if key in self._pages:
+            self.rail.select(key)
 
-        scroll_area.setWidget(content)
-        tab_layout.addWidget(scroll_area)
-        self._advanced_tab_index = self.tabs.addTab(tab, "Advanced")
-
-    def focus_hf_policy(self):
-        """Open the Advanced tab with the Hugging Face policy control focused.
-
-        Used by the consent dialog's "Open Settings" action so the user lands
-        directly on the download-policy control.
-        """
-        self.tabs.setCurrentIndex(self._advanced_tab_index)
+    def focus_hf_policy(self) -> None:
+        """Open Advanced with the Hugging Face policy control focused."""
+        self.select_destination(ADVANCED)
         self.hf_policy_combo.setFocus()
 
-    def _open_model_manager_from_cleanup(self):
-        """Save Settings, close it, then open Model Manager → On-demand.
+    def _on_destination_changed(self, key: str) -> None:
+        page = self._pages.get(key)
+        if page is None:
+            return
+        self.stack.setCurrentWidget(page)
+        title, subtitle = self._headings[key]
+        self.page_title.setText(title)
+        self.page_subtitle.setText(subtitle)
 
-        Model Manager is non-modal and cannot share an ``exec()`` session with
-        Settings — opening it mid-modal stacks behind the main window and
-        becomes unresponsive on Windows. The controller opens it after
-        ``exec()`` returns when ``open_model_manager_on_close`` is set.
-        """
-        self.open_model_manager_on_close = "text"
-        self._save_settings()
+    def refresh(self) -> None:
+        """Reload persisted values and rail captions."""
+        self._loading = True
+        try:
+            self._load_settings()
+        finally:
+            self._loading = False
+        self._refresh_rail_values()
 
-    def _open_model_manager_from_meeting(self):
-        self.open_model_manager_on_close = "meeting"
-        self._save_settings()
+    def eventFilter(self, obj, event):
+        if (
+            obj is getattr(self, "cleanup_prompt_edit", None)
+            and event.type() == QEvent.Type.FocusOut
+        ):
+            self._persist_cleanup_prompt()
+        return super().eventFilter(obj, event)
 
-    def _refresh_cleanup_model_summary(self):
+    def closeEvent(self, event):
+        self._persist_cleanup_prompt()
+        self._release_rule_recorder()
+        super().closeEvent(event)
+
+    def _persist(self, key: str, value, *, message: str = "") -> bool:
+        if self._loading:
+            return False
+        try:
+            if settings_manager.get(key, object()) == value:
+                self._refresh_rail_values()
+                return True
+            settings_manager.save_setting(key, value)
+        except Exception as exc:
+            logger.error("Couldn't save setting %s: %s", key, exc)
+            self.message_label.setText(f"Couldn't save setting: {exc}")
+            return False
+        if message:
+            self.message_label.setText(message)
+        self._refresh_rail_values()
+        return True
+
+    def _persist_many(self, updates: dict, drops: tuple = ()) -> bool:
+        if self._loading:
+            return False
+        try:
+            settings = settings_manager.load_all_settings()
+            settings.update(updates)
+            for key in drops:
+                settings.pop(key, None)
+            settings_manager.save_all_settings(settings)
+        except Exception as exc:
+            logger.error("Couldn't save settings: %s", exc)
+            self.message_label.setText(f"Couldn't save settings: {exc}")
+            return False
+        self._refresh_rail_values()
+        return True
+
+    def _refresh_rail_values(self) -> None:
+        if self.auto_paste_check.isChecked():
+            general = "Auto-paste on"
+        elif self.copy_clipboard_check.isChecked():
+            general = "Clipboard"
+        else:
+            general = "Manual"
+        self.rail.set_value(GENERAL, general)
+        self.rail.set_value(
+            RECORDING,
+            self.audio_device_combo.currentText() or "System Default",
+        )
+        if self.transcript_cleanup_check.isChecked():
+            model = self.cleanup_model_summary.text().split(" · ")[-1].strip()
+            self.rail.set_value(CLEANUP, f"On · {model}" if model else "On")
+        else:
+            self.rail.set_value(CLEANUP, "Off")
+        rule_count = self.cleanup_rules_list.count()
+        self.rail.set_value(
+            CLEANUP_RULES,
+            "No rules" if rule_count == 0 else f"{rule_count} rules",
+        )
+        meeting_lines = self.meeting_model_summary.text().splitlines()
+        intel = next(
+            (line for line in meeting_lines if " · " in line and "Whisper" not in line),
+            "",
+        )
+        if not intel:
+            intel = meeting_lines[2] if len(meeting_lines) > 2 else "Meeting models"
+        self.rail.set_value(MEETING_INTELLIGENCE, intel)
+        if self.meeting_end_report_check.isChecked():
+            after = "Report"
+        elif self.meeting_end_polish_check.isChecked():
+            after = "Polish"
+        elif self.meeting_end_redecode_check.isChecked():
+            after = "Re-decode"
+        else:
+            after = "Off"
+        self.rail.set_value(MEETING_AFTER, after)
+        bind = self.meeting_bind_combo.currentData()
+        port = self.meeting_port_spinbox.value()
+        if bind == MeetingServerBind.LAN:
+            port_label = "auto" if port == 0 else str(port)
+            self.rail.set_value(MEETING_DASHBOARD, f"LAN · {port_label}")
+        else:
+            self.rail.set_value(MEETING_DASHBOARD, "Localhost")
+        self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
+        policy = self.hf_policy_combo.currentData()
+        self.rail.set_value(
+            ADVANCED, _HF_POLICY_RAIL.get(policy, "Ask first")
+        )
+
+    def _hotkey_rail_value(self) -> str:
+        try:
+            hotkeys = settings_manager.load_hotkey_settings()
+        except Exception:
+            hotkeys = config.DEFAULT_HOTKEYS
+        raw = (hotkeys or {}).get("record_toggle", "")
+        return format_hotkey_display(raw) or "Not set"
+
+    def _on_update_check_toggled(self, checked: bool) -> None:
+        self.update_notify_check.setEnabled(bool(checked))
+        self._persist(SettingsKey.UPDATE_CHECK_ENABLED, bool(checked))
+
+    def _on_audio_device_changed(self, _index: int = 0) -> None:
+        if self._loading:
+            return
+        device_id = self.audio_device_combo.currentData()
+        updates = {}
+        drops = ()
+        if device_id is None:
+            drops = (SettingsKey.AUDIO_INPUT_DEVICE,)
+        else:
+            updates[SettingsKey.AUDIO_INPUT_DEVICE] = device_id
+        if not self._persist_many(updates, drops=drops):
+            return
+        if self.on_audio_device_changed:
+            self.on_audio_device_changed(device_id)
+
+    def _on_retention_mode_changed(self, _index: int = 0) -> None:
+        self._update_recording_retention_ui()
+        if self._persist(
+            SettingsKey.RECORDING_RETENTION_MODE,
+            self.recording_retention_combo.currentData(),
+        ):
+            self._apply_retention_limit()
+
+    def _on_max_recordings_changed(self, _value: int = 0) -> None:
+        if self._persist(
+            SettingsKey.MAX_SAVED_RECORDINGS,
+            self.max_recordings_spinbox.value(),
+        ):
+            self._apply_retention_limit()
+
+    def _apply_retention_limit(self) -> None:
+        try:
+            history_manager.set_max_recordings(
+                resolve_max_saved_recordings(settings_manager.load_all_settings())
+            )
+        except Exception as exc:
+            logger.error("Couldn't apply recording retention: %s", exc)
+
+    def _update_recording_retention_ui(self) -> None:
+        is_custom = (
+            self.recording_retention_combo.currentData()
+            == RecordingRetentionMode.CUSTOM
+        )
+        self.max_recordings_label.setEnabled(is_custom)
+        self.max_recordings_spinbox.setEnabled(is_custom)
+
+    def _on_streaming_enabled_changed(self, checked: bool) -> None:
+        self._update_streaming_font_ui()
+        if not self._persist_many(
+            {SettingsKey.STREAMING_ENABLED: bool(checked)},
+            drops=(
+                SettingsKey.STREAMING_OVERLAY_ENABLED,
+                SettingsKey.STREAMING_PASTE_ENABLED,
+                "streaming_tiny_model_enabled",
+                "live_typing_enabled",
+            ),
+        ):
+            return
+        if self.on_streaming_settings_changed:
+            self.on_streaming_settings_changed()
+
+    def _on_streaming_font_changed(self, _value: int = 0) -> None:
+        if not self._persist(
+            SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
+            self.streaming_font_size_spinbox.value(),
+        ):
+            return
+        if self.on_streaming_font_changed:
+            self.on_streaming_font_changed()
+
+    def _update_streaming_font_ui(self) -> None:
+        enabled = self.streaming_enabled_check.isChecked()
+        self.streaming_font_size_label.setEnabled(enabled)
+        self.streaming_font_size_spinbox.setEnabled(enabled)
+
+    def _on_cleanup_enabled_changed(self, checked: bool) -> None:
+        self._update_cleanup_prompt_ui()
+        if not self._persist(
+            SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, bool(checked)
+        ):
+            return
+        if self.on_cleanup_changed:
+            self.on_cleanup_changed()
+
+    def _on_cleanup_reasoning_changed(self, _index: int = 0) -> None:
+        self._persist(
+            SettingsKey.TRANSCRIPT_CLEANUP_REASONING,
+            self.cleanup_reasoning_combo.currentData(),
+        )
+
+    def _persist_cleanup_prompt(self) -> None:
+        prompt_text = self.cleanup_prompt_edit.toPlainText().strip()
+        stored = prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
+        if stored == self._saved_cleanup_prompt:
+            return
+        if self._persist(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT, stored):
+            self._saved_cleanup_prompt = stored
+
+    def _on_end_report_toggled(self, checked: bool) -> None:
+        self._update_report_views_enabled()
+        self._persist(SettingsKey.MEETING_END_REPORT, bool(checked))
+
+    def _on_report_view_toggled(self, key: str, _checked: bool) -> None:
+        self._guard_report_views()
+        actual = {
+            SettingsKey.MEETING_REPORT_RIBBON: (
+                self.meeting_report_ribbon_check.isChecked()
+            ),
+            SettingsKey.MEETING_REPORT_BRIEF: (
+                self.meeting_report_brief_check.isChecked()
+            ),
+            SettingsKey.MEETING_REPORT_SIGNAL: (
+                self.meeting_report_signal_check.isChecked()
+            ),
+        }
+        self._persist(key, actual[key])
+
+    def _on_meeting_bind_changed(self, _index: int = 0) -> None:
+        self._update_meeting_bind_ui()
+        self._persist(
+            SettingsKey.MEETING_SERVER_BIND,
+            self.meeting_bind_combo.currentData(),
+        )
+
+    def _on_meeting_port_changed(self, value: int) -> None:
+        self._persist(SettingsKey.MEETING_SERVER_PORT, int(value))
+
+    def _on_developer_mode_changed(self, checked: bool) -> None:
+        if not self._persist(SettingsKey.DEVELOPER_MODE, bool(checked)):
+            return
+        if self.on_developer_mode_changed:
+            self.on_developer_mode_changed(bool(checked))
+
+    def _on_hf_policy_changed(self, _index: int = 0) -> None:
+        policy = self.hf_policy_combo.currentData()
+        if not self._persist_many(
+            {SettingsKey.HF_ACCESS_POLICY: policy},
+            drops=(SettingsKey.HF_HUB_OFFLINE,),
+        ):
+            return
+        if self.on_hf_policy_changed:
+            self.on_hf_policy_changed(policy)
+
+    def _on_context_folder_path_finished(self) -> None:
+        path = resolve_meeting_context_folder_path({
+            SettingsKey.MEETING_CONTEXT_FOLDER_PATH: (
+                self.meeting_context_folder_path.text()
+            ),
+        })
+        if path != self.meeting_context_folder_path.text():
+            blocker = self.meeting_context_folder_path.blockSignals(True)
+            self.meeting_context_folder_path.setText(path)
+            self.meeting_context_folder_path.blockSignals(blocker)
+        self._persist(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, path)
+
+    def _refresh_cleanup_model_summary(self) -> None:
         try:
             settings = settings_manager.load_all_settings()
             saved_provider = resolve_transcript_cleanup_provider(settings)
@@ -1104,7 +1341,7 @@ class SettingsDialog(QDialog):
         provider_name = profile_display_name(saved_provider, settings)
         self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
 
-    def _refresh_meeting_model_summary(self):
+    def _refresh_meeting_model_summary(self) -> None:
         try:
             settings = settings_manager.load_all_settings()
         except Exception:
@@ -1137,34 +1374,11 @@ class SettingsDialog(QDialog):
             f"Speaker ID · {speaker_label}"
         )
 
-    def _update_threshold_display(self, value):
-        threshold = value / 1000.0
-        self.threshold_value_label.setText(f"{threshold:.3f}")
-
-    def _on_update_check_toggled(self, checked: bool) -> None:
-        """Notify is meaningless when automatic checks are off."""
-        self.update_notify_check.setEnabled(bool(checked))
-
-    def _update_recording_retention_ui(self):
-        is_custom = (
-            self.recording_retention_combo.currentData()
-            == RecordingRetentionMode.CUSTOM
-        )
-        self.max_recordings_label.setEnabled(is_custom)
-        self.max_recordings_spinbox.setEnabled(is_custom)
-
-    def _update_streaming_font_ui(self):
-        enabled = self.streaming_enabled_check.isChecked()
-        self.streaming_font_size_label.setEnabled(enabled)
-        self.streaming_font_size_spinbox.setEnabled(enabled)
-
-    def _update_cleanup_prompt_ui(self):
+    def _update_cleanup_prompt_ui(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
-            self.cleanup_reasoning_label,
             self.cleanup_reasoning_combo,
             self.cleanup_reasoning_info,
-            self.cleanup_prompt_label,
             self.cleanup_prompt_edit,
             self.cleanup_prompt_edit_btn,
             self.cleanup_prompt_reset_btn,
@@ -1177,13 +1391,15 @@ class SettingsDialog(QDialog):
             widget.setEnabled(enabled)
         self._update_cleanup_rule_controls()
 
-    def _open_cleanup_prompt_editor(self):
+    def _open_cleanup_prompt_editor(self) -> None:
         dialog = CleanupPromptDialog(self.cleanup_prompt_edit.toPlainText(), self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.cleanup_prompt_edit.setPlainText(dialog.prompt_text())
+            self._persist_cleanup_prompt()
 
-    def _reset_cleanup_prompt(self):
+    def _reset_cleanup_prompt(self) -> None:
         self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
+        self._persist_cleanup_prompt()
 
     def _staged_cleanup_rules(self) -> list:
         return [
@@ -1191,7 +1407,12 @@ class SettingsDialog(QDialog):
             for i in range(self.cleanup_rules_list.count())
         ]
 
-    def _update_cleanup_rule_controls(self):
+    def _persist_cleanup_rules(self) -> None:
+        self._persist(
+            SettingsKey.TRANSCRIPT_CLEANUP_RULES, self._staged_cleanup_rules()
+        )
+
+    def _update_cleanup_rule_controls(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
         busy = self._rule_polishing or self._rule_dictation_state != "idle"
         rule_count = self.cleanup_rules_list.count()
@@ -1203,8 +1424,6 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_empty.setEnabled(enabled)
         self.cleanup_rule_input.setEnabled(enabled and not busy)
         self.cleanup_rule_add_btn.setEnabled(enabled and not busy)
-        # While recording, the mic button is the Stop control and must stay
-        # enabled; it only locks during polish and transcription.
         self.cleanup_rule_mic_btn.setEnabled(
             enabled
             and not self._rule_polishing
@@ -1214,15 +1433,10 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_edit_btn.setEnabled(enabled and has_selection)
         self.cleanup_rule_delete_btn.setEnabled(enabled and has_selection)
 
-    def _add_cleanup_rule(self):
+    def _add_cleanup_rule(self) -> None:
         self._polish_cleanup_rule(self.cleanup_rule_input.text())
 
-    def _polish_cleanup_rule(self, raw: str):
-        """Polish an instruction with AI, then confirm and stage it.
-
-        Args:
-            raw: Raw instruction text, typed or dictated.
-        """
+    def _polish_cleanup_rule(self, raw: str) -> None:
         raw = raw.strip()
         if (
             not raw
@@ -1244,9 +1458,6 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_status.setText("Polishing rule with AI…")
         self._update_cleanup_rule_controls()
 
-        # Model ownership lives in Model Manager; use its persisted selection.
-        # Reasoning remains staged here so an unsaved thinking-level change is
-        # reflected when polishing a learned rule.
         provider = resolve_transcript_cleanup_provider()
         model = resolve_transcript_cleanup_model()
         reasoning = self.cleanup_reasoning_combo.currentData()
@@ -1263,14 +1474,13 @@ class SettingsDialog(QDialog):
             try:
                 self._cleanup_rule_polished.emit(raw, polished or raw, error or "")
             except RuntimeError:
-                pass  # Dialog was closed before the polish finished.
+                pass
 
         threading.Thread(
             target=worker, name="cleanup-rule-polish", daemon=True
         ).start()
 
-    def _on_cleanup_rule_polished(self, raw: str, polished: str, error: str):
-        """Confirm a finished polish on the main thread and stage the rule."""
+    def _on_cleanup_rule_polished(self, raw: str, polished: str, error: str) -> None:
         self._rule_polishing = False
         self.cleanup_rule_status.setText("")
         self._update_cleanup_rule_controls()
@@ -1293,8 +1503,9 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_list.addItem(rule)
         self.cleanup_rule_input.clear()
         self._update_cleanup_rule_controls()
+        self._persist_cleanup_rules()
 
-    def _edit_cleanup_rule(self):
+    def _edit_cleanup_rule(self) -> None:
         items = self.cleanup_rules_list.selectedItems()
         if not items:
             return
@@ -1305,13 +1516,15 @@ class SettingsDialog(QDialog):
         rule = dialog.rule_text()
         if rule:
             item.setText(rule)
+            self._persist_cleanup_rules()
 
-    def _delete_cleanup_rule(self):
+    def _delete_cleanup_rule(self) -> None:
         for item in self.cleanup_rules_list.selectedItems():
             self.cleanup_rules_list.takeItem(self.cleanup_rules_list.row(item))
         self._update_cleanup_rule_controls()
+        self._persist_cleanup_rules()
 
-    def _toggle_rule_dictation(self):
+    def _toggle_rule_dictation(self) -> None:
         if self._rule_dictation_state == "recording":
             self._stop_rule_dictation()
             return
@@ -1321,16 +1534,11 @@ class SettingsDialog(QDialog):
             self.cleanup_rule_status.setText("Dictation is unavailable.")
             return
         if self.get_meeting_active is not None and self.get_meeting_active():
-            # Exclusive mode: a meeting already owns the microphone and a
-            # Whisper instance, so a second capture stream would fight it.
             self.cleanup_rule_status.setText(
                 "Meeting Mode is active — end the meeting to dictate a rule."
             )
             return
 
-        # Own a private recorder writing to a temp file so dictation never
-        # touches the main flow's recording, even if a hotkey recording is
-        # running at the same time.
         device_id = self.audio_device_combo.currentData()
         if self._rule_recorder is None or self._rule_recorder_device != device_id:
             if self._rule_recorder is not None:
@@ -1349,8 +1557,7 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.start()
         self._update_cleanup_rule_controls()
 
-    def _stop_rule_dictation(self):
-        """Stop the dictation recording and transcribe it on a worker thread."""
+    def _stop_rule_dictation(self) -> None:
         if self._rule_dictation_state != "recording":
             return
         self._rule_dictation_timer.stop()
@@ -1389,34 +1596,30 @@ class SettingsDialog(QDialog):
             try:
                 self._rule_dictation_finished.emit(text.strip(), error)
             except RuntimeError:
-                pass  # Dialog was closed before dictation finished.
+                pass
 
         threading.Thread(
             target=worker, name="rule-dictation", daemon=True
         ).start()
 
-    def _on_rule_dictation_finished(self, text: str, error: str):
-        """Apply a finished dictation on the main thread."""
+    def _on_rule_dictation_finished(self, text: str, error: str) -> None:
         self._rule_dictation_state = "idle"
         self.cleanup_rule_mic_btn.setText("Dictate")
         self._update_cleanup_rule_controls()
         if error:
             self.cleanup_rule_status.setText(error)
             return
-        # Skip the input box: polish the dictation and open the confirm
-        # popup right away. Any text already typed is folded in, matching
-        # the previous append-then-add behavior.
         current = self.cleanup_rule_input.text().strip()
         raw = f"{current} {text}".strip() if current else text
         self._polish_cleanup_rule(raw)
 
-    def _release_rule_recorder(self):
+    def _release_rule_recorder(self, *_args) -> None:
         self._rule_dictation_timer.stop()
         if self._rule_recorder is not None:
             self._rule_recorder.cleanup()
             self._rule_recorder = None
 
-    def _update_meeting_bind_ui(self):
+    def _update_meeting_bind_ui(self) -> None:
         is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
         self.meeting_bind_warning.setVisible(is_lan)
 
@@ -1427,7 +1630,7 @@ class SettingsDialog(QDialog):
             self.meeting_report_signal_check,
         )
 
-    def _update_report_views_enabled(self):
+    def _update_report_views_enabled(self) -> None:
         enabled = self.meeting_end_report_check.isChecked()
         self.meeting_report_views_title.setEnabled(enabled)
         self.meeting_report_views_info.setEnabled(enabled)
@@ -1436,8 +1639,7 @@ class SettingsDialog(QDialog):
         if not enabled:
             self.meeting_report_views_hint.hide()
 
-    def _guard_report_views(self):
-        """Keep at least one report view checked; restore Ribbon if needed."""
+    def _guard_report_views(self) -> None:
         if any(check.isChecked() for check in self._report_view_checks()):
             self.meeting_report_views_hint.hide()
             return
@@ -1446,7 +1648,7 @@ class SettingsDialog(QDialog):
         self.meeting_report_ribbon_check.blockSignals(blocker)
         self.meeting_report_views_hint.show()
 
-    def _browse_context_folder(self):
+    def _browse_context_folder(self) -> None:
         current = self.meeting_context_folder_path.text().strip()
         start = current if os.path.isdir(current) else os.path.expanduser("~")
         chosen = QFileDialog.getExistingDirectory(
@@ -1454,19 +1656,31 @@ class SettingsDialog(QDialog):
         )
         if not chosen:
             return
-        self.meeting_context_folder_path.setText(os.path.normpath(chosen))
-        self.meeting_context_folder_check.setChecked(True)
+        path = os.path.normpath(chosen)
+        self._loading = True
+        try:
+            self.meeting_context_folder_path.setText(path)
+            self.meeting_context_folder_check.setChecked(True)
+        finally:
+            self._loading = False
+        self._persist_many({
+            SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED: True,
+            SettingsKey.MEETING_CONTEXT_FOLDER_PATH: path,
+        })
 
-    def _clear_context_folder(self):
-        self.meeting_context_folder_path.clear()
-        self.meeting_context_folder_check.setChecked(False)
+    def _clear_context_folder(self) -> None:
+        self._loading = True
+        try:
+            self.meeting_context_folder_path.clear()
+            self.meeting_context_folder_check.setChecked(False)
+        finally:
+            self._loading = False
+        self._persist_many({
+            SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED: False,
+            SettingsKey.MEETING_CONTEXT_FOLDER_PATH: "",
+        })
 
-    def _load_meeting_settings(self, settings: dict):
-        """Apply the stored Meeting Mode settings to their controls.
-
-        Args:
-            settings: Loaded settings dict; an empty dict yields the defaults.
-        """
+    def _load_meeting_settings(self, settings: dict) -> None:
         self._refresh_meeting_model_summary()
 
         bind_index = self.meeting_bind_combo.findData(
@@ -1505,64 +1719,78 @@ class SettingsDialog(QDialog):
         self._update_report_views_enabled()
         self._update_meeting_bind_ui()
 
-    def _populate_audio_devices(self):
+    def _populate_audio_devices(self) -> None:
         self.audio_device_combo.clear()
         self.audio_device_combo.addItem("System Default", None)
-
         devices = AudioRecorder.get_input_devices()
         for device_id, device_name in devices:
             self.audio_device_combo.addItem(device_name, device_id)
 
-    def _open_hotkey_dialog(self):
+    def _open_hotkey_dialog(self) -> None:
         logger.info("Opening hotkey configuration dialog")
         from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 
         dialog = HotkeyDialog(self)
         dialog.exec()
+        self._refresh_rail_values()
 
-    def _load_settings(self):
+    def _load_settings(self) -> None:
         try:
             settings = settings_manager.load_all_settings()
 
-            self.auto_paste_check.setChecked(settings.get(SettingsKey.AUTO_PASTE, True))
-            self.copy_clipboard_check.setChecked(settings.get(SettingsKey.COPY_CLIPBOARD, True))
+            self.auto_paste_check.setChecked(
+                settings.get(SettingsKey.AUTO_PASTE, True)
+            )
+            self.copy_clipboard_check.setChecked(
+                settings.get(SettingsKey.COPY_CLIPBOARD, True)
+            )
             self.transcript_cleanup_check.setChecked(
                 settings.get(
                     SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
                     config.TRANSCRIPT_CLEANUP_ENABLED,
                 )
             )
-            self.cleanup_prompt_edit.setPlainText(
-                resolve_transcript_cleanup_prompt(settings)
-            )
+            prompt = resolve_transcript_cleanup_prompt(settings)
+            self.cleanup_prompt_edit.setPlainText(prompt)
+            self._saved_cleanup_prompt = prompt
             self.cleanup_rules_list.clear()
             self.cleanup_rules_list.addItems(
                 resolve_transcript_cleanup_rules(settings)
             )
 
-            # Provider/model are read-only here; Model Manager owns selection.
             self._refresh_cleanup_model_summary()
             reasoning_index = self.cleanup_reasoning_combo.findData(
                 resolve_transcript_cleanup_reasoning(settings)
             )
             self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
-
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(settings.get(SettingsKey.MINIMIZE_TRAY, True))
-            self.update_check_check.setChecked(resolve_update_check_enabled(settings))
-            self.update_notify_check.setChecked(resolve_update_notify_enabled(settings))
-            self._on_update_check_toggled(self.update_check_check.isChecked())
+            self.minimize_tray_check.setChecked(
+                settings.get(SettingsKey.MINIMIZE_TRAY, True)
+            )
+            self.update_check_check.setChecked(
+                resolve_update_check_enabled(settings)
+            )
+            self.update_notify_check.setChecked(
+                resolve_update_notify_enabled(settings)
+            )
+            self.update_notify_check.setEnabled(
+                self.update_check_check.isChecked()
+            )
 
             retention_mode = settings.get(
                 SettingsKey.RECORDING_RETENTION_MODE,
                 RecordingRetentionMode.CUSTOM,
             )
-            retention_index = self.recording_retention_combo.findData(retention_mode)
+            retention_index = self.recording_retention_combo.findData(
+                retention_mode
+            )
             if retention_index < 0:
                 retention_index = self.recording_retention_combo.findData(
                     RecordingRetentionMode.CUSTOM
                 )
-            self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
+            self.recording_retention_combo.setCurrentIndex(
+                max(0, retention_index)
+            )
             max_recordings = settings.get(
                 SettingsKey.MAX_SAVED_RECORDINGS,
                 config.MAX_SAVED_RECORDINGS,
@@ -1573,7 +1801,9 @@ class SettingsDialog(QDialog):
                 self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
             self._update_recording_retention_ui()
 
-            streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED)
+            streaming_enabled = settings.get(
+                SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
+            )
             self.streaming_enabled_check.setChecked(streaming_enabled)
             self.streaming_font_size_spinbox.setValue(
                 resolve_streaming_overlay_font_size(settings)
@@ -1581,10 +1811,8 @@ class SettingsDialog(QDialog):
             self._update_streaming_font_ui()
 
             self._load_meeting_settings(settings)
-
             self.developer_mode_check.setChecked(resolve_developer_mode(settings))
 
-            # Typed load performs legacy hf_hub_offline migration
             policy = settings_manager.load_hf_access_policy()
             policy_index = self.hf_policy_combo.findData(policy)
             self.hf_policy_combo.setCurrentIndex(max(0, policy_index))
@@ -1598,11 +1826,14 @@ class SettingsDialog(QDialog):
 
             logger.info("Settings loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load settings: {e}")
+            logger.error("Failed to load settings: %s", e)
             self.auto_paste_check.setChecked(True)
             self.copy_clipboard_check.setChecked(True)
-            self.transcript_cleanup_check.setChecked(config.TRANSCRIPT_CLEANUP_ENABLED)
+            self.transcript_cleanup_check.setChecked(
+                config.TRANSCRIPT_CLEANUP_ENABLED
+            )
             self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
+            self._saved_cleanup_prompt = config.TRANSCRIPT_CLEANUP_PROMPT
             self.cleanup_rules_list.clear()
             self.cleanup_model_summary.setText(
                 f"OpenRouter · {config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL}"
@@ -1612,7 +1843,9 @@ class SettingsDialog(QDialog):
             self.minimize_tray_check.setChecked(True)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
             self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
-            self._on_update_check_toggled(self.update_check_check.isChecked())
+            self.update_notify_check.setEnabled(
+                self.update_check_check.isChecked()
+            )
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM
             )
@@ -1620,145 +1853,12 @@ class SettingsDialog(QDialog):
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
             self._update_recording_retention_ui()
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
-            self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
+            self.streaming_font_size_spinbox.setValue(
+                config.STREAMING_OVERLAY_FONT_SIZE
+            )
             self._update_streaming_font_ui()
             self._load_meeting_settings({})
             self.developer_mode_check.setChecked(config.DEVELOPER_MODE)
             self.hf_policy_combo.setCurrentIndex(
                 max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
             )
-
-    def _save_settings(self):
-        try:
-            # Load existing settings. The transcription engine and local
-            # whisper model/device/compute are owned by the main-window
-            # controls, so their keys pass through untouched.
-            settings = settings_manager.load_all_settings()
-
-            old_hf_policy = settings_manager.load_hf_access_policy()
-            new_hf_policy = self.hf_policy_combo.currentData()
-            hf_policy_changed = old_hf_policy != new_hf_policy
-
-            old_audio_device = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
-            new_audio_device = self.audio_device_combo.currentData()
-            audio_device_changed = old_audio_device != new_audio_device
-
-            old_streaming_enabled = settings.get(SettingsKey.STREAMING_ENABLED, False)
-            streaming_settings_changed = (
-                old_streaming_enabled != self.streaming_enabled_check.isChecked()
-            )
-
-            settings[SettingsKey.AUTO_PASTE] = self.auto_paste_check.isChecked()
-            settings[SettingsKey.COPY_CLIPBOARD] = self.copy_clipboard_check.isChecked()
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED] = (
-                self.transcript_cleanup_check.isChecked()
-            )
-            prompt_text = self.cleanup_prompt_edit.toPlainText().strip()
-            if prompt_text and prompt_text != config.TRANSCRIPT_CLEANUP_PROMPT:
-                settings[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT] = prompt_text
-            else:
-                # Store default (or clear custom) so resolve falls back cleanly
-                settings[SettingsKey.TRANSCRIPT_CLEANUP_PROMPT] = (
-                    prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
-                )
-            # Provider, model, and catalog order pass through untouched because
-            # Model Manager is their single owner.
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] = (
-                self.cleanup_reasoning_combo.currentData()
-            )
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_RULES] = (
-                self._staged_cleanup_rules()
-            )
-            settings[SettingsKey.MINIMIZE_TRAY] = self.minimize_tray_check.isChecked()
-            settings[SettingsKey.UPDATE_CHECK_ENABLED] = (
-                self.update_check_check.isChecked()
-            )
-            settings[SettingsKey.UPDATE_NOTIFY_ENABLED] = (
-                self.update_notify_check.isChecked()
-            )
-            settings[SettingsKey.STREAMING_ENABLED] = self.streaming_enabled_check.isChecked()
-            settings[SettingsKey.STREAMING_OVERLAY_FONT_SIZE] = (
-                self.streaming_font_size_spinbox.value()
-            )
-            # Drop legacy keys so streaming_enabled is the single source of truth
-            settings.pop(SettingsKey.STREAMING_OVERLAY_ENABLED, None)
-            settings.pop(SettingsKey.STREAMING_PASTE_ENABLED, None)
-            settings.pop("streaming_tiny_model_enabled", None)
-            settings.pop("live_typing_enabled", None)
-            settings[SettingsKey.HF_ACCESS_POLICY] = new_hf_policy
-            # Legacy key superseded by hf_access_policy
-            settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
-            settings[SettingsKey.RECORDING_RETENTION_MODE] = (
-                self.recording_retention_combo.currentData()
-            )
-            settings[SettingsKey.MAX_SAVED_RECORDINGS] = self.max_recordings_spinbox.value()
-
-            # Meeting Mode. Whisper, language, speaker ID, agent core, and
-            # LLM keys pass through untouched because Model Manager is
-            # their single owner.
-            settings[SettingsKey.MEETING_SERVER_BIND] = (
-                self.meeting_bind_combo.currentData()
-            )
-            settings[SettingsKey.MEETING_SERVER_PORT] = (
-                self.meeting_port_spinbox.value()
-            )
-            settings[SettingsKey.MEETING_PAST_RECALL_ENABLED] = (
-                self.meeting_past_recall_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED] = (
-                self.meeting_context_folder_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_CONTEXT_FOLDER_PATH] = (
-                resolve_meeting_context_folder_path({
-                    SettingsKey.MEETING_CONTEXT_FOLDER_PATH: (
-                        self.meeting_context_folder_path.text()
-                    ),
-                })
-            )
-            settings[SettingsKey.MEETING_END_REDECODE] = (
-                self.meeting_end_redecode_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_END_POLISH] = (
-                self.meeting_end_polish_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_END_REPORT] = (
-                self.meeting_end_report_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_REPORT_RIBBON] = (
-                self.meeting_report_ribbon_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_REPORT_BRIEF] = (
-                self.meeting_report_brief_check.isChecked()
-            )
-            settings[SettingsKey.MEETING_REPORT_SIGNAL] = (
-                self.meeting_report_signal_check.isChecked()
-            )
-            settings[SettingsKey.DEVELOPER_MODE] = (
-                self.developer_mode_check.isChecked()
-            )
-
-            if new_audio_device is None:
-                settings.pop(SettingsKey.AUDIO_INPUT_DEVICE, None)
-            else:
-                settings[SettingsKey.AUDIO_INPUT_DEVICE] = new_audio_device
-
-            # Save to file (policy is read live at each model request, so the
-            # new hf_access_policy takes effect immediately)
-            settings_manager.save_all_settings(settings)
-
-            history_manager.set_max_recordings(resolve_max_saved_recordings(settings))
-
-            logger.info("Settings saved successfully")
-
-            if self.on_settings_save:
-                self.on_settings_save(settings)
-
-            settings['_audio_device_changed'] = audio_device_changed
-            settings['_streaming_settings_changed'] = streaming_settings_changed
-            settings['_hf_policy_changed'] = hf_policy_changed
-            self.settings_changed.emit(settings)
-
-            self.accept()
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-            self.reject()

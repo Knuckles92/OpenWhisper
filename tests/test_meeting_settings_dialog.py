@@ -43,7 +43,6 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
                 dialog._clear_context_folder()
                 assert not dialog.meeting_context_folder_check.isChecked()
                 assert dialog.meeting_context_folder_path.text() == ""
-                dialog._save_settings()
 
             saved = isolated.load_all_settings()
             assert not saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
@@ -66,7 +65,6 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
                 dialog._browse_context_folder()
                 assert dialog.meeting_context_folder_check.isChecked()
                 assert dialog.meeting_context_folder_path.text() == os.path.normpath(folder)
-                dialog._save_settings()
 
             saved = isolated.load_all_settings()
             assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
@@ -87,7 +85,7 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
                 dialog.meeting_context_folder_path.setText(
                     os.path.join(temp_dir, "missing-vault")
                 )
-                dialog._save_settings()
+                dialog.meeting_context_folder_path.editingFinished.emit()
 
             saved = isolated.load_all_settings()
             assert saved[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"

@@ -19,7 +19,7 @@ from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
-from ui_qt.dialogs.settings_dialog import SettingsDialog
+from ui_qt.dialogs.settings_dialog import GENERAL, SettingsDialog
 from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
 from ui_qt.widgets import TabbedContentWidget
 from services.settings import SettingsKey, settings_manager
@@ -95,6 +95,7 @@ class UIController(QObject):
         self._meeting_urls: dict = {}
 
         self._model_manager_dialog = None
+        self._settings_dialog = None
         self._downloads_dialog = None
         self._download_progress_dialog = None
 
@@ -468,49 +469,39 @@ class UIController(QObject):
         self.main_window.restore_from_tray()
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
-        """Open the settings dialog.
+        """Show the non-modal Settings window (single instance, re-raised).
 
         Args:
-            focus_hf_policy: When True, open directly to the Advanced tab with
-                the Hugging Face download-policy control focused (used by the
-                consent dialog's "Open Settings" action).
+            focus_hf_policy: When True, open Advanced with the Hugging Face
+                download-policy control focused (used by the consent dialog's
+                "Open Settings" action).
         """
-        dialog = SettingsDialog(self.main_window)
+        dialog = self._ensure_settings_dialog()
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
         dialog.get_meeting_active = self.get_meeting_active
+        dialog.on_audio_device_changed = self.on_audio_device_changed
+        dialog.on_streaming_settings_changed = self.on_streaming_settings_changed
+        dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
+        dialog.on_hf_policy_changed = self.on_hf_policy_changed
+        dialog.on_developer_mode_changed = (
+            self.main_window.meeting_mode_tab.set_developer_mode
+        )
+        dialog.on_cleanup_changed = self.refresh_cleanup_controls
+        dialog.refresh()
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:
-            dialog.tabs.setCurrentIndex(0)  # Default to general
+            dialog.select_destination(GENERAL)
+        self._raise_dialog(dialog)
 
-        def on_settings_changed(settings: dict):
-            self.overlay.refresh_streaming_font_size()
-            self.refresh_cleanup_controls()
-            self.main_window.meeting_mode_tab.set_developer_mode(
-                bool(settings.get(SettingsKey.DEVELOPER_MODE, False))
+    def _ensure_settings_dialog(self):
+        if self._settings_dialog is None:
+            dialog = SettingsDialog(self.main_window)
+            dialog.model_manager_requested.connect(
+                self.open_model_manager_dialog
             )
-            if settings.get('_audio_device_changed', False):
-                if self.on_audio_device_changed:
-                    new_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
-                    self.on_audio_device_changed(new_device_id)
-            if settings.get('_streaming_settings_changed', False):
-                if self.on_streaming_settings_changed:
-                    self.on_streaming_settings_changed()
-            if settings.get('_hf_policy_changed', False):
-                if self.on_hf_policy_changed:
-                    self.on_hf_policy_changed(
-                        settings.get(SettingsKey.HF_ACCESS_POLICY)
-                    )
-
-        dialog.settings_changed.connect(on_settings_changed)
-        dialog.exec()
-        # Open only after Settings' modal loop ends — showing the non-modal
-        # Model Manager during exec() stacks behind the main window on Windows.
-        manager_tab = dialog.open_model_manager_on_close
-        if manager_tab:
-            QTimer.singleShot(
-                0, lambda tab=manager_tab: self.open_model_manager_dialog(tab=tab)
-            )
+            self._settings_dialog = dialog
+        return self._settings_dialog
 
     def refresh_local_engine_controls(self):
         """Re-sync the inline local-engine combos with the persisted settings.

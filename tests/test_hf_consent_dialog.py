@@ -98,7 +98,7 @@ class TestConsentDialogButtons(_QtTestCase):
 class TestSettingsDialogNavigation(_QtTestCase):
     """Open Settings must land directly on the Advanced/Hugging Face control."""
 
-    def test_focus_hf_policy_selects_advanced_tab(self):
+    def test_focus_hf_policy_selects_advanced_destination(self):
         from ui_qt.dialogs import settings_dialog as settings_dialog_module
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,8 +109,7 @@ class TestSettingsDialogNavigation(_QtTestCase):
                 dialog = settings_dialog_module.SettingsDialog()
                 dialog.focus_hf_policy()
 
-                assert dialog.tabs.currentIndex() == dialog._advanced_tab_index
-                # The three-policy control replaces the old offline checkbox
+                assert dialog.rail.current_key() == settings_dialog_module.ADVANCED
                 policies = {
                     dialog.hf_policy_combo.itemData(i)
                     for i in range(dialog.hf_policy_combo.count())

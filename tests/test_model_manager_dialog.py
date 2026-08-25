@@ -680,7 +680,10 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                dialog._save_settings()
+                next_index = (dialog.cleanup_reasoning_combo.currentIndex() + 1) % (
+                    dialog.cleanup_reasoning_combo.count()
+                )
+                dialog.cleanup_reasoning_combo.setCurrentIndex(next_index)
 
             saved = isolated.load_all_settings()
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
@@ -698,12 +701,13 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                assert dialog.open_model_manager_on_close is None
+                requested = []
+                dialog.model_manager_requested.connect(requested.append)
 
                 dialog.open_model_manager_btn.click()
 
-                assert dialog.open_model_manager_on_close == "text"
-                assert dialog.result() == dialog.DialogCode.Accepted
+                assert requested == ["text"]
+                assert dialog.result() != dialog.DialogCode.Accepted
 
     def test_saving_meeting_settings_preserves_model_keys(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -742,7 +746,9 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 assert "OpenAI · gpt-4o-mini" in summary
                 assert "Agent core · Direct" in summary
                 assert "Speaker ID · OpenAI" in summary
-                dialog._save_settings()
+                dialog.meeting_end_polish_check.setChecked(
+                    not dialog.meeting_end_polish_check.isChecked()
+                )
 
             saved = isolated.load_all_settings()
             assert saved[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
@@ -764,9 +770,10 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                assert dialog.open_model_manager_on_close is None
+                requested = []
+                dialog.model_manager_requested.connect(requested.append)
 
                 dialog.open_meeting_model_manager_btn.click()
 
-                assert dialog.open_model_manager_on_close == "meeting"
-                assert dialog.result() == dialog.DialogCode.Accepted
+                assert requested == ["meeting"]
+                assert dialog.result() != dialog.DialogCode.Accepted

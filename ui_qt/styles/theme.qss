@@ -217,6 +217,7 @@ QLineEdit:focus {
 /* Model Manager — rail and stack; Downloads shares the same surfaces */
 QDialog#modelManagerDialog,
 QDialog#downloadsDialog,
+QDialog#settingsDialog,
 QDialog#componentDetailsDialog {
     background-color: #10161c;
 }
@@ -547,7 +548,8 @@ QComboBox#textModelCombo:focus {
 /* Every combo in these two windows. The global fallback draws its arrow from
    two borders, which reads as a stray corner mark beside a real chevron. */
 QDialog#modelManagerDialog QComboBox::down-arrow,
-QDialog#downloadsDialog QComboBox::down-arrow {
+QDialog#downloadsDialog QComboBox::down-arrow,
+QDialog#settingsDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
     border: none;
     width: 16px;
@@ -1079,12 +1081,14 @@ QPushButton#meetingModelManagerLink {
     min-height: 0;
 }
 
-QPushButton#cleanupModelManagerLink:hover {
+QPushButton#cleanupModelManagerLink:hover,
+QPushButton#meetingModelManagerLink:hover {
     color: #409cff;
     text-decoration: underline;
 }
 
-QPushButton#cleanupModelManagerLink:pressed {
+QPushButton#cleanupModelManagerLink:pressed,
+QPushButton#meetingModelManagerLink:pressed {
     color: #0a84ff;
 }
 
