@@ -24,10 +24,11 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
 - **Model Manager** – Manage voice and text models in one place: browse, download, and activate local Whisper models, or use a guided provider → model picker for OpenAI/OpenRouter cleanup models
 - **API Options** – OpenAI Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
+- **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach custom spelling and style rules via text or voice dictation
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
 - **Auto-paste** – Transcription automatically pastes to your active window
 - **System Tray** – Minimize to tray, always accessible
-- **Smart Splitting(API)** – Large audio files split automatically to avoid API limits
+- **Smart Splitting (API)** – Large audio files split automatically to avoid API limits
 - **Audio Device Selection** – Choose your preferred microphone input
 - **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings
 - **Audio Upload** – Import existing audio files for transcription
@@ -48,7 +49,6 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Global hotkeys | `keyboard` library (per-key suppression) | Carbon `RegisterEventHotKey` (no Accessibility permission; falls back to [`pynput`](https://pypi.org/project/pynput/) if registration fails) | `pynput` (observe-only) |
 | Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
-| Caret paste indicator | Tracks the real text caret (Win32 API) | Follows the mouse cursor (no public caret API) | Follows the mouse cursor |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
 | Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Not available — meetings are microphone-only |
 | Launchers | `.cmd` + PowerShell, `pythonw.exe` | `install.sh` + shell scripts | `install.sh` + shell scripts |
@@ -329,13 +329,12 @@ On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Optio
 
 Access settings via **File > Settings** or the system tray menu. Available options:
 
-**General:** Default model, auto-paste, clipboard copy, minimize to tray, streaming transcription (experimental)
-
-**Audio:** Sample rate, channels, silence threshold, input device selection
-
-**Hotkeys:** Customize all keyboard shortcuts
-
-**Advanced:** Whisper model selection (14+ options), compute device (auto/cuda/cpu), compute type (float16/float32/int8), max file size before splitting, streaming overlay positioning, logging, Hugging Face download policy
+- **General:** Auto-paste, copy to clipboard, minimize to system tray on close, automatic update checks and notifications, saved recordings retention policy, and real-time streaming transcription preview toggle and font size.
+- **Audio:** Sample rate, channels, silence threshold, and microphone input device selection.
+- **Hotkeys:** Open hotkey configuration to customize all global shortcuts.
+- **Cleanup:** AI transcript cleanup settings (enable/disable, thinking level, custom prompt) and **Learned Rules** library (teach personal spelling and formatting rules via text or voice dictation). Text provider and model selection are configured in **Model Manager**.
+- **Meeting:** Meeting Mode options including knowledge folder search, past transcript search/recall, end-of-meeting actions (re-transcription with longer pauses, AI cleanup, final report generation with Ribbon, Brief, and Signal views), and dashboard access (localhost vs. LAN sharing and port settings).
+- **Advanced:** Maximum audio file size before splitting, detailed logging, developer mode (demo meeting fixture), and Hugging Face model download policy. Voice engine settings (model, compute device, and quantization) are configured directly in the main window or **Model Manager**.
 
 ## Offline Usage and Model Downloads
 
@@ -362,12 +361,11 @@ python app_qt.py
 ```
 
 Upgrading from an older version: the previous **Skip HuggingFace network checks** toggle migrates automatically — enabled becomes **Never connect**, disabled becomes **Ask before downloading**.
+
 ## Requirements
 
 - Python 3.11–3.12 recommended; 3.13 supported (needs `python3-dev` on Debian/Ubuntu for `evdev`)
 - Windows, macOS, or Linux
-
-**Note:** The caret paste indicator tracks the real text caret only on Windows (uses the Win32 API). On macOS and Linux it follows the mouse cursor, since there is no public caret-position API.
 
 ## Contributing
 
