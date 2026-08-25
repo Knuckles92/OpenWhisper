@@ -67,6 +67,7 @@ sidecar/dist/
 .codex/
 .zcode/
 .shots/
+.grok/
 
 # Design mockups (local planning artifacts, not shipped)
 mockups/
