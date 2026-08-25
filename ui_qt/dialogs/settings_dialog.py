@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -27,7 +29,7 @@ from PyQt6.QtWidgets import (
 
 from config import bundle_root, config
 from services.history_manager import history_manager
-from services.hotkey_manager import format_hotkey_display
+from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
 from services.settings import (
     HuggingFaceAccessPolicy,
@@ -78,6 +80,7 @@ from ui_qt.widgets import (
     PrimaryButton,
     WrappedLabel,
 )
+from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
 from ui_qt.widgets.nav_rail import NavRail
 
 logger = logging.getLogger(__name__)
@@ -129,6 +132,7 @@ class SettingsDialog(QDialog):
     on_hf_policy_changed: Optional[Callable] = None
     on_developer_mode_changed: Optional[Callable] = None
     on_cleanup_changed: Optional[Callable] = None
+    on_hotkeys_changed: Optional[Callable[[Dict[str, str]], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
@@ -143,6 +147,11 @@ class SettingsDialog(QDialog):
         self.setSizeGripEnabled(True)
 
         self._loading = False
+        self.current_hotkeys: Dict[str, str] = {}
+        self.capturing: Optional[str] = None
+        self.capture_thread: Optional[HotkeyCaptureThread] = None
+        self.current_hotkey_input: Optional[HotkeyCaptureInput] = None
+        self.hotkey_inputs: Dict[str, HotkeyCaptureInput] = {}
         self._saved_cleanup_prompt = ""
         self._rule_polishing = False
         self._rule_dictation_state = "idle"
@@ -985,13 +994,136 @@ class SettingsDialog(QDialog):
         )
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
-        layout.addWidget(
-            self._caption("Configure global hotkeys for quick access.")
+        instruction_card = QFrame()
+        instruction_card.setObjectName("hotkeyInstructionCard")
+        instruction_row = QHBoxLayout(instruction_card)
+        instruction_row.setContentsMargins(14, 9, 14, 9)
+        instruction_row.setSpacing(12)
+        instruction_icon = QLabel()
+        instruction_icon.setObjectName("hotkeyInstructionIcon")
+        instruction_icon.setFixedSize(18, 18)
+        instruction_icon.setPixmap(_design_icon("info-blue.svg").pixmap(16, 16))
+        instruction_row.addWidget(
+            instruction_icon, alignment=Qt.AlignmentFlag.AlignTop
         )
-        hotkey_button = PrimaryButton("Configure Hotkeys…")
-        hotkey_button.setMinimumHeight(40)
-        hotkey_button.clicked.connect(self._open_hotkey_dialog)
-        layout.addWidget(hotkey_button)
+        if sys.platform == "darwin":
+            instruction_text = (
+                "Click a shortcut, hold any modifiers, then press its key. "
+                "Control+Option combinations are less likely to conflict with "
+                "macOS shortcuts."
+            )
+        elif USE_PYNPUT_BACKEND:
+            instruction_text = (
+                "Click a shortcut, hold Ctrl, Alt, Shift, or Super, then press "
+                "the desired key."
+            )
+        else:
+            instruction_text = (
+                "Click a shortcut, then press the desired key combination. "
+                "Numpad keys are distinct from the matching regular keys."
+            )
+        instruction = WrappedLabel(instruction_text)
+        instruction.setObjectName("hotkeyInstructionText")
+        instruction_row.addWidget(instruction, stretch=1)
+        layout.addWidget(instruction_card)
+
+        layout.addWidget(self._hotkey_group_title("Recording"))
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "record_toggle",
+                "Start or stop recording",
+                "Start recording when idle; stop and transcribe while recording.",
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "cancel",
+                "Cancel",
+                "Discard an active recording or interrupt transcription.",
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "meeting_toggle",
+                "Meeting Mode",
+                "Start or end Meeting Mode. Leave empty to disable this shortcut.",
+                optional=True,
+            )
+        )
+
+        layout.addWidget(self._hotkey_group_title("OpenWhisper"))
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "enable_disable",
+                "Enable or disable hotkeys",
+                "Temporarily enable or disable every OpenWhisper hotkey.",
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "minimize_tray",
+                "Minimize to tray",
+                "Hide the main window in the system tray.",
+            )
+        )
+
+        actions = QHBoxLayout()
+        actions.addStretch()
+        reset_button = Button("Reset to defaults")
+        reset_button.setObjectName("hotkeyResetButton")
+        self._compact_button(reset_button, 150)
+        reset_button.clicked.connect(self._confirm_reset_hotkeys)
+        actions.addWidget(reset_button)
+        layout.addLayout(actions)
+
+    @staticmethod
+    def _hotkey_group_title(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hotkeyGroupTitle")
+        return label
+
+    def _hotkey_shortcut_row(
+        self,
+        key: str,
+        title: str,
+        description: str,
+        *,
+        optional: bool = False,
+    ) -> QFrame:
+        card = QFrame()
+        card.setObjectName("hotkeyShortcutCard")
+        row = QHBoxLayout(card)
+        row.setContentsMargins(14, 8, 12, 8)
+        row.setSpacing(16)
+
+        copy = QVBoxLayout()
+        copy.setSpacing(2)
+        name = QLabel(title)
+        name.setObjectName("hotkeyShortcutName")
+        copy.addWidget(name)
+        detail = WrappedLabel(description)
+        detail.setObjectName("hotkeyShortcutDescription")
+        copy.addWidget(detail)
+        row.addLayout(copy, stretch=1)
+
+        field = HotkeyCaptureInput()
+        field.setProperty("optional", optional)
+        field.setMinimumWidth(190)
+        field.setMaximumWidth(220)
+        field.capture_requested.connect(
+            lambda key=key, field=field: self._start_hotkey_capture(key, field)
+        )
+        self.hotkey_inputs[key] = field
+        row.addWidget(field, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        if optional:
+            clear_button = Button("Clear")
+            clear_button.setObjectName("hotkeyClearButton")
+            self._compact_button(clear_button, 68)
+            clear_button.clicked.connect(self._clear_meeting_hotkey)
+            self.clear_meeting_hotkey_button = clear_button
+            row.addWidget(clear_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+        return card
 
     def _build_advanced_page(self, layout: QVBoxLayout) -> None:
         self.developer_mode_check = QCheckBox("Developer mode")
@@ -1047,6 +1179,8 @@ class SettingsDialog(QDialog):
         self.hf_policy_combo.setFocus()
 
     def _on_destination_changed(self, key: str) -> None:
+        if key != HOTKEYS:
+            self._cancel_hotkey_capture()
         page = self._pages.get(key)
         if page is None:
             return
@@ -1057,6 +1191,7 @@ class SettingsDialog(QDialog):
 
     def refresh(self) -> None:
         """Reload persisted values and rail captions."""
+        self._cancel_hotkey_capture()
         self._loading = True
         try:
             self._load_settings()
@@ -1073,6 +1208,7 @@ class SettingsDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
+        self._cancel_hotkey_capture()
         self._persist_cleanup_prompt()
         self._release_rule_recorder()
         super().closeEvent(event)
@@ -1163,10 +1299,12 @@ class SettingsDialog(QDialog):
         )
 
     def _hotkey_rail_value(self) -> str:
-        try:
-            hotkeys = settings_manager.load_hotkey_settings()
-        except Exception:
-            hotkeys = config.DEFAULT_HOTKEYS
+        hotkeys = self.current_hotkeys
+        if not hotkeys:
+            try:
+                hotkeys = settings_manager.load_hotkey_settings()
+            except Exception:
+                hotkeys = config.DEFAULT_HOTKEYS
         raw = (hotkeys or {}).get("record_toggle", "")
         return format_hotkey_display(raw) or "Not set"
 
@@ -1726,15 +1864,145 @@ class SettingsDialog(QDialog):
         for device_id, device_name in devices:
             self.audio_device_combo.addItem(device_name, device_id)
 
-    def _open_hotkey_dialog(self) -> None:
-        logger.info("Opening hotkey configuration dialog")
-        from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
+    def _start_hotkey_capture(
+        self, key: str, input_field: HotkeyCaptureInput
+    ) -> None:
+        self._cancel_hotkey_capture()
+        self.capturing = key
+        self.current_hotkey_input = input_field
+        input_field.setText("Press keys…")
+        input_field.set_capturing(True)
 
-        dialog = HotkeyDialog(self)
-        dialog.exec()
+        thread = HotkeyCaptureThread(self)
+        self.capture_thread = thread
+        thread.finished.connect(thread.deleteLater)
+        thread.captured.connect(
+            lambda hotkey, thread=thread: self._on_hotkey_captured(
+                thread, hotkey
+            )
+        )
+        thread.failed.connect(
+            lambda message, thread=thread: self._on_hotkey_capture_failed(
+                thread, message
+            )
+        )
+        logger.info("Capturing hotkey for %s", key)
+        thread.start()
+
+    def _on_hotkey_captured(
+        self, thread: HotkeyCaptureThread, hotkey: str
+    ) -> None:
+        if thread is not self.capture_thread or self.capturing is None:
+            return
+        key = self.capturing
+        self._finish_hotkey_capture(thread)
+        updated = self.current_hotkeys.copy()
+        updated[key] = hotkey
+        label = {
+            "record_toggle": "Recording",
+            "cancel": "Cancel",
+            "meeting_toggle": "Meeting Mode",
+            "enable_disable": "Enable/disable",
+            "minimize_tray": "Minimize to tray",
+        }.get(key, "Shortcut")
+        self._apply_hotkey_settings(updated, f"{label} hotkey updated.")
+
+    def _on_hotkey_capture_failed(
+        self, thread: HotkeyCaptureThread, message: str
+    ) -> None:
+        if thread is not self.capture_thread:
+            return
+        logger.warning(message)
+        self._finish_hotkey_capture(thread)
+        self._update_hotkey_displays()
+        QMessageBox.warning(self, "Hotkey Capture Failed", message)
+
+    def _finish_hotkey_capture(self, thread: HotkeyCaptureThread) -> None:
+        if self.current_hotkey_input is not None:
+            self.current_hotkey_input.set_capturing(False)
+        self.capturing = None
+        self.current_hotkey_input = None
+        if thread is self.capture_thread:
+            self.capture_thread = None
+
+    def _cancel_hotkey_capture(self) -> None:
+        thread = self.capture_thread
+        if thread is not None:
+            try:
+                thread.captured.disconnect()
+                thread.failed.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            if thread.isRunning():
+                thread.stop()
+                thread.wait(1000)
+        if self.current_hotkey_input is not None:
+            self.current_hotkey_input.set_capturing(False)
+        self.capture_thread = None
+        self.capturing = None
+        self.current_hotkey_input = None
+        if self.hotkey_inputs:
+            self._update_hotkey_displays()
+
+    def _apply_hotkey_settings(
+        self, hotkeys: Dict[str, str], message: str
+    ) -> bool:
+        updated = config.DEFAULT_HOTKEYS.copy()
+        updated.update(hotkeys)
+        try:
+            if self.on_hotkeys_changed:
+                self.on_hotkeys_changed(updated.copy())
+            else:
+                settings_manager.save_hotkey_settings(updated)
+        except Exception as exc:
+            logger.error("Couldn't save hotkeys: %s", exc)
+            self.message_label.setText(f"Couldn't save hotkeys: {exc}")
+            self._update_hotkey_displays()
+            return False
+        self.current_hotkeys = updated
+        self._update_hotkey_displays()
+        self.message_label.setText(message)
         self._refresh_rail_values()
+        return True
+
+    def _clear_meeting_hotkey(self) -> None:
+        self._cancel_hotkey_capture()
+        updated = self.current_hotkeys.copy()
+        updated["meeting_toggle"] = ""
+        self._apply_hotkey_settings(updated, "Meeting Mode hotkey cleared.")
+
+    def _confirm_reset_hotkeys(self) -> None:
+        self._cancel_hotkey_capture()
+        answer = QMessageBox.question(
+            self,
+            "Reset hotkeys?",
+            "Replace every shortcut with the platform defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._apply_hotkey_settings(
+                config.DEFAULT_HOTKEYS.copy(),
+                "Hotkeys reset to platform defaults.",
+            )
+
+    def _load_hotkey_settings(self) -> None:
+        hotkeys = config.DEFAULT_HOTKEYS.copy()
+        try:
+            hotkeys.update(settings_manager.load_hotkey_settings() or {})
+        except Exception as exc:
+            logger.warning("Couldn't load hotkeys: %s", exc)
+        self.current_hotkeys = hotkeys
+        self._update_hotkey_displays()
+
+    def _update_hotkey_displays(self) -> None:
+        for key, input_field in self.hotkey_inputs.items():
+            input_field.setText(
+                format_hotkey_display(self.current_hotkeys.get(key, ""))
+            )
 
     def _load_settings(self) -> None:
+        self._load_hotkey_settings()
         try:
             settings = settings_manager.load_all_settings()
 

@@ -809,25 +809,78 @@ QLabel#batchDestPath {
     font-size: 11px;
 }
 
-/* Hotkey capture fields (HotkeyDialog) — the capturing state is toggled
-   via a dynamic "capturing" property from Python */
+/* Integrated Hotkeys destination */
+QFrame#hotkeyInstructionCard,
+QFrame#hotkeyShortcutCard {
+    background-color: #141b22;
+    border: 1px solid #303b45;
+    border-radius: 10px;
+}
+
+QLabel#hotkeyInstructionIcon {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#hotkeyInstructionText,
+QLabel#hotkeyShortcutDescription {
+    color: #98a3b0;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#hotkeyGroupTitle {
+    color: #8d9aa7;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 700;
+    padding-top: 2px;
+}
+
+QLabel#hotkeyShortcutName {
+    color: #e8edf2;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
 QLineEdit#hotkeyInput {
-    background-color: #2c2c2e;
-    color: #0a84ff;
-    border: 1px solid #3a3a3c;
-    border-radius: 8px;
-    padding: 6px 12px;
+    background-color: #161e26;
+    color: #8fc2ff;
+    border: 1px solid #3b4752;
+    border-radius: 9px;
+    padding: 6px 11px;
+    font-size: 13px;
     font-weight: 600;
 }
 
 QLineEdit#hotkeyInput:focus {
-    border: 1px solid #0a84ff;
+    border-color: #318dff;
 }
 
 QLineEdit#hotkeyInput[capturing="true"] {
-    background-color: #0a84ff;
+    background-color: #17345a;
     color: #ffffff;
-    border: 1px solid #0a84ff;
+    border-color: #318dff;
+}
+
+QPushButton#hotkeyClearButton,
+QPushButton#hotkeyResetButton {
+    color: #aeb8c3;
+    background-color: #151c23;
+    border: 1px solid #35404a;
+    border-radius: 9px;
+    font-size: 12px;
+}
+
+QPushButton#hotkeyClearButton:hover,
+QPushButton#hotkeyResetButton:hover {
+    color: #f0f3f6;
+    background-color: #1b252e;
+    border-color: #4b5966;
 }
 
 /* Spin boxes */

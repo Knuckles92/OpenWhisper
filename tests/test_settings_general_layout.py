@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QFormLayout, QScrollArea
+from PyQt6.QtWidgets import QApplication, QFormLayout, QFrame, QScrollArea
 
 from ui_qt.dialogs.settings_dialog import (
     ADVANCED,
@@ -59,6 +59,23 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             )
             helpers = recording.findChildren(WrappedLabel)
             self.assertGreaterEqual(len(helpers), 2)
+            hotkeys = dialog._pages[HOTKEYS]
+            shortcut_cards = [
+                card
+                for card in hotkeys.findChildren(QFrame)
+                if card.objectName() == "hotkeyShortcutCard"
+            ]
+            self.assertEqual(len(shortcut_cards), 5)
+            self.assertEqual(
+                set(dialog.hotkey_inputs),
+                {
+                    "record_toggle",
+                    "cancel",
+                    "meeting_toggle",
+                    "enable_disable",
+                    "minimize_tray",
+                },
+            )
         finally:
             dialog.close()
 

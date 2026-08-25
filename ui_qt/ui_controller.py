@@ -19,8 +19,7 @@ from ui_qt.main_window import MainWindow
 from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
-from ui_qt.dialogs.settings_dialog import GENERAL, SettingsDialog
-from ui_qt.dialogs.hotkey_dialog import HotkeyDialog
+from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
 from ui_qt.widgets import TabbedContentWidget
 from services.settings import SettingsKey, settings_manager
 
@@ -112,7 +111,7 @@ class UIController(QObject):
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
-        self.main_window.hotkeys_requested.connect(self.open_hotkey_dialog)
+        self.main_window.hotkeys_requested.connect(self.open_hotkey_settings)
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.check_for_updates_requested.connect(
             self._on_check_for_updates_requested
@@ -476,6 +475,22 @@ class UIController(QObject):
                 download-policy control focused (used by the consent dialog's
                 "Open Settings" action).
         """
+        dialog = self._prepare_settings_dialog()
+        dialog.refresh()
+        if focus_hf_policy:
+            dialog.focus_hf_policy()
+        else:
+            dialog.select_destination(GENERAL)
+        self._raise_dialog(dialog)
+
+    def open_hotkey_settings(self) -> None:
+        """Show the singleton Settings window on its Hotkeys destination."""
+        dialog = self._prepare_settings_dialog()
+        dialog.refresh()
+        dialog.select_destination(HOTKEYS)
+        self._raise_dialog(dialog)
+
+    def _prepare_settings_dialog(self) -> SettingsDialog:
         dialog = self._ensure_settings_dialog()
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
         dialog.get_meeting_active = self.get_meeting_active
@@ -487,12 +502,8 @@ class UIController(QObject):
             self.main_window.meeting_mode_tab.set_developer_mode
         )
         dialog.on_cleanup_changed = self.refresh_cleanup_controls
-        dialog.refresh()
-        if focus_hf_policy:
-            dialog.focus_hf_policy()
-        else:
-            dialog.select_destination(GENERAL)
-        self._raise_dialog(dialog)
+        dialog.on_hotkeys_changed = self._on_settings_hotkeys_changed
+        return dialog
 
     def _ensure_settings_dialog(self):
         if self._settings_dialog is None:
@@ -1035,16 +1046,12 @@ class UIController(QObject):
         self.set_meeting_status("Guest link copied")
         self.show_copied_animation()
 
-    def open_hotkey_dialog(self):
-        dialog = HotkeyDialog(self.main_window)
-
-        def on_hotkeys_save(hotkeys):
-            if self.on_hotkeys_changed:
-                self.on_hotkeys_changed(hotkeys)
-            self.update_hotkey_display(hotkeys)
-
-        dialog.on_hotkeys_save = on_hotkeys_save
-        dialog.exec()
+    def _on_settings_hotkeys_changed(self, hotkeys: dict) -> None:
+        if self.on_hotkeys_changed:
+            self.on_hotkeys_changed(hotkeys)
+        else:
+            settings_manager.save_hotkey_settings(hotkeys)
+        self.update_hotkey_display(hotkeys)
 
     def _on_upload_file_transcribe(
         self, audio_path: str, duration_seconds: float = 0.0
