@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-08-25
+
+### Changed
+- **Settings navigation is easier to scan** - The Settings window now uses a destination rail with summaries for General, Audio, Hotkeys, Cleanup, Meeting, and Advanced, while keeping one reusable window open instead of rebuilding the dialog on every visit
+- **Hotkeys are configured inside Settings** - The separate hotkey popup is replaced by a dedicated Settings destination with inline shortcut capture, conflict validation, reset controls, and the existing platform-specific defaults
+
 ## [2.3.2] - 2026-08-24
 
 ### Added
