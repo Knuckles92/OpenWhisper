@@ -76,3 +76,4 @@ webui/mocks/
 # Agent instruction files (kept local by preference)
 CLAUDE.md
 AGENTS.md
+docs/screenshots/full_suite/*
