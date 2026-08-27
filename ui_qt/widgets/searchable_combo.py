@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionComboBox,
 )
 
+from ui_qt.utils.fuzzy_match import fuzzy_score
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 
 
@@ -220,23 +221,32 @@ class SearchableComboBox(NoWheelComboBox):
             self._filtering = False
 
     def _apply_filter(self, text: str):
-        """Hide dropdown rows that do not contain ``text``.
+        """Hide dropdown rows that do not match ``text``.
 
-        The highlight moves to the first visible row so Enter activates
-        a visible match. The item model itself is left untouched.
+        The highlight moves to the best-matching visible row so Enter
+        activates the most relevant candidate. The item model itself
+        is left untouched.
         """
         view = self.view()
         model = self.model()
-        needle = text.strip().lower()
-        first_visible = -1
+        needle = text.strip()
+        best_row = -1
+        best_score = -1
         for row in range(model.rowCount()):
-            item_text = (model.data(model.index(row, 0)) or "").lower()
-            hidden = bool(needle) and needle not in item_text
+            item_text = model.data(model.index(row, 0)) or ""
+            if not needle:
+                view.setRowHidden(row, False)
+                if best_row < 0:
+                    best_row = row
+                continue
+            score = fuzzy_score(needle, item_text)
+            hidden = score is None
             view.setRowHidden(row, hidden)
-            if not hidden and first_visible < 0:
-                first_visible = row
-        if first_visible >= 0:
-            self._set_highlighted_row(first_visible)
+            if not hidden and (score is not None and score > best_score):
+                best_score = score
+                best_row = row
+        if best_row >= 0:
+            self._set_highlighted_row(best_row)
 
     def _set_highlighted_row(self, row: int):
         """Highlight a row without changing the combo's chosen value."""

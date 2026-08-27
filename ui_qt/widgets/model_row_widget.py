@@ -27,6 +27,7 @@ from services.hf_access import (
     format_size_bytes,
     resolve_model_repo,
 )
+from ui_qt.utils.fuzzy_match import fuzzy_match
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.eliding_label import ElidingLabel
 
@@ -466,7 +467,7 @@ class ModelRowWidget(QFrame):
         self.usage_label.setVisible(bool(text))
 
     def matches_filter(self, text: str) -> bool:
-        return text in self.model_name.lower() or text in self.repo_id.lower()
+        return fuzzy_match(text, self.model_name) or fuzzy_match(text, self.repo_id)
 
     @staticmethod
     def _is_action_child(widget) -> bool:

@@ -204,4 +204,35 @@ class TestSearchableComboBox:
         assert len(_visible_rows(self.combo)) == len(MODELS)
         assert not self.combo.view().window().isVisible()
 
+    def test_fuzzy_search_space_vs_hyphen(self):
+        """Space-separated search terms match hyphenated model names."""
+        self.combo.showPopup()
+        self._type_search("gemini 1.5")
+        assert _visible_rows(self.combo) == ["google/gemini-pro-1.5"]
+        self.combo.hidePopup()
+
+        self.combo.showPopup()
+        self._type_search("gpt 4o")
+        assert _visible_rows(self.combo) == ["openai/gpt-4o", "openai/gpt-4o-mini"]
+        self.combo.hidePopup()
+
+    def test_fuzzy_search_multi_token_out_of_order(self):
+        """Multi-word search finds matching models regardless of word order."""
+        self.combo.showPopup()
+        self._type_search("sonnet claude")
+        assert _visible_rows(self.combo) == ["anthropic/claude-3.5-sonnet"]
+        self.combo.hidePopup()
+
+    def test_fuzzy_search_best_match_activated_on_enter(self):
+        """Enter key selects the highest-scoring candidate among visible rows."""
+        activated = []
+        self.combo.textActivated.connect(activated.append)
+        self.combo.showPopup()
+        self._type_search("gpt 4o")
+        QTest.keyClick(self.combo.lineEdit(), Qt.Key.Key_Return)
+        QTest.qWait(50)
+        assert self.combo.currentText() == "openai/gpt-4o"
+        assert activated == ["openai/gpt-4o"]
+        assert not self.combo.view().window().isVisible()
+
 
