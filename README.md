@@ -101,7 +101,7 @@ Download **OpenWhisper-Setup-2.3.3.exe** from [openwhisper.fiorilabs.tech](https
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
 - A speech model (~150 MB) downloads on first use, with a consent prompt.
-- **Help → Check for Updates** fetches the latest GitHub release and can download the next setup exe (SHA-256 verified) then reopen the installer. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
+- **Help → Check for Updates** fetches the latest GitHub release. Per-user Windows installs download a verified update archive and apply it in-app (no Inno wizard). Elevated / Program Files installs, or a missing archive, still use the verified setup exe. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
@@ -171,7 +171,7 @@ winget install -e --id JRSoftware.InnoSetup
 .\scripts\build_installer.ps1 -Clean
 ```
 
-The result lands in `installer\Output\`. See [`OpenWhisper.spec`](OpenWhisper.spec) for what is and isn't bundled.
+The result lands in `installer\Output\` as both `OpenWhisper-Setup-<version>.exe` and `OpenWhisper-<version>-win64.tar.xz`. See [`OpenWhisper.spec`](OpenWhisper.spec) for what is and isn't bundled, and [`docs/release-checklist.md`](docs/release-checklist.md) before publishing.
 
 ### Optional downloadable components
 
@@ -180,11 +180,12 @@ The Windows installer is CPU-only. GPU acceleration and the Meeting Intelligence
 | What | Where the bytes come from | Moves when |
 | --- | --- | --- |
 | App installer (`OpenWhisper-Setup-*.exe`) | Latest GitHub Release | Every app release |
+| Native update archive (`OpenWhisper-*-win64.tar.xz`) | Same GitHub Release | Every app release (in-app apply) |
 | `gpu-accel` | PyPI NVIDIA wheels | The CUDA pin in `requirements-gpu.txt` changes |
 | `meeting-agent` | nodejs.org + a zip on the GitHub tag in `MEETING_AGENT_RELEASE_TAG` | Node or the sidecar bundle changes |
 | `speaker-id` | Unpublished placeholder | — |
 
-An app patch updates the installer row only. Existing component pins stay put so Downloads keep working.
+An app patch updates the installer and archive rows. Existing component pins stay put so Downloads keep working.
 
 #### Updating the GPU component
 

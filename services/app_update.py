@@ -1,11 +1,12 @@
-"""Application update check and installer apply.
+"""Application update check and installer / native apply.
 
 Qt-free. GitHub Releases is the only network source of truth — nothing is
 fetched from the project website. ``_version.__version__`` is compared as
 semver against the latest stable tag; git commit distance is ignored.
 
-Installer copies may download the verified setup exe and relaunch Inno.
-Source and git checkouts are notify-only.
+Validated HKCU installer copies may download a verified ``tar.xz`` and
+hand off to ``OpenWhisperUpdater.exe``. Other frozen Windows copies fall
+back to the setup exe. Source and git checkouts are notify-only.
 """
 
 from __future__ import annotations
@@ -25,6 +26,15 @@ from typing import Callable, Dict, Final, Optional, Tuple
 
 from _version import __version__
 from config import bundle_root, config, is_frozen, local_app_dir
+from services.app_update_apply import (
+    InstallRegistration,
+    UpdateApplyError,
+    UpdateCanceled,
+    discover_install_registration,
+    prepare_candidate,
+    resolve_apply_mode,
+    running_app_dir,
+)
 from services.format_utils import format_size_bytes
 from services.settings import (
     SettingsKey,
@@ -32,6 +42,13 @@ from services.settings import (
     resolve_update_notify_enabled,
     resolve_update_skipped_version,
     settings_manager,
+)
+from services.update_contract import (
+    ApplyMode,
+    archive_asset_name,
+    encode_native_result,
+    setup_asset_name,
+    updates_root,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,8 +68,7 @@ _RATE_LIMIT_MESSAGE: Final[str] = (
 _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _NETWORK_TIMEOUT_S: Final[int] = 30
 _CHUNK_BYTES: Final[int] = 1 << 20
-_SETUP_PREFIX: Final[str] = "OpenWhisper-Setup-"
-_UPDATES_DIRNAME: Final[str] = "updates"
+_MAX_ASSET_BYTES: Final[int] = 2 * 1024 * 1024 * 1024
 
 
 class InstallChannel:
@@ -72,10 +88,11 @@ class UpdateStatus:
 
 
 class DownloadPhase:
-    """Phases reported by :func:`download_installer`."""
+    """Phases reported by download / prepare."""
 
     DOWNLOADING: Final[str] = "downloading"
     VERIFYING: Final[str] = "verifying"
+    EXTRACTING: Final[str] = "extracting"
 
 
 class AppUpdateError(Exception):
@@ -84,7 +101,7 @@ class AppUpdateError(Exception):
 
 @dataclass(frozen=True)
 class ReleaseAsset:
-    """Windows setup exe attached to a GitHub release."""
+    """A Windows setup exe or native archive attached to a GitHub release."""
 
     url: str
     name: str
@@ -100,7 +117,13 @@ class ReleaseInfo:
     tag_name: str
     html_url: str
     notes: str
-    asset: Optional[ReleaseAsset]
+    setup_asset: Optional[ReleaseAsset] = None
+    native_asset: Optional[ReleaseAsset] = None
+
+    @property
+    def asset(self) -> Optional[ReleaseAsset]:
+        """Preferred download for size display: native archive, else setup."""
+        return self.native_asset or self.setup_asset
 
 
 @dataclass(frozen=True)
@@ -112,6 +135,7 @@ class UpdateCheckResult:
     channel: str
     release: Optional[ReleaseInfo]
     can_apply: bool
+    apply_mode: str = ApplyMode.NOTIFY_ONLY
     git_hint: Optional[str] = None
     git_summary: Optional[str] = None
 
@@ -281,16 +305,54 @@ def should_auto_notify(
     return True
 
 
-def can_apply(channel: str, release: Optional[ReleaseInfo]) -> bool:
-    """Return whether this process may download and launch the setup exe."""
+def _asset_ready(asset: Optional[ReleaseAsset]) -> bool:
+    return bool(asset and asset.url and asset.sha256 and asset.size_bytes > 0)
+
+
+def resolve_release_apply_mode(
+    channel: str,
+    release: Optional[ReleaseInfo],
+    *,
+    registration: Optional[InstallRegistration] = None,
+    app_dir: Optional[str] = None,
+    helper_present: Optional[bool] = None,
+    platform_name: Optional[str] = None,
+) -> str:
+    """Return :class:`ApplyMode` for this channel and release."""
     if channel != InstallChannel.INSTALLER:
-        return False
-    if sys.platform != "win32":
-        return False
-    if release is None or release.asset is None:
-        return False
-    asset = release.asset
-    return bool(asset.url and asset.sha256)
+        return ApplyMode.NOTIFY_ONLY
+    native_ready = _asset_ready(release.native_asset if release else None)
+    setup_ready = _asset_ready(release.setup_asset if release else None)
+    return resolve_apply_mode(
+        frozen=True,
+        platform_name=platform_name if platform_name is not None else sys.platform,
+        native_ready=native_ready,
+        setup_ready=setup_ready,
+        registration=registration,
+        app_dir=app_dir,
+        helper_present=helper_present,
+    )
+
+
+def can_apply(
+    channel: str,
+    release: Optional[ReleaseInfo],
+    *,
+    registration: Optional[InstallRegistration] = None,
+    app_dir: Optional[str] = None,
+    helper_present: Optional[bool] = None,
+    platform_name: Optional[str] = None,
+) -> bool:
+    """Return whether this process may download a verified apply payload."""
+    mode = resolve_release_apply_mode(
+        channel,
+        release,
+        registration=registration,
+        app_dir=app_dir,
+        helper_present=helper_present,
+        platform_name=platform_name,
+    )
+    return mode in (ApplyMode.NATIVE, ApplyMode.SETUP)
 
 
 def source_update_hint(channel: str) -> Optional[str]:
@@ -343,42 +405,77 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
     if not isinstance(html_url, str) or not html_url:
         html_url = f"https://github.com/{GITHUB_REPO}/releases/tag/{tag_name}"
     notes = payload.get("body") if isinstance(payload.get("body"), str) else ""
-    asset = _parse_setup_asset(payload.get("assets") or [])
+    assets = payload.get("assets") or []
+    stable = not bool(payload.get("draft")) and not bool(payload.get("prerelease"))
+    setup_asset = None
+    native_asset = None
+    if stable:
+        setup_asset = _parse_named_asset(
+            assets,
+            expected_name=setup_asset_name(version),
+            tag_name=tag_name,
+        )
+        native_asset = _parse_named_asset(
+            assets,
+            expected_name=archive_asset_name(version),
+            tag_name=tag_name,
+        )
     return ReleaseInfo(
         version=version,
         tag_name=tag_name,
         html_url=html_url,
         notes=notes.strip(),
-        asset=asset,
+        setup_asset=setup_asset,
+        native_asset=native_asset,
     )
 
 
-def _parse_setup_asset(assets: object) -> Optional[ReleaseAsset]:
+def _expected_asset_url(tag_name: str, filename: str) -> str:
+    return (
+        f"https://github.com/{GITHUB_REPO}/releases/download/"
+        f"{tag_name}/{filename}"
+    )
+
+
+def _parse_named_asset(
+    assets: object,
+    *,
+    expected_name: str,
+    tag_name: str,
+) -> Optional[ReleaseAsset]:
     if not isinstance(assets, list):
         return None
+    matches: list = []
+    expected_url = _expected_asset_url(tag_name, expected_name)
     for item in assets:
         if not isinstance(item, dict):
             continue
         name = item.get("name") or ""
-        if not isinstance(name, str):
+        if not isinstance(name, str) or name != expected_name:
             continue
-        if not name.startswith(_SETUP_PREFIX) or not name.lower().endswith(".exe"):
+        state = item.get("state")
+        if state not in (None, "uploaded"):
             continue
         url = item.get("browser_download_url") or ""
-        if not isinstance(url, str) or not url:
-            return None
+        if not isinstance(url, str) or url != expected_url:
+            continue
         try:
             size_bytes = int(item.get("size") or 0)
         except (TypeError, ValueError):
             size_bytes = 0
-        sha256 = _digest_to_sha256(item.get("digest"))
-        return ReleaseAsset(
-            url=url,
-            name=name,
-            size_bytes=max(0, size_bytes),
-            sha256=sha256,
+        if size_bytes <= 0 or size_bytes > _MAX_ASSET_BYTES:
+            continue
+        matches.append(
+            ReleaseAsset(
+                url=url,
+                name=name,
+                size_bytes=size_bytes,
+                sha256=_digest_to_sha256(item.get("digest")),
+            )
         )
-    return None
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def _digest_to_sha256(raw: object) -> Optional[str]:
@@ -442,12 +539,14 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
     status = compare_versions(__version__, release.version)
     if persist:
         mark_check_completed()
+    apply_mode = resolve_release_apply_mode(channel, release)
     return UpdateCheckResult(
         status=status,
         current_version=__version__,
         channel=channel,
         release=release,
-        can_apply=can_apply(channel, release),
+        can_apply=apply_mode in (ApplyMode.NATIVE, ApplyMode.SETUP),
+        apply_mode=apply_mode,
         git_hint=source_update_hint(channel),
         git_summary=local_git_summary() if channel == InstallChannel.GIT else None,
     )
@@ -491,40 +590,20 @@ def persist_prompt_choices(
 
 
 def updates_dir() -> str:
-    """Directory for verified setup downloads (under the user-data root)."""
-    path = os.path.join(local_app_dir(), _UPDATES_DIRNAME)
+    """Directory for verified update downloads (under the user-data root)."""
+    path = updates_root(local_app_dir())
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def download_installer(
-    release: ReleaseInfo,
+def download_release_asset(
+    asset: ReleaseAsset,
     progress: Optional[ProgressCallback] = None,
     cancel: Optional[threading.Event] = None,
 ) -> str:
-    """Download and SHA-256-verify the Windows setup exe.
-
-    Refuses to run unless this process is a frozen Windows installer copy
-    and the release asset carries a digest. Never writes a setup exe into
-    a source checkout.
-
-    Args:
-        release: Parsed latest release with a setup asset.
-        progress: Optional ``(phase, done_bytes, total_bytes)`` sink.
-        cancel: Optional event; checked once per chunk.
-
-    Returns:
-        Absolute path of the verified setup exe.
-
-    Raises:
-        AppUpdateError: Channel, digest, hash, or network failure.
-    """
-    if not can_apply(detect_channel(), release):
-        raise AppUpdateError(
-            "This copy of OpenWhisper cannot install the Windows setup package."
-        )
-    asset = release.asset
-    assert asset is not None and asset.sha256
+    """Download and SHA-256-verify one GitHub release asset."""
+    if not asset.sha256:
+        raise AppUpdateError("The update package is missing an integrity digest.")
     if not progress:
         progress = lambda _phase, _done, _total: None
     if cancel is None:
@@ -550,6 +629,76 @@ def download_installer(
         cancel=cancel,
     )
     return destination
+
+
+def download_installer(
+    release: ReleaseInfo,
+    progress: Optional[ProgressCallback] = None,
+    cancel: Optional[threading.Event] = None,
+) -> str:
+    """Download and SHA-256-verify the Windows setup exe.
+
+    Refuses to run unless this process may apply a verified setup asset.
+    Never writes a setup exe into a source checkout.
+    """
+    if not _asset_ready(release.setup_asset) or detect_channel() != InstallChannel.INSTALLER:
+        raise AppUpdateError(
+            "This copy of OpenWhisper cannot install the Windows setup package."
+        )
+    if sys.platform != "win32":
+        raise AppUpdateError(
+            "This copy of OpenWhisper cannot install the Windows setup package."
+        )
+    assert release.setup_asset is not None
+    return download_release_asset(release.setup_asset, progress=progress, cancel=cancel)
+
+
+def apply_update(
+    result: UpdateCheckResult,
+    progress: Optional[ProgressCallback] = None,
+    cancel: Optional[threading.Event] = None,
+    *,
+    force_setup: bool = False,
+) -> str:
+    """Download the selected payload and prepare native apply or return setup.
+
+    Returns:
+        A setup exe path, or ``native:<transaction_id>`` after preparation.
+    """
+    release = result.release
+    if release is None:
+        raise AppUpdateError("No installer is available.")
+    mode = ApplyMode.SETUP if force_setup else result.apply_mode
+    if mode == ApplyMode.NATIVE and release.native_asset is not None:
+        try:
+            archive_path = download_release_asset(
+                release.native_asset, progress=progress, cancel=cancel
+            )
+            registration = discover_install_registration()
+            if registration is None:
+                raise UpdateApplyError(
+                    "This installation is not registered for native updates."
+                )
+            journal = prepare_candidate(
+                archive_path,
+                release_version=release.version,
+                current_version=result.current_version,
+                app_dir=running_app_dir(),
+                registration=registration,
+                progress=progress,
+                cancel=cancel,
+                parent_pid=os.getpid(),
+            )
+            return encode_native_result(journal.transaction_id)
+        except UpdateCanceled:
+            raise AppUpdateError("The update was cancelled.") from None
+        except UpdateApplyError as exc:
+            raise AppUpdateError(str(exc)) from exc
+    if mode in (ApplyMode.SETUP, ApplyMode.NATIVE) and _asset_ready(release.setup_asset):
+        return download_installer(release, progress=progress, cancel=cancel)
+    raise AppUpdateError(
+        "This copy of OpenWhisper cannot install the Windows setup package."
+    )
 
 
 def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):

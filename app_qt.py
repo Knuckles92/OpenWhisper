@@ -179,6 +179,20 @@ def _register_qt_icu_directories() -> None:
         os.environ["PATH"] = os.pathsep.join(prepend) + os.pathsep + existing
 
 
+def _early_update_gate() -> None:
+    """Refuse a normal launch while the native updater owns the install."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    from services.app_update_apply import (
+        acquire_application_mutex_or_exit,
+        maybe_exit_if_update_in_progress,
+    )
+
+    maybe_exit_if_update_in_progress()
+    acquire_application_mutex_or_exit()
+
+
+_early_update_gate()
 _register_cuda_dll_directories()
 _register_qt_icu_directories()
 _preload_cuda_libraries()

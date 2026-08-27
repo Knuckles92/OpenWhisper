@@ -300,9 +300,26 @@ def main() -> int:
         ui_controller.show_main_window()
         profiler.mark("main_window_shown")
 
+        from services.app_update_apply import (
+            parse_health_token,
+            write_health_acknowledgement,
+        )
+
+        health_token = parse_health_token()
+        ui_controller.show_apply_error_if_any()
+
         # Whisper load, HF consent, meeting recovery, and streaming setup
         # run after the window is visible — never on the splash path.
         app_controller.notify_main_ui_ready()
+        if health_token:
+            from PyQt6.QtCore import QTimer
+
+            # A visible window is not enough: let the real event loop process
+            # deferred runtime setup before making the helper discard rollback.
+            QTimer.singleShot(
+                1500,
+                lambda token=health_token: write_health_acknowledgement(token),
+            )
 
         profiler.log_summary()
         summary_logged = True

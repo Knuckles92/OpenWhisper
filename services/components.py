@@ -1107,6 +1107,10 @@ class ComponentCoordinator:
         with self._lock:
             return component_id in self._active
 
+    def is_any_installing(self) -> bool:
+        with self._lock:
+            return bool(self._active)
+
     def cancel_install(self, component_id: str) -> None:
         with self._lock:
             event = self._cancel_flags.get(component_id)

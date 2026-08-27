@@ -7,12 +7,22 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 from config import config
 from services.app_update import (
     RELEASES_PAGE_URL,
+    ApplyMode,
     UpdateCheckResult,
     UpdateStatus,
     channel_label,
     detect_channel,
     should_auto_notify,
 )
+from services.app_update_apply import (
+    acquire_application_mutex_or_exit,
+    consume_apply_error,
+    helper_argv,
+    helper_exe_for,
+    load_journal,
+    release_application_mutex_for_setup,
+)
+from services.update_contract import decode_native_result
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
@@ -24,6 +34,16 @@ from ui_qt.widgets import TabbedContentWidget
 from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _start_detached(program: str, arguments: list) -> bool:
+    """Return True when ``QProcess.startDetached`` actually launched."""
+    from PyQt6.QtCore import QProcess
+
+    result = QProcess.startDetached(program, arguments)
+    if isinstance(result, tuple):
+        return bool(result[0])
+    return bool(result)
 
 
 class UIController(QObject):
@@ -69,6 +89,9 @@ class UIController(QObject):
         self.on_component_remove: Optional[Callable] = None
         self.on_check_for_updates: Optional[Callable] = None
         self.on_update_download: Optional[Callable] = None
+        self.on_update_cancel: Optional[Callable] = None
+        self.get_transcribing: Optional[Callable[[], bool]] = None
+        self.get_component_installing: Optional[Callable[[], bool]] = None
         self._last_update_result: Optional[UpdateCheckResult] = None
         self._update_dialog: Optional[AppUpdateDialog] = None
 
@@ -1129,6 +1152,8 @@ class UIController(QObject):
         dialog = AppUpdateDialog(result, error=error, parent=self.main_window)
         self._update_dialog = dialog
         dialog.on_download_requested = self._on_update_download_requested
+        dialog.on_cancel_requested = self._on_update_cancel_requested
+        dialog.on_setup_requested = self._on_update_setup_requested
         dialog.exec()
         if dialog.result_action == AppUpdateDialog.RESULT_PRIMARY:
             if (
@@ -1144,9 +1169,46 @@ class UIController(QObject):
         ):
             self._update_dialog = None
 
+    def _update_work_is_busy(self) -> Optional[str]:
+        if self.is_recording:
+            return "a recording"
+        if self.get_meeting_active and self.get_meeting_active():
+            return "a meeting"
+        if self.get_transcribing and self.get_transcribing():
+            return "transcription"
+        if self.get_component_installing and self.get_component_installing():
+            return "a component install"
+        return None
+
+    def _confirm_update_while_busy(self) -> bool:
+        busy = self._update_work_is_busy()
+        if not busy:
+            return True
+        answer = QMessageBox.question(
+            self.main_window,
+            "Install update?",
+            f"OpenWhisper is busy with {busy}. Install the update anyway? "
+            "Unsaved work in that task may be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _on_update_download_requested(self, result: UpdateCheckResult) -> None:
+        if not self._confirm_update_while_busy():
+            if self._update_dialog is not None:
+                self._update_dialog.set_error("The update was not started.")
+            return
         if self.on_update_download:
             self.on_update_download(result)
+
+    def _on_update_setup_requested(self, result: UpdateCheckResult) -> None:
+        if self.on_update_download:
+            self.on_update_download(result, True)
+
+    def _on_update_cancel_requested(self) -> None:
+        if self.on_update_cancel:
+            self.on_update_cancel()
 
     def on_update_download_progress(self, phase: str, done: int, total: int) -> None:
         """Forward installer-download progress to the open dialog."""
@@ -1154,10 +1216,20 @@ class UIController(QObject):
             self._update_dialog.set_progress(phase, done, total)
 
     def on_update_download_finished(self, path: str, error: str) -> None:
-        """Launch the verified Inno setup and quit, or show the error."""
+        """Start the native helper or setup exe and quit, or show the error."""
         if error:
+            offer_setup = False
+            result = self._last_update_result
+            if (
+                result is not None
+                and result.apply_mode == ApplyMode.NATIVE
+                and result.release is not None
+                and result.release.setup_asset is not None
+                and result.release.setup_asset.sha256
+            ):
+                offer_setup = True
             if self._update_dialog is not None:
-                self._update_dialog.set_error(error)
+                self._update_dialog.set_error(error, offer_setup=offer_setup)
             else:
                 QMessageBox.warning(
                     self.main_window, "Update failed", error
@@ -1165,15 +1237,50 @@ class UIController(QObject):
             return
         from PyQt6.QtCore import QProcess
 
-        launched = QProcess.startDetached(path, [])
-        if not launched:
-            message = "The installer could not be started."
+        transaction_id = decode_native_result(path)
+        if transaction_id:
+            try:
+                journal = load_journal(transaction_id)
+                exe = helper_exe_for(journal)
+                args = helper_argv(journal)
+            except Exception as exc:
+                message = str(exc) or "The updater helper could not be prepared."
+                if self._update_dialog is not None:
+                    self._update_dialog.set_error(message, offer_setup=True)
+                else:
+                    QMessageBox.warning(self.main_window, "Update failed", message)
+                return
             if self._update_dialog is not None:
-                self._update_dialog.set_error(message)
+                self._update_dialog.set_progress("restarting", 1, 1)
+        else:
+            exe = path
+            args = []
+            release_application_mutex_for_setup()
+
+        launched = _start_detached(exe, args)
+        if not launched:
+            if not transaction_id:
+                acquire_application_mutex_or_exit()
+            message = (
+                "The updater could not be started."
+                if transaction_id
+                else "The installer could not be started."
+            )
+            if self._update_dialog is not None:
+                self._update_dialog.set_error(
+                    message, offer_setup=bool(transaction_id)
+                )
             else:
                 QMessageBox.warning(self.main_window, "Update failed", message)
             return
         QApplication.instance().quit()
+
+    def show_apply_error_if_any(self) -> None:
+        """Show a leftover native-update error from the previous launch."""
+        message = consume_apply_error()
+        if not message:
+            return
+        QMessageBox.warning(self.main_window, "Update failed", message)
 
     def show_about_dialog(self):
         channel = channel_label(detect_channel())

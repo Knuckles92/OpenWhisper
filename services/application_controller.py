@@ -234,6 +234,11 @@ class ApplicationController(QObject):
             lambda: self.request_update_check(manual=True)
         )
         self.ui_controller.on_update_download = self.request_update_download
+        self.ui_controller.on_update_cancel = self.cancel_update_download
+        self.ui_controller.get_transcribing = self.is_transcribing
+        self.ui_controller.get_component_installing = (
+            lambda: component_coordinator.is_any_installing()
+        )
         self.ui_controller.on_meeting_start = self.meeting_runtime.start_meeting
         self.ui_controller.on_meeting_start_demo = (
             self.meeting_runtime.start_demo_meeting
@@ -421,12 +426,21 @@ class ApplicationController(QObject):
         if handler:
             handler(result, error, manual)
 
-    def request_update_download(self, result) -> None:
-        """Download the verified setup exe on the long-running worker."""
+    def request_update_download(self, result, force_setup: bool = False) -> None:
+        """Download and prepare a verified update on the long-running worker."""
         self._update_cancel.clear()
-        self.component_executor.submit(self._update_download_worker, result)
+        self.component_executor.submit(
+            self._update_download_worker, result, force_setup
+        )
 
-    def _update_download_worker(self, result) -> None:
+    def cancel_update_download(self) -> None:
+        self._update_cancel.set()
+
+    def is_transcribing(self) -> bool:
+        backend = getattr(self, "current_backend", None)
+        return bool(backend and getattr(backend, "is_transcribing", False))
+
+    def _update_download_worker(self, result, force_setup: bool = False) -> None:
         release = getattr(result, "release", None)
         if release is None:
             self.update_download_finished.emit("", "No installer is available.")
@@ -435,11 +449,14 @@ class ApplicationController(QObject):
         def progress(phase: str, done: int, total: int) -> None:
             self.update_download_progress.emit(phase, done, total)
 
-        from services.app_update import download_installer
+        from services.app_update import apply_update
 
         try:
-            path = download_installer(
-                release, progress=progress, cancel=self._update_cancel
+            path = apply_update(
+                result,
+                progress=progress,
+                cancel=self._update_cancel,
+                force_setup=force_setup,
             )
         except Exception as exc:
             logger.warning("Update download failed: %s", exc)

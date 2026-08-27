@@ -39,12 +39,16 @@ class _FakeUIController:
         self.show_main_window_called = False
         self.device_info = None
         self.cleaned_up = False
+        self.apply_error_checked = False
 
     def show_main_window(self):
         self.show_main_window_called = True
 
     def set_device_info(self, device_info):
         self.device_info = device_info
+
+    def show_apply_error_if_any(self):
+        self.apply_error_checked = True
 
     def cleanup(self):
         self.cleaned_up = True

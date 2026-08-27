@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton
 _QAPP = QApplication.instance() or QApplication([])
 
 from services.app_update import (
+    ApplyMode,
     InstallChannel,
     ReleaseAsset,
     ReleaseInfo,
@@ -24,6 +25,7 @@ def _result(
     channel: str = InstallChannel.SOURCE,
     can_apply: bool = False,
     version: str = "2.2.0",
+    apply_mode: str | None = None,
 ) -> UpdateCheckResult:
     return UpdateCheckResult(
         status=status,
@@ -34,7 +36,7 @@ def _result(
             tag_name=f"v{version}",
             html_url=f"https://github.com/Knuckles92/OpenWhisper/releases/tag/v{version}",
             notes="Bug fixes",
-            asset=ReleaseAsset(
+            setup_asset=ReleaseAsset(
                 url="https://example/OpenWhisper-Setup-2.2.0.exe",
                 name="OpenWhisper-Setup-2.2.0.exe",
                 size_bytes=90_000_000,
@@ -42,6 +44,11 @@ def _result(
             ),
         ),
         can_apply=can_apply,
+        apply_mode=(
+            apply_mode
+            if apply_mode is not None
+            else (ApplyMode.SETUP if can_apply else ApplyMode.NOTIFY_ONLY)
+        ),
         git_hint=(
             "git pull --ff-only\npip install -r requirements.txt"
             if channel == InstallChannel.GIT
@@ -145,3 +152,29 @@ class TestAppUpdateDialog(_QtTestCase):
             check_enabled=True,
             skipped_version=None,
         )
+
+    def test_progress_copy_uses_update_not_installer(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+        assert dialog.body_label.text() == "Downloading the update…"
+        assert dialog.later_btn.text() == "Cancel"
+        dialog.set_progress("verifying", 50, 100)
+        assert dialog.body_label.text() == "Verifying the download…"
+        dialog.set_progress("extracting", 50, 100)
+        assert dialog.body_label.text() == "Preparing the update…"
+        dialog.set_progress("restarting", 1, 1)
+        assert dialog.body_label.text() == "Restarting to finish the update…"
+
+    def test_error_offers_setup_fallback_for_native_mode(self):
+        dialog = AppUpdateDialog(
+            _result(
+                channel=InstallChannel.INSTALLER,
+                can_apply=True,
+                apply_mode=ApplyMode.NATIVE,
+            )
+        )
+        dialog.set_error("disk full", offer_setup=True)
+        assert not dialog.setup_btn.isHidden()
+        assert dialog.later_btn.text() == "Later"

@@ -64,6 +64,9 @@ ShowLanguageDialog=no
 DisableWelcomePage=no
 CloseApplications=yes
 CloseApplicationsFilter=*.exe,*.dll
+; Shared with the native updater so setup/uninstall wait for the app and helper.
+AppMutex=OpenWhisper-App-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,Global\OpenWhisper-App-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,OpenWhisper-Update-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,Global\OpenWhisper-Update-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9
+SetupMutex=Global\OpenWhisper-Setup-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -81,6 +84,14 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startupicon
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\{#AppExeName}"
+Type: files; Name: "{app}\OpenWhisperUpdater.exe"
+Type: files; Name: "{app}\.openwhisper-update.json"
+Type: files; Name: "{app}\.openwhisper-update-complete"
+Type: filesandordirs; Name: "{localappdata}\{#AppName}\updates"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

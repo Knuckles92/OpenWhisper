@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.app_update import (
+    ApplyMode,
     UpdateCheckResult,
     UpdateStatus,
     channel_label,
@@ -42,6 +43,7 @@ class AppUpdateDialog(QDialog):
 
     RESULT_LATER: Final[str] = "later"
     RESULT_PRIMARY: Final[str] = "primary"
+    RESULT_USE_SETUP: Final[str] = "use_setup"
 
     def __init__(
         self,
@@ -62,7 +64,12 @@ class AppUpdateDialog(QDialog):
         self._error = error or ""
         self._persisted = False
         self.result_action = self.RESULT_LATER
+        self._busy = False
         self.on_download_requested: Optional[
+            Callable[[UpdateCheckResult], None]
+        ] = None
+        self.on_cancel_requested: Optional[Callable[[], None]] = None
+        self.on_setup_requested: Optional[
             Callable[[UpdateCheckResult], None]
         ] = None
 
@@ -121,6 +128,12 @@ class AppUpdateDialog(QDialog):
         buttons.setSpacing(8)
         buttons.addStretch()
 
+        self.setup_btn = Button("Use installer instead")
+        self.setup_btn.setObjectName("updateSetupButton")
+        self.setup_btn.clicked.connect(self._on_use_setup)
+        self.setup_btn.hide()
+        buttons.addWidget(self.setup_btn)
+
         self.later_btn = Button(self._later_label())
         self.later_btn.setObjectName("updateLaterButton")
         self.later_btn.clicked.connect(self._on_later)
@@ -158,9 +171,14 @@ class AppUpdateDialog(QDialog):
         lines = [f"You have {current} ({channel})."]
         release = self._result.release
         if self._result.status == UpdateStatus.UPDATE_AVAILABLE and release:
-            if release.asset and release.asset.size_bytes:
+            asset = (
+                release.native_asset
+                if self._result.apply_mode == ApplyMode.NATIVE
+                else release.setup_asset
+            )
+            if asset and asset.size_bytes:
                 lines.append(
-                    f"Download size: {format_size_bytes(release.asset.size_bytes)}."
+                    f"Download size: {format_size_bytes(asset.size_bytes)}."
                 )
             excerpt = _notes_excerpt(release.notes)
             if excerpt:
@@ -201,9 +219,26 @@ class AppUpdateDialog(QDialog):
         return "Later"
 
     def _on_later(self) -> None:
+        if self._busy:
+            self._on_cancel()
+            return
         self.result_action = self.RESULT_LATER
         self._persist(skipped=True)
         self.reject()
+
+    def _on_cancel(self) -> None:
+        if self.on_cancel_requested:
+            self.on_cancel_requested()
+        self.body_label.setText("Cancelling the update…")
+        self.later_btn.setEnabled(False)
+
+    def _on_use_setup(self) -> None:
+        if self._result is None or not self.on_setup_requested:
+            return
+        self.result_action = self.RESULT_USE_SETUP
+        self.setup_btn.hide()
+        self._set_downloading()
+        self.on_setup_requested(self._result)
 
     def _on_primary(self) -> None:
         self.result_action = self.RESULT_PRIMARY
@@ -220,7 +255,13 @@ class AppUpdateDialog(QDialog):
 
     def reject(self) -> None:
         """Treat window-close as Later so the opt-out boxes still persist."""
-        if self.result_action != self.RESULT_PRIMARY:
+        if self._busy:
+            self._on_cancel()
+            return
+        if self.result_action not in (
+            self.RESULT_PRIMARY,
+            self.RESULT_USE_SETUP,
+        ):
             self.result_action = self.RESULT_LATER
             self._persist(skipped=True)
         super().reject()
@@ -247,13 +288,16 @@ class AppUpdateDialog(QDialog):
             logger.warning("Could not persist update preferences: %s", exc)
 
     def _set_downloading(self) -> None:
+        self._busy = True
         self.primary_btn.setEnabled(False)
-        self.later_btn.setEnabled(False)
+        self.setup_btn.setEnabled(False)
+        self.later_btn.setEnabled(True)
+        self.later_btn.setText("Cancel")
         self.dont_notify_check.setEnabled(False)
         self.dont_check_check.setEnabled(False)
         self.progress_bar.show()
         self.progress_bar.setRange(0, 0)
-        self.body_label.setText("Downloading the installer…")
+        self.body_label.setText("Downloading the update…")
 
     def set_progress(self, phase: str, done: int, total: int) -> None:
         """Update the download progress bar from a worker signal."""
@@ -265,16 +309,34 @@ class AppUpdateDialog(QDialog):
             self.progress_bar.setRange(0, 0)
         if phase == "verifying":
             self.body_label.setText("Verifying the download…")
+        elif phase == "extracting":
+            self.body_label.setText("Preparing the update…")
+        elif phase == "restarting":
+            self.body_label.setText("Restarting to finish the update…")
+        elif phase == "rolling_back":
+            self.body_label.setText("Restoring the previous version…")
 
-    def set_error(self, message: str) -> None:
-        """Re-enable the dialog after a failed download."""
+    def set_error(self, message: str, offer_setup: bool = False) -> None:
+        """Re-enable the dialog after a failed download or prepare."""
+        self._busy = False
         self.body_label.setText(message or "The download failed.")
         self.progress_bar.hide()
         self.primary_btn.setEnabled(True)
         self.later_btn.setEnabled(True)
+        self.later_btn.setText(self._later_label())
         self.dont_notify_check.setEnabled(True)
         self.dont_check_check.setEnabled(True)
         self.result_action = self.RESULT_LATER
+        can_offer_setup = (
+            offer_setup
+            and self._result is not None
+            and self._result.apply_mode == ApplyMode.NATIVE
+            and self._result.release is not None
+            and self._result.release.setup_asset is not None
+            and self._result.release.setup_asset.sha256
+        )
+        self.setup_btn.setVisible(bool(can_offer_setup))
+        self.setup_btn.setEnabled(True)
 
 
 def _notes_excerpt(notes: str) -> str:

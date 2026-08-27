@@ -46,6 +46,7 @@ node_modules/
 *.spec
 # ...but the packaging spec is source, not build output.
 !OpenWhisper.spec
+!OpenWhisperUpdater.spec
 
 # PyInstaller / Inno Setup build output
 /build/

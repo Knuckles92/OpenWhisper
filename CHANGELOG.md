@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Native in-app updates** - Help → Check for Updates on a per-user Windows install downloads a verified `OpenWhisper-<version>-win64.tar.xz`, prepares it with Qt progress, then hands off to a windowless `OpenWhisperUpdater.exe`. The helper swaps the install directory atomically, waits for the new app to become ready, updates Add/Remove Programs version metadata, and rolls back if startup fails. The Inno wizard is no longer shown on that path.
+- **Updater helper and update archive** - The installer build freezes `OpenWhisperUpdater.exe` into the app bundle and publishes both `OpenWhisper-Setup-<version>.exe` and `OpenWhisper-<version>-win64.tar.xz` from the same dist tree. See `docs/release-checklist.md`.
+
+### Changed
+- **Setup exe is a fallback** - Elevated / Program Files installs, missing helper or archive, and native preparation failures still use the verified Inno setup. Source and git checkouts stay notify-only. Cancel remains available until the helper starts.
+
+### Fixed
+- **Update launch treated a failed start as success** - `QProcess.startDetached` returns `(ok, pid)` in PyQt6; the updater now checks the boolean instead of the always-truthy tuple before quitting.
+
 ## [2.3.3] - 2026-08-25
 
 ### Changed

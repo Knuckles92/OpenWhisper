@@ -109,6 +109,15 @@ if ($Clean) {
 Write-Step "Generating application icon"
 Invoke-Native $Python @('scripts\generate_icon.py') -ErrorMessage "Icon generation failed"
 
+# Updater helper (onefile, stdlib-only). Copied into the app onedir so first
+# install and later native updates have a commit process outside {app}.
+Write-Step "Freezing the updater helper"
+Invoke-Native $Python `
+    @('-m', 'PyInstaller', '--noconfirm', '--clean', '--log-level', 'WARN', 'OpenWhisperUpdater.spec') `
+    -ErrorMessage "Updater helper freeze failed"
+$HelperExe = Join-Path $RepoRoot 'dist\OpenWhisperUpdater.exe'
+if (-not (Test-Path $HelperExe)) { throw "Expected updater helper not found at $HelperExe" }
+
 # Freeze
 Write-Step "Freezing with PyInstaller (this takes a few minutes)"
 Invoke-Native $Python `
@@ -118,6 +127,8 @@ Invoke-Native $Python `
 $DistDir = Join-Path $RepoRoot 'dist\OpenWhisper'
 $ExePath = Join-Path $DistDir 'OpenWhisper.exe'
 if (-not (Test-Path $ExePath)) { throw "Expected executable not found at $ExePath" }
+Copy-Item -Force $HelperExe (Join-Path $DistDir 'OpenWhisperUpdater.exe')
+Write-Host "    copied OpenWhisperUpdater.exe into the app bundle"
 
 Write-Step "Verifying the bundle"
 $DistSize = Get-TreeSize $DistDir
@@ -149,7 +160,8 @@ $RequiredAssets = @(
     '_internal\PyQt6\Qt6\bin\Qt6Svg.dll',
     # Qt 6.11 imports icuuc.dll; PyQt6 6.11 wheels omit it. The spec copies
     # the Windows system ICU next to Qt6Core when the wheel has none.
-    '_internal\PyQt6\Qt6\bin\icuuc.dll'
+    '_internal\PyQt6\Qt6\bin\icuuc.dll',
+    'OpenWhisperUpdater.exe'
 )
 foreach ($asset in $RequiredAssets) {
     if (-not (Test-Path (Join-Path $DistDir $asset))) {
@@ -170,26 +182,45 @@ foreach ($lib in @('avcodec', 'avformat', 'avutil', 'swresample', 'swscale')) {
 Write-Host "    all required assets and native libraries bundled" -ForegroundColor Green
 
 # Optional code signing
+$HelperInBundle = Join-Path $DistDir 'OpenWhisperUpdater.exe'
 $SignPfx = $env:OPENWHISPER_SIGN_PFX
 if ($SignPfx -and (Test-Path $SignPfx)) {
-    Write-Step "Signing the executable"
+    Write-Step "Signing the executables"
     $SignTool = Get-Command signtool.exe -ErrorAction SilentlyContinue
     if (-not $SignTool) {
         throw "OPENWHISPER_SIGN_PFX is set but signtool.exe is not on PATH (install the Windows SDK)"
     }
-    Invoke-Native $SignTool.Source @(
-        'sign', '/fd', 'SHA256', '/f', $SignPfx, '/p', $env:OPENWHISPER_SIGN_PASS,
-        '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', $ExePath
-    ) -ErrorMessage "Signing the executable failed"
+    foreach ($toSign in @($ExePath, $HelperInBundle)) {
+        Invoke-Native $SignTool.Source @(
+            'sign', '/fd', 'SHA256', '/f', $SignPfx, '/p', $env:OPENWHISPER_SIGN_PASS,
+            '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', $toSign
+        ) -ErrorMessage "Signing $toSign failed"
+    }
 } else {
     Write-Host ""
     Write-Host "    Not signed. Windows SmartScreen will warn users on first run." -ForegroundColor Yellow
     Write-Host "    Set OPENWHISPER_SIGN_PFX and OPENWHISPER_SIGN_PASS to sign." -ForegroundColor Yellow
 }
 
+# Native update archive from the identical, optionally signed dist tree.
+Write-Step "Packing the native update archive"
+$OutputDir = Join-Path $RepoRoot 'installer\Output'
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$ArchivePath = Join-Path $OutputDir "OpenWhisper-$Version-win64.tar.xz"
+if (Test-Path $ArchivePath) { Remove-Item -Force $ArchivePath }
+Invoke-Native $Python @(
+    'scripts\pack_update_archive.py',
+    '--dist', $DistDir,
+    '--output', $ArchivePath,
+    '--version', $Version
+) -ErrorMessage "Native update archive failed"
+
 if ($SkipInstaller) {
+    $ArchiveHash = (Get-FileHash -Algorithm SHA256 $ArchivePath).Hash.ToLower()
     Write-Step "Done (installer skipped)"
-    Write-Host "    Frozen app: $DistDir"
+    Write-Host "    Frozen app : $DistDir"
+    Write-Host "    Archive    : $ArchivePath"
+    Write-Host "    SHA-256    : $ArchiveHash"
     exit 0
 }
 
@@ -233,13 +264,19 @@ if ($SignPfx -and (Test-Path $SignPfx)) {
 # Report
 $SetupSize = (Get-Item $SetupPath).Length
 $Hash = (Get-FileHash -Algorithm SHA256 $SetupPath).Hash.ToLower()
+$ArchiveSize = (Get-Item $ArchivePath).Length
+$ArchiveHash = (Get-FileHash -Algorithm SHA256 $ArchivePath).Hash.ToLower()
 
 Write-Step "Build complete"
 Write-Host ""
 Write-Host "  Installer : $SetupPath"
+Write-Host "  Archive   : $ArchivePath"
 Write-Host "  Version   : $Version"
-Write-Host "  Size      : $(Format-Size $SetupSize)  (unpacked $(Format-Size $DistSize))"
-Write-Host "  SHA-256   : $Hash"
+Write-Host "  Setup     : $(Format-Size $SetupSize)  (unpacked $(Format-Size $DistSize))"
+Write-Host "  Archive   : $(Format-Size $ArchiveSize)"
+Write-Host "  Setup SHA-256   : $Hash"
+Write-Host "  Archive SHA-256 : $ArchiveHash"
 Write-Host ""
-Write-Host "  Publish the SHA-256 next to the download link so users can verify it."
+Write-Host "  Upload both artifacts to a draft GitHub release, wait for both"
+Write-Host "  digest fields, then publish. Old clients only understand the setup exe."
 Write-Host ""

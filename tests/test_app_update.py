@@ -9,6 +9,7 @@ import pytest
 from services import app_update
 from services.app_update import (
     AppUpdateError,
+    ApplyMode,
     InstallChannel,
     RELEASES_PAGE_URL,
     ReleaseAsset,
@@ -24,11 +25,14 @@ from services.app_update import (
     parse_release_payload,
     parse_version,
     persist_prompt_choices,
+    resolve_release_apply_mode,
     should_auto_check,
     should_auto_notify,
     source_update_hint,
     update_check_failure_status,
 )
+from services.app_update_apply import InstallRegistration
+from services.update_contract import archive_asset_name, setup_asset_name
 from services.settings import SettingsKey, SettingsManager
 
 
@@ -56,24 +60,58 @@ LATEST_RELEASE_FIXTURE = {
 }
 
 
+def _asset(
+    version: str,
+    kind: str,
+    *,
+    sha256: str = "ab" * 32,
+    size_bytes: int = 100,
+) -> ReleaseAsset:
+    name = (
+        setup_asset_name(version) if kind == "setup" else archive_asset_name(version)
+    )
+    return ReleaseAsset(
+        url=(
+            f"https://github.com/Knuckles92/OpenWhisper/releases/"
+            f"download/v{version}/{name}"
+        ),
+        name=name,
+        size_bytes=size_bytes,
+        sha256=sha256,
+    )
+
+
 def _release(
     version: str = "2.2.0",
     *,
     sha256: str = "ab" * 32,
-    url: str = "https://github.com/example/OpenWhisper-Setup-2.2.0.exe",
+    url: str = "https://example/setup.exe",
     size_bytes: int = 100,
+    native: bool = False,
 ) -> ReleaseInfo:
+    setup = ReleaseAsset(
+        url=url if url.startswith("https://example") else _asset(version, "setup").url,
+        name=setup_asset_name(version),
+        size_bytes=size_bytes,
+        sha256=sha256,
+    )
     return ReleaseInfo(
         version=version,
         tag_name=f"v{version}",
         html_url=f"https://github.com/Knuckles92/OpenWhisper/releases/tag/v{version}",
         notes="notes",
-        asset=ReleaseAsset(
-            url=url,
-            name=f"OpenWhisper-Setup-{version}.exe",
-            size_bytes=size_bytes,
-            sha256=sha256,
-        ),
+        setup_asset=setup,
+        native_asset=_asset(version, "native", sha256=sha256) if native else None,
+    )
+
+
+def _hkcu(app_dir: str) -> InstallRegistration:
+    return InstallRegistration(
+        hive="HKCU",
+        key_path=r"Software\Microsoft\Windows\CurrentVersion\Uninstall\test",
+        install_location=app_dir,
+        uninstall_string=app_dir + r"\unins000.exe",
+        display_version="2.3.3",
     )
 
 
@@ -183,12 +221,14 @@ class TestParseReleasePayload:
         release = parse_release_payload(LATEST_RELEASE_FIXTURE)
         assert release.version == "2.1.1"
         assert release.tag_name == "v2.1.1"
-        assert release.asset is not None
-        assert release.asset.name == "OpenWhisper-Setup-2.1.1.exe"
-        assert release.asset.sha256 == (
+        assert release.setup_asset is not None
+        assert release.setup_asset.name == "OpenWhisper-Setup-2.1.1.exe"
+        assert release.setup_asset.sha256 == (
             "43d623f9f0a35d3ab7c8366d30bd721fe20c51bd94f3bc37b453c63fd5f8bd13"
         )
-        assert release.asset.size_bytes == 91717696
+        assert release.setup_asset.size_bytes == 91717696
+        assert release.native_asset is None
+        assert release.asset is release.setup_asset
 
     def test_sidecar_zip_asset_is_ignored(self):
         payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
@@ -420,3 +460,124 @@ class TestDownloadInstaller:
             )
         assert path == str(existing)
         opener.assert_not_called()
+
+
+def _payload_with(*assets, **overrides):
+    payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
+    payload.update(overrides)
+    payload["assets"] = list(assets)
+    return payload
+
+
+def _github_asset(name, version="2.1.1", digest=True, size=100, extra=None):
+    item = {
+        "name": name,
+        "size": size,
+        "state": "uploaded",
+        "browser_download_url": (
+            f"https://github.com/Knuckles92/OpenWhisper/releases/"
+            f"download/v{version}/{name}"
+        ),
+    }
+    if digest:
+        item["digest"] = "sha256:" + ("ab" * 32)
+    if extra:
+        item.update(extra)
+    return item
+
+
+class TestDualAssetsAndApplyMode:
+    def test_prefers_exact_archive_name(self):
+        payload = _payload_with(
+            _github_asset("OpenWhisper-Setup-2.1.1.exe"),
+            _github_asset("OpenWhisper-2.1.1-win64.tar.xz"),
+            _github_asset("meeting-agent.zip"),
+        )
+        release = parse_release_payload(payload)
+        assert release.native_asset is not None
+        assert release.native_asset.name == "OpenWhisper-2.1.1-win64.tar.xz"
+        assert release.setup_asset is not None
+        assert release.asset is release.native_asset
+
+    def test_duplicate_archive_is_rejected(self):
+        payload = _payload_with(
+            _github_asset("OpenWhisper-2.1.1-win64.tar.xz"),
+            _github_asset("OpenWhisper-2.1.1-win64.tar.xz"),
+        )
+        release = parse_release_payload(payload)
+        assert release.native_asset is None
+
+    def test_wrong_download_url_is_rejected(self):
+        payload = _payload_with(
+            _github_asset(
+                "OpenWhisper-Setup-2.1.1.exe",
+                extra={
+                    "browser_download_url": "https://evil.example/OpenWhisper-Setup-2.1.1.exe"
+                },
+            )
+        )
+        release = parse_release_payload(payload)
+        assert release.setup_asset is None
+
+    def test_draft_release_has_no_apply_assets(self):
+        payload = _payload_with(
+            _github_asset("OpenWhisper-Setup-2.1.1.exe"),
+            draft=True,
+        )
+        release = parse_release_payload(payload)
+        assert release.setup_asset is None
+        assert release.native_asset is None
+
+    def test_native_mode_requires_hkcu_registration(self, tmp_path):
+        release = _release(native=True)
+        (tmp_path / "unins000.exe").write_bytes(b"uninstaller")
+        with patch.object(app_update.sys, "platform", "win32"):
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER, release
+            ) == ApplyMode.SETUP
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER,
+                release,
+                registration=_hkcu(str(tmp_path)),
+                app_dir=str(tmp_path),
+                helper_present=True,
+            ) == ApplyMode.NATIVE
+
+    def test_hklm_registration_uses_setup(self, tmp_path):
+        release = _release(native=True)
+        hklm = InstallRegistration(
+            hive="HKLM",
+            key_path="x",
+            install_location=str(tmp_path),
+            uninstall_string="unins000.exe",
+            display_version="2.3.3",
+        )
+        with patch.object(app_update.sys, "platform", "win32"):
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER,
+                release,
+                registration=hklm,
+                app_dir=str(tmp_path),
+                helper_present=True,
+            ) == ApplyMode.SETUP
+
+    def test_setup_only_release_is_setup_mode(self):
+        with patch.object(app_update.sys, "platform", "win32"):
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER, _release()
+            ) == ApplyMode.SETUP
+
+    def test_missing_both_digests_is_notify_only(self):
+        release = ReleaseInfo(
+            version="2.2.0",
+            tag_name="v2.2.0",
+            html_url="https://example",
+            notes="",
+            setup_asset=_asset("2.2.0", "setup", sha256=None),
+            native_asset=_asset("2.2.0", "native", sha256=None),
+        )
+        with patch.object(app_update.sys, "platform", "win32"):
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER, release
+            ) == ApplyMode.NOTIFY_ONLY
+            assert not can_apply(InstallChannel.INSTALLER, release)
