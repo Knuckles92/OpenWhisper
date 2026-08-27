@@ -7,16 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-08-27
+
+### Changed
+- **Text model choices save themselves** - Model Manager's text cleanup and meeting intelligence destinations no longer have an "Active now" tile and a Use This Model button. Picking a model from the catalog (or typing a model id and pressing Enter) assigns it right away, and a small **Active** badge inside the model dropdown marks the assignment. A leftover search fragment is not a choice: it rewinds when focus leaves the field.
+- **Model search ranks fuzzy matches** - Downloads rows and searchable model dropdowns score approximate queries (spaces, punctuation, multi-token, subsequence) instead of requiring an exact substring, and highlight the best match. Enter activates that highlight.
+
+### Fixed
+- **Text model search missed hyphenated ids** - Typing ``gemini 3.7`` in Model Manager's text cleanup or meeting intelligence picker hid ``gemini-3.7`` because the filter required an exact substring. Search now ignores spaces and punctuation, so a spaced query still finds the catalog id.
+
+## [2.4.0] - 2026-08-26
+
 ### Added
 - **Native in-app updates** - Help → Check for Updates on a per-user Windows install downloads a verified `OpenWhisper-<version>-win64.tar.xz`, prepares it with Qt progress, then hands off to a windowless `OpenWhisperUpdater.exe`. The helper swaps the install directory atomically, waits for the new app to become ready, updates Add/Remove Programs version metadata, and rolls back if startup fails. The Inno wizard is no longer shown on that path.
 - **Updater helper and update archive** - The installer build freezes `OpenWhisperUpdater.exe` into the app bundle and publishes both `OpenWhisper-Setup-<version>.exe` and `OpenWhisper-<version>-win64.tar.xz` from the same dist tree. See `docs/release-checklist.md`.
 
 ### Changed
-- **Text model choices save themselves** - Model Manager's text cleanup and meeting intelligence destinations no longer have an "Active now" tile and a Use This Model button. Picking a model from the catalog (or typing a model id and pressing Enter) assigns it right away, and a small **Active** badge inside the model dropdown marks the assignment. A leftover search fragment is not a choice: it rewinds when focus leaves the field.
 - **Setup exe is a fallback** - Elevated / Program Files installs, missing helper or archive, and native preparation failures still use the verified Inno setup. Source and git checkouts stay notify-only. Cancel remains available until the helper starts.
 
 ### Fixed
-- **Text model search missed hyphenated ids** - Typing ``gemini 3.7`` in Model Manager's text cleanup or meeting intelligence picker hid ``gemini-3.7`` because the filter required an exact substring. Search now ignores spaces and punctuation, so a spaced query still finds the catalog id.
 - **Update launch treated a failed start as success** - `QProcess.startDetached` returns `(ok, pid)` in PyQt6; the updater now checks the boolean instead of the always-truthy tuple before quitting.
 
 ## [2.3.3] - 2026-08-25
