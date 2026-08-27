@@ -3,6 +3,11 @@
 The picker is stacked vertically because it lives inside a rail destination
 that must fit the window without scrolling. Provider prose that used to sit in
 its own identity card is now carried by the combo's tooltip.
+
+Choosing a model assigns it: there is no separate confirm step. An Active badge
+inside the model combo marks the assignment, so the only place that reports what
+is in use is the value itself. A search fragment left in the editor is not a
+choice — it reverts when focus leaves without Enter or a pick from the list.
 """
 from pathlib import Path
 from typing import List, Optional
@@ -78,10 +83,13 @@ class TextModelPicker(QWidget):
         self._active_model = ""
         self._idle_status = idle_status
         self._profiles: List[TextLLMProfile] = list(builtin_profiles())
-        self._draft_models = {
+        # Model shown per endpoint. Only a committed pick or a caller updates
+        # it, so switching endpoints never carries a search fragment along.
+        self._staged_models = {
             profile.id: default_transcript_cleanup_model(profile.id)
             for profile in self._profiles
         }
+        self._model_edited = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -179,10 +187,12 @@ class TextModelPicker(QWidget):
         self.model_combo.setMinimumHeight(40)
         self._model_icon = _design_icon("box-blue.svg")
         self.model_combo.setIconSize(QSize(20, 20))
-        self.model_combo.setToolTip(
-            "Choose from the provider catalog or enter a model id directly"
-        )
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        self.model_combo.textActivated.connect(self._on_model_activated)
+        model_line_edit = self.model_combo.lineEdit()
+        model_line_edit.textEdited.connect(self._on_model_text_edited)
+        model_line_edit.returnPressed.connect(self._commit_model_selection)
+        model_line_edit.editingFinished.connect(self._on_model_editing_finished)
         model_row.addWidget(self.model_combo, stretch=1)
 
         self.refresh_button = Button("Refresh")
@@ -203,41 +213,6 @@ class TextModelPicker(QWidget):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        active_row = QHBoxLayout()
-        active_row.setSpacing(10)
-        self.active_summary_card = QFrame()
-        self.active_summary_card.setObjectName("textModelActiveCard")
-        self.active_summary_card.setMinimumHeight(56)
-        active_layout = QHBoxLayout(self.active_summary_card)
-        active_layout.setContentsMargins(14, 8, 14, 8)
-        active_layout.setSpacing(12)
-        self.active_summary_icon = QLabel()
-        self.active_summary_icon.setObjectName("textModelActiveIcon")
-        self.active_summary_icon.setFixedSize(24, 24)
-        self.active_summary_icon.setPixmap(
-            _design_icon("bolt-green.svg").pixmap(24, 24)
-        )
-        self.active_summary = QLabel("")
-        self.active_summary.setObjectName("textModelActiveSummary")
-        self.active_summary.setWordWrap(True)
-        active_layout.addWidget(self.active_summary_icon)
-        active_layout.addWidget(self.active_summary, stretch=1)
-        active_row.addWidget(self.active_summary_card, stretch=1)
-
-        self.activate_button = Button("Use This Model")
-        self.activate_button.setObjectName("textModelActivateButton")
-        self.activate_button.setIcon(_design_icon("check-green.svg"))
-        self.activate_button.setIconSize(QSize(18, 18))
-        self.activate_button.set_base_minimum_size(150, 40)
-        self.activate_button.setMaximumHeight(40)
-        self.activate_button.clicked.connect(
-            lambda: self.activation_requested.emit(self.provider)
-        )
-        active_row.addWidget(
-            self.activate_button, alignment=Qt.AlignmentFlag.AlignVCenter
-        )
-        layout.addLayout(active_row)
-
         self._reload_provider_combo()
         self._render_provider()
 
@@ -248,7 +223,7 @@ class TextModelPicker(QWidget):
         current = self.provider
         self._profiles = list(profiles)
         for profile in self._profiles:
-            self._draft_models.setdefault(
+            self._staged_models.setdefault(
                 profile.id, default_transcript_cleanup_model(profile.id)
             )
         self._reload_provider_combo()
@@ -274,9 +249,8 @@ class TextModelPicker(QWidget):
         known = {profile.id for profile in self._profiles}
         if provider not in known and get_profile(provider) is None:
             return
-        self._save_current_draft()
         if model:
-            self._draft_models[provider] = model
+            self._staged_models[provider] = model
         index = self.provider_combo.findData(provider)
         self.provider_combo.blockSignals(True)
         self.provider_combo.setCurrentIndex(max(0, index))
@@ -306,7 +280,6 @@ class TextModelPicker(QWidget):
         self.provider_combo.blockSignals(False)
 
     def _on_provider_combo_changed(self, _index: int) -> None:
-        self._save_current_draft()
         provider = self.provider_combo.currentData()
         if not provider:
             return
@@ -364,16 +337,13 @@ class TextModelPicker(QWidget):
         self.edit_endpoint_button.setEnabled(can_edit)
         self.delete_endpoint_button.setEnabled(can_edit)
 
+        self._model_edited = False
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        self.model_combo.setCurrentText(
-            self._draft_models.get(
-                self.provider, default_transcript_cleanup_model(self.provider)
-            )
-        )
+        self.model_combo.setCurrentText(self._staged_model())
         self.model_combo.blockSignals(False)
         self.status_label.setText("Loading models…")
-        self._update_active_summary()
+        self._update_active_badge()
 
     def _update_credential_status(self, requirement: Optional[str] = None) -> None:
         """Show whether the selected provider's API key is available.
@@ -403,16 +373,54 @@ class TextModelPicker(QWidget):
         self.provider_requirement.style().polish(self.provider_requirement)
         self.provider_requirement.update()
 
-    def _save_current_draft(self) -> None:
-        """Remember typed model ids independently for each provider."""
-        model = self.model_combo.currentText().strip()
-        if model:
-            self._draft_models[self.provider] = model
+    def _staged_model(self) -> str:
+        """Return the model this picker shows for the selected endpoint."""
+        return self._staged_models.get(
+            self.provider, default_transcript_cleanup_model(self.provider)
+        )
 
-    def _on_model_changed(self, text: str) -> None:
-        if text.strip():
-            self._draft_models[self.provider] = text.strip()
-        self._update_activation_button()
+    def _on_model_changed(self, _text: str) -> None:
+        self._update_active_badge()
+
+    def _on_model_text_edited(self, _text: str) -> None:
+        self._model_edited = True
+
+    def _on_model_activated(self, _text: str) -> None:
+        """Assign a model the moment it is picked from the catalog."""
+        self._commit_model_selection()
+
+    def _on_model_editing_finished(self) -> None:
+        """Drop an uncommitted edit when focus leaves the model editor.
+
+        Typing filters the dropdown, so the editor can hold a fragment such as
+        ``clau`` that the user never chose. Only Enter or a pick from the list
+        assigns; anything else rewinds to the model already staged.
+        """
+        if self._model_edited:
+            self._restore_staged_model()
+
+    def _commit_model_selection(self) -> None:
+        """Stage and request activation for the model now in the editor."""
+        self._model_edited = False
+        model = self.model_combo.currentText().strip()
+        if not model:
+            self._restore_staged_model()
+            return
+        self._staged_models[self.provider] = model
+        self._update_active_badge()
+        already_active = (
+            self.provider == self._active_provider
+            and model == self._active_model
+        )
+        if not already_active:
+            self.activation_requested.emit(self.provider)
+
+    def _restore_staged_model(self) -> None:
+        self._model_edited = False
+        staged = self._staged_model()
+        if self.model_combo.currentText() != staged:
+            self.model_combo.setCurrentText(staged)
+        self._update_active_badge()
 
     def current_sort(self) -> str:
         """Return the catalog order applicable to this provider.
@@ -445,16 +453,14 @@ class TextModelPicker(QWidget):
         Args:
             models: Model ids returned by the selected provider.
         """
-        current = self._draft_models.get(self.provider, "").strip()
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         for model in models:
             self.model_combo.addItem(self._model_icon, model)
-        self.model_combo.setCurrentText(
-            current or default_transcript_cleanup_model(self.provider)
-        )
+        self.model_combo.setCurrentText(self._staged_model())
         self.model_combo.blockSignals(False)
-        self._update_activation_button()
+        self._model_edited = False
+        self._update_active_badge()
 
     def set_loading(self, loading: bool) -> None:
         self.refresh_button.setEnabled(not loading)
@@ -462,9 +468,12 @@ class TextModelPicker(QWidget):
             self.status_label.setText("Loading models…")
 
     def set_active_selection(self, provider: str, model: str) -> None:
+        """Record the saved assignment the badge reports."""
         self._active_provider = provider
         self._active_model = model
-        self._update_active_summary()
+        if model:
+            self._staged_models[provider] = model
+        self._update_active_badge()
 
     def _active_profile_name(self) -> str:
         for profile in self._profiles:
@@ -479,40 +488,29 @@ class TextModelPicker(QWidget):
             return "OpenRouter"
         return self._active_provider or "Endpoint"
 
-    def _update_active_summary(self) -> None:
-        """Always report the saved assignment, highlighted when it is on screen.
+    def _update_active_badge(self) -> None:
+        """Badge the model combo when it shows the saved assignment.
 
-        Browsing another endpoint must not hide which model is actually in use,
-        so the row stays visible and only its emphasis follows the selection.
+        The badge is the only report of what is in use, so an endpoint being
+        browsed shows no badge and the combo tooltip names the real one.
         """
-        provider_name = self._active_profile_name()
-        self.active_summary.setText(
-            f"Active now: {provider_name} · {self._active_model}"
-        )
-        matches = bool(self._active_provider) and (
-            self.provider == self._active_provider
-        )
-        for widget in (self.active_summary_card, self.active_summary):
-            widget.setProperty("matches", matches)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-            widget.update()
-        self.active_summary_icon.setVisible(matches)
-        self._update_activation_button()
-
-    def _update_activation_button(self, _text: str = "") -> None:
-        """Disable activation only when the staged selection is already active."""
         selected = self.model_combo.currentText().strip()
-        is_active = (
+        is_active = bool(self._active_provider) and (
             self.provider == self._active_provider
             and selected == self._active_model
         )
-        self.activate_button.setText("Active" if is_active else "Use This Model")
-        self.activate_button.setEnabled(bool(selected) and not is_active)
-        self.activate_button.setProperty("current", is_active)
-        self.activate_button.style().unpolish(self.activate_button)
-        self.activate_button.style().polish(self.activate_button)
-        self.activate_button.update()
+        self.model_combo.set_badge("Active" if is_active else "")
+        if is_active:
+            self.model_combo.setToolTip(
+                f"{self._active_profile_name()} · {self._active_model} is the "
+                "model in use."
+            )
+        else:
+            self.model_combo.setToolTip(
+                "Choose from the catalog or type a model id — the choice is "
+                "saved immediately. In use now: "
+                f"{self._active_profile_name()} · {self._active_model}."
+            )
 
     def _emit_edit(self) -> None:
         profile = self.current_profile()

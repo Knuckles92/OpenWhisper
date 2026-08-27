@@ -468,7 +468,6 @@ QLabel#textModelFootnote {
 }
 
 QLabel#textProviderCredentialIcon,
-QLabel#textModelActiveIcon,
 QLabel#textModelFootnoteIcon {
     background-color: transparent;
     border: none;
@@ -484,31 +483,6 @@ QLabel#textProviderRequirement {
 
 QLabel#textProviderRequirement[available="true"] {
     color: #30d158;
-}
-
-/* Neutral until the endpoint on screen is the one actually in use, so the
-   green "Active now" read never contradicts the endpoint being browsed. */
-QFrame#textModelActiveCard {
-    background-color: #131a21;
-    border: 1px solid #2c3742;
-    border-radius: 10px;
-}
-
-QFrame#textModelActiveCard[matches="true"] {
-    background-color: #0f2a21;
-    border-color: #217353;
-}
-
-QLabel#textModelActiveSummary {
-    color: #94a1ae;
-    background-color: transparent;
-    border: none;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QLabel#textModelActiveSummary[matches="true"] {
-    color: #42df91;
 }
 
 QWidget#modelManagerFieldGroup {
@@ -575,27 +549,6 @@ QPushButton#textModelRefreshButton:hover {
     color: #83bdff;
     background-color: #172538;
     border-color: #62aaff;
-}
-
-QPushButton#textModelActivateButton {
-    color: #eef6ff;
-    background-color: #17345a;
-    border: 1px solid #318dff;
-    border-radius: 9px;
-    padding: 8px 16px;
-    font-size: 14px;
-}
-
-QPushButton#textModelActivateButton:hover {
-    background-color: #1c4678;
-    border-color: #66adff;
-}
-
-QPushButton#textModelActivateButton:disabled,
-QPushButton#textModelActivateButton[current="true"] {
-    color: #dcecff;
-    background-color: #1a3c68;
-    border-color: #3b95ff;
 }
 
 QFrame#textModelFootnoteCard {

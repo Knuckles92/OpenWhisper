@@ -969,6 +969,11 @@ class ModelManagerDialog(QDialog):
         model = self.text_model_picker.model_combo.currentText().strip()
         if not model:
             return
+        if (
+            provider == self._active_text_provider
+            and model == self._active_text_model
+        ):
+            return
         try:
             settings = settings_manager.load_all_settings()
             settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = provider
@@ -995,6 +1000,11 @@ class ModelManagerDialog(QDialog):
             return
         model = self.meeting_model_picker.model_combo.currentText().strip()
         if not model:
+            return
+        if (
+            provider == self._active_meeting_provider
+            and model == self._active_meeting_llm_model
+        ):
             return
         try:
             settings = settings_manager.load_all_settings()

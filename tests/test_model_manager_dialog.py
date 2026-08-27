@@ -339,7 +339,7 @@ class TestTextModelPicker(_DialogTestCase):
         dialog, _values = self._make_text_dialog()
         picker = dialog.text_model_picker
 
-        assert picker.active_summary_card.minimumHeight() >= 56
+        assert not hasattr(picker, "activate_button")
         assert not picker.refresh_button.icon().isNull()
         assert picker.provider_combo.minimumSizeHint().width() <= 170
 
@@ -352,7 +352,8 @@ class TestTextModelPicker(_DialogTestCase):
         ]
         assert labels == ["OpenAI", "OpenRouter"]
         assert picker.provider == TranscriptCleanupProvider.OPENAI
-        assert picker.active_summary.text() == "Active now: OpenAI · gpt-test"
+        assert picker.model_combo.currentText() == "gpt-test"
+        assert picker.model_combo.badge_text() == "Active"
 
     def test_switching_provider_updates_the_same_model_picker(self):
         dialog, _values = self._make_text_dialog()
@@ -370,29 +371,71 @@ class TestTextModelPicker(_DialogTestCase):
         )
         assert not picker.sort_combo.isHidden()
 
-    def test_active_line_stays_readable_while_browsing_another_endpoint(self):
-        """Browsing an endpoint must not hide which model is actually in use."""
+    def test_badge_marks_only_the_endpoint_actually_in_use(self):
+        """Browsing another endpoint shows no badge, and its tooltip says why."""
         dialog, _values = self._make_text_dialog(
             provider=TranscriptCleanupProvider.OPENROUTER,
             model="openrouter/free",
         )
         picker = dialog.text_model_picker
-        expected = "Active now: OpenRouter · openrouter/free"
 
-        assert picker.active_summary.text() == expected
-        assert picker.active_summary_card.property("matches")
+        assert picker.model_combo.badge_text() == "Active"
 
         picker.provider_combo.setCurrentIndex(
             picker.provider_combo.findData(TranscriptCleanupProvider.OPENAI)
         )
 
-        assert picker.active_summary.text() == expected
-        assert not picker.active_summary_card.property("matches")
+        assert picker.model_combo.badge_text() == ""
+        assert "OpenRouter · openrouter/free" in picker.model_combo.toolTip()
 
         picker.provider_combo.setCurrentIndex(
             picker.provider_combo.findData(TranscriptCleanupProvider.OPENROUTER)
         )
-        assert picker.active_summary_card.property("matches")
+        assert picker.model_combo.badge_text() == "Active"
+
+    def test_picking_a_model_persists_it_without_a_confirm_step(self):
+        dialog, values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        index = picker.provider_combo.findData(
+            TranscriptCleanupProvider.OPENROUTER
+        )
+        picker.provider_combo.setCurrentIndex(index)
+        picker.model_combo.setCurrentText("anthropic/claude-test")
+        picker.model_combo.textActivated.emit("anthropic/claude-test")
+
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "anthropic/claude-test"
+        assert picker.model_combo.badge_text() == "Active"
+        assert dialog.rail.value(ONDEMAND_TEXT) == (
+            "OpenRouter · anthropic/claude-test"
+        )
+
+    def test_typed_model_id_persists_on_enter(self):
+        dialog, values = self._make_text_dialog()
+        picker = dialog.text_model_picker
+        line_edit = picker.model_combo.lineEdit()
+
+        line_edit.setText("gpt-typed")
+        line_edit.textEdited.emit("gpt-typed")
+        line_edit.returnPressed.emit()
+        line_edit.editingFinished.emit()
+
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "gpt-typed"
+        assert picker.model_combo.badge_text() == "Active"
+
+    def test_search_fragment_is_not_saved_when_focus_leaves(self):
+        """Typing filters the dropdown, so a fragment is not a model choice."""
+        dialog, values = self._make_text_dialog(model="gpt-test")
+        picker = dialog.text_model_picker
+        line_edit = picker.model_combo.lineEdit()
+
+        line_edit.setText("clau")
+        line_edit.textEdited.emit("clau")
+        line_edit.editingFinished.emit()
+
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "gpt-test"
+        assert picker.model_combo.currentText() == "gpt-test"
+        assert picker.model_combo.badge_text() == "Active"
 
     def test_set_active_persists_provider_and_model(self):
         dialog, values = self._make_text_dialog()
@@ -407,8 +450,7 @@ class TestTextModelPicker(_DialogTestCase):
 
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "anthropic/claude-test"
-        assert picker.activate_button.text() == "Active"
-        assert not picker.activate_button.isEnabled()
+        assert picker.model_combo.badge_text() == "Active"
         assert dialog.rail.value(ONDEMAND_TEXT) == (
             "OpenRouter · anthropic/claude-test"
         )
@@ -543,7 +585,7 @@ class TestMeetingDestinations(_DialogTestCase):
 
         assert values[SettingsKey.MEETING_LLM_PROVIDER] == "openai"
         assert values[SettingsKey.MEETING_LLM_MODEL] == "gpt-4o-mini"
-        assert picker.activate_button.text() == "Active"
+        assert picker.model_combo.badge_text() == "Active"
         assert dialog.rail.value(MEETING_TEXT) == "OpenAI · gpt-4o-mini"
 
     def test_meeting_custom_endpoint_activation_persists(self):

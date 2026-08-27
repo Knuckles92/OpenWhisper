@@ -10,7 +10,12 @@ dropdown directly whether it was opened by clicking or by typing.
 """
 from PyQt6.QtCore import QCoreApplication, QEvent, Qt
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QComboBox
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QStyle,
+    QStyleOptionComboBox,
+)
 
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 
@@ -22,7 +27,14 @@ class SearchableComboBox(NoWheelComboBox):
     ``clear()``/``addItems()``/``setCurrentText()``/``currentText()``
     usage. Custom values not present in the item list remain allowed
     (InsertPolicy.NoInsert).
+
+    Can also carry a badge — a short marker drawn inside the closed combo,
+    left of the arrow — for state that belongs to the shown value itself.
     """
+
+    #: Height of the badge, and the gap it keeps from the editor text.
+    BADGE_HEIGHT = 18
+    BADGE_GAP = 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +55,75 @@ class SearchableComboBox(NoWheelComboBox):
         self._search_started = False
         # Popup container and list get event filters the first time they appear.
         self._popup_filter_installed = False
+
+        # Created after the line edit so it stacks above the editor. The
+        # application stylesheet never reaches a QComboBox's own children, so
+        # the badge carries its appearance itself.
+        self._badge = QLabel("", self)
+        self._badge.setObjectName("searchableComboBadge")
+        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._badge.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._badge.setStyleSheet("""
+            QLabel#searchableComboBadge {
+                color: #42df91;
+                background-color: #0f2a21;
+                border: 1px solid #217353;
+                border-radius: 8px;
+                padding: 0px 7px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+        """)
+        self._badge.hide()
+
+    def set_badge(self, text: str) -> None:
+        """Show a short marker inside the closed combo, or hide it.
+
+        Args:
+            text: Badge text. An empty string hides the badge.
+        """
+        text = text.strip()
+        if text == self.badge_text():
+            return
+        self._badge.setText(text)
+        self._badge.setVisible(bool(text))
+        self._layout_badge()
+
+    def badge_text(self) -> str:
+        """Return the badge text, empty when no badge is shown."""
+        return self._badge.text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_badge()
+
+    def _layout_badge(self):
+        """Park the badge at the right edge of the editor area."""
+        line_edit = self.lineEdit()
+        if not self._badge.text():
+            if line_edit is not None:
+                line_edit.setTextMargins(0, 0, 0, 0)
+            return
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        field = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        )
+        width = self._badge.sizeHint().width()
+        height = min(self.BADGE_HEIGHT, field.height())
+        self._badge.setGeometry(
+            field.right() - width,
+            field.center().y() - height // 2 + 1,
+            width,
+            height,
+        )
+        if line_edit is not None:
+            line_edit.setTextMargins(0, 0, width + self.BADGE_GAP, 0)
 
     def showPopup(self):
         """Show the dropdown, clearing hidden rows on fresh opens.
@@ -118,6 +199,10 @@ class SearchableComboBox(NoWheelComboBox):
                 text = model.data(index) or ""
                 self.setCurrentText(text)
                 self.hidePopup()
+                # Qt emits these itself for its own list activation; this
+                # branch replaces that path, so listeners still see a pick.
+                self.activated.emit(index.row())
+                self.textActivated.emit(text)
                 event.accept()
                 return True
         return False

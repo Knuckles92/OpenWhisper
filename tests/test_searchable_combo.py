@@ -168,12 +168,29 @@ class TestSearchableComboBox:
 
     def test_enter_activates_first_visible_match(self):
         """Enter picks the highlighted (first matching) row."""
+        activated = []
+        self.combo.textActivated.connect(activated.append)
         self.combo.showPopup()
         self._type_search("claude")
         QTest.keyClick(self.combo.lineEdit(), Qt.Key.Key_Return)
         QTest.qWait(50)
         assert self.combo.currentText() == "anthropic/claude-3.5-sonnet"
+        assert activated == ["anthropic/claude-3.5-sonnet"]
         assert not self.combo.view().window().isVisible()
+
+    def test_badge_reserves_editor_room_and_clears(self):
+        """A badge keeps the value text clear of it, and leaves no margin."""
+        self.combo.set_badge("Active")
+        self.app.processEvents()
+        badge_left = self.combo._badge.geometry().left()
+
+        assert self.combo.badge_text() == "Active"
+        assert self.combo.lineEdit().textMargins().right() > 0
+        assert badge_left < self.combo.width()
+
+        self.combo.set_badge("")
+        assert self.combo.badge_text() == ""
+        assert self.combo.lineEdit().textMargins().right() == 0
 
     def test_repopulate_keeps_plain_combo_semantics(self):
         """clear/addItems/setCurrentText behave like a plain QComboBox."""
