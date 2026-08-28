@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,6 +60,7 @@ LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
 RELEASES_PAGE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}/releases"
+UPDATE_FEED_ENV: Final[str] = "OPENWHISPER_UPDATE_FEED_URL"
 _RATE_LIMIT_STATUS: Final[str] = (
     "Could not check for updates (GitHub rate limit)."
 )
@@ -461,7 +463,7 @@ def _parse_named_asset(
         if state not in (None, "uploaded"):
             continue
         url = item.get("browser_download_url") or ""
-        if not isinstance(url, str) or url != expected_url:
+        if not isinstance(url, str) or not _asset_url_allowed(url, expected_url):
             continue
         try:
             size_bytes = int(item.get("size") or 0)
@@ -482,6 +484,22 @@ def _parse_named_asset(
     return matches[0]
 
 
+def _asset_url_allowed(url: str, expected_url: str) -> bool:
+    """Accept GitHub's exact download URL, or the same file on the feed's origin."""
+    if url == expected_url:
+        return True
+    feed = update_feed_override()
+    if not feed:
+        return False
+    same_file = url.rsplit("/", 1)[-1] == expected_url.rsplit("/", 1)[-1]
+    return same_file and _url_origin(url) == _url_origin(feed)
+
+
+def _url_origin(url: str) -> Tuple[str, str]:
+    parts = urllib.parse.urlsplit(url)
+    return (parts.scheme.lower(), parts.netloc.lower())
+
+
 def _digest_to_sha256(raw: object) -> Optional[str]:
     if not isinstance(raw, str):
         return None
@@ -499,15 +517,37 @@ def _digest_to_sha256(raw: object) -> Optional[str]:
     return hex_digest
 
 
+def update_feed_override() -> Optional[str]:
+    """Return the ``/releases/latest`` stand-in named by ``OPENWHISPER_UPDATE_FEED_URL``.
+
+    The feed is otherwise pinned to GitHub's published latest release, which
+    meant a native update could only ever be tried after it had shipped: the
+    update-path fixes in 2.4.2, 2.4.4, and 2.4.6 each had their first run on
+    users. ``scripts/serve_update_feed.py`` serves a built release from
+    localhost so the path can be soaked first. Assets must share the feed's
+    origin, and digests and manifests are verified exactly as for GitHub.
+    """
+    value = os.environ.get(UPDATE_FEED_ENV, "").strip()
+    return value or None
+
+
+def latest_release_url() -> str:
+    override = update_feed_override()
+    if override:
+        logger.warning("Update feed overridden by %s: %s", UPDATE_FEED_ENV, override)
+        return override
+    return LATEST_RELEASE_URL
+
+
 def fetch_latest_release() -> ReleaseInfo:
-    """Fetch and parse GitHub ``/releases/latest``.
+    """Fetch and parse GitHub ``/releases/latest`` (or its configured stand-in).
 
     Raises:
         AppUpdateError: Network, HTTP, or payload failure.
     """
     try:
         with _open(
-            LATEST_RELEASE_URL,
+            latest_release_url(),
             extra_headers={"Accept": "application/vnd.github+json"},
         ) as response:
             raw = response.read()

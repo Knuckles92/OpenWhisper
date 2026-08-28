@@ -260,6 +260,34 @@ class TestParseReleasePayload:
         with pytest.raises(AppUpdateError):
             parse_release_payload({"assets": []})
 
+    def test_an_asset_hosted_off_github_is_ignored(self):
+        payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
+        payload["assets"][0]["browser_download_url"] = (
+            "http://127.0.0.1:8765/download/OpenWhisper-Setup-2.1.1.exe"
+        )
+        assert parse_release_payload(payload).setup_asset is None
+
+    def test_feed_override_accepts_assets_from_its_own_origin(self, monkeypatch):
+        monkeypatch.setenv(
+            app_update.UPDATE_FEED_ENV, "http://127.0.0.1:8765/releases/latest"
+        )
+        payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
+        local = "http://127.0.0.1:8765/download/OpenWhisper-Setup-2.1.1.exe"
+        payload["assets"][0]["browser_download_url"] = local
+        release = parse_release_payload(payload)
+        assert release.setup_asset is not None
+        assert release.setup_asset.url == local
+
+    def test_feed_override_still_rejects_other_origins(self, monkeypatch):
+        monkeypatch.setenv(
+            app_update.UPDATE_FEED_ENV, "http://127.0.0.1:8765/releases/latest"
+        )
+        payload = json.loads(json.dumps(LATEST_RELEASE_FIXTURE))
+        payload["assets"][0]["browser_download_url"] = (
+            "http://127.0.0.1:9999/download/OpenWhisper-Setup-2.1.1.exe"
+        )
+        assert parse_release_payload(payload).setup_asset is None
+
 
 class TestCanApplyAndHints:
     def test_installer_windows_with_digest(self):
@@ -307,6 +335,34 @@ class TestFetchLatestRelease:
         assert "github.com" in captured["url"]
         assert "fiorilabs" not in captured["url"]
         assert release.version == "2.1.1"
+
+    def test_feed_override_replaces_github(self, monkeypatch):
+        captured = {}
+
+        class _Response:
+            def read(self):
+                return json.dumps(LATEST_RELEASE_FIXTURE).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def _open(url, extra_headers=None):
+            captured["url"] = url
+            return _Response()
+
+        monkeypatch.setattr(app_update, "_open", _open)
+        monkeypatch.setenv(
+            app_update.UPDATE_FEED_ENV, "http://127.0.0.1:8765/releases/latest"
+        )
+        app_update.fetch_latest_release()
+        assert captured["url"] == "http://127.0.0.1:8765/releases/latest"
+
+    def test_blank_feed_override_is_ignored(self, monkeypatch):
+        monkeypatch.setenv(app_update.UPDATE_FEED_ENV, "   ")
+        assert app_update.latest_release_url() == app_update.LATEST_RELEASE_URL
 
 
 class TestNetworkErrorCopy:
