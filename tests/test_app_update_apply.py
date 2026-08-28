@@ -951,6 +951,10 @@ class TestLaunchDirectory:
         monkeypatch.setattr(apply_module.sys, "frozen", True, raising=False)
         monkeypatch.setattr(apply_module.sys, "executable", str(install / "OpenWhisperUpdater.exe"))
         monkeypatch.delenv(apply_module._RELAUNCHED_ENV, raising=False)
+        monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", str(tmp_path / "_MEI1"))
+        monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+        monkeypatch.setenv("_MEIPASS2", str(tmp_path / "_MEI1"))
+        monkeypatch.setenv("LOCALAPPDATA_KEEP", "kept")
         launches = []
         monkeypatch.setattr(
             apply_module,
@@ -968,6 +972,11 @@ class TestLaunchDirectory:
             apply_module.updates_root(str(appdata))
         ).resolve()
         assert kwargs["env"][apply_module._RELAUNCHED_ENV] == "1"
+        # Inherited bootstrap variables would make the copy run inside this
+        # process's extraction, and this process's parent would outlive it.
+        assert not any(key.startswith("_PYI_") for key in kwargs["env"])
+        assert "_MEIPASS2" not in kwargs["env"]
+        assert kwargs["env"]["LOCALAPPDATA_KEEP"] == "kept"
         assert Path(os.getcwd()).resolve() == install.resolve()
 
     def test_the_restarted_copy_does_not_restart_again(self, tmp_path, monkeypatch):

@@ -331,7 +331,10 @@ def leave_launch_directory(
     launch directory whatever the child does. A frozen helper started anywhere
     but under the updates root therefore restarts itself from there and
     returns True, meaning this process has handed its work over and must exit.
-    The parent releases the directory as soon as this child returns.
+    The parent releases the directory as soon as this child returns — provided
+    the restarted copy is a new bootloader pair. A onefile exe that inherits
+    the bootstrap's ``_PYI_*``/``_MEIPASS2`` variables instead runs inside the
+    original's extraction, and the original parent then outlives it.
     """
     safe = updates_root(appdata)
     try:
@@ -348,7 +351,7 @@ def leave_launch_directory(
                 sys.executable,
                 list(argv),
                 cwd=safe,
-                env={**os.environ, _RELAUNCHED_ENV: "1"},
+                env={**_environment_without_bootstrap(), _RELAUNCHED_ENV: "1"},
             )
         except UpdateApplyError as exc:
             logger.warning("Could not restart from %s: %s", safe, exc)
@@ -360,6 +363,14 @@ def leave_launch_directory(
     except OSError as exc:
         logger.warning("Could not change directory to %s: %s", safe, exc)
     return False
+
+
+def _environment_without_bootstrap() -> Dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.upper().startswith("_PYI_") and key.upper() != "_MEIPASS2"
+    }
 
 
 def _is_within(path: str, root: str) -> bool:
