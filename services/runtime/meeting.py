@@ -1338,8 +1338,16 @@ class MeetingRuntime:
             )
             return None
 
-    def delete_past_meeting(self, meeting_id: str) -> None:
-        """Delete a past meeting and its audio spool after UI confirmation."""
+    def delete_past_meeting(
+        self, meeting_id: str, delete_recordings: bool = True
+    ) -> None:
+        """Delete a past meeting after UI confirmation.
+
+        Args:
+            meeting_id: Persisted meeting to remove from Past Meetings.
+            delete_recordings: When True, also purge the meeting audio spool.
+                When False, database rows go away and the spool stays on disk.
+        """
         target_id = str(meeting_id or "").strip()
         if not target_id:
             return
@@ -1354,18 +1362,23 @@ class MeetingRuntime:
             return
         threading.Thread(
             target=self._delete_past_meeting_worker,
-            args=(target_id,),
+            args=(target_id, bool(delete_recordings)),
             name="meeting-delete",
             daemon=True,
         ).start()
 
-    def _delete_past_meeting_worker(self, meeting_id: str) -> None:
+    def _delete_past_meeting_worker(
+        self, meeting_id: str, delete_recordings: bool = True
+    ) -> None:
         try:
             from meeting.persist.data_lifecycle import delete_meeting_data
 
             repository = self._repository()
             delete_meeting_data(
-                repository, meeting_id, config.MEETINGS_FOLDER
+                repository,
+                meeting_id,
+                config.MEETINGS_FOLDER,
+                delete_spool=delete_recordings,
             )
             with self._lock:
                 shown = self._card_meeting_id == meeting_id
@@ -1378,6 +1391,55 @@ class MeetingRuntime:
             logger.error(f"Failed to delete meeting '{meeting_id}': {exc}")
             self.controller.meeting_error.emit(
                 f"Could not delete the meeting: {exc}"
+            )
+
+    def clear_past_meetings(self, delete_recordings: bool = False) -> None:
+        """Clear Past Meetings, optionally purging audio spools.
+
+        The in-progress meeting is never removed. One background worker
+        walks the repository rather than spawning a thread per row.
+        """
+        threading.Thread(
+            target=self._clear_past_meetings_worker,
+            args=(bool(delete_recordings),),
+            name="meeting-clear",
+            daemon=True,
+        ).start()
+
+    def _clear_past_meetings_worker(self, delete_recordings: bool) -> None:
+        try:
+            from meeting.persist.data_lifecycle import clear_meetings
+
+            skip_ids = set()
+            live_id = getattr(self._engine, "meeting_id", None)
+            if (
+                (self.is_active or self.controller.meeting_active)
+                and live_id
+            ):
+                skip_ids.add(str(live_id))
+            repository = self._repository()
+            clear_meetings(
+                repository,
+                config.MEETINGS_FOLDER,
+                delete_spools=delete_recordings,
+                skip_ids=skip_ids,
+            )
+            with self._lock:
+                card_id = self._card_meeting_id
+            if card_id and card_id not in skip_ids:
+                self._hide_finalization_card()
+            else:
+                self._refresh_past_meetings()
+            if delete_recordings:
+                self.controller.meeting_status_update.emit(
+                    "Meetings and recordings cleared"
+                )
+            else:
+                self.controller.meeting_status_update.emit("Meetings cleared")
+        except Exception as exc:
+            logger.error("Failed to clear past meetings: %s", exc)
+            self.controller.meeting_error.emit(
+                f"Could not clear past meetings: {exc}"
             )
 
     def discard_recovered(self, meeting_id: str) -> None:

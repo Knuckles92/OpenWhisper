@@ -373,7 +373,8 @@ class HistorySidebar(QWidget):
     retranscribe_requested = pyqtSignal(str)
     past_meeting_selected = pyqtSignal(str)
     past_meeting_copy_requested = pyqtSignal(str)
-    past_meeting_delete_requested = pyqtSignal(str)
+    past_meeting_delete_requested = pyqtSignal(str, bool)
+    past_meetings_clear_requested = pyqtSignal(bool)
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
@@ -494,6 +495,9 @@ class HistorySidebar(QWidget):
         )
         self.meetings_content_widget.delete_meeting_requested.connect(
             self.past_meeting_delete_requested.emit
+        )
+        self.meetings_content_widget.clear_meetings_requested.connect(
+            self.past_meetings_clear_requested.emit
         )
         self.meetings_content_widget.hide()
 

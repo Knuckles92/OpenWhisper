@@ -250,7 +250,8 @@ class MainWindow(QMainWindow):
     meeting_dashboard_requested = pyqtSignal()
     past_meeting_requested = pyqtSignal(str)
     past_meeting_copy_requested = pyqtSignal(str)
-    past_meeting_delete_requested = pyqtSignal(str)
+    past_meeting_delete_requested = pyqtSignal(str, bool)
+    past_meetings_clear_requested = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -426,6 +427,9 @@ class MainWindow(QMainWindow):
         )
         self.history_sidebar.past_meeting_delete_requested.connect(
             self.past_meeting_delete_requested.emit
+        )
+        self.history_sidebar.past_meetings_clear_requested.connect(
+            self.past_meetings_clear_requested.emit
         )
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         self.history_sidebar.animation.finished.connect(

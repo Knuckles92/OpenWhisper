@@ -39,14 +39,23 @@ _CARD_SECTIONS = (
 )
 
 
-def export_markdown(meeting: Dict[str, Any], state: Dict[str, Any],
-                    segments: List[Dict[str, Any]]) -> str:
+def export_markdown(
+    meeting: Dict[str, Any],
+    state: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    *,
+    include_transcript: bool = True,
+    include_intelligence: bool = True,
+) -> str:
     """Render the meeting dashboard and transcript as a Markdown document.
 
     Args:
         meeting: Meeting row dict (``get_meeting`` shape).
         state: ``MeetingState.to_dict()`` document.
         segments: Segment row dicts ordered by ``start_s``.
+        include_transcript: When False, omit the transcript section.
+        include_intelligence: When False, omit notes, cards, topic, summary,
+            and questions. Title and metadata always remain.
 
     Returns:
         The complete Markdown document, ending with a newline.
@@ -58,34 +67,36 @@ def export_markdown(meeting: Dict[str, Any], state: Dict[str, Any],
     if metadata:
         out += ["", metadata]
 
-    _append_topic(out, state)
-    _append_summary(out, state)
+    if include_intelligence:
+        _append_topic(out, state)
+        _append_summary(out, state)
 
-    for card, heading in _CARD_SECTIONS:
-        items = _live_items(state, card)
-        if not items:
-            continue
-        out += ["", f"## {heading}", ""]
-        if card == "action_items":
-            out.extend(_action_item_lines(items, participants))
-        elif card == "risks":
-            out.extend(_risk_lines(items))
-        elif card == "timeline":
-            out.extend(_timeline_lines(items))
-        elif card == "key_points":
-            out.extend(_key_point_lines(items, segments))
-        elif card == "live_notes":
-            out.extend(_live_note_lines(items))
-        else:
-            out.extend(f"- {item['text'].strip()}" for item in items)
+        for card, heading in _CARD_SECTIONS:
+            items = _live_items(state, card)
+            if not items:
+                continue
+            out += ["", f"## {heading}", ""]
+            if card == "action_items":
+                out.extend(_action_item_lines(items, participants))
+            elif card == "risks":
+                out.extend(_risk_lines(items))
+            elif card == "timeline":
+                out.extend(_timeline_lines(items))
+            elif card == "key_points":
+                out.extend(_key_point_lines(items, segments))
+            elif card == "live_notes":
+                out.extend(_live_note_lines(items))
+            else:
+                out.extend(f"- {item['text'].strip()}" for item in items)
 
-    _append_questions(out, state, participants)
+        _append_questions(out, state, participants)
 
-    lines = transcript_lines(segments, participants)
-    if lines:
-        out += ["", "### Transcript", ""]
-        # Trailing double space forces a Markdown hard line break per segment.
-        out.extend(line + "  " for line in lines)
+    if include_transcript:
+        lines = transcript_lines(segments, participants)
+        if lines:
+            out += ["", "### Transcript", ""]
+            # Trailing double space forces a Markdown hard line break per segment.
+            out.extend(line + "  " for line in lines)
 
     return "\n".join(out) + "\n"
 

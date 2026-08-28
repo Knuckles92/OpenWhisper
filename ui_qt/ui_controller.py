@@ -140,7 +140,8 @@ class UIController(QObject):
         self.on_meeting_open_dashboard: Optional[Callable] = None
         self.on_meeting_open_past: Optional[Callable] = None  # (meeting_id: str)
         self.on_meeting_copy_transcript: Optional[Callable] = None  # (id) -> str|None
-        self.on_meeting_delete_past: Optional[Callable] = None  # (meeting_id: str)
+        self.on_meeting_delete_past: Optional[Callable] = None  # (id, delete_recordings)
+        self.on_meeting_clear_past: Optional[Callable] = None  # (delete_recordings: bool)
         self.on_meeting_open_report: Optional[Callable] = None
         self.on_meeting_copy_guest_link: Optional[Callable] = None
         self.on_meeting_toggle_cloud: Optional[Callable] = None  # (enabled: bool)
@@ -190,6 +191,9 @@ class UIController(QObject):
         )
         self.main_window.past_meeting_delete_requested.connect(
             self._on_past_meeting_delete_requested
+        )
+        self.main_window.past_meetings_clear_requested.connect(
+            self._on_past_meetings_clear_requested
         )
 
         meeting_tab = self.main_window.meeting_mode_tab
@@ -937,9 +941,15 @@ class UIController(QObject):
             self.set_meeting_status("Transcript copied")
             self.show_copied_animation()
 
-    def _on_past_meeting_delete_requested(self, meeting_id: str) -> None:
+    def _on_past_meeting_delete_requested(
+        self, meeting_id: str, delete_recordings: bool = True
+    ) -> None:
         if self.on_meeting_delete_past:
-            self.on_meeting_delete_past(meeting_id)
+            self.on_meeting_delete_past(meeting_id, delete_recordings)
+
+    def _on_past_meetings_clear_requested(self, delete_recordings: bool) -> None:
+        if self.on_meeting_clear_past:
+            self.on_meeting_clear_past(delete_recordings)
 
     def _on_tray_meeting_toggle(self):
         if self._meeting_active:

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from meeting.audio_playback import PLAYBACK_RATE, build_playback
-from meeting.persist.data_lifecycle import delete_meeting_data
+from meeting.persist.data_lifecycle import clear_meetings, delete_meeting_data
 from tests.helpers import write_wav as _write_wav
 
 
@@ -115,3 +115,97 @@ def test_delete_rejects_paths_outside_configured_root(tmp_path):
         delete_meeting_data(repo, "m_delete", str(root))
     assert outside.is_dir()
     assert repo.meeting is not None
+
+
+class MultiLifecycleRepository:
+    def __init__(self, meetings):
+        self.meetings = {meeting["id"]: dict(meeting) for meeting in meetings}
+
+    def get_meeting(self, meeting_id):
+        meeting = self.meetings.get(meeting_id)
+        return dict(meeting) if meeting else None
+
+    def list_meetings(self):
+        return [dict(meeting) for meeting in self.meetings.values()]
+
+    def delete_meeting(self, meeting_id):
+        self.meetings.pop(meeting_id, None)
+
+
+def test_delete_can_keep_the_spool(tmp_path):
+    root = tmp_path / "meetings"
+    spool = root / "m_keep"
+    spool.mkdir(parents=True)
+    (spool / "audio.wav").write_bytes(b"audio")
+    repo = LifecycleRepository({"id": "m_keep", "spool_dir": str(spool)})
+
+    assert delete_meeting_data(
+        repo, "m_keep", str(root), delete_spool=False
+    ) is True
+    assert repo.meeting is None
+    assert spool.is_dir()
+    assert (spool / "audio.wav").read_bytes() == b"audio"
+
+
+def test_clear_meetings_skips_live_rows_and_ids(tmp_path):
+    root = tmp_path / "meetings"
+    live = root / "m_live"
+    paused = root / "m_paused"
+    done = root / "m_done"
+    skipped = root / "m_skip"
+    for folder in (live, paused, done, skipped):
+        folder.mkdir(parents=True)
+        (folder / "audio.wav").write_bytes(b"audio")
+    repo = MultiLifecycleRepository([
+        {"id": "m_live", "status": "active", "spool_dir": str(live)},
+        {"id": "m_paused", "status": "paused", "spool_dir": str(paused)},
+        {"id": "m_done", "status": "ended", "spool_dir": str(done)},
+        {"id": "m_skip", "status": "ended", "spool_dir": str(skipped)},
+    ])
+
+    removed = clear_meetings(
+        repo, str(root), delete_spools=True, skip_ids={"m_skip"}
+    )
+
+    assert removed == 1
+    assert set(repo.meetings) == {"m_live", "m_paused", "m_skip"}
+    assert live.is_dir()
+    assert paused.is_dir()
+    assert skipped.is_dir()
+    assert not done.exists()
+
+
+def test_clear_meetings_keeps_spools_when_requested(tmp_path):
+    root = tmp_path / "meetings"
+    spool = root / "m_done"
+    spool.mkdir(parents=True)
+    (spool / "audio.wav").write_bytes(b"audio")
+    repo = MultiLifecycleRepository([
+        {"id": "m_done", "status": "ended", "spool_dir": str(spool)},
+    ])
+
+    removed = clear_meetings(repo, str(root), delete_spools=False)
+
+    assert removed == 1
+    assert repo.meetings == {}
+    assert spool.is_dir()
+    assert (spool / "audio.wav").read_bytes() == b"audio"
+
+
+def test_clear_meetings_purges_orphan_spools_but_not_tombstones(tmp_path):
+    root = tmp_path / "meetings"
+    orphan = root / "m_orphan"
+    tombstone = root / ".deleting-m_old-abc"
+    leftover = root / "notes.txt"
+    orphan.mkdir(parents=True)
+    tombstone.mkdir(parents=True)
+    (orphan / "audio.wav").write_bytes(b"audio")
+    leftover.write_text("keep files", encoding="utf-8")
+    repo = MultiLifecycleRepository([])
+
+    removed = clear_meetings(repo, str(root), delete_spools=True)
+
+    assert removed == 0
+    assert not orphan.exists()
+    assert tombstone.is_dir()
+    assert leftover.is_file()

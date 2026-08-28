@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Past Meetings can clear history the same way History does** - The Meeting Mode sidebar header now offers Clear history (keep recordings), Clear history + recordings, and Open meetings folder. Per-meeting Delete can keep the audio spool or remove it, with a Don't ask me again preference separate from dictation history.
+- **Past Meetings export** - The sidebar header can dump one, some, or all past meetings. A dialog picks Markdown, plain transcript, or JSON; whether to include the transcript and meeting intelligence; an optional start-date range; and one combined file or one file per meeting.
+
 ## [2.4.4] - 2026-08-28
 
 ### Changed

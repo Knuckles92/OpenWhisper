@@ -151,6 +151,23 @@ class TestMarkdownExport:
         assert "[00:00:10] Sam: Let's plan Q3" in md
         assert md.endswith("\n")
 
+    def test_can_omit_transcript_and_intelligence(self):
+        meeting, state, segments = _fixture()
+        md = export_markdown(
+            meeting,
+            state,
+            segments,
+            include_transcript=False,
+            include_intelligence=False,
+        )
+        assert md.startswith("# Planning Sync\n")
+        assert "## Key Points" not in md
+        assert "## Summary" not in md
+        assert "### Transcript" not in md
+        assert "Welcome everyone" not in md
+        assert "Ship beta in June" not in md
+        assert "2026-03-15 14:30" in md
+
 class TestTranscriptTxtExport:
     def test_plain_transcript(self):
         meeting, state, segments = _fixture()

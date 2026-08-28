@@ -258,6 +258,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_delete_past = (
             self.meeting_runtime.delete_past_meeting
         )
+        self.ui_controller.on_meeting_clear_past = (
+            self.meeting_runtime.clear_past_meetings
+        )
         self.ui_controller.on_meeting_open_report = (
             self.meeting_runtime.open_report
         )

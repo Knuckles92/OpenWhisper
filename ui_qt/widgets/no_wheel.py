@@ -7,6 +7,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QPalette, QWheelEvent
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDateEdit,
     QSizePolicy,
     QSpinBox,
     QStyle,
@@ -77,6 +78,21 @@ class NoWheelSpinBox(QSpinBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class NoWheelDateEdit(QDateEdit):
+    """QDateEdit that only changes date on wheel when it has keyboard focus."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCalendarPopup(True)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if self.hasFocus():

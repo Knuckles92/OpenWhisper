@@ -1070,8 +1070,8 @@ def test_delete_past_meeting_hides_card_and_deletes(runtime, monkeypatch):
     controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
     deleted = []
 
-    def fake_delete(repository, meeting_id, root):
-        deleted.append(meeting_id)
+    def fake_delete(repository, meeting_id, root, *, delete_spool=True):
+        deleted.append((meeting_id, delete_spool))
 
     monkeypatch.setattr(rt, "_repository", lambda: object())
     monkeypatch.setattr(
@@ -1081,8 +1081,73 @@ def test_delete_past_meeting_hides_card_and_deletes(runtime, monkeypatch):
 
     rt._delete_past_meeting_worker("m_old")
 
-    assert deleted == ["m_old"]
+    assert deleted == [("m_old", True)]
     assert rt._card_meeting_id is None
     assert any("deleted" in s.lower() for s in statuses)
+
+
+def test_delete_past_meeting_can_keep_recordings(runtime, monkeypatch):
+    rt, controller = runtime
+    deleted = []
+
+    def fake_delete(repository, meeting_id, root, *, delete_spool=True):
+        deleted.append((meeting_id, delete_spool))
+
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.persist.data_lifecycle.delete_meeting_data", fake_delete
+    )
+
+    rt._delete_past_meeting_worker("m_keep", delete_recordings=False)
+
+    assert deleted == [("m_keep", False)]
+
+
+def test_clear_past_meetings_skips_live_id_and_hides_card(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    cleared = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.meeting_active = True
+    rt._engine = SimpleNamespace(meeting_id="m_live")
+    rt._card_meeting_id = "m_old"
+
+    def fake_clear(repository, root, *, delete_spools, skip_ids):
+        cleared.append((delete_spools, set(skip_ids)))
+
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.persist.data_lifecycle.clear_meetings", fake_clear
+    )
+
+    rt._clear_past_meetings_worker(False)
+
+    assert cleared == [(False, {"m_live"})]
+    assert rt._card_meeting_id is None
+    assert statuses[-1] == "Meetings cleared"
+
+
+def test_clear_past_meetings_with_recordings_status(runtime, monkeypatch):
+    rt, controller = runtime
+    statuses = []
+    refreshed = []
+    controller.meeting_status_update.connect(statuses.append)
+    controller.past_meetings_refresh_requested.connect(
+        lambda: refreshed.append(True)
+    )
+
+    def fake_clear(repository, root, *, delete_spools, skip_ids):
+        assert delete_spools is True
+        assert set(skip_ids) == set()
+
+    monkeypatch.setattr(rt, "_repository", lambda: object())
+    monkeypatch.setattr(
+        "meeting.persist.data_lifecycle.clear_meetings", fake_clear
+    )
+
+    rt._clear_past_meetings_worker(True)
+
+    assert refreshed == [True]
+    assert statuses[-1] == "Meetings and recordings cleared"
 
 

@@ -33,6 +33,7 @@ from ui_qt.widgets.compact_record_controller import CompactRecordController
 from ui_qt.widgets.no_wheel import (
     ElidingComboBox,
     NoWheelComboBox,
+    NoWheelDateEdit,
     NoWheelSpinBox,
 )
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -70,6 +71,7 @@ __all__ = [
     "ElidingComboBox",
     "ElidingLabel",
     "NoWheelComboBox",
+    "NoWheelDateEdit",
     "NoWheelSpinBox",
     "SearchableComboBox",
     "WrappedLabel",

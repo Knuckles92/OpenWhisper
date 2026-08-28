@@ -48,6 +48,7 @@ class SettingsKey:
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
+    CONFIRM_MEETING_DELETE: Final[str] = "confirm_meeting_delete"
     # Meeting Mode
     MEETING_WHISPER_MODEL: Final[str] = "meeting_whisper_model"
     MEETING_LANGUAGE: Final[str] = "meeting_language"

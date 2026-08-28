@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable, Dict, Iterable, Optional
 
+from config import config
 from meeting.content import (
     fallback_meeting_title,
     meeting_insights_pill,
@@ -11,11 +13,15 @@ from meeting.content import (
     summarize_meeting_content,
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
+from services.settings import SettingsKey, settings_manager
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -205,7 +211,8 @@ class PastMeetingsPanel(QWidget):
 
     meeting_selected = pyqtSignal(str)
     copy_transcript_requested = pyqtSignal(str)
-    delete_meeting_requested = pyqtSignal(str)
+    delete_meeting_requested = pyqtSignal(str, bool)
+    clear_meetings_requested = pyqtSignal(bool)
     MAX_MEETINGS = 100
 
     def __init__(
@@ -300,11 +307,28 @@ class PastMeetingsPanel(QWidget):
         self.scroll_area.setWidget(scroll_content)
         layout.addWidget(self.scroll_area, stretch=1)
 
-    def _show_header_menu(self) -> None:
+    def _build_header_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
         refresh = menu.addAction("Refresh")
         refresh.triggered.connect(self.refresh)
+        has_meetings = bool(self._meetings)
+        export_action = menu.addAction("Export past meetings…")
+        export_action.setEnabled(has_meetings)
+        export_action.triggered.connect(self._on_export_meetings)
+        open_folder = menu.addAction("Open meetings folder")
+        open_folder.triggered.connect(self._on_open_meetings_folder)
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear history")
+        clear_action.setEnabled(has_meetings)
+        clear_action.triggered.connect(self._on_clear_history)
+        clear_all_action = menu.addAction("Clear history + recordings")
+        clear_all_action.setEnabled(has_meetings)
+        clear_all_action.triggered.connect(self._on_clear_history_and_recordings)
+        return menu
+
+    def _show_header_menu(self) -> None:
+        menu = self._build_header_menu()
         menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
 
     def _on_search_text_changed(self, _text: str) -> None:
@@ -413,19 +437,127 @@ class PastMeetingsPanel(QWidget):
             )
         self._apply_selection()
 
+    def _meeting_by_id(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        for meeting in self._meetings:
+            if str(meeting.get("id") or "") == meeting_id:
+                return meeting
+        return None
+
+    @staticmethod
+    def _meeting_has_audio(meeting: Optional[Dict[str, Any]]) -> bool:
+        if not meeting:
+            return False
+        summary = dict(meeting.get("content_summary") or {})
+        if "has_audio" in summary:
+            return bool(summary.get("has_audio"))
+        return bool(str(meeting.get("spool_dir") or ""))
+
     def _confirm_delete(self, meeting_id: str) -> None:
+        delete_recordings = False
+        try:
+            should_confirm = settings_manager.get(
+                SettingsKey.CONFIRM_MEETING_DELETE,
+                True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to load meeting deletion preference: %s", exc)
+            should_confirm = True
+
+        if should_confirm is False:
+            self.delete_meeting_requested.emit(meeting_id, False)
+            return
+
         confirmation = QMessageBox(self)
         confirmation.setIcon(QMessageBox.Icon.Warning)
         confirmation.setWindowTitle("Delete Meeting")
-        confirmation.setText("Delete this meeting and its recordings?")
+        confirmation.setText("Delete this meeting from Past Meetings?")
         confirmation.setInformativeText("This cannot be undone.")
         confirmation.setStandardButtons(
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+
+        audio_choice = None
+        meeting = self._meeting_by_id(meeting_id)
+        if self._meeting_has_audio(meeting):
+            audio_label = QLabel("Delete saved recordings too?", confirmation)
+            audio_choice = QComboBox(confirmation)
+            audio_choice.addItem("No — keep the recordings", False)
+            audio_choice.addItem("Yes — permanently delete them", True)
+            audio_choice.setToolTip(
+                "Choose whether this meeting's audio spool should also "
+                "be deleted"
+            )
+            message_layout = confirmation.layout()
+            if isinstance(message_layout, QGridLayout):
+                row = message_layout.rowCount()
+                columns = max(1, message_layout.columnCount())
+                message_layout.addWidget(audio_label, row, 0, 1, columns)
+                message_layout.addWidget(
+                    audio_choice, row + 1, 0, 1, columns
+                )
+
+        dont_ask_again = QCheckBox("Don't ask me again", confirmation)
+        confirmation.setCheckBox(dont_ask_again)
+
         if confirmation.exec() != QMessageBox.StandardButton.Yes:
             return
-        self.delete_meeting_requested.emit(meeting_id)
+
+        delete_recordings = bool(
+            audio_choice is not None and audio_choice.currentData()
+        )
+        if dont_ask_again.isChecked():
+            try:
+                settings_manager.save_setting(
+                    SettingsKey.CONFIRM_MEETING_DELETE,
+                    False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to save meeting deletion preference: %s",
+                    exc,
+                )
+
+        self.delete_meeting_requested.emit(meeting_id, delete_recordings)
+
+    def _on_clear_history(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            "Delete all past meetings?\n\nSaved recordings will be kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.clear_meetings_requested.emit(False)
+
+    def _on_clear_history_and_recordings(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Clear History and Recordings",
+            "Delete all past meetings AND permanently delete their "
+            "recordings from disk?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.clear_meetings_requested.emit(True)
+
+    def _on_open_meetings_folder(self) -> None:
+        folder = os.path.abspath(config.MEETINGS_FOLDER)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _on_export_meetings(self) -> None:
+        from ui_qt.dialogs.meeting_export_dialog import MeetingExportDialog
+
+        dialog = MeetingExportDialog(
+            self,
+            meeting_provider=lambda: list(self._meetings),
+        )
+        dialog.exec()
 
     def _clear_list(self) -> None:
         while self.meetings_list_layout.count():
