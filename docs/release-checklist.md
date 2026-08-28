@@ -29,7 +29,9 @@ Optional signing: set `OPENWHISPER_SIGN_PFX` and `OPENWHISPER_SIGN_PASS` before 
    - `OpenWhisper-<version>-win64.tar.xz`
 4. Confirm sizes match the local files.
 5. Smoke-test:
-   - Fresh per-user Inno install of this build
+   - Fresh per-user Inno install of this build, finishing with **Launch
+     OpenWhisper** checked: setup still holds its mutex at that moment, so this
+     is the launch the startup gate is most likely to get wrong
    - In-app update from the previous updater-capable build (native path)
    - Program Files / elevated install still offers the setup exe
    - Uninstall after a native update, both keeping and deleting user data

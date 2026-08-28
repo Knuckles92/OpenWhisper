@@ -68,6 +68,7 @@ _DEFAULT_UNPACKED_CAP = 2 * 1024 * 1024 * 1024
 _SPACE_MARGIN = 1.15
 _PARENT_WAIT_S = 120
 _HEALTH_WAIT_S = 180
+_SETUP_LAUNCH_WAIT_S = 120
 _ERROR_LIMIT = 2000
 _PARENT_STILL_RUNNING = (
     "OpenWhisper did not close, so the update was not installed. Your current "
@@ -1600,17 +1601,36 @@ def is_valid_health_launch_token(
 
 
 def maybe_exit_if_update_in_progress(argv: Optional[List[str]] = None) -> None:
-    """Exit a frozen Windows launch that raced an in-progress commit."""
+    """Hold back, or refuse, a frozen Windows launch that races an install.
+
+    Inno holds its setup mutex until its own process exits, and the postinstall
+    "Launch OpenWhisper" runs before that, so a held setup mutex is the normal
+    state for the launch that follows an install. Waiting starts the app a
+    moment later; refusing means the user clicks Finish and nothing happens.
+
+    A native commit is not something to wait out: the install directory is
+    being swapped, and only the helper's own health launch may proceed.
+    """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
-    setup_running = mutex_exists(SETUP_MUTEX_NAME)
-    update_running = any(mutex_exists(name) for name in UPDATE_MUTEX_NAMES)
-    if not setup_running and not update_running:
-        return
-    token = parse_health_token(argv)
-    if update_running and token and is_valid_health_launch_token(token):
-        return
-    sys.stderr.write("OpenWhisper is finishing an update. Try again in a moment.\n")
+    if any(mutex_exists(name) for name in UPDATE_MUTEX_NAMES):
+        token = parse_health_token(argv)
+        if token and is_valid_health_launch_token(token):
+            return
+        _refuse_launch("OpenWhisper is finishing an update. Try again in a moment.")
+    deadline = time.time() + _SETUP_LAUNCH_WAIT_S
+    while mutex_exists(SETUP_MUTEX_NAME):
+        if time.time() >= deadline:
+            _refuse_launch(
+                "OpenWhisper Setup is still running, so OpenWhisper did not "
+                "start. Finish the installer, then start OpenWhisper again."
+            )
+        time.sleep(0.25)
+
+
+def _refuse_launch(message: str) -> None:
+    """Explain a dropped launch. A windowed frozen build has no ``sys.stderr``."""
+    native_message_box(message)
     raise SystemExit(0)
 
 
@@ -2390,7 +2410,9 @@ def recover_transaction(
 def native_message_box(message: str) -> None:
     """Last-resort error UI when Qt is not available."""
     if sys.platform != "win32":
-        sys.stderr.write(message + "\n")
+        # A windowed frozen build has no streams at all.
+        if sys.stderr is not None:
+            sys.stderr.write(message + "\n")
         return
     import ctypes
 

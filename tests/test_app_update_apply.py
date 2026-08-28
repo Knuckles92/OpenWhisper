@@ -6,11 +6,13 @@ import subprocess
 import sys
 import tarfile
 import threading
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from services import app_update_apply as apply_module
 from services.app_update_apply import (
     InstallRegistration,
     UpdateApplyError,
@@ -42,7 +44,6 @@ from services.app_update_apply import (
 )
 from services.update_contract import (
     APP_EXE_NAME,
-    APP_MUTEX_NAMES,
     MANIFEST_NAME,
     TransactionState,
     UPDATER_EXE_NAME,
@@ -52,6 +53,21 @@ from services.update_contract import (
 
 TX_ID = "a" * 32
 HEALTH_TOKEN = "b" * 32
+
+
+@pytest.fixture(autouse=True)
+def isolated_mutex_names(monkeypatch):
+    """Keep the commit path off the mutexes a real installed OpenWhisper holds.
+
+    The names are process-global, so a run alongside the installed app would
+    otherwise wait out the full parent timeout on every commit.
+    """
+    unique = f"OpenWhisper-Test-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(apply_module, "APP_MUTEX_NAMES", (f"Local\\{unique}-app",))
+    monkeypatch.setattr(
+        apply_module, "UPDATE_MUTEX_NAMES", (f"Local\\{unique}-update",)
+    )
+    monkeypatch.setattr(apply_module, "SETUP_MUTEX_NAME", f"Local\\{unique}-setup")
 
 
 def _bundle(root: Path, version: str = "2.4.1", payload: bytes = b"new") -> Path:
@@ -601,7 +617,7 @@ class TestLiveParent:
             journal.to_dict(),
         )
 
-        app_locks = acquire_named_mutexes(APP_MUTEX_NAMES, 0.0)
+        app_locks = acquire_named_mutexes(apply_module.APP_MUTEX_NAMES, 0.0)
         try:
             with pytest.raises(UpdateApplyError) as caught:
                 commit_prepared_update(

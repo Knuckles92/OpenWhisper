@@ -180,7 +180,7 @@ def _register_qt_icu_directories() -> None:
 
 
 def _early_update_gate() -> None:
-    """Refuse a normal launch while the native updater owns the install."""
+    """Wait out a running setup, and refuse a launch the updater owns."""
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
     from services.app_update_apply import (
