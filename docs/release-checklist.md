@@ -2,7 +2,7 @@
 
 Publish every stable release from a **draft** GitHub release that already has both artifacts. Old installer copies only understand the setup exe and can skip intermediate tags.
 
-Exception: a release that fixes the handoff itself must be setup-only. See [Fixing the handoff](#fixing-the-handoff).
+Exception: a release that fixes the update path itself must be setup-only. See [Fixing the update path](#fixing-the-update-path).
 
 ## Build
 
@@ -32,7 +32,9 @@ Optional signing: set `OPENWHISPER_SIGN_PFX` and `OPENWHISPER_SIGN_PASS` before 
    - Fresh per-user Inno install of this build, finishing with **Launch
      OpenWhisper** checked: setup still holds its mutex at that moment, so this
      is the launch the startup gate is most likely to get wrong
-   - In-app update from the previous updater-capable build (native path)
+   - In-app update from the previous updater-capable build (native path), then
+     read `%LOCALAPPDATA%\OpenWhisper\updater.log`: it names the phase that
+     failed, and the locks the commit waited out on the way to succeeding
    - Program Files / elevated install still offers the setup exe
    - Uninstall after a native update, both keeping and deleting user data
 6. Publish the draft. Do not publish a latest stable release with only one of the two artifacts.
@@ -43,18 +45,24 @@ Optional signing: set `OPENWHISPER_SIGN_PFX` and `OPENWHISPER_SIGN_PASS` before 
 - Missing archive, missing digest, HKLM/Program Files, or an unsupported manifest/topology uses the setup exe.
 - A setup-only release is the emergency switch that disables native apply.
 
-## Fixing the handoff
+## Fixing the update path
 
 The download, the prepare, the handoff, and the helper that commits all run from
 the version being updated **from** — the helper is copied out of the old install
-before the app exits. A fix to any of them cannot reach the builds that need it.
+before the app exits. A fix to any of them cannot reach the builds that need it,
+so it takes effect one release later than it ships.
 
-2.4.2 fixed a handoff that never exited (2.4.0 and 2.4.1 both had it), so:
+Two releases have needed this: 2.4.2 fixed a handoff that never exited (2.4.0 and
+2.4.1 both had it), and 2.4.4 made the commit wait out a file lock instead of
+failing on the first sharing violation (2.4.2 and 2.4.3 both fail on it). In
+either case:
 
 1. Publish the fix **setup-only**. With no archive asset, `resolve_apply_mode`
    returns `SETUP` and no affected build can enter the native path.
 2. Delete the archive asset from the release those builds are currently offered,
-   so they stop entering it before the fix is even published.
+   so they stop entering it before the fix is even published. Do this only for a
+   defect that leaves the install broken or the app stuck: a commit that fails
+   and rolls back cleanly costs one download and is worth the diagnostic.
 3. Rely on the setup exe to close the stuck app: `CloseApplications=force` plus
    the `CloseRunningApp` taskkill in `installer\OpenWhisper.iss` are what make
    installing over a build that cannot quit itself work at all.

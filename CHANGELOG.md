@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-08-28
+
+### Changed
+- **Published as setup-only** - This release attaches no `OpenWhisper-<version>-win64.tar.xz`. The updater that commits an update is copied out of the install being updated *from*, so 2.4.2 and 2.4.3 would run their own lock-intolerant helper on the way to this fix and could fail the same way it does now. Dual artifacts resume in the next release, which is the first real test of the retrying commit.
+
+### Added
+- **The updater keeps a log** - `OpenWhisperUpdater.exe` runs windowless and used to report a whole update through a single message box, so "[WinError 32] The process cannot access the file" named no step and left nothing to read afterwards. It now writes `%LOCALAPPDATA%\OpenWhisper\updater.log` with each phase of the commit, every lock it waited on, and a traceback for anything it could not finish.
+
 ### Fixed
-- **A finished update left its installer behind** - The setup path launches the installer it downloaded and then exits, so nothing was left running to delete it, and `%LOCALAPPDATA%\OpenWhisper\updates` kept roughly 108 MB per update. Startup now collects downloads from attempts that are over, and leaves the native updater's transaction directory to the updater's own recovery.
+- **An update could fail one second after the app closed** - Committing an update moves the install directory aside and the new tree into its place, and a single sharing violation on either move failed the whole update: "The update failed: [WinError 32] The process cannot access the file because it is being used by another process." A process that has just exited keeps its image mapped for a moment, Error Reporting holds the image of one that crashed while it writes a 265 MB dump, and the antimalware scanner opens files it has never seen, such as a freshly extracted candidate tree. All three are transient, and the updater now waits out a lock for up to a minute on the moves, the hash checks, and the rollback restore instead of giving up on the first refusal.
+- **Cleaning up after an update reported the update as failed** - The transaction is deleted by a copy of the updater, which cannot delete the executable the original is running from, and Windows returns access denied for the image of a process that is still up — including one held open by its own error dialog. The failed delete then raised its own "The update failed: [WinError 5] Access is denied: ...\tx\...\OpenWhisperUpdater.exe" box, a second and contradictory verdict on an update that had already been decided. Cleanup is now silent, retries a locked delete, and whatever survives is collected at next start.
+- **A finished update left its installer behind** - The setup path launches the installer it downloaded and then exits, so nothing was left running to delete it, and `%LOCALAPPDATA%\OpenWhisper\updates` kept roughly 108 MB per update. Startup now collects downloads from attempts that are over, along with transaction directories that no journal claims any more — the roughly 17 MB of updater executables an interrupted cleanup leaves behind.
 
 ## [2.4.3] - 2026-08-28
 

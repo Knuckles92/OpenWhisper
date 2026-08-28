@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 from services.update_contract import (
     APP_EXE_NAME,
     APP_ID,
+    JOURNAL_NAME,
     APP_MUTEX_NAMES,
     APP_NAME,
     ARCHITECTURE,
@@ -58,6 +60,8 @@ from services.update_contract import (
     validate_transaction_id,
 )
 
+logger = logging.getLogger(__name__)
+
 ProgressCallback = Callable[[str, int, int], None]
 
 _CHUNK_BYTES = 1 << 20
@@ -70,6 +74,11 @@ _PARENT_WAIT_S = 120
 _HEALTH_WAIT_S = 180
 _SETUP_LAUNCH_WAIT_S = 120
 _ERROR_LIMIT = 2000
+# Access denied, sharing violation, lock violation.
+_LOCK_WINERRORS = frozenset({5, 32, 33})
+_LOCK_WAIT_S = 60.0
+_CLEANUP_LOCK_WAIT_S = 300.0
+_LOCK_POLL_S = 0.25
 _PARENT_STILL_RUNNING = (
     "OpenWhisper did not close, so the update was not installed. Your current "
     "version is unchanged — close OpenWhisper completely and try the update "
@@ -245,11 +254,14 @@ class UpdateJournal:
 
 
 def file_sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    def read() -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(_CHUNK_BYTES), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    return _retry_while_locked(path, read)
 
 
 def write_json_atomic(path: str, payload: Dict) -> None:
@@ -274,7 +286,66 @@ def _fsync_directory(path: str) -> None:
         os.close(fd)
 
 
+def _retry_while_locked(what: str, action, *, timeout_s: float = _LOCK_WAIT_S):
+    """Retry a file operation Windows refuses only because of a lock.
+
+    A process that has just exited keeps its image mapped for a moment, Error
+    Reporting holds the image of one that crashed while it writes its dump, and
+    the antimalware scanner opens files it has never seen — such as a freshly
+    extracted candidate tree. All three surface as a sharing violation or an
+    access denial on the install directory, and each one used to fail an entire
+    update within a second of the app closing.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            return action()
+        except OSError as exc:
+            locked = getattr(exc, "winerror", None) in _LOCK_WINERRORS
+            if not locked or time.monotonic() >= deadline:
+                raise
+            logger.info("%s is locked (%s); retrying", what, exc)
+            time.sleep(_LOCK_POLL_S)
+
+
+def updater_log_path(appdata: Optional[str] = None) -> str:
+    """Log file for the windowless helper, beside the application's own log."""
+    root = updates_root(appdata).rstrip("\\/")
+    return os.path.join(os.path.dirname(root), "updater.log")
+
+
+def setup_updater_logging(appdata: Optional[str] = None) -> None:
+    """Give the helper a log. A single message box is not a diagnosis."""
+    from logging.handlers import RotatingFileHandler
+
+    path = updater_log_path(appdata)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handler = RotatingFileHandler(
+            path, maxBytes=512 * 1024, backupCount=1, encoding="utf-8"
+        )
+    except OSError:
+        return
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+
 def _replace_path_write_through(
+    source: str, destination: str, *, replace_existing: bool
+) -> None:
+    _retry_while_locked(
+        source,
+        lambda: _move_path_write_through(
+            source, destination, replace_existing=replace_existing
+        ),
+    )
+
+
+def _move_path_write_through(
     source: str, destination: str, *, replace_existing: bool
 ) -> None:
     if sys.platform == "win32":
@@ -1272,6 +1343,31 @@ def parse_parent_pid(argv: Optional[List[str]] = None) -> Optional[int]:
     return pid if pid > 0 else None
 
 
+def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
+    """Delete transaction directories that no journal claims any more.
+
+    A transaction is cleaned by a copy of the updater, which cannot delete the
+    executable the original ran from. What survives is a directory holding only
+    that executable: recovery has nothing to read and nothing else collects it.
+    """
+    tx_root = os.path.join(updates_root(appdata), "tx")
+    removed: List[str] = []
+    try:
+        names = sorted(os.listdir(tx_root))
+    except OSError:
+        return removed
+    for name in names:
+        path = os.path.join(tx_root, name)
+        if not os.path.isdir(path) or os.path.islink(path):
+            continue
+        if os.path.isfile(os.path.join(path, JOURNAL_NAME)):
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            removed.append(name)
+    return removed
+
+
 def cleanup_transaction_after_parent(
     transaction_id: str,
     parent_pid: int,
@@ -1285,9 +1381,11 @@ def cleanup_transaction_after_parent(
     }:
         raise UpdateApplyError("Refusing to clean a non-terminal transaction.")
     _wait_for_pid(parent_pid, 120.0)
-    shutil.rmtree(
-        transaction_dir(journal.transaction_id, journal.appdata or None)
-    )
+    tx = transaction_dir(journal.transaction_id, journal.appdata or None)
+    # The updater that asked for this cleanup can outlive the wait: it holds a
+    # message box open, and Windows denies deleting the image of a process that
+    # is still running. Whatever survives the wait is collected at next start.
+    _retry_while_locked(tx, lambda: shutil.rmtree(tx), timeout_s=_CLEANUP_LOCK_WAIT_S)
 
 
 def _kernel32():
@@ -2113,6 +2211,14 @@ def commit_prepared_update(
     health_confirmed = False
     runonce_installed = False
     try:
+        logger.info(
+            "Committing transaction %s: %s -> %s in %s (parent pid %s)",
+            journal.transaction_id,
+            journal.old_version,
+            journal.new_version,
+            journal.app_dir,
+            journal.parent_pid,
+        )
         validate_journal_binding(journal, journal.appdata or None)
         if journal.state != TransactionState.PREPARED:
             raise UpdateApplyError("The update transaction is not prepared.")
@@ -2134,6 +2240,7 @@ def commit_prepared_update(
         app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, parent_timeout_s)
         if app_mutexes is None:
             raise UpdateApplyError(_PARENT_STILL_RUNNING)
+        logger.info("The application has exited; checking the install")
         if "after_parent_exit" in hooks:
             hooks["after_parent_exit"](journal)
 
@@ -2168,6 +2275,7 @@ def commit_prepared_update(
             set(journal.compatibility_files)
         ):
             raise UpdateApplyError("A preserved uninstaller file is unverified.")
+        logger.info("Verifying the prepared tree")
         _verify_candidate_for_commit(journal)
 
         recover_cmd = (
@@ -2182,12 +2290,14 @@ def commit_prepared_update(
         journal.state = TransactionState.OLD_MOVED
         save_journal(journal)
         destructive_started = True
+        logger.info("Moving the installed version aside")
         _rename_dir(journal.app_dir, journal.rollback_dir)
         if "after_old_moved" in hooks:
             hooks["after_old_moved"](journal)
 
         journal.state = TransactionState.NEW_ACTIVE
         save_journal(journal)
+        logger.info("Moving the new version into place")
         _rename_dir(journal.candidate_dir, journal.app_dir)
         if "after_new_active" in hooks:
             hooks["after_new_active"](journal)
@@ -2198,6 +2308,7 @@ def commit_prepared_update(
         release_mutexes(app_mutexes)
         app_mutexes = None
         if launch:
+            logger.info("Starting the new version for its health check")
             launched_process = _launch_exe(
                 new_exe, [HEALTH_ARG, journal.health_token]
             )
@@ -2221,8 +2332,10 @@ def commit_prepared_update(
         _clear_runonce()
         runonce_installed = False
         _cleanup_transaction(journal)
+        logger.info("Update to %s is healthy", journal.new_version)
         return TransactionState.HEALTHY
     except Exception as exc:
+        logger.exception("The commit failed in state %s", journal.state)
         if health_confirmed:
             write_apply_error(
                 f"The new version is running, but update finalization failed: {exc}",
@@ -2260,8 +2373,12 @@ def commit_prepared_update(
             # candidate tree behind costs the user a gigabyte per attempt.
             _cleanup_transaction(journal, include_rollback=destructive_started)
             relaunch_old = launch
+            logger.info(
+                "The install was left on %s", journal.old_version or "the old version"
+            )
         except Exception as rollback_exc:
             rollback_error = rollback_exc
+            logger.exception("The rollback failed")
             write_apply_error(
                 f"{exc}\nRollback also failed: {rollback_exc}",
                 journal.appdata or None,

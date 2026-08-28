@@ -15,6 +15,8 @@ def _helper_module():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    # The real one attaches a handler to the user's updater log.
+    module.setup_updater_logging = lambda *args, **kwargs: None
     return module
 
 
@@ -61,6 +63,27 @@ def test_helper_cleanup_path():
             ]
         ) == 0
     cleanup.assert_called_once_with("abc", 42)
+
+
+def test_cleanup_failure_is_not_reported_as_an_update_failure():
+    module = _helper_module()
+    with patch.object(module, "parse_transaction_id", return_value="abc"), patch.object(
+        module, "parse_parent_pid", return_value=42
+    ), patch.object(
+        module,
+        "cleanup_transaction_after_parent",
+        side_effect=OSError(13, "Access is denied"),
+    ), patch.object(module, "native_message_box") as box:
+        assert module.main(
+            [
+                "--transaction-id",
+                "abc",
+                "--cleanup-transaction",
+                "--parent-pid",
+                "42",
+            ]
+        ) == 1
+    box.assert_not_called()
 
 
 def test_helper_reports_apply_error():

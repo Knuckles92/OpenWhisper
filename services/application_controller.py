@@ -500,22 +500,34 @@ class ApplicationController(QObject):
         except Exception:
             logger.exception("Could not initialize the database")
         QTimer.singleShot(0, self.meeting_runtime.setup)
-        self.component_executor.submit(self._prune_update_downloads)
+        self.component_executor.submit(self._prune_update_leftovers)
         # Defer the GitHub metadata check so HF consent / recovery win the
         # first modal slot, and so a recording or meeting can start first.
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
 
-    def _prune_update_downloads(self) -> None:
-        """Collect the download an earlier update left behind."""
+    def _prune_update_leftovers(self) -> None:
+        """Collect the downloads and transactions an earlier update left behind."""
         from services.app_update import prune_stale_downloads
+        from services.app_update_apply import prune_abandoned_transactions
 
         try:
             removed = prune_stale_downloads()
         except Exception:
             logger.exception("Could not prune finished update downloads")
+        else:
+            if removed:
+                logger.info(
+                    "Removed finished update downloads: %s", ", ".join(removed)
+                )
+        try:
+            transactions = prune_abandoned_transactions()
+        except Exception:
+            logger.exception("Could not prune abandoned update transactions")
             return
-        if removed:
-            logger.info("Removed finished update downloads: %s", ", ".join(removed))
+        if transactions:
+            logger.info(
+                "Removed abandoned update transactions: %s", ", ".join(transactions)
+            )
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.

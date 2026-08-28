@@ -8,6 +8,7 @@ import tarfile
 import threading
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -751,6 +752,131 @@ class TestPrepareCancel:
 
         assert not list(tmp_path.glob("OpenWhisper.new-*"))
         assert not list((updates / "tx").glob("*"))
+
+
+class TestLockedFiles:
+    """Windows refuses a file another process still holds, briefly and often."""
+
+    @staticmethod
+    def _sharing_violation() -> OSError:
+        exc = OSError(13, "The process cannot access the file")
+        exc.winerror = 32
+        return exc
+
+    def test_a_move_that_is_blocked_for_a_moment_still_happens(self, tmp_path):
+        source = tmp_path / "source"
+        source.mkdir()
+        destination = tmp_path / "destination"
+        attempts = []
+        real_move = apply_module._move_path_write_through
+
+        def flaky(src, dst, *, replace_existing):
+            attempts.append(src)
+            if len(attempts) < 3:
+                raise self._sharing_violation()
+            real_move(src, dst, replace_existing=replace_existing)
+
+        with patch.object(apply_module, "_LOCK_POLL_S", 0.01), patch.object(
+            apply_module, "_move_path_write_through", flaky
+        ):
+            apply_module._rename_dir(str(source), str(destination))
+
+        assert len(attempts) == 3
+        assert destination.is_dir()
+
+    def test_a_lock_that_never_clears_still_fails(self, tmp_path):
+        with patch.object(apply_module, "_LOCK_POLL_S", 0.01):
+            with pytest.raises(OSError) as caught:
+                apply_module._retry_while_locked(
+                    "target",
+                    lambda: (_ for _ in ()).throw(self._sharing_violation()),
+                    timeout_s=0.05,
+                )
+        assert caught.value.winerror == 32
+
+    def test_an_ordinary_error_is_not_retried(self):
+        attempts = []
+
+        def missing():
+            attempts.append(1)
+            raise FileNotFoundError(2, "nope")
+
+        with pytest.raises(FileNotFoundError):
+            apply_module._retry_while_locked("target", missing)
+        assert len(attempts) == 1
+
+    def test_hashing_the_app_it_just_closed_waits_for_the_handle(self, tmp_path):
+        target = tmp_path / "OpenWhisper.exe"
+        target.write_bytes(b"payload")
+        attempts = []
+        real_open = open
+
+        def flaky(*args, **kwargs):
+            attempts.append(args)
+            if len(attempts) < 2:
+                raise self._sharing_violation()
+            return real_open(*args, **kwargs)
+
+        with patch.object(apply_module, "_LOCK_POLL_S", 0.01), patch(
+            "builtins.open", flaky
+        ):
+            digest = file_sha256(str(target))
+
+        assert len(attempts) == 2
+        assert digest == file_sha256(str(target))
+
+    def test_cleanup_waits_out_the_updater_that_asked_for_it(self, tmp_path):
+        appdata = tmp_path / "appdata"
+        tx = Path(transaction_dir(TX_ID, str(appdata)))
+        tx.mkdir(parents=True)
+        (tx / UPDATER_EXE_NAME).write_bytes(b"helper")
+        write_json_atomic(
+            str(tx / "journal.json"),
+            {"transaction_id": TX_ID, "state": TransactionState.ROLLED_BACK},
+        )
+        attempts = []
+        real_rmtree = shutil.rmtree
+
+        def flaky(path, *args, **kwargs):
+            attempts.append(path)
+            if len(attempts) < 3:
+                raise self._sharing_violation()
+            real_rmtree(path, *args, **kwargs)
+
+        journal = SimpleNamespace(
+            transaction_id=TX_ID,
+            state=TransactionState.ROLLED_BACK,
+            appdata=str(appdata),
+        )
+        with patch.object(apply_module, "_LOCK_POLL_S", 0.01), patch.object(
+            apply_module, "load_journal", return_value=journal
+        ), patch.object(apply_module, "_wait_for_pid"), patch.object(
+            apply_module.shutil, "rmtree", flaky
+        ):
+            apply_module.cleanup_transaction_after_parent(TX_ID, 4321, str(appdata))
+
+        assert len(attempts) == 3
+        assert not tx.exists()
+
+
+class TestAbandonedTransactions:
+    def test_a_transaction_without_a_journal_is_collected(self, tmp_path):
+        appdata = tmp_path / "appdata"
+        stale = Path(transaction_dir("c" * 32, str(appdata)))
+        stale.mkdir(parents=True)
+        (stale / UPDATER_EXE_NAME).write_bytes(b"helper")
+        live = Path(transaction_dir(TX_ID, str(appdata)))
+        live.mkdir(parents=True)
+        write_json_atomic(str(live / "journal.json"), {"transaction_id": TX_ID})
+
+        removed = apply_module.prune_abandoned_transactions(str(appdata))
+
+        assert removed == ["c" * 32]
+        assert not stale.exists()
+        assert live.is_dir()
+
+    def test_a_missing_transactions_directory_is_not_an_error(self, tmp_path):
+        assert apply_module.prune_abandoned_transactions(str(tmp_path)) == []
 
 
 class TestHealthAndError:
