@@ -26,6 +26,7 @@ def _result(
     can_apply: bool = False,
     version: str = "2.2.0",
     apply_mode: str | None = None,
+    notes: str = "Bug fixes",
 ) -> UpdateCheckResult:
     return UpdateCheckResult(
         status=status,
@@ -35,7 +36,7 @@ def _result(
             version=version,
             tag_name=f"v{version}",
             html_url=f"https://github.com/Knuckles92/OpenWhisper/releases/tag/v{version}",
-            notes="Bug fixes",
+            notes=notes,
             setup_asset=ReleaseAsset(
                 url="https://example/OpenWhisper-Setup-2.2.0.exe",
                 name="OpenWhisper-Setup-2.2.0.exe",
@@ -166,6 +167,110 @@ class TestAppUpdateDialog(_QtTestCase):
         assert dialog.body_label.text() == "Preparing the update…"
         dialog.set_progress("restarting", 1, 1)
         assert dialog.body_label.text() == "Restarting to finish the update…"
+
+    def test_cancel_leaves_a_working_button(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        requests = []
+        dialog.on_cancel_requested = lambda: requests.append(1)
+        dialog._set_downloading()
+
+        self._button(dialog, "updateLaterButton").click()
+
+        assert requests == [1]
+        assert dialog.body_label.text() == "Canceling the update…"
+        assert dialog.later_btn.isEnabled()
+        assert dialog.later_btn.text() == "Close"
+
+    def test_second_cancel_closes_the_dialog(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog.on_cancel_requested = lambda: None
+        dialog._set_downloading()
+        rejected = []
+        dialog.rejected.connect(lambda: rejected.append(1))
+
+        self._button(dialog, "updateLaterButton").click()
+        self._button(dialog, "updateLaterButton").click()
+
+        assert rejected == [1]
+
+    def test_restarting_phase_cannot_be_canceled(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+        dialog.set_progress("restarting", 1, 1)
+
+        assert not dialog.later_btn.isEnabled()
+        # A dialog that refuses to close vetoes the quit the updater waits for.
+        assert not dialog._busy
+
+    def test_release_notes_render_as_rich_text(self):
+        dialog = AppUpdateDialog(
+            _result(
+                channel=InstallChannel.INSTALLER,
+                can_apply=True,
+                notes="- A bullet\n\n### SHA-256\n\n```\n" + "ab" * 32 + "\n```",
+            )
+        )
+
+        assert not dialog.notes_card.isHidden()
+        rendered = dialog.notes_view.toHtml()
+        assert "A bullet" in rendered
+        assert "- A bullet" not in rendered
+        assert "SHA-256" not in rendered
+
+    def test_notes_card_hidden_without_notes(self):
+        dialog = AppUpdateDialog(_result(notes=""))
+        assert dialog.notes_card.isHidden()
+
+    def test_downloading_replaces_notes_with_progress(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+
+        assert dialog.progress_panel.isVisibleTo(dialog)
+        assert dialog.notes_card.isHidden()
+        assert dialog.options_widget.isHidden()
+        assert dialog.progress_bar.is_indeterminate
+
+    def test_download_progress_shows_bytes_and_percent(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+        dialog.set_progress("downloading", 45_000_000, 90_000_000)
+
+        assert not dialog.progress_bar.is_indeterminate
+        assert dialog.progress_bar.fraction == 0.5
+        assert dialog.progress_percent.text() == "50%"
+        assert "of" in dialog.progress_detail.text()
+
+    def test_member_counting_phases_do_not_report_bytes(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+        dialog.set_progress("extracting", 3, 10)
+
+        assert dialog.progress_detail.text() == "OpenWhisper 2.2.0"
+        assert dialog.progress_percent.text() == "30%"
+
+    def test_error_restores_the_notes_and_options(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=True)
+        )
+        dialog._set_downloading()
+        dialog.set_error("disk full")
+
+        assert dialog.progress_panel.isHidden()
+        assert not dialog.notes_card.isHidden()
+        assert not dialog.options_widget.isHidden()
+        assert dialog.body_label.property("tone") == "error"
 
     def test_error_offers_setup_fallback_for_native_mode(self):
         dialog = AppUpdateDialog(

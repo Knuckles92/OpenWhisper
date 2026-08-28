@@ -6,6 +6,7 @@ from ui_qt.widgets.buttons import (
     SuccessButton,
     WarningButton,
 )
+from ui_qt.widgets.animated_progress_bar import AnimatedProgressBar
 from ui_qt.widgets.cards import (
     Card,
     ControlPanel,
@@ -39,6 +40,7 @@ from ui_qt.widgets.searchable_combo import SearchableComboBox
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 __all__ = [
+    "AnimatedProgressBar",
     "Button",
     "HotkeyHintFilter",
     "PrimaryButton",

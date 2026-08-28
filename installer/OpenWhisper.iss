@@ -62,7 +62,12 @@ SolidCompression=yes
 LZMANumBlockThreads=1
 ShowLanguageDialog=no
 DisableWelcomePage=no
-CloseApplications=yes
+; force, not yes: Restart Manager's graceful shutdown sends a close request,
+; and the app answers it by minimizing to tray, so a plain `yes` ends in
+; "Setup was unable to automatically close all applications". Builds up to
+; 2.4.1 also fail to quit after handing off to an update, and this installer
+; is their only way out.
+CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
 ; Shared with the native updater so setup/uninstall wait for the app and helper.
 AppMutex=OpenWhisper-App-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,Global\OpenWhisper-App-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,OpenWhisper-Update-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9,Global\OpenWhisper-Update-CA36AD0A-13B9-4737-87AD-ADB54A28EFC9
@@ -76,7 +81,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Name: "startupicon"; Description: "Start {#AppName} when I sign in"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion; BeforeInstall: CloseRunningApp
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -100,6 +105,30 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait
 function UserDataDir(): String;
 begin
   Result := ExpandConstant('{localappdata}\{#AppName}');
+end;
+
+{
+  Belt and braces for CloseApplications=force, which is reported to leave some
+  processes running. Setup is the recovery path for a build that cannot quit
+  itself, so the running exe has to be gone before the first file is replaced,
+  not "probably gone". No elevation is needed: the install is per-user and so
+  is the process being closed.
+}
+procedure CloseRunningApp();
+var
+  ResultCode: Integer;
+begin
+  Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/f /im "{#AppExeName}"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  { taskkill returns 128 when nothing matched, which is the normal case. }
+  if ResultCode = 0 then
+    Sleep(500);
 end;
 
 {

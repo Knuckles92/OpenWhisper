@@ -1920,3 +1920,114 @@ QLabel#meetingBindWarning {
     font-size: 12px;
     padding: 10px 12px;
 }
+
+/* Update dialog */
+
+QDialog#appUpdateDialog {
+    background-color: #1c1c1e;
+}
+
+QLabel#updateTitleLabel {
+    color: #ffffff;
+    font-size: 19px;
+    font-weight: 700;
+    background-color: transparent;
+}
+
+QLabel#updateBodyLabel {
+    color: #98989d;
+    font-size: 13px;
+    background-color: transparent;
+}
+
+QLabel#updateBodyLabel[tone="error"] {
+    color: #ff6b6b;
+}
+
+QFrame#updateNotesCard {
+    background-color: #232326;
+    border: 1px solid #313135;
+    border-radius: 12px;
+}
+
+QLabel#updateNotesCaption {
+    color: #7d7d82;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    background-color: transparent;
+}
+
+QTextBrowser#updateNotesView {
+    background-color: transparent;
+    border: none;
+    padding: 0px 10px 0px 0px;
+    font-size: 13px;
+}
+
+QTextBrowser#updateNotesView QScrollBar:vertical {
+    background-color: transparent;
+    width: 6px;
+}
+
+QTextBrowser#updateNotesView QScrollBar::handle:vertical {
+    background-color: #48484a;
+    border-radius: 3px;
+    margin: 0px;
+    min-height: 24px;
+}
+
+QTextBrowser#updateNotesView QScrollBar::handle:vertical:hover {
+    background-color: #636366;
+}
+
+QTextBrowser#updateNotesView QScrollBar::add-page:vertical,
+QTextBrowser#updateNotesView QScrollBar::sub-page:vertical {
+    background-color: transparent;
+}
+
+QLabel#updateHintLabel {
+    color: #98989d;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QFrame#updateProgressPanel {
+    background-color: #232326;
+    border: 1px solid #313135;
+    border-radius: 12px;
+}
+
+QLabel#updateProgressDetail {
+    color: #98989d;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#updateProgressPercent {
+    color: #6fb1ff;
+    font-size: 12px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QFrame#updateFooterDivider {
+    background-color: #2f2f33;
+    border: none;
+}
+
+QDialog#appUpdateDialog QCheckBox {
+    color: #b0b0b5;
+    font-size: 13px;
+}
+
+QDialog#appUpdateDialog QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+}
+
+QDialog#appUpdateDialog QPushButton {
+    padding: 9px 18px;
+    font-size: 13px;
+}

@@ -1,7 +1,7 @@
 """System tray icon and menu."""
 import logging
 from typing import Optional
-from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
+from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import pyqtSignal
 
@@ -101,7 +101,6 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _on_exit(self):
         self.exit_requested.emit()
-        QApplication.instance().quit()
 
     def set_recording(self, is_recording: bool):
         if is_recording:

@@ -69,6 +69,11 @@ _SPACE_MARGIN = 1.15
 _PARENT_WAIT_S = 120
 _HEALTH_WAIT_S = 180
 _ERROR_LIMIT = 2000
+_PARENT_STILL_RUNNING = (
+    "OpenWhisper did not close, so the update was not installed. Your current "
+    "version is unchanged — close OpenWhisper completely and try the update "
+    "again."
+)
 _APPLICATION_MUTEX_HANDLES: List[int] = []
 _RESERVED_WINDOWS_NAMES = frozenset(
     {
@@ -1172,12 +1177,18 @@ def prepare_candidate(
         if extracted_manifest != manifest:
             raise UpdateApplyError("The extracted update manifest changed.")
         verify_tree_against_manifest(candidate_dir, manifest)
+        # Hashing and fsyncing the whole tree takes far longer than the
+        # extraction that precedes it, so a cancel arriving here has to be
+        # honored: otherwise the app hands off to the updater and restarts
+        # into a new version the user just declined.
+        _check_cancel(cancel)
         preserved, nvidia = preserve_compat_files(
             app_dir, candidate_dir, registration
         )
         compatibility_files = build_compatibility_file_manifest(
             candidate_dir, manifest
         )
+        _check_cancel(cancel)
         _fsync_tree(candidate_dir)
         write_completion_sentinel(candidate_dir, release_version)
         helper_src = os.path.join(app_dir, UPDATER_EXE_NAME)
@@ -1222,6 +1233,7 @@ def prepare_candidate(
             appdata=appdata_root,
             archive_path=archive_path,
         )
+        _check_cancel(cancel)
         save_journal(journal)
         return journal
     except Exception:
@@ -1703,6 +1715,60 @@ def _wait_for_pid(
         kernel32.CloseHandle(handle)
 
 
+def _force_close_pid(
+    pid: int,
+    *,
+    expected_exe: str = "",
+    expected_creation_time: int = 0,
+    timeout_s: float = 15.0,
+) -> bool:
+    """Terminate a parent that never exited. True when the pid is gone.
+
+    The old app holds its own files open, so a parent that hands off and then
+    fails to leave blocks the swap entirely. Closing it is friendlier than
+    abandoning an update the user already approved: it has finished staging and
+    has nothing left to save that is not already committed atomically.
+
+    Identity is re-checked immediately before terminating, so a pid recycled
+    into an unrelated process is never the victim; a mismatch means the parent
+    is already gone and is reported as success. An unidentified target is never
+    terminated: ``prepare_candidate`` refuses to write a journal without the
+    parent's image path and creation time, so their absence here means this is
+    not the process that handed off.
+    """
+    if pid <= 0 or pid == os.getpid():
+        return True
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        return False
+    if not expected_exe or not expected_creation_time:
+        return False
+    actual_exe, actual_creation = process_identity(pid)
+    if not actual_exe:
+        return True
+    if not paths_equal(actual_exe, expected_exe):
+        return True
+    if actual_creation != expected_creation_time:
+        return True
+    kernel32 = _kernel32()
+    PROCESS_TERMINATE = 0x0001
+    SYNCHRONIZE = 0x00100000
+    handle = kernel32.OpenProcess(
+        PROCESS_TERMINATE | SYNCHRONIZE, False, int(pid)
+    )
+    if not handle:
+        return process_identity(pid)[0] == ""
+    try:
+        if not kernel32.TerminateProcess(handle, 0):
+            return False
+        return kernel32.WaitForSingleObject(handle, int(timeout_s * 1000)) == 0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _launch_exe(path: str, args: List[str]):
     import subprocess
 
@@ -1917,8 +1983,19 @@ def restore_arp_after_rollback(
         winreg.CloseKey(handle)
 
 
-def _cleanup_transaction(journal: UpdateJournal) -> None:
-    for path in (journal.candidate_dir, journal.rollback_dir):
+def _cleanup_transaction(
+    journal: UpdateJournal, *, include_rollback: bool = True
+) -> None:
+    """Delete a finished transaction's trees, archive, and journal.
+
+    ``include_rollback`` must stay False for a transaction that never renamed
+    anything: a rollback tree that exists in that case was not created here and
+    is not ours to delete.
+    """
+    trees = [journal.candidate_dir]
+    if include_rollback:
+        trees.append(journal.rollback_dir)
+    for path in trees:
         if os.path.isdir(path):
             shutil.rmtree(path, ignore_errors=True)
     if journal.archive_path and os.path.isfile(journal.archive_path):
@@ -2020,15 +2097,23 @@ def commit_prepared_update(
         if journal.state != TransactionState.PREPARED:
             raise UpdateApplyError("The update transaction is not prepared.")
         if wait_parent:
-            _wait_for_pid(
-                journal.parent_pid,
-                parent_timeout_s,
-                expected_exe=journal.parent_exe,
-                expected_creation_time=journal.parent_creation_time,
-            )
+            try:
+                _wait_for_pid(
+                    journal.parent_pid,
+                    parent_timeout_s,
+                    expected_exe=journal.parent_exe,
+                    expected_creation_time=journal.parent_creation_time,
+                )
+            except UpdateApplyError as exc:
+                if not _force_close_pid(
+                    journal.parent_pid,
+                    expected_exe=journal.parent_exe,
+                    expected_creation_time=journal.parent_creation_time,
+                ):
+                    raise UpdateApplyError(_PARENT_STILL_RUNNING) from exc
         app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, parent_timeout_s)
         if app_mutexes is None:
-            raise UpdateApplyError("OpenWhisper did not release its application lock.")
+            raise UpdateApplyError(_PARENT_STILL_RUNNING)
         if "after_parent_exit" in hooks:
             hooks["after_parent_exit"](journal)
 
@@ -2127,7 +2212,12 @@ def commit_prepared_update(
         rollback_error: Optional[Exception] = None
         try:
             _terminate_process(launched_process)
-            if app_mutexes is None:
+            # Only a restore needs the application lock. Failing before the
+            # first rename leaves the install untouched, and demanding the lock
+            # there turned "OpenWhisper is still running" into a second,
+            # alarming "rollback failed" for a transaction that never moved a
+            # single file.
+            if app_mutexes is None and destructive_started:
                 app_mutexes = acquire_named_mutexes(APP_MUTEX_NAMES, 30.0)
                 if app_mutexes is None:
                     raise UpdateApplyError(
@@ -2146,8 +2236,9 @@ def commit_prepared_update(
             if runonce_installed:
                 _clear_runonce()
                 runonce_installed = False
-            if destructive_started:
-                _cleanup_transaction(journal)
+            # The journal is terminal either way: leaving the archive and the
+            # candidate tree behind costs the user a gigabyte per attempt.
+            _cleanup_transaction(journal, include_rollback=destructive_started)
             relaunch_old = launch
         except Exception as rollback_exc:
             rollback_error = rollback_exc
@@ -2164,7 +2255,10 @@ def commit_prepared_update(
         update_mutexes = None
         release_mutex(setup_mutex)
         setup_mutex = None
-        if relaunch_old:
+        # An update that failed because the app never exited does not need a
+        # second copy started behind the one the user is still looking at.
+        app_still_running = any(mutex_exists(name) for name in APP_MUTEX_NAMES)
+        if relaunch_old and not app_still_running:
             old_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
             if os.path.isfile(old_exe):
                 _launch_exe(old_exe, [])

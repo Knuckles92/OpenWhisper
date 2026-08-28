@@ -2,7 +2,10 @@
 import io
 import os
 import shutil
+import subprocess
+import sys
 import tarfile
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +14,10 @@ import pytest
 from services.app_update_apply import (
     InstallRegistration,
     UpdateApplyError,
+    UpdateCanceled,
     UpdateJournal,
+    _force_close_pid,
+    acquire_named_mutexes,
     build_update_manifest,
     commit_prepared_update,
     consume_apply_error,
@@ -20,9 +26,12 @@ from services.app_update_apply import (
     native_apply_eligible,
     pack_tar_xz,
     parse_health_token,
+    prepare_candidate,
     preserve_compat_files,
+    process_identity,
     read_manifest_from_tar_xz,
     recover_transaction,
+    release_mutexes,
     safe_extract_tar_xz,
     validate_archive_member_name,
     verify_tree_against_manifest,
@@ -33,6 +42,7 @@ from services.app_update_apply import (
 )
 from services.update_contract import (
     APP_EXE_NAME,
+    APP_MUTEX_NAMES,
     MANIFEST_NAME,
     TransactionState,
     UPDATER_EXE_NAME,
@@ -563,6 +573,168 @@ class TestCommitAndRecover:
                     TX_ID, journal.appdata, registration=_registration(app)
                 )
         clear.assert_not_called()
+
+
+class TestLiveParent:
+    """The app is still alive when the helper wants to swap the install."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_arp_writes(self):
+        with patch(
+            "services.app_update_apply.update_arp_after_success"
+        ), patch(
+            "services.app_update_apply.restore_arp_after_rollback"
+        ), patch(
+            "services.app_update_apply._set_runonce"
+        ), patch("services.app_update_apply._clear_runonce"):
+            yield
+
+    def test_running_parent_is_not_reported_as_a_failed_rollback(self, tmp_path):
+        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        (app / "unins000.exe").write_bytes(b"uninstaller")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
+        write_completion_sentinel(str(candidate), "2.4.1")
+        journal = TestCommitAndRecover()._journal(tmp_path, app, candidate)
+        journal.parent_pid = os.getpid()
+        write_json_atomic(
+            str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
+            journal.to_dict(),
+        )
+
+        app_locks = acquire_named_mutexes(APP_MUTEX_NAMES, 0.0)
+        try:
+            with pytest.raises(UpdateApplyError) as caught:
+                commit_prepared_update(
+                    journal,
+                    launch=False,
+                    parent_timeout_s=0.2,
+                    registration=_registration(app),
+                )
+        finally:
+            release_mutexes(app_locks)
+
+        assert "did not close" in str(caught.value)
+        assert "rollback failed" not in str(caught.value)
+        assert (app / APP_EXE_NAME).read_bytes() == b"old"
+        assert not candidate.exists()
+        assert not Path(transaction_dir(TX_ID, journal.appdata)).exists()
+        error = consume_apply_error(journal.appdata)
+        assert error and "did not close" in error
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only commit path")
+    def test_parent_that_never_exits_is_closed_and_the_update_lands(self, tmp_path):
+        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        (app / "unins000.exe").write_bytes(b"uninstaller")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
+        write_completion_sentinel(str(candidate), "2.4.1")
+        journal = TestCommitAndRecover()._journal(tmp_path, app, candidate)
+        parent = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"]
+        )
+        try:
+            parent_exe, parent_creation = process_identity(parent.pid)
+            assert parent_exe and parent_creation
+            journal.parent_pid = parent.pid
+            journal.parent_exe = parent_exe
+            journal.parent_creation_time = parent_creation
+            write_json_atomic(
+                str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
+                journal.to_dict(),
+            )
+            state = commit_prepared_update(
+                journal,
+                launch=False,
+                parent_timeout_s=0.3,
+                registration=_registration(app),
+            )
+        finally:
+            if parent.poll() is None:
+                parent.kill()
+            parent.wait(timeout=30)
+
+        assert state == TransactionState.HEALTHY
+        assert (app / APP_EXE_NAME).read_bytes() == b"new"
+
+    def test_this_process_is_never_its_own_victim(self):
+        assert _force_close_pid(
+            os.getpid(),
+            expected_exe=sys.executable,
+            expected_creation_time=process_identity(os.getpid())[1] or 1,
+        )
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs process identity")
+    def test_an_unidentified_parent_is_never_terminated(self):
+        parent = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"]
+        )
+        try:
+            # Without a recorded image path and creation time there is no proof
+            # this pid is the process that handed off, so it survives and the
+            # commit reports the failure instead.
+            assert not _force_close_pid(
+                parent.pid, expected_exe="", expected_creation_time=0
+            )
+            assert parent.poll() is None
+        finally:
+            parent.kill()
+            parent.wait(timeout=30)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs process identity")
+    def test_a_recycled_pid_is_not_the_victim(self):
+        parent = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"]
+        )
+        try:
+            _, creation = process_identity(parent.pid)
+            assert _force_close_pid(
+                parent.pid,
+                expected_exe=str(Path(sys.executable).parent / "not-openwhisper.exe"),
+                expected_creation_time=creation,
+            )
+            assert parent.poll() is None
+        finally:
+            parent.kill()
+            parent.wait(timeout=30)
+
+
+class TestPrepareCancel:
+    def test_cancel_after_extraction_still_cancels(self, tmp_path):
+        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        (app / "unins000.exe").write_bytes(b"uninstaller")
+        appdata = tmp_path / "appdata"
+        updates = appdata / "updates"
+        updates.mkdir(parents=True)
+        source = _bundle(tmp_path / "src", "2.4.1", b"new")
+        archive = updates / "OpenWhisper-2.4.1-win64.tar.xz"
+        pack_tar_xz(str(source), str(archive))
+
+        cancel = threading.Event()
+        total_members = read_manifest_from_tar_xz(str(archive))["member_count"]
+
+        def progress(phase, done, total):
+            # Fires on the last archive member, after the extract loop has run
+            # its final cancellation check.
+            if phase == "extracting" and done >= total_members:
+                cancel.set()
+
+        with patch(
+            "services.app_update_apply.native_apply_eligible", return_value=True
+        ):
+            with pytest.raises(UpdateCanceled):
+                prepare_candidate(
+                    str(archive),
+                    release_version="2.4.1",
+                    current_version="2.4.0",
+                    app_dir=str(app),
+                    registration=_registration(app),
+                    progress=progress,
+                    cancel=cancel,
+                    appdata=str(appdata),
+                    parent_pid=os.getpid(),
+                )
+
+        assert not list(tmp_path.glob("OpenWhisper.new-*"))
+        assert not list((updates / "tx").glob("*"))
 
 
 class TestHealthAndError:

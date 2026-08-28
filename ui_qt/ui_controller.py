@@ -1,4 +1,6 @@
 import logging
+import os
+import threading
 from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
 from PyQt6.QtGui import QDesktopServices
@@ -8,6 +10,7 @@ from config import config
 from services.app_update import (
     RELEASES_PAGE_URL,
     ApplyMode,
+    DownloadPhase,
     UpdateCheckResult,
     UpdateStatus,
     channel_label,
@@ -34,6 +37,39 @@ from ui_qt.widgets import TabbedContentWidget
 from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
+
+HANDOFF_EXIT_GRACE_S = 10.0
+
+
+def _hard_exit() -> None:
+    """Leave without running another line of Python: no atexit, no thread joins."""
+    os._exit(0)
+
+
+def arm_handoff_watchdog(grace_s: float = HANDOFF_EXIT_GRACE_S) -> threading.Timer:
+    """Hard-exit if this process is still alive ``grace_s`` after a handoff.
+
+    The updater helper waits for this exact process and abandons the update if
+    it never leaves, so leaving must not depend on every window agreeing to
+    close, on cleanup returning, or on interpreter shutdown joining every
+    thread. The timer is a daemon, so a normal exit kills it before it fires.
+    """
+
+    def _fire() -> None:
+        try:
+            logger.error(
+                "Still running %.0fs after handing off to the updater; exiting hard",
+                grace_s,
+            )
+            logging.shutdown()
+        except Exception:
+            pass
+        _hard_exit()
+
+    timer = threading.Timer(grace_s, _fire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _start_detached(program: str, arguments: list) -> bool:
@@ -94,6 +130,7 @@ class UIController(QObject):
         self.get_component_installing: Optional[Callable[[], bool]] = None
         self._last_update_result: Optional[UpdateCheckResult] = None
         self._update_dialog: Optional[AppUpdateDialog] = None
+        self._update_canceled = False
 
         self.on_meeting_start: Optional[Callable] = None  # (cloud: Optional[bool])
         self.on_meeting_start_demo: Optional[Callable] = None  # (cloud: Optional[bool])
@@ -239,6 +276,9 @@ class UIController(QObject):
 
     def _on_tray_exit(self):
         logger.info("Exit requested from tray")
+        # Must go through the window: a bare QApplication.quit() is vetoed by
+        # the minimize-to-tray closeEvent, which only hid the window again.
+        self.main_window.quit_application()
 
     def _on_tray_toggle_recording(self):
         if self.is_recording:
@@ -1164,9 +1204,9 @@ class UIController(QObject):
                 QDesktopServices.openUrl(QUrl(result.release.html_url))
             elif result is None:
                 QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
-        if self._update_dialog is dialog and dialog.result_action != (
-            AppUpdateDialog.RESULT_PRIMARY
-        ):
+        # exec() has returned, so the dialog is closed: a download the user
+        # walked away from must not report into a dead widget.
+        if self._update_dialog is dialog:
             self._update_dialog = None
 
     def _update_work_is_busy(self) -> Optional[str]:
@@ -1199,14 +1239,17 @@ class UIController(QObject):
             if self._update_dialog is not None:
                 self._update_dialog.set_error("The update was not started.")
             return
+        self._update_canceled = False
         if self.on_update_download:
             self.on_update_download(result)
 
     def _on_update_setup_requested(self, result: UpdateCheckResult) -> None:
+        self._update_canceled = False
         if self.on_update_download:
             self.on_update_download(result, True)
 
     def _on_update_cancel_requested(self) -> None:
+        self._update_canceled = True
         if self.on_update_cancel:
             self.on_update_cancel()
 
@@ -1230,12 +1273,18 @@ class UIController(QObject):
                 offer_setup = True
             if self._update_dialog is not None:
                 self._update_dialog.set_error(error, offer_setup=offer_setup)
+            elif self._update_canceled:
+                # The user asked to stop and closed the dialog; a modal
+                # "Update failed" box for their own cancel is just noise.
+                logger.info("Update stopped after cancel: %s", error)
+                self.set_status("Update canceled")
             else:
                 QMessageBox.warning(
                     self.main_window, "Update failed", error
                 )
             return
-        from PyQt6.QtCore import QProcess
+        if self._update_canceled and self._update_dialog is None:
+            logger.info("Update finished after a cancel that arrived too late")
 
         transaction_id = decode_native_result(path)
         if transaction_id:
@@ -1251,7 +1300,7 @@ class UIController(QObject):
                     QMessageBox.warning(self.main_window, "Update failed", message)
                 return
             if self._update_dialog is not None:
-                self._update_dialog.set_progress("restarting", 1, 1)
+                self._update_dialog.set_progress(DownloadPhase.RESTARTING, 1, 1)
         else:
             exe = path
             args = []
@@ -1273,7 +1322,26 @@ class UIController(QObject):
             else:
                 QMessageBox.warning(self.main_window, "Update failed", message)
             return
-        QApplication.instance().quit()
+        self.exit_for_update()
+
+    def exit_for_update(self) -> None:
+        """Leave immediately so the launched updater can replace this install.
+
+        ``QApplication.quit()`` is only a request: Qt asks every window to
+        close first and abandons the quit if one refuses. Both the open update
+        dialog (busy, so it declines) and the main window (minimize-to-tray
+        ignores the close) veto it, which left the app running while the
+        updater waited for a process that would never exit. ``exit()`` cannot
+        be vetoed.
+        """
+        if self._update_dialog is not None:
+            self._update_dialog.mark_handed_off()
+        try:
+            self.main_window._force_quit = True
+        except Exception as exc:
+            logger.debug("Could not mark the main window for force quit: %s", exc)
+        arm_handoff_watchdog()
+        QApplication.instance().exit(0)
 
     def show_apply_error_if_any(self) -> None:
         """Show a leftover native-update error from the previous launch."""

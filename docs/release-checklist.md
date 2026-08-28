@@ -2,6 +2,8 @@
 
 Publish every stable release from a **draft** GitHub release that already has both artifacts. Old installer copies only understand the setup exe and can skip intermediate tags.
 
+Exception: a release that fixes the handoff itself must be setup-only. See [Fixing the handoff](#fixing-the-handoff).
+
 ## Build
 
 1. Set `_version.py` to the release version. The first updater-capable bootstrap
@@ -38,6 +40,25 @@ Optional signing: set `OPENWHISPER_SIGN_PFX` and `OPENWHISPER_SIGN_PASS` before 
 - Native apply is only for a validated HKCU Inno install whose `InstallLocation` matches the running exe and that already contains `OpenWhisperUpdater.exe`.
 - Missing archive, missing digest, HKLM/Program Files, or an unsupported manifest/topology uses the setup exe.
 - A setup-only release is the emergency switch that disables native apply.
+
+## Fixing the handoff
+
+The download, the prepare, the handoff, and the helper that commits all run from
+the version being updated **from** — the helper is copied out of the old install
+before the app exits. A fix to any of them cannot reach the builds that need it.
+
+2.4.2 fixed a handoff that never exited (2.4.0 and 2.4.1 both had it), so:
+
+1. Publish the fix **setup-only**. With no archive asset, `resolve_apply_mode`
+   returns `SETUP` and no affected build can enter the native path.
+2. Delete the archive asset from the release those builds are currently offered,
+   so they stop entering it before the fix is even published.
+3. Rely on the setup exe to close the stuck app: `CloseApplications=force` plus
+   the `CloseRunningApp` taskkill in `installer\OpenWhisper.iss` are what make
+   installing over a build that cannot quit itself work at all.
+4. Resume dual artifacts in the following release, once a fixed build is the one
+   doing the updating. That release is the first real test of the native path,
+   so soak `fixed → next` on a VM before publishing it.
 
 ## First native-capable train
 

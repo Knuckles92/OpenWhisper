@@ -88,11 +88,13 @@ class UpdateStatus:
 
 
 class DownloadPhase:
-    """Phases reported by download / prepare."""
+    """Phases reported by download / prepare, plus the two commit phases."""
 
     DOWNLOADING: Final[str] = "downloading"
     VERIFYING: Final[str] = "verifying"
     EXTRACTING: Final[str] = "extracting"
+    RESTARTING: Final[str] = "restarting"
+    ROLLING_BACK: Final[str] = "rolling_back"
 
 
 class AppUpdateError(Exception):
