@@ -11,7 +11,7 @@ from ui_qt.dialogs.meeting_consent_dialog import MeetingConsentDialog
 
 class _QtTestCase:
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
 

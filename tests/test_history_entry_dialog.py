@@ -13,7 +13,7 @@ from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
 class _QtTestCase:
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
 

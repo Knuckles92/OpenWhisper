@@ -13,7 +13,7 @@ from ui_qt.dialogs import settings_dialog as settings_dialog_module
 
 class _DialogTestCase:
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
 

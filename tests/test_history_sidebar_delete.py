@@ -17,7 +17,7 @@ class TestHistorySidebarDelete:
     """Confirmation behavior for context-menu deletion requests."""
 
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     @pytest.fixture(autouse=True)

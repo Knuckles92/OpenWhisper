@@ -13,7 +13,7 @@ from ui_qt.dialogs.hf_consent_dialog import HuggingFaceConsentDialog
 
 class _QtTestCase:
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         cls.app = QApplication.instance() or QApplication([])
 
 
