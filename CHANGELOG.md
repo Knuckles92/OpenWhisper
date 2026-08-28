@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-08-28
+
+### Changed
+- **Dual artifacts resume** - Both `OpenWhisper-Setup-<version>.exe` and `OpenWhisper-<version>-win64.tar.xz` are published again. 2.4.2's handoff fix is now the version installs update *from*, so the native path is safe to offer, and 2.4.0 and 2.4.1 were never downloaded by anyone.
+
+### Fixed
+- **"Launch OpenWhisper" at the end of setup crashed instead of starting** - Finishing the installer with the launch box checked showed "Failed to execute script 'app_qt' due to unhandled exception: 'NoneType' object has no attribute 'write'". Two faults stacked. Inno holds its setup mutex until its own process exits and the postinstall launch runs before that, so the startup gate mistook the ordinary post-install launch for a race with a native update; and the gate explained itself by writing to `sys.stderr`, which is `None` in a windowed PyInstaller build, so the exit raised instead of exiting. The gate now waits for setup to finish and then starts normally, and a launch it genuinely has to drop says why in a message box.
+
 ## [2.4.2] - 2026-08-27
 
 ### Changed
