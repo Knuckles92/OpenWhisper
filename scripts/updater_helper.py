@@ -19,6 +19,7 @@ from services.app_update_apply import (  # noqa: E402
     UpdateApplyError,
     cleanup_transaction_after_parent,
     commit_prepared_update,
+    leave_launch_directory,
     load_journal,
     native_message_box,
     parse_parent_pid,
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     setup_updater_logging()
+    leave_launch_directory()
     transaction_id = parse_transaction_id(args)
     if not transaction_id:
         native_message_box("OpenWhisper updater was started without a transaction.")

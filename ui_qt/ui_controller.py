@@ -73,10 +73,17 @@ def arm_handoff_watchdog(grace_s: float = HANDOFF_EXIT_GRACE_S) -> threading.Tim
 
 
 def _start_detached(program: str, arguments: list) -> bool:
-    """Return True when ``QProcess.startDetached`` actually launched."""
+    """Return True when ``QProcess.startDetached`` actually launched.
+
+    The child runs from its own directory, never from ours. Shortcuts start
+    OpenWhisper in the install directory, and a Windows process holds its
+    current directory open without ``FILE_SHARE_DELETE``: had the updater
+    inherited it, renaming the install directory would fail with a sharing
+    violation for as long as the updater lived.
+    """
     from PyQt6.QtCore import QProcess
 
-    result = QProcess.startDetached(program, arguments)
+    result = QProcess.startDetached(program, arguments, os.path.dirname(program))
     if isinstance(result, tuple):
         return bool(result[0])
     return bool(result)

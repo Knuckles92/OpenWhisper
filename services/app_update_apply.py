@@ -15,6 +15,7 @@ import shutil
 import stat
 import sys
 import tarfile
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -312,6 +313,24 @@ def updater_log_path(appdata: Optional[str] = None) -> str:
     """Log file for the windowless helper, beside the application's own log."""
     root = updates_root(appdata).rstrip("\\/")
     return os.path.join(os.path.dirname(root), "updater.log")
+
+
+def leave_launch_directory(appdata: Optional[str] = None) -> None:
+    """Move the helper's working directory somewhere the commit never renames.
+
+    A Windows process holds its current directory open without
+    ``FILE_SHARE_DELETE``, and a directory rename needs ``DELETE`` access, so
+    any process sitting inside the install directory fails the move aside with
+    ERROR_SHARING_VIOLATION until it exits. The app is careful to start the
+    helper elsewhere, but the helper must not depend on its launcher for that.
+    """
+    for target in (updates_root(appdata), tempfile.gettempdir()):
+        try:
+            os.makedirs(target, exist_ok=True)
+            os.chdir(target)
+            return
+        except OSError as exc:
+            logger.warning("Could not change directory to %s: %s", target, exc)
 
 
 def setup_updater_logging(appdata: Optional[str] = None) -> None:
@@ -1344,11 +1363,14 @@ def parse_parent_pid(argv: Optional[List[str]] = None) -> Optional[int]:
 
 
 def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
-    """Delete transaction directories that no journal claims any more.
+    """Delete transaction directories that are over.
 
     A transaction is cleaned by a copy of the updater, which cannot delete the
-    executable the original ran from. What survives is a directory holding only
-    that executable: recovery has nothing to read and nothing else collects it.
+    executable the original ran from, and which gives up if the original sits
+    in its error dialog for longer than the cleanup waits. What survives is a
+    directory holding that executable, with or without a journal that has
+    already reached a terminal state: recovery has nothing to do with either,
+    and nothing else collects them.
     """
     tx_root = os.path.join(updates_root(appdata), "tx")
     removed: List[str] = []
@@ -1360,12 +1382,25 @@ def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
         path = os.path.join(tx_root, name)
         if not os.path.isdir(path) or os.path.islink(path):
             continue
-        if os.path.isfile(os.path.join(path, JOURNAL_NAME)):
+        if not _transaction_is_over(os.path.join(path, JOURNAL_NAME)):
             continue
         shutil.rmtree(path, ignore_errors=True)
         if not os.path.exists(path):
             removed.append(name)
     return removed
+
+
+def _transaction_is_over(journal_file: str) -> bool:
+    if not os.path.isfile(journal_file):
+        return True
+    try:
+        with open(journal_file, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        # Recovery owns anything it might still be able to read.
+        return False
+    state = payload.get("state") if isinstance(payload, dict) else None
+    return state in {TransactionState.HEALTHY, TransactionState.ROLLED_BACK}
 
 
 def cleanup_transaction_after_parent(

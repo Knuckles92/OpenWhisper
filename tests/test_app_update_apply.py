@@ -878,6 +878,81 @@ class TestAbandonedTransactions:
     def test_a_missing_transactions_directory_is_not_an_error(self, tmp_path):
         assert apply_module.prune_abandoned_transactions(str(tmp_path)) == []
 
+    @pytest.mark.parametrize(
+        "state", [TransactionState.HEALTHY, TransactionState.ROLLED_BACK]
+    )
+    def test_a_finished_transaction_is_collected(self, tmp_path, state):
+        """Cleanup gives up on an updater that sits in its error dialog."""
+        appdata = tmp_path / "appdata"
+        finished = Path(transaction_dir("d" * 32, str(appdata)))
+        finished.mkdir(parents=True)
+        (finished / UPDATER_EXE_NAME).write_bytes(b"helper")
+        write_json_atomic(
+            str(finished / "journal.json"),
+            {"transaction_id": "d" * 32, "state": state},
+        )
+
+        removed = apply_module.prune_abandoned_transactions(str(appdata))
+
+        assert removed == ["d" * 32]
+        assert not finished.exists()
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            TransactionState.PREPARED,
+            TransactionState.OLD_MOVED,
+            TransactionState.NEW_ACTIVE,
+        ],
+    )
+    def test_a_transaction_recovery_may_still_need_is_kept(self, tmp_path, state):
+        appdata = tmp_path / "appdata"
+        live = Path(transaction_dir("e" * 32, str(appdata)))
+        live.mkdir(parents=True)
+        write_json_atomic(
+            str(live / "journal.json"), {"transaction_id": "e" * 32, "state": state}
+        )
+
+        assert apply_module.prune_abandoned_transactions(str(appdata)) == []
+        assert live.is_dir()
+
+    def test_an_unreadable_journal_is_left_for_recovery(self, tmp_path):
+        appdata = tmp_path / "appdata"
+        odd = Path(transaction_dir("f" * 32, str(appdata)))
+        odd.mkdir(parents=True)
+        (odd / "journal.json").write_text("{not json", encoding="utf-8")
+
+        assert apply_module.prune_abandoned_transactions(str(appdata)) == []
+        assert odd.is_dir()
+
+
+class TestLaunchDirectory:
+    def test_helper_leaves_the_directory_it_was_started_in(
+        self, tmp_path, monkeypatch
+    ):
+        install = tmp_path / "programs" / "openwhisper"
+        install.mkdir(parents=True)
+        appdata = tmp_path / "appdata"
+        monkeypatch.chdir(install)
+
+        apply_module.leave_launch_directory(str(appdata))
+
+        expected = Path(apply_module.updates_root(str(appdata)))
+        assert Path(os.getcwd()).resolve() == expected.resolve()
+        assert expected.is_dir()
+
+    def test_an_unusable_updates_root_falls_back_to_temp(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        blocker = tmp_path / "appdata"
+        blocker.write_text("not a directory", encoding="utf-8")
+
+        apply_module.leave_launch_directory(str(blocker))
+
+        assert Path(os.getcwd()).resolve() != tmp_path.resolve()
+        assert Path(os.getcwd()).is_dir()
+
 
 class TestHealthAndError:
     def test_parse_health_token(self):
