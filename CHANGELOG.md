@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-08-27
+
+### Changed
+- **The update prompt reads like release notes, not raw Markdown** - The "what's new" section is rendered: headings, bullets, inline code, and links are formatted instead of being printed with their `###`, `-`, and backtick marks. Checksum sections and the Full Changelog footer are dropped, since a wrapped 64-character digest was most of the dialog. Long notes scroll inside a card that fades where the text is clipped, and short ones no longer sit in an oversized box.
+- **The downloading state is a progress panel, not an empty window** - Downloading swaps the notes for a rounded animated bar that eases toward each reported value and sweeps while a phase reports no total, with the transferred size and percentage beneath it. The window resizes to what it is showing, so the title no longer floats above a field of empty background, and a failed download restores the notes and marks the reason in red.
+- **Published as setup-only** - This release attaches no `OpenWhisper-<version>-win64.tar.xz`, which routes every 2.4.0 and 2.4.1 install through the setup exe. The code that performs a handoff lives in the version being updated *from*, so those builds cannot reach this fix through the native path — they would hang on the way to it. Dual artifacts resume in the next release.
+
+### Fixed
+- **In-app update hung after "100%" with no way out** - Qt 6's `QApplication.quit()` is only a request: it asks every window to close first and abandons the quit if one refuses. The still-open update dialog declined (it refuses to close while busy) and minimize-to-tray would have declined for the main window, so the app stayed running after launching `OpenWhisperUpdater.exe`. The helper waited two minutes for a process that was never going to exit and then reported "Timed out waiting for OpenWhisper to exit.; rollback failed", leaving a prepared candidate tree on disk. The handoff now exits unconditionally, a watchdog ends the process if shutdown stalls anyway, and the same veto no longer blocks the tray's Exit.
+- **Setup could not install over a running app** - `CloseApplications=yes` only asks Restart Manager to close applications politely, and the app answers a close request by minimizing to tray, so setup ended at "Setup was unable to automatically close all applications". Setup now force-closes the app before replacing the first file, which is what lets it install over a 2.4.0 or 2.4.1 that has already failed to quit.
+- **The updater abandoned an update over an app that would not close** - The helper waited for the old process, gave up, and left the install on the old version. It now force-closes a parent it has verified by image path and creation time, and only reports a failure if that does not work.
+- **Canceling an update could leave the dialog with no working button** - Cancel disabled itself and the window close did nothing while the worker was busy, so a cancel that arrived after the worker's last checkpoint left "Canceling the update…" on screen forever. Cancel now turns into Close, a cancel during the verify / preserve tail of preparation actually stops the update, and the dialog stops offering Cancel once the updater has taken over.
+- **A failed handoff reported an alarming rollback failure** - An update that never renamed a directory has nothing to roll back, but the helper still demanded the application lock and then reported that rollback had failed. It now reports only that OpenWhisper did not close, leaves the install untouched, and deletes the candidate tree, archive, and transaction it created instead of leaving roughly a gigabyte behind per attempt.
+
 ## [2.4.1] - 2026-08-27
 
 ### Changed
