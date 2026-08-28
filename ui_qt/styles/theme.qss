@@ -931,6 +931,10 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background-color: transparent;
+}
+
 QScrollBar:horizontal {
     background-color: transparent;
     height: 12px;
@@ -950,6 +954,10 @@ QScrollBar::handle:horizontal:hover {
 
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0px;
+}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background-color: transparent;
 }
 
 /* Tab widget */
@@ -1854,6 +1862,185 @@ QDialog#meetingRecoveryDialog,
 QDialog#meetingIntroDialog {
     background-color: #1c1c1e;
     color: #f5f5f7;
+}
+
+/* Export dialog shares the Settings / Model Manager slate palette. */
+QDialog#meetingExportDialog {
+    background-color: #10161c;
+    color: #f5f5f7;
+}
+
+QFrame#meetingExportCard {
+    background-color: #141b22;
+    border: 1px solid #303b45;
+    border-radius: 10px;
+}
+
+/* Plain QWidget containers paint the global background; keep the card
+   surface visible behind the scope panels. */
+QWidget#meetingExportPane {
+    background-color: transparent;
+}
+
+QLabel#meetingExportEyebrow {
+    color: #64b5ff;
+    background-color: transparent;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+}
+
+QLabel#meetingExportMeta,
+QLabel#meetingExportProgress {
+    color: #9da8b5;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+/* The global QWidget rule paints an opaque background; without these the
+   check and radio labels sit in dark bars on top of the lighter cards. */
+QDialog#meetingExportDialog QCheckBox {
+    color: #e8edf2;
+    background-color: transparent;
+    spacing: 8px;
+    font-size: 13px;
+}
+
+QDialog#meetingExportDialog QCheckBox:disabled {
+    color: #5c6770;
+}
+
+QDialog#meetingExportDialog QRadioButton {
+    color: #e8edf2;
+    spacing: 8px;
+    font-size: 13px;
+    background-color: transparent;
+}
+
+/* Both states total 18px (content + border) so the indicator stays a
+   circle and the label never shifts when toggled. */
+QDialog#meetingExportDialog QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #3a4652;
+    border-radius: 9px;
+    background-color: #0f141a;
+}
+
+QDialog#meetingExportDialog QRadioButton::indicator:checked {
+    width: 8px;
+    height: 8px;
+    border: 5px solid #0a84ff;
+    background-color: #ffffff;
+}
+
+QDialog#meetingExportDialog QLineEdit {
+    background-color: #0f141a;
+    color: #f2f5f8;
+    border: 1px solid #2a3540;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+QDialog#meetingExportDialog QLineEdit:focus {
+    border: 1px solid #0a84ff;
+}
+
+QDialog#meetingExportDialog QComboBox {
+    background-color: #0f141a;
+    border: 1px solid #2a3540;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+QDialog#meetingExportDialog QComboBox::down-arrow {
+    image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
+    border: none;
+    width: 16px;
+    height: 16px;
+    margin-right: 10px;
+}
+
+QListWidget#meetingExportList {
+    background-color: #0f141a;
+    color: #f5f5f7;
+    border: 1px solid #2a3540;
+    border-radius: 8px;
+    padding: 4px;
+    font-size: 12px;
+    min-width: 0;
+}
+
+QListWidget#meetingExportList::item {
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+QListWidget#meetingExportList::item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+QListWidget#meetingExportList::item:selected {
+    background-color: rgba(10, 132, 255, 0.16);
+}
+
+QListWidget#meetingExportList::indicator {
+    width: 16px;
+    height: 16px;
+    background-color: #141b22;
+    border: 1px solid #3a4652;
+    border-radius: 4px;
+}
+
+QListWidget#meetingExportList::indicator:checked {
+    background-color: #0a84ff;
+    border: 1px solid #0a84ff;
+    image: url(ui_qt/assets/check.svg);
+}
+
+QDialog#meetingExportDialog QDateEdit {
+    background-color: #0f141a;
+    color: #f2f5f8;
+    border: 1px solid #2a3540;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 13px;
+    min-width: 0;
+}
+
+QDialog#meetingExportDialog QDateEdit::drop-down {
+    border: none;
+    background-color: transparent;
+    width: 24px;
+}
+
+QDialog#meetingExportDialog QDateEdit::down-arrow {
+    image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
+    border: none;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+}
+
+QDialog#meetingExportDialog QCalendarWidget {
+    background-color: #1b242e;
+    color: #f5f5f7;
+}
+
+QPushButton#meetingExportMiniBtn {
+    background-color: #1b242e;
+    color: #e8edf2;
+    border: 1px solid #303b45;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+
+QPushButton#meetingExportMiniBtn:hover {
+    background-color: #232f3b;
+    border-color: #3a4652;
 }
 
 QLabel#meetingIntroLead {
