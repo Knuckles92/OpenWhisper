@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.6] - 2026-08-28
+
+### Changed
+- **Published as setup-only** - This release attaches no `OpenWhisper-<version>-win64.tar.xz`. The code that starts the updater and the updater it starts both come out of the install being updated *from*, so 2.4.4 and 2.4.5 would run their own broken handoff on the way to this fix. Dual artifacts resume in the next release, after that path has been soaked against a local feed instead of on users.
+
+### Added
+- **The update path can be tested before it ships** - `OPENWHISPER_UPDATE_FEED_URL` points the update check at a stand-in for GitHub's `/releases/latest`, and `scripts/serve_update_feed.py` serves a built release from `installer\Output` on localhost with the same asset names, sizes, and `sha256:` digests. Assets must come from the feed's own origin; digests and manifests are verified exactly as they are for GitHub. Every native-update fix so far — 2.4.2, 2.4.4, and this one — shipped without a single native update having been run, because nothing but the published latest release could be checked against. `docs/release-checklist.md` now has the soak procedure.
+
+### Fixed
+- **Every native update failed with "[WinError 32] The process cannot access the file"** - The updater inherited the app's working directory, and a shortcut starts OpenWhisper *in* the install directory. Windows holds a process's working directory open without delete sharing, so the updater's own presence inside `...\Programs\OpenWhisper` made the move-aside fail with a sharing violation on every one of 2.4.4's 240 retries — a lock held by the process doing the waiting is not transient. The updater then rolled back, reported "The update failed", and the relaunched old version repeated the same error in a second box. The app now starts the updater from the transaction directory, and the updater leaves whatever directory it was started in before it touches the install.
+- **A failed update left its updater on disk for good** - The updater reports through a message box, and the copy of itself that deletes the transaction waits two minutes for it to exit before giving up; a box left open longer than that stranded the 9 MB helper and its journal under `updates\tx`. Startup only collected transaction directories with no journal, so these were never collected. It now also collects transactions whose journal has reached a terminal state.
+
 ## [2.4.5] - 2026-08-28
 
 ### Changed
