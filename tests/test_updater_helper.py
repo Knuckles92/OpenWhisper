@@ -18,7 +18,7 @@ def _helper_module():
     # The real ones attach a handler to the user's updater log and change the
     # test process's working directory.
     module.setup_updater_logging = lambda *args, **kwargs: None
-    module.leave_launch_directory = lambda *args, **kwargs: None
+    module.leave_launch_directory = lambda *args, **kwargs: False
     return module
 
 
@@ -100,7 +100,12 @@ def test_helper_reports_apply_error():
 def test_helper_leaves_its_launch_directory_before_committing():
     module = _helper_module()
     calls = []
-    module.leave_launch_directory = lambda *args, **kwargs: calls.append("left")
+
+    def leave(argv, *args, **kwargs):
+        calls.append("left")
+        return False
+
+    module.leave_launch_directory = leave
     with patch.object(module, "parse_transaction_id", return_value="abc"), patch.object(
         module, "load_journal", return_value=object()
     ), patch.object(
@@ -110,6 +115,17 @@ def test_helper_leaves_its_launch_directory_before_committing():
     ):
         assert module.main(["--transaction-id", "abc"]) == 0
     assert calls == ["left", "committed"]
+
+
+def test_helper_exits_after_handing_off_to_a_restarted_copy():
+    module = _helper_module()
+    module.leave_launch_directory = lambda argv, *args, **kwargs: True
+    with patch.object(module, "parse_transaction_id", return_value="abc"), patch.object(
+        module, "commit_prepared_update"
+    ) as commit, patch.object(module, "native_message_box") as box:
+        assert module.main(["--transaction-id", "abc"]) == 0
+    commit.assert_not_called()
+    box.assert_not_called()
 
 
 def test_start_detached_tuple_is_unpacked():

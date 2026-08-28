@@ -15,7 +15,6 @@ import shutil
 import stat
 import sys
 import tarfile
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -80,6 +79,7 @@ _LOCK_WINERRORS = frozenset({5, 32, 33})
 _LOCK_WAIT_S = 60.0
 _CLEANUP_LOCK_WAIT_S = 300.0
 _LOCK_POLL_S = 0.25
+_RELAUNCHED_ENV = "OPENWHISPER_UPDATER_RELAUNCHED"
 _PARENT_STILL_RUNNING = (
     "OpenWhisper did not close, so the update was not installed. Your current "
     "version is unchanged — close OpenWhisper completely and try the update "
@@ -315,22 +315,56 @@ def updater_log_path(appdata: Optional[str] = None) -> str:
     return os.path.join(os.path.dirname(root), "updater.log")
 
 
-def leave_launch_directory(appdata: Optional[str] = None) -> None:
-    """Move the helper's working directory somewhere the commit never renames.
+def leave_launch_directory(
+    argv: List[str], appdata: Optional[str] = None
+) -> bool:
+    """Get the helper out of the directory it was started in.
 
     A Windows process holds its current directory open without
-    ``FILE_SHARE_DELETE``, and a directory rename needs ``DELETE`` access, so
-    any process sitting inside the install directory fails the move aside with
-    ERROR_SHARING_VIOLATION until it exits. The app is careful to start the
-    helper elsewhere, but the helper must not depend on its launcher for that.
+    ``FILE_SHARE_DELETE``, and a directory rename needs ``DELETE`` access, so a
+    helper started inside the install directory fails the move aside with
+    ERROR_SHARING_VIOLATION for as long as it lives. The app starts it from the
+    transaction directory, but the helper must not depend on its launcher.
+
+    Changing directory is not enough for the shipped binary: a onefile
+    PyInstaller build is two processes, and the bootloader parent keeps the
+    launch directory whatever the child does. A frozen helper started anywhere
+    but under the updates root therefore restarts itself from there and
+    returns True, meaning this process has handed its work over and must exit.
+    The parent releases the directory as soon as this child returns.
     """
-    for target in (updates_root(appdata), tempfile.gettempdir()):
+    safe = updates_root(appdata)
+    try:
+        os.makedirs(safe, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Could not create %s: %s", safe, exc)
+        return False
+    started_in = os.getcwd()
+    if _is_within(started_in, safe):
+        return False
+    if getattr(sys, "frozen", False) and os.environ.get(_RELAUNCHED_ENV) != "1":
         try:
-            os.makedirs(target, exist_ok=True)
-            os.chdir(target)
-            return
-        except OSError as exc:
-            logger.warning("Could not change directory to %s: %s", target, exc)
+            _launch_exe(
+                sys.executable,
+                list(argv),
+                cwd=safe,
+                env={**os.environ, _RELAUNCHED_ENV: "1"},
+            )
+        except UpdateApplyError as exc:
+            logger.warning("Could not restart from %s: %s", safe, exc)
+        else:
+            logger.info("Restarted from %s; this copy was started in %s", safe, started_in)
+            return True
+    try:
+        os.chdir(safe)
+    except OSError as exc:
+        logger.warning("Could not change directory to %s: %s", safe, exc)
+    return False
+
+
+def _is_within(path: str, root: str) -> bool:
+    inner, outer = canonical_path(path), canonical_path(root)
+    return inner == outer or inner.startswith(outer + os.sep)
 
 
 def setup_updater_logging(appdata: Optional[str] = None) -> None:
@@ -1922,7 +1956,13 @@ def _force_close_pid(
         kernel32.CloseHandle(handle)
 
 
-def _launch_exe(path: str, args: List[str]):
+def _launch_exe(
+    path: str,
+    args: List[str],
+    *,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+):
     import subprocess
 
     creation = 0
@@ -1935,7 +1975,8 @@ def _launch_exe(path: str, args: List[str]):
     try:
         proc = subprocess.Popen(
             [path, *args],
-            cwd=os.path.dirname(path),
+            cwd=cwd or os.path.dirname(path),
+            env=env,
             close_fds=True,
             creationflags=creation,
         )

@@ -35,11 +35,12 @@ logger = logging.getLogger(__name__)
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     setup_updater_logging()
-    leave_launch_directory()
     transaction_id = parse_transaction_id(args)
     if not transaction_id:
         native_message_box("OpenWhisper updater was started without a transaction.")
         return 2
+    if leave_launch_directory(args):
+        return 0
     try:
         if CLEANUP_ARG in args:
             return _run_cleanup(transaction_id, args)

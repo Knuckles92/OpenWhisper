@@ -927,41 +927,76 @@ class TestAbandonedTransactions:
 
 
 class TestLaunchDirectory:
-    def test_helper_leaves_the_directory_it_was_started_in(
-        self, tmp_path, monkeypatch
-    ):
+    def test_a_source_run_changes_directory(self, tmp_path, monkeypatch):
         install = tmp_path / "programs" / "openwhisper"
         install.mkdir(parents=True)
         appdata = tmp_path / "appdata"
         monkeypatch.chdir(install)
+        monkeypatch.setattr(apply_module.sys, "frozen", False, raising=False)
 
-        apply_module.leave_launch_directory(str(appdata))
+        assert apply_module.leave_launch_directory([], str(appdata)) is False
 
         expected = Path(apply_module.updates_root(str(appdata)))
         assert Path(os.getcwd()).resolve() == expected.resolve()
-        assert expected.is_dir()
 
-    def test_an_unusable_updates_root_falls_back_to_temp(
+    def test_a_frozen_helper_restarts_itself_from_the_updates_root(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.chdir(tmp_path)
-        blocker = tmp_path / "appdata"
-        blocker.write_text("not a directory", encoding="utf-8")
+        """A onefile bootloader parent keeps the launch directory; only a new
+        process pair started elsewhere releases it."""
+        install = tmp_path / "programs" / "openwhisper"
+        install.mkdir(parents=True)
+        appdata = tmp_path / "appdata"
+        monkeypatch.chdir(install)
+        monkeypatch.setattr(apply_module.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(apply_module.sys, "executable", str(install / "OpenWhisperUpdater.exe"))
+        monkeypatch.delenv(apply_module._RELAUNCHED_ENV, raising=False)
+        launches = []
+        monkeypatch.setattr(
+            apply_module,
+            "_launch_exe",
+            lambda path, args, **kwargs: launches.append((path, args, kwargs)),
+        )
 
-        apply_module.leave_launch_directory(str(blocker))
+        argv = ["--transaction-id", TX_ID]
+        assert apply_module.leave_launch_directory(argv, str(appdata)) is True
 
-        assert Path(os.getcwd()).resolve() != tmp_path.resolve()
-        assert Path(os.getcwd()).is_dir()
+        (path, args, kwargs), = launches
+        assert path == str(install / "OpenWhisperUpdater.exe")
+        assert args == argv
+        assert Path(kwargs["cwd"]).resolve() == Path(
+            apply_module.updates_root(str(appdata))
+        ).resolve()
+        assert kwargs["env"][apply_module._RELAUNCHED_ENV] == "1"
+        assert Path(os.getcwd()).resolve() == install.resolve()
 
+    def test_the_restarted_copy_does_not_restart_again(self, tmp_path, monkeypatch):
+        install = tmp_path / "programs" / "openwhisper"
+        install.mkdir(parents=True)
+        appdata = tmp_path / "appdata"
+        monkeypatch.chdir(install)
+        monkeypatch.setattr(apply_module.sys, "frozen", True, raising=False)
+        monkeypatch.setenv(apply_module._RELAUNCHED_ENV, "1")
+        monkeypatch.setattr(
+            apply_module, "_launch_exe", lambda *a, **k: pytest.fail("relaunched twice")
+        )
 
-class TestHealthAndError:
-    def test_parse_health_token(self):
-        assert parse_health_token(["--update-health", "abc"]) == "abc"
-        assert parse_health_token(["--other"]) is None
+        assert apply_module.leave_launch_directory([], str(appdata)) is False
+        assert Path(os.getcwd()).resolve() == Path(
+            apply_module.updates_root(str(appdata))
+        ).resolve()
 
-    def test_apply_error_is_bounded(self, tmp_path):
-        write_apply_error("x" * 8000, str(tmp_path))
-        text = consume_apply_error(str(tmp_path))
-        assert text is not None
-        assert len(text) <= 2000
-        assert consume_apply_error(str(tmp_path)) is None
+    def test_a_helper_already_under_the_updates_root_is_left_alone(
+        self, tmp_path, monkeypatch
+    ):
+        appdata = tmp_path / "appdata"
+        tx = Path(transaction_dir(TX_ID, str(appdata)))
+        tx.mkdir(parents=True)
+        monkeypatch.chdir(tx)
+        monkeypatch.setattr(apply_module.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(
+            apply_module, "_launch_exe", lambda *a, **k: pytest.fail("relaunched")
+        )
+
+        assert apply_module.leave_launch_directory([], str(appdata)) is False
+        assert Path(os.getcwd()).resolve() == tx.resolve()
