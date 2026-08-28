@@ -18,11 +18,12 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Dict, Final, Optional, Tuple
+from typing import Callable, Dict, Final, List, Optional, Tuple
 
 from _version import __version__
 from config import bundle_root, config, is_frozen, local_app_dir
@@ -69,6 +70,7 @@ _USER_AGENT: Final[str] = f"OpenWhisper/{__version__}"
 _NETWORK_TIMEOUT_S: Final[int] = 30
 _CHUNK_BYTES: Final[int] = 1 << 20
 _MAX_ASSET_BYTES: Final[int] = 2 * 1024 * 1024 * 1024
+_DOWNLOAD_KEEP_WINDOW_S: Final[int] = 30
 
 
 class InstallChannel:
@@ -596,6 +598,37 @@ def updates_dir() -> str:
     path = updates_root(local_app_dir())
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def prune_stale_downloads() -> List[str]:
+    """Delete finished update downloads, returning the names removed.
+
+    A setup-path update launches the installer and exits, so nothing is left
+    running to delete the exe it downloaded — every such update used to leave
+    roughly 108 MB behind. Anything sitting directly in the updates directory
+    belongs to an attempt that is over: the native path stages its work in the
+    ``tx`` subdirectory, which the updater's own recovery owns. Files touched
+    in the last few seconds are spared so this can never race a download.
+    """
+    cutoff = time.time() - _DOWNLOAD_KEEP_WINDOW_S
+    removed: List[str] = []
+    try:
+        entries = list(os.scandir(updates_dir()))
+    except OSError as exc:
+        logger.debug("Could not read the updates directory: %s", exc)
+        return removed
+    for entry in entries:
+        try:
+            if not entry.is_file() or entry.stat().st_mtime > cutoff:
+                continue
+            os.unlink(entry.path)
+        except OSError as exc:
+            # An installer that is running right now stays locked; the next
+            # startup collects it.
+            logger.debug("Could not delete %s: %s", entry.path, exc)
+            continue
+        removed.append(entry.name)
+    return removed
 
 
 def download_release_asset(

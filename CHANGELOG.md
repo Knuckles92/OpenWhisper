@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A finished update left its installer behind** - The setup path launches the installer it downloaded and then exits, so nothing was left running to delete it, and `%LOCALAPPDATA%\OpenWhisper\updates` kept roughly 108 MB per update. Startup now collects downloads from attempts that are over, and leaves the native updater's transaction directory to the updater's own recovery.
+
 ## [2.4.3] - 2026-08-28
 
 ### Changed

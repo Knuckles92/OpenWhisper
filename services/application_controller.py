@@ -500,9 +500,22 @@ class ApplicationController(QObject):
         except Exception:
             logger.exception("Could not initialize the database")
         QTimer.singleShot(0, self.meeting_runtime.setup)
+        self.component_executor.submit(self._prune_update_downloads)
         # Defer the GitHub metadata check so HF consent / recovery win the
         # first modal slot, and so a recording or meeting can start first.
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+
+    def _prune_update_downloads(self) -> None:
+        """Collect the download an earlier update left behind."""
+        from services.app_update import prune_stale_downloads
+
+        try:
+            removed = prune_stale_downloads()
+        except Exception:
+            logger.exception("Could not prune finished update downloads")
+            return
+        if removed:
+            logger.info("Removed finished update downloads: %s", ", ".join(removed))
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.

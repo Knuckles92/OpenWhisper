@@ -1,6 +1,7 @@
 """Tests for channel detection, version compare, and GitHub release parsing."""
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from services.app_update import (
     parse_release_payload,
     parse_version,
     persist_prompt_choices,
+    prune_stale_downloads,
     resolve_release_apply_mode,
     should_auto_check,
     should_auto_notify,
@@ -581,3 +583,50 @@ class TestDualAssetsAndApplyMode:
                 InstallChannel.INSTALLER, release
             ) == ApplyMode.NOTIFY_ONLY
             assert not can_apply(InstallChannel.INSTALLER, release)
+
+
+class TestPruneStaleDownloads:
+    """The setup path exits with the installer it downloaded still on disk."""
+
+    def test_a_finished_download_is_collected(self, tmp_path):
+        leftover = tmp_path / "OpenWhisper-Setup-2.4.2.exe"
+        leftover.write_bytes(b"installer")
+        os.utime(leftover, (0, 0))
+        with patch.object(app_update, "updates_dir", return_value=str(tmp_path)):
+            assert prune_stale_downloads() == ["OpenWhisper-Setup-2.4.2.exe"]
+        assert not leftover.exists()
+
+    def test_the_transaction_directory_is_left_to_its_owner(self, tmp_path):
+        tx = tmp_path / "tx" / ("a" * 32)
+        tx.mkdir(parents=True)
+        (tx / "journal.json").write_text("{}")
+        os.utime(tmp_path / "tx", (0, 0))
+        with patch.object(app_update, "updates_dir", return_value=str(tmp_path)):
+            assert prune_stale_downloads() == []
+        assert (tx / "journal.json").exists()
+
+    def test_a_download_in_progress_is_spared(self, tmp_path):
+        active = tmp_path / "OpenWhisper-2.4.3-win64.tar.xz"
+        active.write_bytes(b"partial")
+        with patch.object(app_update, "updates_dir", return_value=str(tmp_path)):
+            assert prune_stale_downloads() == []
+        assert active.exists()
+
+    def test_a_locked_file_does_not_stop_the_others(self, tmp_path):
+        for name in ("locked.exe", "collectable.exe"):
+            path = tmp_path / name
+            path.write_bytes(b"x")
+            os.utime(path, (0, 0))
+
+        real_unlink = os.unlink
+
+        def refuse_locked(path, *args, **kwargs):
+            if path.endswith("locked.exe"):
+                raise PermissionError(32, "in use")
+            return real_unlink(path, *args, **kwargs)
+
+        with patch.object(
+            app_update, "updates_dir", return_value=str(tmp_path)
+        ), patch.object(app_update.os, "unlink", side_effect=refuse_locked):
+            assert prune_stale_downloads() == ["collectable.exe"]
+        assert (tmp_path / "locked.exe").exists()
