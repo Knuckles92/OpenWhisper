@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dual artifacts resume** - Both `OpenWhisper-Setup-<version>.exe` and `OpenWhisper-<version>-win64.tar.xz` are published again. 2.4.2's handoff fix is now the version installs update *from*, so the native path is safe to offer, and 2.4.0 and 2.4.1 were never downloaded by anyone.
 
 ### Fixed
+- **The app crashed on the way out** - `openwhisper.crash.log` had been collecting access violations at process exit. They happened after every cleanup path had run and the shutdown was logged, when interpreter finalization ran on top of Qt's teardown and the `keyboard` library's listener thread, which cannot be stopped. Nothing was ever lost to them, but the process now leaves on its own exit code the moment shutdown is complete.
 - **"Launch OpenWhisper" at the end of setup crashed instead of starting** - Finishing the installer with the launch box checked showed "Failed to execute script 'app_qt' due to unhandled exception: 'NoneType' object has no attribute 'write'". Two faults stacked. Inno holds its setup mutex until its own process exits and the postinstall launch runs before that, so the startup gate mistook the ordinary post-install launch for a race with a native update; and the gate explained itself by writing to `sys.stderr`, which is `None` in a windowed PyInstaller build, so the exit raised instead of exiting. The gate now waits for setup to finish and then starts normally, and a launch it genuinely has to drop says why in a message box.
 
 ## [2.4.2] - 2026-08-27

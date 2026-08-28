@@ -1,5 +1,6 @@
 """Qt entry point and pre-import native-library bootstrap."""
 
+import logging
 import os
 import platform
 import site
@@ -211,4 +212,10 @@ __all__ = ["main"]
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    # ``main`` has already run every cleanup path and logged the shutdown.
+    # Finalizing on top of Qt's teardown and the keyboard library's listener
+    # thread — which cannot be stopped — instead produced access violations in
+    # openwhisper.crash.log on the way out. Nothing is left to lose here.
+    logging.shutdown()
+    os._exit(exit_code)
