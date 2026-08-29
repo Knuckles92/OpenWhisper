@@ -166,15 +166,18 @@ class AppConfig:
     WHISPER_MODEL_CHOICES: List[str] = None
 
     # Main window sizing
-    MAIN_WINDOW_MIN_WIDTH: int = 500
-    # The always-visible engine fields make the collapsed transcription pages
-    # 532px tall at their largest. Keep a small buffer so saved/manual geometry
-    # cannot reopen either page with a vertical scrollbar.
-    MAIN_WINDOW_MIN_HEIGHT: int = 540
-    MAIN_WINDOW_DEFAULT_WIDTH: int = 605
+    # The styled three-tab bar asks for about 574px before its 48px container
+    # margins and the collapsed history edge. Keep enough room for that full
+    # layout so labels and footer controls cannot collide or clip.
+    MAIN_WINDOW_MIN_WIDTH: int = 650
+    # Leave enough headroom for the always-visible engine fields under Windows
+    # font metrics and display scaling. Saved/manual geometry is clamped to this
+    # floor so the front-page scroller never appears in the normal full UI.
+    MAIN_WINDOW_MIN_HEIGHT: int = 580
+    MAIN_WINDOW_DEFAULT_WIDTH: int = 680
     # Sized so neither transcription tab needs a scrollbar at rest while still
     # keeping the collapsed workspace compact.
-    MAIN_WINDOW_DEFAULT_HEIGHT: int = 560
+    MAIN_WINDOW_DEFAULT_HEIGHT: int = 600
     MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24

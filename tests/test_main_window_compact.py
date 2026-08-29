@@ -61,7 +61,7 @@ class TestMainWindowCompactMode:
         assert not self.window.tabbed_content.isVisibleTo(self.window)
         assert not self.window.history_edge_tab.isVisibleTo(self.window)
         assert not self.window.models_button.isVisibleTo(self.window)
-        assert self.window.compact_button.text() == "Full Size"
+        assert self.window.settings_button.text() == "Settings"
 
         self.window.set_compact_mode(False)
 
@@ -69,7 +69,7 @@ class TestMainWindowCompactMode:
         assert self.window.geometry() == full_geometry
         assert self.window.tabbed_content.isVisibleTo(self.window)
         assert self.window.models_button.isVisibleTo(self.window)
-        assert self.window.compact_button.text() == "Compact"
+        assert self.window.settings_button.text() == "Settings"
 
     def test_footer_model_manager_button_opens_manager(self):
         """Footer Model Manager button uses the existing open signal path."""
@@ -80,6 +80,16 @@ class TestMainWindowCompactMode:
 
         assert opened == [True]
         assert self.window.models_button.text() == "Model Manager"
+
+    def test_footer_settings_button_opens_settings(self):
+        """Footer Settings button uses the existing open signal path."""
+        opened = []
+        self.window.settings_requested.connect(lambda: opened.append(True))
+
+        self.window.settings_button.click()
+
+        assert opened == [True]
+        assert self.window.settings_button.text() == "Settings"
 
     def test_file_menu_downloads_opens_downloads(self):
         """File → Downloads uses the existing downloads signal path."""
@@ -129,7 +139,7 @@ class TestMainWindowCompactMode:
         self.window._restore_compact_mode()
 
         assert self.window._compact_mode
-        assert self.window.compact_button.text() == "Full Size"
+        assert self.window.settings_button.text() == "Settings"
 
     def test_collapsed_transcript_caps_tall_saved_geometry_on_restore(self):
         """Collapsed startup does not reserve space for the hidden transcript."""
@@ -173,14 +183,57 @@ class TestMainWindowCompactMode:
 
         assert self.window.height() == config.MAIN_WINDOW_MIN_HEIGHT
 
+    def test_restore_clamps_narrow_saved_geometry_to_full_ui_width(self):
+        """An older saved size cannot reopen with clipped full-UI controls."""
+        saved_geometry = {
+            "x": 10,
+            "y": 10,
+            "width": 500,
+            "height": config.MAIN_WINDOW_DEFAULT_HEIGHT,
+            "format": self.window._geometry_format,
+            "history_expanded": False,
+        }
+        self.mock_get_setting.side_effect = (
+            lambda key, default=None: saved_geometry
+            if key == SettingsKey.WINDOW_GEOMETRY
+            else default
+        )
+
+        self.window._restore_window_geometry()
+
+        assert self.window.width() == config.MAIN_WINDOW_DEFAULT_WIDTH
+
+    def test_minimum_full_width_keeps_tabs_and_footer_controls_separate(self):
+        self.window.resize(
+            config.MAIN_WINDOW_MIN_WIDTH,
+            config.MAIN_WINDOW_DEFAULT_HEIGHT,
+        )
+        self.window.show()
+        self.app.processEvents()
+
+        tab_bar = self.window.tabbed_content.tab_bar
+        last_tab = tab_bar.tabRect(tab_bar.count() - 1)
+        assert last_tab.right() < tab_bar.width()
+
+        buttons = (
+            self.window.models_button,
+            self.window.tray_button,
+            self.window.settings_button,
+            self.window.quit_button,
+        )
+        for left, right in zip(buttons, buttons[1:]):
+            assert left.geometry().right() < right.geometry().left()
+
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""
         from PyQt6.QtCore import QRect
 
         self.window._available_screen_rect = lambda: QRect(0, 0, 1280, 800)
-        clamped = self.window._clamp_geometry(0, 0, 605, 840)
+        clamped = self.window._clamp_geometry(
+            0, 0, config.MAIN_WINDOW_DEFAULT_WIDTH, 840
+        )
         assert clamped.height() == 800
-        assert clamped.width() == 605
+        assert clamped.width() == config.MAIN_WINDOW_DEFAULT_WIDTH
         assert clamped.x() >= 0
         assert clamped.y() >= 0
 
@@ -199,4 +252,3 @@ class TestMainWindowCompactMode:
         before = self.window.height()
         self.window._on_sidebar_width_animated(380)
         assert self.window.height() == before
-

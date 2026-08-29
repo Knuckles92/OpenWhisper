@@ -488,8 +488,8 @@ class MainWindow(QMainWindow):
         }
     """
 
-    _COMPACT_BUTTON_STYLE = """
-        QPushButton#compactButton {
+    _SETTINGS_BUTTON_STYLE = """
+        QPushButton#settingsButton {
             background-color: #2c2c2e;
             color: #64d2ff;
             border: 1px solid #3a3a3c;
@@ -498,12 +498,12 @@ class MainWindow(QMainWindow):
             font-weight: 600;
             font-size: 13px;
         }
-        QPushButton#compactButton:hover {
+        QPushButton#settingsButton:hover {
             background-color: #0a84ff;
             color: #ffffff;
             border: 1px solid #0a84ff;
         }
-        QPushButton#compactButton:pressed {
+        QPushButton#settingsButton:pressed {
             background-color: #0060df;
             color: #ffffff;
         }
@@ -569,15 +569,15 @@ class MainWindow(QMainWindow):
 
         footer_layout.addSpacing(10)
 
-        self.compact_button = QPushButton("Compact")
-        self.compact_button.setObjectName("compactButton")
-        self.compact_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.compact_button.setFixedHeight(34)
-        self.compact_button.setMinimumWidth(100)
-        self.compact_button.setStyleSheet(self._COMPACT_BUTTON_STYLE)
-        HotkeyHintFilter(self.compact_button, self.COMPACT_SHORTCUT)
-        self.compact_button.clicked.connect(self.toggle_compact_mode)
-        footer_layout.addWidget(self.compact_button)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_button.setFixedHeight(34)
+        self.settings_button.setMinimumWidth(100)
+        self.settings_button.setStyleSheet(self._SETTINGS_BUTTON_STYLE)
+        self.settings_button.setToolTip("Open Settings")
+        self.settings_button.clicked.connect(self.open_settings)
+        footer_layout.addWidget(self.settings_button)
 
         footer_layout.addSpacing(10)
 
@@ -1025,7 +1025,6 @@ class MainWindow(QMainWindow):
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
             self.models_button.hide()
-            self.compact_button.setText("Full Size")
 
             self.setMinimumSize(0, 0)
             self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
@@ -1050,7 +1049,6 @@ class MainWindow(QMainWindow):
             self.title_bar.title_label.show()
             self.title_bar.maximize_btn.show()
             self.models_button.show()
-            self.compact_button.setText("Compact")
 
             if self._full_geometry is not None:
                 self.setGeometry(self._full_geometry)
