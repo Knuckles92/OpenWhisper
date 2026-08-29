@@ -24,13 +24,20 @@ class SystemTrayManager(QSystemTrayIcon):
         super().__init__()
         self.main_window = main_window
         self._meeting_active = False
+        self.available = bool(QSystemTrayIcon.isSystemTrayAvailable())
 
         self._setup_icon()
         self._setup_menu()
         self._connect_signals()
 
-        self.show()
-        logger.info("System tray initialized")
+        if self.available:
+            self.show()
+            logger.info("System tray initialized")
+        else:
+            logger.warning(
+                "No system tray is available; close-to-tray and tray controls "
+                "are disabled"
+            )
 
     def _setup_icon(self):
         self.setIcon(app_icon())

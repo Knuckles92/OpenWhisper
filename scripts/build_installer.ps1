@@ -181,6 +181,12 @@ foreach ($lib in @('avcodec', 'avformat', 'avutil', 'swresample', 'swscale')) {
 }
 Write-Host "    all required assets and native libraries bundled" -ForegroundColor Green
 
+# Exercise the same import/Qt bootstrap that the Linux package gate runs. This
+# must happen before signing or archiving so a broken frozen tree cannot ship.
+Invoke-Native $ExePath @('--self-test') `
+    -ErrorMessage "Frozen application self-test failed"
+Write-Host "    frozen application self-test passed" -ForegroundColor Green
+
 # Optional code signing
 $HelperInBundle = Join-Path $DistDir 'OpenWhisperUpdater.exe'
 $SignPfx = $env:OPENWHISPER_SIGN_PFX
@@ -277,6 +283,7 @@ Write-Host "  Archive   : $(Format-Size $ArchiveSize)"
 Write-Host "  Setup SHA-256   : $Hash"
 Write-Host "  Archive SHA-256 : $ArchiveHash"
 Write-Host ""
-Write-Host "  Upload both artifacts to a draft GitHub release, wait for both"
-Write-Host "  digest fields, then publish. Old clients only understand the setup exe."
+Write-Host "  Upload both Windows artifacts and the matching Linux .deb to a draft"
+Write-Host "  GitHub release, wait for every digest field, then publish. Old Windows"
+Write-Host "  clients only understand the setup exe."
 Write-Host ""

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Native Linux installer** - Releases can now ship `OpenWhisper-<version>-linux-amd64.deb` beside the Windows setup and update archive. A shared platform-aware PyInstaller spec freezes the app; the Linux builder installs it under `/usr/lib/openwhisper`, adds `openwhisper`/`ow` commands, a validated desktop entry and PNG icon, declares the Qt/audio dependencies, records the bundle's actual glibc floor, checks every ELF with `ldd`, and runs a frozen import self-test. The release workflow builds Windows and Ubuntu 22.04 in parallel and can upload all artifacts plus checksums to an existing draft release.
+
+### Fixed
+- **Linux package integration handles desktops without a tray** - OpenWhisper now detects whether the current desktop actually provides a system tray. Tray-only controls are disabled when it does not, close exits instead of hiding an unrecoverable window, and the installed desktop-file identity is registered with Qt. Frozen Linux builds are labeled “Linux package” and no longer show the size of the Windows setup executable in update prompts.
+- **Linux Secret Service is included** - `SecretStorage` and the explicit keyring backend are now installed and collected so packaged/source Linux users can save API keys in GNOME Keyring or another Secret Service provider.
+
 ## [2.4.8] - 2026-08-29
 
 ### Changed

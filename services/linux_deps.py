@@ -16,6 +16,11 @@ REQUIRED_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
         "dnf": "mesa-libEGL",
         "pacman": "libgl",
     }),
+    ("libGL.so.1", {
+        "apt": "libgl1",
+        "dnf": "libglvnd-glx",
+        "pacman": "libgl",
+    }),
     ("libxcb-cursor.so.0", {
         "apt": "libxcb-cursor0",
         "dnf": "xcb-util-cursor",
@@ -38,6 +43,11 @@ REQUIRED_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
     }),
     ("libxcb-xkb.so.1", {
         "apt": "libxcb-xkb1",
+        "dnf": "libxcb",
+        "pacman": "libxcb",
+    }),
+    ("libxcb-shape.so.0", {
+        "apt": "libxcb-shape0",
         "dnf": "libxcb",
         "pacman": "libxcb",
     }),

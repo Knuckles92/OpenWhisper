@@ -122,7 +122,7 @@ class ApplicationController(QObject):
     # App updater: (result_or_none, error, manual).
     update_check_finished = pyqtSignal(object, str, bool)
     update_download_progress = pyqtSignal(str, int, int)
-    update_download_finished = pyqtSignal(str, str)
+    update_download_finished = pyqtSignal(object, str)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -170,6 +170,7 @@ class ApplicationController(QObject):
         self._update_check_timer.setSingleShot(True)
         self._update_check_timer.timeout.connect(self._maybe_start_update_check)
         self._update_cancel = threading.Event()
+        self._update_attempt = None
 
         # Exclusive mode: True while a meeting session runs; dictation start
         # paths and engine reloads refuse while set (owned by MeetingRuntime).
@@ -436,10 +437,20 @@ class ApplicationController(QObject):
             handler(result, error, manual)
 
     def request_update_download(self, result, force_setup: bool = False) -> None:
-        """Download and prepare a verified update on the long-running worker."""
-        self._update_cancel.clear()
+        """Download and prepare one verified update attempt on the worker."""
+        # Never clear and reuse a prior token: a quick retry must not revive a
+        # canceled worker that has not unwound yet.
+        self._update_cancel.set()
+        cancel = threading.Event()
+        attempt = object()
+        self._update_cancel = cancel
+        self._update_attempt = attempt
         self.component_executor.submit(
-            self._update_download_worker, result, force_setup
+            self._update_download_worker,
+            result,
+            force_setup,
+            cancel,
+            attempt,
         )
 
     def cancel_update_download(self) -> None:
@@ -449,30 +460,54 @@ class ApplicationController(QObject):
         backend = getattr(self, "current_backend", None)
         return bool(backend and getattr(backend, "is_transcribing", False))
 
-    def _update_download_worker(self, result, force_setup: bool = False) -> None:
+    def _update_download_worker(
+        self,
+        result,
+        force_setup: bool = False,
+        cancel: Optional[threading.Event] = None,
+        attempt=None,
+    ) -> None:
+        token = cancel if cancel is not None else self._update_cancel
+
+        def is_current() -> bool:
+            return attempt is None or self._update_attempt is attempt
+
         release = getattr(result, "release", None)
         if release is None:
-            self.update_download_finished.emit("", "No installer is available.")
+            if is_current():
+                self.update_download_finished.emit(None, "No installer is available.")
             return
 
         def progress(phase: str, done: int, total: int) -> None:
-            self.update_download_progress.emit(phase, done, total)
+            if is_current() and not token.is_set():
+                self.update_download_progress.emit(phase, done, total)
 
-        from services.app_update import apply_update
+        from services.app_update import (
+            LinuxPackageHandoff,
+            apply_update,
+            discard_linux_package_handoff,
+        )
 
         try:
-            path = apply_update(
+            handoff = apply_update(
                 result,
                 progress=progress,
-                cancel=self._update_cancel,
+                cancel=token,
                 force_setup=force_setup,
             )
         except Exception as exc:
             logger.warning("Update download failed: %s", exc)
             message = str(exc) if str(exc) else "The download failed."
-            self.update_download_finished.emit("", message)
+            if is_current():
+                self.update_download_finished.emit(None, message)
             return
-        self.update_download_finished.emit(path, "")
+        if token.is_set() or not is_current():
+            if isinstance(handoff, LinuxPackageHandoff):
+                discard_linux_package_handoff(handoff)
+            if is_current():
+                self.update_download_finished.emit(None, "The download was cancelled.")
+            return
+        self.update_download_finished.emit(handoff, "")
 
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.

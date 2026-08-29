@@ -1,8 +1,12 @@
-# Tooling for producing the Windows installer. Not needed to run from source.
+# Tooling for producing the Windows and Linux native installers. Not needed to
+# run from source.
 #
-#   pip install -r requirements.txt -r requirements-build.txt
-#   .\scripts\build_installer.ps1
+#   pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
+#   # Windows: .\scripts\build_installer.ps1
+#   # Linux:   ./scripts/build_installer.sh
 #
-# Inno Setup is a separate system install and is not a pip package:
-#   winget install -e --id JRSoftware.InnoSetup
+# Platform packagers are separate system installs, not pip packages:
+#   Windows: winget install -e --id JRSoftware.InnoSetup
+#   Debian/Ubuntu: sudo apt install dpkg-dev binutils file desktop-file-utils lintian xvfb xauth
 pyinstaller>=6.10.0
+pytest>=8.0

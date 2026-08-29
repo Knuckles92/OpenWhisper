@@ -70,6 +70,10 @@ class QtApplication:
         QApplication.setApplicationName(APP_NAME)
         QApplication.setApplicationDisplayName(APP_NAME)
         QApplication.setOrganizationName(APP_NAME)
+        if sys.platform.startswith("linux"):
+            # Must match /usr/share/applications/openwhisper.desktop so Linux
+            # taskbars associate windows with the installed launcher.
+            QApplication.setDesktopFileName("openwhisper")
         _override_macos_bundle_name(APP_NAME)
 
         self.app = QApplication.instance()

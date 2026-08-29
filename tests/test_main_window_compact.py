@@ -4,11 +4,20 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication
 
 from config import config
 from services.settings import SettingsKey, settings_manager
+from ui_qt.dialogs.settings_dialog import is_native_wayland_session
 from ui_qt.main_window import MainWindow
+
+
+def test_native_wayland_session_detection():
+    assert is_native_wayland_session("linux", {"XDG_SESSION_TYPE": "wayland"})
+    assert is_native_wayland_session("linux", {"WAYLAND_DISPLAY": "wayland-0"})
+    assert not is_native_wayland_session("linux", {"XDG_SESSION_TYPE": "x11"})
+    assert not is_native_wayland_session("win32", {"XDG_SESSION_TYPE": "wayland"})
 
 
 class TestMainWindowCompactMode:
@@ -70,6 +79,24 @@ class TestMainWindowCompactMode:
         assert self.window.tabbed_content.isVisibleTo(self.window)
         assert self.window.models_button.isVisibleTo(self.window)
         assert self.window.settings_button.text() == "Settings"
+
+    def test_missing_system_tray_disables_tray_only_controls(self):
+        self.window.set_tray_available(False)
+
+        assert self.window.tray_button.isHidden()
+        assert not self.window.minimize_to_tray_action.isVisible()
+
+        with patch.object(self.window, "showMinimized") as minimize:
+            self.window.minimize_to_tray()
+        minimize.assert_called_once_with()
+
+    def test_close_is_not_hidden_when_system_tray_is_unavailable(self):
+        self.window.set_tray_available(False)
+        event = QCloseEvent()
+
+        self.window.closeEvent(event)
+
+        assert event.isAccepted()
 
     def test_footer_model_manager_button_opens_manager(self):
         """Footer Model Manager button uses the existing open signal path."""

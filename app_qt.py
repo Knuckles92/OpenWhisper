@@ -12,6 +12,81 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
 
+def _run_package_self_test() -> None:
+    """Import release-critical modules and initialize Qt without starting UI."""
+    import importlib
+
+    modules = [
+        "av",
+        "ctranslate2",
+        "faster_whisper",
+        "lxml",
+        "onnxruntime",
+        "openpyxl",
+        "pypdf",
+        "sounddevice",
+        "sqlalchemy.dialects.sqlite",
+        "uvicorn",
+    ]
+    if sys.platform == "win32":
+        modules.extend(("keyring.backends.Windows", "keyboard", "soundcard"))
+    elif sys.platform == "darwin":
+        modules.extend(("keyring.backends.macOS", "pynput.keyboard"))
+    else:
+        modules.extend(
+            (
+                "keyring.backends.SecretService",
+                "pynput.keyboard",
+                "secretstorage",
+            )
+        )
+    for module_name in modules:
+        importlib.import_module(module_name)
+
+    from PyQt6.QtWidgets import QApplication
+
+    qt_app = QApplication.instance() or QApplication([])
+
+    from config import bundle_root
+
+    root = Path(bundle_root())
+    for relative in (
+        "ui_qt/styles/theme.qss",
+        "ui_qt/assets/openwhisper.ico",
+        "ui_qt/assets/openwhisper.png",
+        "webui/dist/index.html",
+    ):
+        if not (root / relative).is_file():
+            raise RuntimeError(f"Missing bundled asset: {relative}")
+
+    from PyQt6.QtGui import QIcon
+
+    svg_icon = QIcon(str(root / "ui_qt/assets/check.svg"))
+    if svg_icon.isNull():
+        raise RuntimeError("Qt could not load the bundled SVG image plugin.")
+    del qt_app
+    print("OpenWhisper package self-test passed")
+
+
+def _handle_early_cli() -> None:
+    """Handle metadata-only CLI flags before native-library bootstrap."""
+    if sys.argv[1:] == ["--version"]:
+        from _version import __version__
+
+        print(f"OpenWhisper {__version__}")
+        raise SystemExit(0)
+
+
+def _handle_package_self_test() -> None:
+    """Run the import test after platform DLL/library bootstrap is complete."""
+    if sys.argv[1:] == ["--self-test"]:
+        _run_package_self_test()
+        raise SystemExit(0)
+
+
+_handle_early_cli()
+
+
 # ``os.add_dll_directory`` unregisters a path when its returned handle is
 # closed. Keep the handles alive for the process lifetime; relying on garbage
 # collection here makes CUDA availability depend on timing.
@@ -205,6 +280,10 @@ if sys.platform.startswith("linux"):
 
     if check_linux_dependencies() != 0:
         sys.exit(1)
+
+# PyQt imports in the self-test must happen only after Windows ICU directories
+# and Linux shared-library preflight have been configured.
+_handle_package_self_test()
 
 from ui_qt.bootstrap import main
 

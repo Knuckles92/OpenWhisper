@@ -86,6 +86,12 @@ class TestAppUpdateDialog(_QtTestCase):
             "Download and install"
         )
 
+    def test_notify_only_build_does_not_show_windows_installer_size(self):
+        dialog = AppUpdateDialog(
+            _result(channel=InstallChannel.INSTALLER, can_apply=False)
+        )
+        assert "Download size" not in dialog.body_label.text()
+
     def test_later_persists_opt_outs_and_skipped_version(self):
         dialog = AppUpdateDialog(_result())
         self._box(dialog, "updateDontNotifyCheck").setChecked(True)

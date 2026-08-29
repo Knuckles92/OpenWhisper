@@ -278,6 +278,10 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.current_model = config.MODEL_CHOICES[0]
         self._force_quit = False
+        # Updated by UIController after QSystemTrayIcon probes the desktop.
+        # Defaulting to True preserves construction behavior in lightweight
+        # tests that instantiate MainWindow without a tray manager.
+        self._tray_available = True
         self._initial_show_complete = False
         self._compact_mode = False
         self._full_geometry = None
@@ -611,7 +615,9 @@ class MainWindow(QMainWindow):
         downloads_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()
-        file_menu.addAction("Minimize to Tray", self.minimize_to_tray)
+        self.minimize_to_tray_action = file_menu.addAction(
+            "Minimize to Tray", self.minimize_to_tray
+        )
         quit_action = file_menu.addAction(
             "Quit" if sys.platform == "darwin" else "Exit", self.quit_application
         )
@@ -985,7 +991,22 @@ class MainWindow(QMainWindow):
         logger.info("Showing about dialog")
         self.about_requested.emit()
 
+    def set_tray_available(self, available: bool) -> None:
+        """Enable tray-only UI only when the desktop actually has a tray."""
+        self._tray_available = bool(available)
+        self.tray_button.setVisible(self._tray_available)
+        self.minimize_to_tray_action.setVisible(self._tray_available)
+        if not self._tray_available:
+            self.tray_button.setEnabled(False)
+            self.tray_button.setToolTip(
+                "This desktop session does not provide a system tray."
+            )
+
     def minimize_to_tray(self):
+        if not self._tray_available:
+            logger.info("No system tray is available; minimizing the window")
+            self.showMinimized()
+            return
         logger.info("Minimizing to tray")
         self.hide()
 
@@ -1321,7 +1342,7 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error
 
-        if minimize_tray:
+        if minimize_tray and self._tray_available:
             event.ignore()
             try:
                 self.hide()

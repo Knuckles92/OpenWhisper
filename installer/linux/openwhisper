@@ -1,0 +1,4 @@
+#!/bin/sh
+# Package-owned launcher. Keep the application directory out of the caller's
+# working directory so relative user paths can never land under /usr/lib.
+exec /usr/lib/openwhisper/OpenWhisper "$@"

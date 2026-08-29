@@ -1,7 +1,7 @@
-"""Shared constants for native Windows application updates.
+"""Shared constants for native application update artifacts.
 
-Stdlib-only so the windowless updater helper can import this module without
-pulling in Qt, settings, or the rest of the application.
+Stdlib-only so the windowless Windows updater helper can import this module
+without pulling in Qt, settings, or the rest of the application.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ MINIMUM_UPDATER_VERSION: Final[str] = "2.4.0"
 
 SETUP_NAME_PREFIX: Final[str] = "OpenWhisper-Setup-"
 ARCHIVE_NAME_SUFFIX: Final[str] = "-win64.tar.xz"
+DEB_NAME_SUFFIX: Final[str] = "-linux-amd64.deb"
 
 UPDATES_DIRNAME: Final[str] = "updates"
 TRANSACTIONS_DIRNAME: Final[str] = "tx"
@@ -88,6 +89,7 @@ class ApplyMode:
 
     NATIVE: Final[str] = "native"
     SETUP: Final[str] = "setup"
+    DEB: Final[str] = "deb"
     NOTIFY_ONLY: Final[str] = "notify_only"
 
 
@@ -125,6 +127,13 @@ def setup_asset_name(version: str) -> str:
 def archive_asset_name(version: str) -> str:
     """Return the exact GitHub native-archive filename for ``version``."""
     return f"{APP_NAME}-{normalize_version(version)}{ARCHIVE_NAME_SUFFIX}"
+
+
+def deb_asset_name(version: str) -> str:
+    """Return the exact GitHub Debian-package filename for ``version``."""
+    canonical = normalize_version(version)
+    parse_strict_version(canonical)
+    return f"{APP_NAME}-{canonical}{DEB_NAME_SUFFIX}"
 
 
 def validate_transaction_id(transaction_id: str) -> str:

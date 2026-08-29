@@ -103,6 +103,7 @@ class UIController(QObject):
         self.overlay = WaveformOverlay()
         self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
+        self.main_window.set_tray_available(self.tray_manager.available)
 
         self.is_recording = False
         self.audio_levels: List[float] = [0.0] * 20

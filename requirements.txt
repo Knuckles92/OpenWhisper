@@ -17,6 +17,10 @@ python-dotenv>=1.0.0
 # API keys entered in Settings go to the OS credential store (Windows
 # Credential Manager / macOS Keychain / Secret Service) via keyring.
 keyring>=25.0
+# keyring keeps its Linux Secret Service backend optional. Install it
+# explicitly so source installs and the frozen Linux package can actually use
+# GNOME Keyring/KWallet instead of silently falling back to environment keys.
+SecretStorage>=3.3.3 ; sys_platform == "linux"
 PyQt6>=6.0.0
 sqlalchemy>=2.0.0
 
