@@ -5,13 +5,12 @@ in ``resizeEvent`` rather than managed by a layout, so animating the sidebar
 width clips/reveals pre-laid-out content instead of re-running layout and text
 wrapping on every frame.
 """
-import json
 import logging
 import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
-    QMessageBox, QFileDialog, QCheckBox, QComboBox, QGridLayout,
+    QMessageBox, QCheckBox, QComboBox, QGridLayout,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, pyqtProperty, QTimer, QUrl
 from PyQt6.QtGui import QFont, QDesktopServices
@@ -891,64 +890,10 @@ class HistorySidebar(QWidget):
         self.refresh()
 
     def _on_export_history(self):
-        entries = history_manager.get_history()
-        if not entries:
-            QMessageBox.information(self, "Export History", "No history to export.")
-            return
+        from ui_qt.dialogs.history_export_dialog import HistoryExportDialog
 
-        file_path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Export History",
-            "openwhisper_history.txt",
-            "Text Files (*.txt);;JSON Files (*.json);;All Files (*)",
-        )
-        if not file_path:
-            return
-
-        # Prefer an explicit extension; fall back to the selected dialog filter.
-        _, ext = os.path.splitext(file_path)
-        as_json = ext.lower() == ".json" or (
-            not ext and "JSON" in selected_filter
-        )
-        if not ext:
-            file_path += ".json" if as_json else ".txt"
-
-        try:
-            if as_json:
-                payload = [
-                    {
-                        "id": entry.id,
-                        "timestamp": entry.timestamp,
-                        "model": entry.model,
-                        "text": entry.text,
-                        "raw_text": entry.raw_text,
-                        "cleanup_provider": entry.cleanup_provider,
-                        "cleanup_model": entry.cleanup_model,
-                        "audio_file": entry.audio_file,
-                        "transcription_time": entry.transcription_time,
-                        "audio_duration": entry.audio_duration,
-                        "file_size": entry.file_size,
-                    }
-                    for entry in entries
-                ]
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-            else:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    for entry in entries:
-                        f.write(f"[{entry.formatted_timestamp}] {entry.model}\n")
-                        if _entry_was_cleaned(entry):
-                            f.write(f"Cleanup: {_format_cleanup_info(entry)}\n")
-                        f.write(f"{entry.text}\n")
-                        if entry.raw_text:
-                            f.write(f"\nRaw:\n{entry.raw_text}\n")
-                        f.write("-" * 60 + "\n\n")
-            logger.info(f"Exported {len(entries)} history entries to {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to export history: {e}")
-            QMessageBox.warning(
-                self, "Export Failed", f"Could not export history:\n{e}"
-            )
+        dialog = HistoryExportDialog(self)
+        dialog.exec()
 
     def _on_open_recordings_folder(self):
         folder = os.path.abspath(history_manager.recordings_folder)

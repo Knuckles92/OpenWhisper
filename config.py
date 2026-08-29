@@ -194,6 +194,8 @@ class AppConfig:
 
     # Timing settings
     HOTKEY_DEBOUNCE_MS: int = 300
+    # Shortest push-and-hold that counts as a recording; shorter holds cancel.
+    RECORD_MIN_HOLD_MS: int = 250
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
     CANCELLATION_GRACE_MS: int = 200
@@ -207,6 +209,10 @@ class AppConfig:
     HOTKEY_SLEEP_GAP_THRESHOLD_SEC: float = 30.0
     HOTKEY_HOOK_REFRESH_INTERVAL_MS: int = 5 * 60 * 1000
     WHISPER_TARGET_SAMPLE_RATE: int = 16000
+
+    # Record hotkey activation: "toggle" (press to start, press again to stop)
+    # or "push_hold" (hold to record, release to stop and transcribe).
+    RECORDING_TRIGGER_MODE: str = "toggle"
 
     # Audio splitting settings
     MAX_FILE_SIZE_MB: int = 23

@@ -165,9 +165,13 @@ class FakeHotkeyManager:
         self.callbacks = {}
         self.rehook_called = False
         self.cleaned_up = False
+        self.record_mode = None
 
     def set_callbacks(self, **callbacks):
         self.callbacks = callbacks
+
+    def set_record_mode(self, mode):
+        self.record_mode = mode
 
     def update_hotkeys(self, hotkeys):
         self.hotkeys = hotkeys
@@ -609,10 +613,12 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     # stub than hand-rolled copies.
     from services.settings import (
         HuggingFaceAccessPolicy as _RealHFPolicy,
+        RecordingTriggerMode as _RealRecordingTriggerMode,
         SettingsKey as _RealSettingsKey,
         TranscriptCleanupProvider as _RealCleanupProvider,
         TranscriptCleanupReasoning as _RealCleanupReasoning,
         default_transcript_cleanup_model as _default_cleanup_model,
+        resolve_recording_trigger_mode as _resolve_recording_trigger_mode,
         resolve_transcript_cleanup_model as _resolve_cleanup_model,
         resolve_transcript_cleanup_prompt as _resolve_cleanup_prompt,
         resolve_transcript_cleanup_provider as _resolve_cleanup_provider,
@@ -626,6 +632,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     settings_module.settings_manager = settings_manager
     settings_module.SettingsKey = _RealSettingsKey
     settings_module.HuggingFaceAccessPolicy = _RealHFPolicy
+    settings_module.RecordingTriggerMode = _RealRecordingTriggerMode
     settings_module.TranscriptCleanupProvider = _RealCleanupProvider
     settings_module.TranscriptCleanupReasoning = _RealCleanupReasoning
     settings_module.default_transcript_cleanup_model = _default_cleanup_model
@@ -635,6 +642,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
             settings if settings is not None else settings_manager.load_all_settings()
         )
 
+    settings_module.resolve_recording_trigger_mode = _with_fake_settings(
+        _resolve_recording_trigger_mode
+    )
     settings_module.resolve_transcript_cleanup_prompt = _with_fake_settings(
         _resolve_cleanup_prompt
     )

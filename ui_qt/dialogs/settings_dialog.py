@@ -49,6 +49,7 @@ from services.settings import (
     MeetingServerBind,
     MeetingSpeakerIdBackend,
     RecordingRetentionMode,
+    RecordingTriggerMode,
     SettingsKey,
     TranscriptCleanupReasoning,
     resolve_developer_mode,
@@ -66,6 +67,7 @@ from services.settings import (
     resolve_meeting_report_brief,
     resolve_meeting_report_ribbon,
     resolve_meeting_report_signal,
+    resolve_recording_trigger_mode,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
     resolve_meeting_speaker_id_backend,
@@ -153,6 +155,7 @@ class SettingsDialog(QDialog):
     on_developer_mode_changed: Optional[Callable] = None
     on_cleanup_changed: Optional[Callable] = None
     on_hotkeys_changed: Optional[Callable[[Dict[str, str]], None]] = None
+    on_recording_trigger_mode_changed: Optional[Callable[[str], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
@@ -172,6 +175,7 @@ class SettingsDialog(QDialog):
         self.capture_thread: Optional[HotkeyCaptureThread] = None
         self.current_hotkey_input: Optional[HotkeyCaptureInput] = None
         self.hotkey_inputs: Dict[str, HotkeyCaptureInput] = {}
+        self.hotkey_row_descriptions: Dict[str, WrappedLabel] = {}
         self._saved_cleanup_prompt = ""
         self._rule_polishing = False
         self._rule_dictation_state = "idle"
@@ -1425,10 +1429,11 @@ class SettingsDialog(QDialog):
         layout.addWidget(
             self._hotkey_shortcut_row(
                 "record_toggle",
-                "Start or stop recording",
-                "Start recording when idle; stop and transcribe while recording.",
+                "Record hotkey",
+                self._record_hotkey_description(RecordingTriggerMode.TOGGLE),
             )
         )
+        layout.addWidget(self._build_recording_trigger_mode_row())
         layout.addWidget(
             self._hotkey_shortcut_row(
                 "cancel",
@@ -1470,6 +1475,45 @@ class SettingsDialog(QDialog):
         actions.addWidget(reset_button)
         layout.addLayout(actions)
 
+    def _build_recording_trigger_mode_row(self) -> QWidget:
+        self.record_mode_combo = ElidingComboBox()
+        self.record_mode_combo.setObjectName("recordModeCombo")
+        self.record_mode_combo.addItem(
+            "Toggle — press to start and stop", RecordingTriggerMode.TOGGLE
+        )
+        self.record_mode_combo.addItem(
+            "Push and hold — release to stop", RecordingTriggerMode.PUSH_HOLD
+        )
+        self.record_mode_combo.setMinimumHeight(40)
+        self.record_mode_combo.currentIndexChanged.connect(
+            self._on_recording_trigger_mode_changed
+        )
+        return self._field("How the record hotkey activates", self.record_mode_combo)
+
+    def _on_recording_trigger_mode_changed(self, _index: int = 0) -> None:
+        mode = self.record_mode_combo.currentData()
+        if mode is None:
+            return
+        if not self._persist(SettingsKey.RECORDING_TRIGGER_MODE, mode):
+            return
+        self._update_record_row_description(mode)
+        if self.on_recording_trigger_mode_changed:
+            self.on_recording_trigger_mode_changed(mode)
+
+    @staticmethod
+    def _record_hotkey_description(mode: str) -> str:
+        if mode == RecordingTriggerMode.PUSH_HOLD:
+            return (
+                "Hold to record; release to stop and transcribe. "
+                "Quick taps are canceled."
+            )
+        return "Start recording when idle; stop and transcribe while recording."
+
+    def _update_record_row_description(self, mode: str) -> None:
+        label = self.hotkey_row_descriptions.get("record_toggle")
+        if label is not None:
+            label.setText(self._record_hotkey_description(mode))
+
     @staticmethod
     def _hotkey_group_title(text: str) -> QLabel:
         label = QLabel(text)
@@ -1498,6 +1542,7 @@ class SettingsDialog(QDialog):
         detail = WrappedLabel(description)
         detail.setObjectName("hotkeyShortcutDescription")
         copy.addWidget(detail)
+        self.hotkey_row_descriptions[key] = detail
         row.addLayout(copy, stretch=1)
 
         field = HotkeyCaptureInput()
@@ -2481,6 +2526,12 @@ class SettingsDialog(QDialog):
             policy_index = self.hf_policy_combo.findData(policy)
             self.hf_policy_combo.setCurrentIndex(max(0, policy_index))
 
+            trigger_mode = resolve_recording_trigger_mode(settings)
+            self.record_mode_combo.setCurrentIndex(
+                max(0, self.record_mode_combo.findData(trigger_mode))
+            )
+            self._update_record_row_description(trigger_mode)
+
             saved_device_id = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
             if saved_device_id is not None:
                 for i in range(self.audio_device_combo.count()):
@@ -2527,3 +2578,10 @@ class SettingsDialog(QDialog):
             self.hf_policy_combo.setCurrentIndex(
                 max(0, self.hf_policy_combo.findData(HuggingFaceAccessPolicy.ASK))
             )
+            self.record_mode_combo.setCurrentIndex(
+                max(
+                    0,
+                    self.record_mode_combo.findData(RecordingTriggerMode.TOGGLE),
+                )
+            )
+            self._update_record_row_description(RecordingTriggerMode.TOGGLE)

@@ -4,7 +4,12 @@ import os
 import json
 from unittest.mock import patch
 
-from services.settings import SettingsManager
+from services.settings import (
+    RecordingTriggerMode,
+    SettingsKey,
+    SettingsManager,
+    resolve_recording_trigger_mode,
+)
 from config import config
 
 
@@ -489,6 +494,27 @@ class TestMeetingSettings:
         assert resolve_transcript_cleanup_model(openai) == "gpt-4o-mini"
         assert resolve_meeting_llm_provider(openai) == "openai"
         assert resolve_meeting_llm_model(openai) == "gpt-4o-mini"
+
+
+class TestRecordingTriggerMode:
+    """Resolver for the record hotkey activation mode."""
+
+    def test_missing_key_falls_back_to_config_default(self):
+        assert config.RECORDING_TRIGGER_MODE == "toggle"
+        assert resolve_recording_trigger_mode({}) == RecordingTriggerMode.TOGGLE
+
+    def test_saved_mode_round_trips(self):
+        settings = {
+            SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD
+        }
+        assert (
+            resolve_recording_trigger_mode(settings)
+            == RecordingTriggerMode.PUSH_HOLD
+        )
+
+    def test_invalid_value_falls_back_to_config_default(self):
+        settings = {SettingsKey.RECORDING_TRIGGER_MODE: "pressy"}
+        assert resolve_recording_trigger_mode(settings) == "toggle"
 
 
 class TestUpdatePreferences:

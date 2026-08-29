@@ -11,7 +11,12 @@ from PyQt6.QtCore import QTimer, Qt
 
 from config import config
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
-from services.settings import SettingsKey, settings_manager
+from services.settings import (
+    RecordingTriggerMode,
+    SettingsKey,
+    resolve_recording_trigger_mode,
+    settings_manager,
+)
 from ui_qt.overlay_state import OverlayState
 
 if TYPE_CHECKING:
@@ -129,7 +134,9 @@ if USE_PYNPUT_BACKEND:
             self.controller = controller
 
         def eventFilter(self, obj, event):
-            if event.type() != QEvent.Type.KeyPress:
+            is_press = event.type() == QEvent.Type.KeyPress
+            is_release = event.type() == QEvent.Type.KeyRelease
+            if not is_press and not is_release:
                 return False
             if event.isAutoRepeat() or not self._main_window_is_active():
                 return False
@@ -142,11 +149,19 @@ if USE_PYNPUT_BACKEND:
             if main_key is None:
                 return False
 
-            handled = hotkey_manager.handle_hotkey_press(
-                _qt_event_modifiers(event),
-                main_key,
-                source="qt",
-            )
+            if is_release:
+                # Only the record hotkey has release behavior (push-and-hold).
+                handled = hotkey_manager.handle_hotkey_release(
+                    _qt_event_modifiers(event),
+                    main_key,
+                    source="qt",
+                )
+            else:
+                handled = hotkey_manager.handle_hotkey_press(
+                    _qt_event_modifiers(event),
+                    main_key,
+                    source="qt",
+                )
             if handled:
                 event.accept()
             return handled
@@ -166,6 +181,9 @@ class HotkeyRuntime:
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
         self._active_window_hotkey_filter: Optional[ActiveWindowHotkeyFilter] = None
+        # Push-and-hold bookkeeping; read/written from hotkey callback threads.
+        self._record_press_monotonic: Optional[float] = None
+        self._record_start_accepted = False
 
     def setup_hotkeys(self) -> None:
         logger.info("Setting up hotkeys...")
@@ -175,8 +193,13 @@ class HotkeyRuntime:
         # merge happens here at the point of use.
         hotkeys = {**config.DEFAULT_HOTKEYS, **settings_manager.load_hotkey_settings()}
         self.controller.hotkey_manager = HotkeyManager(hotkeys)
+        self.controller.hotkey_manager.set_record_mode(
+            resolve_recording_trigger_mode()
+        )
         self.controller.hotkey_manager.set_callbacks(
             on_record_toggle=self.controller.toggle_recording,
+            on_record_press=self.record_key_pressed,
+            on_record_release=self.record_key_released,
             on_cancel=self.controller.cancel,
             on_minimize_tray=self.controller.minimize_to_tray,
             on_meeting_toggle=self.controller.toggle_meeting_mode,
@@ -186,6 +209,52 @@ class HotkeyRuntime:
         self.controller.ui_controller.update_hotkey_display(hotkeys)
         self._install_active_window_hotkey_filter()
         self._check_autopaste_permission()
+
+    def set_recording_trigger_mode(self, mode: str) -> None:
+        """Apply a new record hotkey activation mode without re-hooking."""
+        if mode not in RecordingTriggerMode.ALL:
+            mode = config.RECORDING_TRIGGER_MODE
+        logger.info("Recording trigger mode set to %s", mode)
+        self._record_press_monotonic = None
+        self._record_start_accepted = False
+        if self.controller.hotkey_manager:
+            self.controller.hotkey_manager.set_record_mode(mode)
+        if mode == RecordingTriggerMode.PUSH_HOLD:
+            self.controller.status_update.emit("Push-and-hold recording enabled")
+        else:
+            self.controller.status_update.emit("Toggle recording enabled")
+
+    def record_key_pressed(self) -> None:
+        """Push-and-hold: the record hotkey was pressed; start recording."""
+        if self.controller.recorder.is_recording:
+            # A previous stop's post-roll still owns the recorder; ignore the
+            # press rather than surfacing a failed-start status.
+            return
+        self._record_press_monotonic = time.monotonic()
+        self._record_start_accepted = bool(self.controller.start_recording())
+
+    def record_key_released(self) -> None:
+        """Push-and-hold: the record hotkey was released; stop or cancel."""
+        press_time = self._record_press_monotonic
+        self._record_press_monotonic = None
+        if not self._record_start_accepted:
+            return  # start was refused; its status message already surfaced
+        # The release thread can beat the stream open, so wait briefly for
+        # is_recording before deciding between stop and cancel.
+        deadline = time.monotonic() + 0.5
+        while not self.controller.recorder.is_recording and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not self.controller.recorder.is_recording:
+            return  # start failed internally; its failure path updated status
+        if not self.controller.recorder.has_recording_data():
+            # The cancel hotkey already claimed this hold (cancel clears the
+            # captured frames), or the stream never delivered audio.
+            return
+        held_ms = (time.monotonic() - press_time) * 1000 if press_time else 0
+        if held_ms < config.RECORD_MIN_HOLD_MS:
+            self.controller.cancel()
+        else:
+            self.controller.stop_recording()
 
     def _check_autopaste_permission(self) -> None:
         """Warn once if auto-paste is on but macOS Accessibility is missing.

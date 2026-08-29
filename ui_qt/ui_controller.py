@@ -114,6 +114,7 @@ class UIController(QObject):
         self.on_record_cancel: Optional[Callable] = None
         self.on_model_changed: Optional[Callable] = None
         self.on_hotkeys_changed: Optional[Callable] = None
+        self.on_recording_trigger_mode_changed: Optional[Callable] = None
         self.on_retranscribe: Optional[Callable] = None
         self.on_upload_audio: Optional[Callable] = None
         self.on_whisper_settings_changed: Optional[Callable] = None
@@ -579,6 +580,9 @@ class UIController(QObject):
         )
         dialog.on_cleanup_changed = self.refresh_cleanup_controls
         dialog.on_hotkeys_changed = self._on_settings_hotkeys_changed
+        dialog.on_recording_trigger_mode_changed = (
+            self._on_settings_recording_trigger_mode_changed
+        )
         return dialog
 
     def _ensure_settings_dialog(self):
@@ -1140,6 +1144,14 @@ class UIController(QObject):
         else:
             settings_manager.save_hotkey_settings(hotkeys)
         self.update_hotkey_display(hotkeys)
+
+    def _on_settings_recording_trigger_mode_changed(self, mode: str) -> None:
+        if self.on_recording_trigger_mode_changed:
+            self.on_recording_trigger_mode_changed(mode)
+        else:
+            settings_manager.save_setting(
+                SettingsKey.RECORDING_TRIGGER_MODE, mode
+            )
 
     def _on_upload_file_transcribe(
         self, audio_path: str, duration_seconds: float = 0.0

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **History export** - The History sidebar header can dump one, some, or all transcriptions the same way Past Meetings does. A dialog picks Markdown, plain transcript, or JSON; whether to include the cleaned and raw text; an optional start-date range or saved-audio filter; and one combined file or one file per transcription.
+- **Push-and-hold recording** - Settings → Hotkeys has a recording activation mode. **Toggle** keeps the existing press-to-start, press-again-to-stop behavior; **Push and hold** records only while the record hotkey is held, stopping and transcribing on release. Holds shorter than 250 ms are canceled quietly instead of sending post-roll silence through transcription. Works on all platforms: the Windows `keyboard` hook now dispatches key-up for the record hotkey (and suppresses its release to match its suppressed press), Linux/pynput gained release dispatch, and macOS Carbon hotkeys additionally register `kEventHotKeyReleased`. Switching modes applies immediately without re-registering hotkeys.
+
 ## [2.4.7] - 2026-08-28
 
 ### Changed

@@ -213,6 +213,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_record_cancel = self.cancel
         self.ui_controller.on_model_changed = self.on_model_changed
         self.ui_controller.on_hotkeys_changed = self.update_hotkeys
+        self.ui_controller.on_recording_trigger_mode_changed = (
+            self.update_recording_trigger_mode
+        )
         self.ui_controller.on_retranscribe = self.retranscribe_audio
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
@@ -1152,6 +1155,9 @@ class ApplicationController(QObject):
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
         self.hotkey_runtime.update_hotkeys(hotkeys)
+
+    def update_recording_trigger_mode(self, mode: str) -> None:
+        self.hotkey_runtime.set_recording_trigger_mode(mode)
 
     def reconfigure_streaming(self) -> None:
         self.streaming_runtime.reconfigure_streaming()

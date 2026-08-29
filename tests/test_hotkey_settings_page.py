@@ -11,7 +11,11 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, SettingsManager
+from services.settings import (
+    RecordingTriggerMode,
+    SettingsKey,
+    SettingsManager,
+)
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
 from ui_qt.ui_controller import UIController
@@ -140,6 +144,45 @@ class TestHotkeySettingsPage(unittest.TestCase):
                     dialog._confirm_reset_hotkeys()
                 self.assertEqual(applied[-1], config.DEFAULT_HOTKEYS)
             dialog.close()
+
+    def test_recording_trigger_mode_loads_and_applies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            manager.save_setting(
+                SettingsKey.RECORDING_TRIGGER_MODE,
+                RecordingTriggerMode.PUSH_HOLD,
+            )
+            with self._patch_settings(manager):
+                dialog = SettingsDialog()
+                try:
+                    self.assertEqual(
+                        dialog.record_mode_combo.currentData(),
+                        RecordingTriggerMode.PUSH_HOLD,
+                    )
+                    self.assertIn(
+                        "Hold to record",
+                        dialog.hotkey_row_descriptions["record_toggle"].text(),
+                    )
+
+                    received = []
+                    dialog.on_recording_trigger_mode_changed = received.append
+                    dialog.record_mode_combo.setCurrentIndex(
+                        dialog.record_mode_combo.findData(
+                            RecordingTriggerMode.TOGGLE
+                        )
+                    )
+
+                    self.assertEqual(received, [RecordingTriggerMode.TOGGLE])
+                    self.assertEqual(
+                        manager.get(SettingsKey.RECORDING_TRIGGER_MODE),
+                        RecordingTriggerMode.TOGGLE,
+                    )
+                    self.assertIn(
+                        "Start recording when idle",
+                        dialog.hotkey_row_descriptions["record_toggle"].text(),
+                    )
+                finally:
+                    dialog.close()
 
     def test_leaving_hotkeys_stops_active_capture(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):

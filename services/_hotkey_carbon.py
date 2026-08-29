@@ -54,6 +54,7 @@ def _four_char_code(code: str) -> int:
 
 _K_EVENT_CLASS_KEYBOARD = _four_char_code("keyb")
 _K_EVENT_HOTKEY_PRESSED = 5
+_K_EVENT_HOTKEY_RELEASED = 6
 _K_EVENT_PARAM_DIRECT_OBJECT = _four_char_code("----")
 _TYPE_EVENT_HOTKEY_ID = _four_char_code("hkid")
 _HOTKEY_SIGNATURE = _four_char_code("OWHK")  # OpenWhisper HotKey
@@ -140,6 +141,9 @@ def _load_carbon() -> Optional[ctypes.CDLL]:
     carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
     carbon.GetApplicationEventTarget.argtypes = []
 
+    carbon.GetEventKind.restype = ctypes.c_uint32
+    carbon.GetEventKind.argtypes = [ctypes.c_void_p]
+
     carbon.InstallEventHandler.restype = ctypes.c_int32
     carbon.InstallEventHandler.argtypes = [
         ctypes.c_void_p,            # EventTargetRef
@@ -193,7 +197,7 @@ class CarbonHotkeyRegistrar:
     modifiers.
     """
 
-    def __init__(self, on_action: Callable[[str], None]):
+    def __init__(self, on_action: Callable[[str, bool], None]):
         self._on_action = on_action
         self._handler_proc = _EVENT_HANDLER_PROC(self._handle_event)
         self._handler_ref = ctypes.c_void_p()
@@ -208,13 +212,18 @@ class CarbonHotkeyRegistrar:
         if _carbon is None:
             return False
 
-        spec = _EventTypeSpec(_K_EVENT_CLASS_KEYBOARD, _K_EVENT_HOTKEY_PRESSED)
+        # Both pressed and released kinds feed push-and-hold recording; other
+        # actions ignore releases in HotkeyManager.trigger_action.
+        specs = (_EventTypeSpec * 2)(
+            _EventTypeSpec(_K_EVENT_CLASS_KEYBOARD, _K_EVENT_HOTKEY_PRESSED),
+            _EventTypeSpec(_K_EVENT_CLASS_KEYBOARD, _K_EVENT_HOTKEY_RELEASED),
+        )
         target = _carbon.GetApplicationEventTarget()
         status = _carbon.InstallEventHandler(
             target,
             self._handler_proc,
-            1,
-            ctypes.byref(spec),
+            2,
+            specs,
             None,
             ctypes.byref(self._handler_ref),
         )
@@ -240,7 +249,10 @@ class CarbonHotkeyRegistrar:
             if status == 0:
                 action = self._id_to_action.get(hotkey_id.id)
                 if action is not None:
-                    self._on_action(action)
+                    released = (
+                        _carbon.GetEventKind(event) == _K_EVENT_HOTKEY_RELEASED
+                    )
+                    self._on_action(action, released)
         except Exception as exc:
             logger.error(f"Error handling Carbon hotkey event: {exc}")
         return 0  # noErr — always let the system continue.

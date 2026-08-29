@@ -47,6 +47,8 @@ class SettingsKey:
     # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
+    # Record hotkey activation: "toggle" or "push_hold"
+    RECORDING_TRIGGER_MODE: Final[str] = "recording_trigger_mode"
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
     CONFIRM_MEETING_DELETE: Final[str] = "confirm_meeting_delete"
     # Meeting Mode
@@ -89,6 +91,14 @@ class RecordingRetentionMode:
     """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
     KEEP_ALL: Final[str] = "keep_all"
     CUSTOM: Final[str] = "custom"
+
+
+class RecordingTriggerMode:
+    """Values for ``SettingsKey.RECORDING_TRIGGER_MODE``."""
+    TOGGLE: Final[str] = "toggle"
+    PUSH_HOLD: Final[str] = "push_hold"
+
+    ALL: Final[Tuple[str, ...]] = (TOGGLE, PUSH_HOLD)
 
 
 class TranscriptCleanupProvider:
@@ -411,6 +421,19 @@ def resolve_max_saved_recordings(
     except (TypeError, ValueError):
         count = config.MAX_SAVED_RECORDINGS
     return max(1, count)
+
+
+def resolve_recording_trigger_mode(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid record hotkey activation mode."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    mode = settings.get(SettingsKey.RECORDING_TRIGGER_MODE)
+    if mode in RecordingTriggerMode.ALL:
+        return mode
+    return config.RECORDING_TRIGGER_MODE
 
 
 def resolve_streaming_overlay_font_size(

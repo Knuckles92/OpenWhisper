@@ -1881,12 +1881,14 @@ QDialog#meetingIntroDialog {
 }
 
 /* Export dialog shares the Settings / Model Manager slate palette. */
-QDialog#meetingExportDialog {
+QDialog#meetingExportDialog,
+QDialog#historyExportDialog {
     background-color: #10161c;
     color: #f5f5f7;
 }
 
-QFrame#meetingExportCard {
+QFrame#meetingExportCard,
+QFrame#historyExportCard {
     background-color: #141b22;
     border: 1px solid #303b45;
     border-radius: 10px;
@@ -1894,11 +1896,13 @@ QFrame#meetingExportCard {
 
 /* Plain QWidget containers paint the global background; keep the card
    surface visible behind the scope panels. */
-QWidget#meetingExportPane {
+QWidget#meetingExportPane,
+QWidget#historyExportPane {
     background-color: transparent;
 }
 
-QLabel#meetingExportEyebrow {
+QLabel#meetingExportEyebrow,
+QLabel#historyExportEyebrow {
     color: #64b5ff;
     background-color: transparent;
     font-size: 10px;
@@ -1907,7 +1911,9 @@ QLabel#meetingExportEyebrow {
 }
 
 QLabel#meetingExportMeta,
-QLabel#meetingExportProgress {
+QLabel#meetingExportProgress,
+QLabel#historyExportMeta,
+QLabel#historyExportProgress {
     color: #9da8b5;
     background-color: transparent;
     font-size: 12px;
@@ -1915,18 +1921,21 @@ QLabel#meetingExportProgress {
 
 /* The global QWidget rule paints an opaque background; without these the
    check and radio labels sit in dark bars on top of the lighter cards. */
-QDialog#meetingExportDialog QCheckBox {
+QDialog#meetingExportDialog QCheckBox,
+QDialog#historyExportDialog QCheckBox {
     color: #e8edf2;
     background-color: transparent;
     spacing: 8px;
     font-size: 13px;
 }
 
-QDialog#meetingExportDialog QCheckBox:disabled {
+QDialog#meetingExportDialog QCheckBox:disabled,
+QDialog#historyExportDialog QCheckBox:disabled {
     color: #5c6770;
 }
 
-QDialog#meetingExportDialog QRadioButton {
+QDialog#meetingExportDialog QRadioButton,
+QDialog#historyExportDialog QRadioButton {
     color: #e8edf2;
     spacing: 8px;
     font-size: 13px;
@@ -1935,7 +1944,8 @@ QDialog#meetingExportDialog QRadioButton {
 
 /* Both states total 18px (content + border) so the indicator stays a
    circle and the label never shifts when toggled. */
-QDialog#meetingExportDialog QRadioButton::indicator {
+QDialog#meetingExportDialog QRadioButton::indicator,
+QDialog#historyExportDialog QRadioButton::indicator {
     width: 16px;
     height: 16px;
     border: 1px solid #3a4652;
@@ -1943,14 +1953,16 @@ QDialog#meetingExportDialog QRadioButton::indicator {
     background-color: #0f141a;
 }
 
-QDialog#meetingExportDialog QRadioButton::indicator:checked {
+QDialog#meetingExportDialog QRadioButton::indicator:checked,
+QDialog#historyExportDialog QRadioButton::indicator:checked {
     width: 8px;
     height: 8px;
     border: 5px solid #0a84ff;
     background-color: #ffffff;
 }
 
-QDialog#meetingExportDialog QLineEdit {
+QDialog#meetingExportDialog QLineEdit,
+QDialog#historyExportDialog QLineEdit {
     background-color: #0f141a;
     color: #f2f5f8;
     border: 1px solid #2a3540;
@@ -1959,11 +1971,13 @@ QDialog#meetingExportDialog QLineEdit {
     font-size: 13px;
 }
 
-QDialog#meetingExportDialog QLineEdit:focus {
+QDialog#meetingExportDialog QLineEdit:focus,
+QDialog#historyExportDialog QLineEdit:focus {
     border: 1px solid #0a84ff;
 }
 
-QDialog#meetingExportDialog QComboBox {
+QDialog#meetingExportDialog QComboBox,
+QDialog#historyExportDialog QComboBox {
     background-color: #0f141a;
     border: 1px solid #2a3540;
     border-radius: 8px;
@@ -1971,7 +1985,8 @@ QDialog#meetingExportDialog QComboBox {
     font-size: 13px;
 }
 
-QDialog#meetingExportDialog QComboBox::down-arrow {
+QDialog#meetingExportDialog QComboBox::down-arrow,
+QDialog#historyExportDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
     border: none;
     width: 16px;
@@ -1979,7 +1994,8 @@ QDialog#meetingExportDialog QComboBox::down-arrow {
     margin-right: 10px;
 }
 
-QListWidget#meetingExportList {
+QListWidget#meetingExportList,
+QListWidget#historyExportList {
     background-color: #0f141a;
     color: #f5f5f7;
     border: 1px solid #2a3540;
@@ -1989,20 +2005,24 @@ QListWidget#meetingExportList {
     min-width: 0;
 }
 
-QListWidget#meetingExportList::item {
+QListWidget#meetingExportList::item,
+QListWidget#historyExportList::item {
     padding: 6px 8px;
     border-radius: 6px;
 }
 
-QListWidget#meetingExportList::item:hover {
+QListWidget#meetingExportList::item:hover,
+QListWidget#historyExportList::item:hover {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-QListWidget#meetingExportList::item:selected {
+QListWidget#meetingExportList::item:selected,
+QListWidget#historyExportList::item:selected {
     background-color: rgba(10, 132, 255, 0.16);
 }
 
-QListWidget#meetingExportList::indicator {
+QListWidget#meetingExportList::indicator,
+QListWidget#historyExportList::indicator {
     width: 16px;
     height: 16px;
     background-color: #141b22;
@@ -2010,13 +2030,15 @@ QListWidget#meetingExportList::indicator {
     border-radius: 4px;
 }
 
-QListWidget#meetingExportList::indicator:checked {
+QListWidget#meetingExportList::indicator:checked,
+QListWidget#historyExportList::indicator:checked {
     background-color: #0a84ff;
     border: 1px solid #0a84ff;
     image: url(ui_qt/assets/check.svg);
 }
 
-QDialog#meetingExportDialog QDateEdit {
+QDialog#meetingExportDialog QDateEdit,
+QDialog#historyExportDialog QDateEdit {
     background-color: #0f141a;
     color: #f2f5f8;
     border: 1px solid #2a3540;
@@ -2026,13 +2048,15 @@ QDialog#meetingExportDialog QDateEdit {
     min-width: 0;
 }
 
-QDialog#meetingExportDialog QDateEdit::drop-down {
+QDialog#meetingExportDialog QDateEdit::drop-down,
+QDialog#historyExportDialog QDateEdit::drop-down {
     border: none;
     background-color: transparent;
     width: 24px;
 }
 
-QDialog#meetingExportDialog QDateEdit::down-arrow {
+QDialog#meetingExportDialog QDateEdit::down-arrow,
+QDialog#historyExportDialog QDateEdit::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate.svg);
     border: none;
     width: 16px;
@@ -2040,12 +2064,14 @@ QDialog#meetingExportDialog QDateEdit::down-arrow {
     margin-right: 6px;
 }
 
-QDialog#meetingExportDialog QCalendarWidget {
+QDialog#meetingExportDialog QCalendarWidget,
+QDialog#historyExportDialog QCalendarWidget {
     background-color: #1b242e;
     color: #f5f5f7;
 }
 
-QPushButton#meetingExportMiniBtn {
+QPushButton#meetingExportMiniBtn,
+QPushButton#historyExportMiniBtn {
     background-color: #1b242e;
     color: #e8edf2;
     border: 1px solid #303b45;
@@ -2054,7 +2080,8 @@ QPushButton#meetingExportMiniBtn {
     font-size: 12px;
 }
 
-QPushButton#meetingExportMiniBtn:hover {
+QPushButton#meetingExportMiniBtn:hover,
+QPushButton#historyExportMiniBtn:hover {
     background-color: #232f3b;
     border-color: #3a4652;
 }

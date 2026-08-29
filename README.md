@@ -38,7 +38,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **System Tray** – Minimize to tray, always accessible
 - **Smart Splitting (API)** – Large audio files split automatically to avoid API limits
 - **Audio Device Selection** – Choose your preferred microphone input
-- **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings
+- **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings, and export Markdown, plain text, or JSON
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Live Streaming** – Real-time transcription preview while recording
@@ -334,13 +334,18 @@ Default hotkeys depend on your platform (all remappable in **Settings > Hotkeys*
 
 On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Option), `⇧` (Shift).
 
+**Recording activation** (Settings > Hotkeys) chooses how the record hotkey behaves:
+
+- **Toggle** (default) — press to start recording, press again to stop and transcribe.
+- **Push and hold** — hold the hotkey to record; release to stop and transcribe. Taps shorter than 250 ms are canceled instead of transcribed.
+
 ## Settings
 
 Access settings via **File > Settings** or the system tray menu. Available options:
 
 - **General:** Auto-paste, copy to clipboard, minimize to system tray on close, automatic update checks and notifications, saved recordings retention policy, and real-time streaming transcription preview toggle and font size.
 - **Audio:** Sample rate, channels, silence threshold, and microphone input device selection.
-- **Hotkeys:** Open hotkey configuration to customize all global shortcuts.
+- **Hotkeys:** Customize all global shortcuts and choose how the record hotkey activates (toggle, or push-and-hold like a walkie-talkie).
 - **Cleanup:** AI transcript cleanup settings (enable/disable, thinking level, custom prompt) and **Learned Rules** library (teach personal spelling and formatting rules via text or voice dictation). Text provider and model selection are configured in **Model Manager**.
 - **Meeting:** Meeting Mode options including knowledge folder search, past transcript search/recall, end-of-meeting actions (re-transcription with longer pauses, AI cleanup, final report generation with Ribbon, Brief, and Signal views), and dashboard access (localhost vs. LAN sharing and port settings).
 - **Advanced:** Maximum audio file size before splitting, detailed logging, developer mode (demo meeting fixture), and Hugging Face model download policy. Voice engine settings (model, compute device, and quantization) are configured directly in the main window or **Model Manager**.

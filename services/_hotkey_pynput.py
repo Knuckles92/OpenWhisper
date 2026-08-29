@@ -21,6 +21,7 @@ from services._hotkey_common import (
     notify_stt_toggle,
     parse_hotkey_string,
 )
+from services.settings import RecordingTriggerMode
 
 logger = logging.getLogger(__name__)
 
@@ -374,10 +375,15 @@ class HotkeyManager:
     def __init__(self, hotkeys: Dict[str, str] = None):
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
+        self.record_mode = RecordingTriggerMode.TOGGLE
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
         self._last_action_times: Dict[str, float] = {}
+        # Set while the record hotkey is held in push-and-hold mode.
+        self._record_key_held = False
 
         self.on_record_toggle: Optional[Callable] = None
+        self.on_record_press: Optional[Callable] = None
+        self.on_record_release: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
@@ -400,6 +406,8 @@ class HotkeyManager:
         """Start global hotkey detection (Carbon on macOS, pynput on Linux)."""
         self._pressed_modifiers.clear()
         self._pressed_main_keys.clear()
+        # A rehook may miss the release while stopped, so forget held state.
+        self._record_key_held = False
 
         if self._use_carbon and self._setup_carbon_hotkeys():
             return
@@ -470,7 +478,9 @@ class HotkeyManager:
             return False
 
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("record_toggle")):
-            logger.debug(f"Record toggle hotkey matched from {source}")
+            logger.debug(f"Record hotkey matched from {source}")
+            if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
+                self._record_key_held = True
             self.trigger_action("record_toggle")
             return True
 
@@ -493,17 +503,65 @@ class HotkeyManager:
 
         return False
 
-    def trigger_action(self, action: str) -> None:
+    def handle_hotkey_release(
+        self,
+        active_modifiers: frozenset,
+        main_key: str,
+        source: str = "qt",
+    ) -> bool:
+        """Dispatch release of the record hotkey; return whether it matched.
+
+        Entry point for sources that see individual key events (the Qt
+        focused-window fallback). Modifiers are ignored on purpose: the user
+        may release them before the main key.
+        """
+        if not self._record_key_held:
+            return False
+
+        _, expected_key = parse_hotkey(self.hotkeys.get("record_toggle") or "")
+        if expected_key is None or main_key != expected_key:
+            return False
+
+        logger.debug(f"Record hotkey released from {source}")
+        self._record_key_held = False
+        self.trigger_action("record_release")
+        return True
+
+    def trigger_action(self, action: str, released: bool = False) -> None:
         """Apply enable/debounce gating and invoke the callback for an action.
 
         Shared dispatch for every input source: the Carbon registrar (macOS),
         the pynput global listener (Linux), and the Qt focused-window fallback.
         ``_should_accept_action`` dedupes a press seen by more than one source.
+        ``released`` routes Carbon's hotkey-released events, which only the
+        record hotkey acts on (push-and-hold mode).
         """
+        if released:
+            if action == "record_toggle":
+                action = "record_release"
+            else:
+                return
+
+        if (
+            action == "record_toggle"
+            and self.record_mode == RecordingTriggerMode.PUSH_HOLD
+        ):
+            # Carbon delivers presses straight here (macOS has no per-key
+            # events for registered hotkeys), so the mode must route the
+            # toggle action to push-and-hold press dispatch.
+            action = "record_press"
+
         if action == "enable_disable":
             # Works even while the program is disabled.
             if self._should_accept_action("enable_disable"):
                 self._toggle_program_enabled()
+            return
+
+        if action == "record_release":
+            # Ends an in-progress hold; skips the program_enabled gate so a
+            # recording cannot be stranded by disabling hotkeys mid-hold.
+            if self._should_accept_action("record_release") and self.on_record_release:
+                threading.Thread(target=self.on_record_release, daemon=True).start()
             return
 
         if not self.program_enabled:
@@ -516,6 +574,9 @@ class HotkeyManager:
                 and self.on_record_toggle
             ):
                 threading.Thread(target=self.on_record_toggle, daemon=True).start()
+        elif action == "record_press":
+            if self._should_accept_action("record_press") and self.on_record_press:
+                threading.Thread(target=self.on_record_press, daemon=True).start()
         elif action == "cancel":
             if self._should_accept_action("cancel") and self.on_cancel:
                 threading.Thread(target=self.on_cancel, daemon=True).start()
@@ -535,6 +596,14 @@ class HotkeyManager:
         name = key_to_name(key)
         if name is not None:
             self._pressed_main_keys.discard(name)
+            self.handle_hotkey_release(
+                frozenset(self._pressed_modifiers), name, source="global"
+            )
+
+    def set_record_mode(self, mode: str) -> None:
+        """Switch the record hotkey between toggle and push-and-hold."""
+        self.record_mode = mode
+        self._record_key_held = False
 
     def _toggle_program_enabled(self):
         self.program_enabled = not self.program_enabled
@@ -617,6 +686,8 @@ class HotkeyManager:
 
     def set_callbacks(self,
                      on_record_toggle: Callable = None,
+                     on_record_press: Callable = None,
+                     on_record_release: Callable = None,
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
@@ -626,6 +697,8 @@ class HotkeyManager:
                      is_transcribing_fn: Callable[[], bool] = None):
         """Set callbacks invoked by hotkey events."""
         self.on_record_toggle = on_record_toggle
+        self.on_record_press = on_record_press
+        self.on_record_release = on_record_release
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray

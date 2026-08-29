@@ -1,6 +1,7 @@
 """Windows hotkeys with per-key suppression via ``keyboard``."""
 import keyboard
 import logging
+import threading
 from typing import Dict, Callable, Optional, Tuple
 from config import config
 from services._hotkey_common import (
@@ -9,6 +10,7 @@ from services._hotkey_common import (
     notify_stt_toggle,
     parse_hotkey_string,
 )
+from services.settings import RecordingTriggerMode
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +99,14 @@ class HotkeyManager:
     def __init__(self, hotkeys: Dict[str, str] = None):
         self.hotkeys = hotkeys or config.DEFAULT_HOTKEYS.copy()
         self.program_enabled = True
+        self.record_mode = RecordingTriggerMode.TOGGLE
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
+        # Guards auto-repeat KEY_DOWNs while the record key is held.
+        self._record_key_held = False
 
         self.on_record_toggle: Optional[Callable] = None
+        self.on_record_press: Optional[Callable] = None
+        self.on_record_release: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
         self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
@@ -111,6 +118,8 @@ class HotkeyManager:
         self._setup_keyboard_hook()
 
     def _setup_keyboard_hook(self):
+        # A rehook may miss the KEY_UP while unhooked, so forget held state.
+        self._record_key_held = False
         keyboard.hook(self._handle_keyboard_event, suppress=True)
 
     def _handle_keyboard_event(self, event):
@@ -124,11 +133,18 @@ class HotkeyManager:
                     return True
 
             elif self._matches_hotkey(event, self.hotkeys['record_toggle']):
-                suppress = False
-                if self._should_trigger_record_toggle():
-                    if self.on_record_toggle:
-                        import threading
-                        threading.Thread(target=self.on_record_toggle, daemon=True).start()
+                if not self._record_key_held:
+                    self._record_key_held = True
+                    if self.record_mode == RecordingTriggerMode.PUSH_HOLD:
+                        if self.on_record_press:
+                            threading.Thread(
+                                target=self.on_record_press, daemon=True
+                            ).start()
+                    elif self._should_trigger_record_toggle():
+                        if self.on_record_toggle:
+                            threading.Thread(
+                                target=self.on_record_toggle, daemon=True
+                            ).start()
                 return False
 
             elif (self.hotkeys.get('meeting_toggle')
@@ -136,7 +152,6 @@ class HotkeyManager:
                       event, self.hotkeys.get('meeting_toggle')
                   )):
                 if self.on_meeting_toggle:
-                    import threading
                     threading.Thread(
                         target=self.on_meeting_toggle, daemon=True
                     ).start()
@@ -144,17 +159,34 @@ class HotkeyManager:
 
             elif self._matches_hotkey(event, self.hotkeys['cancel']):
                 if self.on_cancel:
-                    import threading
                     threading.Thread(target=self.on_cancel, daemon=True).start()
                 return False
 
             elif self._matches_hotkey(event, self.hotkeys.get('minimize_tray')):
                 if self.on_minimize_tray:
-                    import threading
                     threading.Thread(target=self.on_minimize_tray, daemon=True).start()
                 return False
 
+        elif (event.event_type == keyboard.KEY_UP
+              and self._record_key_held
+              and self._matches_record_main_key(event)):
+            self._record_key_held = False
+            # The press was suppressed, so swallow its release too. Release
+            # dispatch skips the program_enabled gate on purpose: disabling
+            # hotkeys mid-hold must not strand an in-progress recording.
+            if (self.record_mode == RecordingTriggerMode.PUSH_HOLD
+                    and self.on_record_release):
+                threading.Thread(
+                    target=self.on_record_release, daemon=True
+                ).start()
+            return False
+
         return True
+
+    def set_record_mode(self, mode: str) -> None:
+        """Switch the record hotkey between toggle and push-and-hold."""
+        self.record_mode = mode
+        self._record_key_held = False
 
     def _toggle_program_enabled(self):
         self.program_enabled = not self.program_enabled
@@ -167,6 +199,30 @@ class HotkeyManager:
 
     def _should_trigger_record_toggle(self) -> bool:
         return self._debouncer.should_trigger()
+
+    def _matches_record_main_key(self, event) -> bool:
+        """Match a KEY_UP against the record hotkey's main key, modifiers aside.
+
+        The user may release modifiers before the main key, so release
+        matching cannot require the hotkey's modifier set.
+        """
+        hotkey_string = self.hotkeys.get('record_toggle')
+        if not hotkey_string:
+            return False
+
+        main_key = hotkey_string.lower().split('+')[-1]
+        is_numpad_hotkey = main_key.startswith('kp ')
+        expected_key_name = main_key[3:] if is_numpad_hotkey else main_key
+
+        if not event.name or event.name.lower() != expected_key_name:
+            return False
+
+        if (is_numpad_hotkey and not event.is_keypad) or (
+            not is_numpad_hotkey and event.is_keypad
+        ):
+            return False
+
+        return True
 
     def _matches_hotkey(self, event, hotkey_string: str) -> bool:
         if not hotkey_string:
@@ -234,7 +290,6 @@ class HotkeyManager:
         """Clean up keyboard hooks."""
         try:
             # Use a timeout to avoid blocking if cleanup is called from wrong thread
-            import threading
             if threading.current_thread() is threading.main_thread():
                 keyboard.unhook_all()
             else:
@@ -249,6 +304,8 @@ class HotkeyManager:
 
     def set_callbacks(self,
                      on_record_toggle: Callable = None,
+                     on_record_press: Callable = None,
+                     on_record_release: Callable = None,
                      on_cancel: Callable = None,
                      on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
@@ -258,6 +315,8 @@ class HotkeyManager:
                      is_transcribing_fn: Callable[[], bool] = None):
         """Set callbacks invoked by hotkey events."""
         self.on_record_toggle = on_record_toggle
+        self.on_record_press = on_record_press
+        self.on_record_release = on_record_release
         self.on_cancel = on_cancel
         self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
