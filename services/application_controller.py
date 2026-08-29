@@ -21,6 +21,7 @@ from services.components import (
     install_component,
     uninstall_component,
 )
+from services.credentials import resolve_credential
 from services.database import db
 from services.hf_access import (
     AccessDecision,
@@ -218,6 +219,7 @@ class ApplicationController(QObject):
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
         self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
+        self.ui_controller.on_api_keys_changed = self.on_api_keys_changed
         self.ui_controller.on_model_download_requested = self.request_model_download
         self.ui_controller.on_model_delete_requested = self.request_model_delete
         self.ui_controller.on_model_batch_download = (
@@ -531,6 +533,17 @@ class ApplicationController(QObject):
             logger.info(
                 "Removed abandoned update transactions: %s", ", ".join(transactions)
             )
+
+    def on_api_keys_changed(self) -> None:
+        """Rebuild the OpenAI clients after a key is saved or removed in Settings.
+
+        Transcript cleanup and the meeting agent resolve their keys on each
+        run, so only the long-lived transcription backends need a push.
+        """
+        api_key = resolve_credential("OPENAI_API_KEY")
+        for backend in self.transcription_backends.values():
+            if isinstance(backend, OpenAIBackend):
+                backend.update_api_key(api_key)
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.

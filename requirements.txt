@@ -14,6 +14,9 @@ faster-whisper>=1.0.0
 # to get the CUDA runtime libraries (cuBLAS) without the CUDA Toolkit.
 # CPU-only works out of the box; do not install requirements-gpu.txt.
 python-dotenv>=1.0.0
+# API keys entered in Settings go to the OS credential store (Windows
+# Credential Manager / macOS Keychain / Secret Service) via keyring.
+keyring>=25.0
 PyQt6>=6.0.0
 sqlalchemy>=2.0.0
 

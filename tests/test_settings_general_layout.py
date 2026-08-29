@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QFormLayout, QFrame, QScrollArea
 
 from ui_qt.dialogs.settings_dialog import (
     ADVANCED,
+    API_KEYS,
     CLEANUP,
     CLEANUP_RULES,
     GENERAL,
@@ -45,6 +46,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     MEETING_INTELLIGENCE,
                     MEETING_AFTER,
                     MEETING_DASHBOARD,
+                    API_KEYS,
                     HOTKEYS,
                     ADVANCED,
                 ),

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **API keys can be entered in Settings** - A new Settings → API keys destination takes OpenAI, OpenRouter, and custom-endpoint keys and stores them in the operating system's credential manager (Windows Credential Manager, macOS Keychain, or Secret Service on Linux) under "OpenWhisper". Keys never enter `openwhisper_settings.json` or the log; the page shows only the last four characters, the field uses password echo, and a Test button verifies a key with one authenticated request before it is relied on. A saved key takes precedence over the same variable in the environment or `.env`, both of which keep working as fallbacks. When no OS store is available, saving is disabled rather than falling back to a file.
+
 ## [2.4.6] - 2026-08-28
 
 ### Changed

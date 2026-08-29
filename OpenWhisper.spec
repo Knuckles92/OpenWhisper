@@ -42,6 +42,8 @@ hiddenimports = [
     "services.models",
     # Imported inside function bodies in services/hf_access.py.
     "huggingface_hub",
+    # services/credentials.py picks the OS keyring backend by name at runtime.
+    "keyring.backends.Windows",
     # Knowledge-folder extractors (imported lazily from meeting/context_folder).
     "pypdf",
     "docx",

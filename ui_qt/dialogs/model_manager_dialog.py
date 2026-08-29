@@ -398,9 +398,9 @@ class ModelManagerDialog(QDialog):
 
         layout.addWidget(
             self._footnote(
-                "Called only when AI cleanup is enabled. API keys stay in "
-                "environment variables or .env; a blank key variable means no "
-                "auth. Cleanup behavior, prompts, and learned rules remain in "
+                "Called only when AI cleanup is enabled. API keys are entered "
+                "in Settings → API keys; a blank key variable means no auth. "
+                "Cleanup behavior, prompts, and learned rules remain in "
                 "Settings → Cleanup."
             )
         )
@@ -1133,8 +1133,8 @@ class ModelManagerDialog(QDialog):
         if backend == MeetingSpeakerIdBackend.OPENAI:
             self.speaker_id_status.setText(
                 "Uploads system audio after End and relabels speakers on the "
-                "local transcript. Requires OPENAI_API_KEY. Microphone audio "
-                "stays on this computer."
+                "local transcript. Requires an OpenAI API key (Settings → API "
+                "keys). Microphone audio stays on this computer."
             )
             return
         try:

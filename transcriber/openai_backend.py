@@ -1,10 +1,10 @@
 """OpenAI API transcription backend."""
-import os
 import logging
 from typing import Optional, List
 from openai import OpenAI
 from .base import TranscriptionBackend
 from config import config
+from services.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -20,20 +20,7 @@ class OpenAIBackend(TranscriptionBackend):
         self._initialize_client()
 
     def _get_api_key(self) -> Optional[str]:
-        api_key = os.getenv('OPENAI_API_KEY')
-
-        if not api_key:
-            try:
-                from dotenv import load_dotenv
-                from config import env_file_path
-                load_dotenv(env_file_path())
-                api_key = os.getenv('OPENAI_API_KEY')
-            except ImportError:
-                logger.warning("python-dotenv not installed. Skipping .env file loading.")
-            except Exception as e:
-                logger.warning(f"Failed to load .env file: {e}")
-
-        return api_key
+        return resolve_credential("OPENAI_API_KEY")
 
     def _initialize_client(self):
         if self.api_key:
@@ -94,7 +81,7 @@ class OpenAIBackend(TranscriptionBackend):
         """Return whether the API client is initialized."""
         return self.client is not None and self.api_key is not None
 
-    def update_api_key(self, api_key: str):
+    def update_api_key(self, api_key: Optional[str]):
         """Replace the API key and reinitialize the client."""
         self.api_key = api_key
         self._initialize_client()

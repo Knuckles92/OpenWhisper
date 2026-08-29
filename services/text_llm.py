@@ -3,12 +3,12 @@
 Every chat-completions caller (transcript cleanup, meeting intelligence,
 catalog listing) resolves a ``TextLLMProfile`` here. Built-in OpenAI and
 OpenRouter profiles are immutable; users may add named custom endpoints.
-API keys stay in the environment / ``.env`` file and are never persisted.
+API keys are resolved through :mod:`services.credentials` (OS credential
+store, then environment / ``.env``) and never enter the settings file.
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
 import secrets
 from dataclasses import dataclass
@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 from openai import OpenAI
 
 from config import config
+from services.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -423,23 +424,14 @@ def default_model_for_profile(profile: TextLLMProfile) -> str:
 
 
 def lookup_env_value(env_name: str) -> Optional[str]:
-    """Read one environment / ``.env`` value without logging it."""
+    """Resolve one credential by its variable name without logging it.
+
+    Order is the saved key from :mod:`services.credentials`, then the process
+    environment, then the ``.env`` file.
+    """
     if not env_name:
         return None
-    value = os.getenv(env_name)
-    if value:
-        return value
-    try:
-        from dotenv import load_dotenv
-        from config import env_file_path
-
-        load_dotenv(env_file_path())
-        return os.getenv(env_name)
-    except ImportError:
-        logger.warning("python-dotenv not installed. Skipping .env file loading.")
-    except Exception as exc:
-        logger.warning("Failed to load .env file: %s", exc)
-    return None
+    return resolve_credential(env_name)
 
 
 def resolve_api_key(profile: TextLLMProfile) -> Optional[str]:
@@ -449,13 +441,23 @@ def resolve_api_key(profile: TextLLMProfile) -> Optional[str]:
     return lookup_env_value(profile.api_key_env)
 
 
+def credential_label(profile: TextLLMProfile) -> str:
+    """User-facing name of the credential a profile needs."""
+    if profile.id == OPENAI_PROFILE_ID:
+        return "OpenAI API key"
+    if profile.id == OPENROUTER_PROFILE_ID:
+        return "OpenRouter API key"
+    return profile.api_key_env
+
+
 def credential_status(profile: TextLLMProfile) -> Tuple[bool, str]:
     """Return ``(available, status_copy)`` for the profile's credential."""
     if not profile.api_key_env:
         return True, "No API key required"
+    label = credential_label(profile)
     if lookup_env_value(profile.api_key_env):
-        return True, f"{profile.api_key_env} found"
-    return False, f"Requires {profile.api_key_env}"
+        return True, f"{label} found"
+    return False, f"Requires {label} — add it in Settings → API keys"
 
 
 def connection_fingerprint(profile: TextLLMProfile) -> Tuple[Any, ...]:
@@ -492,6 +494,45 @@ def create_openai_client(
         default_headers=provider_headers(profile),
         timeout=timeout,
     )
+
+
+def verify_api_key(
+    profile: TextLLMProfile, api_key: str, *, timeout: float = 10.0
+) -> Tuple[bool, str]:
+    """Make one authenticated request with ``api_key`` and report the outcome.
+
+    Only the HTTP status class reaches the caller. Provider error bodies can
+    echo the credential back, so they are never surfaced or logged.
+    """
+    import httpx
+    import openai
+
+    host = "api.openai.com"
+    if profile.base_url:
+        host = urlsplit(profile.base_url).hostname or "the endpoint"
+    try:
+        client = create_openai_client(profile, timeout=timeout, api_key=api_key)
+        try:
+            if profile.kind == PROFILE_KIND_OPENROUTER:
+                # OpenRouter's model catalog is public, so listing it proves
+                # nothing about the key; /auth/key requires it.
+                client.get("/auth/key", cast_to=httpx.Response)
+            else:
+                client.models.list()
+        finally:
+            client.close()
+    except openai.AuthenticationError:
+        return False, f"{host} rejected the key (HTTP 401)."
+    except openai.PermissionDeniedError:
+        return False, f"{host} accepted the key but denied access (HTTP 403)."
+    except openai.APIConnectionError:
+        return False, f"Couldn't reach {host}."
+    except openai.APIStatusError as exc:
+        return False, f"{host} answered HTTP {exc.status_code}."
+    except Exception as exc:
+        logger.debug("Key verification failed: %s", type(exc).__name__)
+        return False, f"Verification failed ({type(exc).__name__})."
+    return True, f"{host} accepted the key."
 
 
 def filter_openai_chat_models(model_ids: Iterable[str]) -> List[str]:

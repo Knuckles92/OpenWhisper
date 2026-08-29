@@ -32,6 +32,7 @@ from services.text_llm import (
     PROFILE_KIND_OPENROUTER,
     TextLLMProfile,
     builtin_profiles,
+    credential_label,
     credential_status,
     get_profile,
 )
@@ -289,31 +290,28 @@ class TextModelPicker(QWidget):
 
     def _profile_copy(self, profile: Optional[TextLLMProfile]) -> tuple:
         if profile is None:
-            return ("API", "Unknown endpoint.", "Requires an API key")
+            return ("API", "Unknown endpoint.", "API key")
         if profile.id == TranscriptCleanupProvider.OPENAI:
             return (
                 "OAI",
                 "Direct access to OpenAI chat and reasoning models.",
-                "Requires OPENAI_API_KEY",
+                credential_label(profile),
             )
         if profile.id == TranscriptCleanupProvider.OPENROUTER:
             return (
                 "OR",
                 "One catalog with models from OpenAI, Anthropic, Google, and more.",
-                "Requires OPENROUTER_API_KEY",
+                credential_label(profile),
             )
         return (
             "API",
             "Any server that speaks the OpenAI Chat Completions API.",
-            (
-                f"Requires {profile.api_key_env}"
-                if profile.api_key_env else "No API key required"
-            ),
+            credential_label(profile) if profile.api_key_env else "",
         )
 
     def _render_provider(self) -> None:
         profile = self.current_profile()
-        _mark, description, requirement = self._profile_copy(profile)
+        _mark, description, credential = self._profile_copy(profile)
         name = profile.name if profile else "Endpoint"
         self.provider_combo.setToolTip(f"{name} — {description}")
         if profile is not None and profile.base_url:
@@ -329,7 +327,7 @@ class TextModelPicker(QWidget):
             self.provider_url.setText("")
             self.provider_url.setToolTip("")
             self.provider_url.setVisible(False)
-        self._update_credential_status(requirement)
+        self._update_credential_status(credential)
         show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
         self.sort_label.setVisible(show_sort)
         self.sort_combo.setVisible(show_sort)
@@ -345,23 +343,24 @@ class TextModelPicker(QWidget):
         self.status_label.setText("Loading models…")
         self._update_active_badge()
 
-    def _update_credential_status(self, requirement: Optional[str] = None) -> None:
+    def _update_credential_status(self, credential: Optional[str] = None) -> None:
         """Show whether the selected provider's API key is available.
 
         Args:
-            requirement: Missing-key copy from the selected provider metadata.
-                When omitted, the copy is looked up from that metadata.
+            credential: User-facing credential name from the provider metadata.
+                When omitted, it is looked up from that metadata.
         """
         profile = self.current_profile()
         if profile is not None and not profile.builtin:
             available, text = credential_status(profile)
         else:
-            if requirement is None:
-                requirement = self._profile_copy(profile)[2]
-            credential_name = requirement.removeprefix("Requires ")
+            if credential is None:
+                credential = self._profile_copy(profile)[2]
             available = bool(find_api_key(self.provider))
             text = (
-                f"{credential_name} found" if available else requirement
+                f"{credential} found"
+                if available
+                else f"Requires {credential} — add it in Settings → API keys"
             )
         self.provider_requirement.setText(text)
         credential_icon = _design_icon(

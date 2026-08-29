@@ -120,6 +120,7 @@ class UIController(QObject):
         self.on_audio_device_changed: Optional[Callable] = None
         self.on_streaming_settings_changed: Optional[Callable] = None
         self.on_hf_policy_changed: Optional[Callable] = None
+        self.on_api_keys_changed: Optional[Callable] = None
         self.on_model_download_requested: Optional[Callable] = None
         self.on_model_delete_requested: Optional[Callable] = None
         self.on_model_batch_download: Optional[Callable] = None
@@ -572,6 +573,7 @@ class UIController(QObject):
         dialog.on_streaming_settings_changed = self.on_streaming_settings_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
         dialog.on_hf_policy_changed = self.on_hf_policy_changed
+        dialog.on_api_keys_changed = self._on_api_keys_changed
         dialog.on_developer_mode_changed = (
             self.main_window.meeting_mode_tab.set_developer_mode
         )
@@ -600,6 +602,12 @@ class UIController(QObject):
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
         self.main_window.upload_file_tab.load_cleanup_setting()
+
+    def _on_api_keys_changed(self):
+        """A key was saved or removed: rebuild clients, then redraw key status."""
+        if self.on_api_keys_changed:
+            self.on_api_keys_changed()
+        self.refresh_model_manager()
 
     def show_hf_consent_dialog(
         self, model_name: str, policy: str, env_blocked: bool = False

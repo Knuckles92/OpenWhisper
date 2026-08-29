@@ -209,7 +209,7 @@ python scripts\build_component.py meeting-agent
 
 That pins the official Node win-x64 zip from nodejs.org, builds `sidecar/dist/bundle.cjs`, zips it, and prints a ready-to-paste `_BUILTIN_MEETING_AGENT_ARCHIVES` block. Attach the new zip to the GitHub Release whose tag you set as `MEETING_AGENT_RELEASE_TAG`, paste the block, and bump `MEETING_AGENT_COMPONENT_VERSION` so existing installs are offered the new payload. Do not replace the zip on an older tag — GitHub assets are treated as immutable.
 
-OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, set API keys in the environment or a `.env` file. Keys are never stored in settings.
+OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, add API keys under **Settings → API keys**. They are saved in your operating system's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on Linux), never in the settings file or the log, and a **Test** button checks a key against the provider before you rely on it. Environment variables or a `.env` file still work and are used when no key is saved:
 
 ```bash
 # Windows

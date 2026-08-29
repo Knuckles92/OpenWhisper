@@ -61,6 +61,25 @@ def pytest_unconfigure(config):
     os._exit(_session_status[-1] if _session_status else 0)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_credential_store():
+    """Point every test at an in-memory credential store.
+
+    The real store is the developer's own Windows Credential Manager or
+    Keychain; a test must neither read a real key out of it nor leave one
+    behind. Also applies to unittest.TestCase classes.
+    """
+    from services import credentials
+
+    previous = credentials.set_store(
+        credentials.CredentialStore(backend_factory=credentials.memory_backend)
+    )
+    try:
+        yield
+    finally:
+        credentials.set_store(previous)
+
+
 @pytest.fixture
 def db(tmp_path):
     """A DatabaseManager backed by a throwaway sqlite file."""

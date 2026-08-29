@@ -323,7 +323,7 @@ class TestTextModelPicker(_DialogTestCase):
         )
 
         status = dialog.text_model_picker.provider_requirement
-        assert status.text() == "OPENROUTER_API_KEY found"
+        assert status.text() == "OpenRouter API key found"
         assert status.property("available")
 
     def test_provider_credential_status_keeps_requirement_when_key_is_missing(self):
@@ -332,7 +332,9 @@ class TestTextModelPicker(_DialogTestCase):
         )
 
         status = dialog.text_model_picker.provider_requirement
-        assert status.text() == "Requires OPENROUTER_API_KEY"
+        assert status.text() == (
+            "Requires OpenRouter API key — add it in Settings → API keys"
+        )
         assert not status.property("available")
 
     def test_picker_is_one_column_of_labeled_fields(self):

@@ -485,6 +485,22 @@ QLabel#textProviderRequirement[available="true"] {
     color: #30d158;
 }
 
+QLabel#apiKeyStatus {
+    color: #e0a052;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#apiKeyStatus[tone="success"] {
+    color: #30d158;
+}
+
+QLineEdit#apiKeyInput {
+    font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
+    letter-spacing: 1px;
+}
+
 QWidget#modelManagerFieldGroup {
     background-color: transparent;
 }
