@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.8] - 2026-08-29
+
 ### Changed
 - **Quick settings show five values where they used to show one** - The Transcription Engine card on Quick Record and Upload File now lays Backend, Model, Device, and Quant across one row, with the resolved engine on a footer line beside the AI cleanup toggle and the Model Manager link. The card's title, its centering, and its collapse toggle are gone, so it costs 106px instead of 146px and nothing is hidden behind a chevron. Fields are recessed against the card rather than filled in the same color as it, which is what previously left them readable only by their 1px border. Selecting an API backend hides Model, Device, and Quant instead of dimming them.
 - **The engine reports whether it is actually usable** - A status dot sits in the Backend field and on the resolved line: green once the engine has loaded, amber when it cannot be used (a model that is not downloaded, the case the indicator exists for), and neutral before anything has loaded or on an API backend, where there is no local engine to report on. The readiness is read from the backend rather than inferred from the text beside it.

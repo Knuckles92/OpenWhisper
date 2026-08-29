@@ -8,6 +8,6 @@ Note: ``services.database.SCHEMA_VERSION`` is the *database schema* version and
 is unrelated to this number.
 """
 
-__version__ = "2.4.7"
+__version__ = "2.4.8"
 
 __all__ = ["__version__"]
