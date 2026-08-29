@@ -69,7 +69,8 @@ class ApplicationController(QObject):
     overlay_state_update = pyqtSignal(object)
     minimize_to_tray_requested = pyqtSignal()
     # Emitted from the background reload worker (thread-safe UI updates).
-    device_info_update = pyqtSignal(str)
+    # (readout, engine is loaded and usable)
+    device_info_update = pyqtSignal(str, bool)
     engine_busy_changed = pyqtSignal(bool)
     # Hop streaming setup onto the Qt main thread after the first local load.
     streaming_setup_requested = pyqtSignal()
@@ -340,7 +341,7 @@ class ApplicationController(QObject):
             if local_backend:
                 local_backend.reload_model()
                 info = getattr(local_backend, "device_info", "")
-                self.device_info_update.emit(info)
+                self.device_info_update.emit(info, local_backend.is_available())
                 if (
                     not local_backend.is_available()
                     and getattr(local_backend, "is_model_missing", False)
@@ -1035,7 +1036,7 @@ class ApplicationController(QObject):
 
                 if backend.is_available():
                     success = True
-                    self.device_info_update.emit(backend.device_info)
+                    self.device_info_update.emit(backend.device_info, True)
                     self.status_update.emit("Whisper engine ready")
                     logger.info(f"Model '{model_name}' ready: {backend.device_info}")
                 else:
@@ -1091,7 +1092,7 @@ class ApplicationController(QObject):
         ):
             backend.reload_model(model_name)
             if backend.is_available():
-                self.device_info_update.emit(backend.device_info)
+                self.device_info_update.emit(backend.device_info, True)
                 self.status_update.emit("Whisper engine ready")
             if getattr(backend, "gpu_fallback_note", None):
                 self.gpu_fallback_detected.emit()

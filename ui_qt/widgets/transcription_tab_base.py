@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QFrame, QTextEdit,
     QButtonGroup, QPushButton, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
@@ -12,7 +12,14 @@ from PyQt6.QtGui import QFont
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
-from ui_qt.widgets.cards import Card, HeaderCard
+from ui_qt.widgets.cards import HeaderCard
+from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.engine_field import (
+    EngineStatus,
+    StatusDot,
+    engine_combo,
+    engine_field,
+)
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
 
@@ -23,14 +30,19 @@ class TranscriptionTabBase(QWidget):
     """Base widget for tabs that select a model and display a transcript."""
 
     model_changed = pyqtSignal(str)  # Model display name
-    engine_settings_changed = pyqtSignal()  # Local engine combo changed
+    engine_settings_changed = pyqtSignal()  # Local engine chip changed
     manage_models_requested = pyqtSignal()  # "Manage models…" clicked
-    engine_settings_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
     INITIAL_STATUS = ""
     TRANSCRIPT_PLACEHOLDER = "Transcription will appear here..."
+
+    #: Keeps the longest backend label ("API: GPT-4o Mini Transcribe") from
+    #: pushing the rest of the bar off the row; it elides instead.
+    BACKEND_CHIP_MAX_WIDTH = 150
+
+    _BACKEND_SECTION = "backend"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,38 +99,65 @@ class TranscriptionTabBase(QWidget):
         self.scroll_area.setWidget(scroll_host)
         main_layout.addWidget(self.scroll_area)
 
-        model_card = Card()
+        # Engine card: four labeled fields across the full width, then a footer
+        # line carrying the resolved engine and the two controls that apply to
+        # every backend. A QFrame rather than Card because a plain QWidget will
+        # not paint a QSS surface.
+        self.engine_card = QFrame()
+        self.engine_card.setObjectName("engineCard")
+        engine_layout = QVBoxLayout(self.engine_card)
+        engine_layout.setContentsMargins(14, 12, 14, 12)
+        engine_layout.setSpacing(10)
 
-        model_label = QLabel("Transcription Engine")
-        model_label.setObjectName("headerLabel")
-        model_label.setFont(QFont("Segoe UI", 13))
-        model_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.model_combo = engine_combo(config.MODEL_CHOICES, primary=True)
+        self._apply_backend_status(EngineStatus.UNKNOWN)
 
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(config.MODEL_CHOICES)
-        self.model_combo.setMinimumHeight(40)
-        self.model_combo.setMaximumWidth(420)
-        self.model_combo.setFont(QFont("Segoe UI", 12))
-
-        # Local engine controls (model / device / quant). Only meaningful for
-        # the Local Whisper backend; visibility is toggled by the main window
-        # via set_local_engine_visible(). The panel's resolved-info label shows
-        # the actual device/compute that "auto" resolved to after a model load.
+        # Local model/device/quant. Only meaningful for the Local Whisper
+        # backend; the main window hides the group via
+        # set_local_engine_visible() and the trailing filler then absorbs its
+        # share, so Backend does not stretch across the whole card.
         self.local_engine = LocalEngineControls()
 
-        # The AI cleanup checkbox is built inside the engine settings panel;
-        # alias it here so persistence/sync methods keep a stable home.
-        self.cleanup_check = self.local_engine.cleanup_check
+        self._field_row = QHBoxLayout()
+        self._field_row.setContentsMargins(0, 0, 0, 0)
+        self._field_row.setSpacing(10)
+        self._field_row.addWidget(engine_field("Backend", self.model_combo), stretch=2)
+        self._field_row.addWidget(self.local_engine, stretch=4)
+        self._field_filler_index = self._field_row.count()
+        self._field_row.addStretch(0)
+        engine_layout.addLayout(self._field_row)
 
-        model_card.layout.addWidget(model_label)
-        combo_row = QHBoxLayout()
-        combo_row.addStretch()
-        combo_row.addWidget(self.model_combo)
-        combo_row.addStretch()
-        model_card.layout.addLayout(combo_row)
+        self.status_dot = StatusDot()
 
-        model_card.layout.addWidget(self.local_engine)
-        content_layout.addWidget(model_card)
+        # Shows what "auto" actually resolved to after a model load, e.g.
+        # "turbo | cuda (float16)". Empty on the API backends.
+        self.resolved_label = ElidingLabel()
+        self.resolved_label.setObjectName("engineResolvedLabel")
+
+        self.cleanup_check = QCheckBox("AI cleanup")
+        self.cleanup_check.setObjectName("engineCleanupCheck")
+        self.cleanup_check.setToolTip(
+            "Clean up the transcript with an AI model after transcription "
+            "(punctuation, fillers, light ASR fixes)"
+        )
+
+        self.manage_models_button = QPushButton("Manage models…")
+        self.manage_models_button.setObjectName("engineManageButton")
+        self.manage_models_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.manage_models_button.setFlat(True)
+
+        footer_row = QHBoxLayout()
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(6)
+        footer_row.addWidget(self.status_dot)
+        footer_row.addWidget(self.resolved_label, stretch=1)
+        footer_row.addSpacing(6)
+        footer_row.addWidget(self.cleanup_check)
+        footer_row.addSpacing(6)
+        footer_row.addWidget(self.manage_models_button)
+        engine_layout.addLayout(footer_row)
+
+        content_layout.addWidget(self.engine_card)
 
         self._build_content_before_status(content_layout)
 
@@ -184,10 +223,9 @@ class TranscriptionTabBase(QWidget):
         """Insert tab-specific widgets between the status label and transcription card."""
 
     def _connect_signals(self):
-        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        self.model_combo.currentTextChanged.connect(self._on_backend_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
-        self.local_engine.manage_models_requested.connect(self.manage_models_requested)
-        self.local_engine.toggled.connect(self._on_engine_settings_toggled)
+        self.manage_models_button.clicked.connect(self.manage_models_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
         self.fixed_btn.toggled.connect(self._on_version_toggled)
         self.raw_btn.toggled.connect(self._on_version_toggled)
@@ -216,46 +254,79 @@ class TranscriptionTabBase(QWidget):
         else:
             self.transcript_text.setText(self._fixed_text)
 
-    def _on_model_changed(self, model_name: str):
-        self.current_model = model_name
-        self.model_changed.emit(model_name)
+    def _on_backend_changed(self, display_name: str):
+        self.current_model = display_name
+        self.model_changed.emit(display_name)
+
+    def choose_backend(self, display_name: str):
+        """Select a backend and announce it, as if the user picked it."""
+        if display_name == self.current_model:
+            return
+        self.model_combo.setCurrentText(display_name)
+
+    def current_backend(self) -> str:
+        """The selected backend's ``config.MODEL_CHOICES`` label."""
+        return self.current_model
+
+    def set_backend(self, display_name: str):
+        """Show a backend as selected without emitting ``model_changed``."""
+        index = self.model_combo.findText(display_name)
+        if index < 0:
+            return
+        self.model_combo.blockSignals(True)
+        self.model_combo.setCurrentIndex(index)
+        self.model_combo.blockSignals(False)
+        self.current_model = display_name
+
+    def set_backend_enabled(self, enabled: bool):
+        """Lock the backend choice, e.g. while recording."""
+        self.model_combo.setEnabled(enabled)
 
     def set_model_selection(self, model_value: str):
-        """Select a model by its internal backend value."""
+        """Select a backend by its internal value (e.g. ``local_whisper``)."""
         for display_name, internal_value in config.MODEL_VALUE_MAP.items():
             if internal_value == model_value:
-                index = self.model_combo.findText(display_name)
-                if index >= 0:
-                    self.model_combo.blockSignals(True)
-                    self.model_combo.setCurrentIndex(index)
-                    self.current_model = display_name
-                    self.model_combo.blockSignals(False)
+                self.set_backend(display_name)
                 break
 
     def set_status(self, status_text: str):
         self.status_label.setText(status_text)
 
-    def set_device_info(self, device_info: str):
+    def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         """Set the resolved-engine readout (e.g., 'base | cuda (float16)').
 
-        The text is shown inside the Local engine panel; the panel as a whole
-        is shown/hidden by set_local_engine_visible() based on the active
-        backend.
-
         Args:
-            device_info: Device information string to display.
+            device_info: Device information string to display. Empty clears the
+                line, which is what the API backends report.
+            ready: Whether the engine is loaded and usable. ``None`` leaves the
+                dots neutral, which is the honest reading before a first load.
         """
-        self.local_engine.set_resolved_info(device_info)
+        self.resolved_label.setText(device_info)
+        if ready is None:
+            status = EngineStatus.UNKNOWN
+        else:
+            status = EngineStatus.READY if ready else EngineStatus.ATTENTION
+        self.status_dot.set_status(status)
+        self._apply_backend_status(status)
+
+    def _apply_backend_status(self, status: EngineStatus):
+        self.model_combo.set_status(status)
 
     def set_local_engine_visible(self, visible: bool):
+        """Show or hide the Model/Device/Quant group.
+
+        The card keeps its footer either way, so the cleanup toggle and the
+        Model Manager link stay reachable on an API backend. The filler takes
+        half the freed room: enough for the longest backend name to stop
+        eliding, without one field spanning the whole card.
+
+        The status dots go with the group — they report on the local engine, and
+        an API backend has none to read.
+        """
         self.local_engine.setVisible(visible)
-
-    def _on_engine_settings_toggled(self, collapsed: bool, delta: int):
-        self.engine_settings_collapsed.emit(collapsed, delta)
-
-    def set_engine_settings_collapsed(self, collapsed: bool):
-        """Apply collapsed state without emitting (sync/restore)."""
-        self.local_engine.set_collapsed(collapsed, emit=False)
+        self._field_row.setStretch(self._field_filler_index, 0 if visible else 2)
+        self.status_dot.setVisible(visible)
+        self.model_combo.set_status_visible(visible)
 
     def _apply_transcription_stretch(self, collapsed: bool):
         if collapsed:

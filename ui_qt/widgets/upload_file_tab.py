@@ -297,7 +297,7 @@ class UploadFileTab(TranscriptionTabBase):
             self.clear_file()
             return
         self.file_info_card.set_transcribing(True)
-        self.model_combo.setEnabled(False)
+        self.set_backend_enabled(False)
         self.local_engine.set_busy(True)
         self.set_status("Transcribing...")
         duration = self._preview.duration_seconds if self._preview else 0.0
@@ -306,7 +306,7 @@ class UploadFileTab(TranscriptionTabBase):
     def set_transcript(self, text: str, raw=None):
         super().set_transcript(text, raw=raw)
         self.file_info_card.set_transcribing(False)
-        self.model_combo.setEnabled(True)
+        self.set_backend_enabled(True)
         self.local_engine.set_busy(False)
         stripped = (text or "").strip()
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not stripped.startswith("Error:")
@@ -325,7 +325,7 @@ class UploadFileTab(TranscriptionTabBase):
         self.file_info_card.set_transcribing(False)
         self.file_info_card.set_copy_enabled(False)
         self.drop_zone.show()
-        self.model_combo.setEnabled(True)
+        self.set_backend_enabled(True)
         self.local_engine.set_busy(False)
         self.set_status("Select an audio file to transcribe")
 

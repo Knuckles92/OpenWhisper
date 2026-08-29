@@ -290,8 +290,6 @@ class MainWindow(QMainWindow):
         # matching expand restores exactly that much (see _on_transcription_collapsed).
         self._collapse_freed_height = 0
 
-        self._engine_collapse_freed_height = 0
-
         self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
         self._transcription_tab_height = config.MAIN_WINDOW_DEFAULT_HEIGHT
 
@@ -395,7 +393,6 @@ class MainWindow(QMainWindow):
             tab.manage_models_requested.connect(
                 lambda: self.model_manager_requested.emit("downloads")
             )
-            tab.engine_settings_collapsed.connect(self._on_engine_settings_collapsed)
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
@@ -764,14 +761,10 @@ class MainWindow(QMainWindow):
     def _on_model_changed(self, model_name: str):
         self.current_model = model_name
 
-        # Sync the other tabs' combos without re-emitting the signal
+        # Sync the other tabs without re-emitting the signal
         for tab in self.transcription_tabs:
-            combo = tab.model_combo
-            if combo.currentText() != model_name:
-                combo.blockSignals(True)
-                combo.setCurrentText(model_name)
-                tab.current_model = model_name
-                combo.blockSignals(False)
+            if tab.current_backend() != model_name:
+                tab.set_backend(model_name)
 
         self._apply_local_engine_visibility(model_name)
 
@@ -817,9 +810,9 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.set_status(status_text)
         self.compact_controller.set_status(status_text)
 
-    def set_device_info(self, device_info: str):
+    def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         for tab in self.transcription_tabs:
-            tab.set_device_info(device_info)
+            tab.set_device_info(device_info, ready)
 
     def set_transcript(self, text: str, raw=None):
         self.quick_record_tab.set_transcript(text, raw=raw)
@@ -888,41 +881,6 @@ class MainWindow(QMainWindow):
                 target_height = current_height + restore
             elif current_height < config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT:
                 target_height = config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
-            else:
-                target_height = current_height
-            self._transcription_tab_height = target_height
-            self._animate_resize(self.width(), target_height)
-
-    def _on_engine_settings_collapsed(self, collapsed: bool, delta: int):
-        """Reclaim/restore window height when the Engine Settings panel toggles.
-
-        Keeps both tabs in the same collapsed state, then animates the window
-        height by the freed (or restored) body height so the change feels smooth.
-
-        Args:
-            collapsed: True if the panel was just collapsed, False if expanded.
-            delta: The body height that was hidden/shown, in pixels.
-        """
-        source = self.sender()
-        for tab in self.transcription_tabs:
-            if tab is not source:
-                tab.set_engine_settings_collapsed(collapsed)
-
-        current_height = self.height()
-        if collapsed:
-            if delta <= 0:
-                return
-            new_height = max(config.MAIN_WINDOW_MIN_HEIGHT, current_height - delta)
-            self._engine_collapse_freed_height = current_height - new_height
-            self._transcription_tab_height = new_height
-            self._animate_resize(self.width(), new_height)
-        else:
-            restore = self._engine_collapse_freed_height
-            self._engine_collapse_freed_height = 0
-            if restore > 0:
-                target_height = current_height + restore
-            elif delta > 0:
-                target_height = current_height + delta
             else:
                 target_height = current_height
             self._transcription_tab_height = target_height

@@ -391,6 +391,7 @@ class DummyUIController:
         self.is_recording = False
         self.statuses = []
         self.device_infos = []
+        self.device_ready_states = []
         self.engine_busy_states = []
         self.hotkeys = None
         self.refreshed_history = False
@@ -527,8 +528,9 @@ class DummyUIController:
     def set_status(self, status):
         self.statuses.append(status)
 
-    def set_device_info(self, device_info):
+    def set_device_info(self, device_info, ready=None):
         self.device_infos.append(device_info)
+        self.device_ready_states.append(ready)
 
     def set_engine_busy(self, busy):
         self.engine_busy_states.append(busy)

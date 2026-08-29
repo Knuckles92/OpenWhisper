@@ -515,13 +515,14 @@ class TranscriptionRuntime:
                 local_backend = self.controller.transcription_backends.get("local_whisper")
                 if local_backend and hasattr(local_backend, "device_info"):
                     self.controller.ui_controller.set_device_info(
-                        local_backend.device_info
+                        local_backend.device_info,
+                        local_backend.is_available(),
                     )
                 # A missing local model needs the download-consent flow the
                 # moment the user selects this backend.
                 self.controller.ensure_local_model_available()
             else:
-                self.controller.ui_controller.set_device_info("")
+                self.controller.ui_controller.set_device_info("", None)
 
             # Streaming preview requires Local Whisper; rebuild when backend changes.
             self.controller.streaming_runtime.reconfigure_streaming()

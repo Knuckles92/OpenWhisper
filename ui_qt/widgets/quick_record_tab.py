@@ -88,7 +88,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.record_button.setText("Recording...")
             self.stop_button.set_active(True)
             self.cancel_button.set_active(True)
-            self.model_combo.setEnabled(False)
+            self.set_backend_enabled(False)
             self.local_engine.set_busy(True)
             self.status_label.setText("Recording in progress...")
         else:
@@ -96,7 +96,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.record_button.setText("Start Recording")
             self.stop_button.set_active(False)
             self.cancel_button.set_active(False)
-            self.model_combo.setEnabled(True)
+            self.set_backend_enabled(True)
             self.local_engine.set_busy(False)
             self.status_label.setText("Ready to record")
 

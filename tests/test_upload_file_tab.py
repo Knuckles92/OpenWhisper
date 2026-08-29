@@ -9,6 +9,8 @@ from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 from services.audio_processor import AudioFilePreview
+from services.settings import SettingsKey
+from ui_qt.widgets.engine_field import EngineStatus
 from ui_qt.widgets.upload_file_tab import UploadFileTab, DropZoneWidget, FileInfoCard
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
@@ -196,48 +198,250 @@ class TestUploadFileTab:
         assert tab.content_layout.count() > 0
         assert tab.drop_zone.minimumHeight() == 150
 
-    def test_expand_and_collapse_sections_with_scroll_area(self):
-        """Toggling sections maintains clean layout without errors."""
+    def test_expand_and_collapse_transcription_with_scroll_area(self):
+        """Toggling the transcript maintains clean layout without errors."""
         tab = UploadFileTab()
         tab.resize(605, 580)
         tab.show()
         QApplication.processEvents()
 
-        # Expand engine settings
-        tab.set_engine_settings_collapsed(False)
-        QApplication.processEvents()
-        assert not tab.local_engine.is_collapsed
+        engine_height = tab.engine_card.height()
 
-        # Expand transcription
         tab.set_transcription_collapsed(False)
         QApplication.processEvents()
         assert not tab.is_transcription_collapsed()
 
-        # Collapse again
-        tab.set_engine_settings_collapsed(True)
         tab.set_transcription_collapsed(True)
         QApplication.processEvents()
-        assert tab.local_engine.is_collapsed
         assert tab.is_transcription_collapsed()
+        assert tab.engine_card.height() == engine_height
+
+
+class TestEngineCard:
+    def test_card_height_is_stable_across_backends(self):
+        """Switching backends must not resize the card, and so not the window."""
+        tab = UploadFileTab()
+        tab.resize(605, 580)
+        tab.show()
+        QApplication.processEvents()
+
+        local_height = tab.engine_card.height()
+
+        tab.set_local_engine_visible(False)
+        QApplication.processEvents()
+        assert tab.engine_card.height() == local_height
+        assert not tab.local_engine.isVisible()
+
+        tab.set_local_engine_visible(True)
+        QApplication.processEvents()
+        assert tab.engine_card.height() == local_height
+        assert tab.local_engine.isVisible()
+
+    def test_cleanup_toggle_stays_reachable_on_api_backend(self):
+        """AI cleanup applies to every backend, so it outlives the local fields."""
+        tab = UploadFileTab()
+        tab.show()
+        tab.set_local_engine_visible(False)
+        QApplication.processEvents()
+
+        assert tab.cleanup_check.isVisible()
+        assert tab.manage_models_button.isVisible()
+
+    def test_card_does_not_raise_the_content_width_floor(self):
+        """Four fields in one row have to fit the column's floor, not widen it.
+
+        Asserted against the column rather than a pixel budget because the
+        fields size to their text, which varies with the system font.
+        """
+        tab = UploadFileTab()
+        column = tab.engine_card.parentWidget()
+
+        assert tab.engine_card.minimumSizeHint().width() <= column.minimumWidth()
+
+    def test_resolved_readout_clears_for_api_backends(self):
+        tab = UploadFileTab()
+        tab.set_device_info("turbo | cuda (float16)", True)
+        assert tab.resolved_label.text() == "turbo | cuda (float16)"
+
+        tab.set_device_info("")
+        assert tab.resolved_label.text() == ""
+
+    def test_backend_reflects_selection_without_emitting(self):
+        tab = UploadFileTab()
+        announced = []
+        tab.model_changed.connect(announced.append)
+
+        tab.set_backend("API: Whisper")
+        assert tab.current_backend() == "API: Whisper"
+        assert tab.model_combo.currentText() == "API: Whisper"
+        assert announced == []
+
+        tab.choose_backend("Local Whisper")
+        assert announced == ["Local Whisper"]
+
+    def test_choosing_the_active_backend_is_a_no_op(self):
+        tab = UploadFileTab()
+        tab.set_backend("Local Whisper")
+        announced = []
+        tab.model_changed.connect(announced.append)
+
+        tab.choose_backend("Local Whisper")
+        assert announced == []
+
+    def test_backend_locks_while_transcribing(self):
+        tab = UploadFileTab()
+        tab.set_backend_enabled(False)
+        assert not tab.model_combo.isEnabled()
+
+        tab.set_backend_enabled(True)
+        assert tab.model_combo.isEnabled()
+
+
+class TestEngineStatusDots:
+    """The dots claim the engine is usable, so they must follow real state."""
+
+    def test_ready_engine_reads_green(self):
+        tab = UploadFileTab()
+        tab.set_device_info("turbo | cuda (float16)", True)
+        assert tab.status_dot.status() is EngineStatus.READY
+
+    def test_unusable_engine_reads_as_attention(self):
+        """A missing model is the case the dot exists for."""
+        tab = UploadFileTab()
+        tab.set_device_info("large-v3 | not downloaded", False)
+        assert tab.status_dot.status() is EngineStatus.ATTENTION
+
+    def test_unreported_engine_stays_neutral(self):
+        """Nothing has loaded yet at startup; green would be a guess."""
+        tab = UploadFileTab()
+        tab.set_device_info("turbo | cuda (float16)", True)
+        tab.set_device_info("Not initialized")
+        assert tab.status_dot.status() is EngineStatus.UNKNOWN
+
+    def test_dots_go_with_the_local_engine(self):
+        """An API backend has no local engine for the dots to report on."""
+        tab = UploadFileTab()
+        tab.show()
+
+        tab.set_local_engine_visible(False)
+        QApplication.processEvents()
+        assert not tab.status_dot.isVisible()
+
+        tab.set_local_engine_visible(True)
+        QApplication.processEvents()
+        assert tab.status_dot.isVisible()
+
+
+class TestLocalEngineFields:
+    """Three fields, each of which has to reach settings and trigger a reload."""
+
+    def _controls(self, saved):
+        from ui_qt.widgets.local_engine_controls import LocalEngineControls
+
+        stored = {
+            SettingsKey.WHISPER_MODEL: "base",
+            SettingsKey.WHISPER_DEVICE: "auto",
+            SettingsKey.WHISPER_COMPUTE_TYPE: "auto",
+        }
+        with patch(
+            "ui_qt.widgets.local_engine_controls.settings_manager"
+        ) as manager:
+            manager.load_all_settings.side_effect = lambda: dict(stored)
+            manager.save_all_settings.side_effect = saved.append
+            controls = LocalEngineControls()
+        return controls
+
+    @pytest.mark.parametrize(
+        "field, key, value",
+        [
+            ("model_combo", SettingsKey.WHISPER_MODEL, "large-v3"),
+            ("device_combo", SettingsKey.WHISPER_DEVICE, "cpu"),
+            ("compute_combo", SettingsKey.WHISPER_COMPUTE_TYPE, "int8"),
+        ],
+    )
+    def test_changing_a_field_persists_it_and_asks_for_a_reload(
+        self, field, key, value
+    ):
+        saved = []
+        controls = self._controls(saved)
+        reloads = []
+        controls.engine_settings_changed.connect(lambda: reloads.append(True))
+
+        with patch(
+            "ui_qt.widgets.local_engine_controls.settings_manager"
+        ) as manager:
+            manager.load_all_settings.return_value = {}
+            manager.save_all_settings.side_effect = saved.append
+            getattr(controls, field).setCurrentText(value)
+
+        assert saved[-1][key] == value
+        assert reloads == [True]
+
+    def test_a_field_change_persists_all_three_values(self):
+        """The reload reads settings, so a partial write would revert the rest."""
+        saved = []
+        controls = self._controls(saved)
+        controls.set_values("small", "cuda", "int8")
+
+        with patch(
+            "ui_qt.widgets.local_engine_controls.settings_manager"
+        ) as manager:
+            manager.load_all_settings.return_value = {}
+            manager.save_all_settings.side_effect = saved.append
+            controls.model_combo.setCurrentText("medium")
+
+        assert saved[-1] == {
+            SettingsKey.WHISPER_MODEL: "medium",
+            SettingsKey.WHISPER_DEVICE: "cuda",
+            SettingsKey.WHISPER_COMPUTE_TYPE: "int8",
+        }
+
+    def test_set_values_is_silent(self):
+        controls = self._controls([])
+        reloads = []
+        controls.engine_settings_changed.connect(lambda: reloads.append(True))
+
+        controls.set_values("small", "cuda", "float16")
+        assert reloads == []
+        assert controls.model_combo.currentText() == "small"
+        assert controls.device_combo.currentText() == "cuda"
+        assert controls.compute_combo.currentText() == "float16"
+
+    def test_busy_locks_every_field(self):
+        controls = self._controls([])
+        fields = (
+            controls.model_combo,
+            controls.device_combo,
+            controls.compute_combo,
+        )
+
+        controls.set_busy(True)
+        assert not any(field.isEnabled() for field in fields)
+
+        controls.set_busy(False)
+        assert all(field.isEnabled() for field in fields)
 
 
 class TestMainWindowUploadTabIntegration:
     @patch.object(TranscriptionTabBase, "load_cleanup_setting")
-    def test_main_window_upload_tab_at_minimum_height(self, _mock_setting):
+    def test_transcription_tabs_do_not_scroll_at_minimum_height(self, _mock_setting):
         from ui_qt.main_window import MainWindow
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
         from config import config
 
         window = MainWindow()
         window.resize(config.MAIN_WINDOW_DEFAULT_WIDTH, config.MAIN_WINDOW_MIN_HEIGHT)
-        window.tabbed_content.set_current_index(TabbedContentWidget.TAB_UPLOAD_FILE)
         window.show()
         QApplication.processEvents()
 
-        upload_tab = window.upload_file_tab
-        assert upload_tab.isVisibleTo(window)
-        assert upload_tab.scroll_area.isVisibleTo(upload_tab)
-        assert not upload_tab.drop_zone.isHidden()
+        for index, tab in (
+            (TabbedContentWidget.TAB_QUICK_RECORD, window.quick_record_tab),
+            (TabbedContentWidget.TAB_UPLOAD_FILE, window.upload_file_tab),
+        ):
+            window.tabbed_content.set_current_index(index)
+            QApplication.processEvents()
+            assert tab.isVisibleTo(window)
+            assert tab.scroll_area.verticalScrollBar().maximum() == 0
 
         window._force_quit = True
         window.close()

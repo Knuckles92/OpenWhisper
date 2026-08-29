@@ -19,6 +19,7 @@ from ui_qt.widgets.history_sidebar import (
 )
 from ui_qt.widgets.past_meetings_panel import PastMeetingItem, PastMeetingsPanel
 from ui_qt.widgets.stats_display import TranscriptionStatsWidget
+from ui_qt.widgets.engine_field import EngineStatus, StatusDot, engine_combo, engine_field
 from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.model_row_widget import ModelRowWidget
@@ -58,6 +59,10 @@ __all__ = [
     "PastMeetingsPanel",
     "TranscriptionStatsWidget",
     "CollapsibleSectionToggle",
+    "EngineStatus",
+    "StatusDot",
+    "engine_combo",
+    "engine_field",
     "LocalEngineControls",
     "LocalModelPicker",
     "ModelRowWidget",

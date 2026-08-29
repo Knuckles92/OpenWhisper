@@ -44,7 +44,7 @@ class _FakeUIController:
     def show_main_window(self):
         self.show_main_window_called = True
 
-    def set_device_info(self, device_info):
+    def set_device_info(self, device_info, ready=None):
         self.device_info = device_info
 
     def show_apply_error_if_any(self):

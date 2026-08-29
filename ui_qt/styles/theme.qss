@@ -1221,6 +1221,133 @@ QWidget#controlPanel {
     padding: 20px;
 }
 
+/* Engine card on Quick Record / Upload File. Four labeled fields across the
+   full width, then a footer line with the resolved engine and the two controls
+   that apply to every backend. */
+QFrame#engineCard {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 12px;
+}
+
+QWidget#engineFieldGroup {
+    background-color: transparent;
+}
+
+QLabel#engineFieldLabel {
+    color: #8e8e93;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+/* Recessed against the card. The global combo fill is the same color as the
+   card, which would leave a field readable only by its 1px border. */
+QComboBox#engineField,
+QComboBox#engineFieldPrimary {
+    background-color: #1c1c1e;
+    color: #f5f5f7;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 5px 4px 5px 10px;
+    font-size: 12px;
+    min-height: 22px;
+}
+
+/* Extra left padding clears the status dot StatusFieldCombo parents to itself;
+   the API backends have no local engine to report on, so the dot goes and the
+   value moves back to the normal indent. */
+QComboBox#engineFieldPrimary {
+    font-weight: 600;
+    padding-left: 26px;
+}
+
+QComboBox#engineFieldPrimary[dot="false"] {
+    padding-left: 10px;
+}
+
+QComboBox#engineField:hover,
+QComboBox#engineFieldPrimary:hover {
+    border-color: #48484a;
+}
+
+QComboBox#engineField:focus,
+QComboBox#engineFieldPrimary:focus,
+QComboBox#engineField:on,
+QComboBox#engineFieldPrimary:on {
+    border-color: #0a84ff;
+}
+
+QComboBox#engineField:disabled,
+QComboBox#engineFieldPrimary:disabled {
+    color: #636366;
+    background-color: #232325;
+    border-color: #2f2f31;
+}
+
+QComboBox#engineField::drop-down,
+QComboBox#engineFieldPrimary::drop-down {
+    border: none;
+    background-color: transparent;
+    width: 20px;
+}
+
+/* The global fallback draws its arrow from two borders, which reads as a stray
+   corner mark at this field size. */
+QComboBox#engineField::down-arrow,
+QComboBox#engineFieldPrimary::down-arrow {
+    image: url(ui_qt/assets/tabler/chevron-down-gray.svg);
+    border: none;
+    width: 14px;
+    height: 14px;
+    margin-right: 5px;
+}
+
+/* StatusDot styles itself — see its docstring; one instance lives inside a
+   QComboBox, which an application stylesheet cannot reach. */
+
+QLabel#engineResolvedLabel {
+    color: #8e8e93;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+QCheckBox#engineCleanupCheck {
+    color: #f5f5f7;
+    font-size: 11px;
+    spacing: 6px;
+    background-color: transparent;
+}
+
+QCheckBox#engineCleanupCheck::indicator {
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+    border: 1px solid #48484a;
+    background-color: #1c1c1e;
+}
+
+QCheckBox#engineCleanupCheck::indicator:checked {
+    background-color: #0a84ff;
+    border-color: #0a84ff;
+    image: url(ui_qt/assets/check.svg);
+}
+
+QCheckBox#engineCleanupCheck::indicator:hover {
+    border-color: #0a84ff;
+}
+
+QPushButton#engineManageButton {
+    color: #0a84ff;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    padding: 0 2px;
+}
+
+QPushButton#engineManageButton:hover {
+    text-decoration: underline;
+}
+
 /* Content Tab Bar */
 QTabBar#contentTabBar::tab {
     background-color: transparent;

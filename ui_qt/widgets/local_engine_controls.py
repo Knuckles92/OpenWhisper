@@ -1,310 +1,64 @@
-"""Local Whisper controls that persist settings and request controller reloads."""
+"""Local Whisper fields that persist settings and request controller reloads."""
 import logging
 import sys
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox
-)
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QWidget, QHBoxLayout
+from PyQt6.QtCore import pyqtSignal
 
 from config import config
 from services.settings import SettingsKey, settings_manager
-from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
-from ui_qt.utils.collapse_animation import (
-    UNLIMITED_HEIGHT,
-    create_max_height_animation,
-    run_max_height_animation,
-)
+from ui_qt.widgets.engine_field import engine_combo, engine_field
 
 logger = logging.getLogger(__name__)
 
 
 class LocalEngineControls(QWidget):
-    """Inline model/device/quant controls for the local Whisper backend.
+    """The Model / Device / Quant columns of the engine card's field row.
 
     Persists changes to settings and emits ``engine_settings_changed`` so the
     controller can reload the backend. Instantiate one per tab and keep them in
-    sync via :meth:`set_values` (which blocks signals during the update).
+    sync via :meth:`set_values`, which blocks signals during the update.
+
+    Only meaningful for the Local Whisper backend; the owning tab hides the
+    whole group on an API backend rather than disabling the three fields.
     """
 
     #: Emitted after a *user-initiated* change has been persisted to settings.
     engine_settings_changed = pyqtSignal()
 
-    #: Emitted when the user clicks "Manage models…" (opens the Model Manager).
-    manage_models_requested = pyqtSignal()
-
-    #: Emitted when the collapsed state changes (True == collapsed, delta in px).
-    toggled = pyqtSignal(bool, int)
-
-    _EXPANDED_MAX_HEIGHT = UNLIMITED_HEIGHT
-
     COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
-
-    _FIELD_LABEL_STYLE = (
-        "color: #8e8e93; font-size: 10px; background: transparent; border: none;"
-    )
-    _RESOLVED_STYLE = (
-        "color: #8e8e93; margin-top: 2px; background: transparent; border: none;"
-    )
-    _MANAGE_BUTTON_STYLE = (
-        "QPushButton { color: #0a84ff; background: transparent; border: none; "
-        "font-size: 10px; padding: 2px; }"
-        "QPushButton:hover { text-decoration: underline; }"
-    )
-    _COMBO_STYLE = (
-        "QComboBox { background-color: #2c2c2e; color: #f5f5f7; "
-        "border: 1px solid #3a3a3c; border-radius: 6px; padding: 2px 8px; }"
-        "QComboBox:hover { border-color: #0a84ff; }"
-        "QComboBox::drop-down { border: none; background: transparent; }"
-        "QComboBox QAbstractItemView { background-color: #2c2c2e; color: #f5f5f7; "
-        "border: 1px solid #3a3a3c; selection-background-color: #0a84ff; outline: none; }"
-    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._collapsed = False
-        self._content_height = 0
         self._setup_ui()
         self.load_from_settings()
         self._connect_signals()
-        self.set_collapsed(True, emit=False)
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(6)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        self.section_toggle = CollapsibleSectionToggle(
-            "Engine Settings",
-            prefix="⚙ ",
-            expanded=False,
-            expand_tooltip="Show model, device, and quantization settings",
-            collapse_tooltip="Hide engine settings",
-        )
-        header.addStretch()
-        header.addWidget(self.section_toggle)
-        header.addStretch()
-        layout.addLayout(header)
-
-        self._content_widget = QWidget()
-        content_layout = QVBoxLayout(self._content_widget)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(6)
-
-        self.body = QWidget()
-        body_layout = QHBoxLayout(self.body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(10)
-
-        self.model_combo = self._make_combo(config.WHISPER_MODEL_CHOICES)
+        self.model_combo = engine_combo(config.WHISPER_MODEL_CHOICES)
         # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
         device_choices = (
             ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
         )
-        self.device_combo = self._make_combo(device_choices)
-        self.compute_combo = self._make_combo(self.COMPUTE_CHOICES)
+        self.device_combo = engine_combo(device_choices)
+        self.compute_combo = engine_combo(self.COMPUTE_CHOICES)
 
-        body_layout.addWidget(self._labeled("Model", self.model_combo), stretch=2)
-        body_layout.addWidget(self._labeled("Device", self.device_combo), stretch=1)
-        body_layout.addWidget(self._labeled("Quant", self.compute_combo), stretch=1)
-        self.body.setMaximumWidth(480)
-
-        body_row = QHBoxLayout()
-        body_row.setContentsMargins(0, 0, 0, 0)
-        body_row.addStretch()
-        body_row.addWidget(self.body)
-        body_row.addStretch()
-        content_layout.addLayout(body_row)
-
-        # AI cleanup toggle lives inside this panel; persistence and settings
-        # sync stay with TranscriptionTabBase, which exposes it as its own
-        # cleanup_check attribute.
-        self.cleanup_check = QCheckBox("AI cleanup")
-        self.cleanup_check.setFont(QFont("Segoe UI", 10))
-        self.cleanup_check.setToolTip(
-            "Clean up the transcript with an AI model after transcription "
-            "(punctuation, fillers, light ASR fixes)"
-        )
-        cleanup_row = QHBoxLayout()
-        cleanup_row.setContentsMargins(0, 0, 0, 0)
-        cleanup_row.addStretch()
-        cleanup_row.addWidget(self.cleanup_check)
-        cleanup_row.addStretch()
-        content_layout.addLayout(cleanup_row)
-
-        self.resolved_label = QLabel("")
-        self.resolved_label.setFont(QFont("Segoe UI", 9))
-        self.resolved_label.setStyleSheet(self._RESOLVED_STYLE)
-        self.resolved_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(self.resolved_label)
-
-        self.manage_models_button = QPushButton("Manage models…")
-        self.manage_models_button.setStyleSheet(self._MANAGE_BUTTON_STYLE)
-        self.manage_models_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.manage_models_button.setFlat(True)
-        manage_row = QHBoxLayout()
-        manage_row.setContentsMargins(0, 0, 0, 0)
-        manage_row.addStretch()
-        manage_row.addWidget(self.manage_models_button)
-        manage_row.addStretch()
-        content_layout.addLayout(manage_row)
-
-        layout.addWidget(self._content_widget)
-
-    def _make_combo(self, items) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setMinimumHeight(28)
-        combo.setFont(QFont("Segoe UI", 10))
-        combo.setStyleSheet(self._COMBO_STYLE)
-        return combo
-
-    def _labeled(self, text: str, combo: QComboBox) -> QWidget:
-        wrapper = QWidget()
-        col = QVBoxLayout(wrapper)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(2)
-        label = QLabel(text)
-        label.setStyleSheet(self._FIELD_LABEL_STYLE)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(label)
-        col.addWidget(combo)
-        return wrapper
+        # Matches the Backend field's share, so Model reads as its peer and the
+        # two runtime knobs stay visibly secondary.
+        layout.addWidget(engine_field("Model", self.model_combo), stretch=2)
+        layout.addWidget(engine_field("Device", self.device_combo), stretch=1)
+        layout.addWidget(engine_field("Quant", self.compute_combo), stretch=1)
 
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_changed)
         self.device_combo.currentTextChanged.connect(self._on_changed)
         self.compute_combo.currentTextChanged.connect(self._on_changed)
-        self.manage_models_button.clicked.connect(self.manage_models_requested)
-        self.section_toggle.toggled_expanded.connect(self._on_section_toggled)
 
-    @property
-    def is_collapsed(self) -> bool:
-        """Whether the settings body is currently collapsed."""
-        return self._collapsed
-
-    @property
-    def content_height(self) -> int:
-        """Height of the body captured at the last collapse (resize delta)."""
-        return self._content_height
-
-    def _on_section_toggled(self, expanded: bool):
-        self.set_collapsed(not expanded)
-
-    def _content_natural_height(self) -> int:
-        self._content_widget.setVisible(True)
-        self._content_widget.adjustSize()
-        return max(
-            self._content_widget.sizeHint().height(),
-            self._content_widget.minimumSizeHint().height(),
-        )
-
-    def _header_block_height(self) -> int:
-        margins = self.layout().contentsMargins()
-        return (
-            margins.top()
-            + self.section_toggle.sizeHint().height()
-            + margins.bottom()
-        )
-
-    def _expanded_minimum_height(self) -> int:
-        return (
-            self._header_block_height()
-            + self.layout().spacing()
-            + self._content_natural_height()
-        )
-
-    def _collapsed_minimum_height(self) -> int:
-        return self._header_block_height()
-
-    def _measure_collapse_delta(self) -> int:
-        return max(
-            self._expanded_minimum_height() - self._collapsed_minimum_height(),
-            1,
-        )
-
-    def _apply_content_size_policy(self, collapsed: bool):
-        self.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
-        self._content_widget.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
-
-        if collapsed:
-            self._content_widget.setMinimumHeight(0)
-            self.setMinimumHeight(self._collapsed_minimum_height())
-        else:
-            content_height = self._content_natural_height()
-            self._content_widget.setMinimumHeight(content_height)
-            self.setMinimumHeight(self._expanded_minimum_height())
-
-        self.updateGeometry()
-
-    def set_collapsed(self, collapsed: bool, emit: bool = True):
-        """Collapse or expand the settings body.
-
-        Args:
-            collapsed: True to hide the body, False to show it.
-            emit: Whether to emit the ``toggled`` signal (False during tab sync).
-        """
-        if collapsed == self._collapsed:
-            return
-
-        delta = self._measure_collapse_delta()
-        if collapsed:
-            self._content_height = delta
-        elif self._content_height <= 0:
-            self._content_height = delta
-
-        self._collapsed = collapsed
-        self.section_toggle.set_expanded(not collapsed, emit=False)
-
-        if emit:
-            self.toggled.emit(collapsed, self._content_height)
-            self._animate_content_visibility(collapsed)
-        else:
-            self._apply_collapsed_immediate(collapsed)
-
-    def _apply_collapsed_immediate(self, collapsed: bool):
-        if hasattr(self, "_content_anim") and self._content_anim is not None:
-            self._content_anim.stop()
-        self._content_widget.setVisible(not collapsed)
-        self._content_widget.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
-        self._apply_content_size_policy(collapsed)
-
-    def _content_animation(self):
-        if not hasattr(self, "_content_anim") or self._content_anim is None:
-            self._content_anim = create_max_height_animation(self._content_widget)
-        return self._content_anim
-
-    def _animate_content_visibility(self, collapsed: bool):
-        natural = self._content_natural_height()
-        self._content_widget.setVisible(True)
-        self.setMinimumHeight(0)
-        self.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
-        self._content_widget.setMinimumHeight(0)
-
-        if collapsed:
-            start = self._content_widget.height() or natural
-            end = 0
-        else:
-            start = 0
-            end = natural
-
-        def on_finished():
-            self._content_widget.setMaximumHeight(self._EXPANDED_MAX_HEIGHT)
-            if collapsed:
-                self._content_widget.setVisible(False)
-            self._apply_content_size_policy(collapsed)
-
-        run_max_height_animation(
-            self._content_animation(),
-            start=start,
-            end=end,
-            on_finished=on_finished,
-        )
-
-    def _on_changed(self, _text: str):
+    def _on_changed(self, _value: str):
         settings = settings_manager.load_all_settings()
         settings[SettingsKey.WHISPER_MODEL] = self.model_combo.currentText()
         settings[SettingsKey.WHISPER_DEVICE] = self.device_combo.currentText()
@@ -319,7 +73,7 @@ class LocalEngineControls(QWidget):
         self.engine_settings_changed.emit()
 
     def load_from_settings(self):
-        """Populate combos from the persisted settings (no signal emitted)."""
+        """Populate the fields from persisted settings (no signal emitted)."""
         settings = settings_manager.load_all_settings()
         self.set_values(
             settings.get(SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL),
@@ -329,27 +83,16 @@ class LocalEngineControls(QWidget):
 
     def set_values(self, model: str, device: str, compute: str):
         """Reflect values without emitting signals."""
-        for combo, value, fallback in (
-            (self.model_combo, model, config.DEFAULT_WHISPER_MODEL),
-            (self.device_combo, device, "auto"),
-            (self.compute_combo, compute, "auto"),
+        for combo, value in (
+            (self.model_combo, model or config.DEFAULT_WHISPER_MODEL),
+            (self.device_combo, device or "auto"),
+            (self.compute_combo, compute or "auto"),
         ):
             combo.blockSignals(True)
-            self._select(combo, value, fallback)
+            combo.setCurrentText(value)
             combo.blockSignals(False)
 
-    def set_resolved_info(self, info: str):
-        self.resolved_label.setText(info)
-
     def set_busy(self, busy: bool):
-        """Disable combos while a reload is in flight or during recording."""
+        """Disable the fields while a reload is in flight or during recording."""
         for combo in (self.model_combo, self.device_combo, self.compute_combo):
             combo.setEnabled(not busy)
-
-    @staticmethod
-    def _select(combo: QComboBox, value: str, fallback: str = None):
-        index = combo.findText(value)
-        if index < 0 and fallback is not None:
-            index = combo.findText(fallback)
-        if index >= 0:
-            combo.setCurrentIndex(index)

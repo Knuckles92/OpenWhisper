@@ -268,23 +268,26 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_QUICK_RECORD
         )
-        self.window.resize(605, 580)
+        # A collapsed transcript clamps the window to this height, so it is the
+        # only resting height the assertions below can expect.
+        resting_height = config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
+        self.window.resize(config.MAIN_WINDOW_DEFAULT_WIDTH, resting_height)
         self._settle()
-        self.assertEqual(self.window.height(), 580)
+        self.assertEqual(self.window.height(), resting_height)
 
         # Switch to Meeting Mode
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_MEETING_MODE
         )
         self._settle()
-        self.assertNotEqual(self.window.height(), 580)
+        self.assertNotEqual(self.window.height(), resting_height)
 
         # Switch back to Quick Record
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_QUICK_RECORD
         )
         self._settle()
-        self.assertEqual(self.window.height(), 580)
+        self.assertEqual(self.window.height(), resting_height)
 
     def test_step_rows_are_inset_from_the_list_edges(self):
         """Step rows keep padding on both sides instead of touching the border."""

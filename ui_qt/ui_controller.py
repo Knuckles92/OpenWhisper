@@ -378,8 +378,8 @@ class UIController(QObject):
     def set_transcript(self, text: str, raw=None):
         self.transcription_received.emit(text, raw)
 
-    def set_device_info(self, device_info: str):
-        self.main_window.set_device_info(device_info)
+    def set_device_info(self, device_info: str, ready: Optional[bool] = None):
+        self.main_window.set_device_info(device_info, ready)
 
     def set_engine_busy(self, busy: bool):
         """Disable/enable the inline local-engine combos during a reload.
@@ -708,7 +708,7 @@ class UIController(QObject):
         dialog.activateWindow()
 
     def select_transcription_backend(self, display_name: str) -> None:
-        """Select a dictation backend through the main-window combo path.
+        """Select a dictation backend through the main-window engine-bar path.
 
         Args:
             display_name: A ``config.MODEL_CHOICES`` label such as
@@ -717,10 +717,7 @@ class UIController(QObject):
         tabs = getattr(self.main_window, "transcription_tabs", None)
         if not display_name or not tabs:
             return
-        tab = tabs[0]
-        if tab.model_combo.currentText() == display_name:
-            return
-        tab.model_combo.setCurrentText(display_name)
+        tabs[0].choose_backend(display_name)
 
     def _on_manager_runtime_changed(self) -> None:
         self.refresh_local_engine_controls()

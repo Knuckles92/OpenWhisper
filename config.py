@@ -167,11 +167,14 @@ class AppConfig:
 
     # Main window sizing
     MAIN_WINDOW_MIN_WIDTH: int = 500
-    # Lowered so the window can shrink smoothly once the transcription box is
-    # collapsed; the layout's own minimum still governs the expanded state.
-    MAIN_WINDOW_MIN_HEIGHT: int = 460
+    # The always-visible engine fields make the collapsed transcription pages
+    # 532px tall at their largest. Keep a small buffer so saved/manual geometry
+    # cannot reopen either page with a vertical scrollbar.
+    MAIN_WINDOW_MIN_HEIGHT: int = 540
     MAIN_WINDOW_DEFAULT_WIDTH: int = 605
-    MAIN_WINDOW_DEFAULT_HEIGHT: int = 580
+    # Sized so neither transcription tab needs a scrollbar at rest while still
+    # keeping the collapsed workspace compact.
+    MAIN_WINDOW_DEFAULT_HEIGHT: int = 560
     MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24

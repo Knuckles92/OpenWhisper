@@ -153,6 +153,26 @@ class TestMainWindowCompactMode:
         assert self.window.height() == config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
         assert self.window.width() == saved_geometry["width"]
 
+    def test_restore_clamps_short_saved_geometry_to_scroll_free_height(self):
+        """An older saved size cannot reopen the full UI with a scrollbar."""
+        saved_geometry = {
+            "x": 10,
+            "y": 10,
+            "width": config.MAIN_WINDOW_DEFAULT_WIDTH,
+            "height": 500,
+            "format": self.window._geometry_format,
+            "history_expanded": False,
+        }
+        self.mock_get_setting.side_effect = (
+            lambda key, default=None: saved_geometry
+            if key == SettingsKey.WINDOW_GEOMETRY
+            else default
+        )
+
+        self.window._restore_window_geometry()
+
+        assert self.window.height() == config.MAIN_WINDOW_MIN_HEIGHT
+
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""
         from PyQt6.QtCore import QRect
@@ -179,5 +199,4 @@ class TestMainWindowCompactMode:
         before = self.window.height()
         self.window._on_sidebar_width_animated(380)
         assert self.window.height() == before
-
 
