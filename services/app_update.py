@@ -6,8 +6,7 @@ semver against the latest stable tag; git commit distance is ignored.
 
 Validated HKCU Windows installs may hand a verified ``tar.xz`` to
 ``OpenWhisperUpdater.exe``; other Windows installs use the setup exe. Native
-Debian installs may download a verified ``.deb`` for the desktop package
-installer to open. Source and git checkouts are notify-only.
+Debian installs, source copies, and git checkouts are notify-only.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import ipaddress
 import json
 import logging
 import os
-import platform
 import re
 import stat
 import subprocess
@@ -53,7 +51,6 @@ from services.settings import (
 from services.update_contract import (
     ApplyMode,
     archive_asset_name,
-    deb_asset_name,
     encode_native_result,
     setup_asset_name,
     updates_root,
@@ -79,8 +76,6 @@ _NETWORK_TIMEOUT_S: Final[int] = 30
 _CHUNK_BYTES: Final[int] = 1 << 20
 _MAX_ASSET_BYTES: Final[int] = 2 * 1024 * 1024 * 1024
 _DOWNLOAD_KEEP_WINDOW_S: Final[int] = 30
-_DEB_KEEP_WINDOW_S: Final[int] = 24 * 60 * 60
-_DEB_DOWNLOAD_DIRNAME: Final[str] = "packages"
 _MAX_REDIRECTS: Final[int] = 5
 _GITHUB_RELEASE_ASSET_HOSTS: Final[Tuple[str, ...]] = (
     "release-assets.githubusercontent.com",
@@ -138,25 +133,11 @@ class ReleaseInfo:
     notes: str
     setup_asset: Optional[ReleaseAsset] = None
     native_asset: Optional[ReleaseAsset] = None
-    deb_asset: Optional[ReleaseAsset] = None
 
     @property
     def asset(self) -> Optional[ReleaseAsset]:
         """Preferred download for size display: native archive, else setup."""
         return self.native_asset or self.setup_asset
-
-
-@dataclass(frozen=True)
-class LinuxPackageHandoff:
-    """Verified Debian package and its post-verification file identity."""
-
-    path: str
-    name: str
-    size_bytes: int
-    sha256: str
-    device: int
-    inode: int
-    mtime_ns: int
 
 
 @dataclass(frozen=True)
@@ -347,49 +328,6 @@ def _asset_ready(asset: Optional[ReleaseAsset]) -> bool:
     return bool(asset and asset.url and asset.sha256 and asset.size_bytes > 0)
 
 
-def _dpkg_openwhisper_is_installed() -> bool:
-    """Return whether dpkg owns the supported amd64 OpenWhisper package."""
-    try:
-        completed = subprocess.run(
-            [
-                "dpkg-query",
-                "-W",
-                "-f=${Status}\t${Architecture}\n",
-                "openwhisper",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0 and completed.stdout.strip() == (
-        "install ok installed\tamd64"
-    )
-
-
-def linux_package_install_eligible(
-    *,
-    app_dir: Optional[str] = None,
-    package_registered: Optional[bool] = None,
-    machine: Optional[str] = None,
-) -> bool:
-    """Authorize handoff only from the package-manager-owned amd64 install."""
-    architecture = (machine if machine is not None else platform.machine()).lower()
-    if architecture not in ("x86_64", "amd64"):
-        return False
-    running_dir = os.path.realpath(app_dir if app_dir is not None else running_app_dir())
-    if running_dir != "/usr/lib/openwhisper":
-        return False
-    registered = (
-        _dpkg_openwhisper_is_installed()
-        if package_registered is None
-        else package_registered
-    )
-    return bool(registered)
-
-
 def resolve_release_apply_mode(
     channel: str,
     release: Optional[ReleaseInfo],
@@ -398,21 +336,14 @@ def resolve_release_apply_mode(
     app_dir: Optional[str] = None,
     helper_present: Optional[bool] = None,
     platform_name: Optional[str] = None,
-    linux_package_registered: Optional[bool] = None,
-    machine: Optional[str] = None,
 ) -> str:
     """Return :class:`ApplyMode` for this channel and release."""
     if channel != InstallChannel.INSTALLER:
         return ApplyMode.NOTIFY_ONLY
     platform_id = platform_name if platform_name is not None else sys.platform
     if platform_id.startswith("linux"):
-        deb_ready = _asset_ready(release.deb_asset if release else None)
-        if deb_ready and linux_package_install_eligible(
-            app_dir=app_dir,
-            package_registered=linux_package_registered,
-            machine=machine,
-        ):
-            return ApplyMode.DEB
+        # dpkg owns /usr/lib/openwhisper. The application may notify users of
+        # a release, but it must never bypass the system package manager.
         return ApplyMode.NOTIFY_ONLY
     native_ready = _asset_ready(release.native_asset if release else None)
     setup_ready = _asset_ready(release.setup_asset if release else None)
@@ -435,8 +366,6 @@ def can_apply(
     app_dir: Optional[str] = None,
     helper_present: Optional[bool] = None,
     platform_name: Optional[str] = None,
-    linux_package_registered: Optional[bool] = None,
-    machine: Optional[str] = None,
 ) -> bool:
     """Return whether this process may download a verified apply payload."""
     mode = resolve_release_apply_mode(
@@ -446,10 +375,8 @@ def can_apply(
         app_dir=app_dir,
         helper_present=helper_present,
         platform_name=platform_name,
-        linux_package_registered=linux_package_registered,
-        machine=machine,
     )
-    return mode in (ApplyMode.NATIVE, ApplyMode.SETUP, ApplyMode.DEB)
+    return mode in (ApplyMode.NATIVE, ApplyMode.SETUP)
 
 
 def source_update_hint(channel: str) -> Optional[str]:
@@ -506,7 +433,6 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
     stable = not bool(payload.get("draft")) and not bool(payload.get("prerelease"))
     setup_asset = None
     native_asset = None
-    deb_asset = None
     if stable:
         setup_asset = _parse_named_asset(
             assets,
@@ -518,17 +444,6 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
             expected_name=archive_asset_name(version),
             tag_name=tag_name,
         )
-        try:
-            expected_deb_name = deb_asset_name(version)
-        except ValueError:
-            # Debian handoff is authorized only for strict stable versions.
-            expected_deb_name = ""
-        if expected_deb_name:
-            deb_asset = _parse_named_asset(
-                assets,
-                expected_name=expected_deb_name,
-                tag_name=tag_name,
-            )
     return ReleaseInfo(
         version=version,
         tag_name=tag_name,
@@ -536,7 +451,6 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
         notes=notes.strip(),
         setup_asset=setup_asset,
         native_asset=native_asset,
-        deb_asset=deb_asset,
     )
 
 
@@ -768,74 +682,24 @@ def updates_dir() -> str:
     return path
 
 
-def linux_packages_dir() -> str:
-    """Return the private directory used for verified Debian packages."""
-    root = updates_dir()
-    if os.path.islink(root):
-        raise AppUpdateError("The update download directory is not safe to use.")
-    path = os.path.join(root, _DEB_DOWNLOAD_DIRNAME)
-    if os.path.lexists(path):
-        if os.path.islink(path) or not os.path.isdir(path):
-            raise AppUpdateError("The package download directory is not safe to use.")
-    else:
-        os.mkdir(path, 0o700)
-    try:
-        os.chmod(path, 0o700)
-    except OSError as exc:
-        raise AppUpdateError("The package download directory could not be secured.") from exc
-    return path
-
-
 def prune_stale_downloads() -> List[str]:
-    """Delete stale updater-owned downloads, returning relative names removed.
+    """Delete finished update downloads, returning the names removed.
 
-    Windows setup/archive files are collected after the normal short startup
-    grace period. A verified ``.deb`` is retained for one day because a desktop
-    package installer may reopen it after authentication; transaction
-    directories remain owned by the Windows recovery path.
+    Native-update transaction directories are owned by the updater recovery
+    path. Regular setup/archive files are collected after a short startup
+    grace period so this cannot race an active download.
     """
-    now = time.time()
+    cutoff = time.time() - _DOWNLOAD_KEEP_WINDOW_S
     removed: List[str] = []
     try:
-        root = updates_dir()
-        entries = list(os.scandir(root))
+        entries = list(os.scandir(updates_dir()))
     except OSError as exc:
         logger.debug("Could not read the updates directory: %s", exc)
         return removed
     for entry in entries:
-        if entry.name == _DEB_DOWNLOAD_DIRNAME:
-            if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
-                continue
-            try:
-                package_entries = list(os.scandir(entry.path))
-            except OSError as exc:
-                logger.debug("Could not read %s: %s", entry.path, exc)
-                continue
-            for package_entry in package_entries:
-                if not re.fullmatch(
-                    r"OpenWhisper-\d+\.\d+\.\d+-linux-amd64\.deb(?:\.part)?",
-                    package_entry.name,
-                ):
-                    continue
-                try:
-                    info = package_entry.stat(follow_symlinks=False)
-                    if (
-                        not stat.S_ISREG(info.st_mode)
-                        or info.st_mtime > now - _DEB_KEEP_WINDOW_S
-                    ):
-                        continue
-                    os.unlink(package_entry.path)
-                except OSError as exc:
-                    logger.debug("Could not delete %s: %s", package_entry.path, exc)
-                    continue
-                removed.append(f"{_DEB_DOWNLOAD_DIRNAME}/{package_entry.name}")
-            continue
         try:
             info = entry.stat(follow_symlinks=False)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_mtime > now - _DOWNLOAD_KEEP_WINDOW_S
-            ):
+            if not stat.S_ISREG(info.st_mode) or info.st_mtime > cutoff:
                 continue
             os.unlink(entry.path)
         except OSError as exc:
@@ -911,77 +775,6 @@ def download_release_asset(
     return destination
 
 
-def download_linux_package(
-    release: ReleaseInfo,
-    progress: Optional[ProgressCallback] = None,
-    cancel: Optional[threading.Event] = None,
-) -> LinuxPackageHandoff:
-    """Download a verified ``.deb`` only from the installed Debian package."""
-    asset = release.deb_asset
-    try:
-        expected_name = deb_asset_name(release.version)
-    except ValueError as exc:
-        raise AppUpdateError("The Linux package has an invalid release version.") from exc
-    expected_url = _expected_asset_url(release.tag_name, expected_name)
-    if (
-        sys.platform[:5] != "linux"
-        or detect_channel() != InstallChannel.INSTALLER
-        or not linux_package_install_eligible()
-        or not _asset_ready(asset)
-        or asset is None
-        or asset.name != expected_name
-        or not _asset_url_allowed(asset.url, expected_url)
-    ):
-        raise AppUpdateError(
-            "This copy of OpenWhisper cannot hand off the Linux update package."
-        )
-    token = cancel if cancel is not None else threading.Event()
-    path = download_release_asset(
-        asset,
-        progress=progress,
-        cancel=token,
-        destination_dir=linux_packages_dir(),
-    )
-    if token.is_set():
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-        raise AppUpdateError("The download was cancelled.")
-    canonical = os.path.realpath(path)
-    if canonical != os.path.abspath(path):
-        raise AppUpdateError("The verified Linux package path is not safe.")
-    info = _regular_file_stat(canonical)
-    if info is None or info.st_size != asset.size_bytes:
-        raise AppUpdateError("The verified Linux package changed unexpectedly.")
-    return LinuxPackageHandoff(
-        path=canonical,
-        name=asset.name,
-        size_bytes=asset.size_bytes,
-        sha256=asset.sha256 or "",
-        device=info.st_dev,
-        inode=info.st_ino,
-        mtime_ns=info.st_mtime_ns,
-    )
-
-
-def discard_linux_package_handoff(handoff: LinuxPackageHandoff) -> None:
-    """Delete ``handoff`` only if the verified file identity is unchanged."""
-    try:
-        info = os.lstat(handoff.path)
-        unchanged = (
-            stat.S_ISREG(info.st_mode)
-            and info.st_dev == handoff.device
-            and info.st_ino == handoff.inode
-            and info.st_size == handoff.size_bytes
-            and info.st_mtime_ns == handoff.mtime_ns
-        )
-        if unchanged:
-            os.unlink(handoff.path)
-    except OSError:
-        pass
-
-
 def download_installer(
     release: ReleaseInfo,
     progress: Optional[ProgressCallback] = None,
@@ -1010,19 +803,16 @@ def apply_update(
     cancel: Optional[threading.Event] = None,
     *,
     force_setup: bool = False,
-) -> object:
-    """Download and prepare the selected verified platform payload.
+) -> str:
+    """Download and prepare a verified Windows setup or native payload.
 
     Returns:
-        A setup exe path, ``native:<transaction_id>``, or a verified Linux
-        package handoff record.
+        A setup exe path or ``native:<transaction_id>``.
     """
     release = result.release
     if release is None:
         raise AppUpdateError("No installer is available.")
     mode = ApplyMode.SETUP if force_setup else result.apply_mode
-    if mode == ApplyMode.DEB and not force_setup:
-        return download_linux_package(release, progress=progress, cancel=cancel)
     if mode == ApplyMode.NATIVE and release.native_asset is not None:
         try:
             archive_path = download_release_asset(

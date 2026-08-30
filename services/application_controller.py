@@ -482,11 +482,7 @@ class ApplicationController(QObject):
             if is_current() and not token.is_set():
                 self.update_download_progress.emit(phase, done, total)
 
-        from services.app_update import (
-            LinuxPackageHandoff,
-            apply_update,
-            discard_linux_package_handoff,
-        )
+        from services.app_update import apply_update
 
         try:
             handoff = apply_update(
@@ -502,8 +498,6 @@ class ApplicationController(QObject):
                 self.update_download_finished.emit(None, message)
             return
         if token.is_set() or not is_current():
-            if isinstance(handoff, LinuxPackageHandoff):
-                discard_linux_package_handoff(handoff)
             if is_current():
                 self.update_download_finished.emit(None, "The download was cancelled.")
             return

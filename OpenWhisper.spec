@@ -13,6 +13,7 @@ on every launch and lets both native packages own ordinary files.
 
 import os
 import sys
+from importlib.metadata import distribution
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -30,10 +31,27 @@ ICON_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
 #
 # Relative layout is preserved because config.bundle_root() resolves assets as
 # <root>/ui_qt/styles/theme.qss, where <root> is sys._MEIPASS when frozen.
+def _distribution_license(package, suffix, destination):
+    """Return one required wheel license as a PyInstaller data entry."""
+    dist = distribution(package)
+    normalized_suffix = suffix.replace("\\", "/").lower()
+    for entry in dist.files or ():
+        relative = str(entry).replace("\\", "/")
+        if relative.lower().endswith(normalized_suffix):
+            return (str(dist.locate_file(entry)), destination)
+    raise RuntimeError(f"{package} wheel does not contain required license {suffix}")
+
+
+# Keep the binding and toolkit terms beside every frozen binary. PyQt6 and Qt
+# use different licenses and ship their texts in separate wheel metadata trees,
+# which PyInstaller does not otherwise retain.
 datas = [
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "webui" / "dist"), "webui/dist"),
+    (str(REPO_ROOT / "THIRD_PARTY_NOTICES.md"), "."),
+    _distribution_license("PyQt6", "licenses/LICENSE", "third_party_licenses/PyQt6"),
+    _distribution_license("PyQt6-Qt6", ".dist-info/LICENSE", "third_party_licenses/Qt"),
 ]
 binaries = []
 hiddenimports = [

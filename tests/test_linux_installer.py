@@ -81,6 +81,7 @@ def test_frozen_install_channel_uses_linux_copy_and_is_notify_only():
         InstallChannel,
         ReleaseAsset,
         ReleaseInfo,
+        can_apply,
         channel_label,
         resolve_release_apply_mode,
     )
@@ -107,6 +108,32 @@ def test_frozen_install_channel_uses_linux_copy_and_is_notify_only():
         release,
         platform_name="linux",
     ) == ApplyMode.NOTIFY_ONLY
+    assert not can_apply(
+        InstallChannel.INSTALLER,
+        release,
+        platform_name="linux",
+    )
+
+
+def test_release_bundle_and_package_retain_required_license_notices():
+    spec = (ROOT / "OpenWhisper.spec").read_text(encoding="utf-8")
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+
+    assert '_distribution_license("PyQt6",' in spec
+    assert '_distribution_license("PyQt6-Qt6",' in spec
+    assert "third_party_licenses/PyQt6/LICENSE" in script
+    assert "third_party_licenses/Qt/LICENSE" in script
+    assert "PyQt6" in notices
+    assert "Qt 6" in notices
+
+
+def test_release_workflow_smokes_advertised_linux_baselines():
+    workflow = (ROOT / ".github" / "workflows" / "build-installers.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "ubuntu:22.04" in workflow
+    assert "debian:12" in workflow
 
 
 def test_release_artifact_name_is_versioned_and_arch_specific():

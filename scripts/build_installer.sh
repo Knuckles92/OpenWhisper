@@ -121,6 +121,9 @@ for path in \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.ico" \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.png" \
     "$INTERNAL_DIR/webui/dist/index.html" \
+    "$INTERNAL_DIR/THIRD_PARTY_NOTICES.md" \
+    "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
+    "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
     "$INTERNAL_DIR/PyQt6/Qt6/plugins/platforms/libqxcb.so" \
     "$INTERNAL_DIR/PyQt6/Qt6/plugins/imageformats/libqsvg.so"; do
     [[ -f "$path" ]] || fail "required bundle asset missing: ${path#"$DIST_DIR/"}"
@@ -211,7 +214,7 @@ mkdir -p \
     "$PACKAGE_ROOT/usr/bin" \
     "$PACKAGE_ROOT/usr/lib/openwhisper" \
     "$PACKAGE_ROOT/usr/share/applications" \
-    "$PACKAGE_ROOT/usr/share/doc/openwhisper" \
+    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party" \
     "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps" \
     "$PACKAGE_ROOT/usr/share/lintian/overrides" \
     "$OUTPUT_DIR"
@@ -232,6 +235,12 @@ install -m 0644 ui_qt/assets/openwhisper.png \
     "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/openwhisper.png"
 install -m 0644 LICENSE "$PACKAGE_ROOT/usr/share/doc/openwhisper/copyright"
 install -m 0644 README.md "$PACKAGE_ROOT/usr/share/doc/openwhisper/README.md"
+install -m 0644 THIRD_PARTY_NOTICES.md \
+    "$PACKAGE_ROOT/usr/share/doc/openwhisper/THIRD_PARTY_NOTICES.md"
+install -m 0644 "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
+    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party/PyQt6-GPL-3.0.txt"
+install -m 0644 "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
+    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party/Qt-LGPL-3.0.txt"
 gzip -n -9 -c CHANGELOG.md >"$PACKAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
 chmod 0644 "$PACKAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
 install -m 0644 installer/linux/lintian-overrides \

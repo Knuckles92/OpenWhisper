@@ -138,6 +138,28 @@ jobs:
               test ! -e /usr/bin/openwhisper
               test ! -e /usr/bin/ow
             '
+      - name: Smoke-test advertised Debian 12 support
+        run: |
+          artifacts=(installer/Output/OpenWhisper-*-linux-amd64.deb)
+          version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
+          test "${#artifacts[@]}" -eq 1
+          artifact="$(realpath "${artifacts[0]}")"
+          docker run --rm \
+            -e EXPECTED_VERSION="$version" \
+            -v "$artifact:/tmp/openwhisper.deb:ro" \
+            debian:12 bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                file xauth xvfb /tmp/openwhisper.deb
+              test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(ow --version)" = "OpenWhisper $EXPECTED_VERSION"
+              xvfb-run -a openwhisper --self-test
+              apt-get remove -y openwhisper
+              test ! -e /usr/lib/openwhisper
+              test ! -e /usr/bin/openwhisper
+              test ! -e /usr/bin/ow
+            '
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwhisper-linux
