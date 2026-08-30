@@ -1228,7 +1228,9 @@ def _download_verified(
             try:
                 os.chmod(part_path, 0o600, follow_symlinks=False)
             except (NotImplementedError, OSError):
-                os.fchmod(out.fileno(), 0o600)
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(out.fileno(), 0o600)
 
             resume_from = info.st_size
             if resume_from > size_bytes:
