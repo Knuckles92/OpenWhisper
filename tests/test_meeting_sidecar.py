@@ -1194,6 +1194,49 @@ class TestCheckpointTimeoutLifecycle:
         assert "dropped" in caplog.text
 
 
+class TestResolveNodeCmd:
+    def test_windows_prefers_bundled_node_exe(self, tmp_path):
+        (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+        (tmp_path / "node.exe").write_bytes(b"node")
+        agent = PiSidecarAgent(str(tmp_path))
+        with patch.object(pi_mod.sys, "platform", "win32"):
+            cmd = agent._resolve_node_cmd()
+        assert cmd[0].endswith("node.exe")
+        assert cmd[1].endswith("bundle.cjs")
+
+    def test_linux_prefers_executable_bundled_node(self, tmp_path):
+        (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+        node = tmp_path / "node"
+        node.write_text("#!/bin/sh\n", encoding="utf-8")
+        node.chmod(0o755)
+        agent = PiSidecarAgent(str(tmp_path))
+        with patch.object(pi_mod.sys, "platform", "linux"):
+            cmd = agent._resolve_node_cmd()
+        assert cmd[0] == str(node)
+        assert cmd[1].endswith("bundle.cjs")
+
+    def test_linux_non_executable_bundled_node_fails(self, tmp_path):
+        (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+        node = tmp_path / "node"
+        node.write_text("#!/bin/sh\n", encoding="utf-8")
+        node.chmod(0o644)
+        agent = PiSidecarAgent(str(tmp_path))
+        with patch.object(pi_mod.sys, "platform", "linux"):
+            with pytest.raises(RuntimeError, match="not executable"):
+                agent._resolve_node_cmd()
+
+    def test_missing_bundled_runtime_falls_back_to_path_node(self, tmp_path):
+        (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+        agent = PiSidecarAgent(str(tmp_path))
+        with patch.object(pi_mod.sys, "platform", "linux"):
+            assert agent._resolve_node_cmd() == ["node", str(tmp_path / "bundle.cjs")]
+
+    def test_missing_bundle_fails(self, tmp_path):
+        agent = PiSidecarAgent(str(tmp_path))
+        with pytest.raises(RuntimeError, match="bundle not found"):
+            agent._resolve_node_cmd()
+
+
 # Sidecar createMeetingTools polishOnly gate (TypeScript via esbuild runner).
 
 SIDECAR_ROOT = Path(__file__).resolve().parents[1] / "sidecar"

@@ -22,9 +22,13 @@ class TestMeetingPlatformPolicy(unittest.TestCase):
     def test_windows_and_modern_macos_are_supported(self):
         self.assertTrue(meeting_mode_supported("win32"))
         self.assertTrue(meeting_mode_supported("win64"))
-        self.assertTrue(meeting_mode_supported("darwin"))
-        self.assertFalse(meeting_mode_supported("linux"))
-        self.assertFalse(meeting_mode_supported("linux2"))
+        with patch("meeting.platform.platform_module.mac_ver",
+                   return_value=("13.0", ("", "", ""), "arm64")):
+            self.assertTrue(meeting_mode_supported("darwin"))
+        # Linux implementation is ready, but public promotion stays gated.
+        self.assertFalse(meeting_mode_supported("linux", machine="x86_64"))
+        self.assertFalse(meeting_mode_supported("linux2", machine="aarch64"))
+        self.assertFalse(meeting_mode_supported("linux", machine="i686"))
         self.assertFalse(meeting_mode_supported("freebsd14"))
 
     def test_macos_before_screencapturekit_audio_is_unsupported(self):
@@ -35,12 +39,18 @@ class TestMeetingPlatformPolicy(unittest.TestCase):
                    return_value=("13.0", ("", "", ""), "arm64")):
             self.assertTrue(meeting_mode_supported("darwin"))
 
-    def test_undetectable_macos_version_is_allowed(self):
-        # Refusing to open the tab is worse than letting ScreenCaptureKit
-        # rule itself out at capture time.
+    def test_undetectable_macos_version_fails_closed(self):
+        # Unknown macOS versions must not be promoted as supported.
         with patch("meeting.platform.platform_module.mac_ver",
                    return_value=("", ("", "", ""), "")):
-            self.assertTrue(meeting_mode_supported("darwin"))
+            self.assertFalse(meeting_mode_supported("darwin"))
+
+    def test_linux_implementation_ready_is_separate_from_public_support(self):
+        from meeting.platform import linux_meeting_implementation_ready
+        self.assertTrue(linux_meeting_implementation_ready("x86_64"))
+        self.assertTrue(linux_meeting_implementation_ready("aarch64"))
+        self.assertFalse(linux_meeting_implementation_ready("i686"))
+        self.assertFalse(meeting_mode_supported("linux", machine="x86_64"))
 
     def test_os_display_names(self):
         self.assertEqual(meeting_unsupported_os_name("darwin"), "macOS")
@@ -85,13 +95,45 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
         )
 
     def test_go_back_keeps_cancel_result(self):
-        dialog = MeetingUnsupportedPlatformDialog(platform="linux")
+        dialog = MeetingUnsupportedPlatformDialog(
+            platform="linux", implementation_ready=False
+        )
         go_back = dialog.findChild(QPushButton, "meetingUnsupportedGoBackButton")
         go_back.click()
         self.assertEqual(
             dialog.result_action, MeetingUnsupportedPlatformDialog.RESULT_CANCEL
         )
         self.assertIn("Linux", dialog.windowTitle())
+
+    def test_linux_preview_copy_does_not_claim_no_capture_path(self):
+        dialog = MeetingUnsupportedPlatformDialog(
+            platform="linux",
+            machine="x86_64",
+            implementation_ready=True,
+        )
+        body = dialog.body_label.text().lower()
+        self.assertIn("preview", dialog.windowTitle().lower() + body)
+        self.assertIn("not publicly supported", body)
+        self.assertIn("implemented", body)
+        self.assertNotIn("has no supported capture path", body)
+        self.assertNotIn(
+            "system audio will not be captured",
+            dialog.ack_no_system_audio.text().lower(),
+        )
+        self.assertIn("microphone-only", dialog.ack_no_system_audio.text().lower())
+
+    def test_unsupported_arch_linux_keeps_no_path_wording(self):
+        dialog = MeetingUnsupportedPlatformDialog(
+            platform="linux",
+            machine="i686",
+            implementation_ready=False,
+        )
+        body = dialog.body_label.text().lower()
+        self.assertIn("no supported capture path", body)
+        self.assertIn(
+            "system audio will not be captured",
+            dialog.ack_no_system_audio.text().lower(),
+        )
 
     def test_acknowledge_helper_skips_dialog_on_windows(self):
         with patch(
@@ -204,16 +246,42 @@ class TestMeetingTabUnsupportedLock(unittest.TestCase):
         self.assertEqual(tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE), "")
 
     def test_unsupported_tab_is_muted_and_locked_until_ack(self):
-        tabs = self._make_tabs(supported=False)
-        self.assertTrue(tabs.meeting_tab_is_locked())
-        self.assertEqual(tabs.tab_bar.property("unsupportedMeeting"), True)
-        self.assertIn("not supported", tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE))
+        with patch(
+            "meeting.platform.linux_meeting_implementation_ready",
+            return_value=False,
+        ):
+            tabs = self._make_tabs(supported=False)
+            self.assertTrue(tabs.meeting_tab_is_locked())
+            self.assertEqual(tabs.tab_bar.property("unsupportedMeeting"), True)
+            tip = tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE).lower()
+            self.assertTrue(
+                "not supported" in tip or "unsupported" in tip or "preview" in tip,
+                tip,
+            )
 
     def test_saved_ack_unlocks_but_keeps_tab_muted(self):
-        tabs = self._make_tabs(supported=False, acked=True)
-        self.assertFalse(tabs.meeting_tab_is_locked())
-        self.assertEqual(tabs.tab_bar.property("unsupportedMeeting"), True)
-        self.assertIn("unsupported", tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE))
+        with patch(
+            "meeting.platform.linux_meeting_implementation_ready",
+            return_value=False,
+        ):
+            tabs = self._make_tabs(supported=False, acked=True)
+            self.assertFalse(tabs.meeting_tab_is_locked())
+            self.assertEqual(tabs.tab_bar.property("unsupportedMeeting"), True)
+            tip = tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE).lower()
+            self.assertTrue(
+                "unsupported" in tip or "preview" in tip or "not supported" in tip,
+                tip,
+            )
+
+    def test_linux_preview_tab_tooltip(self):
+        with patch(
+            "meeting.platform.linux_meeting_implementation_ready",
+            return_value=True,
+        ), patch("sys.platform", "linux"):
+            tabs = self._make_tabs(supported=False)
+            tip = tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE).lower()
+            self.assertIn("preview", tip)
+            self.assertNotIn("system audio is unavailable", tip)
 
     def test_last_meeting_tab_is_not_restored_while_locked(self):
         tabs = self._make_tabs(

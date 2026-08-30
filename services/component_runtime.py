@@ -77,7 +77,9 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
         if not is_installed(component_id):
             return False, "The component is not installed."
 
-        manifest = read_manifest(component_id) or {}
+        manifest = read_manifest(component_id)
+        if manifest is None:
+            return False, "The component manifest is missing or invalid."
         reason = check_compatibility(manifest)
         if reason:
             logger.warning(f"Component '{component_id}' is not usable: {reason}")

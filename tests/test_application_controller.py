@@ -403,8 +403,6 @@ class DummyUIController:
         self.copy_succeeds = True
         self.streaming_overlay_shown = 0
         self.streaming_overlay_hidden = 0
-        self.caret_shown = 0
-        self.caret_hidden = 0
         self.consent_requests = []
         self.consent_result = "cancel"
         self.engine_controls_refreshes = 0
@@ -469,6 +467,10 @@ class DummyUIController:
     def show_meeting_consent_dialog(self):
         self.meeting_consent_requests += 1
         return self.meeting_consent_result
+
+    def ensure_meeting_start_readiness(self):
+        self.platform_ack_requests += 1
+        return "auto" if self.platform_ack_result else None
 
     def ensure_meeting_platform_ack(self):
         self.platform_ack_requests += 1
@@ -548,12 +550,6 @@ class DummyUIController:
 
     def hide_streaming_overlay(self):
         self.streaming_overlay_hidden += 1
-
-    def show_caret_paste_indicator(self):
-        self.caret_shown += 1
-
-    def hide_caret_paste_indicator(self):
-        self.caret_hidden += 1
 
     def clear_transcription_stats(self):
         self.stats = None
@@ -1403,12 +1399,23 @@ class TestApplicationController:
         reload_requests = []
         controller.reload_whisper_model = lambda: reload_requests.append(True)
 
+        gpu_entry = {
+            "version": "cuda12.9",
+            "component_api": 1,
+            "platform": "win_amd64",
+            "install_bytes": 10,
+            "archives": [],
+        }
         with patch.object(
             self.app_controller_module, "install_component", lambda *a, **k: None
         ), patch.object(
             self.app_controller_module, "activate_component", lambda cid: (True, "")
         ), patch.object(
             self.app_controller_module, "gpu_runtime_available", lambda: True
+        ), patch.object(
+            self.app_controller_module.component_coordinator,
+            "catalog_entry",
+            return_value=gpu_entry,
         ):
             controller._component_install_worker("gpu-accel", threading.Event())
 
@@ -1432,6 +1439,13 @@ class TestApplicationController:
         reload_requests = []
         controller.reload_whisper_model = lambda: reload_requests.append(True)
 
+        gpu_entry = {
+            "version": "cuda12.9",
+            "component_api": 1,
+            "platform": "win_amd64",
+            "install_bytes": 10,
+            "archives": [],
+        }
         with patch.object(
             self.app_controller_module, "install_component", lambda *a, **k: None
         ), patch.object(
@@ -1440,6 +1454,10 @@ class TestApplicationController:
             lambda cid: (False, "registration failed"),
         ), patch.object(
             self.app_controller_module, "gpu_runtime_available", lambda: False
+        ), patch.object(
+            self.app_controller_module.component_coordinator,
+            "catalog_entry",
+            return_value=gpu_entry,
         ):
             controller._component_install_worker("gpu-accel", threading.Event())
 
@@ -1606,5 +1624,4 @@ class TestApplicationController:
         assert controller.start_recording() is False
         assert "still loading" in controller.ui_controller.statuses[-1].lower()
         assert controller.recorder.is_recording is False
-
 

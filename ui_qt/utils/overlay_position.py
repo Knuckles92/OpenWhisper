@@ -59,7 +59,7 @@ def preferred_overlay_position(
     edge, flips above and/or left, then clamps into available geometry.
 
     Args:
-        anchor: Cursor or caret point in global coordinates.
+        anchor: Cursor point in global coordinates.
         width: Overlay width in pixels.
         height: Overlay height in pixels.
         available: Screen available geometry for the anchor's display.
@@ -96,7 +96,7 @@ def max_height_for_anchor(
     to the side with more room.
 
     Args:
-        anchor: Cursor or caret point in global coordinates.
+        anchor: Cursor point in global coordinates.
         available: Screen available geometry for the anchor's display.
         configured_max: Soft maximum from app config.
         offset: Gap between the anchor and the overlay.

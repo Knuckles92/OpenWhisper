@@ -66,6 +66,7 @@ _TERMINATE_WAIT_S = 1.5
 
 _BUNDLE_NAME = "bundle.cjs"
 _NODE_EXE_NAME = "node.exe"
+_NODE_BIN_NAME = "node"
 
 _PROGRESS_DETAILS = {
     "thinking_start": "Model is thinking through the transcript…",
@@ -711,8 +712,18 @@ class PiSidecarAgent:
         bundle = self._bundle_path()
         if not os.path.isfile(bundle):
             raise RuntimeError(f"sidecar bundle not found: {bundle}")
-        portable = os.path.join(self._payload_dir, _NODE_EXE_NAME)
+        if sys.platform.startswith("win"):
+            portable = os.path.join(self._payload_dir, _NODE_EXE_NAME)
+            if os.path.isfile(portable):
+                return [portable, bundle]
+            return ["node", bundle]
+
+        portable = os.path.join(self._payload_dir, _NODE_BIN_NAME)
         if os.path.isfile(portable):
+            if not os.access(portable, os.X_OK):
+                raise RuntimeError(
+                    f"bundled node runtime is not executable: {portable}"
+                )
             return [portable, bundle]
         return ["node", bundle]
 

@@ -11,12 +11,12 @@ measures the payload, and prints a ready-to-paste ``_BUILTIN_GPU_ARCHIVES``
 block plus the matching ``install_bytes``. Entries point straight at PyPI,
 whose published wheels are immutable.
 
-``meeting-agent`` pins the official Node.js win-x64 zip from nodejs.org
-(SHA-256 from that release's ``SHASUMS256.txt``), builds ``sidecar/dist/bundle.cjs``,
-zips the bundle into ``dist/components/``, and prints a ready-to-paste
-``_BUILTIN_MEETING_AGENT_ARCHIVES`` block. The emitted GitHub URL uses this
-checkout's ``_version.py``. Set ``MEETING_AGENT_RELEASE_TAG`` and paste only
-when attaching a new zip.
+``meeting-agent`` pins official Node.js archives for Windows x64, Linux x64,
+and Linux ARM64 from nodejs.org (SHA-256 from that release's
+``SHASUMS256.txt``), builds ``sidecar/dist/bundle.cjs`` once, zips the bundle
+into ``dist/components/``, and prints ready-to-paste platform catalog entries.
+The emitted GitHub URL uses this checkout's ``_version.py``. Set
+``MEETING_AGENT_RELEASE_TAG`` and paste only when attaching a new zip.
 
 An earlier version of this script repacked the GPU DLLs into zips for hosting
 as GitHub Release assets, described by a JSON catalog on the project website.
@@ -39,10 +39,11 @@ import json
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.request import urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -54,15 +55,40 @@ from services.components import (  # noqa: E402
     COMPONENT_API,
     GPU_COMPONENT_VERSION,
     MEETING_AGENT_COMPONENT_VERSION,
+    MEETING_AGENT_NODE_VERSION,
     MEETING_AGENT_RELEASE_TAG,
+    PLATFORM_LINUX_AARCH64,
+    PLATFORM_LINUX_X86_64,
+    PLATFORM_WIN_AMD64,
 )
 
-# Official Node 22 LTS (Jod). Bump together with MEETING_AGENT_COMPONENT_VERSION
-# when the sidecar needs a newer runtime.
-NODE_VERSION = "22.23.2"
-NODE_DIST_FILENAME = f"node-v{NODE_VERSION}-win-x64.zip"
-NODE_DIST_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_DIST_FILENAME}"
+# Official Node LTS. Keep in sync with MEETING_AGENT_NODE_VERSION.
+NODE_VERSION = MEETING_AGENT_NODE_VERSION
 NODE_SHASUMS_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/SHASUMS256.txt"
+
+NODE_TARGETS = (
+    {
+        "platform": PLATFORM_WIN_AMD64,
+        "filename": f"node-v{NODE_VERSION}-win-x64.zip",
+        "extract": "node-exe",
+        "member": None,
+        "runtime_name": "node.exe",
+    },
+    {
+        "platform": PLATFORM_LINUX_X86_64,
+        "filename": f"node-v{NODE_VERSION}-linux-x64.tar.xz",
+        "extract": "node-tar",
+        "member": f"node-v{NODE_VERSION}-linux-x64/bin/node",
+        "runtime_name": "node",
+    },
+    {
+        "platform": PLATFORM_LINUX_AARCH64,
+        "filename": f"node-v{NODE_VERSION}-linux-arm64.tar.xz",
+        "extract": "node-tar",
+        "member": f"node-v{NODE_VERSION}-linux-arm64/bin/node",
+        "runtime_name": "node",
+    },
+)
 
 # Must match the interpreter the application is frozen with.
 TARGET_PYTHON = "3.12"
@@ -243,56 +269,100 @@ def _download(url: str, destination: Path) -> None:
             out.write(chunk)
 
 
-def _node_sha256_from_shasums() -> str:
-    """Return the official digest for the pinned win-x64 zip."""
+def _node_sha256_map() -> Dict[str, str]:
+    """Return filename -> sha256 for the pinned Node release."""
     print(f"=> Fetching {NODE_SHASUMS_URL}")
     with urlopen(NODE_SHASUMS_URL) as response:
         text = response.read().decode("utf-8")
+    mapping: Dict[str, str] = {}
     for line in text.splitlines():
         parts = line.split()
         if len(parts) < 2:
             continue
         filename = parts[-1].lstrip("*")
-        if filename == NODE_DIST_FILENAME:
-            digest = parts[0].lower()
-            if len(digest) != 64:
-                raise SystemExit(f"Unexpected digest for {NODE_DIST_FILENAME}: {digest}")
-            return digest
-    raise SystemExit(
-        f"{NODE_DIST_FILENAME} was not listed in SHASUMS256.txt for v{NODE_VERSION}"
-    )
+        digest = parts[0].lower()
+        if len(digest) == 64:
+            mapping[filename] = digest
+    return mapping
 
 
-def _pin_node() -> dict:
-    """Download, verify, and measure the official Node win-x64 zip."""
-    expected = _node_sha256_from_shasums()
-    with tempfile.TemporaryDirectory() as work:
-        archive_path = Path(work) / NODE_DIST_FILENAME
-        print(f"=> Downloading {NODE_DIST_FILENAME}")
-        _download(NODE_DIST_URL, archive_path)
-        digest = _sha256_file(archive_path)
-        if digest != expected:
-            raise SystemExit(
-                f"Node zip digest mismatch.\n  expected: {expected}\n  got     : {digest}"
-            )
-        size_bytes = archive_path.stat().st_size
-        node_exe_bytes = 0
+def node_archive_specs(
+    version: str = NODE_VERSION,
+    shasums: Optional[Dict[str, str]] = None,
+) -> List[dict]:
+    """Return catalog-ready Node archive specs without downloading.
+
+    Used by tests and dry inspection. When ``shasums`` is omitted, digests
+    remain empty placeholders for pure filename/tag validation.
+    """
+    specs = []
+    for target in NODE_TARGETS:
+        filename = target["filename"].replace(NODE_VERSION, version)
+        member = None
+        if target["member"]:
+            member = target["member"].replace(NODE_VERSION, version)
+        entry = {
+            "platform": target["platform"],
+            "name": filename,
+            "url": f"https://nodejs.org/dist/v{version}/{filename}",
+            "sha256": (shasums or {}).get(filename, ""),
+            "extract": target["extract"],
+            "runtime_name": target["runtime_name"],
+        }
+        if member:
+            entry["member"] = member
+        specs.append(entry)
+    return specs
+
+
+def _measure_node_runtime_bytes(archive_path: Path, target: dict) -> int:
+    if target["extract"] == "node-exe":
         with zipfile.ZipFile(archive_path) as archive:
             for member in archive.infolist():
                 name = member.filename.replace("\\", "/").lower()
                 if name.endswith("/node.exe") or name == "node.exe":
-                    node_exe_bytes = member.file_size
-                    break
-        if node_exe_bytes <= 0:
-            raise SystemExit(f"{NODE_DIST_FILENAME} did not contain node.exe")
-    return {
-        "name": NODE_DIST_FILENAME,
-        "url": NODE_DIST_URL,
+                    return int(member.file_size)
+        raise SystemExit(f"{target['filename']} did not contain node.exe")
+
+    expected = target["member"]
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        for member in archive.getmembers():
+            if member.name == expected and member.isfile():
+                return int(member.size)
+    raise SystemExit(f"{target['filename']} did not contain {expected}")
+
+
+def _pin_node_target(target: dict, shasums: Dict[str, str]) -> dict:
+    """Download, verify, and measure one official Node archive."""
+    filename = target["filename"]
+    expected = shasums.get(filename)
+    if not expected:
+        raise SystemExit(f"{filename} was not listed in SHASUMS256.txt")
+    url = f"https://nodejs.org/dist/v{NODE_VERSION}/{filename}"
+    with tempfile.TemporaryDirectory() as work:
+        archive_path = Path(work) / filename
+        print(f"=> Downloading {filename}")
+        _download(url, archive_path)
+        digest = _sha256_file(archive_path)
+        if digest != expected:
+            raise SystemExit(
+                f"Node archive digest mismatch for {filename}.\n"
+                f"  expected: {expected}\n  got     : {digest}"
+            )
+        size_bytes = archive_path.stat().st_size
+        runtime_bytes = _measure_node_runtime_bytes(archive_path, target)
+    entry = {
+        "platform": target["platform"],
+        "name": filename,
+        "url": url,
         "sha256": expected,
         "size_bytes": size_bytes,
-        "install_bytes": node_exe_bytes,
-        "extract": "node-exe",
+        "install_bytes": runtime_bytes,
+        "extract": target["extract"],
     }
+    if target["member"]:
+        entry["member"] = target["member"]
+    return entry
 
 
 def _npm() -> str:
@@ -350,36 +420,49 @@ def _split_url(url: str) -> tuple[str, str]:
     return f"{head}/", tail
 
 
-def _emit_meeting_agent(archives: List[dict]) -> None:
-    """Print the block to paste into services/components.py."""
+def _emit_meeting_agent_platforms(
+    node_archives: List[dict],
+    bundle: dict,
+) -> None:
+    """Print platform catalog entries to paste into services/components.py."""
     print()
     print("=" * 78)
-    print("Paste into services/components.py, replacing _BUILTIN_MEETING_AGENT_ARCHIVES:")
+    print("Paste into services/components.py as _BUILTIN_MEETING_AGENT_BY_PLATFORM:")
     print("=" * 78)
     print()
-    print("_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = (")
-    for archive in archives:
-        head, tail = _split_url(archive["url"])
-        print("    {")
-        print(f'        "name": "{archive["name"]}",')
-        print('        "url": (')
-        print(f'            "{head}"')
-        print(f'            "{tail}"')
+    print("_BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {")
+    for node in node_archives:
+        platform = node["platform"]
+        install_bytes = int(node["install_bytes"]) + int(bundle["install_bytes"])
+        print(f'    "{platform}": {{')
+        print('        "published": True,')
+        print('        "version": MEETING_AGENT_COMPONENT_VERSION,')
+        print('        "component_api": COMPONENT_API,')
+        print(f'        "platform": "{platform}",')
+        print(f'        "install_bytes": {install_bytes:_},')
+        print('        "archives": (')
+        for archive in (node, bundle):
+            head, tail = _split_url(archive["url"])
+            print("            {")
+            print(f'                "name": "{archive["name"]}",')
+            print('                "url": (')
+            print(f'                    "{head}"')
+            print(f'                    "{tail}"')
+            print("                ),")
+            print(f'                "sha256": "{archive["sha256"]}",')
+            print(f'                "size_bytes": {archive["size_bytes"]:_},')
+            print(f'                "extract": "{archive["extract"]}",')
+            if archive.get("member"):
+                print(f'                "member": "{archive["member"]}",')
+            print("            },")
         print("        ),")
-        print(f'        "sha256": "{archive["sha256"]}",')
-        print(f'        "size_bytes": {archive["size_bytes"]:_},')
-        print(f'        "extract": "{archive["extract"]}",')
         print("    },")
-    print(")")
+    print("}")
     print()
-    install_bytes = sum(int(a["install_bytes"]) for a in archives)
-    download_total = sum(int(a["size_bytes"]) for a in archives)
-    print(f'    # In _BUILTIN_CATALOG: "install_bytes": {install_bytes:_},')
-    print(f"    # Download total: {download_total / 1e6:.0f} MB")
-    print(f"    # Installed     : {install_bytes / 1e6:.0f} MB")
     print(
         f'    # Version pin   : MEETING_AGENT_COMPONENT_VERSION = "{MEETING_AGENT_COMPONENT_VERSION}"'
     )
+    print(f'    # Node pin      : MEETING_AGENT_NODE_VERSION = "{NODE_VERSION}"')
     print(f"    #                 (component_api {COMPONENT_API})")
     print(f"    # Catalog pin   : {MEETING_AGENT_RELEASE_TAG}  (MEETING_AGENT_RELEASE_TAG today)")
     print(f"    # This URL tag  : v{__version__}  (from _version.py)")
@@ -387,19 +470,19 @@ def _emit_meeting_agent(archives: List[dict]) -> None:
     print("Payload unchanged: do not paste this block; leave the catalog as-is.")
     print(f"New payload: attach the zip to the v{__version__} GitHub Release,")
     print(f'set MEETING_AGENT_RELEASE_TAG = "v{__version__}", and paste this block.')
-    for archive in archives:
-        if archive.get("path"):
-            print(f"  {archive['path']}")
+    if bundle.get("path"):
+        print(f"  {bundle['path']}")
     print()
     print("Bump MEETING_AGENT_COMPONENT_VERSION when Node or the sidecar bundle")
     print("changes, so existing installs are offered the new payload.")
 
 
 def build_meeting_agent() -> None:
-    """Pin Node, build the sidecar zip, and emit the catalog entry."""
-    node = _pin_node()
+    """Pin Node for all supported platforms, build the sidecar once, emit catalog."""
+    shasums = _node_sha256_map()
+    node_archives = [_pin_node_target(target, shasums) for target in NODE_TARGETS]
     bundle = _build_sidecar_bundle_zip()
-    _emit_meeting_agent([node, bundle])
+    _emit_meeting_agent_platforms(node_archives, bundle)
 
 
 BUILDERS = {

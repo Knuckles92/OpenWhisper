@@ -29,7 +29,7 @@ from services.update_contract import decode_native_result
 from services.hotkey_manager import format_hotkey_display
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
-from ui_qt.overlays import CaretPasteIndicator, WaveformOverlay
+from ui_qt.overlays import WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
@@ -101,7 +101,6 @@ class UIController(QObject):
 
         self.main_window = MainWindow()
         self.overlay = WaveformOverlay()
-        self.caret_paste_indicator = CaretPasteIndicator()
         self.tray_manager = SystemTrayManager(self.main_window)
         self.main_window.set_tray_available(self.tray_manager.available)
 
@@ -434,7 +433,6 @@ class UIController(QObject):
             self.tray_manager.set_recording(False)
             self.hide_overlay()
             self.hide_streaming_overlay()
-            self.hide_caret_paste_indicator()
             self.streaming_flow_active = False
             return
 
@@ -463,7 +461,6 @@ class UIController(QObject):
 
     def _dismiss_streaming_preview_for_waveform(self, waveform_state: str) -> None:
         self.streaming_flow_active = False
-        self.hide_caret_paste_indicator()
         self.overlay.clear_streaming_text()
         self._show_or_set_overlay(waveform_state)
 
@@ -510,17 +507,8 @@ class UIController(QObject):
         self.overlay.clear_streaming_text()
         logger.debug("Streaming preview cleared")
 
-    def show_caret_paste_indicator(self):
-        self.caret_paste_indicator.show_indicator()
-        logger.debug("Caret paste indicator shown")
-
-    def hide_caret_paste_indicator(self):
-        self.caret_paste_indicator.hide_indicator()
-        logger.debug("Caret paste indicator hidden")
-
     def _start_cancel_animation(self):
         self.cancel_animation_timer.stop()
-        self.hide_caret_paste_indicator()
         self.streaming_flow_active = False
         self.overlay.clear_streaming_text()
 
@@ -875,17 +863,39 @@ class UIController(QObject):
             self._model_manager_dialog.refresh_component_state()
 
     def ensure_meeting_platform_ack(self) -> bool:
-        """Clear both platform gates before Meeting Mode opens or starts.
+        """Clear platform access gates before Meeting Mode opens or starts.
 
-        Windows returns immediately. Linux shows the unsupported-platform
-        acknowledgement on the first call and reuses the persisted answer
-        afterwards. macOS is supported but needs the Screen Recording grant,
-        so it is asked for here rather than discovered as a silent mic-only
-        recording.
+        Unsupported OSes still use the acknowledgement dialog. Supported
+        platforms unlock the tab. Linux system-audio readiness is handled
+        separately by :meth:`ensure_meeting_start_readiness` so a missing
+        monitor never greys out the whole tab.
 
         Returns:
-            True when a meeting may start or the Meeting Mode tab may open.
+            True when Meeting Mode may open on this platform.
         """
+        from ui_qt.dialogs.meeting_unsupported_dialog import (
+            acknowledge_unsupported_meeting_mode,
+        )
+
+        if not acknowledge_unsupported_meeting_mode(self.main_window):
+            return False
+        self.main_window.tabbed_content.unlock_meeting_tab()
+        return True
+
+    def ensure_meeting_start_readiness(self) -> Optional[str]:
+        """Return the session system-audio policy for a meeting start.
+
+        Returns:
+            ``auto``, ``required``, or ``disabled`` when the start may
+            proceed; ``None`` when the user cancelled.
+        """
+        import sys
+
+        from meeting.platform import linux_meeting_implementation_ready
+        from ui_qt.dialogs.meeting_linux_audio_dialog import (
+            MeetingLinuxAudioDialog,
+            ensure_meeting_linux_system_audio,
+        )
         from ui_qt.dialogs.meeting_system_audio_dialog import (
             ensure_meeting_system_audio_permission,
         )
@@ -894,23 +904,35 @@ class UIController(QObject):
         )
 
         if not acknowledge_unsupported_meeting_mode(self.main_window):
-            return False
+            return None
         if not ensure_meeting_system_audio_permission(self.main_window):
-            return False
+            return None
         self.main_window.tabbed_content.unlock_meeting_tab()
-        return True
+
+        # Linux implementation is complete for x86_64/aarch64 even while public
+        # promotion remains gated; still run remediation after the ack.
+        if sys.platform.startswith("linux") and linux_meeting_implementation_ready():
+            decision = ensure_meeting_linux_system_audio(self.main_window)
+            if decision == MeetingLinuxAudioDialog.RESULT_CANCEL:
+                return None
+            if decision == MeetingLinuxAudioDialog.RESULT_MICROPHONE_ONLY:
+                return "disabled"
+            return "required"
+        return "auto"
 
     def _on_meeting_start_requested(self, cloud_enabled: bool):
-        if not self.ensure_meeting_platform_ack():
+        policy = self.ensure_meeting_start_readiness()
+        if policy is None:
             return
         if self.on_meeting_start:
-            self.on_meeting_start(cloud_enabled)
+            self.on_meeting_start(cloud_enabled, system_audio_policy=policy)
 
     def _on_meeting_demo_requested(self, cloud_enabled: bool):
-        if not self.ensure_meeting_platform_ack():
+        policy = self.ensure_meeting_start_readiness()
+        if policy is None:
             return
         if self.on_meeting_start_demo:
-            self.on_meeting_start_demo(cloud_enabled)
+            self.on_meeting_start_demo(cloud_enabled, system_audio_policy=policy)
 
     def _on_meeting_cloud_toggled(self, enabled: bool):
         if self.on_meeting_toggle_cloud:
@@ -941,10 +963,11 @@ class UIController(QObject):
             self.on_meeting_defer_insights()
 
     def _on_meeting_start_new_requested(self, cloud_enabled: bool):
-        if not self.ensure_meeting_platform_ack():
+        policy = self.ensure_meeting_start_readiness()
+        if policy is None:
             return
         if self.on_meeting_start_new:
-            self.on_meeting_start_new(cloud_enabled)
+            self.on_meeting_start_new(cloud_enabled, system_audio_policy=policy)
 
     def _on_past_meeting_requested(self, meeting_id: str) -> None:
         if self.on_meeting_open_past:
@@ -972,8 +995,12 @@ class UIController(QObject):
         if self._meeting_active:
             if self.on_meeting_end:
                 self.on_meeting_end()
-        elif self.ensure_meeting_platform_ack() and self.on_meeting_start:
-            self.on_meeting_start(None)
+            return
+        policy = self.ensure_meeting_start_readiness()
+        if policy is None:
+            return
+        if self.on_meeting_start:
+            self.on_meeting_start(None, system_audio_policy=policy)
 
     def on_meeting_state_changed(self, payload: Any) -> None:
         """Apply a meeting-state payload to the Meeting Mode tab and tray.
@@ -1453,13 +1480,6 @@ class UIController(QObject):
             self.overlay.close()
         except Exception as e:
             logger.debug(f"Error closing overlay: {e}")
-
-        try:
-            if hasattr(self, 'caret_paste_indicator'):
-                self.caret_paste_indicator.hide_indicator()
-                self.caret_paste_indicator.close()
-        except Exception as e:
-            logger.debug(f"Error closing caret indicator: {e}")
 
         try:
             self.tray_manager.hide()

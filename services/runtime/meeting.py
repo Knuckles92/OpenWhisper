@@ -176,6 +176,7 @@ class MeetingRuntime:
         # cloud toggle). Mirrors the hf_consent_requested request/continuation
         # pattern in ApplicationController.
         self._consent_pending_kind: Optional[str] = None
+        self._pending_system_audio_policy: str = "auto"
 
     def setup(self) -> None:
         """Kick off the startup crash-recovery scan for interrupted meetings.
@@ -451,7 +452,11 @@ class MeetingRuntime:
             )
         self._hide_finalization_card()
 
-    def start_new_meeting(self, cloud_enabled: Optional[bool]) -> None:
+    def start_new_meeting(
+        self,
+        cloud_enabled: Optional[bool],
+        system_audio_policy: str = "auto",
+    ) -> None:
         """Defer any leftover card, then start a new session."""
         with self._lock:
             finalizing = self._finalizing
@@ -462,7 +467,11 @@ class MeetingRuntime:
             )
             return
         self._file_leftover_card()
-        self._begin_start(cloud_enabled, demo=False)
+        self._begin_start(
+            cloud_enabled,
+            demo=False,
+            system_audio_policy=system_audio_policy,
+        )
 
     @property
     def is_active(self) -> bool:
@@ -489,11 +498,23 @@ class MeetingRuntime:
         with self._lock:
             return self._finalizing
 
-    def start_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
+    def start_meeting(
+        self,
+        cloud_enabled: Optional[bool] = None,
+        system_audio_policy: str = "auto",
+    ) -> None:
         """Start a meeting using the explicit or remembered cloud setting."""
-        self._begin_start(cloud_enabled, demo=False)
+        self._begin_start(
+            cloud_enabled,
+            demo=False,
+            system_audio_policy=system_audio_policy,
+        )
 
-    def start_demo_meeting(self, cloud_enabled: Optional[bool] = None) -> None:
+    def start_demo_meeting(
+        self,
+        cloud_enabled: Optional[bool] = None,
+        system_audio_policy: str = "auto",
+    ) -> None:
         """Start a developer-mode meeting with canned transcript data.
 
         Skips microphone, system audio, and Whisper so End can be tested
@@ -502,14 +523,20 @@ class MeetingRuntime:
         Args:
             cloud_enabled: Explicit cloud-intelligence choice, or None to use
                 the remembered per-meeting toggle.
+            system_audio_policy: Session-only capture policy from readiness.
         """
-        self._begin_start(cloud_enabled, demo=True)
+        self._begin_start(
+            cloud_enabled,
+            demo=True,
+            system_audio_policy=system_audio_policy,
+        )
 
     def _begin_start(
         self,
         cloud_enabled: Optional[bool],
         *,
         demo: bool,
+        system_audio_policy: str = "auto",
     ) -> None:
         # ``is_active`` is engine-derived and stays False for the seconds
         # ``_start_worker`` takes, so the authoritative guard is the
@@ -566,6 +593,7 @@ class MeetingRuntime:
         else:
             cloud = bool(cloud_enabled)
 
+        self._pending_system_audio_policy = str(system_audio_policy or "auto")
         if cloud and not self._cloud_consent_given():
             # One-time informed consent before any transcript leaves the
             # machine; the controller shows the dialog on the Qt main thread
@@ -574,7 +602,11 @@ class MeetingRuntime:
             self.controller.meeting_consent_requested.emit()
             return
 
-        self._launch(cloud, demo=demo)
+        self._launch(
+            cloud,
+            demo=demo,
+            system_audio_policy=self._pending_system_audio_policy,
+        )
 
     def on_consent_result(self, granted: bool) -> None:
         """Continue the pending meeting action after consent resolves."""
@@ -582,7 +614,12 @@ class MeetingRuntime:
         if kind in ("start", "start_demo"):
             # A declined consent still starts the meeting — transcript-only.
             # _launch releases the start claim taken by start_meeting.
-            self._launch(cloud=granted, demo=(kind == "start_demo"))
+            policy = getattr(self, "_pending_system_audio_policy", "auto")
+            self._launch(
+                cloud=granted,
+                demo=(kind == "start_demo"),
+                system_audio_policy=policy,
+            )
             return
 
         # Nothing is waiting to start on this result; drop any stale claim so
@@ -606,7 +643,13 @@ class MeetingRuntime:
         else:
             logger.debug("Consent result received with no pending meeting action")
 
-    def _launch(self, cloud: bool, *, demo: bool = False) -> None:
+    def _launch(
+        self,
+        cloud: bool,
+        *,
+        demo: bool = False,
+        system_audio_policy: str = "auto",
+    ) -> None:
         """Kick off the meeting start on a dedicated thread.
 
         ``MeetingEngine.start()`` loads a Whisper model and boots the web
@@ -637,11 +680,17 @@ class MeetingRuntime:
              "cloud_enabled": cloud, "finalization": None}
         )
         threading.Thread(
-            target=self._start_worker, args=(cloud, demo),
+            target=self._start_worker,
+            args=(cloud, demo, str(system_audio_policy or "auto")),
             name="meeting-start", daemon=True,
         ).start()
 
-    def _start_worker(self, cloud: bool, demo: bool = False) -> None:
+    def _start_worker(
+        self,
+        cloud: bool,
+        demo: bool = False,
+        system_audio_policy: str = "auto",
+    ) -> None:
         engine = None
         try:
             from meeting.engine import MeetingEngine
@@ -652,7 +701,11 @@ class MeetingRuntime:
                 self.controller.meeting_status_update.emit(
                     "Downloading speaker identification model..."
                 )
-            options = self._build_options(cloud, demo=demo)
+            options = self._build_options(
+                cloud,
+                demo=demo,
+                system_audio_policy=system_audio_policy,
+            )
             engine = MeetingEngine(options, repository=self._repository())
             engine.add_listener(self._on_engine_event)
             # Publish before starting: start() takes seconds to bring up
@@ -683,7 +736,15 @@ class MeetingRuntime:
                 self._card_meeting_id = None
                 self._deferred_start_errors = []
             self.controller.meeting_active = False
-            self.controller.meeting_error.emit(f"Could not start the meeting: {exc}")
+            message = str(exc)
+            if message.startswith("LINUX_SYSTEM_AUDIO_REQUIRED:"):
+                message = (
+                    "System audio became unavailable while starting. "
+                    "Retry detection or continue microphone-only."
+                )
+            self.controller.meeting_error.emit(
+                f"Could not start the meeting: {message}"
+            )
             self.controller.meeting_state_changed.emit(
                 {
                     "active": False,
@@ -735,7 +796,13 @@ class MeetingRuntime:
         for message in deferred_errors:
             self.controller.meeting_error.emit(message)
 
-    def _build_options(self, cloud: bool, *, demo: bool = False):
+    def _build_options(
+        self,
+        cloud: bool,
+        *,
+        demo: bool = False,
+        system_audio_policy: str = "auto",
+    ):
         from meeting.engine import MeetingEngineOptions
 
         settings = settings_manager.load_all_settings()
@@ -780,6 +847,7 @@ class MeetingRuntime:
             end_report=resolve_meeting_end_report(settings),
             report_views=resolve_meeting_report_views(settings),
             demo_mode=demo,
+            system_audio_policy=str(system_audio_policy or "auto"),
         )
 
     def pause_meeting(self) -> None:

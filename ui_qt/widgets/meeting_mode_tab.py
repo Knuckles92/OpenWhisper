@@ -50,6 +50,22 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
             "Recording permission. Without it, meetings capture microphone "
             "audio only."
         )
+    elif platform.startswith("linux"):
+        from meeting.platform import linux_meeting_implementation_ready
+        if linux_meeting_implementation_ready():
+            hint = (
+                "Linux system-audio capture is implemented (PulseAudio / "
+                "PipeWire-Pulse) but not yet publicly promoted. After the "
+                "unsupported-platform acknowledgement, OpenWhisper can enable "
+                "the default output monitor or continue microphone-only."
+            )
+        else:
+            os_name = meeting_unsupported_os_name(platform)
+            hint = (
+                f"{os_name} on this architecture is not a supported Meeting Mode "
+                "platform. Meetings here capture microphone audio only and are "
+                "unsupported."
+            )
     else:
         os_name = meeting_unsupported_os_name(platform)
         hint = (
@@ -82,6 +98,8 @@ def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool
         return False
     if platform == "darwin" and meeting_mode_supported(platform):
         return False
+    # Linux remains publicly unsupported until hardware attestation, so the
+    # idle warning stays visible even when the implementation is ready.
     return True
 
 

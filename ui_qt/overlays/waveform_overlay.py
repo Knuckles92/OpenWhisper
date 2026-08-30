@@ -106,7 +106,7 @@ class WaveformOverlay(QWidget):
         self.stt_particles: List[STTParticle] = []
         self._streaming_preview_text: str = ""
         self._streaming_font_size = resolve_streaming_overlay_font_size()
-        # Cursor/caret anchor used to keep the overlay on-screen as it grows.
+        # Cursor anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
 
         self.large_file_info = LargeFileOverlayInfo()

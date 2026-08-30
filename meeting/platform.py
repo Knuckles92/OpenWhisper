@@ -1,10 +1,11 @@
 """Meeting Mode platform support policy.
 
 Meeting Mode captures two channels: a microphone, which PortAudio provides
-everywhere, and system audio, which has no portable backend. A platform is
-supported when it has a system-audio path -- WASAPI loopback on Windows,
-ScreenCaptureKit on macOS 13+. Linux has neither, so it can still open the UI
-and, after an explicit acknowledgement, try a microphone-only session.
+everywhere, and system audio, which has a first-class path on Windows
+(WASAPI/soundcard) and macOS 13+ (ScreenCaptureKit). Linux x86_64/aarch64 has a
+complete PulseAudio / PipeWire-Pulse implementation in-tree, but public
+``meeting_mode_supported`` promotion stays gated until the manual hardware
+release matrix is attested.
 
 macOS support carries a condition Windows does not: system audio is gated by
 the Screen Recording TCC grant. The platform is still "supported" without it,
@@ -32,6 +33,19 @@ SCREEN_RECORDING_SETTINGS_URL = (
     "?Privacy_ScreenCapture"
 )
 
+_LINUX_X86_64_ALIASES = frozenset({"x86_64", "amd64", "x64"})
+_LINUX_AARCH64_ALIASES = frozenset({"aarch64", "arm64"})
+
+
+def normalize_linux_machine(machine: Optional[str] = None) -> Optional[str]:
+    """Return ``linux_x86_64`` / ``linux_aarch64``, or None when unsupported."""
+    raw = (machine if machine is not None else platform_module.machine()).strip().lower()
+    if raw in _LINUX_X86_64_ALIASES:
+        return "linux_x86_64"
+    if raw in _LINUX_AARCH64_ALIASES:
+        return "linux_aarch64"
+    return None
+
 
 def _macos_major(release: Optional[str] = None) -> int:
     """Major macOS version, or 0 when it cannot be determined."""
@@ -42,17 +56,32 @@ def _macos_major(release: Optional[str] = None) -> int:
         return 0
 
 
-def meeting_mode_supported(platform: Optional[str] = None) -> bool:
-    """True when this OS has a first-class Meeting Mode capture path."""
+def linux_meeting_implementation_ready(machine: Optional[str] = None) -> bool:
+    """True when the Linux Meeting Mode implementation covers this arch.
+
+    Distinct from public ``meeting_mode_supported``: the code path is complete
+    for x86_64/aarch64, but promotion remains gated on hardware attestation.
+    """
+    return normalize_linux_machine(machine) is not None
+
+
+def meeting_mode_supported(
+    platform: Optional[str] = None,
+    machine: Optional[str] = None,
+) -> bool:
+    """True when this OS is publicly promoted as a Meeting Mode platform."""
     platform = platform or sys.platform
     if platform.startswith("win"):
         return True
     if platform == "darwin":
         major = _macos_major()
-        # An undetectable version is treated as new enough: ScreenCaptureKit
-        # will rule itself out at capture time, and refusing to open the tab
-        # is the worse failure.
-        return major == 0 or major >= MIN_MACOS_MAJOR
+        # Unknown macOS versions fail closed: ScreenCaptureKit audio needs a
+        # known Ventura+ baseline rather than an optimistic guess.
+        return major >= MIN_MACOS_MAJOR
+    # Linux implementation exists, but public support stays gated until the
+    # manual x86_64/aarch64 hardware release matrix is attested.
+    if platform.startswith("linux"):
+        return False
     return False
 
 

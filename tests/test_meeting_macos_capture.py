@@ -197,7 +197,9 @@ class TestEngineFallbackChain(unittest.TestCase):
         from meeting.engine import MeetingEngine
 
         engine = SimpleNamespace(_sources=[])
-        engine._start_source = lambda source: (started.append(source), True)[1]
+        engine._start_source = (
+            lambda source, reuse_spool=False: (started.append(source), True)[1]
+        )
         engine._start_fallback_loopback = (
             MeetingEngine._start_fallback_loopback.__get__(engine)
         )
@@ -234,7 +236,9 @@ class TestEngineFallbackChain(unittest.TestCase):
 
         started = []
         engine = SimpleNamespace(_sources=[])
-        engine._start_source = lambda source: (started.append(source), True)[1]
+        engine._start_source = (
+            lambda source, reuse_spool=False: (started.append(source), True)[1]
+        )
         engine._start_fallback_loopback = (
             MeetingEngine._start_fallback_loopback.__get__(engine)
         )

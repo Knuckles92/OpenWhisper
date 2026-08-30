@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import tarfile
 import threading
 import zipfile
 from pathlib import Path
@@ -93,8 +94,11 @@ def test_component_api_mismatch_is_rejected():
 
 
 def test_foreign_platform_is_rejected():
-    reason = check_compatibility({"platform": "linux_x86_64"})
-    assert reason and "linux_x86_64" in reason
+    with patch.object(
+        components, "current_platform_tag", return_value="win_amd64"
+    ):
+        reason = check_compatibility({"platform": "linux_x86_64"})
+        assert reason and "linux_x86_64" in reason
 
 
 def test_python_abi_mismatch_is_rejected():
@@ -171,7 +175,9 @@ def test_catalog_needs_no_network(monkeypatch):
     monkeypatch.setattr(components, "_open", _fail)
     catalog = ComponentCoordinator().fetch_catalog()
 
-    entry = catalog["components"][ComponentId.GPU_ACCEL]
+    entry = catalog["components"][ComponentId.GPU_ACCEL]["platforms"][
+        components.PLATFORM_WIN_AMD64
+    ]
     assert entry["archives"]
     assert all(
         archive["url"].startswith("https://files.pythonhosted.org/")
@@ -191,13 +197,31 @@ def test_built_in_catalog_ships_no_cudnn_wheel():
     assert any("cublas" in name for name in names)
 
 
-def test_available_component_ids_is_empty_off_windows():
-    """Linux and macOS have no installable component payload."""
-    with patch.object(components.sys, "platform", "linux"):
+def test_available_component_ids_by_platform():
+    """Windows keeps GPU+agent; Linux offers only the meeting agent."""
+    with patch.object(components.sys, "platform", "linux"), patch.object(
+        components.platform_module, "machine", return_value="x86_64"
+    ):
+        assert components.available_component_ids() == (
+            ComponentId.MEETING_AGENT,
+        )
+
+    with patch.object(components.sys, "platform", "linux"), patch.object(
+        components.platform_module, "machine", return_value="aarch64"
+    ):
+        assert components.available_component_ids() == (
+            ComponentId.MEETING_AGENT,
+        )
+
+    with patch.object(components.sys, "platform", "darwin"), patch.object(
+        components.platform_module, "machine", return_value="arm64"
+    ):
         assert components.available_component_ids() == ()
         assert ComponentCoordinator().list_components() == ()
 
-    with patch.object(components.sys, "platform", "win32"):
+    with patch.object(components.sys, "platform", "win32"), patch.object(
+        components.platform_module, "machine", return_value="AMD64"
+    ):
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
@@ -205,34 +229,213 @@ def test_available_component_ids_is_empty_off_windows():
 
 
 def test_meeting_agent_catalog_is_published():
-    """The sidecar is offered from Downloads once its archives are pinned."""
-    assert components.component_is_published(ComponentId.MEETING_AGENT) is True
-    entry = components._BUILTIN_CATALOG["components"][ComponentId.MEETING_AGENT]
-    assert entry.get("published") is True
-    assert int(entry.get("install_bytes") or 0) > 0
-    extracts = []
-    for archive in entry["archives"]:
-        digest = str(archive["sha256"]).lower()
-        assert len(digest) == 64
-        assert digest != components._PLACEHOLDER_SHA256
-        int(digest, 16)
-        assert str(archive["url"]).startswith("https://")
-        assert int(archive["size_bytes"]) > 0
-        extracts.append(archive.get("extract"))
-        if archive.get("extract") == "zip":
-            url = str(archive["url"])
-            tag = components.MEETING_AGENT_RELEASE_TAG
-            assert f"/releases/download/{tag}/" in url
-            assert (
-                f"meeting-agent-win_amd64-"
-                f"{components.MEETING_AGENT_COMPONENT_VERSION}.zip"
-            ) in url
-            if tag != f"v{__version__}":
-                assert f"/releases/download/v{__version__}/" not in url
-    assert "node-exe" in extracts
-    assert "zip" in extracts
-    with patch.object(components.sys, "platform", "win32"):
+    """The self-contained sidecar is offered on every supported target."""
+    expected = {
+        components.PLATFORM_WIN_AMD64: ("node-exe", 101_654_617),
+        components.PLATFORM_LINUX_X86_64: ("node-tar", 139_493_705),
+        components.PLATFORM_LINUX_AARCH64: ("node-tar", 136_816_417),
+    }
+    for tag, (node_extract, install_bytes) in expected.items():
+        assert components.component_is_published(
+            ComponentId.MEETING_AGENT, platform_tag=tag
+        ) is True
+        entry = components.catalog_entry_for_platform(
+            ComponentId.MEETING_AGENT, platform_tag=tag
+        )
+        assert entry is not None
+        assert entry.get("published") is True
+        assert entry.get("platform") == tag
+        assert int(entry.get("install_bytes") or 0) == install_bytes
+        extracts = [archive.get("extract") for archive in entry["archives"]]
+        assert node_extract in extracts
+        assert "zip" in extracts
+        for archive in entry["archives"]:
+            digest = str(archive["sha256"]).lower()
+            assert len(digest) == 64
+            assert digest != components._PLACEHOLDER_SHA256
+            int(digest, 16)
+            assert str(archive["url"]).startswith("https://")
+            assert int(archive["size_bytes"]) > 0
+
+    with patch.object(components.sys, "platform", "win32"), patch.object(
+        components.platform_module, "machine", return_value="AMD64"
+    ):
         assert ComponentId.MEETING_AGENT in components.available_component_ids()
+
+
+def test_check_compatibility_rejects_cross_architecture():
+    with patch.object(components, "current_platform_tag",
+                      return_value=components.PLATFORM_LINUX_AARCH64):
+        reason = components.check_compatibility(
+            {"component_api": 1, "platform": components.PLATFORM_LINUX_X86_64}
+        )
+        assert reason and "linux_x86_64" in reason
+    with patch.object(components, "current_platform_tag",
+                      return_value=components.PLATFORM_LINUX_X86_64):
+        assert components.check_compatibility(
+            {"component_api": 1, "platform": components.PLATFORM_LINUX_X86_64}
+        ) is None
+
+
+def test_read_manifest_rejects_malformed_shapes(component_root):
+    target = components.component_dir(ComponentId.MEETING_AGENT)
+    os.makedirs(target, exist_ok=True)
+    path = os.path.join(target, "manifest.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('[1,2,3]')
+    assert components.read_manifest(ComponentId.MEETING_AGENT) is None
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('{"platform": ["win_amd64"], "component_api": "x"}')
+    assert components.read_manifest(ComponentId.MEETING_AGENT) is None
+    # bool is a subclass of int; must still be rejected.
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('{"component_api": true, "version": false}')
+    assert components.read_manifest(ComponentId.MEETING_AGENT) is None
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('{"component_api": 1, "version": true}')
+    assert components.read_manifest(ComponentId.MEETING_AGENT) is None
+
+
+def test_boolean_manifest_cannot_activate_component(component_root):
+    from services.component_runtime import activate_component
+
+    target = Path(components.component_dir(ComponentId.MEETING_AGENT))
+    target.mkdir(parents=True, exist_ok=True)
+    (target / ".installed").write_text("x", encoding="utf-8")
+    (target / "manifest.json").write_text(
+        '{"component_api": true, "version": "1"}', encoding="utf-8"
+    )
+    ok, reason = activate_component(ComponentId.MEETING_AGENT)
+    assert ok is False
+    assert "manifest" in reason.lower() or "invalid" in reason.lower()
+
+
+def test_prune_orphans_restores_complete_old_tree(component_root):
+    dest = component_root / ComponentId.MEETING_AGENT
+    old = component_root / f"{ComponentId.MEETING_AGENT}.old"
+    old.mkdir()
+    (old / ".installed").write_text("node22-pi1", encoding="utf-8")
+    (old / "bundle.cjs").write_text("// ok", encoding="utf-8")
+    assert not dest.exists()
+    components.prune_orphans()
+    assert dest.is_dir()
+    assert (dest / ".installed").read_text(encoding="utf-8") == "node22-pi1"
+    assert not old.exists()
+
+
+def test_install_component_restores_previous_on_second_rename_failure(
+    component_root, tmp_path, monkeypatch
+):
+    dest = component_root / ComponentId.MEETING_AGENT
+    dest.mkdir()
+    (dest / ".installed").write_text("old", encoding="utf-8")
+    (dest / "keep.txt").write_text("previous", encoding="utf-8")
+
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        # First replace moves destination -> rollback; second (staging -> dest) fails.
+        if calls["n"] == 2:
+            raise OSError("simulated second rename failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(components.os, "replace", flaky_replace)
+    monkeypatch.setattr(components, "_download_verified", lambda *a, **k: None)
+    monkeypatch.setattr(components, "_validate_component_payload", lambda *a, **k: None)
+    monkeypatch.setattr(components, "_check_free_space", lambda *a, **k: None)
+    monkeypatch.setattr(
+        components, "current_platform_tag", lambda **kwargs: "linux_x86_64"
+    )
+    monkeypatch.setattr(components.sys, "platform", "linux")
+
+    # Pretend archives already exist in cache by writing empty files after resolve.
+    entry = {
+        "version": "new",
+        "component_api": components.COMPONENT_API,
+        "platform": "linux_x86_64",
+        "install_bytes": 1,
+        "archives": [
+            {
+                "name": "bundle.zip",
+                "url": "https://example.invalid/bundle.zip",
+                "sha256": "a" * 64,
+                "size_bytes": 1,
+                "extract": "zip",
+            }
+        ],
+    }
+
+    def fake_download(url, sha, size, destination, *a, **k):
+        Path(destination).write_bytes(b"PK\x03\x04")
+
+    monkeypatch.setattr(components, "_download_verified", fake_download)
+    monkeypatch.setattr(
+        components, "_safe_extract", lambda *a, **k: None
+    )
+
+    with pytest.raises(ComponentError):
+        components.install_component(
+            ComponentId.MEETING_AGENT,
+            entry,
+            lambda *a: None,
+            threading.Event(),
+        )
+    assert dest.is_dir()
+    assert (dest / "keep.txt").read_text(encoding="utf-8") == "previous"
+
+
+def test_uninstall_component_raises_when_leftovers_remain(component_root, monkeypatch):
+    target = component_root / ComponentId.MEETING_AGENT
+    target.mkdir()
+    (target / ".installed").write_text("x", encoding="utf-8")
+
+    def fake_replace(src, dst):
+        raise OSError("busy")
+
+    monkeypatch.setattr(components.os, "replace", fake_replace)
+    monkeypatch.setattr(components, "_rmtree", lambda path: None)
+    with pytest.raises(ComponentError, match="fully remove"):
+        components.uninstall_component(ComponentId.MEETING_AGENT)
+
+
+def test_install_component_rejects_foreign_platform_before_download(
+    component_root, monkeypatch
+):
+    called = []
+
+    def boom(*args, **kwargs):
+        called.append(True)
+        raise AssertionError("_download_verified must not run")
+
+    monkeypatch.setattr(components, "_download_verified", boom)
+    monkeypatch.setattr(
+        components, "current_platform_tag", lambda **kwargs: "linux_x86_64"
+    )
+    entry = {
+        "version": "node22-pi1",
+        "component_api": components.COMPONENT_API,
+        "platform": "win_amd64",
+        "install_bytes": 10,
+        "archives": [
+            {
+                "name": "node.zip",
+                "url": "https://example.invalid/node.zip",
+                "sha256": "a" * 64,
+                "size_bytes": 5,
+                "extract": "node-exe",
+            }
+        ],
+    }
+    with pytest.raises(ComponentError, match="win_amd64"):
+        components.install_component(
+            ComponentId.MEETING_AGENT,
+            entry,
+            lambda *args: None,
+            threading.Event(),
+        )
+    assert called == []
 
 
 def test_unpublished_speaker_id_is_never_offered(component_root):
@@ -253,7 +456,10 @@ def test_meeting_agent_payload_dir_uses_installed_bundle(component_root):
         {"version": "node22-pi1", "component_api": 1, "platform": "win_amd64"},
     )
     (target / "bundle.cjs").write_text("// stub", encoding="utf-8")
-    with patch.object(components, "_source_sidecar_payload_dir", return_value=None):
+    (target / "node.exe").write_bytes(b"node")
+    with patch.object(components, "_source_sidecar_payload_dir", return_value=None), patch.object(
+        components, "current_platform_tag", return_value="win_amd64"
+    ), patch.object(components.sys, "platform", "win32"):
         assert components.meeting_agent_payload_dir() == str(target)
 
 
@@ -414,7 +620,10 @@ def test_a_superseded_install_is_offered_the_update(component_root):
         component_root, "gpu-accel", {"version": "cuda12.9-cudnn9.24"}
     )
 
-    info = coordinator.describe("gpu-accel")
+    with patch.object(components.sys, "platform", "win32"), patch.object(
+        components.platform_module, "machine", return_value="AMD64"
+    ):
+        info = coordinator.describe("gpu-accel")
 
     assert info.installed_version == "cuda12.9-cudnn9.24"
     assert info.available_version == components.GPU_COMPONENT_VERSION
@@ -552,20 +761,81 @@ def test_safe_extract_node_exe_errors_when_missing(tmp_path):
         )
 
 
-def test_validate_meeting_agent_payload_requires_node_and_bundle(tmp_path):
-    with pytest.raises(ComponentError, match="node.exe"):
+def test_safe_extract_node_tar_writes_executable(tmp_path):
+    import tarfile
+
+    archive = tmp_path / "node.tar"
+    member = "node-v22.23.2-linux-x64/bin/node"
+    with tarfile.open(archive, "w") as tar:
+        info = tarfile.TarInfo(name=member)
+        data = b"#!/bin/node\n"
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        extra = tarfile.TarInfo(name="node-v22.23.2-linux-x64/README.md")
+        extra_data = b"ignore"
+        extra.size = len(extra_data)
+        tar.addfile(extra, io.BytesIO(extra_data))
+
+    out = tmp_path / "out"
+    out.mkdir()
+    components._safe_extract_node_tar(
+        str(archive),
+        str(out),
+        lambda *a: None,
+        threading.Event(),
+        member_name=member,
+    )
+    node_path = out / "node"
+    assert node_path.read_bytes().startswith(b"#!")
+    assert os.access(node_path, os.X_OK)
+
+    evil = tmp_path / "evil.tar"
+    with tarfile.open(evil, "w") as tar:
+        info = tarfile.TarInfo(name="../node")
+        payload = b"bad"
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    with pytest.raises(ComponentError, match="invalid|unsafe path"):
+        components._safe_extract_node_tar(
+            str(evil),
+            str(tmp_path / "out2"),
+            lambda *a: None,
+            threading.Event(),
+            member_name="../node",
+        )
+
+
+def test_validate_meeting_agent_payload_requires_node_and_bundle(tmp_path, monkeypatch):
+    with patch.object(components.sys, "platform", "win32"), patch.object(
+        components, "current_platform_tag", return_value="win_amd64"
+    ):
+        with pytest.raises(ComponentError, match="node.exe"):
+            components._validate_component_payload(
+                ComponentId.MEETING_AGENT, str(tmp_path)
+            )
+
+        (tmp_path / "node.exe").write_bytes(b"node")
+        with pytest.raises(ComponentError, match="bundle.cjs"):
+            components._validate_component_payload(
+                ComponentId.MEETING_AGENT, str(tmp_path)
+            )
+
+        (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
+
+        class _Result:
+            def __init__(self, code=0, stdout="v22.23.2\n"):
+                self.returncode = code
+                self.stdout = stdout
+                self.stderr = ""
+
+        monkeypatch.setattr(
+            components.subprocess,
+            "run",
+            lambda *a, **k: _Result(),
+        )
         components._validate_component_payload(
             ComponentId.MEETING_AGENT, str(tmp_path)
         )
-
-    (tmp_path / "node.exe").write_bytes(b"node")
-    with pytest.raises(ComponentError, match="bundle.cjs"):
-        components._validate_component_payload(
-            ComponentId.MEETING_AGENT, str(tmp_path)
-        )
-
-    (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
-    components._validate_component_payload(ComponentId.MEETING_AGENT, str(tmp_path))
 
 
 def test_install_component_accepts_verified_meeting_agent_archives(
@@ -588,6 +858,18 @@ def test_install_component_accepts_verified_meeting_agent_archives(
         Path(destination).write_bytes(source.read_bytes())
 
     monkeypatch.setattr(components, "_download_verified", fake_download)
+
+    class _Result:
+        def __init__(self, code=0, stdout="v22.23.2\n"):
+            self.returncode = code
+            self.stdout = stdout
+            self.stderr = ""
+
+    monkeypatch.setattr(components.subprocess, "run", lambda *a, **k: _Result())
+    monkeypatch.setattr(components.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components, "current_platform_tag", lambda **kwargs: "win_amd64"
+    )
     entry = {
         "version": "node22-pi1",
         "component_api": components.COMPONENT_API,
@@ -640,6 +922,10 @@ def test_install_component_rejects_meeting_agent_missing_bundle(
         Path(destination).write_bytes(sources[Path(destination).name].read_bytes())
 
     monkeypatch.setattr(components, "_download_verified", fake_download)
+    monkeypatch.setattr(components.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components, "current_platform_tag", lambda **kwargs: "win_amd64"
+    )
     entry = {
         "version": "node22-pi1",
         "install_bytes": 10,
@@ -702,6 +988,10 @@ def test_install_component_accepts_verified_nvidia_wheels(
         Path(destination).write_bytes(source.read_bytes())
 
     monkeypatch.setattr(components, "_download_verified", fake_download)
+    monkeypatch.setattr(components.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components, "current_platform_tag", lambda **kwargs: "win_amd64"
+    )
     entry = {
         "version": "test",
         "component_api": components.COMPONENT_API,
@@ -765,3 +1055,94 @@ def test_free_space_check_passes_when_ample(component_root):
 
     with patch("services.components.shutil.disk_usage", return_value=_Usage()):
         components._check_free_space(1024)  # must not raise
+
+
+def test_prune_orphans_preserves_old_when_restore_fails(component_root, monkeypatch):
+    dest = component_root / ComponentId.MEETING_AGENT
+    old = component_root / f"{ComponentId.MEETING_AGENT}.old"
+    old.mkdir()
+    (old / ".installed").write_text("node22-pi1", encoding="utf-8")
+    (old / "bundle.cjs").write_text("// ok", encoding="utf-8")
+
+    def boom(src, dst):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(components.os, "replace", boom)
+    components.prune_orphans()
+    assert old.is_dir()
+    assert (old / ".installed").exists()
+    assert not dest.exists()
+
+
+def test_uninstall_removes_stale_old_without_target(component_root):
+    old = component_root / f"{ComponentId.MEETING_AGENT}.old"
+    old.mkdir()
+    (old / "bundle.cjs").write_text("// leftover", encoding="utf-8")
+    components.uninstall_component(ComponentId.MEETING_AGENT)
+    assert not old.exists()
+
+
+def test_meeting_agent_payload_rejects_malformed_manifest(component_root, tmp_path):
+    target = components.component_dir(ComponentId.MEETING_AGENT)
+    os.makedirs(target, exist_ok=True)
+    (Path(target) / ".installed").write_text("x", encoding="utf-8")
+    (Path(target) / "bundle.cjs").write_text("//", encoding="utf-8")
+    node_name = "node.exe" if os.name == "nt" else "node"
+    node_path = Path(target) / node_name
+    node_path.write_bytes(b"#!/bin/node\n")
+    if os.name != "nt":
+        os.chmod(node_path, 0o755)
+    (Path(target) / "manifest.json").write_text("{not-json", encoding="utf-8")
+    with patch.object(components, "is_frozen", return_value=True):
+        assert components.meeting_agent_payload_dir() is None
+
+
+def test_catalog_entry_mutation_does_not_affect_builtin():
+    entry = components.catalog_entry_for_platform(
+        ComponentId.MEETING_AGENT, platform_tag=components.PLATFORM_WIN_AMD64
+    )
+    assert entry is not None
+    entry["install_bytes"] = 1
+    entry["archives"][0]["sha256"] = "0" * 64
+    again = components.catalog_entry_for_platform(
+        ComponentId.MEETING_AGENT, platform_tag=components.PLATFORM_WIN_AMD64
+    )
+    assert again["install_bytes"] != 1
+    assert again["archives"][0]["sha256"] != "0" * 64
+
+
+def test_node_tar_rejects_absolute_member_name(tmp_path):
+    archive = tmp_path / "node.tar"
+    member = "node-v22.23.2-linux-x64/bin/node"
+    with tarfile.open(archive, "w") as tar:
+        info = tarfile.TarInfo(name=member)
+        data = b"#!/bin/node\n"
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    with pytest.raises(ComponentError, match="invalid"):
+        components._safe_extract_node_tar(
+            str(archive),
+            str(tmp_path / "out"),
+            lambda *a: None,
+            threading.Event(),
+            member_name="/" + member,
+        )
+
+
+def test_validate_node_version_requires_exact_match(tmp_path, monkeypatch):
+    (tmp_path / "node").write_bytes(b"#!/bin/node\n")
+    os.chmod(tmp_path / "node", 0o755)
+    (tmp_path / "bundle.cjs").write_text("//", encoding="utf-8")
+
+    class _Result:
+        def __init__(self, code=0, stdout="v22.23.20\n"):
+            self.returncode = code
+            self.stdout = stdout
+            self.stderr = ""
+
+    monkeypatch.setattr(components.sys, "platform", "linux")
+    monkeypatch.setattr(components.subprocess, "run", lambda *a, **k: _Result())
+    with pytest.raises(ComponentError, match="unexpected version|reported"):
+        components._validate_component_payload(
+            ComponentId.MEETING_AGENT, str(tmp_path)
+        )

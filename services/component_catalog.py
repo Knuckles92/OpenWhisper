@@ -123,8 +123,13 @@ _CATALOG: dict[str, ComponentDetails] = {
         maintainer="OpenWhisper (sidecar); Pi (agent SDK); Node.js project",
         family="Pi sidecar",
         requires="An OpenRouter API key. Used by Meeting Mode.",
-        payload="Portable Node 22 (node.exe) plus the Pi sidecar (bundle.cjs)",
-        local_format="Flat extract: node.exe and bundle.cjs side by side",
+        payload=(
+            "Portable Node 22 (node.exe on Windows, node on Linux) plus the "
+            "Pi sidecar (bundle.cjs)"
+        ),
+        local_format=(
+            "Flat extract: platform Node runtime and bundle.cjs side by side"
+        ),
         license="Node.js MIT; Pi per its license; sidecar with OpenWhisper",
         best_for=(
             "Meeting Mode sessions that should track topics, decisions, and "
@@ -133,9 +138,9 @@ _CATALOG: dict[str, ComponentDetails] = {
         limitations=(
             "Needs an OpenRouter API key and a network connection while "
             "the agent runs.",
-            "The Windows payload is a portable node.exe; this component is "
-            "not offered on macOS or Linux.",
-            "About 38 MB to download.",
+            "Offered on Windows x64 and Linux x86_64/aarch64. macOS is not "
+            "supported for this downloadable payload.",
+            "Download size depends on the platform Node archive.",
             "Meeting Mode still works without it — the Direct agent and "
             "Me/Others labels do not depend on Pi.",
         ),

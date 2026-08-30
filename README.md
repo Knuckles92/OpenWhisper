@@ -45,7 +45,8 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio
   into a durable, searchable meeting transcript; share a tokenized live
   dashboard, review evidence-linked insights, play the recording, and export
-  the result
+  the result. Linux x86_64/aarch64 has an in-tree Pulse/PipeWire path gated
+  behind an unsupported-platform acknowledgement until hardware attestation.
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
@@ -58,7 +59,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Default hotkeys | Numpad (`*`, `-`, `Ctrl+Alt+*`) | Control+Option (`⌃⌥R`, `⌃⌥⎋`, `⌃⌥⇧R`) | Numpad (same as Windows) |
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
-| Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Not available — meetings are microphone-only |
+| Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Implementation present (Pulse/PipeWire-Pulse); public support gated pending hardware attestation — try-anyway after ack |
 | Distribution / launchers | Native `.exe` installer | `install.sh` + shell scripts | Native `.deb` / `.pkg.tar.zst` installers; `openwhisper` / `ow` commands |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. Native Wayland security prevents `pynput` from reliably observing or injecting keys across other native Wayland applications; global hotkeys and auto-paste therefore require an X11 session (or may work only with XWayland windows). Recording, transcription, clipboard copy, and the rest of the UI remain available on Wayland. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
@@ -178,6 +179,8 @@ sudo apt install -y \
 
 `libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*. `./install.sh`, `scripts/openwhisper`, and `python app_qt.py` probe these libraries on Linux and print the matching `apt` / `dnf` / `pacman` command instead of a raw `ImportError`. Clipboard copy uses Qt and does not require `xclip` or `wl-clipboard`.
 
+Meeting Mode on Linux also needs a Pulse-compatible desktop audio session (native PulseAudio or PipeWire with `pipewire-pulse`) and the Pulse client library (`libpulse0` / `pulseaudio-libs` / `libpulse`). If system audio is missing, OpenWhisper shows distro-specific setup commands and can continue microphone-only for that meeting. See [`docs/linux-system-audio.md`](docs/linux-system-audio.md).
+
 **Fedora / RHEL:**
 
 ```bash
@@ -244,7 +247,7 @@ The **Build native installers** GitHub Actions workflow builds both operating sy
 
 ### Optional downloadable components
 
-The Windows installer is CPU-only. GPU acceleration and the Meeting Intelligence Agent are installed later from **Downloads** inside the app. Those URLs live in [`services/components.py`](services/components.py) — not on `/releases/latest`, and not on the website (except an unpublished speaker-id placeholder). Every archive is SHA-256 verified before extract.
+The Windows installer is CPU-only. GPU acceleration (Windows) and the Meeting Intelligence Agent (Windows x64 and Linux x86_64/aarch64) are installed later from **Downloads** inside the app. Those URLs live in [`services/components.py`](services/components.py) — not on `/releases/latest`, and not on the website (except an unpublished speaker-id placeholder). Every archive is SHA-256 verified before extract.
 
 | What | Where the bytes come from | Moves when |
 | --- | --- | --- |
@@ -278,7 +281,7 @@ Leave the catalog alone when only the app changed. Rebuild when Node or `sidecar
 python scripts\build_component.py meeting-agent
 ```
 
-That pins the official Node win-x64 zip from nodejs.org, builds `sidecar/dist/bundle.cjs`, zips it, and prints a ready-to-paste `_BUILTIN_MEETING_AGENT_ARCHIVES` block. Attach the new zip to the GitHub Release whose tag you set as `MEETING_AGENT_RELEASE_TAG`, paste the block, and bump `MEETING_AGENT_COMPONENT_VERSION` so existing installs are offered the new payload. Do not replace the zip on an older tag — GitHub assets are treated as immutable.
+That pins official Node archives for Windows x64, Linux x64, and Linux ARM64 from nodejs.org, builds `sidecar/dist/bundle.cjs` once, zips the platform-neutral bundle, and prints a ready-to-paste `_BUILTIN_MEETING_AGENT_BY_PLATFORM` block covering `win_amd64`, `linux_x86_64`, and `linux_aarch64`. Attach the bundle zip to the GitHub Release whose tag you set as `MEETING_AGENT_RELEASE_TAG`, paste the block, and bump `MEETING_AGENT_COMPONENT_VERSION` so existing installs are offered the new payload. Do not replace the zip on an older tag — GitHub assets are treated as immutable.
 
 OPTIONAL: For cloud transcription, transcript cleanup, or meeting intelligence, add API keys under **Settings → API keys**. They are saved in your operating system's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on Linux), never in the settings file or the log, and a **Test** button checks a key against the provider before you rely on it. Environment variables or a `.env` file still work and are used when no key is saved:
 

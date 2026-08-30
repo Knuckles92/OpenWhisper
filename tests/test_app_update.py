@@ -595,15 +595,27 @@ class TestDualAssetsAndApplyMode:
     def test_native_mode_requires_hkcu_registration(self, tmp_path):
         release = _release(native=True)
         (tmp_path / "unins000.exe").write_bytes(b"uninstaller")
-        assert resolve_release_apply_mode(
-            InstallChannel.INSTALLER,
-            release,
-            platform_name="win32",
-        ) == ApplyMode.SETUP
-        with patch(
+        # Patching sys.platform to win32 on Linux must not reach a real winreg
+        # import; discovery is isolated and returns no registration by default.
+        with patch.object(app_update.sys, "platform", "win32"), patch(
+            "services.app_update_apply.discover_install_registration",
+            return_value=None,
+        ), patch(
+            "services.app_update_apply.is_process_elevated", return_value=False
+        ), patch(
+            "services.app_update_apply._is_under_program_files",
+            return_value=False,
+        ), patch(
+            "services.app_update_apply.reject_reparse_chain"
+        ), patch(
             "services.app_update_apply.registered_uninstaller_path",
             return_value=str(tmp_path / "unins000.exe"),
         ):
+            assert resolve_release_apply_mode(
+                InstallChannel.INSTALLER,
+                release,
+                platform_name="win32",
+            ) == ApplyMode.SETUP
             assert resolve_release_apply_mode(
                 InstallChannel.INSTALLER,
                 release,

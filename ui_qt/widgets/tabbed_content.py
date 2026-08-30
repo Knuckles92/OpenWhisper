@@ -137,7 +137,28 @@ class TabbedContentWidget(QWidget):
             self.tab_bar.setTabToolTip(self.TAB_MEETING_MODE, "")
             return
         os_name = meeting_unsupported_os_name()
-        if self._meeting_unlocked:
+        try:
+            from meeting.platform import linux_meeting_implementation_ready
+            import sys
+
+            preview = (
+                sys.platform.startswith("linux")
+                and linux_meeting_implementation_ready()
+            )
+        except Exception:
+            preview = False
+        if preview:
+            if self._meeting_unlocked:
+                tip = (
+                    f"Meeting Mode on {os_name} is a preview; "
+                    "capture is implemented but not publicly supported yet."
+                )
+            else:
+                tip = (
+                    f"Meeting Mode on {os_name} is a preview "
+                    "(not publicly supported yet). Click to continue."
+                )
+        elif self._meeting_unlocked:
             tip = (
                 f"Meeting Mode is unsupported on {os_name}; "
                 "system audio is unavailable."

@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Approved implementation plan for Linux and Windows feature parity in OpenWhisper Meeting Mode.">
+  <title>Linux Meeting Mode · Feature Parity Plan</title>
+  <style>
+    :root {
+      --bg: #07101c;
+      --bg-soft: #0b1726;
+      --panel: rgba(14, 29, 47, .82);
+      --panel-solid: #0e1d2f;
+      --panel-2: #12243a;
+      --line: rgba(166, 199, 222, .16);
+      --line-strong: rgba(166, 199, 222, .27);
+      --text: #ecf5f9;
+      --muted: #9fb5c3;
+      --muted-2: #748d9e;
+      --cyan: #5fe0d0;
+      --cyan-2: #1db9aa;
+      --blue: #78aaff;
+      --violet: #b7a1ff;
+      --amber: #ffc76d;
+      --red: #ff8d91;
+      --green: #8fe3a8;
+      --shadow: 0 22px 70px rgba(0,0,0,.34);
+      --radius: 18px;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 84% 7%, rgba(95,224,208,.12), transparent 26rem),
+        radial-gradient(circle at 15% 30%, rgba(120,170,255,.10), transparent 32rem),
+        linear-gradient(180deg, #081321 0%, var(--bg) 52%, #050b13 100%);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.72;
+      min-height: 100vh;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .16;
+      background-image: linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: linear-gradient(to bottom, black, transparent 70%);
+    }
+    a { color: var(--cyan); text-decoration-color: rgba(95,224,208,.4); text-underline-offset: 3px; }
+    a:hover { color: #a9fff5; }
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0;
+      z-index: 100;
+      background: linear-gradient(90deg, var(--cyan), var(--blue), var(--violet));
+      box-shadow: 0 0 18px rgba(95,224,208,.8);
+    }
+    .shell {
+      width: min(1480px, calc(100% - 36px));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 980px);
+      gap: 42px;
+      justify-content: center;
+      padding: 34px 0 90px;
+    }
+    .sidebar {
+      position: sticky;
+      top: 28px;
+      align-self: start;
+      max-height: calc(100vh - 56px);
+      overflow: auto;
+      padding: 18px 12px 18px 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(8,20,34,.74);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 12px 45px rgba(0,0,0,.22);
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin: 2px 7px 18px;
+      color: var(--text);
+      font-weight: 760;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      color: #04201d;
+      background: linear-gradient(135deg, #a7fff3, var(--cyan-2));
+      box-shadow: 0 7px 24px rgba(29,185,170,.25);
+      font-size: 18px;
+    }
+    .toc-title {
+      color: var(--muted-2);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin: 0 8px 8px;
+    }
+    #toc a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      line-height: 1.35;
+      padding: 7px 10px;
+      margin: 2px 0;
+      border-left: 2px solid transparent;
+      border-radius: 0 9px 9px 0;
+      transition: .18s ease;
+    }
+    #toc a.level-3 { padding-left: 22px; color: var(--muted-2); font-size: 12px; }
+    #toc a:hover, #toc a.active {
+      color: var(--text);
+      border-left-color: var(--cyan);
+      background: rgba(95,224,208,.075);
+    }
+    .side-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 18px 6px 2px; }
+    button, .file-link {
+      appearance: none;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(255,255,255,.035);
+      color: var(--muted);
+      font: 700 12px var(--sans);
+      padding: 9px 10px;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+    }
+    button:hover, .file-link:hover { color: var(--text); border-color: rgba(95,224,208,.45); background: rgba(95,224,208,.08); }
+    main { min-width: 0; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(30px, 6vw, 66px);
+      border: 1px solid var(--line-strong);
+      border-radius: 28px;
+      background:
+        linear-gradient(135deg, rgba(18,42,64,.95), rgba(9,25,41,.92)),
+        var(--panel-solid);
+      box-shadow: var(--shadow);
+      margin-bottom: 28px;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 360px;
+      height: 360px;
+      right: -130px;
+      top: -180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(95,224,208,.24), transparent 68%);
+    }
+    .eyebrow { color: var(--cyan); font-size: 12px; font-weight: 850; letter-spacing: .2em; text-transform: uppercase; }
+    h1 {
+      max-width: 760px;
+      margin: 14px 0 16px;
+      font-size: clamp(37px, 6.2vw, 72px);
+      line-height: .99;
+      letter-spacing: -.055em;
+      text-wrap: balance;
+    }
+    .hero-copy { max-width: 710px; margin: 0; color: #bdd0db; font-size: clamp(17px, 2vw, 21px); line-height: 1.55; }
+    .status-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 26px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.035);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .pill.approved { color: var(--green); border-color: rgba(143,227,168,.32); background: rgba(143,227,168,.08); }
+    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 18px 0 30px;
+    }
+    .stat {
+      padding: 17px 18px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(13,30,48,.76);
+      box-shadow: 0 10px 30px rgba(0,0,0,.16);
+    }
+    .stat strong { display: block; color: var(--text); font-size: 25px; line-height: 1.1; letter-spacing: -.03em; }
+    .stat span { display: block; color: var(--muted-2); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; margin-top: 6px; }
+    article {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      padding: clamp(25px, 5vw, 55px);
+    }
+    article > h2:first-child { margin-top: 0; }
+    h2, h3, h4 { scroll-margin-top: 26px; text-wrap: balance; }
+    h2 {
+      margin: 64px 0 20px;
+      padding-top: 6px;
+      color: #f4fbfd;
+      font-size: clamp(26px, 4vw, 38px);
+      line-height: 1.15;
+      letter-spacing: -.035em;
+    }
+    h2::before { content: ""; display: block; width: 42px; height: 3px; margin-bottom: 15px; border-radius: 9px; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
+    h3 { margin: 42px 0 14px; color: #dcecf2; font-size: 23px; line-height: 1.25; letter-spacing: -.02em; }
+    h4 { margin: 30px 0 10px; color: var(--cyan); font-size: 16px; }
+    p { color: #c2d2dc; }
+    strong { color: #f2fbfd; }
+    ul, ol { color: #bfd0da; padding-left: 1.35em; }
+    li { margin: .42em 0; padding-left: .25em; }
+    li::marker { color: var(--cyan-2); font-weight: 800; }
+    article > ol {
+      padding: 4px 4px 4px 0;
+      list-style: none;
+      counter-reset: decisions;
+    }
+    article > ol > li {
+      position: relative;
+      counter-increment: decisions;
+      padding: 15px 18px 15px 58px;
+      margin: 9px 0;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255,255,255,.025);
+    }
+    article > ol > li::before {
+      content: counter(decisions, decimal-leading-zero);
+      position: absolute;
+      left: 15px;
+      top: 14px;
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      color: #06201d;
+      background: var(--cyan);
+      font: 850 11px var(--mono);
+    }
+    code {
+      padding: .16em .38em;
+      border: 1px solid rgba(120,170,255,.16);
+      border-radius: 6px;
+      color: #b9d2ff;
+      background: rgba(120,170,255,.08);
+      font: .88em var(--mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      position: relative;
+      overflow: auto;
+      padding: 20px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: #06101b;
+      box-shadow: inset 0 1px rgba(255,255,255,.025);
+      scrollbar-width: thin;
+    }
+    pre code { padding: 0; border: 0; color: #d3e5ef; background: none; overflow-wrap: normal; }
+    .copy-code { position: absolute; top: 8px; right: 8px; padding: 6px 8px; background: #0d1b2b; }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin: 20px 0 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      overflow: hidden;
+      font-size: 14px;
+    }
+    th, td { padding: 12px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: #d9f8f3; background: rgba(95,224,208,.075); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    td { color: #bcd0da; background: rgba(255,255,255,.018); }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: rgba(120,170,255,.045); }
+    blockquote {
+      margin: 24px 0;
+      padding: 15px 20px;
+      border-left: 4px solid var(--cyan);
+      border-radius: 0 12px 12px 0;
+      background: rgba(95,224,208,.07);
+    }
+    blockquote p { margin: 0; color: #d8eee9; }
+    hr { border: 0; height: 1px; background: var(--line); margin: 48px 0; }
+    .footer { color: var(--muted-2); font-size: 12px; text-align: center; margin: 22px 0 0; }
+    @media (max-width: 1050px) {
+      .shell { grid-template-columns: 1fr; width: min(940px, calc(100% - 28px)); }
+      .sidebar { position: relative; top: 0; max-height: none; }
+      #toc { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+      #toc a.level-3 { display: none; }
+      .side-actions { max-width: 300px; }
+    }
+    @media (max-width: 650px) {
+      body { font-size: 15px; }
+      .shell { width: min(100% - 18px, 940px); padding-top: 10px; gap: 14px; }
+      .sidebar { border-radius: 15px; }
+      #toc { grid-template-columns: 1fr; }
+      .hero { border-radius: 19px; padding: 30px 23px; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      article { border-radius: 18px; padding: 25px 20px; }
+      table { display: block; overflow-x: auto; }
+      h2 { margin-top: 48px; }
+    }
+    @media print {
+      :root { --text: #15222b; --muted: #4b5b65; --muted-2: #65747d; --line: #d9e1e5; --line-strong: #bdcbd2; }
+      body { background: white; color: #15222b; font-size: 11px; }
+      body::before, .progress, .sidebar, .copy-code { display: none !important; }
+      .shell { display: block; width: 100%; padding: 0; }
+      .hero, article { box-shadow: none; backdrop-filter: none; background: white; color: #15222b; border-color: #bdcbd2; }
+      .hero { padding: 25px; margin-bottom: 15px; }
+      h1, h2, h3, h4, strong { color: #10202a; }
+      p, li, td { color: #263a46; }
+      .stats { margin: 10px 0 15px; }
+      .stat { background: white; box-shadow: none; }
+      a { color: #096b70; }
+      pre { white-space: pre-wrap; background: #f3f6f7; }
+      code { color: #244a73; background: #f1f4f8; }
+      table { font-size: 9px; break-inside: avoid; }
+      h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Plan navigation">
+      <div class="brand"><span class="brand-mark">◉</span><span>OpenWhisper</span></div>
+      <div class="toc-title">Plan contents</div>
+      <nav id="toc"></nav>
+      <div class="side-actions">
+        <button type="button" onclick="window.print()">Print / PDF</button>
+        <a class="file-link" href="linux-meeting-mode-parity.md">Markdown</a>
+      </div>
+    </aside>
+    <main>
+      <header class="hero">
+        <div class="eyebrow">Approved implementation plan</div>
+        <h1>Linux Meeting Mode parity</h1>
+        <p class="hero-copy">Bring microphone, system audio, recovery, intelligence, and the Pi sidecar to Linux with the same product contract as Windows—across x86_64 and ARM64.</p>
+        <div class="status-row">
+          <span class="pill approved"><span class="dot"></span>Shared understanding confirmed</span>
+          <span class="pill">No installer work</span>
+          <span class="pill">Atomic support flip</span>
+        </div>
+      </header>
+      <section class="stats" aria-label="Plan summary">
+        <div class="stat"><strong>6</strong><span>Delivery phases</span></div>
+        <div class="stat"><strong>2</strong><span>Architectures</span></div>
+        <div class="stat"><strong>1</strong><span>Audio contract</span></div>
+        <div class="stat"><strong>12s</strong><span>Recovery target</span></div>
+      </section>
+      <article id="plan-content">
+<h2 id="goal">Goal</h2>
+<p>A Linux user can use Meeting Mode with the same product behavior as a Windows user:</p>
+<ul>
+<li>capture the microphone as <strong>Me</strong>;</li>
+<li>capture the complete default system-output mix as <strong>Others</strong>;</li>
+<li>run live ASR, speaker identification, intelligence, dashboard, recovery, finalization, history, playback, and export;</li>
+<li>use either the Direct intelligence core or a self-contained Pi sidecar installed from Downloads;</li>
+<li>follow default-output changes and recover failed capture sources;</li>
+<li>deliberately continue microphone-only when system audio cannot be captured.</li>
+</ul>
+<p>Linux must no longer be presented as an unsupported Meeting Mode platform once the release matrix below passes.</p>
+<h2 id="resolved-decisions">Resolved decisions</h2>
+<ol>
+<li><strong>Parity means Windows behavior, not Linux-specific expansion.</strong> Capture the entire default output mix. Per-application capture and an output-device picker are out of scope.</li>
+<li><strong>Both Linux architectures ship together.</strong> Support x86_64 and ARM64/aarch64 in the same public support change.</li>
+<li><strong>Use one supported system-audio contract.</strong> The production backend captures PulseAudio monitor sources. This covers native PulseAudio and PipeWire through <code>pipewire-pulse</code>. An ALSA-only starting system is supported through guided installation of a Pulse-compatible PipeWire session, not through a separate native ALSA loopback backend.</li>
+<li><strong>Missing system audio is never silent.</strong> Before each affected meeting, show a diagnostic dialog with the detected problem, distro-specific guidance, Copy command, Open setup guide, Retry detection, Go back, and Continue microphone-only. The microphone-only decision is not persisted.</li>
+<li><strong>The easiest Pi path wins.</strong> Downloads offers self-contained Pi-sidecar payloads for Linux x86_64 and ARM64; users do not need to install Node or build <code>sidecar/</code> manually.</li>
+<li><strong>ARM64 parity is functional, not performance parity.</strong> CPU-local and cloud transcription are supported. NVIDIA/CUDA acceleration is not guaranteed on ARM64.</li>
+<li><strong>The public support flip is atomic.</strong> Implementation may land in phases, but Linux remains labeled unsupported until capture, remediation, both architectures, and the sidecar pass their release gates.</li>
+<li><strong>No installer work.</strong> Do not modify PyInstaller/Inno, create AppImage/deb/rpm packages, add native updater support, or change desktop integration.</li>
+</ol>
+<h2 id="current-state">Current state</h2>
+<p>Most Meeting Mode code is already platform-neutral:</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Current Linux state</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Microphone capture</td>
+<td>Implemented through <code>sounddevice</code> / PortAudio</td>
+</tr>
+<tr>
+<td>Spooling, ASR, persistence, recovery</td>
+<td>Implemented</td>
+</tr>
+<tr>
+<td>Dashboard, LAN sharing, history, playback, export</td>
+<td>Implemented</td>
+</tr>
+<tr>
+<td>Direct intelligence core</td>
+<td>Implemented</td>
+</tr>
+<tr>
+<td>Speaker identification and finalization</td>
+<td>Implemented with existing degradation paths</td>
+</tr>
+<tr>
+<td>NVIDIA local ASR</td>
+<td>Available on supported x86_64 setups through <code>requirements-gpu.txt</code></td>
+</tr>
+<tr>
+<td>System audio</td>
+<td>Missing from a stock Linux installation</td>
+</tr>
+<tr>
+<td>Platform UX</td>
+<td>Hard-coded unsupported</td>
+</tr>
+<tr>
+<td>Pi-sidecar download</td>
+<td>Windows-only</td>
+</tr>
+</tbody>
+</table>
+<p>The principal blockers are deliberate policy and distribution choices rather than a separate Linux meeting engine:</p>
+<ul>
+<li><code>meeting/platform.py:45-56</code> supports only Windows and macOS 13+.</li>
+<li><code>requirements.txt:32</code> installs <code>soundcard</code> only on Windows.</li>
+<li><code>meeting/capture/soundcard_stream.py</code> has a cross-platform shape but <code>available()</code> only verifies importability.</li>
+<li><code>ui_qt/widgets/tabbed_content.py</code>, <code>ui_qt/dialogs/meeting_unsupported_dialog.py</code>, and <code>ui_qt/widgets/meeting_mode_tab.py</code> encode Linux as unsupported.</li>
+<li><code>services/components.py:281-299</code> hides every downloadable component off Windows, and the meeting-agent catalog contains only <code>win_amd64</code> payloads.</li>
+<li><code>meeting/agent/pi_sidecar.py:68</code> assumes a portable runtime named <code>node.exe</code>.</li>
+</ul>
+<h2 id="support-contract">Support contract</h2>
+<h3 id="supported-capture-environments">Supported capture environments</h3>
+<ul>
+<li>Linux x86_64 or aarch64/ARM64.</li>
+<li>A working desktop audio session exposing PulseAudio monitor sources through either:</li>
+<li>native PulseAudio; or</li>
+<li>PipeWire plus <code>pipewire-pulse</code>.</li>
+<li>Source/venv application installation using the repository's documented dependency flow.</li>
+</ul>
+<h3 id="supported-through-remediation">Supported through remediation</h3>
+<p>A user beginning with ALSA-only audio, PipeWire without Pulse compatibility, missing <code>libpulse</code>, or no active user audio server receives detected, package-family-specific setup instructions. The app does not silently claim capture is ready and does not modify system packages, kernel modules, services, or user configuration itself.</p>
+<h3 id="explicitly-out-of-scope">Explicitly out of scope</h3>
+<ul>
+<li>A native ALSA <code>snd-aloop</code> backend. It requires kernel-module and output-routing configuration and would not provide a zero-configuration equivalent to the Windows default-output mix.</li>
+<li>A second native PipeWire capture implementation while <code>pipewire-pulse</code> provides the supported monitor API.</li>
+<li>Per-application capture.</li>
+<li>Output-device selection separate from the OS default.</li>
+<li>Flatpak portals or sandbox policy.</li>
+<li>Linux installer/package/updater work.</li>
+<li>Guaranteed ARM64 GPU acceleration.</li>
+</ul>
+<h2 id="architecture">Architecture</h2>
+<h3 id="1-linux-system-audio-capability-probe">1. Linux system-audio capability probe</h3>
+<p>Add a capture-layer probe, recommended location:</p>
+<ul>
+<li><code>meeting/capture/linux_audio.py</code></li>
+</ul>
+<p>It should return structured data rather than a bare boolean. Suggested result fields:</p>
+<pre><code class="language-python">LinuxAudioCapability(
+    ready: bool,
+    reason: str,
+    server_kind: str,       # pulse | pipewire-pulse | unavailable | unknown
+    default_sink: str,
+    monitor_source: str,
+    package_family: str,    # apt | dnf | pacman
+    remediation_key: str,
+)
+</code></pre>
+<p>Required failure classifications:</p>
+<ul>
+<li><code>soundcard_missing</code></li>
+<li><code>libpulse_missing</code></li>
+<li><code>audio_server_unavailable</code></li>
+<li><code>pipewire_pulse_missing</code></li>
+<li><code>default_sink_missing</code></li>
+<li><code>monitor_source_missing</code></li>
+<li><code>monitor_open_failed</code></li>
+<li><code>unsupported_architecture</code></li>
+<li><code>unknown_failure</code></li>
+</ul>
+<p>The probe must:</p>
+<ol>
+<li>remain safe to call from the meeting start worker;</li>
+<li>never raise into the UI;</li>
+<li>resolve the current default speaker and its monitor;</li>
+<li>verify the selected source is actually loopback/monitor capture;</li>
+<li>report actionable evidence without logging credentials or unrelated environment data;</li>
+<li>be reusable by the pre-start dialog, the engine, and a diagnostic script.</li>
+</ol>
+<p>Do not use <code>sounddevice</code> device-name matching as the primary Linux path. Linux PortAudio installations commonly expose ALSA devices without Pulse monitor sources. Use SoundCard's PulseAudio backend and explicitly validate its monitor selection.</p>
+<h3 id="2-production-loopback-source">2. Production loopback source</h3>
+<p>Harden <code>meeting/capture/soundcard_stream.py</code> as the shared Windows/Linux SoundCard source:</p>
+<ul>
+<li>update module and class documentation so it is no longer described as Windows-only;</li>
+<li>make capability detection resolve and validate the default speaker monitor instead of checking only <code>import soundcard</code>;</li>
+<li>keep Windows COM initialization as a Windows-only no-op elsewhere;</li>
+<li>log the selected backend, default sink, monitor, sample rate, and channels;</li>
+<li>retain bounded startup and shutdown waits, with a Linux-appropriate startup bound established by the proof phase;</li>
+<li>preserve non-fatal behavior: a failed loopback source must not prevent microphone capture;</li>
+<li>continue using mono int16 <code>CaptureBlock</code> values so the existing spool/resampler remains unchanged;</li>
+<li>retain <code>is_default_device_current()</code> and verify it correctly detects Linux default-sink changes;</li>
+<li>ensure an open-but-silent/wrong source is not reported as healthy during the initial proof window.</li>
+</ul>
+<p>The engine's existing fallback chain can remain platform-neutral:</p>
+<pre><code class="language-text">WASAPI sounddevice → ScreenCaptureKit → SoundCard monitor
+</code></pre>
+<p>Each backend rules itself out through capability detection. Update comments in:</p>
+<ul>
+<li><code>meeting/engine.py</code></li>
+<li><code>meeting/capture/__init__.py</code></li>
+<li><code>meeting/capture/devices.py</code></li>
+</ul>
+<p>The watchdog already polls every two seconds and throttles retries to ten seconds. A usable replacement source should be restored within twelve seconds of becoming available.</p>
+<h3 id="3-pre-start-linux-readiness-flow">3. Pre-start Linux readiness flow</h3>
+<p>Refactor <code>ui_qt/ui_controller.py:876+</code> so meeting readiness is not represented by one unsupported-platform acknowledgement.</p>
+<p>The common start flow for tab, button, demo, tray, and hotkey entry points should perform:</p>
+<ol>
+<li>unsupported-OS policy check;</li>
+<li>macOS Screen Recording check when applicable;</li>
+<li>Linux system-audio capability check when applicable;</li>
+<li>start dual-channel capture when ready;</li>
+<li>otherwise show the Linux diagnostic/remediation dialog;</li>
+<li>proceed microphone-only only after an explicit decision for that meeting.</li>
+</ol>
+<p>Add a dialog such as:</p>
+<ul>
+<li><code>ui_qt/dialogs/meeting_linux_audio_dialog.py</code></li>
+</ul>
+<p>Required states and actions:</p>
+<ul>
+<li>concise detected problem;</li>
+<li>what Meeting Mode will miss without the fix;</li>
+<li>detected distro/package family and audio stack;</li>
+<li>a copyable command or bounded sequence of commands;</li>
+<li><strong>Copy command</strong>;</li>
+<li><strong>Open setup guide</strong>;</li>
+<li><strong>Retry detection</strong> without closing the app;</li>
+<li><strong>Continue microphone-only</strong>;</li>
+<li><strong>Go back</strong>.</li>
+</ul>
+<p>The dialog must not execute <code>sudo</code>, install packages, load kernel modules, replace the audio server, or edit user configuration. Commands are advice and must be reviewed and tested per distro family before release.</p>
+<p>The existing <code>MEETING_UNSUPPORTED_PLATFORM_ACK</code> setting remains for genuinely unsupported systems and old macOS. Linux no longer reads or writes it. The microphone-only choice is session-scoped and never persisted.</p>
+<p>If system audio disappears after capture has started, do not interrupt the meeting with a modal. Keep the existing persistent capture status, retry through the watchdog, and report restoration when it succeeds.</p>
+<h3 id="4-remediation-data-and-documentation">4. Remediation data and documentation</h3>
+<p>Extend the existing Linux package-family detection in <code>services/linux_deps.py</code>; do not create a second distro detector.</p>
+<p>Maintain remediation as structured data keyed by failure and package family. At minimum cover:</p>
+<ul>
+<li>Debian/Ubuntu (<code>apt</code>)</li>
+<li>Fedora/RHEL-family (<code>dnf</code>)</li>
+<li>Arch-family (<code>pacman</code>)</li>
+</ul>
+<p>The commands must account for these distinct cases:</p>
+<ul>
+<li><code>libpulse</code> missing while a compatible server already exists;</li>
+<li>PipeWire running without <code>pipewire-pulse</code>;</li>
+<li>ALSA-only desktop requiring PipeWire, Pulse compatibility, and an appropriate session manager;</li>
+<li>packages installed but the user service not active;</li>
+<li>a restart or sign-out required before retry can succeed.</li>
+</ul>
+<p>Keep the in-app explanation usable offline. <strong>Open setup guide</strong> should lead to a detailed README/docs page with the same diagnostic keys, verification commands, rollback notes, and distro caveats. The website must not be the sole source of recovery instructions.</p>
+<h3 id="5-supported-platform-policy-and-copy">5. Supported-platform policy and copy</h3>
+<p>Only after the capture and remediation gates pass, update <code>meeting/platform.py</code>:</p>
+<ul>
+<li>Windows: supported;</li>
+<li>Linux x86_64 and aarch64: supported;</li>
+<li>macOS 13+: supported;</li>
+<li>old macOS and unknown platforms: unsupported.</li>
+</ul>
+<p>Supported means the OS has a maintained first-class capture path; it does not mean every machine currently has a usable output device. This matches Windows, which remains supported when no loopback device can be opened.</p>
+<p>Update:</p>
+<ul>
+<li><code>ui_qt/widgets/tabbed_content.py</code> — Linux tab is not greyed or locked;</li>
+<li><code>ui_qt/dialogs/meeting_unsupported_dialog.py</code> — remove Linux-specific wording and behavior;</li>
+<li><code>ui_qt/widgets/meeting_mode_tab.py</code> — describe PulseAudio/PipeWire monitor capture and mic-only degradation honestly;</li>
+<li><code>ui_qt/ui_controller.py</code> — route Linux through readiness/remediation, not unsupported acknowledgement;</li>
+<li><code>services/settings.py</code> docstrings concerning the unsupported acknowledgement;</li>
+<li><code>README.md</code> platform feature bullet and comparison table;</li>
+<li><code>CHANGELOG.md</code>.</li>
+</ul>
+<p>Recommended idle copy:</p>
+<blockquote>
+<p>System audio uses the default PulseAudio/PipeWire output monitor. If it is unavailable, OpenWhisper will explain how to enable it before offering a microphone-only meeting.</p>
+</blockquote>
+<h3 id="6-arm64-dependency-readiness">6. ARM64 dependency readiness</h3>
+<p>Before making the support claim, verify the complete source-install dependency graph on aarch64, not only Meeting Mode's own Python files.</p>
+<p>The current ecosystem has aarch64 builds for key native dependencies such as CTranslate2, PyQt6, ONNX Runtime, PyAV, and tokenizers, but wheel tags impose glibc and Python-version floors. Establish and document the actual minimum supported distro/Python combination by resolving <code>requirements.txt</code> in a clean ARM64 environment.</p>
+<p>Required outcomes:</p>
+<ul>
+<li>clean <code>pip install -r requirements.txt</code> on the ARM64 release baseline;</li>
+<li>PyQt application startup;</li>
+<li>CPU faster-whisper model load and transcription;</li>
+<li>microphone and monitor capture;</li>
+<li>local speaker embedding when ONNX Runtime is available;</li>
+<li>honest degradation if an optional accelerator is unavailable;</li>
+<li>no CUDA promise on ARM64.</li>
+</ul>
+<p>Do not infer ARM64 support from pure-Python imports or from Node availability alone.</p>
+<h2 id="pi-sidecar-parity">Pi-sidecar parity</h2>
+<p>The Downloads component is application functionality and remains in scope even though application installer work is excluded.</p>
+<h3 id="platform-aware-component-catalog">Platform-aware component catalog</h3>
+<p>Refactor <code>services/components.py</code> so component availability and compatibility use the current platform/architecture rather than a global Windows-only catalog.</p>
+<p>Add normalized tags:</p>
+<ul>
+<li><code>win_amd64</code></li>
+<li><code>linux_x86_64</code></li>
+<li><code>linux_aarch64</code></li>
+</ul>
+<p>Expected component availability:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Windows x64</th>
+<th>Linux x64</th>
+<th>Linux ARM64</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU acceleration component</td>
+<td>Existing</td>
+<td>Hidden; retain <code>requirements-gpu.txt</code> flow</td>
+<td>Hidden</td>
+</tr>
+<tr>
+<td>Meeting Intelligence Agent</td>
+<td>Available</td>
+<td>Available</td>
+<td>Available</td>
+</tr>
+<tr>
+<td>Speaker-ID component</td>
+<td>Preserve existing publication policy</td>
+<td>Preserve existing publication policy</td>
+<td>Preserve existing publication policy</td>
+</tr>
+</tbody>
+</table>
+<p><code>check_compatibility()</code> must compare the manifest with the normalized current platform. A Windows payload must never be considered compatible on Linux, and an x64 Linux payload must never be considered compatible on ARM64.</p>
+<h3 id="self-contained-node-payloads">Self-contained Node payloads</h3>
+<p>Update <code>scripts/build_component.py</code> to generate/pin meeting-agent entries for both Linux architectures while preserving the existing Windows output.</p>
+<p>Use official Node 22 archives:</p>
+<ul>
+<li>Linux x64: <code>node-v&lt;version&gt;-linux-x64.tar.xz</code></li>
+<li>Linux ARM64: <code>node-v&lt;version&gt;-linux-arm64.tar.xz</code></li>
+</ul>
+<p>The sidecar <code>bundle.cjs</code> is platform-independent and should be built once per component version. It may be referenced by all platform entries if archive naming and immutable release pins remain clear.</p>
+<p>Add a safe Node tar extractor in <code>services/components.py</code> that:</p>
+<ul>
+<li>selects only the Node executable;</li>
+<li>rejects absolute paths, traversal, links, and unexpected members;</li>
+<li>writes <code>node</code> into the component payload;</li>
+<li>applies executable permissions;</li>
+<li>reports bounded extraction progress;</li>
+<li>validates <code>node</code> and <code>bundle.cjs</code> before atomic commit.</li>
+</ul>
+<p>Update <code>meeting/agent/pi_sidecar.py</code>:</p>
+<ul>
+<li>resolve <code>node.exe</code> on Windows;</li>
+<li>resolve the bundled executable <code>node</code> on Linux;</li>
+<li>retain <code>node</code> from <code>PATH</code> as the source-development fallback;</li>
+<li>preserve existing Windows <code>CREATE_NO_WINDOW</code> behavior only on Windows.</li>
+</ul>
+<p>The Model Manager should enable <strong>Pi (sidecar)</strong> immediately after a successful Linux component install, matching Windows behavior.</p>
+<h2 id="work-phases">Work phases</h2>
+<h3 id="phase-0-proof-and-facts">Phase 0 — Proof and facts</h3>
+<ol>
+<li>Add <code>scripts/probe_linux_loopback.py</code>.</li>
+<li>Install/test SoundCard manually on representative PulseAudio and PipeWire-Pulse systems without changing the product support flag.</li>
+<li>Measure monitor resolution, startup delay, block cadence, silence behavior, and mic/loopback alignment.</li>
+<li>Resolve <code>requirements.txt</code> and start the app on clean ARM64.</li>
+<li>Verify the exact remediation commands for apt, dnf, and pacman families.</li>
+</ol>
+<p><strong>Gate:</strong> SoundCard must reliably capture the default output monitor on the release matrix. If it fails, stop and redesign the backend before changing product policy.</p>
+<h3 id="phase-1-capture-backend-and-dependency-support">Phase 1 — Capture backend and dependency support</h3>
+<ol>
+<li>Enable <code>soundcard</code> on Linux in <code>requirements.txt</code>.</li>
+<li>Add <code>libpulse.so.0</code> to <code>services/linux_deps.py</code> with package-family mappings.</li>
+<li>Add the structured Linux capability probe.</li>
+<li>Harden <code>SoundcardLoopbackSource</code> for Linux.</li>
+<li>Wire actionable failure details into engine capture status.</li>
+<li>Add capture unit and integration tests.</li>
+</ol>
+<h3 id="phase-2-readiness-and-remediation-ux">Phase 2 — Readiness and remediation UX</h3>
+<ol>
+<li>Add the Linux audio diagnostic dialog.</li>
+<li>Route every meeting start path through it.</li>
+<li>Implement Copy command, Open setup guide, Retry detection, Continue microphone-only, and Go back.</li>
+<li>Add offline guidance and detailed docs.</li>
+<li>Test each failure classification and all dialog decisions.</li>
+</ol>
+<h3 id="phase-3-multi-architecture-pi-component">Phase 3 — Multi-architecture Pi component</h3>
+<ol>
+<li>Introduce normalized platform tags and platform-specific catalog entries.</li>
+<li>Add Linux x64 and ARM64 Node payloads.</li>
+<li>Add safe tar extraction and executable validation.</li>
+<li>Make sidecar Node resolution platform-aware.</li>
+<li>Expose the meeting-agent component in Downloads on Linux.</li>
+<li>Test installation, activation, removal, update, and sidecar handshake on both architectures.</li>
+</ol>
+<h3 id="phase-4-platform-promotion">Phase 4 — Platform promotion</h3>
+<ol>
+<li>Mark Linux x86_64 and aarch64 supported in policy.</li>
+<li>Remove the unsupported Linux tab/dialog path.</li>
+<li>Add supported Linux copy and runtime degradation messaging.</li>
+<li>Flip tests that intentionally encode Linux as unsupported.</li>
+<li>Update README and changelog.</li>
+</ol>
+<p>This phase lands only after Phases 0–3 satisfy their gates.</p>
+<h3 id="phase-5-regression-and-release-validation">Phase 5 — Regression and release validation</h3>
+<ol>
+<li>Run all Python tests.</li>
+<li>Run sidecar typecheck, tests, and build.</li>
+<li>Run automated null-sink/monitor integration tests where possible.</li>
+<li>Complete the manual hardware matrix.</li>
+<li>Confirm no installer files changed.</li>
+</ol>
+<h2 id="tests">Tests</h2>
+<h3 id="new-linux-capture-tests">New Linux capture tests</h3>
+<p>Recommended new module:</p>
+<ul>
+<li><code>tests/test_meeting_linux_capture.py</code></li>
+</ul>
+<p>Cover:</p>
+<ul>
+<li>SoundCard missing;</li>
+<li><code>libpulse</code> missing;</li>
+<li>no server;</li>
+<li>PipeWire without Pulse compatibility;</li>
+<li>no default sink;</li>
+<li>no monitor source;</li>
+<li>valid Pulse monitor;</li>
+<li>monitor source rejected when it is not loopback;</li>
+<li>recorder open failure;</li>
+<li>start timeout;</li>
+<li>mono/stereo conversion;</li>
+<li>timestamps and block duration;</li>
+<li>stop and restart;</li>
+<li>default-sink switch;</li>
+<li>watchdog restoration;</li>
+<li>mic-only continuation and cancellation.</li>
+</ul>
+<h3 id="existing-tests-to-update">Existing tests to update</h3>
+<ul>
+<li><code>tests/test_meeting_unsupported_platform.py</code> — Linux architectures become supported; old macOS and unknown systems remain unsupported.</li>
+<li><code>tests/test_meeting_mode_tab.py</code> — Linux copy and warning behavior.</li>
+<li><code>tests/test_meeting_intro_dialog.py</code> — Linux opens normally.</li>
+<li><code>tests/test_meeting_macos_capture.py</code> — move generic fallback-chain coverage into a platform-neutral module if appropriate.</li>
+<li><code>tests/test_meeting_engine.py</code> — dual-channel Linux start, degradation, status, and recovery.</li>
+<li><code>tests/test_components.py</code> — platform catalogs, compatibility, Linux extraction, component availability, and architecture mismatch.</li>
+<li><code>tests/test_model_manager_dialog.py</code> — Pi core availability after Linux component installation.</li>
+<li>Pi-sidecar tests — Linux executable resolution, handshake, cancellation, restart, and shutdown.</li>
+</ul>
+<h3 id="diagnostic-remediation-ui-tests">Diagnostic/remediation UI tests</h3>
+<p>Cover every failure classification and assert:</p>
+<ul>
+<li>correct short explanation;</li>
+<li>correct package-family guidance;</li>
+<li>Copy command payload;</li>
+<li>guide URL;</li>
+<li>Retry reruns the probe;</li>
+<li>ready-on-retry proceeds without another warning;</li>
+<li>Continue microphone-only applies only to the current meeting;</li>
+<li>Go back starts nothing;</li>
+<li>hotkey/tray starts cannot bypass the dialog.</li>
+</ul>
+<h3 id="commands">Commands</h3>
+<pre><code class="language-bash">venv/bin/python -m pytest -q
+npm --prefix sidecar ci
+npm --prefix sidecar run typecheck
+npm --prefix sidecar test
+npm --prefix sidecar run build
+</code></pre>
+<p>The focused current baseline is 129 passed and 2 skipped across the Meeting Mode platform/capture suite. Those tests presently encode Linux as unsupported and must be changed only with the production support path.</p>
+<h2 id="manual-release-matrix">Manual release matrix</h2>
+<p>At minimum:</p>
+<table>
+<thead>
+<tr>
+<th>Architecture</th>
+<th>Environment</th>
+<th>Required result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>x86_64</td>
+<td>Ubuntu-family, PipeWire-Pulse</td>
+<td>Dual capture, recovery, Direct and Pi cores</td>
+</tr>
+<tr>
+<td>x86_64</td>
+<td>Fedora-family, PipeWire-Pulse</td>
+<td>Dual capture, recovery, Direct and Pi cores</td>
+</tr>
+<tr>
+<td>x86_64</td>
+<td>Native PulseAudio</td>
+<td>Dual capture and default-sink switch</td>
+</tr>
+<tr>
+<td>x86_64</td>
+<td>ALSA-only starting state</td>
+<td>Correct remediation; successful capture after supported setup</td>
+</tr>
+<tr>
+<td>aarch64</td>
+<td>Ubuntu-family, PipeWire-Pulse</td>
+<td>Clean install, CPU ASR, dual capture, Pi core</td>
+</tr>
+<tr>
+<td>aarch64</td>
+<td>ALSA-only starting state</td>
+<td>Correct remediation; successful capture after supported setup</td>
+</tr>
+</tbody>
+</table>
+<p>For each ready environment:</p>
+<ol>
+<li>start with microphone and active system playback;</li>
+<li>verify local speech is <strong>Me</strong> and playback/call audio is <strong>Others</strong>;</li>
+<li>verify no crossed or duplicated channel assignment;</li>
+<li>switch the default output mid-meeting;</li>
+<li>unplug/reconnect USB or Bluetooth output;</li>
+<li>verify restoration within twelve seconds after a usable output returns;</li>
+<li>suspend/resume;</li>
+<li>pause/resume the meeting;</li>
+<li>finish, re-transcribe, identify speakers, generate reports, export, reopen, and play the recording;</li>
+<li>run both Direct and Pi-sidecar intelligence;</li>
+<li>run a 60-minute alignment test, targeting no more than 250 ms absolute channel offset and no more than 100 ms/hour drift;</li>
+<li>verify intentional microphone-only continuation is prominently recorded in the capture status.</li>
+</ol>
+<h2 id="acceptance-criteria">Acceptance criteria</h2>
+<p>Linux Meeting Mode parity is complete only when all are true:</p>
+<ul>
+<li>Linux x86_64 and aarch64 open Meeting Mode without an unsupported-platform acknowledgement.</li>
+<li>A ready PulseAudio or PipeWire-Pulse environment captures microphone and default system output into separate durable channels.</li>
+<li>The resulting transcript and speaker behavior match the Windows Me/Others contract.</li>
+<li>Default-output changes and source failures recover through the watchdog.</li>
+<li>Missing prerequisites produce accurate, distro-specific, offline-usable remediation.</li>
+<li>A user must explicitly choose microphone-only for each affected meeting.</li>
+<li>Retry detection can proceed without restarting OpenWhisper when the audio session becomes ready.</li>
+<li>Downloads installs and activates a self-contained Pi sidecar on Linux x64 and ARM64.</li>
+<li>Direct-core fallback remains functional when the sidecar is absent.</li>
+<li>ARM64 completes local CPU transcription and the full meeting lifecycle.</li>
+<li>Windows and macOS Meeting Mode tests remain green.</li>
+<li>The complete Python and sidecar suites pass.</li>
+<li>The manual release matrix passes.</li>
+<li>No application installer, packaging, or updater files are changed.</li>
+</ul>
+<h2 id="risks-and-stop-conditions">Risks and stop conditions</h2>
+<ol>
+<li><strong>Monitor matching is unreliable.</strong> Do not ship a fuzzy name match that can silently record a physical microphone. Require positive monitor validation.</li>
+<li><strong>Transport latency breaks channel ordering.</strong> If SoundCard delivery timestamps exceed the alignment targets, fix timestamping or select a lower-level Pulse backend before promotion.</li>
+<li><strong>Remediation is destructive or distro-incorrect.</strong> Never execute package/audio-server changes automatically. A command must be verified on its target family before appearing in-app.</li>
+<li><strong>ARM64 dependency floor is too narrow.</strong> Publish the actual glibc/Python/distro minimum discovered by the clean install; do not claim older systems that cannot resolve native wheels.</li>
+<li><strong>Component platform checks remain Windows-shaped.</strong> Platform normalization and architecture mismatch tests are mandatory before offering Linux payloads.</li>
+<li><strong>Partial delivery tempts an early copy change.</strong> Keep Linux unsupported in product policy until every acceptance gate passes.</li>
+</ol>
+<h2 id="files-expected-to-change">Files expected to change</h2>
+<p>Capture and policy:</p>
+<ul>
+<li><code>requirements.txt</code></li>
+<li><code>meeting/platform.py</code></li>
+<li><code>meeting/capture/__init__.py</code></li>
+<li><code>meeting/capture/devices.py</code></li>
+<li><code>meeting/capture/soundcard_stream.py</code></li>
+<li><code>meeting/capture/linux_audio.py</code> (new)</li>
+<li><code>meeting/engine.py</code></li>
+<li><code>services/linux_deps.py</code></li>
+<li><code>services/settings.py</code></li>
+<li><code>services/runtime/meeting.py</code> if a session-scoped mic-only decision must enter engine options</li>
+</ul>
+<p>UI and docs:</p>
+<ul>
+<li><code>ui_qt/ui_controller.py</code></li>
+<li><code>ui_qt/widgets/tabbed_content.py</code></li>
+<li><code>ui_qt/widgets/meeting_mode_tab.py</code></li>
+<li><code>ui_qt/dialogs/meeting_unsupported_dialog.py</code></li>
+<li><code>ui_qt/dialogs/meeting_linux_audio_dialog.py</code> (new)</li>
+<li><code>ui_qt/dialogs/__init__.py</code></li>
+<li><code>ui_qt/styles/theme.qss</code></li>
+<li><code>README.md</code></li>
+<li><code>CHANGELOG.md</code></li>
+<li>detailed Linux system-audio setup documentation (new)</li>
+</ul>
+<p>Pi component:</p>
+<ul>
+<li><code>services/components.py</code></li>
+<li><code>scripts/build_component.py</code></li>
+<li><code>meeting/agent/pi_sidecar.py</code></li>
+<li><code>ui_qt/dialogs/model_manager_dialog.py</code> only where component availability copy needs adjustment</li>
+</ul>
+<p>Diagnostics and tests:</p>
+<ul>
+<li><code>scripts/probe_linux_loopback.py</code> (new)</li>
+<li><code>tests/test_meeting_linux_capture.py</code> (new)</li>
+<li>existing platform, engine, component, Model Manager, and sidecar tests listed above</li>
+</ul>
+<p>Files explicitly not in scope:</p>
+<ul>
+<li><code>OpenWhisper.spec</code></li>
+<li><code>OpenWhisperUpdater.spec</code></li>
+<li><code>scripts/build_installer.ps1</code></li>
+<li><code>installer/**</code></li>
+<li>updater implementation</li>
+<li>Linux package manifests or desktop bundles</li>
+</ul>
+      </article>
+      <p class="footer">OpenWhisper · Linux Meeting Mode feature parity · Generated from <code>specs/linux-meeting-mode-parity.md</code></p>
+    </main>
+  </div>
+  <script>
+    const headings = [...document.querySelectorAll('#plan-content h2, #plan-content h3')];
+    const toc = document.getElementById('toc');
+    for (const heading of headings) {
+      const link = document.createElement('a');
+      link.href = '#' + heading.id;
+      link.textContent = heading.textContent;
+      link.className = heading.tagName === 'H3' ? 'level-3' : 'level-2';
+      toc.appendChild(link);
+    }
+
+    const links = [...toc.querySelectorAll('a')];
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.filter(e => e.isIntersecting).sort((a,b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (!visible) return;
+      links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + visible.target.id));
+    }, { rootMargin: '-12% 0px -76% 0px', threshold: 0 });
+    headings.forEach(h => observer.observe(h));
+
+    for (const pre of document.querySelectorAll('pre')) {
+      const button = document.createElement('button');
+      button.className = 'copy-code';
+      button.type = 'button';
+      button.textContent = 'Copy';
+      button.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(pre.innerText.replace(/^Copy\n/, ''));
+        button.textContent = 'Copied';
+        setTimeout(() => button.textContent = 'Copy', 1200);
+      });
+      pre.appendChild(button);
+    }
+
+    const progress = document.getElementById('progress');
+    const updateProgress = () => {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      progress.style.width = (max > 0 ? (scrollY / max) * 100 : 0) + '%';
+    };
+    addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+  </script>
+</body>
+</html>

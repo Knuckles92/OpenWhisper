@@ -7,6 +7,7 @@ Every subsystem the engine imports lazily (capture, ASR, diarizer, web server,
 agent core, scheduler) is replaced with an in-process fake, so nothing here
 touches an audio device, a Whisper model, a socket, or the network.
 """
+import importlib.util
 import os
 import sys
 import threading
@@ -420,6 +421,37 @@ class TestRequiredStartupServices:
         assert result["host_url"]
         assert engine.is_active() is True
         assert {source.channel for source in engine._sources} == {"mic"}
+
+    def test_required_system_audio_fails_when_loopback_missing(
+            self, make_engine, fakes, repo):
+        fakes.modules["meeting.capture.devices"].find_loopback_device = lambda: None
+        engine = make_engine(
+            cloud_enabled=False, system_audio_policy="required",
+        )
+
+        with pytest.raises(RuntimeError, match="LINUX_SYSTEM_AUDIO_REQUIRED"):
+            engine.start()
+
+        assert engine.is_active() is False
+        assert repo.get_meeting(engine.meeting_id) is None
+
+    def test_disabled_system_audio_skips_loopback_and_watchdog(
+            self, make_engine, fakes):
+        engine = make_engine(
+            cloud_enabled=False, system_audio_policy="disabled",
+        )
+
+        result = engine.start()
+
+        assert result["host_url"]
+        assert engine.is_active() is True
+        assert {source.channel for source in engine._sources} == {"mic"}
+        capture = engine.store.snapshot()["capture"]
+        assert capture["loopback_available"] is False
+        assert "microphone-only choice" in capture["message"]
+        # Watchdog should not reopen loopback while disabled.
+        engine._restart_capture_channel("loopback")
+        assert engine._capture_source("loopback") is None
 
 
 # Intelligence health
@@ -985,6 +1017,7 @@ class TestCaptureRecovery:
         engine.start()
         original_mic = engine._capture_source("mic")
         original_loopback = engine._capture_source("loopback")
+        original_spool = engine._spools["loopback"]
 
         loopback_index[0] = 9
         deadline = time.monotonic() + 2.0
@@ -1001,10 +1034,112 @@ class TestCaptureRecovery:
         assert original_loopback.stopped is True
         assert engine._capture_source("mic") is original_mic
         assert original_mic.is_active() is True
+        # Source swap must keep the same channel spool writer.
+        assert engine._spools["loopback"] is original_spool
         capture = engine.store.snapshot()["capture"]
         assert capture["mic_available"] is True
         assert capture["loopback_available"] is True
         assert capture["message"] == ""
+
+    def test_loopback_source_restart_preserves_spooled_session_audio(
+            self, make_engine, fakes, tmp_path, monkeypatch):
+        """Audio before and after sink recovery must remain in the session WAV."""
+        import importlib
+        import time as _time
+        import wave
+
+        import numpy as np
+
+        from meeting.interfaces import CHANNEL_LOOPBACK, CaptureBlock
+
+        # Always load the real spool implementation from disk so the fakes
+        # fixture's stub module cannot shadow it.
+        import meeting.capture as capture_pkg
+        path = os.path.join(os.path.dirname(capture_pkg.__file__), "spool.py")
+        spec = importlib.util.spec_from_file_location(
+            "meeting_capture_spool_real", path
+        )
+        spool_mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(spool_mod)
+
+        SpoolWriter = spool_mod.SpoolWriter
+        resolve_session_wav = spool_mod.resolve_session_wav
+        target_rate = spool_mod.TARGET_RATE
+
+        class _HybridSpool:
+            def __init__(self, meeting_id, channel, spool_dir, clock, repository,
+                         on_chunk=None, initial_seq=0, **kwargs):
+                self.channel = channel
+                self.on_chunk = on_chunk
+                self.flushes = 0
+                self._real = None
+                if channel == CHANNEL_LOOPBACK:
+                    self._real = SpoolWriter(
+                        meeting_id, channel, spool_dir, clock, repository,
+                        on_chunk=on_chunk, initial_seq=initial_seq,
+                        target_sec=0.2, max_sec=0.5,
+                    )
+
+            def feed(self, block):
+                if self._real is not None:
+                    self._real.feed(block)
+
+            def flush(self):
+                self.flushes += 1
+                if self._real is None:
+                    return None
+                return self._real.flush()
+
+        fakes.modules["meeting.capture.spool"].SpoolWriter = _HybridSpool
+        monkeypatch.setitem(
+            sys.modules, "meeting.capture.spool", fakes.modules["meeting.capture.spool"]
+        )
+
+        loopback_index = [2]
+        fakes.modules["meeting.capture.devices"].find_loopback_device = lambda: {
+            "index": loopback_index[0], "samplerate": 16000, "channels": 1,
+        }
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+        old_source = engine._capture_source(CHANNEL_LOOPBACK)
+        old_spool = engine._spools[CHANNEL_LOOPBACK]
+        assert old_spool is not None
+
+        frames_a = (np.ones(3200, dtype=np.float32) * 0.25)
+        old_spool.feed(CaptureBlock(
+            channel=CHANNEL_LOOPBACK,
+            frames=(frames_a * 32767).astype(np.int16),
+            sample_rate=16000,
+            t_mono=_time.monotonic(),
+        ))
+        time.sleep(0.25)
+
+        loopback_index[0] = 9
+        assert engine._restart_capture_channel(CHANNEL_LOOPBACK) is True
+        assert engine._spools[CHANNEL_LOOPBACK] is old_spool
+        assert engine._capture_source(CHANNEL_LOOPBACK) is not old_source
+
+        frames_b = (np.ones(3200, dtype=np.float32) * 0.5)
+        old_spool.feed(CaptureBlock(
+            channel=CHANNEL_LOOPBACK,
+            frames=(frames_b * 32767).astype(np.int16),
+            sample_rate=16000,
+            t_mono=_time.monotonic(),
+        ))
+        chunk = old_spool.flush()
+        if chunk is not None:
+            engine._on_chunk(chunk)
+
+        chunks = engine.repository.get_audio_chunks(engine.meeting_id)
+        wav = resolve_session_wav(engine._spool_dir, CHANNEL_LOOPBACK, chunks)
+        assert wav is not None
+        with wave.open(wav, "rb") as reader:
+            assert reader.getframerate() == target_rate
+            assert reader.getnchannels() == 1
+            data = reader.readframes(reader.getnframes())
+        # Pre- and post-restart audio both contributed samples.
+        assert len(data) >= 3200
 
 # Diarization degradation
 
@@ -1304,3 +1439,17 @@ class TestDirectAgentCapabilities:
         assert result.ok is True
         assert agent._use_json_response_format is False
         assert timed.chat.completions.create.call_count == 2
+
+
+def test_capture_recovery_budget_fits_twelve_seconds():
+    import meeting.engine as engine_module
+    import meeting.capture.soundcard_stream as sc
+
+    # Worst phase: one failed retry interval wait + one poll + SoundCard start.
+    worst = (
+        float(engine_module.CAPTURE_RETRY_INTERVAL_S)
+        + float(engine_module.CAPTURE_WATCHDOG_INTERVAL_S)
+        + float(sc._START_TIMEOUT_S)
+    )
+    assert worst <= float(engine_module.CAPTURE_RECOVERY_BUDGET_S)
+    assert float(engine_module.CAPTURE_RECOVERY_BUDGET_S) <= 12.0

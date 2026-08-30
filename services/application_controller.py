@@ -64,8 +64,6 @@ class ApplicationController(QObject):
     streaming_text_update = pyqtSignal(str, bool)
     streaming_overlay_show = pyqtSignal()
     streaming_overlay_hide = pyqtSignal()
-    caret_indicator_show = pyqtSignal()
-    caret_indicator_hide = pyqtSignal()
     overlay_state_update = pyqtSignal(object)
     minimize_to_tray_requested = pyqtSignal()
     # Emitted from the background reload worker (thread-safe UI updates).
@@ -1321,14 +1319,14 @@ class ApplicationController(QObject):
         self.hotkey_runtime.update_status_with_auto_hide(status)
 
     def _on_meeting_platform_ack_requested(self) -> None:
-        """Show the unsupported-platform warning, then start if allowed."""
-        allowed = False
+        """Run Meeting Mode readiness gates, then start if allowed."""
+        policy = None
         try:
-            allowed = self.ui_controller.ensure_meeting_platform_ack()
+            policy = self.ui_controller.ensure_meeting_start_readiness()
         except Exception as exc:
-            logger.error(f"Meeting platform acknowledgement failed: {exc}")
-        if allowed:
-            self.meeting_runtime.start_meeting()
+            logger.error(f"Meeting start readiness failed: {exc}")
+        if policy is not None:
+            self.meeting_runtime.start_meeting(system_audio_policy=policy)
 
     def _on_meeting_consent_requested(self) -> None:
         """Show the meeting cloud-consent dialog and act on it (Qt main thread).
@@ -1444,12 +1442,6 @@ class ApplicationController(QObject):
         self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
         self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
-        self.caret_indicator_show.connect(
-            self.ui_controller.show_caret_paste_indicator
-        )
-        self.caret_indicator_hide.connect(
-            self.ui_controller.hide_caret_paste_indicator
-        )
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
         self.ui_controller.is_recording = is_recording

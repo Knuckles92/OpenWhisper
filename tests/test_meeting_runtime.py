@@ -64,8 +64,12 @@ def runtime(qapp, monkeypatch):
 def _record_launch(rt, monkeypatch):
     launched = []
 
-    def fake_launch(cloud, *, demo=False):
-        launched.append({"cloud": cloud, "demo": demo})
+    def fake_launch(cloud, *, demo=False, system_audio_policy="auto"):
+        launched.append({
+            "cloud": cloud,
+            "demo": demo,
+            "system_audio_policy": system_audio_policy,
+        })
 
     monkeypatch.setattr(rt, "_launch", fake_launch)
     return launched
@@ -573,7 +577,7 @@ def test_begin_start_files_leftover_card(runtime, monkeypatch):
     rt.start_meeting(False)
 
     assert persisted[0][1]["finalization"]["card_deferred"] is True
-    assert launched == [{"cloud": False, "demo": False}]
+    assert launched == [{"cloud": False, "demo": False, "system_audio_policy": "auto"}]
     assert rt._card_meeting_id is None
 
 
@@ -751,13 +755,17 @@ def test_start_new_meeting_defers_then_starts(runtime, monkeypatch):
     rt._finalization = {"status": "failed", "message": "boom"}
     started = []
     monkeypatch.setattr(
-        rt, "_begin_start", lambda cloud, demo=False: started.append((cloud, demo))
+        rt,
+        "_begin_start",
+        lambda cloud, demo=False, system_audio_policy="auto": started.append(
+            (cloud, demo, system_audio_policy)
+        ),
     )
 
     rt.start_new_meeting(True)
 
     assert persisted[0][1]["finalization"]["card_deferred"] is True
-    assert started == [(True, False)]
+    assert started == [(True, False, "auto")]
     assert rt._card_meeting_id is None
 
 
@@ -796,7 +804,7 @@ def test_declined_consent_still_starts_transcript_only(runtime, monkeypatch):
 
     rt.on_consent_result(False)
 
-    assert launched == [{"cloud": False, "demo": False}]
+    assert launched == [{"cloud": False, "demo": False, "system_audio_policy": "auto"}]
     assert rt._consent_pending_kind is None
 
 
@@ -808,7 +816,7 @@ def test_granted_consent_starts_with_cloud(runtime, monkeypatch):
 
     rt.on_consent_result(True)
 
-    assert launched == [{"cloud": True, "demo": False}]
+    assert launched == [{"cloud": True, "demo": False, "system_audio_policy": "auto"}]
 
 
 def test_granted_demo_consent_starts_demo_with_cloud(runtime, monkeypatch):
@@ -818,7 +826,7 @@ def test_granted_demo_consent_starts_demo_with_cloud(runtime, monkeypatch):
 
     rt.on_consent_result(True)
 
-    assert launched == [{"cloud": True, "demo": True}]
+    assert launched == [{"cloud": True, "demo": True, "system_audio_policy": "auto"}]
 
 
 def test_start_without_cloud_skips_consent(runtime, monkeypatch):
@@ -830,7 +838,7 @@ def test_start_without_cloud_skips_consent(runtime, monkeypatch):
     rt.start_meeting(cloud_enabled=False)
 
     assert consents == []
-    assert launched == [{"cloud": False, "demo": False}]
+    assert launched == [{"cloud": False, "demo": False, "system_audio_policy": "auto"}]
     assert rt._consent_pending_kind is None
 
 
@@ -844,7 +852,7 @@ def test_start_with_consent_already_given_launches_cloud(runtime, monkeypatch):
     rt.start_meeting(cloud_enabled=True)
 
     assert consents == []
-    assert launched == [{"cloud": True, "demo": False}]
+    assert launched == [{"cloud": True, "demo": False, "system_audio_policy": "auto"}]
 
 
 def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):

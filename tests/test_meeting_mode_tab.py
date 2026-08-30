@@ -335,14 +335,19 @@ class TestMeetingModeTabState(unittest.TestCase):
 
     def test_platform_copy_does_not_promise_unavailable_system_audio(self):
         subtitle, linux_hint = meeting_audio_support_copy("linux")
-        _, mac_hint = meeting_audio_support_copy("darwin")
+        with patch(
+            "ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",
+            side_effect=lambda platform=None: platform == "darwin",
+        ):
+            _, mac_hint = meeting_audio_support_copy("darwin")
         _, win_hint = meeting_audio_support_copy("win32")
 
         self.assertIn("when supported", subtitle)
-        self.assertIn("not a supported", linux_hint)
-        self.assertIn("microphone audio only", linux_hint)
-        self.assertIn("macOS 13+", linux_hint)
-        self.assertIn("Linux", linux_hint)
+        self.assertIn("PulseAudio", linux_hint)
+        self.assertTrue(
+            "not yet publicly promoted" in linux_hint
+            or "not a supported" in linux_hint
+        )
         self.assertIn("WASAPI", win_hint)
         # macOS captures system audio, but only once the user grants it, so
         # the copy must name the permission rather than promise the channel.
@@ -357,6 +362,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             not meeting_audio_shows_platform_warning(),
         )
         self.assertFalse(meeting_audio_shows_platform_warning("win32"))
+        # Linux stays warning-visible until public promotion is attested.
         self.assertTrue(meeting_audio_shows_platform_warning("linux"))
         with patch(
             "ui_qt.widgets.meeting_mode_tab.meeting_mode_supported",

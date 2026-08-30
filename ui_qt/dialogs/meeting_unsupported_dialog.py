@@ -1,9 +1,10 @@
-"""First-time acknowledgement that Meeting Mode is unsupported on this OS.
+"""First-time acknowledgement that Meeting Mode is unsupported or unattested.
 
-Shown when a user on a platform with no system-audio path -- Linux, or a Mac
-too old for ScreenCaptureKit -- opens Meeting Mode or starts a meeting from
-the tray or a hotkey, before they have accepted the warning. Continue stays
-disabled until every explicit checkbox is ticked.
+Shown when a user on a platform without public Meeting Mode promotion — a Mac
+too old for ScreenCaptureKit, an unsupported Linux architecture, or Linux
+x86_64/aarch64 before hardware attestation — opens Meeting Mode or starts a
+meeting from the tray or a hotkey, before they have accepted the warning.
+Continue stays disabled until every explicit checkbox is ticked.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from meeting.platform import (
+    linux_meeting_implementation_ready,
     meeting_mode_supported,
     meeting_unsupported_os_name,
 )
@@ -36,13 +38,40 @@ class MeetingUnsupportedPlatformDialog(QDialog):
     RESULT_CANCEL: Final[str] = "cancel"
     RESULT_CONTINUE: Final[str] = "continue"
 
-    def __init__(self, parent=None, platform: Optional[str] = None):
+    def __init__(
+        self,
+        parent=None,
+        platform: Optional[str] = None,
+        *,
+        machine: Optional[str] = None,
+        implementation_ready: Optional[bool] = None,
+    ):
         super().__init__(parent)
         self.setObjectName("meetingUnsupportedDialog")
         self.result_action = self.RESULT_CANCEL
         self.os_name = meeting_unsupported_os_name(platform)
+        self._platform = platform
+        if implementation_ready is None:
+            import sys
 
-        self.setWindowTitle(f"Meeting Mode is not supported on {self.os_name}")
+            host = platform or sys.platform
+            if str(host).startswith("linux"):
+                self._implementation_ready = linux_meeting_implementation_ready(
+                    machine
+                )
+            else:
+                self._implementation_ready = False
+        else:
+            self._implementation_ready = bool(implementation_ready)
+
+        if self._implementation_ready:
+            self.setWindowTitle(
+                f"Meeting Mode on {self.os_name} is a preview"
+            )
+        else:
+            self.setWindowTitle(
+                f"Meeting Mode is not supported on {self.os_name}"
+            )
         self.setMinimumWidth(500)
         self.setModal(True)
 
@@ -53,38 +82,55 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
-        title = QLabel(f"Meeting Mode is not supported on {self.os_name}")
+        if self._implementation_ready:
+            title = QLabel(
+                f"Meeting Mode on {self.os_name} is implemented but not "
+                "publicly supported yet"
+            )
+        else:
+            title = QLabel(
+                f"Meeting Mode is not supported on {self.os_name}"
+            )
         title.setObjectName("headerLabel")
         title.setWordWrap(True)
         layout.addWidget(title)
 
-        body = QLabel(
-            "Meeting Mode records microphone and system audio on Windows and "
-            f"macOS 13+. {self.os_name} has no supported capture path. System "
-            "audio will not be captured, and a meeting here may fail or run "
-            "microphone-only.\n\n"
-            "This is unsupported. Check every box below if you still want "
-            "to try it."
-        )
-        body.setObjectName("consentBodyLabel")
-        body.setWordWrap(True)
-        layout.addWidget(body)
+        self.body_label = QLabel(self._body_text())
+        self.body_label.setObjectName("consentBodyLabel")
+        self.body_label.setWordWrap(True)
+        layout.addWidget(self.body_label)
 
-        self.ack_unsupported = QCheckBox(
-            f"I understand Meeting Mode is not supported on {self.os_name}"
-        )
+        if self._implementation_ready:
+            self.ack_unsupported = QCheckBox(
+                f"I understand Meeting Mode on {self.os_name} is a preview "
+                "and not publicly supported yet"
+            )
+            self.ack_no_system_audio = QCheckBox(
+                "I understand capture may fail diagnostics and fall back to "
+                "microphone-only"
+            )
+            self.ack_try_anyway = QCheckBox(
+                "I want to try the preview path anyway"
+            )
+        else:
+            self.ack_unsupported = QCheckBox(
+                f"I understand Meeting Mode is not supported on {self.os_name}"
+            )
+            self.ack_no_system_audio = QCheckBox(
+                "I understand system audio will not be captured"
+            )
+            self.ack_try_anyway = QCheckBox(
+                "I want to try it anyway, knowing it is unsupported"
+            )
+
         self.ack_unsupported.setObjectName("meetingUnsupportedAckUnsupported")
         layout.addWidget(self.ack_unsupported)
 
-        self.ack_no_system_audio = QCheckBox(
-            "I understand system audio will not be captured"
+        self.ack_no_system_audio.setObjectName(
+            "meetingUnsupportedAckNoSystemAudio"
         )
-        self.ack_no_system_audio.setObjectName("meetingUnsupportedAckNoSystemAudio")
         layout.addWidget(self.ack_no_system_audio)
 
-        self.ack_try_anyway = QCheckBox(
-            "I want to try it anyway, knowing it is unsupported"
-        )
         self.ack_try_anyway.setObjectName("meetingUnsupportedAckTryAnyway")
         layout.addWidget(self.ack_try_anyway)
 
@@ -117,6 +163,27 @@ class MeetingUnsupportedPlatformDialog(QDialog):
         button_layout.addWidget(go_back_btn)
 
         layout.addLayout(button_layout)
+
+    def _body_text(self) -> str:
+        if self._implementation_ready:
+            return (
+                "Meeting Mode can record microphone and system audio on "
+                f"{self.os_name} x86_64/aarch64 through PulseAudio or "
+                "PipeWire-Pulse, but this path is not publicly supported until "
+                "the hardware release matrix is attested.\n\n"
+                "Capture is implemented and may work after diagnostics. It can "
+                "still fail open/monitor checks and fall back to microphone-only "
+                "for a single meeting. Check every box below if you still want "
+                "to try the preview path."
+            )
+        return (
+            "Meeting Mode records microphone and system audio on Windows, "
+            f"macOS 13+, and Linux x86_64/aarch64. {self.os_name} has no "
+            "supported capture path. System audio will not be captured, and a "
+            "meeting here may fail or run microphone-only.\n\n"
+            "This is unsupported. Check every box below if you still want "
+            "to try it."
+        )
 
     def _update_continue_enabled(self) -> None:
         self.continue_btn.setEnabled(

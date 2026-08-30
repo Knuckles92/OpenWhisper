@@ -619,17 +619,47 @@ class TestLiveParent:
             journal.to_dict(),
         )
 
-        app_locks = acquire_named_mutexes(apply_module.APP_MUTEX_NAMES, 0.0)
-        try:
-            with pytest.raises(UpdateApplyError) as caught:
-                commit_prepared_update(
-                    journal,
-                    launch=False,
-                    parent_timeout_s=0.2,
-                    registration=_registration(app),
-                )
-        finally:
-            release_mutexes(app_locks)
+        # Named-mutex contention is a Windows kernel feature. On other hosts the
+        # mutex helpers are no-ops that always succeed, so simulate a still-held
+        # application mutex after the parent wait without blocking update locks.
+        if sys.platform != "win32":
+
+            def _acquire(names, timeout_s):
+                if tuple(names) == tuple(apply_module.APP_MUTEX_NAMES):
+                    return None
+                return [1] * len(names)
+
+            with patch(
+                "services.app_update_apply.acquire_named_mutexes",
+                side_effect=_acquire,
+            ), patch(
+                "services.app_update_apply._wait_for_pid",
+            ), patch(
+                "services.app_update_apply._force_close_pid",
+                return_value=True,
+            ), patch(
+                "services.app_update_apply.create_named_mutex",
+                return_value=1,
+            ):
+                with pytest.raises(UpdateApplyError) as caught:
+                    commit_prepared_update(
+                        journal,
+                        launch=False,
+                        parent_timeout_s=0.2,
+                        registration=_registration(app),
+                    )
+        else:
+            app_locks = acquire_named_mutexes(apply_module.APP_MUTEX_NAMES, 0.0)
+            try:
+                with pytest.raises(UpdateApplyError) as caught:
+                    commit_prepared_update(
+                        journal,
+                        launch=False,
+                        parent_timeout_s=0.2,
+                        registration=_registration(app),
+                    )
+            finally:
+                release_mutexes(app_locks)
 
         assert "did not close" in str(caught.value)
         assert "rollback failed" not in str(caught.value)

@@ -17,14 +17,21 @@ import hashlib
 import json
 import logging
 import os
+import platform as platform_module
 import shutil
+import stat
+import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import urllib.error
 import urllib.request
 import zipfile
+import copy
 from dataclasses import dataclass
-from typing import Callable, Dict, Final, Optional, Set, Tuple
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Final, Mapping, Optional, Set, Tuple
 
 from _version import __version__
 from config import bundle_root, components_root, is_frozen, local_app_dir
@@ -41,6 +48,7 @@ COMPONENT_API: Final[int] = 1
 # constant so this module never imports the meeting package.
 _SIDECAR_BUNDLE_NAME: Final[str] = "bundle.cjs"
 _NODE_EXE_NAME: Final[str] = "node.exe"
+_NODE_BIN_NAME: Final[str] = "node"
 
 _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
     {
@@ -82,11 +90,16 @@ _BUILTIN_GPU_ARCHIVES: Final[Tuple[dict, ...]] = (
 # at release time once the speaker-id payload is published.
 _PLACEHOLDER_SHA256: Final[str] = "0" * 64
 
-# Version of the meeting-agent payload (portable win-x64 Node LTS + the built
+# Version of the meeting-agent payload (portable Node LTS + the built
 # Pi sidecar bundle.cjs). Versioned by its own contents, like the GPU payload.
 MEETING_AGENT_COMPONENT_VERSION: Final[str] = "node22-pi1"
+MEETING_AGENT_NODE_VERSION: Final[str] = "22.23.2"
 # Hosting pin for the sidecar zip — not the latest app installer tag.
 MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.3.0"
+
+PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
+PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
+PLATFORM_LINUX_AARCH64: Final[str] = "linux_aarch64"
 
 # Version of the speaker-id payload (WeSpeaker-family ONNX embedding model).
 SPEAKER_ID_COMPONENT_VERSION: Final[str] = "wespeaker-v1"
@@ -102,28 +115,100 @@ SPEAKER_MODEL_SHA256: Final[str] = (
 )
 _SPEAKER_MODEL_ENV: Final[str] = "OPENWHISPER_SPEAKER_MODEL"
 
-_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = (
-    {
-        "name": "node-v22.23.2-win-x64.zip",
-        "url": (
-            "https://nodejs.org/dist/v22.23.2/"
-            "node-v22.23.2-win-x64.zip"
+_MEETING_AGENT_BUNDLE_ARCHIVE: Final[dict] = {
+    "name": f"meeting-agent-bundle-{MEETING_AGENT_COMPONENT_VERSION}.zip",
+    "url": (
+        "https://github.com/Knuckles92/OpenWhisper/releases/download/"
+        f"{MEETING_AGENT_RELEASE_TAG}/"
+        # Keep the published Windows asset name for existing installs; the
+        # payload is the platform-neutral bundle.cjs zip.
+        f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
+    ),
+    "sha256": "f8c0f140f62ac3e8a947fc65d56edbae3086b5c8b691daa2ee0b9d8595ad389e",
+    "size_bytes": 2_587_836,
+    "extract": "zip",
+}
+
+_BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
+    PLATFORM_WIN_AMD64: {
+        "published": True,
+        "version": MEETING_AGENT_COMPONENT_VERSION,
+        "component_api": COMPONENT_API,
+        "platform": PLATFORM_WIN_AMD64,
+        "install_bytes": 101_654_617,
+        "archives": (
+            {
+                "name": f"node-v{MEETING_AGENT_NODE_VERSION}-win-x64.zip",
+                "url": (
+                    f"https://nodejs.org/dist/v{MEETING_AGENT_NODE_VERSION}/"
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-win-x64.zip"
+                ),
+                "sha256": (
+                    "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97"
+                ),
+                "size_bytes": 35_683_585,
+                "extract": "node-exe",
+            },
+            dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
         ),
-        "sha256": "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97",
-        "size_bytes": 35_683_585,
-        "extract": "node-exe",
     },
-    {
-        "name": f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip",
-        "url": (
-            "https://github.com/Knuckles92/OpenWhisper/releases/download/"
-            f"{MEETING_AGENT_RELEASE_TAG}/"
-            f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
+    PLATFORM_LINUX_X86_64: {
+        "published": True,
+        "version": MEETING_AGENT_COMPONENT_VERSION,
+        "component_api": COMPONENT_API,
+        "platform": PLATFORM_LINUX_X86_64,
+        # Exact Node binary + uncompressed bundle.cjs bytes.
+        "install_bytes": 139_493_705,
+        "archives": (
+            {
+                "name": f"node-v{MEETING_AGENT_NODE_VERSION}-linux-x64.tar.xz",
+                "url": (
+                    f"https://nodejs.org/dist/v{MEETING_AGENT_NODE_VERSION}/"
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-linux-x64.tar.xz"
+                ),
+                "sha256": (
+                    "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+                ),
+                "size_bytes": 31_058_332,
+                "extract": "node-tar",
+                "member": (
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-linux-x64/bin/node"
+                ),
+            },
+            dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
         ),
-        "sha256": "f8c0f140f62ac3e8a947fc65d56edbae3086b5c8b691daa2ee0b9d8595ad389e",
-        "size_bytes": 2_587_836,
-        "extract": "zip",
     },
+    PLATFORM_LINUX_AARCH64: {
+        "published": True,
+        "version": MEETING_AGENT_COMPONENT_VERSION,
+        "component_api": COMPONENT_API,
+        "platform": PLATFORM_LINUX_AARCH64,
+        # Exact Node binary + uncompressed bundle.cjs bytes.
+        "install_bytes": 136_816_417,
+        "archives": (
+            {
+                "name": f"node-v{MEETING_AGENT_NODE_VERSION}-linux-arm64.tar.xz",
+                "url": (
+                    f"https://nodejs.org/dist/v{MEETING_AGENT_NODE_VERSION}/"
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-linux-arm64.tar.xz"
+                ),
+                "sha256": (
+                    "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
+                ),
+                "size_bytes": 30_246_708,
+                "extract": "node-tar",
+                "member": (
+                    f"node-v{MEETING_AGENT_NODE_VERSION}-linux-arm64/bin/node"
+                ),
+            },
+            dict(_MEETING_AGENT_BUNDLE_ARCHIVE),
+        ),
+    },
+}
+
+# Back-compat alias used by older tests/docs.
+_BUILTIN_MEETING_AGENT_ARCHIVES: Final[Tuple[dict, ...]] = tuple(
+    _BUILTIN_MEETING_AGENT_BY_PLATFORM[PLATFORM_WIN_AMD64]["archives"]
 )
 
 _BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
@@ -147,40 +232,71 @@ _BUILTIN_SPEAKER_ID_ARCHIVES: Final[Tuple[dict, ...]] = (
 # would make an installed component look outdated for no reason.
 GPU_COMPONENT_VERSION: Final[str] = "cuda12.9"
 
-_BUILTIN_CATALOG: Final[dict] = {
-    "schema": 1,
+def _freeze_catalog_value(value: Any) -> Any:
+    """Recursively freeze nested catalog structures against mutation."""
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_catalog_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_catalog_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_catalog_value(item) for item in value)
+    return value
+
+
+def _thaw_catalog_value(value: Any) -> Any:
+    """Return a deep mutable copy of a frozen or plain catalog value."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_catalog_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        # Archive tuples should stay lists of dicts for install code that
+        # mutates local working copies only.
+        thawed = [_thaw_catalog_value(item) for item in value]
+        if thawed and isinstance(thawed[0], dict):
+            return thawed
+        return tuple(thawed)
+    if isinstance(value, list):
+        return [_thaw_catalog_value(item) for item in value]
+    return copy.copy(value)
+
+
+_BUILTIN_CATALOG_RAW: Final[dict] = {
+    "schema": 2,
     "components": {
         "gpu-accel": {
-            "version": GPU_COMPONENT_VERSION,
-            "component_api": COMPONENT_API,
-            "platform": "win_amd64",
-            # Sum of the DLLs the three archives above extract (cuBLAS 12.9.2.10,
-            # NVRTC 12.9.86, CUDA runtime 12.9.79). Measured, not estimated: it
-            # drives the pre-install free-space check.
-            "install_bytes": 959_060_480,
-            "archives": _BUILTIN_GPU_ARCHIVES,
+            "platforms": {
+                PLATFORM_WIN_AMD64: {
+                    "version": GPU_COMPONENT_VERSION,
+                    "component_api": COMPONENT_API,
+                    "platform": PLATFORM_WIN_AMD64,
+                    # Sum of the DLLs the three archives above extract.
+                    "install_bytes": 959_060_480,
+                    "archives": _BUILTIN_GPU_ARCHIVES,
+                },
+            },
         },
         "meeting-agent": {
-            "published": True,
-            "version": MEETING_AGENT_COMPONENT_VERSION,
-            "component_api": COMPONENT_API,
-            "platform": "win_amd64",
-            # node.exe (official 22.23.2 win-x64) + sidecar bundle.cjs.
-            # Measured, not estimated: it drives the pre-install free-space check.
-            "install_bytes": 101_654_617,
-            "archives": _BUILTIN_MEETING_AGENT_ARCHIVES,
+            "platforms": dict(_BUILTIN_MEETING_AGENT_BY_PLATFORM),
         },
         "speaker-id": {
-            "published": False,
-            "version": SPEAKER_ID_COMPONENT_VERSION,
-            "component_api": COMPONENT_API,
-            "platform": "win_amd64",
-            # TODO(meeting-mode): measure once the payload exists.
-            "install_bytes": 30_000_000,
-            "archives": _BUILTIN_SPEAKER_ID_ARCHIVES,
+            "platforms": {
+                PLATFORM_WIN_AMD64: {
+                    "published": False,
+                    "version": SPEAKER_ID_COMPONENT_VERSION,
+                    "component_api": COMPONENT_API,
+                    "platform": PLATFORM_WIN_AMD64,
+                    # TODO(meeting-mode): measure once the payload exists.
+                    "install_bytes": 30_000_000,
+                    "archives": _BUILTIN_SPEAKER_ID_ARCHIVES,
+                },
+            },
         },
     },
 }
+
+# Immutable source of truth. Public APIs always return thawed defensive copies.
+_BUILTIN_CATALOG: Final[Any] = _freeze_catalog_value(_BUILTIN_CATALOG_RAW)
 
 # CTranslate2 4.8 loads exactly one CUDA library by name (plus nvcuda.dll from
 # the driver): cuBLAS. cuDNN is intentionally not listed — the ctranslate2 wheel
@@ -275,34 +391,98 @@ def _copy_for(component_id: str) -> Tuple[str, str]:
     return details.display_name, details.summary
 
 
-def available_component_ids() -> Tuple[str, ...]:
+def current_platform_tag(
+    platform: Optional[str] = None,
+    machine: Optional[str] = None,
+) -> Optional[str]:
+    """Return the normalized component platform tag for this host."""
+    host = platform or sys.platform
+    arch = (machine if machine is not None else platform_module.machine()).strip().lower()
+    if host.startswith("win"):
+        if arch in {"amd64", "x86_64", "x64"}:
+            return PLATFORM_WIN_AMD64
+        return None
+    if host.startswith("linux"):
+        if arch in {"amd64", "x86_64", "x64"}:
+            return PLATFORM_LINUX_X86_64
+        if arch in {"aarch64", "arm64"}:
+            return PLATFORM_LINUX_AARCH64
+        return None
+    return None
+
+
+def _component_root_entry(component_id: str) -> Optional[Mapping]:
+    components = _BUILTIN_CATALOG.get("components") or {}
+    entry = components.get(component_id) if isinstance(components, Mapping) else None
+    return entry if isinstance(entry, Mapping) else None
+
+
+def catalog_entry_for_platform(
+    component_id: str,
+    platform_tag: Optional[str] = None,
+    catalog: Optional[Mapping] = None,
+) -> Optional[dict]:
+    """Return a defensive copy of the catalog entry for one component/platform."""
+    root = None
+    if catalog is not None:
+        components = catalog.get("components") or {}
+        candidate = components.get(component_id) if isinstance(components, Mapping) else None
+        root = candidate if isinstance(candidate, Mapping) else None
+    else:
+        root = _component_root_entry(component_id)
+    if root is None:
+        return None
+    platforms = root.get("platforms")
+    if isinstance(platforms, Mapping):
+        tag = platform_tag if platform_tag is not None else current_platform_tag()
+        if not tag:
+            return None
+        entry = platforms.get(tag)
+        if not isinstance(entry, Mapping):
+            return None
+        return _thaw_catalog_value(entry)
+    # Schema 1 fallback: a flat entry already carries platform/archives.
+    return _thaw_catalog_value(root)
+
+
+def available_component_ids(
+    platform_tag: Optional[str] = None,
+) -> Tuple[str, ...]:
     """Components that can be installed on this platform.
 
-    Component payloads are Windows-only: GPU Acceleration is native CUDA
-    DLLs activated through ``os.add_dll_directory``, and the meeting agent
-    is a portable Node runtime plus the Pi sidecar bundle. Linux GPU users
-    get the same CUDA libraries from pip wheels instead
-    (``requirements-gpu.txt``), and macOS has no CUDA backend at all. An
-    empty tuple keeps the UI from offering a payload it could never activate.
+    GPU Acceleration remains Windows-only (native CUDA DLLs). The meeting
+    agent is offered on Windows x64 and Linux x86_64/aarch64. Linux GPU users
+    still use ``requirements-gpu.txt``. macOS has no downloadable component
+    payloads.
 
     Returns:
         Installable component identifiers, in display order.
     """
-    if sys.platform != "win32":
+    tag = platform_tag if platform_tag is not None else current_platform_tag()
+    if tag is None:
         return ()
-    return tuple(
-        component_id for component_id in (
+    if tag == PLATFORM_WIN_AMD64:
+        candidates = (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.SPEAKER_ID,
         )
-        if component_is_published(component_id)
+    elif tag in {PLATFORM_LINUX_X86_64, PLATFORM_LINUX_AARCH64}:
+        candidates = (ComponentId.MEETING_AGENT,)
+    else:
+        return ()
+    return tuple(
+        component_id for component_id in candidates
+        if component_is_published(component_id, platform_tag=tag)
     )
 
 
-def component_is_published(component_id: str) -> bool:
+def component_is_published(
+    component_id: str,
+    platform_tag: Optional[str] = None,
+) -> bool:
     """Whether a catalog entry has production-ready immutable artifacts."""
-    entry = (_BUILTIN_CATALOG.get("components") or {}).get(component_id)
+    entry = catalog_entry_for_platform(component_id, platform_tag=platform_tag)
     if not isinstance(entry, dict) or entry.get("published", True) is False:
         return False
     archives = entry.get("archives") or ()
@@ -396,8 +576,7 @@ def meeting_agent_payload_dir() -> Optional[str]:
 
     Resolution order:
         1. Installed ``meeting-agent`` component tree with ``bundle.cjs``
-           (usable even before the catalog marks the component published, so
-           a locally staged install works in development).
+           and a platform-compatible Node runtime.
         2. Source-tree ``sidecar/dist`` when ``bundle.cjs`` has been built.
         3. ``None`` — callers fall back to the direct OpenRouter agent.
 
@@ -407,12 +586,42 @@ def meeting_agent_payload_dir() -> Optional[str]:
     """
     if is_installed(ComponentId.MEETING_AGENT):
         installed = component_dir(ComponentId.MEETING_AGENT)
-        if _payload_has_sidecar_bundle(installed):
-            return installed
-        logger.warning(
-            "meeting-agent component is installed but missing %s",
-            _SIDECAR_BUNDLE_NAME,
-        )
+        manifest = read_manifest(ComponentId.MEETING_AGENT)
+        if manifest is None:
+            # Sentinel-bearing trees with missing/malformed manifests are broken;
+            # never treat them as a runnable payload.
+            logger.warning(
+                "meeting-agent install is present but its manifest is missing "
+                "or invalid; falling back to source/direct"
+            )
+        else:
+            incompatible = check_compatibility(manifest)
+            runtime = os.path.join(
+                installed, _node_runtime_name(manifest.get("platform"))
+            )
+            if incompatible:
+                logger.warning(
+                    "meeting-agent install is incompatible: %s", incompatible
+                )
+            elif not _payload_has_sidecar_bundle(installed):
+                logger.warning(
+                    "meeting-agent component is installed but missing %s",
+                    _SIDECAR_BUNDLE_NAME,
+                )
+            elif not os.path.isfile(runtime):
+                logger.warning(
+                    "meeting-agent component is installed but missing %s",
+                    os.path.basename(runtime),
+                )
+            elif (
+                not sys.platform.startswith("win")
+                and not os.access(runtime, os.X_OK)
+            ):
+                logger.warning(
+                    "meeting-agent node runtime is not executable: %s", runtime
+                )
+            else:
+                return installed
     return _source_sidecar_payload_dir()
 
 
@@ -582,12 +791,31 @@ def ensure_speaker_model() -> Optional[str]:
 
 
 def read_manifest(component_id: str) -> Optional[dict]:
+    """Load a component manifest, rejecting non-dict or unsafe field types."""
     path = os.path.join(component_dir(component_id), _MANIFEST_NAME)
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
+            data = json.load(handle)
+    except (OSError, ValueError, TypeError):
         return None
+    if not isinstance(data, dict):
+        return None
+    # Compatibility fields must be simple JSON scalars when present.
+    # Reject bool explicitly: isinstance(True, int) is True in Python.
+    platform = data.get("platform")
+    if platform is not None and not isinstance(platform, str):
+        return None
+    api = data.get("component_api")
+    if api is not None and (isinstance(api, bool) or not isinstance(api, int)):
+        return None
+    abi = data.get("python_abi")
+    if abi is not None and not isinstance(abi, str):
+        return None
+    version = data.get("version")
+    if version is not None:
+        if isinstance(version, bool) or not isinstance(version, (str, int, float)):
+            return None
+    return data
 
 
 def installed_size_bytes(component_id: str) -> int:
@@ -602,18 +830,43 @@ def installed_size_bytes(component_id: str) -> int:
 
 
 def prune_orphans() -> None:
-    """Delete staging and rollback directories left by an interrupted install.
+    """Recover or delete staging/rollback directories left by an interrupted install.
 
-    Safe to call at startup: neither location holds anything a completed
-    install depends on.
+    When a complete ``.old`` tree remains and the destination is absent, the
+    previous install is restored. Incomplete rollbacks and staging dirs are
+    removed. Safe to call at startup.
     """
     _rmtree(staging_dir())
     root = components_root()
     if not os.path.isdir(root):
         return
-    for name in os.listdir(root):
-        if name.endswith(".old"):
-            _rmtree(os.path.join(root, name))
+    for name in list(os.listdir(root)):
+        if not name.endswith(".old"):
+            continue
+        old_path = os.path.join(root, name)
+        destination = old_path[: -len(".old")]
+        complete = os.path.isfile(os.path.join(old_path, _SENTINEL_NAME))
+        if complete and not os.path.isdir(destination):
+            try:
+                os.replace(old_path, destination)
+                logger.info(
+                    "Restored component tree from interrupted swap: %s",
+                    os.path.basename(destination),
+                )
+                continue
+            except OSError:
+                logger.exception(
+                    "Could not restore component tree from %s; preserving "
+                    ".old rollback for a later retry", old_path
+                )
+                # Never delete the only complete rollback after a failed restore.
+                continue
+        if complete and os.path.isdir(destination):
+            # Destination already committed; the rollback is superseded.
+            _rmtree(old_path)
+            continue
+        # Incomplete rollback / staging leftovers only.
+        _rmtree(old_path)
 
 
 def _current_abi() -> str:
@@ -630,8 +883,10 @@ def check_compatibility(manifest: dict) -> Optional[str]:
         )
 
     platform_tag = manifest.get("platform")
-    if platform_tag and platform_tag != "win_amd64":
-        return f"Built for {platform_tag}, which this app cannot use"
+    host_tag = current_platform_tag()
+    if platform_tag:
+        if host_tag is None or platform_tag != host_tag:
+            return f"Built for {platform_tag}, which this app cannot use"
 
     # Only components that put Python packages on sys.path carry an ABI tag.
     # A DLL-only payload such as gpu-accel omits it.
@@ -644,6 +899,13 @@ def check_compatibility(manifest: dict) -> Optional[str]:
         )
 
     return None
+
+
+def _node_runtime_name(platform_tag: Optional[str] = None) -> str:
+    tag = platform_tag if platform_tag is not None else current_platform_tag()
+    if tag == PLATFORM_WIN_AMD64 or (tag is None and sys.platform.startswith("win")):
+        return _NODE_EXE_NAME
+    return _NODE_BIN_NAME
 
 
 # Called as (phase, done bytes, total bytes), always off the Qt thread.
@@ -901,6 +1163,88 @@ def _safe_extract_node_exe(
         progress(InstallPhase.EXTRACTING, 1, 1)
 
 
+def _safe_extract_node_tar(
+    archive_path: str,
+    target_dir: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+    *,
+    member_name: str,
+) -> None:
+    """Extract only the Node binary from an official Linux tar.xz archive."""
+    raw_member = (member_name or "").replace("\\", "/")
+    # Reject absolute configured names before any stripping so the contract is
+    # exact against the archive member path.
+    if (
+        not raw_member
+        or raw_member.startswith("/")
+        or raw_member.startswith("~/")
+        or ".." in raw_member.split("/")
+    ):
+        raise ComponentError("The Node package path is invalid.")
+    expected = raw_member
+
+    selected = None
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        for member in archive.getmembers():
+            name = str(member.name or "").replace("\\", "/")
+            if name.startswith("/") or ".." in name.split("/"):
+                raise ComponentError(f"Archive contains an unsafe path: {name}")
+            if name != expected:
+                continue
+            if selected is not None:
+                raise ComponentError("The Node package contained duplicate node binaries.")
+            if not member.isfile() or member.issym() or member.islnk():
+                raise ComponentError("The Node package node member is not a regular file.")
+            if member.size <= 0:
+                raise ComponentError("The Node package node member is empty.")
+            selected = member
+
+        if selected is None:
+            raise ComponentError("The Node package did not contain the expected node binary.")
+        if cancel.is_set():
+            raise ComponentCanceled()
+
+        source = archive.extractfile(selected)
+        if source is None:
+            raise ComponentError("Could not read the Node binary from the archive.")
+
+        os.makedirs(target_dir, exist_ok=True)
+        destination = os.path.join(target_dir, _NODE_BIN_NAME)
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix="node.", dir=target_dir)
+        try:
+            copied = 0
+            total = int(selected.size)
+            with os.fdopen(tmp_fd, "wb") as out:
+                while True:
+                    if cancel.is_set():
+                        raise ComponentCanceled()
+                    chunk = source.read(_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    copied += len(chunk)
+                    progress(InstallPhase.EXTRACTING, min(copied, total), total)
+            os.chmod(
+                tmp_path,
+                stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+                | stat.S_IRGRP | stat.S_IXGRP
+                | stat.S_IROTH | stat.S_IXOTH,
+            )
+            os.replace(tmp_path, destination)
+            progress(InstallPhase.EXTRACTING, total, total)
+        finally:
+            try:
+                source.close()
+            except Exception:
+                pass
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id == ComponentId.GPU_ACCEL:
         bin_dir = os.path.join(target_dir, "bin")
@@ -920,15 +1264,63 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id != ComponentId.MEETING_AGENT:
         return
 
+    runtime_name = _node_runtime_name()
+    runtime_path = os.path.join(target_dir, runtime_name)
+    bundle_path = os.path.join(target_dir, _SIDECAR_BUNDLE_NAME)
     missing = [
-        name
-        for name in (_NODE_EXE_NAME, _SIDECAR_BUNDLE_NAME)
-        if not os.path.isfile(os.path.join(target_dir, name))
+        name for name, path in (
+            (runtime_name, runtime_path),
+            (_SIDECAR_BUNDLE_NAME, bundle_path),
+        )
+        if not os.path.isfile(path)
     ]
     if missing:
         raise ComponentError(
             "The meeting agent is missing required files: " + ", ".join(missing)
         )
+    if os.path.islink(runtime_path) or os.path.islink(bundle_path):
+        raise ComponentError("The meeting agent payload must not contain symlinks.")
+    if os.path.getsize(runtime_path) <= 0 or os.path.getsize(bundle_path) <= 0:
+        raise ComponentError("The meeting agent payload contains an empty file.")
+    if not sys.platform.startswith("win") and not os.access(runtime_path, os.X_OK):
+        raise ComponentError("The meeting agent node runtime is not executable.")
+
+    # Bounded structural probes — never start the sidecar or leak secrets.
+    try:
+        version = subprocess.run(
+            [runtime_path, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        raise ComponentError(f"Could not start the bundled Node runtime: {exc}") from exc
+    if version.returncode != 0:
+        raise ComponentError("The bundled Node runtime failed --version.")
+    reported = (version.stdout or "").strip()
+    # node --version prints a single line like "v22.23.2". Require exact match
+    # (allowing only surrounding whitespace) — substring checks would accept
+    # v22.23.20 for a pin of 22.23.2.
+    expected_version = f"v{MEETING_AGENT_NODE_VERSION}"
+    if reported != expected_version:
+        raise ComponentError(
+            f"The bundled Node runtime reported {reported or 'an unexpected version'}."
+        )
+    try:
+        checked = subprocess.run(
+            [runtime_path, "--check", bundle_path],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        raise ComponentError(f"Could not validate the sidecar bundle: {exc}") from exc
+    if checked.returncode != 0:
+        raise ComponentError("The sidecar bundle failed Node syntax validation.")
 
 
 def install_component(
@@ -947,6 +1339,10 @@ def install_component(
     archives = entry.get("archives") or []
     if not archives:
         raise ComponentError("The catalog entry lists no files to download.")
+
+    incompatible = check_compatibility(entry)
+    if incompatible:
+        raise ComponentError(incompatible)
 
     os.makedirs(cache_dir(), exist_ok=True)
     os.makedirs(staging_dir(), exist_ok=True)
@@ -992,6 +1388,14 @@ def install_component(
                 _safe_extract_node_exe(
                     archive_path, staging, progress, cancel
                 )
+            elif extract == "node-tar":
+                _safe_extract_node_tar(
+                    archive_path,
+                    staging,
+                    progress,
+                    cancel,
+                    member_name=str(archive.get("member") or ""),
+                )
             else:
                 _safe_extract(archive_path, staging, progress, cancel)
 
@@ -1004,14 +1408,29 @@ def install_component(
         with open(os.path.join(staging, _SENTINEL_NAME), "w", encoding="utf-8") as out:
             out.write(str(entry.get("version", "")))
 
+        moved_aside = False
         _rmtree(rollback)
-        if os.path.isdir(destination):
-            os.replace(destination, rollback)
-        os.replace(staging, destination)
-        _rmtree(rollback)
+        try:
+            if os.path.isdir(destination):
+                os.replace(destination, rollback)
+                moved_aside = True
+            os.replace(staging, destination)
+        except OSError as exc:
+            # Second rename failed after the live tree was moved aside: restore
+            # the previous install before surfacing the error.
+            if moved_aside and os.path.isdir(rollback) and not os.path.isdir(destination):
+                try:
+                    os.replace(rollback, destination)
+                except OSError:
+                    logger.exception(
+                        "Failed to restore previous %s install after swap error",
+                        component_id,
+                    )
+            raise ComponentError(_describe_disk_error(exc)) from exc
 
-        # Only drop the cached archives once the install is committed, so a
-        # failure part-way through does not force a multi-gigabyte re-download.
+        # Only drop the previous tree and cached archives once the new install
+        # is committed in place.
+        _rmtree(rollback)
         for archive_path in archive_paths:
             try:
                 os.unlink(archive_path)
@@ -1019,27 +1438,58 @@ def install_component(
                 pass
 
         logger.info(f"Installed component '{component_id}' version {entry.get('version')}")
+    except ComponentError:
+        raise
     except OSError as exc:
         raise ComponentError(_describe_disk_error(exc)) from exc
     finally:
-        _rmtree(staging)
+        if os.path.isdir(staging):
+            _rmtree(staging)
 
 
 def uninstall_component(component_id: str) -> None:
-    """Remove an installed component from disk."""
+    """Remove an installed component from disk.
+
+    Raises:
+        ComponentError: When rename/delete leaves the target or rollback behind.
+    """
     target = component_dir(component_id)
-    if not os.path.isdir(target):
-        return
-    # Rename first so the tree stops counting as installed even if deleting
-    # the (very large) contents is slow or partially blocked by antivirus.
     rollback = target + ".old"
-    _rmtree(rollback)
-    try:
-        os.replace(target, rollback)
-    except OSError:
-        _rmtree(target)
+    target_present = os.path.isdir(target)
+    rollback_present = os.path.isdir(rollback)
+    if not target_present and not rollback_present:
         return
-    _rmtree(rollback)
+
+    if target_present:
+        # Rename first so the tree stops counting as installed even if deleting
+        # the (very large) contents is slow or partially blocked by antivirus.
+        if rollback_present:
+            _rmtree(rollback)
+        try:
+            os.replace(target, rollback)
+            rollback_present = True
+            target_present = False
+        except OSError as exc:
+            try:
+                _rmtree(target)
+            except Exception:
+                pass
+            target_present = os.path.isdir(target)
+            rollback_present = os.path.isdir(rollback)
+            if target_present or rollback_present:
+                raise ComponentError(
+                    f"Could not fully remove '{component_id}': {_describe_disk_error(exc)}"
+                ) from exc
+            logger.info(f"Removed component '{component_id}'")
+            return
+
+    if rollback_present or os.path.isdir(rollback):
+        _rmtree(rollback)
+
+    if os.path.isdir(target) or os.path.isdir(rollback):
+        raise ComponentError(
+            f"Could not fully remove '{component_id}'; leftover files remain."
+        )
     logger.info(f"Removed component '{component_id}'")
 
 
@@ -1149,13 +1599,14 @@ class ComponentCoordinator:
 
         ``force`` remains accepted for call compatibility.
         """
-        return _BUILTIN_CATALOG
+        return _thaw_catalog_value(_BUILTIN_CATALOG)
 
     def catalog_entry(self, component_id: str) -> Optional[dict]:
         catalog = self.fetch_catalog()
         if not catalog:
             return None
-        return (catalog.get("components") or {}).get(component_id)
+        # Prefer the platform-specific schema-2 entry for this host.
+        return catalog_entry_for_platform(component_id, catalog=catalog)
 
     def describe(self, component_id: str) -> ComponentInfo:
         """Summarize a component's state for the UI.
@@ -1175,6 +1626,19 @@ class ComponentCoordinator:
 
         installed_manifest = read_manifest(component_id)
         present = is_installed(component_id)
+
+        if present and installed_manifest is None:
+            return ComponentInfo(
+                component_id=component_id,
+                display_name=display_name,
+                summary=summary,
+                state=ComponentState.BROKEN,
+                installed_version=None,
+                available_version=available_version,
+                download_bytes=download_bytes,
+                install_bytes=int(entry.get("install_bytes", 0)) if entry else 0,
+                reason="The component manifest is missing or invalid.",
+            )
 
         if not present:
             if component_id == ComponentId.GPU_ACCEL and gpu_runtime_available():

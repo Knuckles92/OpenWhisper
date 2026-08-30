@@ -705,8 +705,10 @@ def resolve_meeting_unsupported_platform_ack(
 ) -> bool:
     """Return whether the user acknowledged unsupported-platform Meeting Mode.
 
-    Off by default. On macOS and Linux the Meeting Mode tab stays muted
-    until this is granted once; later launches skip the warning.
+    Off by default. On unsupported platforms (old macOS, unsupported Linux
+    architectures, and other OSes) the Meeting Mode tab stays muted until this
+    is granted once; later launches skip the warning. Supported Linux no longer
+    uses this acknowledgement.
     """
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,

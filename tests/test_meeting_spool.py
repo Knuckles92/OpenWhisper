@@ -474,3 +474,107 @@ class TestSessionWav:
         assert origin == pytest.approx(0.0)
         with wave.open(str(out), "rb") as wav:
             assert wav.getnframes() == pytest.approx(rate, abs=2)
+
+
+
+
+class TestRateChangeAndLargeGaps:
+    def test_rate_change_preserves_session_origin_and_gap(self, tmp_path):
+        from meeting.capture.spool import load_session_meta
+
+        repo = FakeRepo()
+        collector = Collector(repo)
+        clock, t0 = _start_clock()
+        writer = _make_writer(tmp_path, repo, collector, clock)
+
+        first = _signal(0.5, 44100)
+        _feed_stream(writer, first, 44100, t0)
+        first_dur = (first.size // BLOCK) * BLOCK / 44100.0
+
+        second = _signal(0.5, 48000)
+        idx = 0
+        resume_t0 = t0 + first_dur + 1.0
+        while idx + BLOCK <= second.size:
+            block = second[idx:idx + BLOCK]
+            writer.feed(
+                CaptureBlock(
+                    channel="mic",
+                    frames=block,
+                    sample_rate=48000,
+                    t_mono=resume_t0 + idx / 48000.0,
+                )
+            )
+            idx += BLOCK
+        writer.flush()
+
+        wav_path = os.path.join(tmp_path, "mic_session.wav")
+        meta_path = os.path.join(tmp_path, "mic_session.json")
+        assert os.path.isfile(wav_path)
+        meta = load_session_meta(meta_path)
+        assert meta is not None
+        assert meta["origin_s"] == pytest.approx(0.0, abs=0.05)
+        with wave.open(wav_path, "rb") as wav:
+            duration = wav.getnframes() / float(wav.getframerate())
+        assert duration == pytest.approx(2.0, abs=0.25)
+        # Live chunks may span the silence gap inside one remainder; the durable
+        # session timeline is the alignment contract for offline ASR.
+        assert collector.chunks, "expected at least one live chunk"
+        end = max(c.start_s + c.duration_s for c in collector.chunks)
+        assert end == pytest.approx(first_dur + 1.0 + 0.5, abs=0.35)
+
+    def test_large_gap_fill_uses_bounded_allocations(self, tmp_path, monkeypatch):
+        """Gap silence must be written in bounded chunks, not one giant array."""
+        import meeting.capture.spool as spool_mod
+
+        allocs = []
+        real_zeros = np.zeros
+
+        def tracking_zeros(shape, dtype=float, *args, **kwargs):
+            out = real_zeros(shape, dtype=dtype, *args, **kwargs)
+            dt = kwargs.get("dtype", dtype)
+            if dt is np.int16 or str(dt).endswith("int16"):
+                try:
+                    size = int(shape) if isinstance(shape, (int, np.integer)) else int(np.prod(shape))
+                except Exception:
+                    size = int(getattr(out, "size", 0))
+                allocs.append(size)
+            return out
+
+        monkeypatch.setattr(spool_mod.np, "zeros", tracking_zeros)
+
+        repo = FakeRepo()
+        collector = Collector(repo)
+        clock, t0 = _start_clock()
+        writer = _make_writer(
+            tmp_path, repo, collector, clock, target_sec=1.0, max_sec=2.0
+        )
+
+        rate = 16000
+        first = _signal(0.25, rate)
+        _feed_stream(writer, first, rate, t0)
+        first_dur = (first.size // BLOCK) * BLOCK / float(rate)
+
+        # 30s gap is large enough to catch a full-interval allocation regression
+        # without writing multi-hour fixtures to disk.
+        gap_s = 30.0
+        second = _signal(0.25, rate)
+        idx = 0
+        resume_t0 = t0 + first_dur + gap_s
+        while idx + BLOCK <= second.size:
+            block = second[idx:idx + BLOCK]
+            writer.feed(
+                CaptureBlock(
+                    channel="mic",
+                    frames=block,
+                    sample_rate=rate,
+                    t_mono=resume_t0 + idx / float(rate),
+                )
+            )
+            idx += BLOCK
+        writer.flush()
+
+        silence_allocs = [n for n in allocs if n >= rate // 2]
+        assert silence_allocs, allocs
+        assert max(silence_allocs) <= int(rate * spool_mod.GAP_FILL_CHUNK_S) + 1
+        # Full-interval allocation would be ~30 * rate samples in one shot.
+        assert max(silence_allocs) < int(gap_s * rate) // 2

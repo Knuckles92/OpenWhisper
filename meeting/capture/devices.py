@@ -6,8 +6,10 @@ This module locates the loopback device mirroring the default render device
 (system audio, the "Others" channel) and the microphone (the "Me" channel).
 
 All functions degrade gracefully: any sounddevice import or query failure
-returns ``None`` so the engine can fall back (e.g. to the ``soundcard``
-backend) instead of crashing.
+returns ``None`` so the engine can fall back (e.g. to the SoundCard monitor
+backend on Windows/Linux, or ScreenCaptureKit on macOS) instead of crashing.
+Linux has no WASAPI host API, so loopback discovery here is expected to return
+``None`` and leave system audio to SoundCard.
 """
 from __future__ import annotations
 

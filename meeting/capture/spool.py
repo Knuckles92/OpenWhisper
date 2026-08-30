@@ -138,6 +138,26 @@ def resample_to_16k(frames_int16: np.ndarray, src_rate: int) -> np.ndarray:
     return (resampled * 32767.0).astype(np.int16)
 
 
+# Maximum silence written in one allocation when filling a capture gap.
+# Keeps peak memory bounded across multi-hour suspend/resume outages.
+GAP_FILL_CHUNK_S = 1.0
+
+
+def gap_fill_frame_count(
+    expected_start_s: Optional[float],
+    actual_start_s: float,
+    sample_rate: int = TARGET_RATE,
+    tolerance_s: float = GAP_TOLERANCE_S,
+) -> int:
+    """Number of silence frames needed to bridge a capture gap."""
+    if expected_start_s is None:
+        return 0
+    gap_s = actual_start_s - expected_start_s
+    if gap_s <= tolerance_s:
+        return 0
+    return max(0, int(round(gap_s * float(sample_rate))))
+
+
 def gap_fill_frames(expected_start_s: Optional[float], actual_start_s: float,
                     sample_rate: int = TARGET_RATE,
                     tolerance_s: float = GAP_TOLERANCE_S) -> np.ndarray:
@@ -154,13 +174,20 @@ def gap_fill_frames(expected_start_s: Optional[float], actual_start_s: float,
 
     Returns:
         A (possibly empty) 1-D int16 array of zeros covering the gap.
+
+    Note:
+        Prefer :meth:`SpoolWriter._append_silence_frames` for large outages;
+        this helper still allocates the full interval for short gaps/tests.
     """
-    if expected_start_s is None:
+    count = gap_fill_frame_count(
+        expected_start_s,
+        actual_start_s,
+        sample_rate=sample_rate,
+        tolerance_s=tolerance_s,
+    )
+    if count <= 0:
         return np.zeros(0, dtype=np.int16)
-    gap_s = actual_start_s - expected_start_s
-    if gap_s <= tolerance_s:
-        return np.zeros(0, dtype=np.int16)
-    return np.zeros(int(round(gap_s * sample_rate)), dtype=np.int16)
+    return np.zeros(count, dtype=np.int16)
 
 
 class _CutScanner:
@@ -552,6 +579,10 @@ class SpoolWriter:
         self._session_samples = 0
         self._session_rate: Optional[int] = None
         self._session_origin_s = 0.0
+        # Immutable meeting-time origin for the durable concatenated session.
+        # Survives rate changes and source recovery so offline ASR stays aligned.
+        self._session_meeting_origin_s: Optional[float] = None
+        self._session_16k_samples = 0
         self._session_meta_at = 0
         self._session_16k_pcm = os.path.join(
             spool_dir, f"{channel}_session.16k.pcm"
@@ -685,6 +716,18 @@ class SpoolWriter:
             quiet_window_s=self._quiet_window_s,
         )
 
+    def _append_silence_frames(self, frame_count: int) -> None:
+        """Append silence in bounded chunks; cut pending chunks as needed."""
+        if frame_count <= 0 or self._rate is None:
+            return
+        chunk = max(1, int(round(GAP_FILL_CHUNK_S * float(self._rate))))
+        remaining = int(frame_count)
+        while remaining > 0:
+            n = min(remaining, chunk)
+            self._append(np.zeros(n, dtype=np.int16))
+            self._cut_ready_chunks()
+            remaining -= n
+
     def _process_block(self, frames: np.ndarray, t_meeting: float,
                        src_rate: int) -> None:
         frames = np.asarray(frames, dtype=np.int16).reshape(-1)
@@ -694,21 +737,29 @@ class SpoolWriter:
 
         if self._rate is None:
             self._reset_stream(rate, t_meeting)
+            if self._session_meeting_origin_s is None:
+                self._session_meeting_origin_s = float(t_meeting)
         elif rate != self._rate:
             logger.warning("Capture rate changed on channel %s (%d -> %d Hz); "
                            "cutting the pending chunk", self._channel,
                            self._rate, rate)
             self._finalize_remainder()
+            # Preserve the meeting-time cursor across the rate boundary so the
+            # subsequent gap fill accounts for outage time and the durable
+            # session keeps one immutable origin.
+            end_s = self._stream_end_s()
             self._spill_session_pcm()
-            self._reset_stream(rate, t_meeting)
+            self._reset_stream(rate, end_s)
 
         gap_s = t_meeting - self._stream_end_s()
         if gap_s > GAP_TOLERANCE_S:
-            fill = gap_fill_frames(self._stream_end_s(), t_meeting, self._rate)
-            if fill.size:
+            fill_count = gap_fill_frame_count(
+                self._stream_end_s(), t_meeting, self._rate or TARGET_RATE
+            )
+            if fill_count > 0:
                 self._log_timeline_fix("Filling %.3fs of silence on channel %s",
                                        gap_s)
-                self._append(fill)
+                self._append_silence_frames(fill_count)
         elif gap_s < -GAP_TOLERANCE_S:
             # The stream already covers this span: a stalled source delivered
             # a burst of buffered audio stamped at delivery time. Trim the
@@ -787,7 +838,10 @@ class SpoolWriter:
             pcm_path = session_pcm_path(self._spool_dir, self._channel)
             self._session_fp = open(pcm_path, "wb")
             self._session_rate = int(self._rate)
-            self._session_origin_s = float(self._origin_s)
+            if self._session_meeting_origin_s is None:
+                self._session_meeting_origin_s = float(self._origin_s)
+            # Always publish the immutable first-sample meeting time.
+            self._session_origin_s = float(self._session_meeting_origin_s)
             self._session_samples = 0
             self._session_meta_at = 0
         payload = np.ascontiguousarray(frames, dtype=np.int16)
@@ -806,14 +860,25 @@ class SpoolWriter:
                 self._session_fp.flush()
             except OSError:
                 logger.exception("Session PCM flush failed (%s)", self._channel)
-        if self._session_rate is None:
+        origin = self._session_meeting_origin_s
+        if origin is None:
+            origin = self._session_origin_s
+        # Prefer durable 16 kHz totals once any segment has spilled so offline
+        # consumers see one contiguous timeline origin even mid-meeting.
+        if self._session_16k_samples > 0 and self._session_fp is None:
+            rate = TARGET_RATE
+            samples = int(self._session_16k_samples)
+        elif self._session_rate is not None:
+            rate = int(self._session_rate)
+            samples = int(self._session_samples)
+        else:
             return
         try:
             write_session_meta(
                 session_meta_path(self._spool_dir, self._channel),
-                self._session_rate,
-                self._session_samples,
-                self._session_origin_s,
+                rate,
+                samples,
+                float(origin),
             )
         except Exception:
             logger.exception("Session metadata write failed (%s)", self._channel)
@@ -838,18 +903,22 @@ class SpoolWriter:
         rate = self._session_rate
         if pcm_path is None or rate is None:
             self._session_samples = 0
+            self._session_rate = None
             return
         try:
-            resample_pcm_file_to_16k(
+            written = resample_pcm_file_to_16k(
                 pcm_path,
                 rate,
                 self._session_16k_pcm,
                 append=os.path.isfile(self._session_16k_pcm),
             )
+            self._session_16k_samples += int(written or 0)
         except Exception:
             logger.exception("Session PCM resample failed (%s)", self._channel)
         self._session_samples = 0
         self._session_rate = None
+        # Rewrite meta against the durable 16 kHz timeline after each spill.
+        self._write_session_meta()
 
     def _finalize_session(self) -> None:
         self._spill_session_pcm()
@@ -861,6 +930,17 @@ class SpoolWriter:
         except Exception:
             logger.exception("Session WAV wrap failed (%s)", self._channel)
             return
+        try:
+            if self._session_16k_samples <= 0:
+                self._session_16k_samples = (
+                    os.path.getsize(self._session_16k_pcm) // 2
+                )
+        except OSError:
+            pass
+        # Final meta describes the concatenated 16 kHz session WAV origin.
+        self._session_rate = TARGET_RATE
+        self._session_samples = int(self._session_16k_samples)
+        self._write_session_meta()
         try:
             os.remove(self._session_16k_pcm)
         except OSError:
