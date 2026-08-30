@@ -1,0 +1,14 @@
+# OpenWhisper is a self-contained PyInstaller application. The bundled Python,
+# Qt, FFmpeg/PyAV, ONNX Runtime, and wheel-provided native libraries are
+# intentional: replacing them with distro versions would make the frozen
+# runtime incomplete and change its tested ABI set.
+openwhisper binary: embedded-library
+
+# Release binaries are deliberately left unstripped. Upstream wheels can carry
+# loader-sensitive native objects, and stripping the assembled tree has caused
+# frozen-runtime regressions. Package size is checked and accepted separately.
+openwhisper binary: unstripped-binary-or-object
+
+# A wheel-provided Cairo compatibility library has no direct libc dependency;
+# it is loaded by companion Cairo/GLib objects in the same frozen tree.
+openwhisper binary: library-not-linked-against-libc

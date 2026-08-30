@@ -606,6 +606,7 @@ class TestLiveParent:
         ), patch("services.app_update_apply._clear_runonce"):
             yield
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only commit path")
     def test_running_parent_is_not_reported_as_a_failed_rollback(self, tmp_path):
         app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")

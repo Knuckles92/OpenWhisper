@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OpenWhisper
+GenericName=Speech-to-Text
+Comment=Record audio and transcribe speech to text
+Exec=openwhisper
+Icon=openwhisper
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=audio;dictation;microphone;speech;transcription;whisper;
+StartupNotify=true
+StartupWMClass=OpenWhisper

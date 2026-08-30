@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QSystemTrayIcon,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -104,6 +105,22 @@ from ui_qt.widgets.nav_rail import NavRail
 
 logger = logging.getLogger(__name__)
 
+
+def is_native_wayland_session(
+    platform_name: Optional[str] = None,
+    environment: Optional[Dict[str, str]] = None,
+) -> bool:
+    """Return whether Linux is running inside a native Wayland session."""
+    platform_id = platform_name if platform_name is not None else sys.platform
+    env = environment if environment is not None else os.environ
+    if not platform_id.startswith("linux"):
+        return False
+    return (
+        env.get("XDG_SESSION_TYPE", "").strip().lower() == "wayland"
+        or bool(env.get("WAYLAND_DISPLAY"))
+    )
+
+
 GENERAL = "general"
 RECORDING = "recording"
 CLEANUP = "cleanup"
@@ -170,6 +187,8 @@ class SettingsDialog(QDialog):
         self.setSizeGripEnabled(True)
 
         self._loading = False
+        self._tray_available = bool(QSystemTrayIcon.isSystemTrayAvailable())
+        self._native_wayland = is_native_wayland_session()
         self.current_hotkeys: Dict[str, str] = {}
         self.capturing: Optional[str] = None
         self.capture_thread: Optional[HotkeyCaptureThread] = None
@@ -416,8 +435,18 @@ class SettingsDialog(QDialog):
         self.auto_paste_check = QCheckBox(
             "Auto-paste transcription to active window"
         )
+        if self._native_wayland:
+            self.auto_paste_check.setToolTip(
+                "Native Wayland blocks reliable cross-application key injection. "
+                "Use clipboard copy or an X11 session when auto-paste does not work."
+            )
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
+        if not self._tray_available:
+            self.minimize_tray_check.setEnabled(False)
+            self.minimize_tray_check.setToolTip(
+                "This desktop session does not provide a system tray."
+            )
         self.update_check_check = QCheckBox("Check for updates automatically")
         self.update_check_check.setObjectName("updateCheckEnabledCheck")
         self.update_notify_check = QCheckBox(
@@ -1409,6 +1438,13 @@ class SettingsDialog(QDialog):
                 "Click a shortcut, hold any modifiers, then press its key. "
                 "Control+Option combinations are less likely to conflict with "
                 "macOS shortcuts."
+            )
+        elif self._native_wayland:
+            instruction_text = (
+                "This is a native Wayland session. Wayland blocks reliable "
+                "system-wide key observation and injection, so these hotkeys "
+                "may work only in XWayland apps. Use the in-app controls or "
+                "sign in to an X11 session for global shortcuts and auto-paste."
             )
         elif USE_PYNPUT_BACKEND:
             instruction_text = (
@@ -2473,7 +2509,8 @@ class SettingsDialog(QDialog):
             self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(
-                settings.get(SettingsKey.MINIMIZE_TRAY, True)
+                self._tray_available
+                and settings.get(SettingsKey.MINIMIZE_TRAY, True)
             )
             self.update_check_check.setChecked(
                 resolve_update_check_enabled(settings)
@@ -2555,7 +2592,7 @@ class SettingsDialog(QDialog):
             )
             self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()
-            self.minimize_tray_check.setChecked(True)
+            self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
             self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
             self.update_notify_check.setEnabled(

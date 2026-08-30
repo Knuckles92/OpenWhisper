@@ -1,8 +1,8 @@
-"""Generate the multi-resolution application icon.
+"""Generate the Windows ICO and Linux desktop PNG application icons.
 
-Renders the mark from ``ui_qt.utils.app_icon`` at every size Windows asks for
-and packs them into ``ui_qt/assets/openwhisper.ico``, which is used for the
-executable, the installer, the taskbar, and the system tray.
+Renders the mark from ``ui_qt.utils.app_icon`` at every size Windows asks for,
+packs them into ``ui_qt/assets/openwhisper.ico``, and writes the 256 px PNG used
+by the Linux desktop entry.
 
 Run after changing the artwork:
 
@@ -28,7 +28,8 @@ from PyQt6.QtGui import QGuiApplication  # noqa: E402
 
 from ui_qt.utils.app_icon import ICON_SIZES, render_app_pixmap  # noqa: E402
 
-OUTPUT_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
+ICO_OUTPUT_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
+PNG_OUTPUT_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.png"
 
 
 def _png_bytes(size: int) -> bytes:
@@ -85,12 +86,20 @@ def main() -> int:
     global _app
     _app = QGuiApplication.instance() or QGuiApplication([])
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_bytes(build_ico())
+    ICO_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ICO_OUTPUT_PATH.write_bytes(build_ico())
+    PNG_OUTPUT_PATH.write_bytes(_png_bytes(256))
 
-    kib = OUTPUT_PATH.stat().st_size / 1024
-    print(f"Wrote {OUTPUT_PATH.relative_to(REPO_ROOT)} "
-          f"({kib:.1f} KiB, sizes: {', '.join(str(s) for s in ICON_SIZES)})")
+    ico_kib = ICO_OUTPUT_PATH.stat().st_size / 1024
+    png_kib = PNG_OUTPUT_PATH.stat().st_size / 1024
+    print(
+        f"Wrote {ICO_OUTPUT_PATH.relative_to(REPO_ROOT)} "
+        f"({ico_kib:.1f} KiB, sizes: {', '.join(str(s) for s in ICON_SIZES)})"
+    )
+    print(
+        f"Wrote {PNG_OUTPUT_PATH.relative_to(REPO_ROOT)} "
+        f"({png_kib:.1f} KiB, 256x256)"
+    )
     return 0
 
 

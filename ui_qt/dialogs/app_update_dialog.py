@@ -345,11 +345,14 @@ class AppUpdateDialog(QDialog):
         if self._result is None or self._result.release is None:
             return 0
         release = self._result.release
-        asset = (
-            release.native_asset
-            if self._result.apply_mode == ApplyMode.NATIVE
-            else release.setup_asset
-        )
+        if self._result.apply_mode == ApplyMode.NATIVE:
+            asset = release.native_asset
+        elif self._result.apply_mode == ApplyMode.SETUP:
+            asset = release.setup_asset
+        else:
+            # Source checkouts and packaged non-Windows builds are notify-only;
+            # showing the Windows setup size there implies the wrong download.
+            asset = None
         return int(asset.size_bytes) if asset and asset.size_bytes else 0
 
     def _hint_text(self) -> str:

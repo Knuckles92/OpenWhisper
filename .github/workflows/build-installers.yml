@@ -1,0 +1,213 @@
+name: Build native installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing draft release tag to upload to (optional, e.g. v2.4.9)"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Never let two runs race while replacing assets in the same draft release.
+concurrency:
+  group: native-installers-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Validate tag version
+        if: github.ref_type == 'tag' || inputs.release_tag != ''
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          $version = python -c "import _version; print(_version.__version__)"
+          if ("v$version" -ne $env:RELEASE_TAG) {
+            throw "Tag $env:RELEASE_TAG does not match _version.py ($version)"
+          }
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m venv venv
+          .\venv\Scripts\python -m pip install --upgrade pip
+          .\venv\Scripts\python -m pip install `
+            -r requirements.txt -r requirements-build.txt `
+            -c requirements-release-constraints.txt
+          .\venv\Scripts\python -m pip check
+          choco install innosetup --version=6.4.0 --yes --no-progress
+      - name: Build and verify
+        shell: pwsh
+        run: .\scripts\build_installer.ps1 -Clean
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwhisper-windows
+          path: |
+            installer/Output/OpenWhisper-Setup-*.exe
+            installer/Output/OpenWhisper-*-win64.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Linux Debian package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Validate tag version
+        if: github.ref_type == 'tag' || inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          version="$(python -c 'import _version; print(_version.__version__)')"
+          test "v$version" = "$RELEASE_TAG"
+      - name: Install system and Python build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils build-essential desktop-file-utils dpkg-dev file lintian xauth xvfb \
+            libdrm2 libegl1 libgl1 libportaudio2 \
+            libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xkb1 libxkbcommon-x11-0
+          python -m venv venv
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install \
+            -r requirements.txt -r requirements-build.txt \
+            -c requirements-release-constraints.txt
+          ./venv/bin/python -m pip check
+      - name: Run Linux test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./venv/bin/python -m pytest
+      - name: Build and verify
+        run: ./scripts/build_installer.sh --clean
+      - name: Smoke-test package lifecycle in clean Ubuntu
+        run: |
+          artifacts=(installer/Output/OpenWhisper-*-linux-amd64.deb)
+          version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
+          test "${#artifacts[@]}" -eq 1
+          artifact="$(realpath "${artifacts[0]}")"
+          docker run --rm \
+            -e EXPECTED_VERSION="$version" \
+            -v "$artifact:/tmp/openwhisper.deb:ro" \
+            ubuntu:22.04 bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends file /tmp/openwhisper.deb
+              test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(ow --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(dpkg-query -W -f=\${Version} openwhisper)" = "$EXPECTED_VERSION"
+              test -f /usr/share/applications/openwhisper.desktop
+              test -f /usr/share/icons/hicolor/256x256/apps/openwhisper.png
+
+              failures="$(mktemp)"
+              while IFS= read -r -d "" candidate; do
+                file -b "$candidate" | grep -q ELF || continue
+                if ! output="$(LD_LIBRARY_PATH=/usr/lib/openwhisper/_internal ldd "$candidate" 2>&1)"; then
+                  printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
+                elif grep -q "not found" <<<"$output"; then
+                  printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
+                fi
+              done < <(find /usr/lib/openwhisper -type f -print0)
+              test ! -s "$failures" || { cat "$failures" >&2; exit 1; }
+
+              apt-get install -y --no-install-recommends xauth xvfb
+              xvfb-run -a openwhisper --self-test
+              apt-get remove -y openwhisper
+              test ! -e /usr/lib/openwhisper
+              test ! -e /usr/bin/openwhisper
+              test ! -e /usr/bin/ow
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwhisper-linux
+          path: installer/Output/OpenWhisper-*-linux-amd64.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle:
+    name: Combined release candidate
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: openwhisper-*
+          merge-multiple: true
+          path: release
+      - name: Inventory and checksums
+        run: |
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 3
+          (cd release && sha256sum -- ./* | sed 's|  \./|  |' | tee SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwhisper-release-candidate
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+  upload-draft:
+    name: Upload to existing draft release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.release_tag != ''
+    needs: bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: openwhisper-release-candidate
+          path: release
+      - name: Verify draft and upload all native artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="$(python -c 'import _version; print(_version.__version__)')"
+          test "$RELEASE_TAG" = "v$version"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" \
+            release/OpenWhisper-Setup-"$version".exe \
+            release/OpenWhisper-"$version"-win64.tar.xz \
+            release/OpenWhisper-"$version"-linux-amd64.deb \
+            release/SHA256SUMS.txt \
+            --clobber
+
+          for file in release/*; do
+            name="$(basename "$file")"
+            expected="sha256:$(sha256sum "$file" | cut -d" " -f1)"
+            uploaded="$(gh api \
+              "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              --jq ".assets[] | select(.name == \"$name\") | .digest")"
+            test "$uploaded" = "$expected"
+          done

@@ -1,18 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller build specification for OpenWhisper (Windows, onedir).
+"""PyInstaller onedir specification for OpenWhisper on Windows and Linux.
 
-Build with::
+Build on the target operating system with::
 
     pyinstaller --noconfirm --clean OpenWhisper.spec
 
-onedir rather than onefile: onefile re-extracts the whole ~300 MB bundle to a
-temp directory on every launch, which is slow and a reliable source of
-antivirus false positives. Inno Setup packs the directory afterwards, so the
-user still downloads a single file.
+PyInstaller does not cross-compile. The Windows tree is packed by Inno Setup;
+the Linux tree is installed by the Debian package built by
+``scripts/build_installer.sh``. ``onedir`` avoids extracting the whole bundle
+on every launch and lets both native packages own ordinary files.
 """
 
 import os
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
@@ -42,8 +43,6 @@ hiddenimports = [
     "services.models",
     # Imported inside function bodies in services/hf_access.py.
     "huggingface_hub",
-    # services/credentials.py picks the OS keyring backend by name at runtime.
-    "keyring.backends.Windows",
     # Knowledge-folder extractors (imported lazily from meeting/context_folder).
     "pypdf",
     "docx",
@@ -51,6 +50,16 @@ hiddenimports = [
     "openpyxl",
     "lxml",
 ]
+
+# services/credentials.py chooses one explicit OS backend at runtime rather
+# than allowing keyring entry-point discovery. Keep the matching backend in
+# each native bundle without dragging the other platforms' implementations in.
+if sys.platform == "win32":
+    hiddenimports.append("keyring.backends.Windows")
+elif sys.platform == "darwin":
+    hiddenimports.append("keyring.backends.macOS")
+else:
+    hiddenimports.append("keyring.backends.SecretService")
 
 # Native packages needing explicit collection
 #
@@ -62,8 +71,28 @@ hiddenimports = [
 #   av            - av/ and av.libs/ MUST stay siblings; av/__init__.py calls
 #                   os.add_dll_directory() on ../av.libs to find FFmpeg
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
-for package in ("ctranslate2", "faster_whisper", "onnxruntime", "av",
-                "tokenizers", "sounddevice", "lxml", "uvicorn", "soundcard"):
+for package in (
+    "ctranslate2",
+    "faster_whisper",
+    "onnxruntime",
+    "av",
+    "tokenizers",
+    "sounddevice",
+    "lxml",
+    "uvicorn",
+    "soundcard",
+    # Plugin-style packages whose platform implementations are selected at
+    # runtime. SecretStorage/jeepney back Linux's explicit keyring backend;
+    # pynput selects its Xorg implementation dynamically.
+    "keyring",
+    "secretstorage",
+    "jeepney",
+    "pynput",
+):
+    # Platform markers intentionally leave Windows-only or Linux-only packages
+    # absent. collect_all() warns for a missing package, so skip it cleanly.
+    if find_spec(package) is None:
+        continue
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
@@ -134,7 +163,7 @@ excludes = [
 # ~6 MB compressed is cheap insurance against an app that will not launch.
 QT_EXCLUDE_PATTERNS = (
     "qt6quick", "qt6qml", "qt6quick3d", "qt6quickcontrols", "qt6quickwidgets",
-    "qt6pdf", "qt6designer", "qt6shadertools", "qt6webengine", "qt6webview",
+    "qt6pdf", "libqpdf", "qt6designer", "qt6shadertools", "qt6webengine", "qt6webview",
     "qt6charts", "qt63d", "qt6datavisualization", "qt6multimedia",
     "qt6sensors", "qt6positioning", "qt6bluetooth", "qt6nfc", "qt6serialport",
     "qt6test", "qt6help", "qt6uitools", "qt6location", "qt6texttospeech",
@@ -167,9 +196,18 @@ def _strip_qt(toc):
     """
     kept = []
     for entry in toc:
-        name = entry[0].replace("\\", "/").lower()
-        is_qt = "pyqt6/" in name or "/qt6/" in name or name.startswith("qt6/")
-        if is_qt and any(pattern in name for pattern in QT_EXCLUDE_PATTERNS):
+        # SYMLINK entries may live at the bundle root while pointing into Qt
+        # (for example libQt6Pdf.so.6 -> PyQt6/Qt6/lib/libQt6Pdf.so.6).
+        # Inspect both names so filtering the target cannot leave a dangling
+        # root symlink behind. Source scoping still protects PyAV's av.libs.
+        names = [str(value).replace("\\", "/").lower() for value in entry[:2]]
+        is_qt = any(
+            "pyqt6/" in name or "/qt6/" in name or name.startswith("qt6/")
+            for name in names
+        )
+        if is_qt and any(
+            pattern in name for name in names for pattern in QT_EXCLUDE_PATTERNS
+        ):
             continue
         kept.append(entry)
     return kept
@@ -248,7 +286,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ICON_PATH) if ICON_PATH.exists() else None,
+    # Linux desktop environments take their icon from the installed PNG and
+    # .desktop file; executable icon resources are a Windows/macOS concept.
+    icon=(
+        str(ICON_PATH)
+        if ICON_PATH.exists() and sys.platform in ("win32", "darwin")
+        else None
+    ),
     version=_version_resource() if sys.platform == "win32" else None,
 )
 

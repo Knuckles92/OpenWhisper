@@ -18,6 +18,7 @@ from services.app_update import (
     UpdateStatus,
     can_apply,
     check_for_update,
+    channel_label,
     compare_versions,
     detect_channel,
     download_installer,
@@ -130,6 +131,11 @@ class TestDetectChannel:
     def test_loose_tree_is_source(self, tmp_path):
         with patch.object(app_update, "is_frozen", return_value=False):
             assert detect_channel(str(tmp_path)) == InstallChannel.SOURCE
+
+    def test_frozen_channel_label_is_platform_aware(self):
+        assert channel_label(InstallChannel.INSTALLER, "win32") == "Windows installer"
+        assert channel_label(InstallChannel.INSTALLER, "linux") == "Linux package"
+        assert channel_label(InstallChannel.INSTALLER, "linux2") == "Linux package"
 
 
 class TestCompareVersions:
@@ -589,16 +595,22 @@ class TestDualAssetsAndApplyMode:
     def test_native_mode_requires_hkcu_registration(self, tmp_path):
         release = _release(native=True)
         (tmp_path / "unins000.exe").write_bytes(b"uninstaller")
-        with patch.object(app_update.sys, "platform", "win32"):
-            assert resolve_release_apply_mode(
-                InstallChannel.INSTALLER, release
-            ) == ApplyMode.SETUP
+        assert resolve_release_apply_mode(
+            InstallChannel.INSTALLER,
+            release,
+            platform_name="win32",
+        ) == ApplyMode.SETUP
+        with patch(
+            "services.app_update_apply.registered_uninstaller_path",
+            return_value=str(tmp_path / "unins000.exe"),
+        ):
             assert resolve_release_apply_mode(
                 InstallChannel.INSTALLER,
                 release,
                 registration=_hkcu(str(tmp_path)),
                 app_dir=str(tmp_path),
                 helper_present=True,
+                platform_name="win32",
             ) == ApplyMode.NATIVE
 
     def test_hklm_registration_uses_setup(self, tmp_path):
