@@ -7,9 +7,6 @@ on:
         description: "Existing draft release tag to upload to (optional, e.g. v2.4.9)"
         required: false
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
@@ -51,7 +48,7 @@ jobs:
             -r requirements.txt -r requirements-build.txt `
             -c requirements-release-constraints.txt
           .\venv\Scripts\python -m pip check
-          choco install innosetup --version=6.4.0 --yes --no-progress
+          choco install innosetup --version=6.4.0 --allow-downgrade --yes --no-progress
       - name: Build and verify
         shell: pwsh
         run: .\scripts\build_installer.ps1 -Clean
@@ -101,7 +98,7 @@ jobs:
       - name: Run Linux test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./venv/bin/python -m pytest
+        run: xvfb-run -a ./venv/bin/python -m pytest
       - name: Build and verify
         run: ./scripts/build_installer.sh --clean
       - name: Smoke-test package lifecycle in clean Ubuntu
