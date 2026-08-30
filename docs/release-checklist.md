@@ -64,7 +64,7 @@ so PyInstaller cannot accidentally raise the official glibc floor.
 
 ```bash
 sudo apt install -y \
-  python3 python3-venv python3-dev build-essential binutils dpkg-dev file \
+  python3 python3-venv python3-dev build-essential binutils dpkg-dev file patchelf \
   desktop-file-utils lintian xvfb xauth \
   libdrm2 libegl1 libgl1 libportaudio2 \
   libwayland-client0 libwayland-cursor0 libwayland-egl1 \

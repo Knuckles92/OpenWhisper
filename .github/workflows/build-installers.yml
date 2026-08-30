@@ -84,7 +84,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            binutils build-essential desktop-file-utils dpkg-dev file lintian xauth xvfb \
+            binutils build-essential desktop-file-utils dpkg-dev file lintian patchelf xauth xvfb \
             libdrm2 libegl1 libgl1 libportaudio2 \
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \

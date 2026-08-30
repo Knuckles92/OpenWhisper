@@ -60,7 +60,7 @@ if [[ -z "$PYTHON" ]]; then
 fi
 [[ -x "$PYTHON" ]] || fail "Python is not executable: $PYTHON"
 
-for command in file find ldd numfmt readelf sha256sum xvfb-run; do
+for command in file find ldd numfmt patchelf readelf sha256sum xvfb-run; do
     command -v "$command" >/dev/null || fail "required build command not found: $command"
 done
 if (( ! SKIP_PACKAGE )); then
@@ -102,7 +102,20 @@ INTERNAL_DIR="$DIST_DIR/_internal"
 EXE_PATH="$DIST_DIR/OpenWhisper"
 [[ -x "$EXE_PATH" ]] || fail "expected executable not found: $EXE_PATH"
 
+step "Removing build-host library search paths"
+PYTHON_BASE_PREFIX="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')"
+while IFS= read -r -d '' candidate; do
+    if ! file -b "$candidate" | grep -q 'ELF'; then
+        continue
+    fi
+    rpath="$(patchelf --print-rpath "$candidate" 2>/dev/null || true)"
+    if [[ "$rpath" == "$PYTHON_BASE_PREFIX/lib" ]]; then
+        patchelf --remove-rpath "$candidate"
+    fi
+done < <(find "$DIST_DIR" -type f -print0)
+
 step "Verifying the frozen bundle"
+
 for path in \
     "$INTERNAL_DIR/ui_qt/styles/theme.qss" \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.ico" \
