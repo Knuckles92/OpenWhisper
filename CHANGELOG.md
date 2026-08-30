@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.9] - 2026-08-29
+
 ### Added
 - **Native Linux installer** - Releases can now ship `OpenWhisper-<version>-linux-amd64.deb` beside the Windows setup and update archive. A shared platform-aware PyInstaller spec freezes the app; the Linux builder installs it under `/usr/lib/openwhisper`, adds `openwhisper`/`ow` commands, a validated desktop entry and PNG icon, declares the Qt/audio dependencies, records the bundle's actual glibc floor, checks every ELF with `ldd`, and runs a frozen import self-test. The release workflow builds Windows and Ubuntu 22.04 in parallel and can upload all artifacts plus checksums to an existing draft release.
 
