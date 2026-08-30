@@ -193,6 +193,7 @@ jobs:
           version="$(python -c 'import _version; print(_version.__version__)')"
           test "$RELEASE_TAG" = "v$version"
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          release_api="$(gh release view "$RELEASE_TAG" --json apiUrl --jq .apiUrl)"
           gh release upload "$RELEASE_TAG" \
             release/OpenWhisper-Setup-"$version".exe \
             release/OpenWhisper-"$version"-win64.tar.xz \
@@ -204,7 +205,7 @@ jobs:
             name="$(basename "$file")"
             expected="sha256:$(sha256sum "$file" | cut -d" " -f1)"
             uploaded="$(gh api \
-              "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              "$release_api" \
               --jq ".assets[] | select(.name == \"$name\") | .digest")"
             test "$uploaded" = "$expected"
           done
