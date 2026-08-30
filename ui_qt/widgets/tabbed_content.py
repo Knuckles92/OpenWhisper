@@ -8,11 +8,13 @@ from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from meeting.platform import (
+    linux_meeting_implementation_ready,
     meeting_mode_supported,
     meeting_unsupported_os_name,
 )
 from services.settings import (
     SettingsKey,
+    resolve_meeting_linux_preview_ack,
     resolve_meeting_unsupported_platform_ack,
     settings_manager,
 )
@@ -122,10 +124,19 @@ class TabbedContentWidget(QWidget):
 
     def _init_meeting_tab_lock(self) -> None:
         """Grey Meeting Mode on unsupported OSes until (and after) first ack."""
-        self._meeting_unlocked = (
-            meeting_mode_supported() or resolve_meeting_unsupported_platform_ack()
+        import sys
+
+        supported = meeting_mode_supported()
+        preview = (
+            sys.platform.startswith("linux")
+            and linux_meeting_implementation_ready()
         )
-        unsupported = not meeting_mode_supported()
+        acknowledged = (
+            resolve_meeting_linux_preview_ack()
+            if preview else resolve_meeting_unsupported_platform_ack()
+        )
+        self._meeting_unlocked = supported or acknowledged
+        unsupported = not supported
         self.tab_bar.setProperty("unsupportedMeeting", unsupported)
         self.tab_bar.style().unpolish(self.tab_bar)
         self.tab_bar.style().polish(self.tab_bar)
@@ -138,7 +149,6 @@ class TabbedContentWidget(QWidget):
             return
         os_name = meeting_unsupported_os_name()
         try:
-            from meeting.platform import linux_meeting_implementation_ready
             import sys
 
             preview = (
@@ -171,7 +181,7 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.setTabToolTip(self.TAB_MEETING_MODE, tip)
 
     def meeting_tab_is_locked(self) -> bool:
-        """True when Meeting Mode still needs the unsupported-platform ack."""
+        """True when Meeting Mode still needs its platform acknowledgement."""
         return not meeting_mode_supported() and not self._meeting_unlocked
 
     def unlock_meeting_tab(self) -> None:
@@ -197,7 +207,7 @@ class TabbedContentWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_locked_meeting_tab_activated(self) -> None:
-        """Prompt for the first-time unsupported-platform acknowledgement."""
+        """Prompt for the first-time platform acknowledgement."""
         from ui_qt.dialogs.meeting_unsupported_dialog import (
             acknowledge_unsupported_meeting_mode,
         )

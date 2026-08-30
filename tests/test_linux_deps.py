@@ -42,6 +42,18 @@ class TestLinuxDeps(unittest.TestCase):
         self.assertIn("pactl", joined)
         self.assertNotIn("apt install", joined)
 
+    def test_pactl_missing_remediation_by_family(self):
+        expected = {
+            "apt": "pulseaudio-utils",
+            "dnf": "pulseaudio-utils",
+            "pacman": "libpulse",
+        }
+        for family, package in expected.items():
+            remediation = meeting_audio_remediation("pactl_missing", family)
+            joined = " ".join(remediation.commands)
+            self.assertIn(package, joined)
+            self.assertIn("pactl info", remediation.verification)
+
     def test_remediation_never_pushes_pipewire_onto_pulse_for_transient_errors(self):
         for reason in (
             "default_sink_missing",

@@ -152,6 +152,7 @@ for path in \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.ico" \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.png" \
     "$INTERNAL_DIR/webui/dist/index.html" \
+    "$INTERNAL_DIR/docs/linux-system-audio.md" \
     "$INTERNAL_DIR/THIRD_PARTY_NOTICES.md" \
     "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
     "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
@@ -254,6 +255,7 @@ mkdir -p \
     "$STAGE_ROOT/usr/share/applications" \
     "$STAGE_ROOT/usr/share/doc/openwhisper/third-party" \
     "$STAGE_ROOT/usr/share/icons/hicolor/256x256/apps" \
+    "$STAGE_ROOT/usr/share/licenses/openwhisper" \
     "$OUTPUT_DIR"
 
 cp -a "$DIST_DIR/." "$STAGE_ROOT/usr/lib/openwhisper/"
@@ -272,12 +274,20 @@ install -m 0644 ui_qt/assets/openwhisper.png \
     "$STAGE_ROOT/usr/share/icons/hicolor/256x256/apps/openwhisper.png"
 install -m 0644 LICENSE "$STAGE_ROOT/usr/share/doc/openwhisper/copyright"
 install -m 0644 README.md "$STAGE_ROOT/usr/share/doc/openwhisper/README.md"
+install -m 0644 docs/linux-system-audio.md \
+    "$STAGE_ROOT/usr/share/doc/openwhisper/linux-system-audio.md"
 install -m 0644 THIRD_PARTY_NOTICES.md \
     "$STAGE_ROOT/usr/share/doc/openwhisper/THIRD_PARTY_NOTICES.md"
 install -m 0644 "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
     "$STAGE_ROOT/usr/share/doc/openwhisper/third-party/PyQt6-GPL-3.0.txt"
 install -m 0644 "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
     "$STAGE_ROOT/usr/share/doc/openwhisper/third-party/Qt-LGPL-3.0.txt"
+install -m 0644 LICENSE \
+    "$STAGE_ROOT/usr/share/licenses/openwhisper/LICENSE"
+install -m 0644 "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
+    "$STAGE_ROOT/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt"
+install -m 0644 "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
+    "$STAGE_ROOT/usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt"
 gzip -n -9 -c CHANGELOG.md >"$STAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
 chmod 0644 "$STAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
 
@@ -328,6 +338,8 @@ grep -q './usr/share/applications/openwhisper.desktop$' <<<"$package_contents" |
     fail "Debian package does not contain the desktop entry"
 grep -q './usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
     <<<"$package_contents" || fail "Debian package does not contain the desktop icon"
+grep -q './usr/share/doc/openwhisper/linux-system-audio.md$' \
+    <<<"$package_contents" || fail "Debian package does not contain the Linux audio guide"
 [[ "$(dpkg-deb --field "$DEB_ARTIFACT" Package)" == "openwhisper" ]] || fail "wrong package name"
 [[ "$(dpkg-deb --field "$DEB_ARTIFACT" Version)" == "$VERSION" ]] || fail "wrong package version"
 [[ "$(dpkg-deb --field "$DEB_ARTIFACT" Architecture)" == "amd64" ]] || fail "wrong package architecture"
@@ -395,6 +407,12 @@ grep -q '^usr/share/applications/openwhisper.desktop$' <<<"$arch_contents" || \
     fail "Arch package does not contain the desktop entry"
 grep -q '^usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
     <<<"$arch_contents" || fail "Arch package does not contain the desktop icon"
+for license_file in LICENSE PyQt6-GPL-3.0.txt Qt-LGPL-3.0.txt; do
+    grep -q "^usr/share/licenses/openwhisper/$license_file$" \
+        <<<"$arch_contents" || fail "Arch package is missing license file: $license_file"
+done
+grep -q '^usr/share/doc/openwhisper/linux-system-audio.md$' \
+    <<<"$arch_contents" || fail "Arch package does not contain the Linux audio guide"
 grep -q '^depend = glibc>=' "$PACMAN_ROOT/.PKGINFO" || \
     fail "Arch package metadata is missing the glibc dependency"
 

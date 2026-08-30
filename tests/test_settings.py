@@ -239,6 +239,7 @@ class TestMeetingSettings:
     @pytest.fixture(autouse=True)
     def _setup(self):
         from services.settings import (
+            MEETING_LINUX_PREVIEW_ACK_VERSION,
             MeetingAgentCore,
             MeetingLanguage,
             MeetingServerBind,
@@ -246,6 +247,7 @@ class TestMeetingSettings:
             SettingsKey,
             resolve_meeting_agent_core,
             resolve_meeting_audio_upload_consent,
+            resolve_meeting_linux_preview_ack,
             resolve_meeting_unsupported_platform_ack,
             resolve_meeting_mode_intro_seen,
             resolve_meeting_context_folder_enabled,
@@ -279,6 +281,8 @@ class TestMeetingSettings:
         self.resolve_agent_core = resolve_meeting_agent_core
         self.resolve_speaker_id = resolve_meeting_speaker_id_backend
         self.resolve_audio_consent = resolve_meeting_audio_upload_consent
+        self.preview_ack_version = MEETING_LINUX_PREVIEW_ACK_VERSION
+        self.resolve_preview_ack = resolve_meeting_linux_preview_ack
         self.resolve_platform_ack = resolve_meeting_unsupported_platform_ack
         self.resolve_intro_seen = resolve_meeting_mode_intro_seen
         self.resolve_past_recall = resolve_meeting_past_recall_enabled
@@ -305,6 +309,7 @@ class TestMeetingSettings:
         assert self.resolve_speaker_id({}) == config.MEETING_SPEAKER_ID_BACKEND
         assert config.MEETING_SPEAKER_ID_BACKEND == self.speaker_backends.LOCAL
         assert not self.resolve_audio_consent({})
+        assert not self.resolve_preview_ack({})
         assert not self.resolve_platform_ack({})
         assert not self.resolve_intro_seen({})
         assert not self.resolve_past_recall({})
@@ -330,6 +335,7 @@ class TestMeetingSettings:
             self.keys.MEETING_AGENT_CORE: self.agent_cores.DIRECT,
             self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OPENAI,
             self.keys.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: True,
+            self.keys.MEETING_LINUX_PREVIEW_ACK_VERSION: self.preview_ack_version,
             self.keys.MEETING_UNSUPPORTED_PLATFORM_ACK: True,
             self.keys.MEETING_MODE_INTRO_SEEN: True,
             self.keys.MEETING_PAST_RECALL_ENABLED: True,
@@ -351,6 +357,7 @@ class TestMeetingSettings:
         assert self.resolve_agent_core(saved) == self.agent_cores.DIRECT
         assert self.resolve_speaker_id(saved) == self.speaker_backends.OPENAI
         assert self.resolve_audio_consent(saved)
+        assert self.resolve_preview_ack(saved)
         assert self.resolve_platform_ack(saved)
         assert self.resolve_intro_seen(saved)
         assert self.resolve_past_recall(saved)
@@ -403,6 +410,10 @@ class TestMeetingSettings:
         assert not self.resolve_platform_ack(
             {self.keys.MEETING_UNSUPPORTED_PLATFORM_ACK: "yes"}
         )
+        for value in (True, "1", 0, self.preview_ack_version + 1):
+            assert not self.resolve_preview_ack(
+                {self.keys.MEETING_LINUX_PREVIEW_ACK_VERSION: value}
+            )
         assert not self.resolve_intro_seen(
             {self.keys.MEETING_MODE_INTRO_SEEN: "yes"}
         )

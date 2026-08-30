@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from config import bundle_root
 from meeting.capture.linux_audio import (
     REASON_MONITOR_OPEN_FAILED,
     REASON_UNKNOWN_FAILURE,
@@ -130,8 +131,8 @@ class MeetingLinuxAudioDialog(QDialog):
 
     @staticmethod
     def _default_guide_url() -> str:
-        repo_docs = Path(__file__).resolve().parents[2] / LINUX_SYSTEM_AUDIO_GUIDE
-        return repo_docs.as_uri()
+        guide_path = Path(bundle_root()) / LINUX_SYSTEM_AUDIO_GUIDE
+        return guide_path.as_uri()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)

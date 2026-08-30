@@ -25,7 +25,9 @@ from meeting.platform import (
     meeting_unsupported_os_name,
 )
 from services.settings import (
+    MEETING_LINUX_PREVIEW_ACK_VERSION,
     SettingsKey,
+    resolve_meeting_linux_preview_ack,
     resolve_meeting_unsupported_platform_ack,
     settings_manager,
 )
@@ -205,6 +207,7 @@ _ACK_CONTINUE = MeetingUnsupportedPlatformDialog.RESULT_CONTINUE
 def acknowledge_unsupported_meeting_mode(
     parent=None,
     platform: Optional[str] = None,
+    machine: Optional[str] = None,
 ) -> bool:
     """Return True when Meeting Mode may proceed on this platform.
 
@@ -219,20 +222,42 @@ def acknowledge_unsupported_meeting_mode(
     Returns:
         True when the platform is supported or the user accepted the warning.
     """
-    if meeting_mode_supported(platform):
+    import sys
+
+    host = platform or sys.platform
+    if meeting_mode_supported(host, machine=machine):
         return True
-    if resolve_meeting_unsupported_platform_ack():
+    linux_preview = (
+        str(host).startswith("linux")
+        and linux_meeting_implementation_ready(machine)
+    )
+    if linux_preview:
+        acknowledged = resolve_meeting_linux_preview_ack()
+    else:
+        acknowledged = resolve_meeting_unsupported_platform_ack()
+    if acknowledged:
         return True
 
-    dialog = MeetingUnsupportedPlatformDialog(parent=parent, platform=platform)
+    dialog = MeetingUnsupportedPlatformDialog(
+        parent=parent,
+        platform=host,
+        machine=machine,
+        implementation_ready=linux_preview,
+    )
     dialog.exec()
     if getattr(dialog, "result_action", None) != _ACK_CONTINUE:
         return False
 
     try:
-        settings_manager.save_setting(
-            SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, True
-        )
+        if linux_preview:
+            settings_manager.save_setting(
+                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION,
+                MEETING_LINUX_PREVIEW_ACK_VERSION,
+            )
+        else:
+            settings_manager.save_setting(
+                SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, True
+            )
     except Exception as exc:
         logger.warning(
             "Could not persist unsupported-platform Meeting Mode ack: %s",

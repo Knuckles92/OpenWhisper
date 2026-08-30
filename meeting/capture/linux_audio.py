@@ -23,6 +23,7 @@ REASON_LIBPULSE_MISSING = "libpulse_missing"
 REASON_AUDIO_SERVER_UNAVAILABLE = "audio_server_unavailable"
 REASON_PIPEWIRE_PULSE_MISSING = "pipewire_pulse_missing"
 REASON_DEFAULT_SINK_MISSING = "default_sink_missing"
+REASON_PACTL_MISSING = "pactl_missing"
 REASON_MONITOR_SOURCE_MISSING = "monitor_source_missing"
 REASON_MONITOR_OPEN_FAILED = "monitor_open_failed"
 REASON_UNSUPPORTED_ARCHITECTURE = "unsupported_architecture"
@@ -358,15 +359,31 @@ def resolve_linux_monitor(
     if not sink_id:
         raise RuntimeError(REASON_DEFAULT_SINK_MISSING)
 
-    expected_monitor = _pactl_monitor_for_sink(sink_id)
-    if not expected_monitor:
-        raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
-
+    # SoundCard normally exposes the default sink's loopback either under the
+    # canonical Pulse monitor id or under the sink id itself. Prove those
+    # representations first so pactl remains optional on standard desktops.
+    expected_monitor = f"{sink_id}.monitor"
     monitor = _pick_exact_loopback(
         soundcard_module,
         sink_id=sink_id,
         expected_monitor=expected_monitor,
     )
+
+    # Some Pulse-compatible servers use a nonstandard monitor name. In that
+    # case only, let pactl prove the exact "Monitor of" association. Never use
+    # fuzzy SoundCard matches or a monitor belonging to another sink.
+    if monitor is None:
+        pactl_monitor = _pactl_monitor_for_sink(sink_id)
+        if not pactl_monitor:
+            if not shutil.which("pactl"):
+                raise RuntimeError(REASON_PACTL_MISSING)
+            raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
+        expected_monitor = pactl_monitor
+        monitor = _pick_exact_loopback(
+            soundcard_module,
+            sink_id=sink_id,
+            expected_monitor=expected_monitor,
+        )
     if monitor is None:
         raise RuntimeError(REASON_MONITOR_SOURCE_MISSING)
 
@@ -545,6 +562,7 @@ def probe_linux_audio(
             if reason not in {
                 REASON_SOUNDCARD_MISSING,
                 REASON_DEFAULT_SINK_MISSING,
+                REASON_PACTL_MISSING,
                 REASON_MONITOR_SOURCE_MISSING,
                 REASON_MONITOR_OPEN_FAILED,
             }:

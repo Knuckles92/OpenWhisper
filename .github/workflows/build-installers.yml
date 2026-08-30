@@ -181,8 +181,16 @@ jobs:
               pacman -Qi openwhisper | grep -q "^Name[[:space:]]*: openwhisper$"
               pacman -Qi openwhisper | grep -q "^Version[[:space:]]*: $EXPECTED_VERSION-1$"
               ! pacman -Qi openwhisper | grep -Eq "^Installed Size[[:space:]]*: 0([.]00)?[[:space:]]*B"
+              license_line="$(pacman -Qi openwhisper | sed -n "s/^Licenses[[:space:]]*: //p")"
+              grep -q "MIT" <<<"$license_line"
+              grep -q "GPL-3.0-only" <<<"$license_line"
+              grep -q "LGPL-3.0-only" <<<"$license_line"
               test -f /usr/share/applications/openwhisper.desktop
               test -f /usr/share/icons/hicolor/256x256/apps/openwhisper.png
+              test -f /usr/share/doc/openwhisper/linux-system-audio.md
+              test -f /usr/share/licenses/openwhisper/LICENSE
+              test -f /usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt
+              test -f /usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt
               pacman -Qkk openwhisper
               namcap /tmp/openwhisper.pkg.tar.zst || \
                 echo "namcap reported findings (advisory; not a gate)"

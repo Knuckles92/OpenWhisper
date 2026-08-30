@@ -191,6 +191,7 @@ def meeting_audio_remediation(
         "audio_server_unavailable": "No Pulse-compatible audio server is running",
         "pipewire_pulse_missing": "PipeWire is running without PulseAudio compatibility",
         "default_sink_missing": "No default audio output was found",
+        "pactl_missing": "Optional pactl fallback is not installed",
         "monitor_source_missing": "System-audio monitor source is unavailable",
         "monitor_open_failed": "System-audio monitor could not be opened",
         "unsupported_architecture": "This Linux architecture is not supported",
@@ -318,6 +319,37 @@ def meeting_audio_remediation(
             rollback_note=(
                 "Do not replace a working native Pulse install with PipeWire "
                 "only to recover a temporary outage."
+            ),
+        )
+
+    if reason == "pactl_missing":
+        packages = {
+            "apt": ("pulseaudio-utils",),
+            "dnf": ("pulseaudio-utils",),
+            "pacman": ("libpulse",),
+        }.get(family, ())
+        commands = _family_commands(family, packages)
+        explanation = (
+            "SoundCard could not directly prove which nonstandard loopback "
+            "belongs to the default output. Install pactl so OpenWhisper can "
+            "verify the exact PulseAudio or PipeWire-Pulse monitor association. "
+            "System-audio capture remains optional."
+        )
+        if not commands:
+            explanation += (
+                " Install the package that provides pactl for your distribution, "
+                "then retry detection."
+            )
+        return MeetingAudioRemediation(
+            reason=reason,
+            package_family=family,
+            title=title,
+            explanation=explanation,
+            commands=commands,
+            verification=(
+                "pactl info",
+                "pactl list short sinks",
+                "pactl list short sources",
             ),
         )
 

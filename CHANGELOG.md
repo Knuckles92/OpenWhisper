@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Arch Linux package** - Releases can now ship `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` beside the Debian package. The same Ubuntu 22.04 freeze is wrapped for pacman, `libstdc++` / `libgcc_s` stay with the host OS so Arch mesa can load, and CI smokes install / self-test / remove on `archlinux:latest`.
-- **Linux Meeting Mode capture path (implementation)** - Linux x86_64/aarch64 can capture the default PulseAudio / PipeWire-Pulse output monitor after the unsupported-platform acknowledgement. Missing prerequisites open a per-meeting remediation dialog with copyable setup commands, a local guide, retry detection, and an explicit microphone-only choice that is never persisted. Public promotion remains gated until the hardware release matrix is attested.
+- **Linux Meeting Mode capture path (implementation)** - Linux x86_64/aarch64 can capture the default PulseAudio / PipeWire-Pulse output monitor after a versioned preview acknowledgement. Missing prerequisites open a per-meeting remediation dialog with copyable setup commands, a local guide, retry detection, and an explicit microphone-only choice that is never persisted. Public promotion remains gated until the hardware release matrix is attested.
 - **Linux Meeting Intelligence Agent component** - Downloads offers a self-contained Pi sidecar on Linux x86_64 and aarch64: the official pinned Node runtime plus the platform-neutral `bundle.cjs`, with exact installed sizes and SHA-256 verification. GPU Acceleration remains Windows-only; Linux GPU users still use `requirements-gpu.txt`.
+
+### Removed
+- **Unwired caret paste indicator implementation** - Removed the unused overlay code that was never connected to the pending-paste lifecycle; the historical 1.0.0 release note remains intact.
 
 ## [2.4.9] - 2026-08-29
 
@@ -290,6 +293,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Real-time Streaming Transcription** - Live text preview while recording with draggable overlay
+- **Caret Paste Indicator** - Visual feedback showing where text will be pasted
 - **Dynamic Streaming Settings** - Reconfigure streaming behavior without restart
 - **Enhanced Crash Diagnostics** - Improved logging with Qt message handling for debugging
 - **Window Geometry Persistence** - App remembers size and position between sessions

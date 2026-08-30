@@ -10,7 +10,11 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton
 
 from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
-from services.settings import SettingsKey, settings_manager
+from services.settings import (
+    MEETING_LINUX_PREVIEW_ACK_VERSION,
+    SettingsKey,
+    settings_manager,
+)
 from ui_qt.dialogs.meeting_unsupported_dialog import (
     MeetingUnsupportedPlatformDialog,
     acknowledge_unsupported_meeting_mode,
@@ -155,6 +159,53 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
             self.assertTrue(acknowledge_unsupported_meeting_mode(platform="darwin"))
             dialog_cls.assert_not_called()
 
+    def test_linux_preview_ignores_legacy_ack_and_persists_version(self):
+        class _Accepted:
+            result_action = MeetingUnsupportedPlatformDialog.RESULT_CONTINUE
+
+            def exec(self):
+                return 1
+
+        with patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".resolve_meeting_unsupported_platform_ack",
+            return_value=True,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".resolve_meeting_linux_preview_ack",
+            return_value=False,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".MeetingUnsupportedPlatformDialog",
+            return_value=_Accepted(),
+        ) as dialog_cls, patch.object(settings_manager, "save_setting") as save:
+            self.assertTrue(
+                acknowledge_unsupported_meeting_mode(
+                    platform="linux", machine="x86_64"
+                )
+            )
+            dialog_cls.assert_called_once()
+            save.assert_called_once_with(
+                SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION,
+                MEETING_LINUX_PREVIEW_ACK_VERSION,
+            )
+
+    def test_linux_preview_skips_dialog_after_current_version_ack(self):
+        with patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".resolve_meeting_linux_preview_ack",
+            return_value=True,
+        ), patch(
+            "ui_qt.dialogs.meeting_unsupported_dialog"
+            ".MeetingUnsupportedPlatformDialog",
+        ) as dialog_cls:
+            self.assertTrue(
+                acknowledge_unsupported_meeting_mode(
+                    platform="linux", machine="aarch64"
+                )
+            )
+            dialog_cls.assert_not_called()
+
     def test_acknowledge_helper_persists_continue(self):
         class _Accepted:
             result_action = MeetingUnsupportedPlatformDialog.RESULT_CONTINUE
@@ -174,7 +225,7 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
             ".MeetingUnsupportedPlatformDialog",
             return_value=_Accepted(),
         ), patch.object(settings_manager, "save_setting") as save:
-            self.assertTrue(acknowledge_unsupported_meeting_mode())
+            self.assertTrue(acknowledge_unsupported_meeting_mode(platform="freebsd14"))
             save.assert_called_once_with(
                 SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, True
             )
@@ -198,7 +249,7 @@ class TestUnsupportedMeetingDialog(unittest.TestCase):
             ".MeetingUnsupportedPlatformDialog",
             return_value=_Cancelled(),
         ), patch.object(settings_manager, "save_setting") as save:
-            self.assertFalse(acknowledge_unsupported_meeting_mode())
+            self.assertFalse(acknowledge_unsupported_meeting_mode(platform="freebsd14"))
             save.assert_not_called()
 
 
@@ -216,6 +267,11 @@ class TestMeetingTabUnsupportedLock(unittest.TestCase):
             patch(
                 "ui_qt.widgets.tabbed_content"
                 ".resolve_meeting_unsupported_platform_ack",
+                return_value=acked,
+            ),
+            patch(
+                "ui_qt.widgets.tabbed_content"
+                ".resolve_meeting_linux_preview_ack",
                 return_value=acked,
             ),
             patch.object(

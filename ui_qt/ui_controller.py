@@ -928,11 +928,15 @@ class UIController(QObject):
             self.on_meeting_start(cloud_enabled, system_audio_policy=policy)
 
     def _on_meeting_demo_requested(self, cloud_enabled: bool):
-        policy = self.ensure_meeting_start_readiness()
-        if policy is None:
+        # Demo mode seeds canned transcript data and never opens capture. Keep
+        # the platform-preview disclosure, but do not probe or remediate audio.
+        if not self.ensure_meeting_platform_ack():
             return
         if self.on_meeting_start_demo:
-            self.on_meeting_start_demo(cloud_enabled, system_audio_policy=policy)
+            self.on_meeting_start_demo(
+                cloud_enabled,
+                system_audio_policy="disabled",
+            )
 
     def _on_meeting_cloud_toggled(self, enabled: bool):
         if self.on_meeting_toggle_cloud:

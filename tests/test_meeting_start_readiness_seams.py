@@ -32,6 +32,7 @@ def _controller():
         on_meeting_start_new=MagicMock(),
         on_meeting_end=None,
         _meeting_active=False,
+        ensure_meeting_platform_ack=MagicMock(return_value=True),
         ensure_meeting_start_readiness=MagicMock(return_value="required"),
     )
     # Bind unbound methods from UIController onto the namespace.
@@ -54,7 +55,6 @@ def _controller():
     "method_name,args,target_attr",
     [
         ("_on_meeting_start_requested", (True,), "on_meeting_start"),
-        ("_on_meeting_demo_requested", (False,), "on_meeting_start_demo"),
         ("_on_meeting_start_new_requested", (True,), "on_meeting_start_new"),
         ("_on_tray_meeting_toggle", (), "on_meeting_start"),
     ],
@@ -73,7 +73,6 @@ def test_start_seams_forward_ready_policy_once(qapp, method_name, args, target_a
     "method_name,args,target_attr",
     [
         ("_on_meeting_start_requested", (True,), "on_meeting_start"),
-        ("_on_meeting_demo_requested", (False,), "on_meeting_start_demo"),
         ("_on_meeting_start_new_requested", (True,), "on_meeting_start_new"),
         ("_on_tray_meeting_toggle", (), "on_meeting_start"),
     ],
@@ -99,6 +98,29 @@ def test_start_seams_forward_mic_only_disabled(qapp, method_name, args, target_a
     target = getattr(ctrl, target_attr)
     target.assert_called_once()
     assert target.call_args.kwargs.get("system_audio_policy") == "disabled"
+
+
+def test_demo_uses_platform_ack_without_audio_readiness(qapp):
+    ctrl = _controller()
+
+    ctrl._on_meeting_demo_requested(False)
+
+    ctrl.ensure_meeting_platform_ack.assert_called_once()
+    ctrl.ensure_meeting_start_readiness.assert_not_called()
+    ctrl.on_meeting_start_demo.assert_called_once_with(
+        False,
+        system_audio_policy="disabled",
+    )
+
+
+def test_demo_cancelled_by_platform_ack_starts_nothing(qapp):
+    ctrl = _controller()
+    ctrl.ensure_meeting_platform_ack.return_value = False
+
+    ctrl._on_meeting_demo_requested(False)
+
+    ctrl.ensure_meeting_start_readiness.assert_not_called()
+    ctrl.on_meeting_start_demo.assert_not_called()
 
 
 def test_hotkey_controller_uses_readiness_once(qapp):

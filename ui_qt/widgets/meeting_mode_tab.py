@@ -56,7 +56,7 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
             hint = (
                 "Linux system-audio capture is implemented (PulseAudio / "
                 "PipeWire-Pulse) but not yet publicly promoted. After the "
-                "unsupported-platform acknowledgement, OpenWhisper can enable "
+                "Linux preview acknowledgement, OpenWhisper can enable "
                 "the default output monitor or continue microphone-only."
             )
         else:

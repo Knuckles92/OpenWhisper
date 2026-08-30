@@ -15,6 +15,7 @@ from meeting.capture.linux_audio import (
     REASON_LIBPULSE_MISSING,
     REASON_MONITOR_OPEN_FAILED,
     REASON_MONITOR_SOURCE_MISSING,
+    REASON_PACTL_MISSING,
     REASON_PIPEWIRE_PULSE_MISSING,
     REASON_READY,
     REASON_SOUNDCARD_MISSING,
@@ -174,9 +175,8 @@ class TestLinuxProbe(unittest.TestCase):
         ), patch(
             "meeting.capture.linux_audio._libpulse_available", return_value=True
         ), patch(
-            "meeting.capture.linux_audio._pactl_monitor_for_sink",
-            return_value="sink0.monitor",
-        ):
+            "meeting.capture.linux_audio._pactl_monitor_for_sink"
+        ) as pactl_monitor:
             result = probe_linux_audio(
                 platform="linux",
                 machine="x86_64",
@@ -187,6 +187,51 @@ class TestLinuxProbe(unittest.TestCase):
         self.assertEqual(result.reason, REASON_READY)
         self.assertEqual(result.default_sink, "sink0")
         self.assertEqual(result.monitor_source, "sink0.monitor")
+        pactl_monitor.assert_not_called()
+
+    def test_sink_keyed_soundcard_loopback_succeeds_without_pactl(self):
+        monitor = _FakeMic("sink0", "Speakers Monitor", loopback=True)
+        sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
+        with patch(
+            "meeting.capture.linux_audio._pactl_monitor_for_sink"
+        ) as pactl_monitor:
+            selection = resolve_linux_monitor(sc, server_kind="pulse")
+        self.assertEqual(selection.monitor_id, "sink0.monitor")
+        self.assertEqual(selection.soundcard_id, "sink0")
+        pactl_monitor.assert_not_called()
+
+    def test_nonstandard_monitor_name_uses_exact_pactl_fallback(self):
+        monitor = _FakeMic("custom.monitor.name", "Speakers Monitor", loopback=True)
+        sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
+        with patch(
+            "meeting.capture.linux_audio._pactl_monitor_for_sink",
+            return_value="custom.monitor.name",
+        ) as pactl_monitor:
+            selection = resolve_linux_monitor(sc, server_kind="pulse")
+        self.assertEqual(selection.monitor_id, "custom.monitor.name")
+        self.assertEqual(selection.soundcard_id, "custom.monitor.name")
+        pactl_monitor.assert_called_once_with("sink0")
+
+    def test_missing_pactl_is_distinct_when_fallback_is_needed(self):
+        monitor = _FakeMic("custom.monitor.name", "Speakers Monitor", loopback=True)
+        sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
+        with patch(
+            "meeting.capture.linux_audio.detect_linux_audio_server",
+            return_value="pulse",
+        ), patch(
+            "meeting.capture.linux_audio._libpulse_available", return_value=True
+        ), patch(
+            "meeting.capture.linux_audio._pactl_monitor_for_sink", return_value=None
+        ), patch(
+            "meeting.capture.linux_audio.shutil.which", return_value=None
+        ):
+            result = probe_linux_audio(
+                platform="linux",
+                machine="x86_64",
+                soundcard_module=sc,
+                verify_open=False,
+            )
+        self.assertEqual(result.reason, REASON_PACTL_MISSING)
 
     def test_non_loopback_rejected(self):
         mic = _FakeMic("mic0", "USB Mic", loopback=False)

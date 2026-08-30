@@ -8,6 +8,8 @@ packager = Fiori Labs <support@fiorilabs.tech>
 size = @INSTALLED_SIZE_BYTES@
 arch = x86_64
 license = MIT
+license = GPL-3.0-only
+license = LGPL-3.0-only
 depend = glibc>=@GLIBC_MIN@
 depend = libdrm
 depend = libegl
@@ -20,3 +22,4 @@ depend = xcb-util-keysyms
 depend = libxcb
 depend = libxkbcommon
 optdepend = gnome-keyring: Secret Service credential storage for API keys
+optdepend = libpulse: Linux Meeting Mode system-audio capture and pactl diagnostics

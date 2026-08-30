@@ -8,6 +8,11 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+# Bump whenever the Linux preview disclosure changes meaning. Persisting the
+# version instead of a boolean prevents an older acknowledgement from silently
+# authorizing newly added capture behavior.
+MEETING_LINUX_PREVIEW_ACK_VERSION: Final[int] = 1
+
 
 class SettingsKey:
     """Keys persisted in the settings JSON file."""
@@ -71,6 +76,9 @@ class SettingsKey:
     )
     MEETING_UNSUPPORTED_PLATFORM_ACK: Final[str] = (
         "meeting_unsupported_platform_ack"
+    )
+    MEETING_LINUX_PREVIEW_ACK_VERSION: Final[str] = (
+        "meeting_linux_preview_ack_version"
     )
     MEETING_MODE_INTRO_SEEN: Final[str] = "meeting_mode_intro_seen"
     MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
@@ -707,11 +715,29 @@ def resolve_meeting_unsupported_platform_ack(
 
     Off by default. On unsupported platforms (old macOS, unsupported Linux
     architectures, and other OSes) the Meeting Mode tab stays muted until this
-    is granted once; later launches skip the warning. Supported Linux no longer
-    uses this acknowledgement.
+    is granted once; later launches skip the warning. Implementation-ready
+    Linux uses the versioned preview acknowledgement below instead.
     """
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK, False,
+    )
+
+
+def resolve_meeting_linux_preview_ack(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the current Linux Meeting Mode preview was accepted.
+
+    Legacy booleans and stale/future versions deliberately fail closed. A
+    changed disclosure must bump :data:`MEETING_LINUX_PREVIEW_ACK_VERSION` so
+    users see it once before newly authorized capture behavior can start.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    value = settings.get(SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION)
+    return (
+        type(value) is int
+        and value == MEETING_LINUX_PREVIEW_ACK_VERSION
     )
 
 

@@ -48,6 +48,10 @@ def test_pkginfo_template_has_native_runtime_dependencies():
     ):
         assert f"depend = {package}" in pkginfo
     assert "optdepend = gnome-keyring:" in pkginfo
+    assert "optdepend = libpulse:" in pkginfo
+    assert "license = MIT" in pkginfo
+    assert "license = GPL-3.0-only" in pkginfo
+    assert "license = LGPL-3.0-only" in pkginfo
 
 
 def test_control_template_has_native_runtime_dependencies():
@@ -73,6 +77,7 @@ def test_control_template_has_native_runtime_dependencies():
         "libxkbcommon-x11-0",
     ):
         assert package in control
+    assert "Recommends: gnome-keyring, pulseaudio-utils" in control
 
 
 def test_desktop_entry_and_launcher_match_installed_layout():
@@ -149,8 +154,19 @@ def test_release_bundle_and_package_retain_required_license_notices():
     assert '_distribution_license("PyQt6-Qt6",' in spec
     assert "third_party_licenses/PyQt6/LICENSE" in script
     assert "third_party_licenses/Qt/LICENSE" in script
+    assert "usr/share/licenses/openwhisper/LICENSE" in script
+    assert "usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in script
+    assert "usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt" in script
     assert "PyQt6" in notices
     assert "Qt 6" in notices
+
+
+def test_linux_audio_guide_is_bundled_and_installed_as_documentation():
+    spec = (ROOT / "OpenWhisper.spec").read_text(encoding="utf-8")
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert '"docs" / "linux-system-audio.md"' in spec
+    assert '"linux-system-audio.md"), "docs"' in spec
+    assert "usr/share/doc/openwhisper/linux-system-audio.md" in script
 
 
 def test_release_workflow_smokes_advertised_linux_baselines():
@@ -164,6 +180,10 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert '-eq 4' in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
     assert "pacman -Qkk openwhisper" in workflow
+    assert "GPL-3.0-only" in workflow
+    assert "LGPL-3.0-only" in workflow
+    assert "/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in workflow
+    assert "/usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt" in workflow
 
 
 def test_release_artifact_name_is_versioned_and_arch_specific():

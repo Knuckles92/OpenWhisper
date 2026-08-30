@@ -8,11 +8,18 @@ monitor sources. That covers:
 
 Public Meeting Mode promotion for Linux stays **gated** until the manual
 x86_64/aarch64 hardware release matrix is attested. On a current build you can
-still try the path after the unsupported-platform acknowledgement; the app will
+still try the path after the versioned Linux preview acknowledgement; the app will
 run the same diagnostics and remediation dialog.
 
 ALSA-only desktops are supported by installing a Pulse-compatible session, not
 by a separate ALSA loopback backend.
+
+Detection is SoundCard-first. OpenWhisper accepts only a positively identified
+loopback that SoundCard exposes as `<default-sink-id>.monitor` or explicitly
+keys to the default sink. Most desktops need nothing else. If a server uses a
+nonstandard monitor name, OpenWhisper optionally uses `pactl` to prove the exact
+`Monitor of` association; it never guesses from a fuzzy name or accepts another
+sink's monitor.
 
 ## Diagnostic keys
 
@@ -26,12 +33,27 @@ use the same keys.
 | `audio_server_unavailable` | No Pulse-compatible server answered | Install/start Pulse or PipeWire-Pulse |
 | `pipewire_pulse_missing` | PipeWire is up without Pulse compatibility | Install/enable `pipewire-pulse` |
 | `default_sink_missing` | No default output sink | Choose a default output in desktop settings |
+| `pactl_missing` | Nonstandard monitor association needs optional `pactl` fallback | Install the distro package that provides `pactl` |
 | `monitor_source_missing` | Default sink has no validated loopback monitor | Confirm monitor source; do not swap stacks casually |
 | `monitor_open_failed` | Monitor found but open/read timed out or failed | Close exclusive apps; restart user audio services |
 | `unsupported_architecture` | Not x86_64/amd64 or aarch64/arm64 | Unsupported |
 | `unknown_failure` | Unexpected probe error | See verification commands; open an issue with logs |
 
+## Optional `pactl` fallback
+
+`pactl` is not required when SoundCard can directly prove the default-sink
+loopback. For nonstandard monitor names, install it with:
+
+- Debian/Ubuntu: `sudo apt install -y pulseaudio-utils`
+- Fedora/RHEL: `sudo dnf install -y pulseaudio-utils`
+- Arch: `sudo pacman -S --needed libpulse`
+
+These packages provide diagnostics and fallback association; system-audio
+capture itself remains optional.
+
 ## Quick checks
+
+When `pactl` is installed:
 
 ```bash
 pactl info

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -59,6 +60,17 @@ class TestMeetingLinuxAudioDialog(unittest.TestCase):
         ) as open_url:
             dialog._open_guide()
         open_url.assert_called_once()
+
+    def test_frozen_guide_url_resolves_beneath_bundle_root(self):
+        with patch(
+            "ui_qt.dialogs.meeting_linux_audio_dialog.bundle_root",
+            return_value="/tmp/openwhisper-bundle",
+        ):
+            url = MeetingLinuxAudioDialog._default_guide_url()
+        expected = Path(
+            "/tmp/openwhisper-bundle/docs/linux-system-audio.md"
+        ).as_uri()
+        self.assertEqual(url, expected)
 
     def test_retry_ready_finishes(self):
         from PyQt6.QtCore import QTimer

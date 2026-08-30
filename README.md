@@ -46,7 +46,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
   into a durable, searchable meeting transcript; share a tokenized live
   dashboard, review evidence-linked insights, play the recording, and export
   the result. Linux x86_64/aarch64 has an in-tree Pulse/PipeWire path gated
-  behind an unsupported-platform acknowledgement until hardware attestation.
+  behind a versioned preview acknowledgement until hardware attestation.
 - **Window Memory** – Remembers window position and size between sessions
 
 ## Platform differences
@@ -179,7 +179,7 @@ sudo apt install -y \
 
 `libportaudio2` backs `sounddevice` (recording). The Qt/XCB packages cover EGL, cursor, keyboard, and ICCCM support — without them the app can fail at import with missing `libEGL.so.1` or with *"no Qt platform plugin could be initialized"*. `./install.sh`, `scripts/openwhisper`, and `python app_qt.py` probe these libraries on Linux and print the matching `apt` / `dnf` / `pacman` command instead of a raw `ImportError`. Clipboard copy uses Qt and does not require `xclip` or `wl-clipboard`.
 
-Meeting Mode on Linux also needs a Pulse-compatible desktop audio session (native PulseAudio or PipeWire with `pipewire-pulse`) and the Pulse client library (`libpulse0` / `pulseaudio-libs` / `libpulse`). If system audio is missing, OpenWhisper shows distro-specific setup commands and can continue microphone-only for that meeting. See [`docs/linux-system-audio.md`](docs/linux-system-audio.md).
+Meeting Mode on Linux also needs a Pulse-compatible desktop audio session (native PulseAudio or PipeWire with `pipewire-pulse`) and the Pulse client library (`libpulse0` / `pulseaudio-libs` / `libpulse`). OpenWhisper detects the default-sink loopback with SoundCard first; `pactl` is only an optional fallback for nonstandard monitor names (`pulseaudio-utils` on Debian/Ubuntu and Fedora/RHEL, `libpulse` on Arch). If system audio is missing, OpenWhisper shows distro-specific setup commands and can continue microphone-only for that meeting. See [`docs/linux-system-audio.md`](docs/linux-system-audio.md).
 
 **Fedora / RHEL:**
 
