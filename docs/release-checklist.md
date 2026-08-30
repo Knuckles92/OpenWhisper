@@ -7,12 +7,16 @@ except for a documented setup-only recovery release.
 ## Required artifacts
 
 For version `<version>`, the draft must contain exactly these application
-artifacts (plus `SHA256SUMS.txt`):
+artifacts (plus `BUILD-METADATA.json` and `SHA256SUMS.txt`):
 
 - `OpenWhisper-Setup-<version>.exe` — Windows per-user installer
 - `OpenWhisper-<version>-win64.tar.xz` — Windows native-update payload
 - `OpenWhisper-<version>-linux-amd64.deb` — Debian/Ubuntu x86-64 package
 - `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` — Arch Linux x86-64 package
+
+`BUILD-METADATA.json` records the exact full Git commit, source tag/ref, UTC
+build time, and GitHub Actions run that produced the artifact set. It is also
+covered by `SHA256SUMS.txt`.
 
 A setup-only emergency release omits only the `win64.tar.xz`; it never omits
 the Windows setup exe or either Linux package.
@@ -34,7 +38,8 @@ the Windows setup exe or either Linux package.
    - runs package tests and frozen-bundle verification;
    - installs, launches, and removes the generated `.deb` on Ubuntu 22.04 and
      Debian 12, and the generated `.pkg.tar.zst` on Arch;
-   - combines the four artifacts and generates `SHA256SUMS.txt`;
+   - combines the four artifacts, records their source commit in
+     `BUILD-METADATA.json`, and generates `SHA256SUMS.txt`;
    - refuses to upload unless the destination exists, is still a draft, and
      matches `_version.py`.
 4. Download the combined workflow artifact and retain it with the release
@@ -165,6 +170,8 @@ trying to overwrite `/usr/lib/openwhisper`.
 Before publishing, confirm:
 
 - tag and all filenames use the exact same version;
+- `BUILD-METADATA.json` names the commit targeted by the release tag and links
+  to the build's GitHub Actions run;
 - all four required application artifacts are present (subject only to the
   documented Windows setup-only exception);
 - sizes match the combined workflow artifact;

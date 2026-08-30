@@ -24,7 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          # github.sha locks an untagged dispatch to the commit selected when
+          # the run started, even if the branch advances during the build.
+          ref: ${{ inputs.release_tag || github.sha }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -68,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.sha }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -234,15 +236,48 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: openwhisper-*
           merge-multiple: true
           path: release
-      - name: Inventory and checksums
+      - name: Inventory, build metadata, and checksums
+        env:
+          BUILD_REF: ${{ inputs.release_tag || github.ref }}
+          BUILD_REPOSITORY: ${{ github.repository }}
+          BUILD_RUN_ID: ${{ github.run_id }}
+          BUILD_RUN_ATTEMPT: ${{ github.run_attempt }}
+          BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq 4
-          (cd release && sha256sum -- ./* | sed 's|  \./|  |' | tee SHA256SUMS.txt)
+          export BUILD_COMMIT="$(git rev-parse HEAD)"
+          export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
+          export BUILT_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "schema_version": 1,
+              "version": os.environ["BUILD_VERSION"],
+              "commit_sha": os.environ["BUILD_COMMIT"],
+              "source_ref": os.environ["BUILD_REF"],
+              "built_at_utc": os.environ["BUILT_AT_UTC"],
+              "repository": os.environ["BUILD_REPOSITORY"],
+              "workflow_run_id": int(os.environ["BUILD_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["BUILD_RUN_ATTEMPT"]),
+              "workflow_run_url": os.environ["BUILD_RUN_URL"],
+          }
+          Path("release/BUILD-METADATA.json").write_text(
+              json.dumps(metadata, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          (cd release && sha256sum -- OpenWhisper-* BUILD-METADATA.json | tee SHA256SUMS.txt)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwhisper-release-candidate
@@ -273,7 +308,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          version="$(python -c 'import _version; print(_version.__version__)')"
+          version="$(python3 -c 'import _version; print(_version.__version__)')"
           test "$RELEASE_TAG" = "v$version"
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           release_api="$(gh release view "$RELEASE_TAG" --json apiUrl --jq .apiUrl)"
@@ -282,6 +317,7 @@ jobs:
             release/OpenWhisper-"$version"-win64.tar.xz \
             release/OpenWhisper-"$version"-linux-amd64.deb \
             release/OpenWhisper-"$version"-linux-x86_64.pkg.tar.zst \
+            release/BUILD-METADATA.json \
             release/SHA256SUMS.txt \
             --clobber
 
