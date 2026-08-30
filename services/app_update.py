@@ -6,7 +6,7 @@ semver against the latest stable tag; git commit distance is ignored.
 
 Validated HKCU Windows installs may hand a verified ``tar.xz`` to
 ``OpenWhisperUpdater.exe``; other Windows installs use the setup exe. Native
-Debian installs, source copies, and git checkouts are notify-only.
+Linux package installs, source copies, and git checkouts are notify-only.
 """
 
 from __future__ import annotations
@@ -342,8 +342,9 @@ def resolve_release_apply_mode(
         return ApplyMode.NOTIFY_ONLY
     platform_id = platform_name if platform_name is not None else sys.platform
     if platform_id.startswith("linux"):
-        # dpkg owns /usr/lib/openwhisper. The application may notify users of
-        # a release, but it must never bypass the system package manager.
+        # The system package manager owns /usr/lib/openwhisper. The
+        # application may notify users of a release, but it must never
+        # bypass that ownership.
         return ApplyMode.NOTIFY_ONLY
     native_ready = _asset_ready(release.native_asset if release else None)
     setup_ready = _asset_ready(release.setup_asset if release else None)

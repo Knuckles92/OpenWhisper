@@ -12,9 +12,10 @@ artifacts (plus `SHA256SUMS.txt`):
 - `OpenWhisper-Setup-<version>.exe` — Windows per-user installer
 - `OpenWhisper-<version>-win64.tar.xz` — Windows native-update payload
 - `OpenWhisper-<version>-linux-amd64.deb` — Debian/Ubuntu x86-64 package
+- `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` — Arch Linux x86-64 package
 
 A setup-only emergency release omits only the `win64.tar.xz`; it never omits
-the Windows setup exe or Linux package.
+the Windows setup exe or either Linux package.
 
 ## Build
 
@@ -31,8 +32,9 @@ the Windows setup exe or Linux package.
    - builds Linux on Ubuntu 22.04, which establishes the glibc compatibility
      floor;
    - runs package tests and frozen-bundle verification;
-   - installs, launches, and removes the generated Linux package on the runner;
-   - combines the three artifacts and generates `SHA256SUMS.txt`;
+   - installs, launches, and removes the generated `.deb` on Ubuntu 22.04 and
+     Debian 12, and the generated `.pkg.tar.zst` on Arch;
+   - combines the four artifacts and generates `SHA256SUMS.txt`;
    - refuses to upload unless the destination exists, is still a draft, and
      matches `_version.py`.
 4. Download the combined workflow artifact and retain it with the release
@@ -65,7 +67,7 @@ so PyInstaller cannot accidentally raise the official glibc floor.
 ```bash
 sudo apt install -y \
   python3 python3-venv python3-dev build-essential binutils dpkg-dev file patchelf \
-  desktop-file-utils lintian xvfb xauth \
+  desktop-file-utils libarchive-tools lintian xvfb xauth zstd \
   libdrm2 libegl1 libgl1 libportaudio2 \
   libwayland-client0 libwayland-cursor0 libwayland-egl1 \
   libxcb-cursor0 libxkbcommon-x11-0 \
@@ -84,10 +86,14 @@ The build must finish with all of these gates passing:
 - the frozen import/Qt self-test passes under Xvfb;
 - the desktop file validates and Lintian reports no unoverridden error tags;
 - package name/version/architecture and required paths pass `dpkg-deb` checks;
-- the generated `Depends` records the highest GLIBC symbol required by the
-  actual bundle.
+- the generated Debian `Depends` and Arch `depend` lines record the highest
+  GLIBC symbol required by the actual bundle;
+- the frozen tree does not contain `libstdc++.so.6` or `libgcc_s.so.1`;
+- the Arch artifact starts with `.PKGINFO`, includes a gzip-compressed
+  `.MTREE`, and contains the same launchers, desktop entry, and icon.
 
-The result is `installer/Output/OpenWhisper-<version>-linux-amd64.deb`.
+The results are `installer/Output/OpenWhisper-<version>-linux-amd64.deb` and
+`installer/Output/OpenWhisper-<version>-linux-x86_64.pkg.tar.zst`.
 `--skip-package` stops after frozen-tree verification.
 
 ## Soak the Windows native-update path
@@ -114,10 +120,11 @@ The soak exercises the updater in the version being updated **from**. It cannot
 test a fix to that old updater; use the setup-only rule below when repairing
 the update path.
 
-## Smoke-test the Linux package
+## Smoke-test the Linux packages
 
-Use a clean Ubuntu 22.04 or Debian 12 VM with a normal desktop session. Do not
-only extract the package or test on the build host.
+Use a clean Ubuntu 22.04 or Debian 12 VM and a clean Arch Linux VM or
+container, each with a normal desktop session. Do not only extract the
+packages or test on the build host.
 
 1. Install with `sudo apt install ./OpenWhisper-<version>-linux-amd64.deb`.
    Confirm APT resolves dependencies with no manual Python/pip step.
@@ -144,7 +151,12 @@ only extract the package or test on the build host.
    only when the user deletes it explicitly; never remove the shared Hugging
    Face cache.
 
-The Linux package is CPU-only and package-manager-owned. Help → Check for
+On Arch, repeat the same lifecycle with
+`sudo pacman -U ./OpenWhisper-<version>-linux-x86_64.pkg.tar.zst`,
+`pacman -Q openwhisper` reporting `<version>-1`, and
+`sudo pacman -R openwhisper` for removal.
+
+The Linux packages are CPU-only and package-manager-owned. Help → Check for
 Updates is intentionally notify-only; it must open the release page rather than
 trying to overwrite `/usr/lib/openwhisper`.
 
@@ -153,7 +165,7 @@ trying to overwrite `/usr/lib/openwhisper`.
 Before publishing, confirm:
 
 - tag and all filenames use the exact same version;
-- all three required application artifacts are present (subject only to the
+- all four required application artifacts are present (subject only to the
   documented Windows setup-only exception);
 - sizes match the combined workflow artifact;
 - GitHub digest fields match `SHA256SUMS.txt`;
@@ -162,8 +174,9 @@ Before publishing, confirm:
 - Linux fresh install, desktop launch, upgrade, no-tray behavior, and removal
   have been smoked;
 - release notes describe the supported Linux scope: amd64 Debian 12+/Ubuntu
-  22.04+, CPU-only, manual APT/dpkg upgrades, optional tray integration, and
-  the X11 requirement for reliable global hotkeys/auto-paste.
+  22.04+ and Arch, CPU-only, manual APT/dpkg or `pacman -U` upgrades, optional
+  tray integration, and the X11 requirement for reliable global
+  hotkeys/auto-paste.
 
 Only then publish the draft. Do not publish stable assets piecemeal.
 
@@ -191,8 +204,9 @@ bug that can leave the install broken or the app stuck:
    worth retaining for diagnostics.
 3. Rely on Inno `CloseApplications=force` plus `CloseRunningApp` to replace the
    affected build.
-4. Continue shipping the Linux `.deb` normally; it does not use this path.
-5. Resume all three Windows/Linux artifacts in the following release after
+4. Continue shipping the Linux `.deb` and `.pkg.tar.zst` normally; they do
+   not use this path.
+5. Resume all four Windows/Linux artifacts in the following release after
    soaking `fixed → next` locally.
 
 Historical examples are 2.4.2 (handoff did not exit), 2.4.4 (commit did not wait

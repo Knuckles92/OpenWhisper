@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the release-grade Debian/Ubuntu x86-64 installer.
+# Build the release-grade Debian/Ubuntu and Arch Linux x86-64 installers.
 #
 # PyInstaller is not a cross-compiler. Run this on x86-64 Linux, preferably
 # Ubuntu 22.04 (glibc 2.35), which is also the release-workflow baseline.
@@ -16,7 +16,7 @@ usage() {
 Usage: ./scripts/build_installer.sh [--clean] [--skip-package]
 
   --clean         Remove build/, dist/, and installer/Output first.
-  --skip-package  Build and verify dist/OpenWhisper without creating a .deb.
+  --skip-package  Build and verify dist/OpenWhisper without creating packages.
 
 Set OPENWHISPER_PYTHON to override venv/bin/python.
 EOF
@@ -45,6 +45,36 @@ fail() {
     exit 1
 }
 
+render_template() {
+    local template="$1"
+    local output="$2"
+    shift 2
+    "$PYTHON" - "$template" "$output" "$@" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+template, output, *pairs = sys.argv[1:]
+if len(pairs) % 2:
+    raise SystemExit("replacements must be key/value pairs")
+text = Path(template).read_text(encoding="utf-8")
+for marker, value in zip(pairs[0::2], pairs[1::2]):
+    text = text.replace(marker, value)
+if re.search(r"@[A-Z_]+@", text):
+    raise SystemExit(f"Unresolved placeholder in {template}")
+Path(output).write_text(text, encoding="utf-8")
+PY
+}
+
+clone_stage() {
+    local dest="$1"
+    rm -rf -- "$dest"
+    mkdir -p "$dest"
+    if ! cp -al -- "$STAGE_ROOT/usr" "$dest/usr" 2>/dev/null; then
+        cp -a -- "$STAGE_ROOT/usr" "$dest/usr"
+    fi
+}
+
 [[ "$(uname -s)" == "Linux" ]] || fail "the Linux installer must be built on Linux"
 [[ "$(uname -m)" == "x86_64" ]] || fail "only x86_64 Linux is currently supported"
 
@@ -64,7 +94,7 @@ for command in file find ldd numfmt patchelf readelf sha256sum xvfb-run; do
     command -v "$command" >/dev/null || fail "required build command not found: $command"
 done
 if (( ! SKIP_PACKAGE )); then
-    for command in desktop-file-validate dpkg-deb gzip lintian; do
+    for command in bsdtar desktop-file-validate dpkg-deb gzip lintian zstd; do
         command -v "$command" >/dev/null || \
             fail "$command is required to build the release package"
     done
@@ -75,8 +105,9 @@ VERSION="$($PYTHON -c 'import _version; print(_version.__version__)')"
 "$PYTHON" -c 'import PyInstaller' >/dev/null 2>&1 || \
     fail "PyInstaller is missing; install the release requirements and constraints"
 
-# Give icon generation, PyInstaller, and dpkg the same stable timestamp input.
-# Repeated builds are reproducible when the locked inputs and toolchain match.
+# Give icon generation, PyInstaller, and the packers the same stable timestamp
+# input. Repeated builds are reproducible when the locked inputs and toolchain
+# match.
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || date +%s)}"
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || fail "SOURCE_DATE_EPOCH must be an integer"
 export SOURCE_DATE_EPOCH
@@ -148,6 +179,13 @@ for forbidden in torch nvidia scipy sympy networkx; do
         fail "excluded package leaked into the bundle: $forbidden"
 done
 
+# A bundled build-host libstdc++ / libgcc_s shadows Arch's newer gcc-libs and
+# then system mesa / libglvnd fail to load. The spec strips these; refuse to
+# ship if they leak back in.
+bundled_cxx="$(find "$DIST_DIR" \( -name 'libstdc++.so*' -o -name 'libgcc_s.so*' \) -print)"
+[[ -z "$bundled_cxx" ]] || \
+    fail "bundled C++ runtime would shadow the system copy on Arch: $bundled_cxx"
+
 echo "    checking ELF dependencies"
 LDD_FAILURES="$(mktemp)"
 trap 'rm -f -- "$LDD_FAILURES"' EXIT
@@ -187,12 +225,12 @@ echo "    bundle size: $(format_size "$dist_bytes")"
 echo "    all required assets and native libraries are present"
 
 if (( SKIP_PACKAGE )); then
-    step "Done (Debian package skipped)"
+    step "Done (native packages skipped)"
     echo "    Frozen app: $DIST_DIR"
     exit 0
 fi
 
-step "Building the Debian package"
+step "Staging the shared Linux filesystem tree"
 ARCHITECTURE="$(dpkg --print-architecture)"
 [[ "$ARCHITECTURE" == "amd64" ]] || fail "dpkg architecture must be amd64, got $ARCHITECTURE"
 
@@ -205,114 +243,173 @@ GLIBC_MIN="$({
 } | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | cut -d_ -f2 | sort -Vu | tail -1)"
 GLIBC_MIN="${GLIBC_MIN:-2.17}"
 
-PACKAGE_ROOT="$REPO_ROOT/build/linux-package"
+STAGE_ROOT="$REPO_ROOT/build/linux-stage"
 OUTPUT_DIR="$REPO_ROOT/installer/Output"
-ARTIFACT="$OUTPUT_DIR/OpenWhisper-$VERSION-linux-amd64.deb"
-rm -rf -- "$PACKAGE_ROOT"
+DEB_ARTIFACT="$OUTPUT_DIR/OpenWhisper-$VERSION-linux-amd64.deb"
+ARCH_ARTIFACT="$OUTPUT_DIR/OpenWhisper-$VERSION-linux-x86_64.pkg.tar.zst"
+rm -rf -- "$STAGE_ROOT"
 mkdir -p \
-    "$PACKAGE_ROOT/DEBIAN" \
-    "$PACKAGE_ROOT/usr/bin" \
-    "$PACKAGE_ROOT/usr/lib/openwhisper" \
-    "$PACKAGE_ROOT/usr/share/applications" \
-    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party" \
-    "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps" \
-    "$PACKAGE_ROOT/usr/share/lintian/overrides" \
+    "$STAGE_ROOT/usr/bin" \
+    "$STAGE_ROOT/usr/lib/openwhisper" \
+    "$STAGE_ROOT/usr/share/applications" \
+    "$STAGE_ROOT/usr/share/doc/openwhisper/third-party" \
+    "$STAGE_ROOT/usr/share/icons/hicolor/256x256/apps" \
     "$OUTPUT_DIR"
 
-cp -a "$DIST_DIR/." "$PACKAGE_ROOT/usr/lib/openwhisper/"
+cp -a "$DIST_DIR/." "$STAGE_ROOT/usr/lib/openwhisper/"
 # Bytecode caches are build-host debris, not runtime inputs. Shared objects do
 # not need execute permission; normalize wheel/PyInstaller modes before root
 # installs the package.
-find "$PACKAGE_ROOT/usr/lib/openwhisper" -type d -name __pycache__ \
+find "$STAGE_ROOT/usr/lib/openwhisper" -type d -name __pycache__ \
     -prune -exec rm -rf -- {} +
-find "$PACKAGE_ROOT/usr/lib/openwhisper" -type f \
+find "$STAGE_ROOT/usr/lib/openwhisper" -type f \
     \( -name '*.so' -o -name '*.so.*' \) -exec chmod 0644 -- {} +
-install -m 0755 installer/linux/openwhisper "$PACKAGE_ROOT/usr/bin/openwhisper"
-ln -s openwhisper "$PACKAGE_ROOT/usr/bin/ow"
+install -m 0755 installer/linux/openwhisper "$STAGE_ROOT/usr/bin/openwhisper"
+ln -s openwhisper "$STAGE_ROOT/usr/bin/ow"
 install -m 0644 installer/linux/openwhisper.desktop \
-    "$PACKAGE_ROOT/usr/share/applications/openwhisper.desktop"
+    "$STAGE_ROOT/usr/share/applications/openwhisper.desktop"
 install -m 0644 ui_qt/assets/openwhisper.png \
-    "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/openwhisper.png"
-install -m 0644 LICENSE "$PACKAGE_ROOT/usr/share/doc/openwhisper/copyright"
-install -m 0644 README.md "$PACKAGE_ROOT/usr/share/doc/openwhisper/README.md"
+    "$STAGE_ROOT/usr/share/icons/hicolor/256x256/apps/openwhisper.png"
+install -m 0644 LICENSE "$STAGE_ROOT/usr/share/doc/openwhisper/copyright"
+install -m 0644 README.md "$STAGE_ROOT/usr/share/doc/openwhisper/README.md"
 install -m 0644 THIRD_PARTY_NOTICES.md \
-    "$PACKAGE_ROOT/usr/share/doc/openwhisper/THIRD_PARTY_NOTICES.md"
+    "$STAGE_ROOT/usr/share/doc/openwhisper/THIRD_PARTY_NOTICES.md"
 install -m 0644 "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
-    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party/PyQt6-GPL-3.0.txt"
+    "$STAGE_ROOT/usr/share/doc/openwhisper/third-party/PyQt6-GPL-3.0.txt"
 install -m 0644 "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
-    "$PACKAGE_ROOT/usr/share/doc/openwhisper/third-party/Qt-LGPL-3.0.txt"
-gzip -n -9 -c CHANGELOG.md >"$PACKAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
-chmod 0644 "$PACKAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
-install -m 0644 installer/linux/lintian-overrides \
-    "$PACKAGE_ROOT/usr/share/lintian/overrides/openwhisper"
+    "$STAGE_ROOT/usr/share/doc/openwhisper/third-party/Qt-LGPL-3.0.txt"
+gzip -n -9 -c CHANGELOG.md >"$STAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
+chmod 0644 "$STAGE_ROOT/usr/share/doc/openwhisper/changelog.gz"
 
-broken_links="$(find -L "$PACKAGE_ROOT" -type l -print)"
+broken_links="$(find -L "$STAGE_ROOT" -type l -print)"
 [[ -z "$broken_links" ]] || fail "package contains broken symlinks: $broken_links"
-unsafe_modes="$(find "$PACKAGE_ROOT" -xdev -type f \
+unsafe_modes="$(find "$STAGE_ROOT" -xdev -type f \
     \( -perm /0022 -o -perm /6000 \) -print)"
 [[ -z "$unsafe_modes" ]] || fail "package contains unsafe file modes: $unsafe_modes"
 
-INSTALLED_SIZE="$(du -sk "$PACKAGE_ROOT/usr" | cut -f1)"
-"$PYTHON" - \
-    installer/linux/control.in "$PACKAGE_ROOT/DEBIAN/control" \
-    "$VERSION" "$ARCHITECTURE" "$GLIBC_MIN" "$INSTALLED_SIZE" <<'PY'
-from pathlib import Path
-import sys
+# Normalize the staged tree before either packer sees it so the .deb and the
+# pacman package wrap the same files at the same timestamps.
+find "$STAGE_ROOT" -print0 | xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
 
-template, output, version, architecture, glibc_min, installed_size = sys.argv[1:]
-text = Path(template).read_text(encoding="utf-8")
-replacements = {
-    "@VERSION@": version,
-    "@ARCHITECTURE@": architecture,
-    "@GLIBC_MIN@": glibc_min,
-    "@INSTALLED_SIZE@": installed_size,
-}
-for marker, value in replacements.items():
-    text = text.replace(marker, value)
-import re
-if re.search(r"@[A-Z_]+@", text):
-    raise SystemExit("Unresolved placeholder in Debian control template")
-Path(output).write_text(text, encoding="utf-8")
-PY
-chmod 0755 "$PACKAGE_ROOT/DEBIAN"
-chmod 0644 "$PACKAGE_ROOT/DEBIAN/control"
+INSTALLED_SIZE="$(du -sk "$STAGE_ROOT/usr" | cut -f1)"
+INSTALLED_SIZE_BYTES="$(du -sb "$STAGE_ROOT/usr" | cut -f1)"
 
-# Normalize the staged tree too; copied bundle files otherwise retain build
-# timestamps even though dpkg itself honors SOURCE_DATE_EPOCH.
-find "$PACKAGE_ROOT" -print0 | xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
+step "Building the Debian package"
+DEB_ROOT="$REPO_ROOT/build/linux-deb"
+clone_stage "$DEB_ROOT"
+mkdir -p \
+    "$DEB_ROOT/DEBIAN" \
+    "$DEB_ROOT/usr/share/lintian/overrides"
+install -m 0644 installer/linux/lintian-overrides \
+    "$DEB_ROOT/usr/share/lintian/overrides/openwhisper"
+render_template \
+    installer/linux/control.in "$DEB_ROOT/DEBIAN/control" \
+    @VERSION@ "$VERSION" \
+    @ARCHITECTURE@ "$ARCHITECTURE" \
+    @GLIBC_MIN@ "$GLIBC_MIN" \
+    @INSTALLED_SIZE@ "$INSTALLED_SIZE"
+chmod 0755 "$DEB_ROOT/DEBIAN"
+chmod 0644 "$DEB_ROOT/DEBIAN/control"
+find "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/share/lintian" -print0 | \
+    xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
 
-rm -f -- "$ARTIFACT"
-dpkg-deb --root-owner-group -Zxz -z9 --build "$PACKAGE_ROOT" "$ARTIFACT"
+rm -f -- "$DEB_ARTIFACT"
+dpkg-deb --root-owner-group -Zxz -z9 --build "$DEB_ROOT" "$DEB_ARTIFACT"
 
-dpkg-deb --info "$ARTIFACT" >/dev/null
-package_contents="$(dpkg-deb --contents "$ARTIFACT")"
+dpkg-deb --info "$DEB_ARTIFACT" >/dev/null
+package_contents="$(dpkg-deb --contents "$DEB_ARTIFACT")"
 grep -q './usr/lib/openwhisper/OpenWhisper$' <<<"$package_contents" || \
-    fail "package does not contain the application executable"
+    fail "Debian package does not contain the application executable"
 grep -q './usr/bin/openwhisper$' <<<"$package_contents" || \
-    fail "package does not contain the command launcher"
+    fail "Debian package does not contain the command launcher"
 grep -q './usr/bin/ow -> openwhisper$' <<<"$package_contents" || \
-    fail "package does not contain the ow command alias"
+    fail "Debian package does not contain the ow command alias"
 grep -q './usr/share/applications/openwhisper.desktop$' <<<"$package_contents" || \
-    fail "package does not contain the desktop entry"
+    fail "Debian package does not contain the desktop entry"
 grep -q './usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
-    <<<"$package_contents" || fail "package does not contain the desktop icon"
-[[ "$(dpkg-deb --field "$ARTIFACT" Package)" == "openwhisper" ]] || fail "wrong package name"
-[[ "$(dpkg-deb --field "$ARTIFACT" Version)" == "$VERSION" ]] || fail "wrong package version"
-[[ "$(dpkg-deb --field "$ARTIFACT" Architecture)" == "amd64" ]] || fail "wrong package architecture"
+    <<<"$package_contents" || fail "Debian package does not contain the desktop icon"
+[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Package)" == "openwhisper" ]] || fail "wrong package name"
+[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Version)" == "$VERSION" ]] || fail "wrong package version"
+[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Architecture)" == "amd64" ]] || fail "wrong package architecture"
 
 desktop-file-validate installer/linux/openwhisper.desktop
 # Fail malformed/policy-error packages while still reporting non-fatal
 # warnings. Intentional PyInstaller embedded-library exceptions are documented
 # narrowly in installer/linux/lintian-overrides.
-lintian --fail-on error "$ARTIFACT"
+lintian --fail-on error "$DEB_ARTIFACT"
 
-artifact_bytes="$(stat -c %s "$ARTIFACT")"
-digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
+# There is no Ubuntu-installable equivalent of lintian for pacman packages
+# (namcap is Arch-only), so package-level validation of the .pkg.tar.zst
+# happens in the archlinux:latest workflow smoke.
+step "Building the Arch package"
+PACMAN_ROOT="$REPO_ROOT/build/linux-pacman"
+clone_stage "$PACMAN_ROOT"
+render_template \
+    installer/linux/PKGINFO.in "$PACMAN_ROOT/.PKGINFO" \
+    @VERSION@ "$VERSION" \
+    @GLIBC_MIN@ "$GLIBC_MIN" \
+    @BUILDDATE@ "$SOURCE_DATE_EPOCH" \
+    @INSTALLED_SIZE_BYTES@ "$INSTALLED_SIZE_BYTES"
+chmod 0644 "$PACMAN_ROOT/.PKGINFO"
+touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.PKGINFO"
+
+# gzip -n keeps the header timestamp out of the reproducibility story, matching
+# changelog.gz. Force root ownership so pacman -Qkk matches a root install.
+(
+    cd "$PACMAN_ROOT"
+    bsdtar --uid 0 --gid 0 --uname root --gname root \
+        --format=mtree \
+        --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
+        .PKGINFO usr
+) | gzip -n -9 >"$PACMAN_ROOT/.MTREE"
+chmod 0644 "$PACMAN_ROOT/.MTREE"
+touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.MTREE"
+
+# Pipe an uncompressed ustar stream through the zstd CLI rather than bsdtar's
+# --zstd filter so Ubuntu 22.04's libarchive build does not have to write zstd.
+# Skip --long; the default window is what pacman's libarchive expects.
+# .PKGINFO is the first archive member, .MTREE the second.
+rm -f -- "$ARCH_ARTIFACT"
+(
+    cd "$PACMAN_ROOT"
+    bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar \
+        -cf - .PKGINFO .MTREE usr
+) | zstd -T0 -19 -q -o "$ARCH_ARTIFACT"
+
+arch_contents="$(zstd -d -c -- "$ARCH_ARTIFACT" | bsdtar -tf -)"
+first_member="$(head -n1 <<<"$arch_contents")"
+[[ "$first_member" == ".PKGINFO" ]] || \
+    fail "Arch package first member must be .PKGINFO, got '$first_member'"
+grep -q '^\.MTREE$' <<<"$arch_contents" || \
+    fail "Arch package does not contain .MTREE"
+grep -q '^usr/lib/openwhisper/OpenWhisper$' <<<"$arch_contents" || \
+    fail "Arch package does not contain the application executable"
+grep -q '^usr/bin/openwhisper$' <<<"$arch_contents" || \
+    fail "Arch package does not contain the command launcher"
+grep -q '^usr/bin/ow$' <<<"$arch_contents" || \
+    fail "Arch package does not contain the ow command alias"
+ow_listing="$(zstd -d -c -- "$ARCH_ARTIFACT" | bsdtar -tvf - usr/bin/ow)"
+grep -Eq 'usr/bin/ow -> openwhisper$' <<<"$ow_listing" || \
+    fail "Arch package ow alias is not a symlink to openwhisper"
+grep -q '^usr/share/applications/openwhisper.desktop$' <<<"$arch_contents" || \
+    fail "Arch package does not contain the desktop entry"
+grep -q '^usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
+    <<<"$arch_contents" || fail "Arch package does not contain the desktop icon"
+grep -q '^depend = glibc>=' "$PACMAN_ROOT/.PKGINFO" || \
+    fail "Arch package metadata is missing the glibc dependency"
+
+deb_bytes="$(stat -c %s "$DEB_ARTIFACT")"
+arch_bytes="$(stat -c %s "$ARCH_ARTIFACT")"
+deb_digest="$(sha256sum "$DEB_ARTIFACT" | cut -d' ' -f1)"
+arch_digest="$(sha256sum "$ARCH_ARTIFACT" | cut -d' ' -f1)"
 step "Build complete"
-echo "    Installer : $ARTIFACT"
+echo "    Debian    : $DEB_ARTIFACT"
+echo "    Arch      : $ARCH_ARTIFACT"
 echo "    Version   : $VERSION"
 echo "    Requires  : glibc >= $GLIBC_MIN"
-echo "    Package   : $(format_size "$artifact_bytes") (installed $(format_size "$dist_bytes"))"
-echo "    SHA-256   : $digest"
+echo "    Debian    : $(format_size "$deb_bytes") (installed $(format_size "$dist_bytes"))"
+echo "    Arch      : $(format_size "$arch_bytes")"
+echo "    SHA-256   : $deb_digest  $(basename "$DEB_ARTIFACT")"
+echo "    SHA-256   : $arch_digest  $(basename "$ARCH_ARTIFACT")"
 echo
-echo "    Upload this .deb beside the Windows setup exe and win64 update archive."
+echo "    Upload both Linux packages beside the Windows setup exe and win64 update archive."

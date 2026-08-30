@@ -6,7 +6,7 @@ Build on the target operating system with::
     pyinstaller --noconfirm --clean OpenWhisper.spec
 
 PyInstaller does not cross-compile. The Windows tree is packed by Inno Setup;
-the Linux tree is installed by the Debian package built by
+the Linux tree is installed by the Debian and Arch packages built by
 ``scripts/build_installer.sh``. ``onedir`` avoids extracting the whole bundle
 on every launch and lets both native packages own ordinary files.
 """
@@ -231,6 +231,31 @@ def _strip_qt(toc):
     return kept
 
 
+# Build-host libstdc++ / libgcc_s must not ship in the Linux bundle. Arch's
+# mesa and libglvnd are compiled against a newer GCC C++ ABI; if the older
+# copies sit on LD_LIBRARY_PATH first, loading a system GL/EGL driver dies
+# with missing GLIBCXX symbols. GCC's C++ ABI is backward compatible, so
+# binaries frozen on Ubuntu 22.04 still run against a newer system runtime.
+def _is_system_cxx_lib(name):
+    """Return whether *name* is a libstdc++ or libgcc_s SONAME or symlink."""
+    base = Path(str(name)).name.lower()
+    return base.startswith("libstdc++.so") or base.startswith("libgcc_s.so")
+
+
+def _strip_system_cxx(toc):
+    """Leave libstdc++ and libgcc_s to the host OS on Linux.
+
+    Args:
+        toc: List of (dest_name, source_path, typecode) tuples.
+
+    Returns:
+        The filtered TOC. Unchanged on Windows and macOS.
+    """
+    if sys.platform != "linux":
+        return toc
+    return [entry for entry in toc if not _is_system_cxx_lib(entry[0])]
+
+
 a = Analysis(
     ["app_qt.py"],
     pathex=[str(REPO_ROOT)],
@@ -245,7 +270,7 @@ a = Analysis(
     optimize=0,
 )
 
-a.binaries = _strip_qt(a.binaries)
+a.binaries = _strip_system_cxx(_strip_qt(a.binaries))
 a.datas = _strip_qt(a.datas)
 
 pyz = PYZ(a.pure)

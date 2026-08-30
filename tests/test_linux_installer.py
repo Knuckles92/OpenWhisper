@@ -25,6 +25,31 @@ def test_build_script_is_executable_and_valid_bash():
     assert completed.returncode == 0, completed.stderr
 
 
+def test_pkginfo_template_has_native_runtime_dependencies():
+    pkginfo = (LINUX_INSTALLER / "PKGINFO.in").read_text(encoding="utf-8")
+    assert "pkgname = openwhisper" in pkginfo
+    assert "pkgbase = openwhisper" in pkginfo
+    assert "pkgver = @VERSION@-1" in pkginfo
+    assert "builddate = @BUILDDATE@" in pkginfo
+    assert "packager = Fiori Labs <support@fiorilabs.tech>" in pkginfo
+    assert "size = @INSTALLED_SIZE_BYTES@" in pkginfo
+    assert "depend = glibc>=@GLIBC_MIN@" in pkginfo
+    for package in (
+        "libdrm",
+        "libegl",
+        "libgl",
+        "portaudio",
+        "wayland",
+        "xcb-util-cursor",
+        "xcb-util-wm",
+        "xcb-util-keysyms",
+        "libxcb",
+        "libxkbcommon",
+    ):
+        assert f"depend = {package}" in pkginfo
+    assert "optdepend = gnome-keyring:" in pkginfo
+
+
 def test_control_template_has_native_runtime_dependencies():
     control = (LINUX_INSTALLER / "control.in").read_text(encoding="utf-8")
     assert "Package: openwhisper" in control
@@ -134,11 +159,17 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     )
     assert "ubuntu:22.04" in workflow
     assert "debian:12" in workflow
+    assert "archlinux:latest" in workflow
+    assert "archlinux" in workflow
+    assert '-eq 4' in workflow
+    assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
+    assert "pacman -Qkk openwhisper" in workflow
 
 
 def test_release_artifact_name_is_versioned_and_arch_specific():
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "OpenWhisper-$VERSION-linux-amd64.deb" in script
+    assert "OpenWhisper-$VERSION-linux-x86_64.pkg.tar.zst" in script
     assert "dpkg-deb --root-owner-group" in script
     assert 'xvfb-run -a "$PYTHON" -m PyInstaller' in script
     assert "patchelf --remove-rpath" in script
@@ -147,3 +178,17 @@ def test_release_artifact_name_is_versioned_and_arch_specific():
     assert 'find -L "$DIST_DIR" -type l' in script
     assert "lintian --fail-on error" in script
     assert "-perm /0022" in script
+    assert 'bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar' in script
+    assert "zstd -T0 -19" in script
+    assert ".PKGINFO" in script
+    assert 'gzip -n -9 >"$PACMAN_ROOT/.MTREE"' in script
+    assert "libstdc++.so*" in script
+    assert "libgcc_s.so*" in script
+
+
+def test_spec_leaves_system_cxx_runtime_on_linux():
+    spec = (ROOT / "OpenWhisper.spec").read_text(encoding="utf-8")
+    assert "def _strip_system_cxx(" in spec
+    assert "libstdc++.so" in spec
+    assert "libgcc_s.so" in spec
+    assert "a.binaries = _strip_system_cxx(_strip_qt(a.binaries))" in spec

@@ -59,7 +59,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
 | Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Not available — meetings are microphone-only |
-| Distribution / launchers | Native `.exe` installer | `install.sh` + shell scripts | Native `.deb` installer; `openwhisper` / `ow` commands |
+| Distribution / launchers | Native `.exe` installer | `install.sh` + shell scripts | Native `.deb` / `.pkg.tar.zst` installers; `openwhisper` / `ow` commands |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. Native Wayland security prevents `pynput` from reliably observing or injecting keys across other native Wayland applications; global hotkeys and auto-paste therefore require an X11 session (or may work only with XWayland windows). Recording, transcription, clipboard copy, and the rest of the UI remain available on Wayland. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
 
@@ -67,7 +67,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 **Prerequisite (both platforms):** an NVIDIA driver providing CUDA 12 — version 525 or newer. The driver supplies `nvcuda.dll` / `libcuda.so.1` and never comes from pip. **You do not need the CUDA Toolkit installer.**
 
-> **Native packages ship CPU transcription only.** On Windows, NVIDIA GPU acceleration remains an optional ~633 MB verified download from **Manage models → Components**. The Linux `.deb` does not currently install CUDA into its frozen runtime; Linux users who need NVIDIA acceleration should use the source install plus `requirements-gpu.txt` below.
+> **Native packages ship CPU transcription only.** On Windows, NVIDIA GPU acceleration remains an optional ~633 MB verified download from **Manage models → Components**. The Linux packages do not currently install CUDA into their frozen runtime; Linux users who need NVIDIA acceleration should use the source install plus `requirements-gpu.txt` below.
 
 Running **from source**, install the CUDA libraries faster-whisper's engine (CTranslate2) loads at runtime:
 
@@ -133,11 +133,34 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
 
 Remove the application with `sudo apt remove openwhisper`. To also remove OpenWhisper's per-user settings, history, recordings, and app-managed components, delete `~/.local/share/OpenWhisper` (or `$XDG_DATA_HOME/OpenWhisper`) yourself. Whisper models remain in the shared `${HF_HOME:-~/.cache/huggingface}` cache; remove that cache separately only if you understand it may also contain models used by other applications.
 
-> Fedora, Arch, ARM64, and older-glibc systems are not targets of this `.deb`; use the source installation below. A Linux PyInstaller bundle inherits the glibc floor of its build host, so official packages are built on Ubuntu 22.04 and record their actual minimum `libc6` requirement.
+### Linux — native Arch package
+
+Download **OpenWhisper-2.4.9-linux-x86_64.pkg.tar.zst** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install it with pacman so required audio and Qt system libraries are resolved automatically:
+
+```bash
+sudo pacman -U ./OpenWhisper-2.4.9-linux-x86_64.pkg.tar.zst
+```
+
+- Supports x86-64 Arch Linux and compatible derivatives (Manjaro, EndeavourOS).
+- No Python or virtual environment is needed. The package installs the private app bundle under `/usr/lib/openwhisper`, adds the desktop-menu entry, and provides both `openwhisper` and `ow` commands.
+- Settings, history, recordings, and app-managed components live outside the package under `${XDG_DATA_HOME:-~/.local/share}/OpenWhisper`, so upgrades and normal removal preserve them. Downloaded Whisper models use the shared Hugging Face cache under `${HF_HOME:-~/.cache/huggingface}`.
+- **Help → Check for Updates** reports new releases but does not bypass pacman ownership. Download the new `.pkg.tar.zst` and run the same command to upgrade.
+- The package is CPU-only. Use the source installation below when NVIDIA CUDA acceleration is required.
+- Tray integration is used only when the desktop exposes a system tray; otherwise tray-only controls are disabled and closing the main window exits normally. On native Wayland, use the in-app controls and clipboard copy unless you switch to an X11 session for global hotkeys and auto-paste.
+
+Verify a download against `SHA256SUMS.txt` from the same release:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
+Remove the application with `sudo pacman -R openwhisper`. To also remove OpenWhisper's per-user settings, history, recordings, and app-managed components, delete `~/.local/share/OpenWhisper` (or `$XDG_DATA_HOME/OpenWhisper`) yourself. Whisper models remain in the shared `${HF_HOME:-~/.cache/huggingface}` cache; remove that cache separately only if you understand it may also contain models used by other applications.
+
+> Fedora, ARM64, and older-glibc systems are not targets of the official Linux packages; use the source installation below. A Linux PyInstaller bundle inherits the glibc floor of its build host, so official packages are built on Ubuntu 22.04 and record their actual minimum glibc requirement.
 
 ### Install from source (all platforms)
 
-Use this for macOS, non-Debian Linux distributions, development, or Linux NVIDIA GPU acceleration.
+Use this for macOS, Fedora, development, or Linux NVIDIA GPU acceleration.
 
 **Python:** 3.11–3.12 recommended (3.11 verified; 3.12 stable). 3.13 works, but on Debian/Ubuntu you need `python3-dev` and a compiler because `pynput` → `evdev` has no prebuilt wheel for 3.13 yet.
 
@@ -204,8 +227,8 @@ This creates `OpenWhisper-Setup-<version>.exe` and the Windows in-app update pay
 
 ```bash
 sudo apt install -y \
-  python3 python3-venv python3-dev build-essential binutils dpkg-dev file \
-  desktop-file-utils lintian xvfb xauth \
+  python3 python3-venv python3-dev build-essential binutils dpkg-dev file patchelf \
+  desktop-file-utils libarchive-tools lintian xvfb xauth zstd \
   libdrm2 libegl1 libgl1 libportaudio2 \
   libwayland-client0 libwayland-cursor0 libwayland-egl1 \
   libxcb-cursor0 libxkbcommon-x11-0 \
@@ -215,9 +238,9 @@ venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requiremen
 ./scripts/build_installer.sh --clean
 ```
 
-This creates `OpenWhisper-<version>-linux-amd64.deb`, validates the desktop metadata and package control fields, checks every bundled ELF for unresolved libraries, and runs the frozen import self-test under Xvfb. The script prints the package SHA-256.
+This creates `OpenWhisper-<version>-linux-amd64.deb` and `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` from the same frozen tree, validates the desktop metadata and package control fields, checks every bundled ELF for unresolved libraries, and runs the frozen import self-test under Xvfb. The script prints each package SHA-256.
 
-The **Build native installers** GitHub Actions workflow builds both operating systems in parallel and produces one combined release-candidate artifact; an optional workflow-dispatch input uploads all three native files plus `SHA256SUMS.txt` to an existing draft release. Native release builds use the reviewed exact versions in [`requirements-release-constraints.txt`](requirements-release-constraints.txt), while ordinary source installs retain the compatible ranges in `requirements.txt`. See [`OpenWhisper.spec`](OpenWhisper.spec) for the shared frozen-bundle definition and [`docs/release-checklist.md`](docs/release-checklist.md) before publishing.
+The **Build native installers** GitHub Actions workflow builds both operating systems in parallel and produces one combined release-candidate artifact; an optional workflow-dispatch input uploads all four native files plus `SHA256SUMS.txt` to an existing draft release. Native release builds use the reviewed exact versions in [`requirements-release-constraints.txt`](requirements-release-constraints.txt), while ordinary source installs retain the compatible ranges in `requirements.txt`. See [`OpenWhisper.spec`](OpenWhisper.spec) for the shared frozen-bundle definition and [`docs/release-checklist.md`](docs/release-checklist.md) before publishing.
 
 ### Optional downloadable components
 
@@ -227,12 +250,13 @@ The Windows installer is CPU-only. GPU acceleration and the Meeting Intelligence
 | --- | --- | --- |
 | Windows installer (`OpenWhisper-Setup-*.exe`) | Latest GitHub Release | Every app release |
 | Windows native update archive (`OpenWhisper-*-win64.tar.xz`) | Same GitHub Release | Every app release (in-app apply) |
-| Linux native package (`OpenWhisper-*-linux-amd64.deb`) | Same GitHub Release | Every app release (APT/dpkg upgrade) |
+| Linux Debian package (`OpenWhisper-*-linux-amd64.deb`) | Same GitHub Release | Every app release (APT/dpkg upgrade) |
+| Linux Arch package (`OpenWhisper-*-linux-x86_64.pkg.tar.zst`) | Same GitHub Release | Every app release (`pacman -U` upgrade) |
 | `gpu-accel` | PyPI NVIDIA wheels | The CUDA pin in `requirements-gpu.txt` changes |
 | `meeting-agent` | nodejs.org + a zip on the GitHub tag in `MEETING_AGENT_RELEASE_TAG` | Node or the sidecar bundle changes |
 | `speaker-id` | Unpublished placeholder | — |
 
-An app patch updates all three application artifacts. Existing component pins stay put so Downloads keep working.
+An app patch updates all four application artifacts. Existing component pins stay put so Downloads keep working.
 
 #### Updating the GPU component
 

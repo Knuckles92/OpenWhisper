@@ -62,7 +62,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux Debian package
+    name: Linux packages
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
@@ -84,7 +84,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            binutils build-essential desktop-file-utils dpkg-dev file lintian patchelf xauth xvfb \
+            binutils build-essential desktop-file-utils dpkg-dev file \
+            libarchive-tools lintian patchelf xauth xvfb zstd \
             libdrm2 libegl1 libgl1 libportaudio2 \
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
@@ -160,10 +161,62 @@ jobs:
               test ! -e /usr/bin/openwhisper
               test ! -e /usr/bin/ow
             '
+      - name: Smoke-test advertised Arch Linux support
+        run: |
+          artifacts=(installer/Output/OpenWhisper-*-linux-x86_64.pkg.tar.zst)
+          version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
+          test "${#artifacts[@]}" -eq 1
+          artifact="$(realpath "${artifacts[0]}")"
+          docker run --rm \
+            -e EXPECTED_VERSION="$version" \
+            -v "$artifact:/tmp/openwhisper.pkg.tar.zst:ro" \
+            archlinux:latest bash -euo pipefail -c '
+              pacman -Sy --noconfirm archlinux-keyring
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed file namcap xorg-server-xvfb
+              pacman -U --noconfirm /tmp/openwhisper.pkg.tar.zst
+              test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(ow --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(pacman -Q openwhisper)" = "openwhisper $EXPECTED_VERSION-1"
+              pacman -Qi openwhisper | grep -q "^Name[[:space:]]*: openwhisper$"
+              pacman -Qi openwhisper | grep -q "^Version[[:space:]]*: $EXPECTED_VERSION-1$"
+              ! pacman -Qi openwhisper | grep -Eq "^Installed Size[[:space:]]*: 0([.]00)?[[:space:]]*B"
+              test -f /usr/share/applications/openwhisper.desktop
+              test -f /usr/share/icons/hicolor/256x256/apps/openwhisper.png
+              pacman -Qkk openwhisper
+              namcap /tmp/openwhisper.pkg.tar.zst || \
+                echo "namcap reported findings (advisory; not a gate)"
+
+              failures="$(mktemp)"
+              while IFS= read -r -d "" candidate; do
+                file -b "$candidate" | grep -q ELF || continue
+                if ! output="$(LD_LIBRARY_PATH=/usr/lib/openwhisper/_internal ldd "$candidate" 2>&1)"; then
+                  printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
+                elif grep -q "not found" <<<"$output"; then
+                  printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
+                fi
+              done < <(find /usr/lib/openwhisper -type f -print0)
+              test ! -s "$failures" || { cat "$failures" >&2; exit 1; }
+
+              Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &
+              xvfb_pid=$!
+              export DISPLAY=:99
+              sleep 2
+              kill -0 "$xvfb_pid" || { cat /tmp/xvfb.log >&2; exit 1; }
+              openwhisper --self-test
+              kill "$xvfb_pid"
+
+              pacman -R --noconfirm openwhisper
+              test ! -e /usr/lib/openwhisper
+              test ! -e /usr/bin/openwhisper
+              test ! -e /usr/bin/ow
+            '
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwhisper-linux
-          path: installer/Output/OpenWhisper-*-linux-amd64.deb
+          path: |
+            installer/Output/OpenWhisper-*-linux-amd64.deb
+            installer/Output/OpenWhisper-*-linux-x86_64.pkg.tar.zst
           if-no-files-found: error
           retention-days: 14
 
@@ -180,7 +233,7 @@ jobs:
           path: release
       - name: Inventory and checksums
         run: |
-          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 4
           (cd release && sha256sum -- ./* | sed 's|  \./|  |' | tee SHA256SUMS.txt)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -220,6 +273,7 @@ jobs:
             release/OpenWhisper-Setup-"$version".exe \
             release/OpenWhisper-"$version"-win64.tar.xz \
             release/OpenWhisper-"$version"-linux-amd64.deb \
+            release/OpenWhisper-"$version"-linux-x86_64.pkg.tar.zst \
             release/SHA256SUMS.txt \
             --clobber
 

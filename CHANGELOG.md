@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Arch Linux package** - Releases can now ship `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` beside the Debian package. The same Ubuntu 22.04 freeze is wrapped for pacman, `libstdc++` / `libgcc_s` stay with the host OS so Arch mesa can load, and CI smokes install / self-test / remove on `archlinux:latest`.
+
 ## [2.4.9] - 2026-08-29
 
 ### Added
