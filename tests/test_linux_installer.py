@@ -113,6 +113,7 @@ def test_release_artifact_name_is_versioned_and_arch_specific():
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "OpenWhisper-$VERSION-linux-amd64.deb" in script
     assert "dpkg-deb --root-owner-group" in script
+    assert 'xvfb-run -a "$PYTHON" -m PyInstaller' in script
     assert '"$EXE_PATH" --version' in script
     assert '"$EXE_PATH" --self-test' in script
     assert 'find -L "$DIST_DIR" -type l' in script

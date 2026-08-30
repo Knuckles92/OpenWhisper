@@ -60,11 +60,11 @@ if [[ -z "$PYTHON" ]]; then
 fi
 [[ -x "$PYTHON" ]] || fail "Python is not executable: $PYTHON"
 
-for command in file find ldd numfmt readelf sha256sum; do
+for command in file find ldd numfmt readelf sha256sum xvfb-run; do
     command -v "$command" >/dev/null || fail "required build command not found: $command"
 done
 if (( ! SKIP_PACKAGE )); then
-    for command in desktop-file-validate dpkg-deb gzip lintian xvfb-run; do
+    for command in desktop-file-validate dpkg-deb gzip lintian; do
         command -v "$command" >/dev/null || \
             fail "$command is required to build the release package"
     done
@@ -94,7 +94,7 @@ step "Generating application icons"
 "$PYTHON" scripts/generate_icon.py
 
 step "Freezing with PyInstaller"
-"$PYTHON" -m PyInstaller \
+xvfb-run -a "$PYTHON" -m PyInstaller \
     --noconfirm --clean --log-level WARN OpenWhisper.spec
 
 DIST_DIR="$REPO_ROOT/dist/OpenWhisper"
