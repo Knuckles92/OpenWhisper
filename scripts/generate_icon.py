@@ -1,8 +1,9 @@
-"""Generate the Windows ICO and Linux desktop PNG application icons.
+"""Generate the application icons used by native packages.
 
 Renders the mark from ``ui_qt.utils.app_icon`` at every size Windows asks for,
 packs them into ``ui_qt/assets/openwhisper.ico``, and writes the 256 px PNG used
-by the Linux desktop entry.
+by the Linux desktop entry. On macOS, also builds a Retina ``.icns`` under
+``build/macos/`` via ``iconutil`` for the app-bundle freeze.
 
 Run after changing the artwork:
 
@@ -12,8 +13,12 @@ Pillow is deliberately not used — ICO is a thin container around PNG data, so
 assembling it here keeps the icon out of the dependency list.
 """
 
+from __future__ import annotations
+
 import os
+import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,6 +35,12 @@ from ui_qt.utils.app_icon import ICON_SIZES, render_app_pixmap  # noqa: E402
 
 ICO_OUTPUT_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
 PNG_OUTPUT_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.png"
+ICNS_OUTPUT_PATH = REPO_ROOT / "build" / "macos" / "openwhisper.icns"
+ICONSET_DIR = REPO_ROOT / "build" / "macos" / "OpenWhisper.iconset"
+
+# iconutil expects named 1x/2x slots. Render the logical size for 1x entries and
+# twice that size for @2x entries so Dock/Finder get a Retina mark through 1024.
+ICNS_BASE_SIZES = (16, 32, 128, 256, 512)
 
 
 def _png_bytes(size: int) -> bytes:
@@ -78,6 +89,46 @@ def build_ico(sizes=ICON_SIZES) -> bytes:
     return header + directory + payload
 
 
+def build_icns(output_path: Path = ICNS_OUTPUT_PATH) -> Path:
+    """Write a Retina ICNS under ``build/macos/`` using Apple's ``iconutil``.
+
+    The ICNS is a build product, not a committed source asset. Callers must
+    run this on Darwin before freezing ``OpenWhisper.app``.
+    """
+    if sys.platform != "darwin":
+        raise RuntimeError("ICNS generation requires macOS iconutil")
+    if shutil.which("iconutil") is None:
+        raise RuntimeError("iconutil is required to build openwhisper.icns")
+
+    if ICONSET_DIR.exists():
+        shutil.rmtree(ICONSET_DIR)
+    ICONSET_DIR.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for base in ICNS_BASE_SIZES:
+        (ICONSET_DIR / f"icon_{base}x{base}.png").write_bytes(_png_bytes(base))
+        retina = base * 2
+        (ICONSET_DIR / f"icon_{base}x{base}@2x.png").write_bytes(
+            _png_bytes(retina)
+        )
+
+    completed = subprocess.run(
+        ["iconutil", "-c", "icns", str(ICONSET_DIR), "-o", str(output_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            f"iconutil failed with exit {completed.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    if not output_path.is_file() or output_path.stat().st_size < 16:
+        raise RuntimeError(f"iconutil did not write a usable ICNS at {output_path}")
+    return output_path
+
+
 # Held for the module lifetime: Qt objects must not outlive the application.
 _app = None
 
@@ -100,6 +151,14 @@ def main() -> int:
         f"Wrote {PNG_OUTPUT_PATH.relative_to(REPO_ROOT)} "
         f"({png_kib:.1f} KiB, 256x256)"
     )
+
+    if sys.platform == "darwin":
+        icns_path = build_icns()
+        icns_kib = icns_path.stat().st_size / 1024
+        print(
+            f"Wrote {icns_path.relative_to(REPO_ROOT)} "
+            f"({icns_kib:.1f} KiB, Retina slots through 1024)"
+        )
     return 0
 
 

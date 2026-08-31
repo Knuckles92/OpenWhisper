@@ -230,9 +230,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  macos:
+    name: macOS DMG (Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Require Apple Silicon host
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+      - name: Validate tag version
+        if: github.ref_type == 'tag' || inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          version="$(python -c 'import _version; print(_version.__version__)')"
+          test "v$version" = "$RELEASE_TAG"
+      - name: Install Python build dependencies
+        run: |
+          python -m venv venv
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install \
+            -r requirements.txt -r requirements-build.txt \
+            -c requirements-release-constraints.txt
+          ./venv/bin/python -m pip check
+      - name: Run test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./venv/bin/python -m pytest
+      - name: Build and verify DMG
+        # Ad-hoc signed and unnotarized by design. No Apple Developer secrets.
+        run: ./scripts/build_installer_macos.sh --clean
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwhisper-macos
+          path: |
+            installer/Output/OpenWhisper-*-macos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 14
+
   bundle:
     name: Combined release candidate
-    needs: [windows, linux]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -252,7 +298,9 @@ jobs:
           BUILD_RUN_ATTEMPT: ${{ github.run_attempt }}
           BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 4
+          # Five application artifacts: Win setup, Win archive, deb, Arch, macOS DMG.
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 5
+          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-macos-arm64.dmg' | wc -l)" -eq 1
           export BUILD_COMMIT="$(git rev-parse HEAD)"
           export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
           export BUILT_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -317,6 +365,7 @@ jobs:
             release/OpenWhisper-"$version"-win64.tar.xz \
             release/OpenWhisper-"$version"-linux-amd64.deb \
             release/OpenWhisper-"$version"-linux-x86_64.pkg.tar.zst \
+            release/OpenWhisper-"$version"-macos-arm64.dmg \
             release/BUILD-METADATA.json \
             release/SHA256SUMS.txt \
             --clobber

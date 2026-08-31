@@ -60,7 +60,7 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 | Auto-paste | `Ctrl+V` | `Cmd+V` | `Ctrl+V` |
 | GPU | CUDA (NVIDIA) — downloadable component or pip wheels | CPU only (no Metal/MPS in faster-whisper) | CUDA (NVIDIA) — pip wheels |
 | Meeting Mode system audio | WASAPI loopback, with a `soundcard` fallback | ScreenCaptureKit (macOS 13+), needs Screen Recording | Implementation present (Pulse/PipeWire-Pulse); public support gated pending hardware attestation — try-anyway after ack |
-| Distribution / launchers | Native `.exe` installer | `install.sh` + shell scripts | Native `.deb` / `.pkg.tar.zst` installers; `openwhisper` / `ow` commands |
+| Distribution / launchers | Native `.exe` installer | Apple Silicon `.dmg` preview (unnotarized) or source + `install.sh` | Native `.deb` / `.pkg.tar.zst` installers; `openwhisper` / `ow` commands |
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. Native Wayland security prevents `pynput` from reliably observing or injecting keys across other native Wayland applications; global hotkeys and auto-paste therefore require an X11 session (or may work only with XWayland windows). Recording, transcription, clipboard copy, and the rest of the UI remain available on Wayland. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
 
@@ -159,9 +159,34 @@ Remove the application with `sudo pacman -R openwhisper`. To also remove OpenWhi
 
 > Fedora, ARM64, and older-glibc systems are not targets of the official Linux packages; use the source installation below. A Linux PyInstaller bundle inherits the glibc floor of its build host, so official packages are built on Ubuntu 22.04 and record their actual minimum glibc requirement.
 
+### macOS — Apple Silicon DMG (preview)
+
+Download **OpenWhisper-*-macos-arm64.dmg** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases).
+
+- **Apple Silicon only** (arm64). macOS **14 (Sonoma) or newer**.
+- Open the disk image and drag **OpenWhisper** into **Applications**.
+- The app inside the DMG is **ad-hoc signed**; the DMG is **not notarized**. The first launch is blocked by Gatekeeper until you approve it once:
+  1. Open OpenWhisper from Applications (or double-click it in the DMG).
+  2. When macOS reports that the developer cannot be verified, open **System Settings → Privacy & Security**.
+  3. Find the OpenWhisper message near the bottom of the Security section and choose **Open Anyway**.
+  4. Confirm **Open** when prompted. Subsequent launches use the same exception.
+- Do **not** turn Gatekeeper off, and do **not** strip quarantine attributes as a normal install step. Apple’s Open Anyway flow is the supported override for an unnotarized build.
+- Settings, history, and recordings live in `~/Library/Application Support/OpenWhisper` and survive replacing the app bundle.
+- **Help → Check for Updates** reports new releases but does not replace the app. Download the new DMG and drag OpenWhisper into Applications again.
+- Transcription is CPU-only on macOS. Downloadable Windows/Linux components (GPU Acceleration, Meeting Agent) are not offered on Mac.
+- Grant **Microphone**, and for Meeting Mode **Screen & System Audio Recording**, under Privacy & Security when prompted. Auto-paste still needs **Accessibility** for the OpenWhisper app identity. See [Required macOS permissions](#required-macos-permissions).
+
+Verify a download against `SHA256SUMS.txt` from the same release:
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+```
+
+Intel Macs, older macOS releases, and signed/notarized distribution are not covered by this preview; use the source installation below or wait for a later release.
+
 ### Install from source (all platforms)
 
-Use this for macOS, Fedora, development, or Linux NVIDIA GPU acceleration.
+Use this for Intel Macs, older macOS, Fedora, development, or Linux NVIDIA GPU acceleration.
 
 **Python:** 3.11–3.12 recommended (3.11 verified; 3.12 stable). 3.13 works, but on Debian/Ubuntu you need `python3-dev` and a compiler because `pynput` → `evdev` has no prebuilt wheel for 3.13 yet.
 
@@ -243,7 +268,17 @@ venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requiremen
 
 This creates `OpenWhisper-<version>-linux-amd64.deb` and `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` from the same frozen tree, validates the desktop metadata and package control fields, checks every bundled ELF for unresolved libraries, and runs the frozen import self-test under Xvfb. The script prints each package SHA-256.
 
-The **Build native installers** GitHub Actions workflow builds both operating systems in parallel and produces one combined release-candidate artifact; an optional workflow-dispatch input uploads all four native files plus `SHA256SUMS.txt` to an existing draft release. Native release builds use the reviewed exact versions in [`requirements-release-constraints.txt`](requirements-release-constraints.txt), while ordinary source installs retain the compatible ranges in `requirements.txt`. See [`OpenWhisper.spec`](OpenWhisper.spec) for the shared frozen-bundle definition and [`docs/release-checklist.md`](docs/release-checklist.md) before publishing.
+**macOS** (Apple Silicon host only):
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
+./scripts/build_installer_macos.sh --clean
+```
+
+This freezes `OpenWhisper.app`, verifies Info.plist identity and privacy keys, runs `--version` / `--self-test`, checks the ad-hoc code signature and arm64 Mach-O slices, and writes `OpenWhisper-<version>-macos-arm64.dmg` under `installer/Output/`. The build host must be Darwin arm64; Intel Macs are rejected. The DMG is intentionally unnotarized until a Developer ID pipeline is added.
+
+The **Build native installers** GitHub Actions workflow builds Windows, Linux, and macOS in parallel and produces one combined release-candidate artifact; an optional workflow-dispatch input uploads all five native files plus `SHA256SUMS.txt` to an existing draft release. Native release builds use the reviewed exact versions in [`requirements-release-constraints.txt`](requirements-release-constraints.txt), while ordinary source installs retain the compatible ranges in `requirements.txt`. See [`OpenWhisper.spec`](OpenWhisper.spec) for the shared frozen-bundle definition and [`docs/release-checklist.md`](docs/release-checklist.md) before publishing.
 
 ### Optional downloadable components
 
@@ -255,11 +290,12 @@ The Windows installer is CPU-only. GPU acceleration (Windows) and the Meeting In
 | Windows native update archive (`OpenWhisper-*-win64.tar.xz`) | Same GitHub Release | Every app release (in-app apply) |
 | Linux Debian package (`OpenWhisper-*-linux-amd64.deb`) | Same GitHub Release | Every app release (APT/dpkg upgrade) |
 | Linux Arch package (`OpenWhisper-*-linux-x86_64.pkg.tar.zst`) | Same GitHub Release | Every app release (`pacman -U` upgrade) |
+| macOS Apple Silicon DMG (`OpenWhisper-*-macos-arm64.dmg`) | Same GitHub Release | Every app release (manual replace; unnotarized preview) |
 | `gpu-accel` | PyPI NVIDIA wheels | The CUDA pin in `requirements-gpu.txt` changes |
 | `meeting-agent` | nodejs.org + a zip on the GitHub tag in `MEETING_AGENT_RELEASE_TAG` | Node or the sidecar bundle changes |
 | `speaker-id` | Unpublished placeholder | — |
 
-An app patch updates all four application artifacts. Existing component pins stay put so Downloads keep working.
+An app patch updates all five application artifacts. Existing component pins stay put so Downloads keep working.
 
 #### Updating the GPU component
 

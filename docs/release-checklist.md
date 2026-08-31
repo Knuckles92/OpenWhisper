@@ -1,7 +1,7 @@
 # Native release checklist
 
-Every stable release ships the Windows and Linux packages together from a
-**draft** GitHub release. The Windows native-update archive is also required
+Every stable release ships the Windows, Linux, and macOS packages together from
+a **draft** GitHub release. The Windows native-update archive is also required
 except for a documented setup-only recovery release.
 
 ## Required artifacts
@@ -13,13 +13,15 @@ artifacts (plus `BUILD-METADATA.json` and `SHA256SUMS.txt`):
 - `OpenWhisper-<version>-win64.tar.xz` — Windows native-update payload
 - `OpenWhisper-<version>-linux-amd64.deb` — Debian/Ubuntu x86-64 package
 - `OpenWhisper-<version>-linux-x86_64.pkg.tar.zst` — Arch Linux x86-64 package
+- `OpenWhisper-<version>-macos-arm64.dmg` — Apple Silicon macOS 14+ DMG
+  containing an ad-hoc-signed app (unnotarized preview)
 
 `BUILD-METADATA.json` records the exact full Git commit, source tag/ref, UTC
 build time, and GitHub Actions run that produced the artifact set. It is also
 covered by `SHA256SUMS.txt`.
 
 A setup-only emergency release omits only the `win64.tar.xz`; it never omits
-the Windows setup exe or either Linux package.
+the Windows setup exe, either Linux package, or the macOS DMG.
 
 ## Build
 
@@ -35,10 +37,13 @@ the Windows setup exe or either Linux package.
    - builds Windows on `windows-2022`;
    - builds Linux on Ubuntu 22.04, which establishes the glibc compatibility
      floor;
+   - builds the Apple Silicon DMG on `macos-14` (arm64 host asserted);
    - runs package tests and frozen-bundle verification;
    - installs, launches, and removes the generated `.deb` on Ubuntu 22.04 and
      Debian 12, and the generated `.pkg.tar.zst` on Arch;
-   - combines the four artifacts, records their source commit in
+   - freezes and self-tests the ad-hoc-signed macOS `.app`, verifies its code
+     signature, and packs it into a UDZO DMG (no notarization secrets);
+   - combines the five artifacts, records their source commit in
      `BUILD-METADATA.json`, and generates `SHA256SUMS.txt`;
    - refuses to upload unless the destination exists, is still a draft, and
      matches `_version.py`.
@@ -100,6 +105,39 @@ The build must finish with all of these gates passing:
 The results are `installer/Output/OpenWhisper-<version>-linux-amd64.deb` and
 `installer/Output/OpenWhisper-<version>-linux-x86_64.pkg.tar.zst`.
 `--skip-package` stops after frozen-tree verification.
+
+### Local macOS build
+
+Build on an **Apple Silicon** Mac running macOS 14 or newer. The script refuses
+Intel hosts and non-Darwin environments.
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
+./scripts/build_installer_macos.sh --clean
+```
+
+The build must finish with all of these gates passing:
+
+- `OpenWhisper.app` exists with bundle id `tech.fiorilabs.openwhisper`;
+- `CFBundleShortVersionString` / `CFBundleVersion` match `_version.py`;
+- `LSMinimumSystemVersion` is `14.0`;
+- `NSMicrophoneUsageDescription` and `NSAudioCaptureUsageDescription` are set;
+- `NSScreenCaptureUsageDescription` is **not** present;
+- frozen `--version` and `--self-test` succeed (including PyObjC capture stack);
+- `codesign --verify --deep --strict` succeeds (ad-hoc by default);
+- every Mach-O has an `arm64` slice and no absolute build-host library paths;
+- the DMG mounts, contains `OpenWhisper.app` plus an `/Applications` symlink,
+  and the nested app passes strict code-signature verification and reports the
+  release version.
+
+The result is `installer/Output/OpenWhisper-<version>-macos-arm64.dmg`.
+`--skip-dmg` stops after app-bundle verification. Optional future signing uses
+`OPENWHISPER_MACOS_CODESIGN_IDENTITY`; the first public path does **not**
+require Apple credentials and does **not** notarize.
+
+Do not gate the unnotarized preview on `spctl` success. Gatekeeper is expected
+to warn until the user chooses **Open Anyway**.
 
 ## Soak the Windows native-update path
 
@@ -165,6 +203,37 @@ The Linux packages are CPU-only and package-manager-owned. Help → Check for
 Updates is intentionally notify-only; it must open the release page rather than
 trying to overwrite `/usr/lib/openwhisper`.
 
+## Smoke-test the macOS DMG
+
+Use a clean Apple Silicon Mac on macOS 14+ that did not build the artifact. Do
+not only open the DMG on the CI host.
+
+1. Download the DMG from the draft release (or copy the workflow artifact) so
+   quarantine attaches as it would for end users.
+2. Open the DMG, drag OpenWhisper into Applications, and launch it once.
+3. When Gatekeeper blocks the unnotarized app, use **System Settings → Privacy
+   & Security → Open Anyway**, then confirm **Open**. Do not disable Gatekeeper
+   and do not strip quarantine attributes as the install procedure.
+4. Confirm About shows the release version and channel label
+   `macOS application`.
+5. Record and transcribe a short microphone sample. Grant Microphone when
+   prompted.
+6. Exercise a Carbon hotkey while another app is focused, enable auto-paste,
+   and grant Accessibility to the OpenWhisper app identity if needed.
+7. Start a Meeting Mode session with something playing and grant Screen &
+   System Audio Recording; confirm system audio appears or the documented
+   mic-only degradation is honest. Optional: run
+   `scripts/probe_macos_loopback.py` from a source checkout on the same machine
+   when debugging capture.
+8. Save an API key under Settings → API keys and confirm Keychain storage.
+9. Help → Check for Updates must be notify-only (no in-app replace).
+10. Quit, replace Applications/OpenWhisper.app with a newer DMG build, and
+    confirm `~/Library/Application Support/OpenWhisper` settings/history remain
+    and TCC grants still attach to `tech.fiorilabs.openwhisper`.
+
+The macOS DMG is CPU-only and unnotarized. Intel Macs are out of scope for this
+artifact.
+
 ## Draft, then publish
 
 Before publishing, confirm:
@@ -172,18 +241,24 @@ Before publishing, confirm:
 - tag and all filenames use the exact same version;
 - `BUILD-METADATA.json` names the commit targeted by the release tag and links
   to the build's GitHub Actions run;
-- all four required application artifacts are present (subject only to the
-  documented Windows setup-only exception);
+- all five required application artifacts are present (subject only to the
+  documented Windows setup-only exception for `win64.tar.xz`);
 - sizes match the combined workflow artifact;
 - GitHub digest fields match `SHA256SUMS.txt`;
 - Windows fresh install, native update, elevated/Program Files fallback, and
   uninstall have been smoked;
 - Linux fresh install, desktop launch, upgrade, no-tray behavior, and removal
   have been smoked;
+- macOS DMG fresh install via Open Anyway, microphone, hotkeys/auto-paste,
+  Meeting Mode permission path, Keychain, and manual app replacement have been
+  smoked on clean Apple Silicon hardware;
 - release notes describe the supported Linux scope: amd64 Debian 12+/Ubuntu
   22.04+ and Arch, CPU-only, manual APT/dpkg or `pacman -U` upgrades, optional
   tray integration, and the X11 requirement for reliable global
-  hotkeys/auto-paste.
+  hotkeys/auto-paste;
+- release notes describe the macOS preview scope: Apple Silicon, macOS 14+,
+  unnotarized DMG, Open Anyway, CPU-only, notify-only updates, no Homebrew
+  cask in the official tap yet.
 
 Only then publish the draft. Do not publish stable assets piecemeal.
 
@@ -211,10 +286,10 @@ bug that can leave the install broken or the app stuck:
    worth retaining for diagnostics.
 3. Rely on Inno `CloseApplications=force` plus `CloseRunningApp` to replace the
    affected build.
-4. Continue shipping the Linux `.deb` and `.pkg.tar.zst` normally; they do
-   not use this path.
-5. Resume all four Windows/Linux artifacts in the following release after
-   soaking `fixed → next` locally.
+4. Continue shipping the Linux `.deb` / `.pkg.tar.zst` and the macOS DMG
+   normally; they do not use this path.
+5. Resume the full five-artifact set (including the Windows archive) in the
+   following release after soaking `fixed → next` locally.
 
 Historical examples are 2.4.2 (handoff did not exit), 2.4.4 (commit did not wait
 for file locks), and 2.4.6 (helper inherited the locked install working

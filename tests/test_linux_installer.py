@@ -177,8 +177,11 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "debian:12" in workflow
     assert "archlinux:latest" in workflow
     assert "archlinux" in workflow
-    assert '-eq 4' in workflow
+    # Combined release candidate ships five application artifacts (Win×2,
+    # Linux×2, macOS DMG). The historical four-file inventory is retired.
+    assert '-eq 5' in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
+    assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "pacman -Qkk openwhisper" in workflow
     assert "GPL-3.0-only" in workflow
     assert "LGPL-3.0-only" in workflow

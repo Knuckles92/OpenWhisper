@@ -31,7 +31,20 @@ def _run_package_self_test() -> None:
     if sys.platform == "win32":
         modules.extend(("keyring.backends.Windows", "keyboard", "soundcard"))
     elif sys.platform == "darwin":
-        modules.extend(("keyring.backends.macOS", "pynput.keyboard"))
+        modules.extend(
+            (
+                "keyring.backends.macOS",
+                "pynput.keyboard",
+                # Meeting Mode / Accessibility stack is imported lazily at
+                # runtime; freeze self-test must prove the bindings survived.
+                "objc",
+                "Foundation",
+                "HIServices",
+                "ScreenCaptureKit",
+                "CoreMedia",
+                "Quartz",
+            )
+        )
     else:
         modules.extend(
             (

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller onedir specification for OpenWhisper on Windows and Linux.
+"""PyInstaller onedir specification for OpenWhisper on Windows, Linux, and macOS.
 
 Build on the target operating system with::
 
@@ -7,8 +7,10 @@ Build on the target operating system with::
 
 PyInstaller does not cross-compile. The Windows tree is packed by Inno Setup;
 the Linux tree is installed by the Debian and Arch packages built by
-``scripts/build_installer.sh``. ``onedir`` avoids extracting the whole bundle
-on every launch and lets both native packages own ordinary files.
+``scripts/build_installer.sh``; the macOS tree is wrapped as ``OpenWhisper.app``
+by this spec and packed into a DMG by ``scripts/build_installer_macos.sh``.
+``onedir`` avoids extracting the whole bundle on every launch and lets native
+packages own ordinary files.
 """
 
 import os
@@ -25,7 +27,15 @@ sys.path.insert(0, str(REPO_ROOT))
 from _version import __version__  # noqa: E402
 
 APP_NAME = "OpenWhisper"
+# Permanent reverse-DNS identity for the macOS app bundle and TCC grants.
+MACOS_BUNDLE_IDENTIFIER = "tech.fiorilabs.openwhisper"
+# Meeting Mode and the current arm64 wheel set establish Sonoma as the floor.
+MACOS_MINIMUM_SYSTEM_VERSION = "14.0"
 ICON_PATH = REPO_ROOT / "ui_qt" / "assets" / "openwhisper.ico"
+ICNS_CANDIDATES = (
+    REPO_ROOT / "build" / "macos" / "openwhisper.icns",
+    REPO_ROOT / "ui_qt" / "assets" / "openwhisper.icns",
+)
 
 # Bundled read-only assets
 #
@@ -77,6 +87,20 @@ if sys.platform == "win32":
     hiddenimports.append("keyring.backends.Windows")
 elif sys.platform == "darwin":
     hiddenimports.append("keyring.backends.macOS")
+    # Lazy Meeting Mode / Accessibility imports must survive freeze analysis.
+    hiddenimports.extend(
+        (
+            "objc",
+            "Foundation",
+            "HIServices",
+            "ScreenCaptureKit",
+            "CoreMedia",
+            "Quartz",
+            "ApplicationServices",
+            "CoreText",
+            "Cocoa",
+        )
+    )
 else:
     hiddenimports.append("keyring.backends.SecretService")
 
@@ -90,7 +114,7 @@ else:
 #   av            - av/ and av.libs/ MUST stay siblings; av/__init__.py calls
 #                   os.add_dll_directory() on ../av.libs to find FFmpeg
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
-for package in (
+_COLLECT_PACKAGES = [
     "ctranslate2",
     "faster_whisper",
     "onnxruntime",
@@ -107,7 +131,24 @@ for package in (
     "secretstorage",
     "jeepney",
     "pynput",
-):
+]
+if sys.platform == "darwin":
+    # ScreenCaptureKit, Accessibility (HIServices), and pynput's Darwin stack
+    # are imported lazily. collect_all keeps their framework bindings.
+    _COLLECT_PACKAGES.extend(
+        (
+            "objc",
+            "Foundation",
+            "Cocoa",
+            "CoreMedia",
+            "Quartz",
+            "ScreenCaptureKit",
+            "ApplicationServices",
+            "CoreText",
+            "HIServices",
+        )
+    )
+for package in _COLLECT_PACKAGES:
     # Platform markers intentionally leave Windows-only or Linux-only packages
     # absent. collect_all() warns for a missing package, so skip it cleanly.
     if find_spec(package) is None:
@@ -309,6 +350,34 @@ def _version_resource():
     )
 
 
+def _macos_icon_path():
+    """Prefer a generated ICNS; fall back only when one is already present."""
+    for candidate in ICNS_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _macos_codesign_identity():
+    """Return the optional Developer ID identity, or None for ad-hoc signing.
+
+    The first public macOS app is intentionally ad-hoc signed and distributed
+    in an unnotarized DMG. Setting ``OPENWHISPER_MACOS_CODESIGN_IDENTITY`` opts
+    into a real identity later without changing the packaging layout.
+    """
+    identity = (os.environ.get("OPENWHISPER_MACOS_CODESIGN_IDENTITY") or "").strip()
+    return identity or None
+
+
+_macos_icon = _macos_icon_path() if sys.platform == "darwin" else None
+_codesign_identity = _macos_codesign_identity() if sys.platform == "darwin" else None
+_target_arch = "arm64" if sys.platform == "darwin" else None
+_exe_icon = None
+if sys.platform == "win32" and ICON_PATH.exists():
+    _exe_icon = str(ICON_PATH)
+elif sys.platform == "darwin" and _macos_icon is not None:
+    _exe_icon = str(_macos_icon)
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -327,16 +396,13 @@ exe = EXE(
     uac_admin=False,
     uac_uiaccess=False,
     argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
+    target_arch=_target_arch,
+    codesign_identity=_codesign_identity,
+    # No App Sandbox and no permissive hardened-runtime entitlements for v1.
     entitlements_file=None,
     # Linux desktop environments take their icon from the installed PNG and
     # .desktop file; executable icon resources are a Windows/macOS concept.
-    icon=(
-        str(ICON_PATH)
-        if ICON_PATH.exists() and sys.platform in ("win32", "darwin")
-        else None
-    ),
+    icon=_exe_icon,
     version=_version_resource() if sys.platform == "win32" else None,
 )
 
@@ -349,3 +415,34 @@ coll = COLLECT(
     upx_exclude=[],
     name=APP_NAME,
 )
+
+if sys.platform == "darwin":
+    if _macos_icon is None:
+        raise SystemExit(
+            "macOS freeze requires openwhisper.icns; run "
+            "scripts/generate_icon.py on Darwin first"
+        )
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=str(_macos_icon),
+        bundle_identifier=MACOS_BUNDLE_IDENTIFIER,
+        version=__version__,
+        info_plist={
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleName": APP_NAME,
+            "CFBundleShortVersionString": __version__,
+            "CFBundleVersion": __version__,
+            "CFBundlePackageType": "APPL",
+            "LSMinimumSystemVersion": MACOS_MINIMUM_SYSTEM_VERSION,
+            "NSHighResolutionCapable": True,
+            "NSMicrophoneUsageDescription": (
+                "OpenWhisper records microphone audio for local and cloud "
+                "speech-to-text transcription."
+            ),
+            "NSAudioCaptureUsageDescription": (
+                "OpenWhisper captures system audio in Meeting Mode so the "
+                "other side of a call can appear in the transcript."
+            ),
+        },
+    )

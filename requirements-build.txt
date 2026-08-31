@@ -1,12 +1,14 @@
-# Tooling for producing the Windows and Linux native installers. Not needed to
-# run from source.
+# Tooling for producing the Windows, Linux, and macOS native installers. Not
+# needed to run from source.
 #
 #   pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
 #   # Windows: .\scripts\build_installer.ps1
 #   # Linux:   ./scripts/build_installer.sh
+#   # macOS:   ./scripts/build_installer_macos.sh   # Apple Silicon host only
 #
 # Platform packagers are separate system installs, not pip packages:
 #   Windows: winget install -e --id JRSoftware.InnoSetup
 #   Debian/Ubuntu: sudo apt install dpkg-dev binutils file desktop-file-utils lintian xvfb xauth
+#   macOS: Xcode CLT (iconutil, codesign, hdiutil, lipo, otool, plutil)
 pyinstaller>=6.10.0
 pytest>=8.0

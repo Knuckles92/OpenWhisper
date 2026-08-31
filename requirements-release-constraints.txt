@@ -1,11 +1,12 @@
-# Exact dependency resolution used for the Windows and Linux native release
-# builders. Source/development installs continue to use the compatible ranges
-# in requirements*.txt. Regenerate and review this file deliberately when
-# updating release dependencies; do not refresh it during a release build.
+# Exact dependency resolution used for the Windows, Linux, and macOS native
+# release builders. Source/development installs continue to use the compatible
+# ranges in requirements*.txt. Regenerate and review this file deliberately
+# when updating release dependencies; do not refresh it during a release build.
 #
 # Generated from the Python 3.12 release environment on 2026-08-29. Entries
 # for one platform are harmless constraints on the other when that package is
-# not selected by an environment marker.
+# not selected by an environment marker. Darwin-only PyObjC pins were added for
+# the Apple Silicon DMG builder; they do not affect Windows/Linux resolution.
 altgraph==0.17.5
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -59,6 +60,13 @@ pyinstaller==6.22.2
 pyinstaller-hooks-contrib==2026.7
 pynput==1.8.2
 pypdf==6.16.2
+pyobjc-core==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-Cocoa==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-CoreMedia==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-CoreText==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-Quartz==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-ScreenCaptureKit==12.2.2 ; sys_platform == "darwin"
 PyQt6==6.11.0
 PyQt6-Qt6==6.11.2
 PyQt6_sip==13.12.0
