@@ -1709,11 +1709,7 @@ class SettingsDialog(QDialog):
         if self._loading:
             return False
         try:
-            settings = settings_manager.load_all_settings()
-            settings.update(updates)
-            for key in drops:
-                settings.pop(key, None)
-            settings_manager.save_all_settings(settings)
+            settings_manager.update_settings(updates, remove=tuple(drops))
         except Exception as exc:
             logger.error("Couldn't save settings: %s", exc)
             self.message_label.setText(f"Couldn't save settings: {exc}")

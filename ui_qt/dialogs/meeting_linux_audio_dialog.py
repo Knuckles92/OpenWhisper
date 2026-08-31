@@ -124,6 +124,11 @@ class MeetingLinuxAudioDialog(QDialog):
         self._probe_bridge = _ProbeBridge(self)
         self._probe_bridge.finished.connect(self._on_probe_finished)
         self.setWindowTitle("System audio needs a quick setup")
+        self.setAccessibleName("Set up Linux system audio")
+        self.setAccessibleDescription(
+            "Review detected audio issues and setup commands, retry detection, "
+            "continue microphone only, or go back."
+        )
         self.setMinimumWidth(560)
         self.setModal(True)
         self._setup_ui()

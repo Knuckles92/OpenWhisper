@@ -120,10 +120,35 @@ class HistoryManager:
     def _save_recording(self, source_path: str) -> Optional[str]:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"recording_{timestamp}.wav"
-            dest_path = os.path.join(self.recordings_folder, filename)
+            stem = f"recording_{timestamp}"
+            suffix = 1
+            while True:
+                filename = f"{stem}.wav" if suffix == 1 else f"{stem}-{suffix}.wav"
+                dest_path = os.path.join(self.recordings_folder, filename)
+                try:
+                    dest_fd = os.open(
+                        dest_path,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                except FileExistsError:
+                    suffix += 1
+                    continue
+                break
 
-            shutil.copy2(source_path, dest_path)
+            try:
+                with os.fdopen(dest_fd, "wb") as destination, open(
+                    source_path, "rb"
+                ) as source:
+                    shutil.copyfileobj(source, destination, length=1024 * 1024)
+                    destination.flush()
+                    os.fsync(destination.fileno())
+            except Exception:
+                try:
+                    os.remove(dest_path)
+                except FileNotFoundError:
+                    pass
+                raise
             logger.info(f"Saved recording: {filename}")
 
             self._rotate_recordings()
@@ -133,6 +158,12 @@ class HistoryManager:
         except Exception as e:
             logger.error(f"Failed to save recording: {e}")
             return None
+
+    def preserve_recording(self, source_path: str) -> Optional[str]:
+        """Retain standalone audio, such as a failed quick transcription."""
+        if not source_path or not os.path.isfile(source_path):
+            return None
+        return self._save_recording(source_path)
 
     def _rotate_recordings(self) -> None:
         """Remove oldest recordings if we exceed max_recordings."""
@@ -162,6 +193,14 @@ class HistoryManager:
     def get_history(self, limit: Optional[int] = None) -> List[HistoryEntry]:
         """Return history entries newest first."""
         return db.get_history_entries(limit)
+
+    def search_history(
+        self,
+        query: str,
+        limit: Optional[int] = None,
+    ) -> List[HistoryEntry]:
+        """Return matching history entries newest first, optionally paged."""
+        return db.search_history_entries(query, limit)
 
     def get_recordings(self) -> List[RecordingInfo]:
         """Return saved recordings newest first."""

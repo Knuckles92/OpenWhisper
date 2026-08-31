@@ -131,6 +131,7 @@ def _load_pynput_backend():
     ):
         assert spec.loader is not None
         spec.loader.exec_module(module)
+    module._pynput_keyboard_module = keyboard_ns
     return module
 
 
@@ -227,6 +228,14 @@ class TestPynputBackendPushHold(unittest.TestCase):
         manager._on_press(self.module.pynput_keyboard.Key.ctrl)
         manager._on_press(self.module.pynput_keyboard.Key.alt)
         manager._on_press(self.module.pynput_keyboard.KeyCode(char="r"))
+
+    def test_available_backend_starts_global_listener(self):
+        manager = self.module.HotkeyManager(dict(self.HOTKEYS))
+
+        self.assertTrue(manager.backend_available)
+        self.assertEqual(manager.backend_name, "pynput")
+        self.assertIsNotNone(manager._listener)
+        manager.cleanup()
 
     def test_hold_fires_press_and_global_release(self):
         manager = self._manager()

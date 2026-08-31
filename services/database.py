@@ -6,7 +6,7 @@ import threading
 from contextlib import contextmanager
 from typing import List, Optional
 
-from sqlalchemy import create_engine, event, func, inspect, text
+from sqlalchemy import create_engine, event, func, inspect, or_, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from config import config
@@ -382,6 +382,34 @@ class DatabaseManager:
             q = session.query(TranscriptionHistory).order_by(
                 TranscriptionHistory.timestamp.desc()
             )
+            if limit:
+                q = q.limit(limit)
+            return q.all()
+
+    def search_history_entries(
+        self,
+        query: str,
+        limit: Optional[int] = None,
+    ) -> List[TranscriptionHistory]:
+        """Search transcription text while keeping the returned page bounded."""
+        needle = str(query or "").strip()
+        if not needle:
+            return self.get_history_entries(limit)
+        escaped = (
+            needle.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+        with self.get_session() as session:
+            q = session.query(TranscriptionHistory).filter(
+                or_(
+                    TranscriptionHistory.text.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.raw_text.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.timestamp.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.source_name.ilike(pattern, escape="\\"),
+                )
+            ).order_by(TranscriptionHistory.timestamp.desc())
             if limit:
                 q = q.limit(limit)
             return q.all()

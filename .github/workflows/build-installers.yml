@@ -51,6 +51,9 @@ jobs:
             -c requirements-release-constraints.txt
           .\venv\Scripts\python -m pip check
           choco install innosetup --version=6.4.0 --allow-downgrade --yes --no-progress
+      - name: Check ASGI test stack compatibility
+        shell: pwsh
+        run: .\venv\Scripts\python scripts\check_testclient_compat.py --timeout 15
       - name: Build and verify
         shell: pwsh
         run: .\scripts\build_installer.ps1 -Clean
@@ -98,6 +101,8 @@ jobs:
             -r requirements.txt -r requirements-build.txt \
             -c requirements-release-constraints.txt
           ./venv/bin/python -m pip check
+      - name: Check ASGI test stack compatibility
+        run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
       - name: Run Linux test suite
         env:
           QT_QPA_PLATFORM: offscreen
@@ -261,6 +266,8 @@ jobs:
             -r requirements.txt -r requirements-build.txt \
             -c requirements-release-constraints.txt
           ./venv/bin/python -m pip check
+      - name: Check ASGI test stack compatibility
+        run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen

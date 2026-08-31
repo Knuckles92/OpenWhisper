@@ -391,6 +391,29 @@ class ApplicationController(QObject):
             return "Whisper engine is still loading..."
         return None
 
+    def transcription_readiness_message(self) -> Optional[str]:
+        """Return an actionable reason capture must not start yet."""
+        backend = getattr(self, "current_backend", None)
+        if backend is None:
+            return "No transcription engine is selected"
+        if backend.is_available():
+            return None
+
+        loading = self.local_whisper_loading_message()
+        if loading:
+            return loading
+        if isinstance(backend, LocalWhisperBackend) and getattr(
+            backend, "is_model_missing", False
+        ):
+            self.ensure_local_model_available()
+            return (
+                f"Whisper model '{backend.model_name}' is not downloaded — "
+                "finish the model download before recording"
+            )
+        if self._current_model_name.startswith("api_"):
+            return "The selected API transcription engine needs a valid API key"
+        return "The selected transcription engine is unavailable"
+
     def request_update_check(self, manual: bool = True) -> None:
         """Run a GitHub latest-release check on a worker thread."""
         self.executor.submit(self._update_check_worker, manual)
@@ -455,6 +478,9 @@ class ApplicationController(QObject):
         self._update_cancel.set()
 
     def is_transcribing(self) -> bool:
+        runtime = getattr(self, "transcription_runtime", None)
+        if runtime is not None and runtime.has_active_job:
+            return True
         backend = getattr(self, "current_backend", None)
         return bool(backend and getattr(backend, "is_transcribing", False))
 
@@ -1147,6 +1173,11 @@ class ApplicationController(QObject):
                     logger.error(f"Model download failed for '{model_name}': {exc}")
                     self.status_update.emit(f"Model download failed: {exc}")
                 finally:
+                    # ``claim_batch`` transfers ownership of one coordinator
+                    # slot per model to this worker.  Release processed models
+                    # here; the outer ``finally`` only owns models the queue
+                    # never reached (for example after Stop was requested).
+                    hf_access_coordinator.end_request(model_name)
                     self.model_download_finished.emit(model_name, success)
                     if success:
                         self.model_cache_changed.emit()
@@ -1200,9 +1231,9 @@ class ApplicationController(QObject):
         """
         if self._refuse_dictation_during_meeting():
             return False
-        loading = self.local_whisper_loading_message()
-        if loading:
-            self.status_update.emit(loading)
+        unavailable = self.transcription_readiness_message()
+        if unavailable:
+            self.status_update.emit(unavailable)
             return False
         self.transcription_runtime.start_recording()
         return True
@@ -1220,9 +1251,9 @@ class ApplicationController(QObject):
         if not self.recorder.is_recording and self._refuse_dictation_during_meeting():
             return False
         if not self.recorder.is_recording:
-            loading = self.local_whisper_loading_message()
-            if loading:
-                self.status_update.emit(loading)
+            unavailable = self.transcription_readiness_message()
+            if unavailable:
+                self.status_update.emit(unavailable)
                 return False
         self.transcription_runtime.toggle_recording()
         return True
@@ -1295,7 +1326,7 @@ class ApplicationController(QObject):
         backend = self.current_backend
         if backend is None:
             raise RuntimeError("No transcription engine is available")
-        if getattr(backend, "is_transcribing", False):
+        if self.is_transcribing():
             raise RuntimeError("Transcription engine is busy")
         return backend.transcribe(audio_path)
 

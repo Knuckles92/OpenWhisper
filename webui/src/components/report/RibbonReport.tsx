@@ -113,11 +113,13 @@ export default function RibbonReport({
               const time = itemTime(item, segs);
               if (time == null) return null;
               return (
-                <span
+                <button
                   key={`${card}-${item.id}`}
+                  type="button"
                   className={`mm-marker ${card}`}
                   style={{ left: `${(time / duration) * 100}%` }}
                   title={item.text}
+                  aria-label={`${card === 'decisions' ? 'Decision' : card === 'risks' ? 'Risk' : 'Commitment'} at ${clock(time)}: ${item.text}`}
                   onClick={() => onSeek?.(time)}
                 />
               );

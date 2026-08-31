@@ -25,6 +25,10 @@ from meeting.interfaces import CHANNELS, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
+
+class OfflineWindowError(RuntimeError):
+    """Raised when one window fails and the offline transcript is incomplete."""
+
 #: Preferred offline chunk duration before quiet-cut scanning starts.
 OFFLINE_TARGET_SEC = 15.0
 
@@ -225,13 +229,21 @@ def transcribe_session_audio(
                 condition_on_previous_text=False,
                 initial_prompt=prompt,
             )
-        except Exception:
+            # faster-whisper returns a lazy iterator, so consume it inside the
+            # guarded region.  A failure in any window must invalidate the
+            # entire offline pass; otherwise callers can mistake a transcript
+            # with a missing middle section for a complete replacement.
+            whisper_segments = list(whisper_segments)
+        except Exception as exc:
             logger.exception(
                 "Offline ASR window failed (%s %.1f-%.1fs)",
                 channel, window_origin,
                 window_origin + (end - start) / float(sample_rate),
             )
-            continue
+            raise OfflineWindowError(
+                f"Offline ASR failed for {channel} window "
+                f"{idx}/{total_windows} at {window_origin:.1f}s"
+            ) from exc
         decoded: List[TranscriptSegment] = []
         for ordinal, seg in enumerate(whisper_segments):
             text = (seg.text or "").strip()

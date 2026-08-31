@@ -666,14 +666,15 @@ def persist_prompt_choices(
         check_enabled: When False, no background GitHub fetch.
         skipped_version: When set, this release is not auto-notified again.
     """
-    settings = settings_manager.load_all_settings()
-    settings[SettingsKey.UPDATE_NOTIFY_ENABLED] = bool(notify_enabled)
-    settings[SettingsKey.UPDATE_CHECK_ENABLED] = bool(check_enabled)
+    updates = {
+        SettingsKey.UPDATE_NOTIFY_ENABLED: bool(notify_enabled),
+        SettingsKey.UPDATE_CHECK_ENABLED: bool(check_enabled),
+    }
     if skipped_version:
-        settings[SettingsKey.UPDATE_SKIPPED_VERSION] = normalize_version(
+        updates[SettingsKey.UPDATE_SKIPPED_VERSION] = normalize_version(
             skipped_version
         )
-    settings_manager.save_all_settings(settings)
+    settings_manager.update_settings(updates)
 
 
 def updates_dir() -> str:

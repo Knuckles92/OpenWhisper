@@ -1737,7 +1737,7 @@ QCheckBox#meetingCloudCheckbox:hover {
     color: #f5f5f7;
 }
 
-QLabel#meetingCloudHelpIcon {
+QToolButton#meetingCloudHelpIcon {
     color: #8e8e93;
     background-color: #2c2c2e;
     border: 1px solid #3a3a3c;
@@ -1748,13 +1748,31 @@ QLabel#meetingCloudHelpIcon {
     max-width: 16px;
     min-height: 16px;
     max-height: 16px;
-    qproperty-alignment: AlignCenter;
+    padding: 0px;
 }
 
-QLabel#meetingCloudHelpIcon:hover {
+QToolButton#meetingCloudHelpIcon:hover {
     color: #f5f5f7;
     background-color: #3a3a3c;
     border-color: #636366;
+}
+
+QWidget#meetingModeTab QPushButton:focus,
+QWidget#meetingModeTab QToolButton:focus,
+QWidget#meetingModeTab QCheckBox:focus {
+    border: 2px solid #64d2ff;
+}
+
+QDialog#meetingIntroDialog QPushButton:focus,
+QDialog#meetingConsentDialog QPushButton:focus,
+QDialog#meetingAudioConsentDialog QPushButton:focus,
+QDialog#meetingUnsupportedDialog QPushButton:focus,
+QDialog#meetingUnsupportedDialog QCheckBox:focus,
+QDialog#meetingSystemAudioDialog QPushButton:focus,
+QDialog#meetingLinuxAudioDialog QPushButton:focus,
+QDialog#meetingLinuxAudioDialog QTextEdit:focus,
+QDialog#meetingRecoveryDialog QPushButton:focus {
+    border: 2px solid #64d2ff;
 }
 
 QWidget#meetingFinalizationCard {

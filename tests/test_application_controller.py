@@ -292,10 +292,15 @@ class FakeExecutor:
 class FakeHistoryManager:
     def __init__(self):
         self.entries = []
+        self.preserved = []
 
     def add_entry(self, **kwargs):
         self.entries.append(kwargs)
         return kwargs
+
+    def preserve_recording(self, source_path):
+        self.preserved.append(source_path)
+        return "recording_recovered.wav"
 
 
 class FakeAudioProcessor:
@@ -933,6 +938,9 @@ class TestApplicationController:
         assert len(controller.executor.submissions) == 1
         assert controller.executor.submissions[0][0].__name__ == "transcribe_audio_file"
 
+        # The second half models a later job, after the first result completed.
+        controller.transcription_runtime._finish_job()
+
         controller.executor = FakeExecutor()
         controller.current_backend = controller.transcription_backends["api_gpt4o"]
         controller.recorder.is_recording = True
@@ -1025,6 +1033,21 @@ class TestApplicationController:
         assert controller._pending_audio_path is None
         assert controller._pending_source_name is None
 
+    def test_transcription_failure_preserves_quick_recording(self):
+        controller = self._create_controller()
+        source = Path(self.temp_dir.name) / "failed-quick-record.wav"
+        source.write_bytes(b"RIFF-failed-audio")
+        controller._pending_audio_path = str(source)
+        controller._pending_source_name = "Quick Record"
+        controller.transcription_runtime._claim_job()
+
+        controller._on_transcription_error("backend unavailable")
+
+        assert self.history_manager.preserved == [str(source)]
+        assert "audio saved in Recordings" in controller.ui_controller.statuses[-1]
+        assert controller._pending_audio_path is None
+        assert not controller.transcription_runtime.has_active_job
+
     def test_copy_failure_does_not_claim_pasted(self):
         controller = self._create_controller()
         self.settings.all_settings["auto_paste"] = True
@@ -1050,6 +1073,54 @@ class TestApplicationController:
         assert controller._pending_audio_duration == 3.72
         assert controller._pending_source_name == "upload.wav"
         assert len(controller.executor.submissions) == 1
+
+    def test_second_upload_is_refused_without_overwriting_active_job_metadata(self):
+        controller = self._create_controller()
+        first = str(Path(self.temp_dir.name) / "first.wav")
+        second = str(Path(self.temp_dir.name) / "second.wav")
+        Path(first).write_bytes(b"x" * 256)
+        Path(second).write_bytes(b"y" * 512)
+
+        controller.upload_audio_file(first, duration_seconds=3.0)
+        controller.upload_audio_file(second, duration_seconds=9.0)
+
+        assert len(controller.executor.submissions) == 1
+        assert controller._pending_source_name == "first.wav"
+        assert controller._pending_audio_duration == 3.0
+        assert controller._pending_file_size == 256
+        assert "already in progress" in controller.ui_controller.statuses[-1]
+
+    def test_recording_start_is_refused_while_a_job_is_queued(self):
+        controller = self._create_controller()
+        clip_path = str(Path(self.temp_dir.name) / "upload.wav")
+        Path(clip_path).write_bytes(b"x" * 256)
+
+        controller.upload_audio_file(clip_path, duration_seconds=3.0)
+        assert controller.transcription_runtime.has_active_job
+
+        controller.start_recording()
+
+        assert not controller.recorder.is_recording
+        assert "already in progress" in controller.ui_controller.statuses[-1]
+
+    def test_stopped_recording_claims_job_before_post_roll_finishes(self):
+        controller = self._create_controller()
+        upload = str(Path(self.temp_dir.name) / "racing-upload.wav")
+        Path(upload).write_bytes(b"u" * 512)
+        controller.recorder.is_recording = True
+
+        def race_upload_during_post_roll():
+            controller.upload_audio_file(upload, duration_seconds=9.0)
+            return True
+
+        controller.recorder.wait_for_stop_completion = race_upload_during_post_roll
+
+        controller.stop_recording()
+
+        assert len(controller.executor.submissions) == 1
+        assert controller._pending_source_name == "Quick Record"
+        assert controller._pending_audio_duration == 12.5
+        assert controller._pending_file_size == 256
 
     def test_transcribe_audio_file_applies_cleanup_when_enabled(self):
         controller = self._create_controller()
@@ -1347,6 +1418,37 @@ class TestApplicationController:
         assert controller.ui_controller.device_infos[-1] == "cpu-reloaded"
         assert "Whisper engine ready" in controller.ui_controller.statuses
 
+    def test_batch_download_releases_every_processed_request(self):
+        controller = self._create_controller()
+        coordinator = self._coordinator()
+        ended = []
+        coordinator.end_request = ended.append
+        coordinator.grant_once = lambda model_name: None
+        controller._download_model_to_cache = lambda model_name: model_name != "base"
+
+        controller._hf_batch_worker(["tiny", "base", "small"])
+
+        assert ended == ["tiny", "base", "small"]
+        assert controller.ui_controller.batch_finished == [(2, 3)]
+
+    def test_stopped_batch_releases_processed_and_unprocessed_requests(self):
+        controller = self._create_controller()
+        coordinator = self._coordinator()
+        ended = []
+        coordinator.end_request = ended.append
+        coordinator.grant_once = lambda model_name: None
+
+        def download(model_name):
+            controller._batch_stop_requested = True
+            return True
+
+        controller._download_model_to_cache = download
+
+        controller._hf_batch_worker(["tiny", "base", "small"])
+
+        assert ended == ["tiny", "base", "small"]
+        assert controller.ui_controller.batch_finished == [(1, 3)]
+
     def test_manager_delete_refuses_loaded_model(self):
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]
@@ -1625,3 +1727,26 @@ class TestApplicationController:
         assert "still loading" in controller.ui_controller.statuses[-1].lower()
         assert controller.recorder.is_recording is False
 
+    def test_start_recording_prompts_for_missing_model_before_capture(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.is_model_missing = True
+        requested = []
+        controller.ensure_local_model_available = lambda: requested.append(True)
+
+        assert controller.start_recording() is False
+
+        assert requested == [True]
+        assert controller.recorder.is_recording is False
+        assert "not downloaded" in controller.ui_controller.statuses[-1]
+
+    def test_start_recording_refuses_unavailable_api_before_capture(self):
+        controller = self._create_controller()
+        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        controller._current_model_name = "api_gpt4o"
+        controller.current_backend.is_available = lambda: False
+
+        assert controller.start_recording() is False
+
+        assert controller.recorder.is_recording is False
+        assert "API key" in controller.ui_controller.statuses[-1]

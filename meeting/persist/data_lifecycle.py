@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 import uuid
 from typing import Any, Iterable, Optional, Set
 
@@ -12,6 +13,11 @@ logger = logging.getLogger(__name__)
 # Live capture statuses. Past Meetings hides these, and bulk clear must
 # never remove them even if a caller forgets to pass skip_ids.
 _NON_HISTORICAL_STATUSES = frozenset({"active", "paused", "ending"})
+
+# A live delete holds its tombstone only for the database transaction and one
+# rmtree.  Preserve recent names for concurrent callers, but collect abandoned
+# tombstones left by a crash instead of leaking meeting audio indefinitely.
+DELETION_TOMBSTONE_STALE_S = 60 * 60
 
 
 def _validated_spool_path(spool_dir: str, meetings_root: str) -> Optional[str]:
@@ -53,7 +59,22 @@ def delete_meeting_data(
         tombstone = os.path.join(
             os.path.dirname(spool), f".deleting-{meeting_id}-{uuid.uuid4().hex}"
         )
-        os.replace(spool, tombstone)
+        try:
+            os.replace(spool, tombstone)
+            # A rename preserves the directory's old mtime.  Refresh it so
+            # orphan cleanup measures the age of this deletion transaction,
+            # not the age of the meeting's last audio chunk.
+            os.utime(tombstone, None)
+        except Exception:
+            if os.path.isdir(tombstone) and not os.path.exists(spool):
+                try:
+                    os.replace(tombstone, spool)
+                except Exception:
+                    logger.exception(
+                        "Could not restore meeting spool after tombstone setup failed: %s",
+                        meeting_id,
+                    )
+            raise
     try:
         repository.delete_meeting(meeting_id)
     except Exception:
@@ -90,8 +111,22 @@ def _purge_orphan_spools(
         return
     for name in names:
         # Concurrent single-meeting deletes rename the spool to this prefix
-        # before the database commit; leave those directories alone.
+        # before the database commit.  Leave recent ones alone, but a crash can
+        # strand the renamed audio forever, so collect stale tombstones.
         if name.startswith(".deleting-"):
+            path = os.path.join(root, name)
+            try:
+                age_s = max(0.0, time.time() - os.stat(path).st_mtime)
+            except OSError:
+                continue
+            if age_s < DELETION_TOMBSTONE_STALE_S:
+                continue
+            try:
+                shutil.rmtree(path)
+            except Exception:
+                logger.exception(
+                    "Could not purge abandoned deletion tombstone %s", path
+                )
             continue
         path = os.path.join(root, name)
         if not os.path.isdir(path):
@@ -147,4 +182,3 @@ def clear_meetings(
     if delete_spools:
         _purge_orphan_spools(meetings_root, keep_spools)
     return removed
-

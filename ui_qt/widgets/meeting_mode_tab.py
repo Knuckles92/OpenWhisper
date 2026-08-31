@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -127,6 +129,10 @@ class MeetingModeTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("meetingModeTab")
+        self.setAccessibleName("Meeting Mode")
+        self.setAccessibleDescription(
+            "Start, monitor, and finish a meeting, then open its browser dashboard."
+        )
 
         self._active = False
         self._starting = False
@@ -221,6 +227,7 @@ class MeetingModeTab(QWidget):
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("meetingModeScrollArea")
+        self.scroll_area.setAccessibleName("Meeting Mode controls")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -271,6 +278,7 @@ class MeetingModeTab(QWidget):
         self.platform_hint.setObjectName("meetingModePlatformHint")
         self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.platform_hint.setFont(QFont("Segoe UI", 10))
+        self.platform_hint.setAccessibleName("Meeting platform notice")
         self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
         intro_card.layout.addWidget(self.platform_hint)
         content_layout.addWidget(intro_card)
@@ -284,15 +292,26 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox.setChecked(
             bool(settings_manager.get(SettingsKey.MEETING_CLOUD_LAST_ENABLED, False))
         )
+        self.cloud_checkbox.setAccessibleDescription(
+            "When checked, transcript text is sent to the configured AI model "
+            "for live insights and post-meeting reports. Audio stays local."
+        )
         self.cloud_checkbox.toggled.connect(self.cloud_toggled)
         cloud_row.addWidget(self.cloud_checkbox)
 
-        self.cloud_help_icon = QLabel("?")
+        self.cloud_help_icon = QToolButton()
+        self.cloud_help_icon.setText("?")
         self.cloud_help_icon.setObjectName("meetingCloudHelpIcon")
         self.cloud_help_icon.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.cloud_help_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cloud_help_icon.setFixedSize(18, 18)
         self.cloud_help_icon.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cloud_help_icon.setToolTip(cloud_intelligence_tooltip())
+        self.cloud_help_icon.setAccessibleName("About cloud intelligence")
+        self.cloud_help_icon.setAccessibleDescription(
+            "Explain what meeting data stays local and what is sent to the "
+            "configured AI model."
+        )
+        self.cloud_help_icon.clicked.connect(self._show_cloud_help)
         cloud_row.addWidget(self.cloud_help_icon)
 
         content_layout.addLayout(cloud_row)
@@ -310,6 +329,9 @@ class MeetingModeTab(QWidget):
         self.start_button.setObjectName("meetingStartButton")
         self.start_button.setMinimumHeight(48)
         self.start_button.setMaximumWidth(320)
+        self.start_button.setAccessibleDescription(
+            "Begin microphone and supported system-audio capture."
+        )
         self.start_button.clicked.connect(self._on_start_clicked)
         idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -319,6 +341,9 @@ class MeetingModeTab(QWidget):
         self.demo_button.setToolTip(
             "Open the dashboard with a fake transcript so you can test "
             "end-of-meeting cleanup and the final report without recording."
+        )
+        self.demo_button.setAccessibleDescription(
+            "Load a fake meeting and open its dashboard without recording audio."
         )
         self.demo_button.clicked.connect(self._on_demo_clicked)
         idle_layout.addWidget(
@@ -348,10 +373,12 @@ class MeetingModeTab(QWidget):
         self.status_pill = QLabel("Meeting")
         self.status_pill.setObjectName("meetingStatusPill")
         self.status_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_pill.setAccessibleName("Meeting status: Meeting")
         status_row.addWidget(self.status_pill)
 
         self.elapsed_label = QLabel("00:00")
         self.elapsed_label.setObjectName("meetingElapsedLabel")
+        self.elapsed_label.setAccessibleName("Meeting elapsed time: 00:00")
         status_row.addWidget(self.elapsed_label)
         self.session_card.layout.addLayout(status_row)
 
@@ -360,11 +387,15 @@ class MeetingModeTab(QWidget):
 
         self.pause_button = Button("Pause")
         self.pause_button.setObjectName("meetingPauseButton")
+        self.pause_button.setAccessibleDescription("Pause meeting capture.")
         self.pause_button.clicked.connect(self._on_pause_clicked)
         controls_row.addWidget(self.pause_button, stretch=1)
 
         self.end_button = DangerButton("End")
         self.end_button.setObjectName("meetingEndButton")
+        self.end_button.setAccessibleDescription(
+            "Stop capture and begin post-meeting finalization."
+        )
         self.end_button.clicked.connect(self.end_requested)
         controls_row.addWidget(self.end_button, stretch=1)
         self.session_card.layout.addLayout(controls_row)
@@ -374,11 +405,17 @@ class MeetingModeTab(QWidget):
 
         self.dashboard_button = Button("Open dashboard")
         self.dashboard_button.setObjectName("meetingDashboardButton")
+        self.dashboard_button.setAccessibleDescription(
+            "Open the live transcript and meeting insights in your web browser."
+        )
         self.dashboard_button.clicked.connect(self.open_dashboard_requested)
         links_row.addWidget(self.dashboard_button, stretch=1)
 
         self.guest_link_button = Button("Copy guest link")
         self.guest_link_button.setObjectName("meetingGuestLinkButton")
+        self.guest_link_button.setAccessibleDescription(
+            "Copy the guest dashboard link to the clipboard."
+        )
         self.guest_link_button.clicked.connect(self.copy_guest_link_requested)
         links_row.addWidget(self.guest_link_button, stretch=1)
         self.session_card.layout.addLayout(links_row)
@@ -453,6 +490,7 @@ class MeetingModeTab(QWidget):
         self.finalization_progress = QProgressBar()
         self.finalization_progress.setObjectName("meetingFinalizationProgress")
         self.finalization_progress.setTextVisible(False)
+        self.finalization_progress.setAccessibleName("Meeting finalization progress")
         self.finalization_progress.setMaximumHeight(6)
         self.finalization_progress.hide()
         self.finalization_card.layout.addWidget(self.finalization_progress)
@@ -466,6 +504,7 @@ class MeetingModeTab(QWidget):
 
         self.finalization_message = WrappedLabel("")
         self.finalization_message.setObjectName("meetingFinalizationMessage")
+        self.finalization_message.setAccessibleName("Meeting finalization status")
         active_box_layout.addWidget(self.finalization_message)
 
         self.finalization_detail = WrappedLabel("")
@@ -599,6 +638,17 @@ class MeetingModeTab(QWidget):
         """Emit the start request with the current cloud choice."""
         self.start_requested.emit(self.cloud_checkbox.isChecked())
 
+    def _show_cloud_help(self) -> None:
+        """Show the cloud privacy explanation for mouse and keyboard users."""
+        anchor = self.cloud_help_icon.mapToGlobal(
+            self.cloud_help_icon.rect().bottomLeft()
+        )
+        QToolTip.showText(
+            anchor,
+            cloud_intelligence_tooltip(),
+            self.cloud_help_icon,
+        )
+
     def _on_start_new_clicked(self):
         """Start a new meeting after saving the incomplete card for later."""
         self.start_new_meeting_requested.emit(self.cloud_checkbox.isChecked())
@@ -718,6 +768,7 @@ class MeetingModeTab(QWidget):
         """
         if text:
             self.status_pill.setText(text)
+            self.status_pill.setAccessibleName(f"Meeting status: {text}")
 
     def set_dashboard_available(self, available: bool) -> None:
         """Enable Open Dashboard when a retained URL exists.
@@ -816,7 +867,9 @@ class MeetingModeTab(QWidget):
             self._elapsed_base_s = 0.0
             self._running_since = None
             self.pause_button.setText("Pause")
+            self.pause_button.setAccessibleDescription("Pause meeting capture.")
             self.elapsed_label.setText("00:00")
+            self.elapsed_label.setAccessibleName("Meeting elapsed time: 00:00")
         self._apply_layout_state()
 
     def _set_paused(self, paused: bool) -> None:
@@ -830,9 +883,11 @@ class MeetingModeTab(QWidget):
                 self._elapsed_base_s += now - self._running_since
                 self._running_since = None
             self.pause_button.setText("Resume")
+            self.pause_button.setAccessibleDescription("Resume meeting capture.")
         else:
             self._running_since = now
             self.pause_button.setText("Pause")
+            self.pause_button.setAccessibleDescription("Pause meeting capture.")
 
     def _apply_layout_state(self) -> None:
         """Show idle, in-meeting, and/or finalization controls."""
@@ -987,6 +1042,10 @@ class MeetingModeTab(QWidget):
             else titles.get(display_status, "Final insights")
         )
         self.finalization_message.setText(message or defaults.get(display_status, ""))
+        self.finalization_card.setAccessibleName(self.finalization_title.text())
+        self.finalization_card.setAccessibleDescription(
+            self.finalization_message.text()
+        )
         self.finalization_keep_hint.setText(
             "This failed start has no audio or transcript."
             if empty_meeting
@@ -1156,6 +1215,10 @@ class MeetingModeTab(QWidget):
 
             step_id = str(s.get("id") or "")
             step_status = s.get("status", "pending")
+            step_name = str(s.get("name") or f"Step {idx}")
+            detail_text = str(s.get("detail") or "")
+            row.setAccessibleName(f"{step_name}: {step_status}")
+            row.setAccessibleDescription(detail_text)
             if step_status == "completed":
                 icon_text = "✓"
                 icon_color = "#30d158"
@@ -1179,7 +1242,7 @@ class MeetingModeTab(QWidget):
             icon_label.setFixedWidth(16)
             row_layout.addWidget(icon_label)
 
-            name_label = QLabel(s.get("name", f"Step {idx}"))
+            name_label = QLabel(step_name)
             name_label.setObjectName("meetingFinalizationStepName")
             name_font = QFont("Segoe UI", 11)
             if step_status == "running":
@@ -1189,7 +1252,6 @@ class MeetingModeTab(QWidget):
 
             row_layout.addStretch()
 
-            detail_text = s.get("detail", "")
             if detail_text and step_status == "running":
                 detail_label = QLabel("In progress")
             elif step_status == "completed":
@@ -1217,6 +1279,7 @@ class MeetingModeTab(QWidget):
                 action.setObjectName("meetingFinalizationStepAction")
                 action.setCursor(Qt.CursorShape.PointingHandCursor)
                 action.setFlat(True)
+                action.setAccessibleName(f"{action_label} {step_name}")
                 action.clicked.connect(
                     lambda _checked=False, sid=step_id: (
                         self.retry_step_requested.emit(sid)
@@ -1241,9 +1304,13 @@ class MeetingModeTab(QWidget):
         hours, remainder = divmod(total, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours:
-            self.elapsed_label.setText(f"{hours}:{minutes:02d}:{seconds:02d}")
+            elapsed_text = f"{hours}:{minutes:02d}:{seconds:02d}"
         else:
-            self.elapsed_label.setText(f"{minutes:02d}:{seconds:02d}")
+            elapsed_text = f"{minutes:02d}:{seconds:02d}"
+        self.elapsed_label.setText(elapsed_text)
+        self.elapsed_label.setAccessibleName(
+            f"Meeting elapsed time: {elapsed_text}"
+        )
 
     @property
     def is_meeting_active(self) -> bool:

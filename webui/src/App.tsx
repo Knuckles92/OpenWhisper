@@ -20,7 +20,7 @@ import {
 } from './report';
 import { initialUiState, meetingReducer } from './state';
 import type { Op, Role, SessionResponse } from './types';
-import { MeetingSocket } from './ws';
+import { MeetingSocket, socketStatusMessage } from './ws';
 
 /** Read meeting token from `/m/{token}` or `?token=`. */
 export function extractToken(): string | null {
@@ -126,12 +126,62 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     writeStoredReportView(view);
   }, []);
 
-  const sendOp = useCallback((op: Op) => {
-    socketRef.current?.sendAction(op);
+  const sendOp = useCallback(async (op: Op): Promise<boolean> => {
+    const socket = socketRef.current;
+    if (!socket) {
+      dispatch({ type: 'client_error', message: 'You are offline. Your change was not sent.' });
+      return false;
+    }
+    try {
+      const results = await socket.sendAction(op);
+      const acknowledged = results.length > 0;
+      if (!acknowledged) {
+        dispatch({ type: 'client_error', message: 'The server did not acknowledge the change.' });
+      }
+      const rejected = results.find((result) => !result.ok);
+      if (rejected) {
+        dispatch({
+          type: 'client_error',
+          message: (rejected.reason || 'Action was rejected').replace(/_/g, ' '),
+        });
+      }
+      return acknowledged && !rejected;
+    } catch (err) {
+      dispatch({
+        type: 'client_error',
+        message: err instanceof Error ? err.message : 'Your change could not be sent.',
+      });
+      return false;
+    }
   }, []);
 
-  const sendUndo = useCallback((seq: number) => {
-    socketRef.current?.sendUndo(seq);
+  const sendUndo = useCallback(async (seq: number): Promise<boolean> => {
+    const socket = socketRef.current;
+    if (!socket) {
+      dispatch({ type: 'client_error', message: 'You are offline. Undo was not sent.' });
+      return false;
+    }
+    try {
+      const results = await socket.sendUndo(seq);
+      const acknowledged = results.length > 0;
+      if (!acknowledged) {
+        dispatch({ type: 'client_error', message: 'The server did not acknowledge undo.' });
+      }
+      const rejected = results.find((result) => !result.ok);
+      if (rejected) {
+        dispatch({
+          type: 'client_error',
+          message: (rejected.reason || 'Undo was rejected').replace(/_/g, ' '),
+        });
+      }
+      return acknowledged && !rejected;
+    } catch (err) {
+      dispatch({
+        type: 'client_error',
+        message: err instanceof Error ? err.message : 'Undo could not be sent.',
+      });
+      return false;
+    }
   }, []);
 
   const participants = useMemo(
@@ -180,7 +230,16 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   }, []);
 
   if (!ui.state) {
-    return <div className="loading-screen">Connecting…</div>;
+    return <div className="loading-screen" role="status" aria-live="polite">Connecting…</div>;
+  }
+
+  if (ui.socketStatus === 'unauthorized' || ui.socketStatus === 'name_required') {
+    return (
+      <div className="error-screen" role="alert">
+        <p>{ui.socketStatus === 'unauthorized' ? 'Meeting link expired' : 'Unable to join meeting'}</p>
+        <p>{socketStatusMessage(ui.socketStatus)}</p>
+      </div>
+    );
   }
 
   return (
@@ -195,6 +254,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         meetingEnded={ui.meetingEnded}
         lastError={ui.lastError}
         onSendOp={sendOp}
+        onClientError={(message) => dispatch({ type: 'client_error', message })}
         onClearError={() => dispatch({ type: 'clear_error' })}
         onToggleHistory={() => {
           setShowHistory((v) => !v);
@@ -237,6 +297,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                       ref={audioRef}
                       key={`${ui.state.meeting_id}:${ui.state.status}`}
                       controls
+                      aria-label="Meeting audio recording"
                       preload={ui.state.status === 'active' ? 'none' : 'metadata'}
                       src={api.audioUrl(
                         token,
@@ -376,7 +437,7 @@ export default function App() {
 
   if (!token) {
     return (
-      <div className="error-screen">
+      <div className="error-screen" role="alert">
         <p>Missing meeting token.</p>
         <p>Open the link shared by the host.</p>
       </div>
@@ -385,7 +446,7 @@ export default function App() {
 
   if (loadError) {
     return (
-      <div className="error-screen">
+      <div className="error-screen" role="alert">
         <p>Unable to join meeting</p>
         <p>{loadError}</p>
       </div>
@@ -393,7 +454,7 @@ export default function App() {
   }
 
   if (!session) {
-    return <div className="loading-screen">Loading meeting…</div>;
+    return <div className="loading-screen" role="status" aria-live="polite">Loading meeting…</div>;
   }
 
   if (session.role === 'guest' && !guestName) {

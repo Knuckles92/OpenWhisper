@@ -656,8 +656,6 @@ def rerun_polish(
             ),
             tools,
         )
-        last_error = ""
-        applied_any = False
         total = len(blocks)
         for idx, block in enumerate(blocks, 1):
             if progress_cb is not None:
@@ -678,12 +676,14 @@ def rerun_polish(
             )
             result = _run_checkpoint(core, payload, timeout_s)
             if not result.ok:
-                last_error = result.error or "transcript cleanup failed"
-                break
-            applied_any = True
-        if last_error and not applied_any:
-            return {"ok": False, "applied": tools.applied - applied_before,
-                    "error": last_error}
+                # Earlier blocks may already have persisted edits.  Report the
+                # pass as incomplete so finalization remains retryable instead
+                # of presenting a partially polished transcript as finished.
+                return {
+                    "ok": False,
+                    "applied": tools.applied - applied_before,
+                    "error": result.error or "transcript cleanup failed",
+                }
         return {"ok": True, "applied": tools.applied - applied_before,
                 "error": None}
     except Exception as exc:

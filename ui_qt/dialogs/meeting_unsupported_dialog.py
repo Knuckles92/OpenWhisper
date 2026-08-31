@@ -74,6 +74,10 @@ class MeetingUnsupportedPlatformDialog(QDialog):
             self.setWindowTitle(
                 f"Meeting Mode is not supported on {self.os_name}"
             )
+        self.setAccessibleName(self.windowTitle())
+        self.setAccessibleDescription(
+            "Platform warning. Review and acknowledge every limitation before continuing."
+        )
         self.setMinimumWidth(500)
         self.setModal(True)
 

@@ -308,8 +308,93 @@ def session_wav_path(spool_dir: str, channel: str) -> str:
     return os.path.join(spool_dir, f"{channel}_session.wav")
 
 
-def write_session_meta(path: str, sample_rate: int, sample_count: int,
-                       origin_s: float) -> None:
+def chunk_recovery_meta_path(file_path: str) -> str:
+    """Stable sidecar path for an unregistered chunk artifact.
+
+    The WAV may move between ``*.wav`` and ``*.wav.orphan`` while SQLite is
+    unavailable.  Keeping the sidecar beside the canonical WAV name lets a
+    later recovery pass find the timing metadata regardless of that rename.
+    """
+    canonical = str(file_path)
+    if canonical.endswith(".orphan"):
+        canonical = canonical[:-len(".orphan")]
+    return canonical + ".recovery.json"
+
+
+def write_chunk_recovery_meta(
+    file_path: str,
+    meeting_id: str,
+    channel: str,
+    seq: int,
+    start_s: float,
+    duration_s: float,
+    sample_rate: int = TARGET_RATE,
+) -> None:
+    """Atomically preserve registration fields for a stranded chunk WAV."""
+    path = chunk_recovery_meta_path(file_path)
+    payload = {
+        "version": 1,
+        "meeting_id": str(meeting_id),
+        "channel": str(channel),
+        "seq": int(seq),
+        "start_s": float(start_s),
+        "duration_s": float(duration_s),
+        "sample_rate": int(sample_rate),
+    }
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, separators=(",", ":"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+def load_chunk_recovery_meta(file_path: str) -> Optional[Dict[str, Any]]:
+    """Load a stranded chunk sidecar, returning None when it is unusable."""
+    try:
+        with open(chunk_recovery_meta_path(file_path), "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return {
+            "meeting_id": str(data.get("meeting_id") or ""),
+            "channel": str(data.get("channel") or ""),
+            "seq": int(data["seq"]),
+            "start_s": float(data["start_s"]),
+            "duration_s": float(data["duration_s"]),
+            "sample_rate": int(data.get("sample_rate") or TARGET_RATE),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def remove_chunk_recovery_meta(file_path: str) -> None:
+    """Best-effort removal after the corresponding DB row is durable."""
+    try:
+        os.remove(chunk_recovery_meta_path(file_path))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.debug(
+            "Could not remove recovered chunk sidecar for %s",
+            file_path,
+            exc_info=True,
+        )
+
+
+def write_session_meta(
+    path: str,
+    sample_rate: int,
+    sample_count: int,
+    origin_s: float,
+    *,
+    pcm_origin_s: Optional[float] = None,
+    prefix_16k_samples: int = 0,
+    pcm_active: bool = True,
+) -> None:
     """Atomically write session PCM watermark metadata.
 
     Args:
@@ -317,11 +402,24 @@ def write_session_meta(path: str, sample_rate: int, sample_count: int,
         sample_rate: Native sample rate of the PCM file.
         sample_count: Number of int16 samples written so far.
         origin_s: Meeting-clock time of the first sample.
+        pcm_origin_s: Meeting-clock time of the current native PCM's first
+            sample. This differs from ``origin_s`` after a rate change.
+        prefix_16k_samples: Samples already stored in ``*.16k.pcm`` before
+            the current native PCM suffix.
+        pcm_active: Whether ``*_session.pcm`` is a current, unconverted suffix.
     """
     payload = {
         "sample_rate": int(sample_rate),
         "sample_count": int(sample_count),
         "origin_s": float(origin_s),
+        # ``*_session.pcm`` is overwritten after a native-rate change while
+        # ``*.16k.pcm`` keeps the already converted prefix.  These fields make
+        # the current raw file independently placeable after a hard kill.
+        "pcm_origin_s": float(
+            origin_s if pcm_origin_s is None else pcm_origin_s
+        ),
+        "prefix_16k_samples": max(0, int(prefix_16k_samples)),
+        "pcm_active": bool(pcm_active),
     }
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as handle:
@@ -341,11 +439,20 @@ def load_session_meta(path: str) -> Optional[Dict[str, Any]]:
     if not isinstance(data, dict):
         return None
     try:
-        return {
+        result = {
             "sample_rate": int(data.get("sample_rate") or 0),
             "sample_count": int(data.get("sample_count") or 0),
             "origin_s": float(data.get("origin_s") or 0.0),
         }
+        if "pcm_origin_s" in data:
+            result["pcm_origin_s"] = float(data["pcm_origin_s"])
+        if "prefix_16k_samples" in data:
+            result["prefix_16k_samples"] = max(
+                0, int(data["prefix_16k_samples"])
+            )
+        if "pcm_active" in data:
+            result["pcm_active"] = bool(data["pcm_active"])
+        return result
     except (TypeError, ValueError):
         return None
 
@@ -386,7 +493,63 @@ def resample_pcm_file_to_16k(
             out = resample_to_16k(frames, rate)
             dest.write(np.ascontiguousarray(out, dtype=np.int16).tobytes())
             written += int(out.size)
+        dest.flush()
+        os.fsync(dest.fileno())
     return written
+
+
+def pcm_slice_to_wav(
+    src_pcm: str,
+    src_rate: int,
+    start_sample: int,
+    end_sample: int,
+    wav_path: str,
+    *,
+    window_s: float = SESSION_RESAMPLE_WINDOW_S,
+) -> int:
+    """Materialize a native PCM interval as an atomic 16 kHz mono WAV.
+
+    Returns the exact number of output frames written.  Input is streamed in
+    bounded windows so a long interrupted meeting cannot create an equally
+    large recovery allocation.
+    """
+    rate = max(1, int(src_rate))
+    start = max(0, int(start_sample))
+    end = max(start, int(end_sample))
+    remaining = end - start
+    if remaining <= 0:
+        return 0
+    window_n = max(1, int(round(float(window_s) * rate)))
+    tmp_path = wav_path + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(wav_path)) or ".", exist_ok=True)
+    written = 0
+    try:
+        with open(src_pcm, "rb") as src, wave.open(tmp_path, "wb") as wav_file:
+            src.seek(start * 2)
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(TARGET_RATE)
+            while remaining > 0:
+                raw = src.read(min(remaining, window_n) * 2)
+                frames = np.frombuffer(raw, dtype="<i2")
+                if frames.size == 0:
+                    break
+                out = resample_to_16k(frames, rate)
+                wav_file.writeframesraw(
+                    np.ascontiguousarray(out, dtype=np.int16).tobytes()
+                )
+                written += int(out.size)
+                remaining -= int(frames.size)
+        with open(tmp_path, "rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, wav_path)
+        return written
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def pcm16k_to_wav(pcm_path: str, wav_path: str) -> None:
@@ -834,7 +997,8 @@ class SpoolWriter:
     def _append_session(self, frames: np.ndarray) -> None:
         if frames.size == 0 or self._rate is None:
             return
-        if self._session_fp is None:
+        opened = self._session_fp is None
+        if opened:
             pcm_path = session_pcm_path(self._spool_dir, self._channel)
             self._session_fp = open(pcm_path, "wb")
             self._session_rate = int(self._rate)
@@ -847,7 +1011,7 @@ class SpoolWriter:
         payload = np.ascontiguousarray(frames, dtype=np.int16)
         self._session_fp.write(payload.tobytes())
         self._session_samples += int(payload.size)
-        if (
+        if opened or (
             self._session_samples - self._session_meta_at
             >= _SESSION_META_EVERY_SAMPLES
         ):
@@ -865,12 +1029,18 @@ class SpoolWriter:
             origin = self._session_origin_s
         # Prefer durable 16 kHz totals once any segment has spilled so offline
         # consumers see one contiguous timeline origin even mid-meeting.
-        if self._session_16k_samples > 0 and self._session_fp is None:
-            rate = TARGET_RATE
-            samples = int(self._session_16k_samples)
-        elif self._session_rate is not None:
+        if self._session_rate is not None and self._session_samples > 0:
             rate = int(self._session_rate)
             samples = int(self._session_samples)
+            pcm_origin = float(origin) + (
+                self._session_16k_samples / float(TARGET_RATE)
+            )
+            pcm_active = True
+        elif self._session_16k_samples > 0:
+            rate = TARGET_RATE
+            samples = int(self._session_16k_samples)
+            pcm_origin = float(origin)
+            pcm_active = False
         else:
             return
         try:
@@ -879,6 +1049,9 @@ class SpoolWriter:
                 rate,
                 samples,
                 float(origin),
+                pcm_origin_s=pcm_origin,
+                prefix_16k_samples=self._session_16k_samples,
+                pcm_active=pcm_active,
             )
         except Exception:
             logger.exception("Session metadata write failed (%s)", self._channel)
@@ -905,6 +1078,7 @@ class SpoolWriter:
             self._session_samples = 0
             self._session_rate = None
             return
+        converted = False
         try:
             written = resample_pcm_file_to_16k(
                 pcm_path,
@@ -913,8 +1087,15 @@ class SpoolWriter:
                 append=os.path.isfile(self._session_16k_pcm),
             )
             self._session_16k_samples += int(written or 0)
+            converted = True
         except Exception:
             logger.exception("Session PCM resample failed (%s)", self._channel)
+        if converted:
+            try:
+                os.remove(pcm_path)
+            except OSError:
+                logger.debug("Could not remove converted session PCM %s",
+                             pcm_path, exc_info=True)
         self._session_samples = 0
         self._session_rate = None
         # Rewrite meta against the durable 16 kHz timeline after each spill.
@@ -991,6 +1172,24 @@ class SpoolWriter:
                 pass
             return None
 
+        # Publish the registration transaction marker before touching SQLite.
+        # A hard kill after the WAV replace but before/during the DB commit can
+        # then be reconciled on startup; a successful registration removes it.
+        try:
+            write_chunk_recovery_meta(
+                file_path,
+                self._meeting_id,
+                self._channel,
+                seq,
+                start_s,
+                duration_s,
+                TARGET_RATE,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to publish recovery metadata for %s", file_path
+            )
+
         chunk_id = self._register_chunk(file_path, seq, start_s, duration_s)
         if chunk_id is None:
             return None
@@ -1025,7 +1224,7 @@ class SpoolWriter:
         """
         for attempt in (1, 2):
             try:
-                return self._repository.register_chunk(
+                chunk_id = self._repository.register_chunk(
                     meeting_id=self._meeting_id,
                     channel=self._channel,
                     seq=seq,
@@ -1035,6 +1234,8 @@ class SpoolWriter:
                     sample_rate=TARGET_RATE,
                     asr_status="pending",
                 )
+                remove_chunk_recovery_meta(file_path)
+                return chunk_id
             except Exception:
                 logger.exception("Failed to register spool chunk %s "
                                  "(attempt %d)", file_path, attempt)
@@ -1046,8 +1247,22 @@ class SpoolWriter:
         except OSError:
             logger.exception("Failed to rename orphaned chunk %s", file_path)
             orphan_path = file_path
+        try:
+            write_chunk_recovery_meta(
+                orphan_path,
+                self._meeting_id,
+                self._channel,
+                seq,
+                start_s,
+                duration_s,
+                TARGET_RATE,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to preserve recovery metadata for %s", orphan_path
+            )
         logger.error(
-            "Chunk %s could not be registered; audio kept at %s but it will "
-            "not be transcribed or recovered", file_path, orphan_path,
+            "Chunk %s could not be registered; audio kept at %s for startup "
+            "recovery", file_path, orphan_path,
         )
         return None

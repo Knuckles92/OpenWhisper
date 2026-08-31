@@ -5,7 +5,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtWidgets import QApplication, QPushButton, QToolButton
 
 from config import config
 from services.settings import SettingsKey, settings_manager
@@ -70,6 +70,34 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
             self.window.meeting_mode_tab,
         )
         self.assertFalse(hasattr(self.window, "meeting_panel"))
+
+    def test_launch_controls_are_named_and_keyboard_reachable(self):
+        tab = self.window.meeting_mode_tab
+
+        self.assertEqual(tab.accessibleName(), "Meeting Mode")
+        self.assertTrue(tab.accessibleDescription())
+        self.assertIsInstance(tab.cloud_help_icon, QToolButton)
+        self.assertEqual(
+            tab.cloud_help_icon.accessibleName(),
+            "About cloud intelligence",
+        )
+        self.assertTrue(tab.cloud_help_icon.accessibleDescription())
+        self.assertNotEqual(
+            tab.cloud_help_icon.focusPolicy(),
+            Qt.FocusPolicy.NoFocus,
+        )
+        self.assertTrue(tab.cloud_checkbox.accessibleDescription())
+        self.assertTrue(tab.dashboard_button.accessibleDescription())
+
+        tab.set_status_text("Paused")
+        self.assertEqual(
+            tab.status_pill.accessibleName(),
+            "Meeting status: Paused",
+        )
+        self.assertEqual(
+            self.window.title_bar.close_btn.accessibleName(),
+            "Close window",
+        )
 
     def test_sidebar_switches_to_past_meetings_for_meeting_mode(self):
         self.assertFalse(self.window.history_sidebar.content_widget.isHidden())

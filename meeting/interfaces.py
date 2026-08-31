@@ -8,7 +8,9 @@ standalone application without rewrites.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
+from typing import (
+    Any, Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable,
+)
 
 import numpy as np
 
@@ -387,6 +389,7 @@ class MeetingRepository(Protocol):
 
     # -- audio chunks --
     def register_chunk(self, **fields) -> int: ...
+    def register_chunk_if_missing(self, **fields) -> Tuple[int, bool]: ...
     def set_chunk_status(self, chunk_id: int, status: str,
                          error: Optional[str] = None) -> None: ...
     def get_pending_chunks(self, meeting_id: str) -> List[Dict[str, Any]]: ...

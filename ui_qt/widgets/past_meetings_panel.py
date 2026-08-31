@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, Callable, Dict, Iterable, Optional
 
 from config import config
@@ -213,22 +214,28 @@ class PastMeetingsPanel(QWidget):
     copy_transcript_requested = pyqtSignal(str)
     delete_meeting_requested = pyqtSignal(str, bool)
     clear_meetings_requested = pyqtSignal(bool)
+    _meetings_loaded = pyqtSignal(int, object, str, bool)
     MAX_MEETINGS = 100
 
     def __init__(
         self,
         parent=None,
         meeting_provider: Optional[Callable[[], Iterable[Dict[str, Any]]]] = None,
+        repository=None,
     ):
         super().__init__(parent)
         self._meeting_provider = meeting_provider
-        self._repository = None
+        self._repository = repository
         self._selected_id: Optional[str] = None
         self._meetings: list[Dict[str, Any]] = []
+        self._meeting_load_generation = 0
+        self._source_filtered = False
+        self._has_more = False
         self.setObjectName("pastMeetingsContent")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._setup_ui()
         self._apply_style()
+        self._meetings_loaded.connect(self._apply_meeting_results)
 
     def set_selected_meeting_id(self, meeting_id: Optional[str]) -> None:
         """Highlight the tile that matches the leftover card, if listed."""
@@ -277,7 +284,7 @@ class PastMeetingsPanel(QWidget):
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(250)
-        self._search_timer.timeout.connect(self._rebuild_list)
+        self._search_timer.timeout.connect(self.refresh)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("pastMeetingsScrollArea")
@@ -332,17 +339,33 @@ class PastMeetingsPanel(QWidget):
         menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
 
     def _on_search_text_changed(self, _text: str) -> None:
+        self._meeting_load_generation += 1
         self._search_timer.start()
 
-    def _load_meetings(self) -> list[Dict[str, Any]]:
+    def _load_meetings(
+        self,
+        query: str = "",
+    ) -> tuple[list[Dict[str, Any]], bool]:
         if self._meeting_provider is not None:
             rows = self._meeting_provider()
+            source_filtered = False
         else:
             if self._repository is None:
                 from meeting.persist.repository import SqlMeetingRepository
 
                 self._repository = SqlMeetingRepository()
-            rows = self._repository.list_meetings()
+            summary_loader = getattr(
+                self._repository, "list_past_meeting_summaries", None
+            )
+            if callable(summary_loader):
+                rows = summary_loader(
+                    limit=self.MAX_MEETINGS + 1,
+                    query=query,
+                )
+                source_filtered = True
+            else:
+                rows = self._repository.list_meetings()
+                source_filtered = False
         meetings = []
         for row in rows:
             meeting = dict(row)
@@ -356,7 +379,7 @@ class PastMeetingsPanel(QWidget):
                     self._repository, str(meeting.get("id") or "")
                 )
             meetings.append(meeting)
-        return meetings
+        return meetings, source_filtered
 
     def _filter_meetings(
         self, meetings: list[Dict[str, Any]]
@@ -382,8 +405,46 @@ class PastMeetingsPanel(QWidget):
 
     def refresh(self) -> None:
         """Reload persisted meetings and rebuild the card list."""
+        query = self.search_input.text().strip().lower()
+        self._meeting_load_generation += 1
+        generation = self._meeting_load_generation
+
+        # Explicit providers are small test/integration seams and retain their
+        # synchronous behavior. Production repository reads run off the Qt
+        # thread and return only one bounded page.
+        if self._meeting_provider is None:
+            if self._repository is None:
+                from meeting.persist.repository import SqlMeetingRepository
+
+                self._repository = SqlMeetingRepository()
+            if not self._meetings:
+                self._clear_list()
+                self.meetings_list_layout.addWidget(
+                    self._placeholder("Loading past meetings…")
+                )
+
+            def load() -> None:
+                meetings = []
+                error = ""
+                source_filtered = False
+                try:
+                    meetings, source_filtered = self._load_meetings(query)
+                except Exception as exc:
+                    logger.error("Failed to load past meetings: %s", exc)
+                    error = str(exc)
+                self._meetings_loaded.emit(
+                    generation, meetings, error, source_filtered
+                )
+
+            threading.Thread(
+                target=load,
+                name="past-meetings-load",
+                daemon=True,
+            ).start()
+            return
+
         try:
-            self._meetings = self._load_meetings()
+            self._meetings, self._source_filtered = self._load_meetings(query)
         except Exception as exc:
             logger.error("Failed to load past meetings: %s", exc)
             self._meetings = []
@@ -393,15 +454,43 @@ class PastMeetingsPanel(QWidget):
                 self._placeholder("Past meetings could not be loaded")
             )
             return
+        self._has_more = len(self._meetings) > self.MAX_MEETINGS
+        self._rebuild_list()
+
+    def _apply_meeting_results(
+        self,
+        generation: int,
+        meetings,
+        error: str,
+        source_filtered: bool,
+    ) -> None:
+        if generation != self._meeting_load_generation:
+            return
+        if error:
+            self._meetings = []
+            self._clear_list()
+            self.section_header.setText("PAST MEETINGS")
+            self.meetings_list_layout.addWidget(
+                self._placeholder("Past meetings could not be loaded")
+            )
+            return
+        self._meetings = list(meetings or [])
+        self._source_filtered = bool(source_filtered)
+        self._has_more = len(self._meetings) > self.MAX_MEETINGS
         self._rebuild_list()
 
     def _rebuild_list(self) -> None:
         self._clear_list()
-        meetings = self._filter_meetings(self._meetings)
+        meetings = (
+            self._meetings
+            if self._source_filtered
+            else self._filter_meetings(self._meetings)
+        )
         query = self.search_input.text().strip()
         total = len(self._meetings)
         shown = min(len(meetings), self.MAX_MEETINGS)
-        self.section_header.setText(f"PAST MEETINGS ({shown})")
+        suffix = "+" if self._has_more and shown == self.MAX_MEETINGS else ""
+        self.section_header.setText(f"PAST MEETINGS ({shown}{suffix})")
 
         if not self._meetings:
             self.meetings_list_layout.addWidget(
@@ -423,10 +512,11 @@ class PastMeetingsPanel(QWidget):
             card.delete_requested.connect(self._confirm_delete)
             self.meetings_list_layout.addWidget(card)
 
-        if len(meetings) > self.MAX_MEETINGS:
+        if self._has_more or len(meetings) > self.MAX_MEETINGS:
             self.meetings_list_layout.addWidget(
                 self._placeholder(
-                    f"Showing 100 of {len(meetings)} — search to find older meetings"
+                    "Showing the first 100 matches — refine your search to find "
+                    "older meetings"
                 )
             )
         elif not query and total > self.MAX_MEETINGS:

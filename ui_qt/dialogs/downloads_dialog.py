@@ -7,6 +7,7 @@ the only scroller here: the header, toolbar, and component strip stay put.
 Non-modal, like Model Manager, because a multi-gigabyte download must not lock
 the user out of recording.
 """
+import threading
 from typing import Callable, Dict, List, Optional, Set
 
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
@@ -33,6 +34,7 @@ from services.hf_access import (
     format_download_size,
     format_size_bytes,
     get_hf_cache_dir,
+    peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
 )
@@ -150,6 +152,7 @@ class DownloadsDialog(QDialog):
     component_install_requested = pyqtSignal(str)
     component_cancel_requested = pyqtSignal(str)
     component_remove_requested = pyqtSignal(str)
+    _cache_scan_finished = pyqtSignal(int, object)
 
     #: Assigned by UIController; called with the model name.
     on_download_requested: Optional[Callable[[str], None]] = None
@@ -162,6 +165,7 @@ class DownloadsDialog(QDialog):
         self,
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         parent=None,
+        background_cache_scan: bool = True,
     ):
         """Show the catalog with the in-use model protected from deletion.
 
@@ -172,6 +176,9 @@ class DownloadsDialog(QDialog):
         """
         super().__init__(parent)
         self._get_loaded_model = get_loaded_model
+        self._background_cache_scan = bool(background_cache_scan)
+        self._cache_scan_generation = 0
+        self._cache_inventory_loading = False
         self._downloading_model: Optional[str] = None
         self._component_rows: Dict[str, ComponentRowWidget] = {}
         self._selected_model: Optional[str] = None
@@ -192,6 +199,7 @@ class DownloadsDialog(QDialog):
 
         self._setup_ui()
         self.resize(self.DEFAULT_SIZE)
+        self._cache_scan_finished.connect(self._on_cache_scan_finished)
         self.refresh()
 
     # ---- construction ----
@@ -818,7 +826,39 @@ class DownloadsDialog(QDialog):
     # ---- public state API (driven by UIController) ----
 
     def refresh(self) -> None:
-        cached = scan_cached_models()
+        if not self._background_cache_scan:
+            self._cache_inventory_loading = False
+            self._refresh_cached_model_state(
+                scan_cached_models(max_age_seconds=30.0)
+            )
+            return
+
+        cached = peek_cached_models()
+        self._cache_inventory_loading = cached is None
+        self._refresh_cached_model_state(cached or {})
+        self._cache_scan_generation += 1
+        generation = self._cache_scan_generation
+
+        def load() -> None:
+            result = scan_cached_models(max_age_seconds=30.0)
+            self._cache_scan_finished.emit(generation, result)
+
+        threading.Thread(
+            target=load,
+            name="downloads-cache-scan",
+            daemon=True,
+        ).start()
+
+    def _on_cache_scan_finished(self, generation: int, cached) -> None:
+        if generation != self._cache_scan_generation:
+            return
+        self._cache_inventory_loading = False
+        self._refresh_cached_model_state(dict(cached or {}))
+
+    def _refresh_cached_model_state(
+        self,
+        cached: Dict[str, CachedModelInfo],
+    ) -> None:
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
@@ -837,7 +877,9 @@ class DownloadsDialog(QDialog):
 
         queued_names = set(self._batch_queue)
         slot_busy = self._download_slot_busy()
-        selection_locked = slot_busy or downloads_blocked
+        selection_locked = (
+            slot_busy or downloads_blocked or self._cache_inventory_loading
+        )
         seen_repos: Dict[str, CachedModelInfo] = {}
         for model_name, row in self.rows.items():
             info = cached.get(row.repo_id)
@@ -849,7 +891,7 @@ class DownloadsDialog(QDialog):
                 is_loaded=(row.repo_id == loaded_repo),
                 downloading=(model_name == self._downloading_model),
                 downloads_blocked=downloads_blocked,
-                download_slot_busy=slot_busy,
+                download_slot_busy=slot_busy or self._cache_inventory_loading,
                 queued=(model_name in queued_names
                         and model_name != self._downloading_model),
                 selection_enabled=not selection_locked,
@@ -865,10 +907,15 @@ class DownloadsDialog(QDialog):
                 self._selected_models.discard(model_name)
 
         total_bytes = sum(info.size_bytes for info in seen_repos.values())
-        self.stats_label.setText(
-            f"{len(seen_repos)} of {len(self.rows)} Whisper models · "
-            f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
-        )
+        if self._cache_inventory_loading:
+            self.stats_label.setText(
+                f"Checking downloaded models… · {get_hf_cache_dir()}"
+            )
+        else:
+            self.stats_label.setText(
+                f"{len(seen_repos)} of {len(self.rows)} Whisper models · "
+                f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
+            )
         self.refresh_components()
         self._apply_filter(self.filter_edit.text())
         if self._selected_model:
@@ -880,6 +927,10 @@ class DownloadsDialog(QDialog):
             self.inspector_usage.setVisible(bool(self.inspector_usage.text()))
         self.stop_batch_button.setVisible(bool(self._batch_queue))
         self._update_selection_bar()
+        if self._cache_inventory_loading:
+            self.select_all_button.setEnabled(False)
+            self.download_all_button.setEnabled(False)
+            self.download_selected_button.setEnabled(False)
 
     def refresh_components(self) -> None:
         for component_id, row in self._component_rows.items():

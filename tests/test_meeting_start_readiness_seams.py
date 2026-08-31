@@ -48,6 +48,9 @@ def _controller():
     ctrl._on_tray_meeting_toggle = mod.UIController._on_tray_meeting_toggle.__get__(
         ctrl, type(ctrl)
     )
+    ctrl._on_meeting_end_requested = (
+        mod.UIController._on_meeting_end_requested.__get__(ctrl, type(ctrl))
+    )
     return ctrl
 
 
@@ -111,6 +114,28 @@ def test_demo_uses_platform_ack_without_audio_readiness(qapp):
         False,
         system_audio_policy="disabled",
     )
+
+
+@pytest.mark.parametrize(
+    "answer, expected_calls",
+    [
+        ("Yes", 1),
+        ("No", 0),
+    ],
+)
+def test_active_tray_end_requires_confirmation(qapp, answer, expected_calls):
+    from ui_qt.ui_controller import QMessageBox
+
+    ctrl = _controller()
+    ctrl._meeting_active = True
+    ctrl.on_meeting_end = MagicMock()
+    button = getattr(QMessageBox.StandardButton, answer)
+
+    with patch("ui_qt.ui_controller.QMessageBox.question", return_value=button):
+        ctrl._on_tray_meeting_toggle()
+
+    assert ctrl.on_meeting_end.call_count == expected_calls
+    ctrl.ensure_meeting_start_readiness.assert_not_called()
 
 
 def test_demo_cancelled_by_platform_ack_starts_nothing(qapp):

@@ -19,7 +19,8 @@ interface HeaderBarProps {
   socketStatus: SocketStatus;
   meetingEnded: boolean;
   lastError: string | null;
-  onSendOp: (op: Op) => void;
+  onSendOp: (op: Op) => Promise<boolean>;
+  onClientError: (message: string) => void;
   onClearError: () => void;
   onToggleHistory: () => void;
   showHistory: boolean;
@@ -40,6 +41,7 @@ export default function HeaderBar({
   meetingEnded,
   lastError,
   onSendOp,
+  onClientError,
   onClearError,
   onToggleHistory,
   showHistory,
@@ -80,22 +82,24 @@ export default function HeaderBar({
       await navigator.clipboard.writeText(fullGuestUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable */
+    } catch (err) {
+      onClientError(
+        err instanceof Error ? err.message : 'The guest link could not be copied.',
+      );
     }
   };
 
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
-    if (trimmed && trimmed !== state.title) onSendOp(ops.setTitle(trimmed));
+    if (trimmed && trimmed !== state.title) void onSendOp(ops.setTitle(trimmed));
   };
 
   const hostAction = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
       await fn();
-    } catch {
-      /* surfaced via WS error or banner */
+    } catch (err) {
+      onClientError(err instanceof Error ? err.message : 'The request could not be completed.');
     } finally {
       setBusy(false);
     }
@@ -131,7 +135,11 @@ export default function HeaderBar({
 
       <div className="header-actions">
         {socketStatus !== 'open' && (
-          <span className={`socket-indicator ${socketStatus}`}>
+          <span
+            className={`socket-indicator ${socketStatus}`}
+            role="status"
+            aria-live="polite"
+          >
             {socketStatus === 'connecting' ? 'Reconnecting…' : 'Offline'}
           </span>
         )}
@@ -156,9 +164,14 @@ export default function HeaderBar({
         {isHost && !showHistory && (
           <>
             {fullGuestUrl && (
-              <button type="button" className="primary" onClick={copyGuestLink}>
-                {copied ? 'Copied' : 'Copy guest link'}
-              </button>
+              <>
+                <button type="button" className="primary" onClick={copyGuestLink}>
+                  {copied ? 'Copied' : 'Copy guest link'}
+                </button>
+                <span className="sr-only" role="status" aria-live="polite">
+                  {copied ? 'Guest link copied.' : ''}
+                </span>
+              </>
             )}
             <button type="button" className="ghost" onClick={onToggleHistory}>
               History
@@ -211,9 +224,11 @@ export default function HeaderBar({
             </button>
           </>
         )}
-        {isHost && showHistory && (meetingLive || state.status === 'paused' || meetingEnding) && (
+        {isHost && showHistory && (
           <button type="button" className="primary" onClick={onToggleHistory}>
-            Back to live
+            {meetingLive || state.status === 'paused' || meetingEnding
+              ? 'Back to live'
+              : 'Back to meeting'}
           </button>
         )}
       </div>

@@ -218,21 +218,28 @@ def write_per_meeting_files(
         stem = meeting_file_stem(entry["meeting"], entry["state"])
         candidate = stem
         suffix = 2
-        while f"{candidate}.{fmt}" in used:
-            candidate = f"{stem}-{suffix}"
-            suffix += 1
-        filename = f"{candidate}.{fmt}"
+        document = render_meeting_document(
+            entry,
+            fmt,
+            include_transcript=include_transcript,
+            include_intelligence=include_intelligence,
+        )
+        while True:
+            filename = f"{candidate}.{fmt}"
+            path = os.path.join(out_dir, filename)
+            if filename in used:
+                candidate = f"{stem}-{suffix}"
+                suffix += 1
+                continue
+            try:
+                with open(path, "x", encoding="utf-8") as handle:
+                    handle.write(document)
+            except FileExistsError:
+                candidate = f"{stem}-{suffix}"
+                suffix += 1
+                continue
+            break
         used.add(filename)
-        path = os.path.join(out_dir, filename)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(
-                render_meeting_document(
-                    entry,
-                    fmt,
-                    include_transcript=include_transcript,
-                    include_intelligence=include_intelligence,
-                )
-            )
         written.append(path)
     return written
 

@@ -4,7 +4,7 @@ import type { Participant } from '../types';
 interface ParticipantsPaneProps {
   participants: Participant[];
   onlineIds: Set<string>;
-  onRename?: (participantId: string, displayName: string) => void;
+  onRename?: (participantId: string, displayName: string) => Promise<boolean>;
   readOnly?: boolean;
 }
 
@@ -22,6 +22,7 @@ export default function ParticipantsPane({
 }: ParticipantsPaneProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const sorted = [...participants].sort((a, b) => {
     const order = { me: 0, guest: 1, others_cluster: 2 };
@@ -35,10 +36,21 @@ export default function ParticipantsPane({
     setDraft(p.display_name);
   };
 
-  const commitEdit = (participantId: string) => {
+  const commitEdit = async (participantId: string) => {
     const trimmed = draft.trim();
-    if (trimmed) onRename?.(participantId, trimmed);
-    setEditingId(null);
+    if (!trimmed || !onRename) {
+      setEditingId(null);
+      return;
+    }
+    if (savingId === participantId) return;
+    setSavingId(participantId);
+    try {
+      if (await onRename(participantId, trimmed)) setEditingId(null);
+    } catch {
+      // Preserve the draft for retry.
+    } finally {
+      setSavingId(null);
+    }
   };
 
   return (
@@ -63,12 +75,13 @@ export default function ParticipantsPane({
                   <input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    onBlur={() => commitEdit(p.id)}
+                    onBlur={() => void commitEdit(p.id)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitEdit(p.id);
+                      if (e.key === 'Enter') void commitEdit(p.id);
                       if (e.key === 'Escape') setEditingId(null);
                     }}
                     autoFocus
+                    disabled={savingId === p.id}
                     aria-label="Rename participant"
                   />
                 ) : (
@@ -84,6 +97,7 @@ export default function ParticipantsPane({
                   <button
                     type="button"
                     className="ghost no-print"
+                    disabled={savingId === p.id}
                     onClick={() => startEdit(p)}
                     aria-label={`Rename ${p.display_name}`}
                   >

@@ -371,7 +371,9 @@ class TestLocalEngineFields:
             "ui_qt.widgets.local_engine_controls.settings_manager"
         ) as manager:
             manager.load_all_settings.return_value = {}
-            manager.save_all_settings.side_effect = saved.append
+            manager.update_settings.side_effect = (
+                lambda updates: saved.append(dict(updates)) or dict(updates)
+            )
             getattr(controls, field).setCurrentText(value)
 
         assert saved[-1][key] == value
@@ -387,7 +389,9 @@ class TestLocalEngineFields:
             "ui_qt.widgets.local_engine_controls.settings_manager"
         ) as manager:
             manager.load_all_settings.return_value = {}
-            manager.save_all_settings.side_effect = saved.append
+            manager.update_settings.side_effect = (
+                lambda updates: saved.append(dict(updates)) or dict(updates)
+            )
             controls.model_combo.setCurrentText("medium")
 
         assert saved[-1] == {
@@ -446,4 +450,3 @@ class TestMainWindowUploadTabIntegration:
         window._force_quit = True
         window.close()
         QApplication.processEvents()
-

@@ -179,6 +179,18 @@ def test_write_per_entry_files_disambiguates_stems(tmp_path):
     assert (tmp_path / names[0]).read_text(encoding="utf-8")
 
 
+def test_write_per_entry_files_never_overwrites_prior_export(tmp_path):
+    entry = serialize_history_entry(_entry(text="Existing title"))
+    original_name = f"{entry_file_stem(entry)}.txt"
+    original = tmp_path / original_name
+    original.write_text("keep me", encoding="utf-8")
+
+    written = write_per_entry_files([entry], FORMAT_TXT, str(tmp_path))
+
+    assert original.read_text(encoding="utf-8") == "keep me"
+    assert written == [str(tmp_path / original_name.replace(".txt", "-2.txt"))]
+
+
 def test_entry_file_stem_uses_local_stamp_and_preview():
     entry = serialize_history_entry(
         _entry(timestamp="2026-03-15T14:30:00+00:00", text="Hello from history")

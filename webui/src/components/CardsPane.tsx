@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op, type Question } from '../types';
 import { CAPTURE_TAGS, CARD_LABELS, capturedFeedEntries, sortedCardItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
@@ -6,10 +6,10 @@ import { QuestionRow } from './QuestionInbox';
 
 interface CardsPaneProps {
   cards: MeetingStateDoc['cards'];
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
   /** Host-only: revert the event at `seq`. Omitted for guests. */
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   /** Newest event seq per item id, from the reducer. */
   lastSeqByTarget: Record<string, number>;
   /** When true, omit the outer panel chrome (embedded in Captured rail). */
@@ -33,26 +33,41 @@ function CardItemRow({
 }: {
   item: CardItem;
   tag: string;
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   undoSeq?: number;
   readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(item.text);
+  }, [editing, item.text]);
 
   const canUndo = onUndo !== undefined && undoSeq !== undefined;
 
   const statusClass =
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== item.text) {
-      onSendOp?.(ops.updateItem(item.id, { text: trimmed }));
+    if (!trimmed || trimmed === item.text || !onSendOp) {
+      setEditing(false);
+      return;
     }
-    setEditing(false);
+    setSaving(true);
+    try {
+      if (await onSendOp(ops.updateItem(item.id, { text: trimmed }))) {
+        setEditing(false);
+      }
+    } catch {
+      // Keep the editor and draft intact; the shared mutation banner explains why.
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (item.status === 'removed') {
@@ -71,7 +86,9 @@ function CardItemRow({
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={saveEdit}
+          onBlur={() => void saveEdit()}
+          disabled={saving}
+          aria-label={`Edit ${tag.toLowerCase()}`}
           autoFocus
         />
       ) : (
@@ -86,21 +103,21 @@ function CardItemRow({
       />
       {!readOnly && (
         <div className="card-item-actions no-print">
-          <button type="button" onClick={() => setEditing(true)}>
+          <button type="button" disabled={saving} onClick={() => setEditing(true)}>
             Edit
           </button>
           {item.status !== 'confirmed' && (
-            <button type="button" onClick={() => onSendOp?.(ops.confirmItem(item.id))}>
+            <button type="button" onClick={() => { void onSendOp?.(ops.confirmItem(item.id)); }}>
               Confirm
             </button>
           )}
           <button
             type="button"
-            onClick={() => onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
+            onClick={() => { void onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id)); }}
           >
             {item.pinned ? 'Unpin' : 'Pin'}
           </button>
-          <button type="button" className="danger" onClick={() => onSendOp?.(ops.removeItem(item.id))}>
+          <button type="button" className="danger" onClick={() => { void onSendOp?.(ops.removeItem(item.id)); }}>
             Remove
           </button>
           {canUndo && (
@@ -108,7 +125,7 @@ function CardItemRow({
               type="button"
               className="ghost"
               title="Undo the last change to this item"
-              onClick={() => onUndo?.(undoSeq as number)}
+              onClick={() => { void onUndo?.(undoSeq as number); }}
             >
               Undo
             </button>
@@ -133,9 +150,9 @@ function CardSection({
 }: {
   cardKey: CardKey;
   items: CardItem[];
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   lastSeqByTarget: Record<string, number>;
   readOnly?: boolean;
 }) {
@@ -165,15 +182,22 @@ function CardSection({
   );
 }
 
-function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
+function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => Promise<boolean> }) {
   const [cardKey, setCardKey] = useState<CardKey>('key_points');
   const [newText, setNewText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const addItem = () => {
+  const addItem = async () => {
     const trimmed = newText.trim();
-    if (!trimmed) return;
-    onSendOp(ops.addItem(cardKey, trimmed));
-    setNewText('');
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    try {
+      if (await onSendOp(ops.addItem(cardKey, trimmed))) setNewText('');
+    } catch {
+      // Preserve the draft for retry.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -193,13 +217,19 @@ function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
         type="text"
         placeholder={`Add ${CAPTURE_TAGS[cardKey].toLowerCase()}…`}
         value={newText}
+        aria-label={`New ${CAPTURE_TAGS[cardKey].toLowerCase()}`}
         onChange={(e) => setNewText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') addItem();
+          if (e.key === 'Enter') void addItem();
         }}
       />
-      <button type="button" className="primary" onClick={addItem}>
-        Add
+      <button
+        type="button"
+        className="primary"
+        disabled={submitting || !newText.trim()}
+        onClick={() => void addItem()}
+      >
+        {submitting ? 'Adding…' : 'Add'}
       </button>
     </div>
   );

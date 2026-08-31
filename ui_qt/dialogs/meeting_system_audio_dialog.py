@@ -39,6 +39,11 @@ class MeetingSystemAudioPermissionDialog(QDialog):
         self.result_action = self.RESULT_CANCEL
 
         self.setWindowTitle("Allow OpenWhisper to record system audio")
+        self.setAccessibleName("Allow system-audio recording")
+        self.setAccessibleDescription(
+            "macOS Screen Recording permission is needed to capture other speakers. "
+            "Choose System Settings, microphone only, or go back."
+        )
         self.setMinimumWidth(520)
         self.setModal(True)
 

@@ -2,6 +2,8 @@
 import pytest
 import os
 import tempfile
+import threading
+import time
 import types
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +16,9 @@ from services.hf_access import (
     download_model_files,
     format_download_size,
     format_size_bytes,
+    invalidate_cached_models_snapshot,
     is_model_cached,
+    peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
 )
@@ -193,6 +197,56 @@ class TestScanCachedModels:
         ):
             assert scan_cached_models() == {}
 
+    def test_positive_max_age_reuses_snapshot_and_returns_copies(self):
+        cache_info = types.SimpleNamespace(
+            repos=[_fake_repo("Systran/faster-whisper-base", 10, ["abc"])]
+        )
+        invalidate_cached_models_snapshot()
+        try:
+            with patch(
+                "huggingface_hub.scan_cache_dir", return_value=cache_info
+            ) as scan:
+                first = scan_cached_models(max_age_seconds=30)
+                first.clear()
+                second = scan_cached_models(max_age_seconds=30)
+
+            assert scan.call_count == 1
+            assert set(second) == {"Systran/faster-whisper-base"}
+            assert set(peek_cached_models() or {}) == {
+                "Systran/faster-whisper-base"
+            }
+        finally:
+            invalidate_cached_models_snapshot()
+
+    def test_peek_does_not_wait_for_a_cold_directory_walk(self):
+        cache_info = types.SimpleNamespace(repos=[])
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_scan():
+            started.set()
+            assert release.wait(1.0)
+            return cache_info
+
+        invalidate_cached_models_snapshot()
+        try:
+            with patch("huggingface_hub.scan_cache_dir", side_effect=slow_scan):
+                worker = threading.Thread(
+                    target=lambda: scan_cached_models(max_age_seconds=30),
+                    daemon=True,
+                )
+                worker.start()
+                assert started.wait(1.0)
+                before = time.monotonic()
+                assert peek_cached_models() is None
+                assert time.monotonic() - before < 0.1
+                release.set()
+                worker.join(1.0)
+                assert not worker.is_alive()
+        finally:
+            release.set()
+            invalidate_cached_models_snapshot()
+
 
 class TestDeleteModelFromCache:
     """Deletion routes through huggingface_hub's delete strategy."""
@@ -296,5 +350,3 @@ class TestClaimBatch:
         assert self.coordinator.requests_in_flight == 2
         self.coordinator.end_request("tiny")
         assert self.coordinator.requests_in_flight == 1
-
-

@@ -1,6 +1,8 @@
 """Qt tests for the Meeting Mode Past Meetings sidebar content."""
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -215,6 +217,42 @@ def test_panel_search_filters_and_empty_copy():
     empty = panel.findChild(QLabel, "pastMeetingsEmpty")
     assert empty is not None
     assert empty.text() == "No matching meetings"
+
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_repository_refresh_runs_off_ui_thread_and_requests_one_page():
+    app = QApplication.instance() or QApplication([])
+    main_thread = threading.get_ident()
+    called = threading.Event()
+
+    class Repo:
+        def list_past_meeting_summaries(self, *, limit, query):
+            self.args = (limit, query)
+            self.thread_id = threading.get_ident()
+            called.set()
+            row = _meeting("m_async", title="Async review")
+            row["content_summary"] = {
+                "has_audio": False,
+                "has_transcript": False,
+                "is_empty": True,
+                "preview_text": "",
+            }
+            return [row]
+
+    repo = Repo()
+    panel = PastMeetingsPanel(repository=repo)
+    panel.refresh()
+    assert called.wait(1.0)
+    deadline = time.monotonic() + 1.0
+    while not _list_cards(panel) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+
+    assert repo.args == (panel.MAX_MEETINGS + 1, "")
+    assert repo.thread_id != main_thread
+    assert [card.meeting_id for card in _list_cards(panel)] == ["m_async"]
 
     panel.deleteLater()
     app.processEvents()

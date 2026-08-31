@@ -175,21 +175,30 @@ def write_per_entry_files(
         stem = entry_file_stem(entry)
         candidate = stem
         suffix = 2
-        while f"{candidate}.{fmt}" in used:
-            candidate = f"{stem}-{suffix}"
-            suffix += 1
-        filename = f"{candidate}.{fmt}"
+        document = render_entry_document(
+            entry,
+            fmt,
+            include_cleaned=include_cleaned,
+            include_raw=include_raw,
+        )
+        while True:
+            filename = f"{candidate}.{fmt}"
+            path = os.path.join(out_dir, filename)
+            if filename in used:
+                candidate = f"{stem}-{suffix}"
+                suffix += 1
+                continue
+            try:
+                # Exclusive creation also closes the check/write race if two
+                # exports target the same directory at the same time.
+                with open(path, "x", encoding="utf-8") as handle:
+                    handle.write(document)
+            except FileExistsError:
+                candidate = f"{stem}-{suffix}"
+                suffix += 1
+                continue
+            break
         used.add(filename)
-        path = os.path.join(out_dir, filename)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(
-                render_entry_document(
-                    entry,
-                    fmt,
-                    include_cleaned=include_cleaned,
-                    include_raw=include_raw,
-                )
-            )
         written.append(path)
     return written
 

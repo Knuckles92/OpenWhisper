@@ -2,11 +2,13 @@
 import json
 import os
 import logging
+import tempfile
 import threading
-from typing import Dict, Any, Final, List, Tuple, Optional
+from typing import Callable, Dict, Any, Final, List, Tuple, Optional, TypeVar
 from config import config
 
 logger = logging.getLogger(__name__)
+SettingsMutationResult = TypeVar("SettingsMutationResult")
 
 # Bump whenever the Linux preview disclosure changes meaning. Persisting the
 # version instead of a boolean prevents an older acknowledgement from silently
@@ -256,24 +258,75 @@ class SettingsManager:
 
     def __init__(self, settings_file: str = None):
         self.settings_file = settings_file or config.SETTINGS_FILE
-        self._lock = threading.Lock()
+        # A setting mutation is a read-modify-write transaction.  Several UI
+        # and background workers share this singleton, so the lock must cover
+        # the complete transaction rather than only the final write.
+        self._lock = threading.RLock()
+
+    def _load_all_settings_unlocked(self, *, strict: bool = False) -> Dict[str, Any]:
+        """Read the settings mapping while the caller owns ``_lock``.
+
+        ``strict`` is used by read-modify-write operations: a malformed file
+        must not be mistaken for an empty mapping and then overwritten with a
+        single new preference.
+        """
+        if not os.path.exists(self.settings_file):
+            return {}
+        try:
+            with open(self.settings_file, 'r', encoding='utf-8') as handle:
+                settings = json.load(handle)
+            if not isinstance(settings, dict):
+                raise ValueError("settings root must be a JSON object")
+            return settings
+        except Exception as exc:
+            logger.warning(f"Failed to load all settings: {exc}")
+            if strict:
+                raise
+            return {}
+
+    def _save_all_settings_unlocked(self, settings: Dict[str, Any]) -> None:
+        """Atomically replace the settings file while ``_lock`` is held."""
+        if not isinstance(settings, dict):
+            raise TypeError("settings must be a mapping")
+
+        absolute_path = os.path.abspath(self.settings_file)
+        directory = os.path.dirname(absolute_path) or os.curdir
+        prefix = f".{os.path.basename(absolute_path)}."
+        temp_fd = -1
+        temp_path = ""
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(
+                prefix=prefix,
+                suffix=".tmp",
+                dir=directory,
+            )
+            with os.fdopen(temp_fd, 'w', encoding='utf-8') as handle:
+                temp_fd = -1
+                json.dump(settings, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, absolute_path)
+            temp_path = ""
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except FileNotFoundError:
+                    pass
 
     def load_all_settings(self) -> Dict[str, Any]:
         """Load settings, returning an empty dict on failure."""
-        try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load all settings: {e}")
-
-        return {}
+        with self._lock:
+            return self._load_all_settings_unlocked()
 
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
         """Persist the complete settings mapping."""
         try:
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=2)
+            with self._lock:
+                self._save_all_settings_unlocked(settings)
             logger.info("All settings saved successfully")
         except Exception as e:
             logger.error(f"Failed to save all settings: {e}")
@@ -282,11 +335,49 @@ class SettingsManager:
     def get(self, key: str, default: Any = None) -> Any:
         return self.load_all_settings().get(key, default)
 
+    def update_settings(
+        self,
+        updates: Dict[str, Any],
+        *,
+        remove: Tuple[str, ...] = (),
+    ) -> Dict[str, Any]:
+        """Atomically merge keys into the persisted settings mapping.
+
+        Returns a copy of the complete mapping that was committed.  Callers
+        changing several related preferences should use this method instead of
+        a separate ``load_all_settings`` / ``save_all_settings`` pair.
+        """
+        if not isinstance(updates, dict):
+            raise TypeError("updates must be a mapping")
+        def apply_updates(settings: Dict[str, Any]) -> Dict[str, Any]:
+            settings.update(updates)
+            for key in remove:
+                settings.pop(key, None)
+            return dict(settings)
+
+        return self.mutate_settings(apply_updates)
+
+    def mutate_settings(
+        self,
+        mutator: Callable[[Dict[str, Any]], SettingsMutationResult],
+    ) -> SettingsMutationResult:
+        """Atomically mutate settings with a caller-supplied transaction.
+
+        This covers structured values whose helper functions edit a settings
+        mapping in place, such as custom endpoint profiles.  The callback runs
+        while the settings lock is held; if it raises, nothing is written.
+        """
+        if not callable(mutator):
+            raise TypeError("mutator must be callable")
+        with self._lock:
+            settings = self._load_all_settings_unlocked(strict=True)
+            result = mutator(settings)
+            self._save_all_settings_unlocked(settings)
+            return result
+
     def save_setting(self, key: str, value: Any) -> None:
         try:
-            settings = self.load_all_settings()
-            settings[key] = value
-            self.save_all_settings(settings)
+            self.update_settings({key: value})
             logger.debug(f"Setting saved: {key}={value}")
         except Exception as e:
             logger.error(f"Failed to save setting '{key}': {e}")
@@ -295,10 +386,8 @@ class SettingsManager:
     def load_hotkey_settings(self) -> Dict[str, str]:
         """Load saved hotkeys or platform defaults."""
         try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-                    return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
+            settings = self.load_all_settings()
+            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
         except Exception as e:
             logger.warning(f"Failed to load settings: {e}")
 
@@ -306,10 +395,7 @@ class SettingsManager:
 
     def save_hotkey_settings(self, hotkeys: Dict[str, str]) -> None:
         try:
-            settings = self.load_all_settings()
-            settings[SettingsKey.HOTKEYS] = hotkeys
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=2)
+            self.update_settings({SettingsKey.HOTKEYS: hotkeys})
             logger.info("Hotkey settings saved successfully")
         except Exception as e:
             logger.error(f"Failed to save settings: {e}")
@@ -365,9 +451,10 @@ class SettingsManager:
         )
         if SettingsKey.HF_HUB_OFFLINE in settings or policy is not None:
             try:
-                settings[SettingsKey.HF_ACCESS_POLICY] = migrated
-                settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
-                self.save_all_settings(settings)
+                self.update_settings(
+                    {SettingsKey.HF_ACCESS_POLICY: migrated},
+                    remove=(SettingsKey.HF_HUB_OFFLINE,),
+                )
                 logger.info(f"Migrated HuggingFace access policy to '{migrated}'")
             except Exception as e:
                 logger.warning(f"Failed to persist HF policy migration: {e}")
@@ -380,10 +467,10 @@ class SettingsManager:
                 f"Invalid HF access policy '{policy}'. "
                 f"Valid values: {list(HuggingFaceAccessPolicy.ALL)}"
             )
-        settings = self.load_all_settings()
-        settings[SettingsKey.HF_ACCESS_POLICY] = policy
-        settings.pop(SettingsKey.HF_HUB_OFFLINE, None)
-        self.save_all_settings(settings)
+        self.update_settings(
+            {SettingsKey.HF_ACCESS_POLICY: policy},
+            remove=(SettingsKey.HF_HUB_OFFLINE,),
+        )
         logger.info(f"HuggingFace access policy saved: {policy}")
 
     def load_audio_input_device(self) -> Optional[int]:

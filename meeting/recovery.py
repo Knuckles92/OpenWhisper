@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import sys
-from typing import Any, Callable, Dict, List, Optional
+import wave
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from meeting.interfaces import SpooledChunk
+from meeting.interfaces import CHANNELS, SpooledChunk
 from meeting.state.schema import FinalizationState, now_iso
 from meeting.time_utils import seconds_since
 
@@ -31,6 +33,373 @@ FINALIZE_DRAIN_TIMEOUT_S = 600.0
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _STILL_ACTIVE = 259
 _ERROR_ACCESS_DENIED = 5
+
+# Keep recovered units within the same upper bound as live chunks.  This is
+# especially important when SQLite was unavailable for a long time and the
+# native session PCM is the only complete source left.
+RECOVERED_CHUNK_MAX_S = 20.0
+
+
+def _read_wav_duration(path: str) -> Optional[Tuple[int, float]]:
+    """Validate a recoverable WAV and return ``(rate, duration_s)``."""
+    try:
+        with wave.open(path, "rb") as wav_file:
+            if wav_file.getnchannels() != 1 or wav_file.getsampwidth() != 2:
+                return None
+            rate = int(wav_file.getframerate())
+            frames = int(wav_file.getnframes())
+    except (OSError, EOFError, wave.Error):
+        return None
+    if rate <= 0 or frames <= 0:
+        return None
+    return rate, frames / float(rate)
+
+
+def _registered_audio(repository: Any, meeting_id: str) -> List[Dict[str, Any]]:
+    getter = getattr(repository, "get_audio_chunks", None)
+    if not callable(getter):
+        return []
+    rows = getter(meeting_id)
+    return [dict(row) for row in rows]
+
+
+def _register_recovered_chunk(
+    repository: Any,
+    fields: Dict[str, Any],
+) -> Tuple[int, bool]:
+    """Use the repository's idempotent recovery seam when available."""
+    method = getattr(repository, "register_chunk_if_missing", None)
+    if callable(method):
+        result = method(**fields)
+        if isinstance(result, tuple):
+            return int(result[0]), bool(result[1])
+        return int(result), True
+
+    # Compatibility for lightweight test/dry-run repositories.  Recheck the
+    # sequence before using the legacy insertion method so repeated recovery
+    # is still idempotent in the common single-process case.
+    for row in _registered_audio(repository, str(fields["meeting_id"])):
+        if (
+            str(row.get("channel")) == str(fields["channel"])
+            and int(row.get("seq") or 0) == int(fields["seq"])
+        ):
+            return int(row["id"]), False
+    return int(repository.register_chunk(**fields)), True
+
+
+def _recover_stranded_wavs(
+    repository: Any,
+    meeting: Dict[str, Any],
+    chunks: List[Dict[str, Any]],
+) -> int:
+    """Register valid ``*.recovery.json`` WAV artifacts exactly once."""
+    from meeting.capture.spool import (
+        load_chunk_recovery_meta,
+        remove_chunk_recovery_meta,
+    )
+
+    meeting_id = str(meeting.get("id") or "")
+    spool_dir = str(meeting.get("spool_dir") or "")
+    if not meeting_id or not os.path.isdir(spool_dir):
+        return 0
+    by_identity = {
+        (str(row.get("channel") or ""), int(row.get("seq") or 0)): row
+        for row in chunks
+    }
+    recovered = 0
+    try:
+        sidecars = sorted(
+            entry.path for entry in os.scandir(spool_dir)
+            if entry.is_file() and entry.name.endswith(".recovery.json")
+        )
+    except OSError:
+        logger.exception("Could not scan meeting spool %s", spool_dir)
+        return 0
+
+    for sidecar in sidecars:
+        canonical = sidecar[:-len(".recovery.json")]
+        orphan = canonical + ".orphan"
+        artifact = canonical if os.path.isfile(canonical) else orphan
+        meta = load_chunk_recovery_meta(canonical)
+        if (
+            meta is None
+            or meta.get("meeting_id") != meeting_id
+            or not meta.get("channel")
+            or not os.path.isfile(artifact)
+        ):
+            logger.warning("Leaving unusable recovery artifact %s untouched",
+                           sidecar)
+            continue
+        channel = str(meta["channel"])
+        seq = int(meta["seq"])
+        identity = (channel, seq)
+
+        # The DB row may have committed immediately before the old process
+        # died.  Make its expected canonical path available before removing
+        # the leftover transaction marker.
+        if artifact == orphan and not os.path.exists(canonical):
+            try:
+                os.replace(orphan, canonical)
+                artifact = canonical
+            except OSError:
+                logger.exception("Could not restore orphan WAV %s", orphan)
+                continue
+
+        wav_info = _read_wav_duration(artifact)
+        if wav_info is None:
+            logger.warning("Leaving invalid recovery WAV %s untouched", artifact)
+            continue
+        sample_rate, duration_s = wav_info
+        if identity in by_identity:
+            remove_chunk_recovery_meta(canonical)
+            continue
+
+        fields = {
+            "meeting_id": meeting_id,
+            "channel": channel,
+            "seq": seq,
+            "file_path": canonical,
+            "start_s": float(meta["start_s"]),
+            # Trust the committed WAV header over a sidecar written around a
+            # crash boundary.
+            "duration_s": duration_s,
+            "sample_rate": sample_rate,
+            "asr_status": "pending",
+        }
+        try:
+            chunk_id, created = _register_recovered_chunk(repository, fields)
+        except Exception:
+            logger.exception("Could not register recovery WAV %s", canonical)
+            continue
+        by_identity[identity] = {"id": chunk_id, **fields}
+        chunks.append(by_identity[identity])
+        remove_chunk_recovery_meta(canonical)
+        if created:
+            recovered += 1
+            logger.info("Recovered stranded meeting chunk %s (%s seq %d)",
+                        chunk_id, channel, seq)
+    return recovered
+
+
+def _pcm_artifacts(
+    spool_dir: str,
+    channel: str,
+) -> Sequence[Tuple[str, int, int, float]]:
+    """Return timeline-ordered ``(path, rate, samples, origin_s)`` PCM spans."""
+    from meeting.capture.spool import (
+        TARGET_RATE,
+        load_session_meta,
+        session_meta_path,
+        session_pcm_path,
+        session_wav_path,
+    )
+
+    # A completed session WAV means normal flush reached its final durable
+    # representation.  The native PCM in older meetings was intentionally
+    # retained and must not be mistaken for a new tail.
+    final_wav = session_wav_path(spool_dir, channel)
+    if _read_wav_duration(final_wav) is not None:
+        return []
+
+    meta = load_session_meta(session_meta_path(spool_dir, channel))
+    if meta is None:
+        return []
+    rate = int(meta.get("sample_rate") or 0)
+    if rate <= 0:
+        return []
+    global_origin = float(meta.get("origin_s") or 0.0)
+    prefix_path = os.path.join(spool_dir, f"{channel}_session.16k.pcm")
+    raw_path = session_pcm_path(spool_dir, channel)
+    artifacts: List[Tuple[str, int, int, float]] = []
+    prefix_samples = 0
+    try:
+        prefix_samples = os.path.getsize(prefix_path) // 2
+    except OSError:
+        pass
+    if prefix_samples > 0:
+        artifacts.append((prefix_path, TARGET_RATE, prefix_samples, global_origin))
+
+    try:
+        raw_samples = os.path.getsize(raw_path) // 2
+    except OSError:
+        raw_samples = 0
+    # A failed unlink after successful prefix conversion can leave the old raw
+    # source in place.  New metadata marks it inactive so recovery does not
+    # register the same audio twice.  Legacy metadata has no marker and keeps
+    # the conservative placement rules below.
+    if raw_samples > 0 and meta.get("pcm_active", True):
+        if "pcm_origin_s" in meta:
+            raw_origin = float(meta["pcm_origin_s"])
+        elif prefix_samples:
+            # Metadata predating the segment-origin field cannot tell whether
+            # this is the old, already-converted source or a newer native-rate
+            # suffix.  Recover the unambiguous prefix and retain the raw file
+            # for manual/offline salvage instead of creating corrupt overlap.
+            logger.warning(
+                "Cannot place legacy raw PCM suffix for %s; leaving %s intact",
+                channel, raw_path,
+            )
+            raw_origin = None
+        else:
+            raw_origin = global_origin
+        if raw_origin is not None:
+            artifacts.append((raw_path, rate, raw_samples, raw_origin))
+    artifacts.sort(key=lambda item: item[3])
+    return artifacts
+
+
+def _recover_pcm_tails(
+    repository: Any,
+    meeting: Dict[str, Any],
+    chunks: List[Dict[str, Any]],
+) -> int:
+    """Materialize native session audio after the last registered chunk."""
+    from meeting.capture.spool import (
+        TARGET_RATE,
+        pcm_slice_to_wav,
+        remove_chunk_recovery_meta,
+        write_chunk_recovery_meta,
+    )
+
+    meeting_id = str(meeting.get("id") or "")
+    spool_dir = str(meeting.get("spool_dir") or "")
+    if not meeting_id or not os.path.isdir(spool_dir):
+        return 0
+    recovered = 0
+    channels = set(CHANNELS)
+    channels.update(str(row.get("channel") or "") for row in chunks)
+    channels.discard("")
+
+    for channel in sorted(channels):
+        channel_rows = [
+            row for row in chunks if str(row.get("channel") or "") == channel
+        ]
+        coverage_end = max(
+            (
+                float(row.get("start_s") or 0.0)
+                + max(0.0, float(row.get("duration_s") or 0.0))
+                for row in channel_rows
+            ),
+            default=float("-inf"),
+        )
+        next_seq = max(
+            (int(row.get("seq") or 0) for row in channel_rows), default=-1
+        ) + 1
+
+        for pcm_path, rate, sample_count, origin_s in _pcm_artifacts(
+            spool_dir, channel
+        ):
+            artifact_end = origin_s + sample_count / float(rate)
+            cursor_s = max(origin_s, coverage_end)
+            if cursor_s >= artifact_end - (0.5 / float(rate)):
+                continue
+            start_sample = max(
+                0, int(math.floor((cursor_s - origin_s) * rate + 0.5))
+            )
+            while start_sample < sample_count:
+                end_sample = min(
+                    sample_count,
+                    start_sample + max(1, int(round(RECOVERED_CHUNK_MAX_S * rate))),
+                )
+                start_s = origin_s + start_sample / float(rate)
+                file_path = os.path.join(
+                    spool_dir, f"{channel}_{next_seq:05d}.recovered.wav"
+                )
+                try:
+                    output_frames = pcm_slice_to_wav(
+                        pcm_path, rate, start_sample, end_sample, file_path
+                    )
+                    if output_frames <= 0:
+                        break
+                    duration_s = output_frames / float(TARGET_RATE)
+                    # This sidecar also protects a crash caused by the recovery
+                    # pass itself between file replace and SQLite commit.
+                    write_chunk_recovery_meta(
+                        file_path, meeting_id, channel, next_seq,
+                        start_s, duration_s, TARGET_RATE,
+                    )
+                    fields = {
+                        "meeting_id": meeting_id,
+                        "channel": channel,
+                        "seq": next_seq,
+                        "file_path": file_path,
+                        "start_s": start_s,
+                        "duration_s": duration_s,
+                        "sample_rate": TARGET_RATE,
+                        "asr_status": "pending",
+                    }
+                    chunk_id, created = _register_recovered_chunk(
+                        repository, fields
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not materialize raw PCM recovery tail for %s",
+                        channel,
+                    )
+                    # Do not advance into later audio: the next startup can
+                    # consume the sidecar or retry this exact interval.
+                    break
+                remove_chunk_recovery_meta(file_path)
+                row = {"id": chunk_id, **fields}
+                chunks.append(row)
+                channel_rows.append(row)
+                if created:
+                    recovered += 1
+                    logger.info(
+                        "Recovered %.2fs raw PCM tail as chunk %s (%s)",
+                        duration_s, chunk_id, channel,
+                    )
+                coverage_end = max(coverage_end, start_s + duration_s)
+                next_seq += 1
+                start_sample = end_sample
+    return recovered
+
+
+def reconcile_meeting_audio(
+    repository: Any,
+    meeting: Dict[str, Any],
+) -> Dict[str, int]:
+    """Reconcile crash artifacts into durable pending chunk rows.
+
+    The operation is safe to call before every scan/finalize.  Identity is the
+    database's unique ``(meeting_id, channel, seq)`` tuple, and every newly
+    materialized tail gets its own transaction sidecar before registration.
+    """
+    meeting_id = str(meeting.get("id") or "")
+    if not meeting_id or not callable(getattr(repository, "get_audio_chunks", None)):
+        return {"orphan_chunks": 0, "tail_chunks": 0}
+    try:
+        chunks = _registered_audio(repository, meeting_id)
+        orphans = _recover_stranded_wavs(repository, meeting, chunks)
+        # Reload after orphan registration so their coverage prevents the raw
+        # session fallback from creating an overlapping chunk.
+        chunks = _registered_audio(repository, meeting_id)
+        tails = _recover_pcm_tails(repository, meeting, chunks)
+        return {"orphan_chunks": orphans, "tail_chunks": tails}
+    except Exception:
+        logger.exception("Meeting audio reconciliation failed for %s", meeting_id)
+        return {"orphan_chunks": 0, "tail_chunks": 0}
+
+
+def reconcile_startup_audio(repository: Any) -> int:
+    """Reconcile dead/terminal meeting spools before recovery candidates load."""
+    list_meetings = getattr(repository, "list_meetings", None)
+    if not callable(list_meetings):
+        return 0
+    try:
+        meetings = list_meetings()
+    except Exception:
+        logger.exception("Failed to list meetings for audio reconciliation")
+        return 0
+    recovered = 0
+    for meeting in meetings:
+        status = str(meeting.get("status") or "")
+        if status in ("active", "paused", "ending", "needs_recovery"):
+            if not is_session_dead(meeting):
+                continue
+        result = reconcile_meeting_audio(repository, meeting)
+        recovered += result["orphan_chunks"] + result["tail_chunks"]
+    return recovered
 
 
 def _pid_alive(pid: Optional[int]) -> bool:
@@ -109,6 +478,10 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
         Meeting dicts eligible for finalize/resume/discard, or an empty list
         when the scan fails.
     """
+    # Registration failures and sub-chunk PCM tails are filesystem evidence,
+    # so reconcile them before the database query decides which terminal
+    # meetings still have unfinished audio.
+    reconcile_startup_audio(repository)
     try:
         candidates = repository.find_interrupted_meetings()
     except Exception:
@@ -167,6 +540,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     model_name = meeting.get("asr_model") or asr_model or "auto"
 
     try:
+        reconcile_meeting_audio(repository, meeting)
         repository.reset_unfinished_chunks(meeting_id)
         pending = repository.get_pending_chunks(meeting_id)
     except Exception:

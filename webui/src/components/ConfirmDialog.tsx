@@ -29,6 +29,7 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const messageId = useId();
 
@@ -36,10 +37,16 @@ export default function ConfirmDialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (open && !dialog.open) {
+      previousFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
       dialog.showModal();
       cancelRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
+      const previous = previousFocusRef.current;
+      if (previous?.isConnected) previous.focus();
+      previousFocusRef.current = null;
     }
   }, [open]);
 
@@ -47,6 +54,9 @@ export default function ConfirmDialog({
     <dialog
       ref={dialogRef}
       className="confirm-dialog"
+      role={danger ? 'alertdialog' : 'dialog'}
+      aria-modal="true"
+      aria-busy={busy}
       aria-labelledby={titleId}
       aria-describedby={messageId}
       onCancel={(event) => {

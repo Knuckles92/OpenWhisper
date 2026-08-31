@@ -7,6 +7,7 @@ wrapping on every frame.
 """
 import logging
 import os
+import threading
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMenu, QApplication, QLineEdit, QSizePolicy,
@@ -377,6 +378,7 @@ class HistorySidebar(QWidget):
     # Emits the sidebar width every animation frame so the owning window can
     # resize in lockstep (keeps the main content area a constant width).
     width_animated = pyqtSignal(int)
+    _history_loaded = pyqtSignal(int, str, object, str)
 
     COLLAPSED_WIDTH = 0
     EXPANDED_WIDTH = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
@@ -389,10 +391,12 @@ class HistorySidebar(QWidget):
         self._current_width = self.COLLAPSED_WIDTH
         self._refresh_pending = True
         self._meeting_mode = False
+        self._history_load_generation = 0
 
         self._setup_ui()
         self._setup_meetings_ui()
         self._apply_style()
+        self._history_loaded.connect(self._apply_history_results)
 
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
@@ -687,32 +691,73 @@ class HistorySidebar(QWidget):
         return label
 
     def _on_search_text_changed(self, text: str):
+        # Invalidate an in-flight result immediately; the debounced replacement
+        # query starts after the user pauses typing.
+        self._history_load_generation += 1
         self._search_timer.start()
 
     def _load_history(self):
-        self._clear_layout(self.history_list_layout)
-
-        entries = history_manager.get_history()
-
         query = self.search_input.text().strip().lower()
-        if query:
-            entries = [
-                entry for entry in entries
-                if query in entry.text.lower()
-                or (entry.raw_text and query in entry.raw_text.lower())
-                or query in entry.formatted_timestamp.lower()
-            ]
+        self._history_load_generation += 1
+        generation = self._history_load_generation
+        if self.history_list_layout.count() == 0:
+            self.history_list_layout.addWidget(
+                self._make_empty_label("Loading history…")
+            )
+
+        def load() -> None:
+            entries = []
+            error = ""
+            try:
+                limit = self.MAX_HISTORY_ITEMS + 1
+                if query:
+                    entries = history_manager.search_history(query, limit=limit)
+                else:
+                    entries = history_manager.get_history(limit=limit)
+            except Exception as exc:
+                logger.error("Failed to load transcription history: %s", exc)
+                error = str(exc)
+            self._history_loaded.emit(generation, query, entries, error)
+
+        threading.Thread(
+            target=load,
+            name="history-sidebar-load",
+            daemon=True,
+        ).start()
+
+    def _apply_history_results(
+        self,
+        generation: int,
+        query: str,
+        entries,
+        error: str,
+    ) -> None:
+        if generation != self._history_load_generation:
+            return
+        self._clear_layout(self.history_list_layout)
+        if error:
+            self.history_header.setText("HISTORY")
+            self.history_list_layout.addWidget(
+                self._make_empty_label("History could not be loaded")
+            )
+            return
+
+        entries = list(entries or [])
+        has_more = len(entries) > self.MAX_HISTORY_ITEMS
+        shown = entries[:self.MAX_HISTORY_ITEMS]
 
         self.history_header.setText(
-            f"HISTORY ({len(entries)})" if entries else "HISTORY"
+            (
+                f"HISTORY ({len(shown)}{'+' if has_more else ''})"
+                if shown else "HISTORY"
+            )
         )
 
-        if not entries:
+        if not shown:
             message = "No matching entries" if query else "No history yet"
             self.history_list_layout.addWidget(self._make_empty_label(message))
             return
 
-        shown = entries[:self.MAX_HISTORY_ITEMS]
         for entry in shown:
             item = HistoryItemWidget(entry)
             item.clicked.connect(self._on_entry_clicked)
@@ -722,10 +767,11 @@ class HistorySidebar(QWidget):
             item.retranscribe_requested.connect(self.retranscribe_requested.emit)
             self.history_list_layout.addWidget(item)
 
-        if len(entries) > len(shown):
+        if has_more:
             self.history_list_layout.addWidget(
                 self._make_empty_label(
-                    f"Showing {len(shown)} of {len(entries)} — search to find older entries"
+                    f"Showing the first {len(shown)} matches — refine your search "
+                    "to find older entries"
                 )
             )
 

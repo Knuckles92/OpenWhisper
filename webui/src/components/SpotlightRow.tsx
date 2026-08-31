@@ -8,10 +8,10 @@ interface SpotlightRowProps {
   status: string;
   cloudEnabled: boolean;
   intelligenceOnline: boolean;
-  onSendOp: (op: Op) => void;
+  onSendOp: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
   /** Host-only: revert the event at `seq`. Omitted for guests. */
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   /** Newest event seq per item id, from the reducer. */
   lastSeqByTarget?: Record<string, number>;
 }
@@ -47,13 +47,14 @@ function SpotlightCard({
   undoSeq,
 }: {
   item: CardItem;
-  onSendOp: (op: Op) => void;
+  onSendOp: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   undoSeq?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!editing) setDraft(item.text);
@@ -64,12 +65,22 @@ function SpotlightCard({
   const statusClass =
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== item.text) {
-      onSendOp(ops.updateItem(item.id, { text: trimmed }));
+    if (!trimmed || trimmed === item.text) {
+      setEditing(false);
+      return;
     }
-    setEditing(false);
+    setSaving(true);
+    try {
+      if (await onSendOp(ops.updateItem(item.id, { text: trimmed }))) {
+        setEditing(false);
+      }
+    } catch {
+      // Keep the editor and draft intact for retry.
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -83,10 +94,12 @@ function SpotlightCard({
           className="spotlight-edit"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={saveEdit}
+          onBlur={() => void saveEdit()}
+          disabled={saving}
+          aria-label={`Edit ${tag.toLowerCase()}`}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setEditing(false);
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveEdit();
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void saveEdit();
           }}
           autoFocus
         />
@@ -103,24 +116,24 @@ function SpotlightCard({
           {relativeTime(item.updated_at)}
         </span>
         <div className="spotlight-actions">
-          <button type="button" onClick={() => setEditing(true)}>
+          <button type="button" disabled={saving} onClick={() => setEditing(true)}>
             Edit
           </button>
           {item.status !== 'confirmed' && (
-            <button type="button" onClick={() => onSendOp(ops.confirmItem(item.id))}>
+            <button type="button" onClick={() => { void onSendOp(ops.confirmItem(item.id)); }}>
               Confirm
             </button>
           )}
           <button
             type="button"
-            onClick={() => onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
+            onClick={() => { void onSendOp(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id)); }}
           >
             {item.pinned ? 'Unpin' : 'Pin'}
           </button>
           <button
             type="button"
             className="danger"
-            onClick={() => onSendOp(ops.removeItem(item.id))}
+            onClick={() => { void onSendOp(ops.removeItem(item.id)); }}
           >
             Remove
           </button>
@@ -129,7 +142,7 @@ function SpotlightCard({
               type="button"
               className="ghost"
               title="Undo the last change to this item"
-              onClick={() => onUndo?.(undoSeq as number)}
+              onClick={() => { void onUndo?.(undoSeq as number); }}
             >
               Undo
             </button>

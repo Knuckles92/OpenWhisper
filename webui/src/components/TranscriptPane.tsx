@@ -58,7 +58,10 @@ export default function TranscriptPane({
   useEffect(() => {
     if (!highlightSegmentId || !highlightedAvailable) return undefined;
     const node = document.getElementById(`${segmentIdPrefix}seg-${highlightSegmentId}`);
-    if (node) scrollChildIntoView(node, { block: 'center' });
+    if (node) {
+      scrollChildIntoView(node, { block: 'center' });
+      node.focus({ preventScroll: true });
+    }
     const timer = window.setTimeout(() => clearHighlightRef.current(), 3000);
     return () => window.clearTimeout(timer);
   }, [highlightSegmentId, highlightedAvailable, segmentIdPrefix]);
@@ -84,6 +87,8 @@ export default function TranscriptPane({
                   key={seg.id}
                   id={`${segmentIdPrefix}seg-${seg.id}`}
                   className={`segment${highlighted ? ' highlight' : ''}`}
+                  tabIndex={highlighted ? -1 : undefined}
+                  aria-label={`${speakerLabel(participants, seg.speaker_participant_id, seg.channel)} at ${formatTime(seg.start_s)}`}
                 >
                   <time className="segment-time">{formatTime(seg.start_s)}</time>
                   <div>
@@ -98,7 +103,7 @@ export default function TranscriptPane({
                               const val = e.target.value;
                               onReassignSpeaker(seg.id, val || null);
                             }}
-                            aria-label="Speaker"
+                            aria-label={`Speaker for transcript at ${formatTime(seg.start_s)}`}
                           >
                             <option value="">
                               {speakerLabel(participants, null, seg.channel)}

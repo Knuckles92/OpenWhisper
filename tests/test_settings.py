@@ -2,6 +2,7 @@ import pytest
 import tempfile
 import os
 import json
+import threading
 from unittest.mock import patch
 
 from services.settings import (
@@ -92,6 +93,83 @@ class TestSettingsManager:
             saved_data = json.load(f)
 
         assert saved_data == test_settings
+
+    def test_concurrent_setting_writes_preserve_every_key(self):
+        threads = [
+            threading.Thread(
+                target=self.settings_manager.save_setting,
+                args=(f"worker_{index}", index),
+            )
+            for index in range(20)
+        ]
+
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert self.settings_manager.load_all_settings() == {
+            f"worker_{index}": index for index in range(20)
+        }
+
+    def test_failed_atomic_replace_preserves_previous_settings(self):
+        original = {"kept": True}
+        self.settings_manager.save_all_settings(original)
+
+        with patch("services.settings.os.replace", side_effect=OSError("blocked")):
+            with pytest.raises(OSError, match="blocked"):
+                self.settings_manager.save_setting("new", "value")
+
+        assert self.settings_manager.load_all_settings() == original
+        assert os.listdir(self.temp_dir) == ["test_settings.json"]
+
+    def test_malformed_file_is_not_overwritten_by_single_setting(self):
+        with open(self.test_settings_file, "w", encoding="utf-8") as handle:
+            handle.write("{not-json")
+
+        with pytest.raises(json.JSONDecodeError):
+            self.settings_manager.save_setting("new", "value")
+
+        with open(self.test_settings_file, encoding="utf-8") as handle:
+            assert handle.read() == "{not-json"
+
+    def test_update_settings_merges_and_removes_in_one_transaction(self):
+        self.settings_manager.save_all_settings({"keep": 1, "remove": 2})
+
+        committed = self.settings_manager.update_settings(
+            {"added": 3}, remove=("remove",)
+        )
+
+        assert committed == {"keep": 1, "added": 3}
+        assert self.settings_manager.load_all_settings() == committed
+
+    def test_mutate_settings_commits_structured_change_and_returns_result(self):
+        self.settings_manager.save_all_settings({"profiles": [{"id": "a"}]})
+
+        def append_profile(settings):
+            settings["profiles"].append({"id": "b"})
+            return "b"
+
+        result = self.settings_manager.mutate_settings(append_profile)
+
+        assert result == "b"
+        assert self.settings_manager.load_all_settings()["profiles"] == [
+            {"id": "a"}, {"id": "b"},
+        ]
+
+    def test_mutate_settings_does_not_write_when_callback_fails(self):
+        original = {"keep": True}
+        self.settings_manager.save_all_settings(original)
+
+        def fail(settings):
+            settings["leak"] = True
+            raise RuntimeError("invalid mutation")
+
+        with pytest.raises(RuntimeError, match="invalid mutation"):
+            self.settings_manager.mutate_settings(fail)
+
+        assert self.settings_manager.load_all_settings() == original
 
     def test_is_hf_hub_offline_env_set(self):
         """Env helper should reflect the externally supplied HF_HUB_OFFLINE."""

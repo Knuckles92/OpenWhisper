@@ -1,6 +1,5 @@
 import {
   GENERIC_CARD_KEYS,
-  type ActionResultItem,
   type AgentActivityRecord,
   type CardItem,
   type CardKey,
@@ -30,7 +29,6 @@ export interface MeetingUiState {
   socketStatus: SocketStatus;
   meetingEnded: boolean;
   lastError: string | null;
-  actionResults: Record<string, ActionResultItem[]>;
   /** Dashboard-connected guests (presence events). */
   onlineIds: Set<string>;
   /** Newest event seq seen per target id — the handle host undo acts on. */
@@ -49,7 +47,6 @@ export const initialUiState: MeetingUiState = {
   socketStatus: 'closed',
   meetingEnded: false,
   lastError: null,
-  actionResults: {},
   onlineIds: new Set(),
   lastSeqByTarget: {},
   agentActivity: [],
@@ -177,6 +174,7 @@ export type UiAction =
   | { type: 'socket_status'; status: SocketStatus }
   | { type: 'server_message'; msg: ServerMessage }
   | { type: 'hydrate_segments'; segments: Segment[] }
+  | { type: 'client_error'; message: string }
   | { type: 'clear_error' };
 
 export function meetingReducer(state: MeetingUiState, action: UiAction): MeetingUiState {
@@ -186,6 +184,9 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
 
     case 'clear_error':
       return { ...state, lastError: null };
+
+    case 'client_error':
+      return { ...state, lastError: action.message };
 
     case 'hydrate_segments':
       return { ...state, segments: mergeSegments(state.segments, action.segments) };
@@ -284,10 +285,8 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             meetingEnded: isTerminalStatus(status),
           };
         case 'action_result': {
-          const results = { ...state.actionResults, [msg.client_action_id]: msg.results };
           let next = {
             ...state,
-            actionResults: results,
             lastSeqByTarget: trackSeqs(state.lastSeqByTarget, msg.results),
           };
           for (const r of msg.results) {

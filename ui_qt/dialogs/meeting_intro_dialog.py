@@ -51,6 +51,10 @@ class MeetingModeIntroDialog(QDialog):
         self.result_action = self.RESULT_SKIP
 
         self.setWindowTitle("Meeting Mode")
+        self.setAccessibleName("Welcome to Meeting Mode")
+        self.setAccessibleDescription(
+            "Overview of meeting capture, the browser dashboard, and Meeting settings."
+        )
         self.setMinimumWidth(460)
         self.setMaximumWidth(520)
         self.setModal(True)

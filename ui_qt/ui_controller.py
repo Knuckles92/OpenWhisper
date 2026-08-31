@@ -214,9 +214,7 @@ class UIController(QObject):
         meeting_tab.resume_requested.connect(
             lambda: self.on_meeting_resume and self.on_meeting_resume()
         )
-        meeting_tab.end_requested.connect(
-            lambda: self.on_meeting_end and self.on_meeting_end()
-        )
+        meeting_tab.end_requested.connect(self._on_meeting_end_requested)
         meeting_tab.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
         meeting_tab.open_report_requested.connect(self._on_meeting_open_report)
         meeting_tab.copy_guest_link_requested.connect(
@@ -997,14 +995,29 @@ class UIController(QObject):
 
     def _on_tray_meeting_toggle(self):
         if self._meeting_active:
-            if self.on_meeting_end:
-                self.on_meeting_end()
+            self._on_meeting_end_requested()
             return
         policy = self.ensure_meeting_start_readiness()
         if policy is None:
             return
         if self.on_meeting_start:
             self.on_meeting_start(None, system_audio_policy=policy)
+
+    def _on_meeting_end_requested(self) -> None:
+        """Confirm the irreversible capture stop before ending a meeting."""
+        if not self._meeting_active or not self.on_meeting_end:
+            return
+        answer = QMessageBox.question(
+            self.main_window,
+            "End meeting?",
+            "End this meeting now? Audio capture will stop immediately. "
+            "OpenWhisper will keep working in the background to finish the "
+            "transcript and report.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.on_meeting_end()
 
     def on_meeting_state_changed(self, payload: Any) -> None:
         """Apply a meeting-state payload to the Meeting Mode tab and tray.

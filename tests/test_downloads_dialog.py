@@ -100,7 +100,10 @@ class _DialogTestCase:
         for patcher in patchers:
             patcher.start()
             self._started.append(patcher)
-        return DownloadsDialog(get_loaded_model=lambda: loaded_model), values
+        return DownloadsDialog(
+            get_loaded_model=lambda: loaded_model,
+            background_cache_scan=False,
+        ), values
 
 
 class TestWindowShell(_DialogTestCase):

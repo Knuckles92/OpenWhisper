@@ -337,6 +337,9 @@ class TestSpoolWriterContract:
         assert repo.chunks[chunk.chunk_id]["seq"] == 0
         # Atomic write: the temp file never survives.
         assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
+        assert [
+            f for f in os.listdir(tmp_path) if f.endswith(".recovery.json")
+        ] == []
         assert os.path.basename(chunk.file_path) == "mic_00000.wav"
         with wave.open(chunk.file_path, "rb") as wav:
             assert wav.getframerate() == TARGET_RATE
@@ -377,6 +380,11 @@ class TestSpoolWriterContract:
         assert len(collector.chunks) == 1
 
     def test_registration_failure_orphans_the_wav(self, tmp_path):
+        from meeting.capture.spool import (
+            chunk_recovery_meta_path,
+            load_chunk_recovery_meta,
+        )
+
         rate = 16000
         repo = FakeRepo(fail_times=2)  # both the attempt and its retry fail
         collector = Collector(repo)
@@ -389,6 +397,15 @@ class TestSpoolWriterContract:
         assert collector.chunks == []
         names = os.listdir(tmp_path)
         assert "mic_00000.wav.orphan" in names
+        sidecar = chunk_recovery_meta_path(
+            str(tmp_path / "mic_00000.wav.orphan")
+        )
+        assert os.path.isfile(sidecar)
+        meta = load_chunk_recovery_meta(str(tmp_path / "mic_00000.wav.orphan"))
+        assert meta is not None
+        assert meta["meeting_id"] == "m_test"
+        assert meta["channel"] == "mic"
+        assert meta["seq"] == 0
         assert collector.chunks == []
         session_names = {
             name for name in names

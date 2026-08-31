@@ -8,6 +8,10 @@ import time
 import types
 from unittest.mock import patch
 
+# Load the real settings module before the deliberately minimal config stub is
+# installed below. The non-Windows backend imports RecordingTriggerMode from it.
+import services.settings  # noqa: F401
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / "services" / "hotkey_manager.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("test_hotkey_manager_module", MODULE_PATH)
 hotkey_manager_module = importlib.util.module_from_spec(MODULE_SPEC)
@@ -81,5 +85,4 @@ class TestHotkeyManager:
         assert not manager.program_enabled
         assert manager.hotkeys == original_hotkeys
         assert manager.on_record_toggle is callback
-
 

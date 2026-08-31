@@ -1,0 +1,76 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python and Qt tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libportaudio2 libxcb-cursor0 \
+            libxkbcommon-x11-0 xauth xvfb
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r requirements.txt -r requirements-build.txt \
+            -c requirements-release-constraints.txt
+          python -m pip check
+      - name: Run test suite with a hard hang guard
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: timeout 20m xvfb-run -a python -m pytest
+
+  webui:
+    name: Dashboard typecheck and bundle
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - working-directory: webui
+        run: npm ci
+      - working-directory: webui
+        run: npm run build
+      - name: Require the committed dashboard bundle to match its source
+        run: git diff --exit-code -- webui/dist
+
+  sidecar:
+    name: Meeting sidecar checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sidecar/package-lock.json
+      - working-directory: sidecar
+        run: npm ci
+      - working-directory: sidecar
+        run: npm run typecheck
+      - working-directory: sidecar
+        run: npm test

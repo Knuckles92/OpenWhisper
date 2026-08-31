@@ -1,7 +1,10 @@
 """Focused tests for Meeting Mode crash-recovery scan, finalize, and discard."""
 import json
 import os
+import wave
 from datetime import datetime, timedelta
+
+import numpy as np
 
 from meeting.interfaces import SpooledChunk
 from meeting.recovery import (
@@ -11,6 +14,7 @@ from meeting.recovery import (
     finalize_meeting,
     find_recoverable_meetings,
     is_session_dead,
+    reconcile_meeting_audio,
 )
 from meeting.state.schema import MeetingState
 
@@ -357,3 +361,163 @@ def test_finalize_meeting_unfinished_chunks_mark_needs_recovery(monkeypatch):
 
     assert finalize_meeting(repo, meeting) is False
     assert repo.updates[-1] == ("m_crash", {"status": "needs_recovery"})
+
+
+def _create_meeting(repo, spool_dir, meeting_id="m_reconcile", status="active"):
+    repo.create_meeting(
+        id=meeting_id,
+        title="Interrupted capture",
+        status=status,
+        started_at=datetime.now().isoformat(),
+        host_token="host",
+        guest_token="guest",
+        cloud_enabled=False,
+        spool_dir=str(spool_dir),
+    )
+    return repo.get_meeting(meeting_id)
+
+
+def _write_wav(path, seconds=1.0, rate=16000):
+    samples = np.arange(int(seconds * rate), dtype=np.int16)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(samples.tobytes())
+
+
+def test_reconcile_registers_orphan_wav_once(repo, tmp_path):
+    from meeting.capture.spool import (
+        chunk_recovery_meta_path,
+        write_chunk_recovery_meta,
+    )
+
+    meeting = _create_meeting(repo, tmp_path)
+    canonical = tmp_path / "mic_00000.wav"
+    orphan = tmp_path / "mic_00000.wav.orphan"
+    _write_wav(canonical, seconds=1.25)
+    os.replace(canonical, orphan)
+    write_chunk_recovery_meta(
+        str(orphan), meeting["id"], "mic", 0, 2.5, 1.25
+    )
+
+    first = reconcile_meeting_audio(repo, meeting)
+    second = reconcile_meeting_audio(repo, meeting)
+
+    rows = repo.get_audio_chunks(meeting["id"])
+    assert first == {"orphan_chunks": 1, "tail_chunks": 0}
+    assert second == {"orphan_chunks": 0, "tail_chunks": 0}
+    assert len(rows) == 1
+    assert rows[0]["seq"] == 0
+    assert rows[0]["start_s"] == 2.5
+    assert rows[0]["duration_s"] == 1.25
+    assert rows[0]["file_path"] == str(canonical)
+    assert canonical.is_file()
+    assert not orphan.exists()
+    assert not os.path.exists(chunk_recovery_meta_path(str(canonical)))
+
+
+def test_reconcile_sidecar_after_db_commit_does_not_duplicate(repo, tmp_path):
+    from meeting.capture.spool import write_chunk_recovery_meta
+
+    meeting = _create_meeting(repo, tmp_path)
+    wav_path = tmp_path / "mic_00000.wav"
+    _write_wav(wav_path)
+    repo.register_chunk(
+        meeting_id=meeting["id"], channel="mic", seq=0,
+        file_path=str(wav_path), start_s=0.0, duration_s=1.0,
+        sample_rate=16000, asr_status="pending",
+    )
+    write_chunk_recovery_meta(
+        str(wav_path), meeting["id"], "mic", 0, 0.0, 1.0
+    )
+
+    result = reconcile_meeting_audio(repo, meeting)
+
+    assert result == {"orphan_chunks": 0, "tail_chunks": 0}
+    assert len(repo.get_audio_chunks(meeting["id"])) == 1
+
+
+def test_reconcile_materializes_only_unregistered_pcm_tail(repo, tmp_path):
+    from meeting.capture.spool import write_session_meta
+
+    meeting = _create_meeting(repo, tmp_path)
+    source = np.arange(2 * 16000, dtype=np.int16)
+    pcm_path = tmp_path / "mic_session.pcm"
+    pcm_path.write_bytes(source.tobytes())
+    write_session_meta(
+        str(tmp_path / "mic_session.json"),
+        16000,
+        source.size,
+        0.0,
+        pcm_origin_s=0.0,
+    )
+    first_wav = tmp_path / "mic_00000.wav"
+    _write_wav(first_wav)
+    repo.register_chunk(
+        meeting_id=meeting["id"], channel="mic", seq=0,
+        file_path=str(first_wav), start_s=0.0, duration_s=1.0,
+        sample_rate=16000, asr_status="done",
+    )
+
+    first = reconcile_meeting_audio(repo, meeting)
+    second = reconcile_meeting_audio(repo, meeting)
+
+    rows = repo.get_audio_chunks(meeting["id"])
+    assert first == {"orphan_chunks": 0, "tail_chunks": 1}
+    assert second == {"orphan_chunks": 0, "tail_chunks": 0}
+    assert len(rows) == 2
+    recovered = rows[1]
+    assert recovered["seq"] == 1
+    assert recovered["start_s"] == 1.0
+    assert recovered["duration_s"] == 1.0
+    assert recovered["asr_status"] == "pending"
+    with wave.open(recovered["file_path"], "rb") as wav_file:
+        assert wav_file.getframerate() == 16000
+        assert wav_file.getnframes() == 16000
+
+
+def test_reconcile_ignores_raw_file_already_converted_into_prefix(repo, tmp_path):
+    from meeting.capture.spool import write_session_meta
+
+    meeting = _create_meeting(repo, tmp_path)
+    samples = np.arange(16000, dtype=np.int16)
+    (tmp_path / "mic_session.16k.pcm").write_bytes(samples.tobytes())
+    # Simulate Windows refusing the best-effort unlink after conversion.
+    (tmp_path / "mic_session.pcm").write_bytes(samples.tobytes())
+    write_session_meta(
+        str(tmp_path / "mic_session.json"),
+        16000,
+        samples.size,
+        0.0,
+        pcm_origin_s=0.0,
+        prefix_16k_samples=samples.size,
+        pcm_active=False,
+    )
+
+    result = reconcile_meeting_audio(repo, meeting)
+
+    rows = repo.get_audio_chunks(meeting["id"])
+    assert result == {"orphan_chunks": 0, "tail_chunks": 1}
+    assert len(rows) == 1
+    assert rows[0]["duration_s"] == 1.0
+
+
+def test_startup_scan_discovers_terminal_meeting_with_stranded_wav(repo, tmp_path):
+    from meeting.capture.spool import write_chunk_recovery_meta
+
+    meeting = _create_meeting(repo, tmp_path, status="ended")
+    canonical = tmp_path / "loopback_00000.wav"
+    orphan = tmp_path / "loopback_00000.wav.orphan"
+    _write_wav(canonical, seconds=0.5)
+    os.replace(canonical, orphan)
+    write_chunk_recovery_meta(
+        str(orphan), meeting["id"], "loopback", 0, 4.0, 0.5
+    )
+
+    recovered = find_recoverable_meetings(repo)
+
+    assert [row["id"] for row in recovered] == [meeting["id"]]
+    chunks = repo.get_audio_chunks(meeting["id"])
+    assert len(chunks) == 1
+    assert chunks[0]["asr_status"] == "pending"

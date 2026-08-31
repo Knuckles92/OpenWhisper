@@ -1,6 +1,8 @@
 """Failure-path tests for meeting audio playback and recoverable deletion."""
 from __future__ import annotations
 
+import os
+import time
 import wave
 
 import numpy as np
@@ -102,6 +104,29 @@ def test_delete_restores_spool_when_database_delete_fails(tmp_path):
         delete_meeting_data(repo, "m_delete", str(root))
     assert spool.is_dir()
     assert (spool / "audio.wav").read_bytes() == b"audio"
+
+
+def test_delete_refreshes_old_spool_timestamp_before_database_commit(tmp_path):
+    root = tmp_path / "meetings"
+    spool = root / "m_delete"
+    spool.mkdir(parents=True)
+    (spool / "audio.wav").write_bytes(b"audio")
+    old = time.time() - (2 * 60 * 60)
+    os.utime(spool, (old, old))
+    observed = {}
+
+    class InspectingRepository(LifecycleRepository):
+        def delete_meeting(self, meeting_id):
+            tombstone = next(root.glob(".deleting-*"))
+            observed["age_s"] = time.time() - tombstone.stat().st_mtime
+            super().delete_meeting(meeting_id)
+
+    repo = InspectingRepository(
+        {"id": "m_delete", "spool_dir": str(spool)}
+    )
+
+    assert delete_meeting_data(repo, "m_delete", str(root)) is True
+    assert observed["age_s"] < 10
 
 
 def test_delete_rejects_paths_outside_configured_root(tmp_path):
@@ -209,3 +234,19 @@ def test_clear_meetings_purges_orphan_spools_but_not_tombstones(tmp_path):
     assert not orphan.exists()
     assert tombstone.is_dir()
     assert leftover.is_file()
+
+
+def test_clear_meetings_purges_abandoned_deletion_tombstones(tmp_path):
+    root = tmp_path / "meetings"
+    tombstone = root / ".deleting-m_old-abc"
+    tombstone.mkdir(parents=True)
+    (tombstone / "audio.wav").write_bytes(b"audio")
+    old = time.time() - (2 * 60 * 60)
+    os.utime(tombstone, (old, old))
+
+    removed = clear_meetings(
+        MultiLifecycleRepository([]), str(root), delete_spools=True
+    )
+
+    assert removed == 0
+    assert not tombstone.exists()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
@@ -65,6 +66,31 @@ class TranscriptionRuntime:
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
         self._transcript_cleanup = TranscriptCleanup()
+        self._job_lock = threading.Lock()
+        self._job_active = False
+
+    @property
+    def has_active_job(self) -> bool:
+        """Whether one recording result is queued, transcribing, or cleaning."""
+        with self._job_lock:
+            return self._job_active
+
+    def _claim_job(self) -> bool:
+        """Atomically reserve the single transcription workflow slot."""
+        with self._job_lock:
+            if self._job_active:
+                return False
+            self._job_active = True
+            return True
+
+    def _finish_job(self) -> None:
+        with self._job_lock:
+            self._job_active = False
+
+    def _report_busy(self, action: str) -> None:
+        message = f"A transcription is already in progress — wait before {action}"
+        self.controller.status_update.emit(message)
+        logger.info(message)
 
     def start_recording(self) -> None:
         if self.controller.is_meeting_active():
@@ -72,10 +98,13 @@ class TranscriptionRuntime:
                 "Meeting Mode is active — end the meeting to use dictation"
             )
             return
-        loading = getattr(self.controller, "local_whisper_loading_message", None)
-        message = loading() if callable(loading) else None
+        readiness = getattr(self.controller, "transcription_readiness_message", None)
+        message = readiness() if callable(readiness) else None
         if message:
             self.controller.status_update.emit(message)
+            return
+        if self.has_active_job:
+            self._report_busy("starting another recording")
             return
         if self.controller.recorder.start_recording():
             logger.info("Recording started")
@@ -111,6 +140,15 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Processing...")
+
+        # Reserve the workflow before post-roll/save work.  Once the recorder
+        # flips to inactive, an upload can arrive from another UI thread; a
+        # late claim would let it take the slot and could make this path clear
+        # or overwrite that upload's metadata on an error.
+        if not self._claim_job():
+            self._report_busy("processing this recording")
+            self.controller.overlay_state_update.emit(OverlayState.NONE)
+            return
 
         if not self.controller.recorder.wait_for_stop_completion():
             logger.warning(
@@ -207,6 +245,12 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
             return
+        if self.controller.recorder.is_recording:
+            self._report_busy("re-transcribing audio")
+            return
+        if not self._claim_job():
+            self._report_busy("re-transcribing audio")
+            return
 
         logger.info("Re-transcribing audio file: %s", audio_path)
         self.controller._pending_audio_path = None
@@ -235,6 +279,12 @@ class TranscriptionRuntime:
             logger.error(f"Uploaded audio file not found: {audio_path}")
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Error: Audio file not found")
+            return
+        if self.controller.recorder.is_recording:
+            self._report_busy("uploading audio")
+            return
+        if not self._claim_job():
+            self._report_busy("uploading audio")
             return
 
         logger.info(f"Processing uploaded audio file: {audio_path}")
@@ -393,6 +443,7 @@ class TranscriptionRuntime:
             )
             self.controller.ui_controller.set_status(EMPTY_ASR_MESSAGE)
             self._clear_pending_audio_metadata()
+            self._finish_job()
             return
 
         try:
@@ -421,7 +472,10 @@ class TranscriptionRuntime:
         finally:
             self._clear_pending_audio_metadata()
 
-        self._apply_clipboard_and_paste(transcript)
+        try:
+            self._apply_clipboard_and_paste(transcript)
+        finally:
+            self._finish_job()
 
     def _clear_pending_audio_metadata(self) -> None:
         """Drop one-shot metadata attached to the current transcription job."""
@@ -492,9 +546,22 @@ class TranscriptionRuntime:
         self.controller.ui_controller.set_status("Ready")
 
     def on_transcription_error(self, error_message: str) -> None:
-        self.controller.ui_controller.set_status(f"Error: {error_message}")
+        recovery_name = None
+        pending_audio = self.controller._pending_audio_path
+        if pending_audio and os.path.isfile(pending_audio):
+            try:
+                recovery_name = history_manager.preserve_recording(pending_audio)
+            except Exception as exc:
+                logger.error("Failed to preserve audio after transcription error: %s", exc)
+        status = f"Error: {error_message}"
+        if recovery_name:
+            status += f" — audio saved in Recordings as {recovery_name}"
+        self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
+        self.controller._transcription_start_time = None
+        self._clear_pending_audio_metadata()
+        self._finish_job()
 
     def on_model_changed(self, model_name: str) -> None:
         if self.controller.is_meeting_active():

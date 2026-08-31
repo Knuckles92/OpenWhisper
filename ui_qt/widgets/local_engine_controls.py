@@ -59,11 +59,11 @@ class LocalEngineControls(QWidget):
         self.compute_combo.currentTextChanged.connect(self._on_changed)
 
     def _on_changed(self, _value: str):
-        settings = settings_manager.load_all_settings()
-        settings[SettingsKey.WHISPER_MODEL] = self.model_combo.currentText()
-        settings[SettingsKey.WHISPER_DEVICE] = self.device_combo.currentText()
-        settings[SettingsKey.WHISPER_COMPUTE_TYPE] = self.compute_combo.currentText()
-        settings_manager.save_all_settings(settings)
+        settings = settings_manager.update_settings({
+            SettingsKey.WHISPER_MODEL: self.model_combo.currentText(),
+            SettingsKey.WHISPER_DEVICE: self.device_combo.currentText(),
+            SettingsKey.WHISPER_COMPUTE_TYPE: self.compute_combo.currentText(),
+        })
         logger.debug(
             "Engine settings changed: model=%s device=%s compute=%s",
             settings[SettingsKey.WHISPER_MODEL],

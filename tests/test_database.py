@@ -59,6 +59,27 @@ class TestDatabaseManager:
         entry = temp_db.get_history_entry_by_id(entry_id)
         assert entry is None
 
+    def test_history_search_is_bounded_and_treats_wildcards_literally(
+        self, temp_db
+    ):
+        rows = [
+            ("entry-old", "ordinary notes", "2026-01-01T00:00:00+00:00"),
+            ("entry-mid", "literal 100% result", "2026-02-01T00:00:00+00:00"),
+            ("entry-new", "another 100% result", "2026-03-01T00:00:00+00:00"),
+        ]
+        for entry_id, body, timestamp in rows:
+            temp_db.add_history_entry(
+                entry_id=entry_id,
+                text=body,
+                timestamp=timestamp,
+                model="local_whisper",
+            )
+
+        matches = temp_db.search_history_entries("100%", limit=1)
+
+        assert [entry.id for entry in matches] == ["entry-new"]
+        assert temp_db.search_history_entries("100_", limit=10) == []
+
     def test_migration_removes_meeting_tables(self, tmp_path):
         """Legacy meeting tables stay dropped; schema reaches current version."""
         db_path = str(tmp_path / "legacy.db")

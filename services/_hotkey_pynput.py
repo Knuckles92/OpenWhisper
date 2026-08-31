@@ -10,9 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
-
-from pynput import keyboard as pynput_keyboard
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from config import config
 from services._hotkey_common import (
@@ -26,6 +24,50 @@ from services.settings import RecordingTriggerMode
 logger = logging.getLogger(__name__)
 
 
+class HotkeyBackendUnavailable(RuntimeError):
+    """Raised when pynput cannot provide a native keyboard backend."""
+
+
+_pynput_keyboard_module: Optional[Any] = None
+_pynput_keyboard_error: Optional[Exception] = None
+
+
+def _load_pynput_keyboard():
+    """Import pynput only when native keyboard access is actually requested.
+
+    Importing pynput selects and initializes its platform backend. On Linux that
+    opens the X display immediately, so importing it from a UI or service module
+    used to make pure-Wayland and headless startup fail before the application
+    could offer its in-window controls. Keep that native boundary lazy and turn
+    backend initialization failures into a normal unavailable state.
+    """
+    global _pynput_keyboard_module, _pynput_keyboard_error
+    if _pynput_keyboard_module is not None:
+        return _pynput_keyboard_module
+
+    try:
+        from pynput import keyboard as keyboard_module
+    except Exception as exc:
+        _pynput_keyboard_error = exc
+        raise HotkeyBackendUnavailable(
+            f"pynput keyboard backend is unavailable: {exc}"
+        ) from exc
+
+    _pynput_keyboard_module = keyboard_module
+    _pynput_keyboard_error = None
+    return keyboard_module
+
+
+class _LazyPynputKeyboard:
+    """Compatibility proxy for callers that inspect ``pynput_keyboard``."""
+
+    def __getattr__(self, name: str):
+        return getattr(_load_pynput_keyboard(), name)
+
+
+pynput_keyboard = _LazyPynputKeyboard()
+
+
 def get_listener_class():
     """Return a pynput listener class that avoids unsafe macOS layout lookup.
 
@@ -36,16 +78,17 @@ def get_listener_class():
     event keycodes/unicode strings directly, so the layout context is not
     needed.
     """
+    keyboard_module = _load_pynput_keyboard()
     if sys.platform != "darwin":
-        return pynput_keyboard.Listener
+        return keyboard_module.Listener
 
     try:
         from pynput._util.darwin import ListenerMixin
     except Exception as exc:
         logger.warning(f"Could not load macOS pynput listener shim: {exc}")
-        return pynput_keyboard.Listener
+        return keyboard_module.Listener
 
-    class MacOSHotkeyListener(pynput_keyboard.Listener):
+    class MacOSHotkeyListener(keyboard_module.Listener):
         def _run(self):
             self._context = None
             ListenerMixin._run(self)
@@ -80,32 +123,42 @@ _MAIN_KEY_ALIASES: Dict[str, str] = {
     "pgdn": "page_down",
 }
 
-# pynput modifier Key objects -> canonical modifier name.
-_MODIFIER_KEYS: Dict[object, str] = {
-    pynput_keyboard.Key.cmd: "cmd",
-    pynput_keyboard.Key.cmd_l: "cmd",
-    pynput_keyboard.Key.cmd_r: "cmd",
-    pynput_keyboard.Key.ctrl: "ctrl",
-    pynput_keyboard.Key.ctrl_l: "ctrl",
-    pynput_keyboard.Key.ctrl_r: "ctrl",
-    pynput_keyboard.Key.alt: "alt",
-    pynput_keyboard.Key.alt_l: "alt",
-    pynput_keyboard.Key.alt_r: "alt",
-    pynput_keyboard.Key.shift: "shift",
-    pynput_keyboard.Key.shift_l: "shift",
-    pynput_keyboard.Key.shift_r: "shift",
-}
+_modifier_keys: Optional[Dict[object, str]] = None
 
-# pynput's alt_gr only exists on some platforms; include it defensively.
-if hasattr(pynput_keyboard.Key, "alt_gr"):
-    _MODIFIER_KEYS[pynput_keyboard.Key.alt_gr] = "alt"
+
+def _get_modifier_keys() -> Dict[object, str]:
+    """Build the pynput-key lookup after its native backend is available."""
+    global _modifier_keys
+    if _modifier_keys is not None:
+        return _modifier_keys
+
+    key_type = _load_pynput_keyboard().Key
+    modifier_keys = {
+        key_type.cmd: "cmd",
+        key_type.cmd_l: "cmd",
+        key_type.cmd_r: "cmd",
+        key_type.ctrl: "ctrl",
+        key_type.ctrl_l: "ctrl",
+        key_type.ctrl_r: "ctrl",
+        key_type.alt: "alt",
+        key_type.alt_l: "alt",
+        key_type.alt_r: "alt",
+        key_type.shift: "shift",
+        key_type.shift_l: "shift",
+        key_type.shift_r: "shift",
+    }
+    # pynput's alt_gr only exists on some platforms; include it defensively.
+    if hasattr(key_type, "alt_gr"):
+        modifier_keys[key_type.alt_gr] = "alt"
+    _modifier_keys = modifier_keys
+    return modifier_keys
 
 _ALL_MODIFIERS = ("cmd", "ctrl", "alt", "shift")
 
 
 def modifier_of(key) -> Optional[str]:
     """Return the canonical modifier name for ``key`` or ``None`` if it is not a modifier."""
-    return _MODIFIER_KEYS.get(key)
+    return _get_modifier_keys().get(key)
 
 
 def key_to_name(key) -> Optional[str]:
@@ -114,9 +167,10 @@ def key_to_name(key) -> Optional[str]:
     The same function is used by the hotkey capture dialog so that whatever the
     user presses to set a hotkey produces the identical name used at match time.
     """
-    if isinstance(key, pynput_keyboard.Key):
+    keyboard_module = _load_pynput_keyboard()
+    if isinstance(key, keyboard_module.Key):
         return key.name
-    if isinstance(key, pynput_keyboard.KeyCode):
+    if isinstance(key, keyboard_module.KeyCode):
         if key.char:
             return key.char.lower()
         if key.vk is not None:
@@ -351,7 +405,7 @@ def accessibility_permission_diagnostics() -> str:
     return "\n".join(lines)
 
 
-_paste_controller: Optional[pynput_keyboard.Controller] = None
+_paste_controller: Optional[Any] = None
 
 
 def send_paste() -> None:
@@ -361,9 +415,14 @@ def send_paste() -> None:
     for the host process to post synthetic key events on macOS.
     """
     global _paste_controller
+    keyboard_module = _load_pynput_keyboard()
     if _paste_controller is None:
-        _paste_controller = pynput_keyboard.Controller()
-    modifier = pynput_keyboard.Key.cmd if sys.platform == "darwin" else pynput_keyboard.Key.ctrl
+        _paste_controller = keyboard_module.Controller()
+    modifier = (
+        keyboard_module.Key.cmd
+        if sys.platform == "darwin"
+        else keyboard_module.Key.ctrl
+    )
     with _paste_controller.pressed(modifier):
         _paste_controller.press("v")
         _paste_controller.release("v")
@@ -394,11 +453,14 @@ class HotkeyManager:
 
         self._pressed_modifiers: set = set()
         self._pressed_main_keys: set = set()
-        self._listener: Optional[pynput_keyboard.Listener] = None
+        self._listener: Optional[Any] = None
         # macOS detection runs through Carbon RegisterEventHotKey (no
         # Accessibility permission); Linux keeps the pynput global listener.
         self._carbon_registrar = None
         self._use_carbon = sys.platform == "darwin"
+        self.backend_available = False
+        self.backend_name = "unavailable"
+        self.backend_error = ""
 
         self._setup_keyboard_hook()
 
@@ -410,18 +472,36 @@ class HotkeyManager:
         self._record_key_held = False
 
         if self._use_carbon and self._setup_carbon_hotkeys():
+            self.backend_available = True
+            self.backend_name = "carbon"
+            self.backend_error = ""
             return
 
         # suppress=False: pynput cannot selectively suppress keys, so hotkeys are
         # observed but still pass through to the focused app.
-        listener_class = get_listener_class()
-        self._listener = listener_class(
-            on_press=self._on_press,
-            on_release=self._on_release,
-            suppress=False,
-        )
-        self._listener.daemon = True
-        self._listener.start()
+        try:
+            listener_class = get_listener_class()
+            self._listener = listener_class(
+                on_press=self._on_press,
+                on_release=self._on_release,
+                suppress=False,
+            )
+            self._listener.daemon = True
+            self._listener.start()
+        except Exception as exc:
+            self._listener = None
+            self.backend_available = False
+            self.backend_name = "unavailable"
+            self.backend_error = str(exc)
+            logger.warning(
+                "Global hotkeys unavailable; continuing with in-window controls: %s",
+                exc,
+            )
+            return
+
+        self.backend_available = True
+        self.backend_name = "pynput"
+        self.backend_error = ""
         logger.info("Keyboard hook started")
 
     def _setup_carbon_hotkeys(self) -> bool:
@@ -652,7 +732,12 @@ class HotkeyManager:
             logger.warning(f"Error during rehook cleanup: {e}")
         try:
             self._setup_keyboard_hook()
-            logger.info("Keyboard hook re-registered successfully")
+            if self.backend_available:
+                logger.info("Keyboard hook re-registered successfully")
+            else:
+                logger.warning(
+                    "Keyboard hook remains unavailable: %s", self.backend_error
+                )
         except Exception as e:
             logger.error(f"Failed to re-register keyboard hook: {e}")
 

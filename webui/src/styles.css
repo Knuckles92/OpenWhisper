@@ -139,6 +139,26 @@ select:focus {
   border-color: var(--leaf);
 }
 
+button:focus-visible,
+summary:focus-visible,
+a:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 3px solid var(--leaf);
+  outline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 textarea {
   resize: vertical;
   min-height: 64px;
@@ -1600,6 +1620,9 @@ a {
 }
 
 .history-item {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 12px 14px;
   border: 1px solid var(--line);
   cursor: pointer;
@@ -2012,6 +2035,15 @@ a {
   width: 2px;
   transform: translateX(-1px);
   cursor: pointer;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mm-marker:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
 }
 
 .mm-marker::after {
@@ -2791,6 +2823,17 @@ a {
 
 .socket-indicator.connecting {
   color: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .capture-heading {

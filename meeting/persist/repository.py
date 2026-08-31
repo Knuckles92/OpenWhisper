@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import text as sql_text
+from sqlalchemy import case, func, or_, text as sql_text
 
 from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
 from meeting.interfaces import OpResult, TranscriptSegment
@@ -243,6 +243,120 @@ class SqlMeetingRepository:
             ).all()
             return [_session_to_dict(r) for r in rows]
 
+    def list_past_meeting_summaries(
+        self,
+        *,
+        limit: int = 101,
+        query: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Return a bounded Past Meetings page with batched content metadata.
+
+        The Qt history sidebar previously loaded every full session snapshot,
+        then issued separate chunk and segment queries for every row. This
+        query keeps the page bounded and derives all card capabilities in
+        three aggregate reads.
+        """
+        page_limit = max(1, min(int(limit), 501))
+        needle = str(query or "").strip()
+        with self._db.get_session() as session:
+            sessions = session.query(MeetingSession).filter(
+                ~MeetingSession.status.in_(("active", "paused", "ending"))
+            )
+            if needle:
+                escaped = (
+                    needle.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                pattern = f"%{escaped}%"
+                transcript_matches = session.query(
+                    MeetingSegment.meeting_id
+                ).filter(
+                    MeetingSegment.text.ilike(pattern, escape="\\")
+                ).distinct()
+                sessions = sessions.filter(
+                    or_(
+                        MeetingSession.title.ilike(pattern, escape="\\"),
+                        MeetingSession.started_at.ilike(pattern, escape="\\"),
+                        MeetingSession.status.ilike(pattern, escape="\\"),
+                        MeetingSession.state_json.ilike(pattern, escape="\\"),
+                        MeetingSession.id.in_(transcript_matches),
+                    )
+                )
+            rows = sessions.order_by(
+                MeetingSession.started_at.desc(),
+                MeetingSession.id.desc(),
+            ).limit(page_limit).all()
+            meeting_ids = [row.id for row in rows]
+            if not meeting_ids:
+                return []
+
+            audio_rows = session.query(
+                MeetingAudioChunk.meeting_id,
+                func.count(MeetingAudioChunk.id),
+                func.max(case((MeetingAudioChunk.channel == "loopback", 1), else_=0)),
+            ).filter(
+                MeetingAudioChunk.meeting_id.in_(meeting_ids),
+                MeetingAudioChunk.duration_s > 0.0,
+            ).group_by(MeetingAudioChunk.meeting_id).all()
+            audio_by_meeting = {
+                meeting_id: (int(count or 0), bool(has_loopback))
+                for meeting_id, count, has_loopback in audio_rows
+            }
+
+            transcript_rows = session.query(
+                MeetingSegment.meeting_id,
+                func.count(MeetingSegment.id),
+            ).filter(
+                MeetingSegment.meeting_id.in_(meeting_ids),
+                func.trim(MeetingSegment.text) != "",
+            ).group_by(MeetingSegment.meeting_id).all()
+            transcript_count = {
+                meeting_id: int(count or 0)
+                for meeting_id, count in transcript_rows
+            }
+
+            ranked = session.query(
+                MeetingSegment.meeting_id.label("meeting_id"),
+                MeetingSegment.text.label("text"),
+                func.row_number().over(
+                    partition_by=MeetingSegment.meeting_id,
+                    order_by=(MeetingSegment.start_s, MeetingSegment.id),
+                ).label("rank"),
+            ).filter(
+                MeetingSegment.meeting_id.in_(meeting_ids),
+                func.trim(MeetingSegment.text) != "",
+            ).subquery()
+            preview_by_meeting = {
+                meeting_id: str(text or "")
+                for meeting_id, text in session.query(
+                    ranked.c.meeting_id, ranked.c.text
+                ).filter(ranked.c.rank == 1).all()
+            }
+
+            result: List[Dict[str, Any]] = []
+            for row in rows:
+                audio_count, has_loopback = audio_by_meeting.get(
+                    row.id, (0, False)
+                )
+                segment_count = transcript_count.get(row.id, 0)
+                preview = preview_by_meeting.get(row.id, "").strip()
+                if len(preview) > 100:
+                    preview = preview[:100].rstrip() + "…"
+                meeting = _session_to_dict(row)
+                meeting["content_summary"] = {
+                    "has_audio": audio_count > 0,
+                    "has_loopback_audio": has_loopback,
+                    "has_transcript": segment_count > 0,
+                    "is_empty": audio_count == 0 and segment_count == 0,
+                    "audio_chunks": audio_count,
+                    "transcript_segments": segment_count,
+                    "can_rerun_speakers": has_loopback,
+                    "preview_text": preview,
+                }
+                result.append(meeting)
+            return result
+
     def delete_meeting(self, meeting_id: str) -> None:
         """Delete a meeting and all child rows.
 
@@ -272,7 +386,9 @@ class SqlMeetingRepository:
                 MeetingAudioChunk.asr_status != "done"
             )
             rows = session.query(MeetingSession).filter(
-                (MeetingSession.status.in_(("active", "paused", "needs_recovery")))
+                (MeetingSession.status.in_((
+                    "active", "paused", "ending", "needs_recovery",
+                )))
                 | (MeetingSession.id.in_(unfinished))
             ).all()
             return [_session_to_dict(r) for r in rows]
@@ -283,6 +399,33 @@ class SqlMeetingRepository:
             session.add(row)
             session.flush()  # assign autoincrement id before commit
             return row.id
+
+    def register_chunk_if_missing(self, **fields) -> Tuple[int, bool]:
+        """Idempotently register one recovered audio chunk.
+
+        Recovery can restart after the SQLite commit but before its filesystem
+        sidecar is removed.  The per-meeting/channel sequence is the durable
+        identity, so returning the existing row in that case prevents a
+        second transcription unit from being created.
+
+        Returns:
+            ``(chunk_id, created)``.
+        """
+        meeting_id = str(fields["meeting_id"])
+        channel = str(fields["channel"])
+        seq = int(fields["seq"])
+        with self._db.get_session() as session:
+            existing = session.query(MeetingAudioChunk).filter(
+                MeetingAudioChunk.meeting_id == meeting_id,
+                MeetingAudioChunk.channel == channel,
+                MeetingAudioChunk.seq == seq,
+            ).one_or_none()
+            if existing is not None:
+                return int(existing.id), False
+            row = MeetingAudioChunk(**fields)
+            session.add(row)
+            session.flush()
+            return int(row.id), True
 
     def set_chunk_status(self, chunk_id: int, status: str,
                          error: Optional[str] = None) -> None:

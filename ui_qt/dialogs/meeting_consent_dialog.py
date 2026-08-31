@@ -42,6 +42,11 @@ class MeetingConsentDialog(QDialog):
         )
 
         self.setWindowTitle("Enable Cloud Intelligence")
+        self.setAccessibleName("Enable cloud intelligence for meetings")
+        self.setAccessibleDescription(
+            "Consent choice for sending transcript text and dashboard state "
+            f"to {self.destination}. Meeting audio is not uploaded."
+        )
         self.setMinimumWidth(480)
         self.setModal(True)
 

@@ -33,6 +33,10 @@ class MeetingRecoveryDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("meetingRecoveryDialog")
         self.setWindowTitle("Recover Interrupted Meetings")
+        self.setAccessibleName("Recover interrupted meetings")
+        self.setAccessibleDescription(
+            "Finalize captured audio into meeting history or permanently discard it."
+        )
         self.setMinimumWidth(520)
         self.setModal(True)
 
@@ -70,6 +74,7 @@ class MeetingRecoveryDialog(QDialog):
         close_btn = Button("Close")
         close_btn.setObjectName("meetingRecoveryCloseButton")
         close_btn.clicked.connect(self.accept)
+        close_btn.setDefault(True)
         button_layout.addWidget(close_btn)
         layout.addLayout(button_layout)
 
@@ -94,8 +99,16 @@ class MeetingRecoveryDialog(QDialog):
 
         finalize_btn = PrimaryButton("Finalize")
         finalize_btn.setObjectName("meetingRecoveryFinalizeButton")
+        finalize_btn.setAccessibleName(f"Finalize {title}")
+        finalize_btn.setAccessibleDescription(
+            "Transcribe the captured audio and keep this meeting in history."
+        )
         discard_btn = DangerButton("Discard")
         discard_btn.setObjectName("meetingRecoveryDiscardButton")
+        discard_btn.setAccessibleName(f"Discard {title}")
+        discard_btn.setAccessibleDescription(
+            "Permanently delete this interrupted meeting and its captured audio."
+        )
 
         def settle(action_text: str) -> None:
             finalize_btn.setEnabled(False)

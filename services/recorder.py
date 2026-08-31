@@ -3,15 +3,23 @@ import sounddevice as sd
 import wave
 import threading
 import logging
+import os
+import tempfile
 import numpy as np
 import time
 
-from typing import Callable, List, Optional, Tuple
+from typing import BinaryIO, Callable, List, Optional, Tuple
 from config import config
 
 logger = logging.getLogger(__name__)
 
 AudioLevelCallback = Callable[[float], None]
+
+# Keep short dictations in memory, then transparently spill longer captures to
+# an anonymous temporary file.  This bounds resident audio memory without doing
+# an unbounded list append for multi-hour recordings.
+SPOOL_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024
+COPY_BLOCK_BYTES = 1024 * 1024
 
 
 class AudioRecorder:
@@ -39,7 +47,9 @@ class AudioRecorder:
         self.device_id = device_id
         self.output_file = output_file or config.RECORDED_AUDIO_FILE
         self.is_recording = False
-        self.frames: List[bytes] = []
+        self._audio_spool: Optional[BinaryIO] = None
+        self._recorded_bytes = 0
+        self._recorded_sample_frames = 0
         self.stream: Optional[sd.InputStream] = None
         self.recording_thread: Optional[threading.Thread] = None
         self._stop_requested: bool = False
@@ -189,14 +199,25 @@ class AudioRecorder:
 
         try:
             with self._callback_lock:
-                self.frames.append(indata.copy().tobytes())
+                audio_copy = indata.copy()
+                payload = audio_copy.tobytes()
+                if self._audio_spool is None:
+                    self._audio_spool = tempfile.SpooledTemporaryFile(
+                        max_size=SPOOL_MEMORY_LIMIT_BYTES,
+                        mode="w+b",
+                    )
+                self._audio_spool.write(payload)
+                self._recorded_bytes += len(payload)
+                self._recorded_sample_frames += int(
+                    audio_copy.shape[0] if audio_copy.ndim else frames
+                )
 
                 if self.audio_level_callback:
-                    self._calculate_and_report_level(indata.copy())
+                    self._calculate_and_report_level(audio_copy)
 
                 if self.streaming_callback:
                     try:
-                        self.streaming_callback(indata.copy())
+                        self.streaming_callback(audio_copy.copy())
                     except Exception as stream_err:
                         logger.debug(f"Streaming callback error: {stream_err}")
 
@@ -252,19 +273,8 @@ class AudioRecorder:
             logger.debug(f"Error calculating audio level: {e}")
 
     def save_recording(self, filename: str = None) -> bool:
-        """Atomically save captured frames to a WAV file."""
-        if not self.frames:
-            logger.warning("No audio data to save")
-            return False
-
+        """Atomically stream captured PCM into a WAV file."""
         filename = filename or self.output_file
-
-        # The audio callback may append frames while post-roll is finishing.
-        with self._callback_lock:
-            frames_to_write = list(self.frames)
-
-        frame_count = len(frames_to_write)
-        total_bytes = sum(len(frame) for frame in frames_to_write)
 
         # Trailing silence prevents some ASR models from dropping the last word.
         padding_bytes = b''
@@ -273,33 +283,59 @@ class AudioRecorder:
             if padding_samples > 0:
                 silence_shape = (padding_samples, self.channels) if self.channels > 1 else (padding_samples,)
                 padding_bytes = np.zeros(silence_shape, dtype=self.dtype).tobytes()
-                total_bytes += len(padding_bytes)
 
         try:
-            import tempfile
-            import os
-            temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', dir=os.path.dirname(filename))
+            directory = os.path.dirname(os.path.abspath(filename)) or os.curdir
+            temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', dir=directory)
 
             try:
-                with os.fdopen(temp_fd, 'wb') as temp_file:
-                    with wave.open(temp_file, 'wb') as wf:
-                        wf.setnchannels(self.channels)
-                        wf.setsampwidth(np.dtype(self.dtype).itemsize)
-                        wf.setframerate(self.rate)
-                        wf.writeframes(b''.join(frames_to_write) + padding_bytes)
+                # The callback may still be completing post-roll after a timeout.
+                # Holding its lock produces one coherent snapshot without ever
+                # materializing the whole recording as a bytes object.
+                with self._callback_lock:
+                    if self._audio_spool is None or self._recorded_bytes <= 0:
+                        os.close(temp_fd)
+                        temp_fd = -1
+                        os.remove(temp_path)
+                        logger.warning("No audio data to save")
+                        return False
+                    recorded_bytes = self._recorded_bytes
+                    recorded_sample_frames = self._recorded_sample_frames
+                    self._audio_spool.flush()
+                    self._audio_spool.seek(0)
+                    with os.fdopen(temp_fd, 'wb') as temp_file:
+                        temp_fd = -1
+                        with wave.open(temp_file, 'wb') as wf:
+                            wf.setnchannels(self.channels)
+                            wf.setsampwidth(np.dtype(self.dtype).itemsize)
+                            wf.setframerate(self.rate)
+                            while True:
+                                block = self._audio_spool.read(COPY_BLOCK_BYTES)
+                                if not block:
+                                    break
+                                wf.writeframesraw(block)
+                            if padding_bytes:
+                                wf.writeframesraw(padding_bytes)
+                    self._audio_spool.seek(0, os.SEEK_END)
 
-                if os.path.exists(filename):
-                    os.remove(filename)
-                os.rename(temp_path, filename)
+                os.replace(temp_path, filename)
+                temp_path = ""
 
-                import time
+                total_bytes = recorded_bytes + len(padding_bytes)
                 if padding_bytes:
                     logger.info(f"Appended {config.END_PADDING_MS}ms of silence to protect the tail of the recording")
-                logger.info(f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} - {frame_count} frames, {total_bytes} bytes, {self.get_recording_duration():.2f}s")
+                logger.info(
+                    f"Audio saved to {filename} at {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"- {recorded_sample_frames} sample frames, {total_bytes} bytes, "
+                    f"{self.get_recording_duration():.2f}s"
+                )
                 return True
 
             except Exception as e:
-                if os.path.exists(temp_path):
+                if temp_fd >= 0:
+                    os.close(temp_fd)
+                    temp_fd = -1
+                if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise
 
@@ -309,23 +345,25 @@ class AudioRecorder:
 
     def get_recording_duration(self) -> float:
         """Return captured duration in seconds."""
-        if not self.frames:
-            return 0.0
-
-        total_frames = len(self.frames) * self.chunk
-        return total_frames / self.rate
+        with self._callback_lock:
+            return self._recorded_sample_frames / self.rate
 
     def has_recording_data(self) -> bool:
         """Return whether audio frames have been captured."""
-        return bool(self.frames)
+        with self._callback_lock:
+            return self._recorded_bytes > 0
 
     def clear_recording_data(self):
         """Clear the recorded audio data."""
         with self._callback_lock:
-            old_frame_count = len(self.frames)
-            self.frames = []
+            old_bytes = self._recorded_bytes
+            spool, self._audio_spool = self._audio_spool, None
+            self._recorded_bytes = 0
+            self._recorded_sample_frames = 0
+            if spool is not None:
+                spool.close()
 
-        logger.info(f"Cleared recording data. Old frame count: {old_frame_count}")
+        logger.info(f"Cleared recording data. Old byte count: {old_bytes}")
 
     def cleanup(self):
         """Clean up audio resources."""
@@ -344,6 +382,8 @@ class AudioRecorder:
                 except Exception:
                     pass
                 self.stream = None
+
+            self.clear_recording_data()
 
             logger.info("Audio recorder cleaned up")
 

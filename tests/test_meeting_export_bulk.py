@@ -180,6 +180,20 @@ def test_write_per_meeting_files_disambiguates(tmp_path):
     assert (tmp_path / names[0]).read_text(encoding="utf-8")
 
 
+def test_write_per_meeting_files_never_overwrites_prior_export(tmp_path):
+    entry = _entry("m_a", "Existing meeting")
+    stem = meeting_file_stem(entry["meeting"], entry["state"])
+    original = tmp_path / f"{stem}.txt"
+    original.write_text("keep me", encoding="utf-8")
+
+    written = write_per_meeting_files(
+        [entry], FORMAT_TXT, str(tmp_path)
+    )
+
+    assert original.read_text(encoding="utf-8") == "keep me"
+    assert written == [str(tmp_path / f"{stem}-2.txt")]
+
+
 def test_meeting_file_stem_is_filesystem_safe():
     meeting = {
         "title": "Q3 / Roadmap?",

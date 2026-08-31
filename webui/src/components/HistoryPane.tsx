@@ -17,6 +17,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [selectedId, setSelectedId] = useState<string | null>(initialMeetingId ?? null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
+  const [searchStatus, setSearchStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -32,6 +33,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [deleting, setDeleting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const reportRef = useRef<HTMLDivElement | null>(null);
+  const selectedIdRef = useRef<string | null>(selectedId);
   const focusReport = useMemo(
     () => new URLSearchParams(location.search).get('view') === 'report',
     [],
@@ -55,6 +57,31 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   }, [loadMeetings]);
 
   useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  const loadCompleteMeeting = useCallback(async (
+    meetingId: string,
+    onPage?: (state: MeetingStateDoc, segments: Segment[], complete: boolean) => void,
+  ): Promise<{ state: MeetingStateDoc; segments: Segment[] }> => {
+    const response = await api.meeting(token, meetingId);
+    let segments = response.segments;
+    let cursor = response.transcript_next_cursor ?? undefined;
+    onPage?.(response.state, segments, !cursor);
+    while (cursor) {
+      const page = await api.meetingTranscriptPage(token, meetingId, cursor);
+      const byId = new Map(segments.map((segment) => [segment.id, segment]));
+      for (const segment of page.items) byId.set(segment.id, segment);
+      segments = [...byId.values()].sort(
+        (a, b) => a.start_s - b.start_s || a.id.localeCompare(b.id),
+      );
+      cursor = page.next_cursor ?? undefined;
+      onPage?.(response.state, segments, !cursor);
+    }
+    return { state: response.state, segments };
+  }, [token]);
+
+  useEffect(() => {
     setDetail(null);
     setDetailSegments([]);
     setDetailError(null);
@@ -62,22 +89,13 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     setTranscriptComplete(false);
     if (!selectedId) return;
     let cancelled = false;
-    api
-      .meeting(token, selectedId)
-      .then(async (res) => {
-        if (cancelled) return;
-        setDetail(res.state);
-        let segments = res.segments;
-        setDetailSegments(segments);
-        let cursor = res.transcript_next_cursor ?? undefined;
-        while (cursor && !cancelled) {
-          const page = await api.meetingTranscriptPage(token, selectedId, cursor);
-          const byId = new Map(segments.map((segment) => [segment.id, segment]));
-          for (const segment of page.items) byId.set(segment.id, segment);
-          segments = [...byId.values()].sort((a, b) => a.start_s - b.start_s);
-          setDetailSegments(segments);
-          cursor = page.next_cursor ?? undefined;
-        }
+    loadCompleteMeeting(selectedId, (state, segments, complete) => {
+      if (cancelled) return;
+      setDetail(state);
+      setDetailSegments(segments);
+      setTranscriptComplete(complete);
+    })
+      .then(() => {
         if (!cancelled) setTranscriptComplete(true);
       })
       .catch((err: unknown) => {
@@ -88,19 +106,40 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     return () => {
       cancelled = true;
     };
-  }, [token, selectedId]);
+  }, [loadCompleteMeeting, selectedId]);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (pendingDeleteId) {
+        setPendingDeleteId(null);
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose, pendingDeleteId]);
 
   const runSearch = async () => {
     const q = query.trim();
     if (!q) {
       setSearchResults([]);
+      setSearchStatus('');
       return;
     }
+    setSearchStatus('Searching meeting transcripts…');
     try {
       const results = await api.search(token, q);
       setSearchResults(results);
+      setSearchStatus(
+        results.length === 1
+          ? '1 meeting transcript result.'
+          : `${results.length} meeting transcript results.`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
+      setSearchStatus('Meeting transcript search failed.');
     }
   };
 
@@ -156,16 +195,40 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     setRerunNote(null);
     try {
       const res = await api.rerunInsights(token, meetingId);
-      setDetail(res.state);
-      if (res.ok) {
-        setRerunNote(
-          res.applied === 1 ? '1 update applied.' : `${res.applied} updates applied.`,
-        );
-      } else {
-        setDetailError(res.error ?? 'Re-run failed');
+      if (selectedIdRef.current === meetingId) {
+        setDetail(res.state);
+        if (res.ok) {
+          setRerunNote(
+            res.applied === 1 ? '1 update applied.' : `${res.applied} updates applied.`,
+          );
+        } else {
+          setDetailError(res.error ?? 'Re-run failed');
+        }
+        setTranscriptComplete(false);
       }
+      // A retry can include audio re-decoding or speaker relabeling, so replace
+      // the entire client transcript rather than leaving its old 500-row page.
+      try {
+        await loadCompleteMeeting(meetingId, (state, segments, complete) => {
+          if (selectedIdRef.current !== meetingId) return;
+          setDetail(state);
+          setDetailSegments(segments);
+          setTranscriptComplete(complete);
+        });
+      } catch (refreshError) {
+        if (selectedIdRef.current === meetingId) {
+          setDetailError(
+            `The re-run finished, but the updated transcript could not be loaded: ${
+              refreshError instanceof Error ? refreshError.message : 'refresh failed'
+            }`,
+          );
+        }
+      }
+      await loadMeetings();
     } catch (err) {
-      setDetailError(err instanceof Error ? err.message : 'Re-run failed');
+      if (selectedIdRef.current === meetingId) {
+        setDetailError(err instanceof Error ? err.message : 'Re-run failed');
+      }
     } finally {
       setRerunning(false);
     }
@@ -177,21 +240,40 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     setRerunNote(null);
     try {
       const res = await api.rerunSpeakers(token, meetingId);
-      setDetail(res.state);
-      const page = await api.meeting(token, meetingId);
-      setDetail(page.state);
-      setDetailSegments(page.segments);
-      if (res.ok) {
-        setRerunNote(
-          res.applied === 1
-            ? '1 speaker label updated.'
-            : `${res.applied} speaker labels updated.`,
-        );
-      } else {
-        setDetailError(res.error ?? 'Speaker re-run failed');
+      if (selectedIdRef.current === meetingId) {
+        setDetail(res.state);
+        setTranscriptComplete(false);
+        if (res.ok) {
+          setRerunNote(
+            res.applied === 1
+              ? '1 speaker label updated.'
+              : `${res.applied} speaker labels updated.`,
+          );
+        } else {
+          setDetailError(res.error ?? 'Speaker re-run failed');
+        }
       }
+      try {
+        await loadCompleteMeeting(meetingId, (state, segments, complete) => {
+          if (selectedIdRef.current !== meetingId) return;
+          setDetail(state);
+          setDetailSegments(segments);
+          setTranscriptComplete(complete);
+        });
+      } catch (refreshError) {
+        if (selectedIdRef.current === meetingId) {
+          setDetailError(
+            `Speaker identification finished, but the updated transcript could not be loaded: ${
+              refreshError instanceof Error ? refreshError.message : 'refresh failed'
+            }`,
+          );
+        }
+      }
+      await loadMeetings();
     } catch (err) {
-      setDetailError(err instanceof Error ? err.message : 'Speaker re-run failed');
+      if (selectedIdRef.current === meetingId) {
+        setDetailError(err instanceof Error ? err.message : 'Speaker re-run failed');
+      }
     } finally {
       setRerunningSpeakers(false);
     }
@@ -221,12 +303,19 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   }, []);
 
   return (
-    <section className="panel history-pane" style={{ minHeight: '70vh' }}>
+    <section
+      className="panel history-pane"
+      style={{ minHeight: '70vh' }}
+      aria-labelledby="meeting-history-heading"
+    >
       <div className="panel-header no-print">
         <div className="history-pane-title">
-          <span>Past Meetings</span>
+          <span id="meeting-history-heading">Past Meetings</span>
           {!loading && <span className="status-chip">{meetings.length}</span>}
         </div>
+        <button type="button" className="ghost" onClick={onClose} aria-label="Close meeting history">
+          Close
+        </button>
       </div>
       <div className="panel-body">
         {error && (
@@ -241,6 +330,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
               <input
                 type="search"
                 placeholder="Search transcripts…"
+                aria-label="Search meeting transcripts"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -251,6 +341,9 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                 Search
               </button>
             </div>
+            <p className="sr-only" role="status" aria-live="polite">
+              {searchStatus}
+            </p>
 
             {searchResults.length > 0 && (
               <div className="search-results">
@@ -268,43 +361,46 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
             )}
 
             {loading ? (
-              <p className="empty-state">Loading past meetings…</p>
+              <p className="empty-state" role="status" aria-live="polite">Loading past meetings…</p>
             ) : meetings.length === 0 ? (
               <p className="empty-state">No past meetings recorded.</p>
             ) : (
               <ul className="history-list">
                 {meetings.map((m) => (
-                  <li
-                    key={m.id}
-                    className={`history-item${selectedId === m.id ? ' active' : ''}`}
-                    onClick={() => setSelectedId(m.id)}
-                  >
-                    <div
-                      className="history-item-title"
-                      title={String(
-                        m.display_title
-                        || m.title
-                        || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
-                      )}
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className={`history-item${selectedId === m.id ? ' active' : ''}`}
+                      aria-current={selectedId === m.id ? 'true' : undefined}
+                      onClick={() => setSelectedId(m.id)}
                     >
-                      {String(
-                        m.display_title
-                        || m.title
-                        || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
-                      )}
-                    </div>
-                    <div className="history-item-meta">
-                      <span>{m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}</span>
-                      {m.insights_pill && (
-                        <span
-                          className={`status-chip insights-pill${
-                            m.insights_tone ? ` insights-${m.insights_tone}` : ''
-                          }`}
-                        >
-                          {String(m.insights_pill)}
-                        </span>
-                      )}
-                    </div>
+                      <span
+                        className="history-item-title"
+                        title={String(
+                          m.display_title
+                          || m.title
+                          || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                        )}
+                      >
+                        {String(
+                          m.display_title
+                          || m.title
+                          || (m.status === 'failed' ? 'Failed meeting' : 'Untitled meeting'),
+                        )}
+                      </span>
+                      <span className="history-item-meta">
+                        <span>{m.started_at ? new Date(String(m.started_at)).toLocaleString() : '—'}</span>
+                        {m.insights_pill && (
+                          <span
+                            className={`status-chip insights-pill${
+                              m.insights_tone ? ` insights-${m.insights_tone}` : ''
+                            }`}
+                          >
+                            {String(m.insights_pill)}
+                          </span>
+                        )}
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -431,7 +527,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                 )}
 
                 {!detail ? (
-                  <p className="empty-state">Loading meeting report…</p>
+                  <p className="empty-state" role="status" aria-live="polite">Loading meeting report…</p>
                 ) : (
                   <div ref={reportRef} id="history-report">
                     <ReportTabs
@@ -445,8 +541,12 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 )}
 
-                <section className="panel no-print" style={{ marginTop: 20 }}>
-                  <div className="panel-header"><span>Audio Recording</span></div>
+                <section
+                  className="panel no-print"
+                  style={{ marginTop: 20 }}
+                  aria-labelledby="history-audio-heading"
+                >
+                  <div className="panel-header"><span id="history-audio-heading">Audio Recording</span></div>
                   <div className="panel-body">
                     {selected.has_audio === false ? (
                       <p className="empty-state">No audio was captured for this meeting.</p>
@@ -454,6 +554,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                       <audio
                         ref={audioRef}
                         controls
+                        aria-label={`Audio recording for ${selected.display_title || selected.title || 'meeting'}`}
                         preload="metadata"
                         src={api.audioUrl(token, selected.id)}
                         style={{ width: '100%' }}
@@ -462,9 +563,13 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 </section>
 
-                <section className="panel no-print" style={{ marginTop: 20 }}>
+                <section
+                  className="panel no-print"
+                  style={{ marginTop: 20 }}
+                  aria-labelledby="history-transcript-heading"
+                >
                   <div className="panel-header">
-                    <span>Full Transcript</span>
+                    <span id="history-transcript-heading">Full Transcript</span>
                     <span className="status-chip">{detailSegments.length} segments</span>
                   </div>
                   <div className="panel-body">

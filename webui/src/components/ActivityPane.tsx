@@ -4,7 +4,7 @@ import type { AgentActivityRecord, AuditEvent } from '../types';
 
 interface ActivityPaneProps {
   token: string;
-  onUndo: (seq: number) => void;
+  onUndo: (seq: number) => Promise<boolean>;
   onHide: () => void;
   refreshKey: number;
   cloudEnabled: boolean;
@@ -157,6 +157,7 @@ export default function ActivityPane({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [undoingSeq, setUndoingSeq] = useState<number | null>(null);
   const [, setClock] = useState(0);
 
   const mergeEvents = useCallback((rows: AuditEvent[], reset: boolean) => {
@@ -191,6 +192,22 @@ export default function ActivityPane({
       setError(err instanceof Error ? err.message : 'Failed to load older activity');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const undoEvent = async (seq: number) => {
+    if (undoingSeq !== null) return;
+    setUndoingSeq(seq);
+    try {
+      if (await onUndo(seq)) {
+        setEvents((current) => current.map((item) => (
+          item.seq === seq ? { ...item, undoable: false } : item
+        )));
+      }
+    } catch {
+      // The shared mutation banner reports the error; leave Undo available.
+    } finally {
+      setUndoingSeq(null);
     }
   };
 
@@ -311,6 +328,9 @@ export default function ActivityPane({
             <div
               className={`agent-live${latestTick ? '' : ' idle'}`}
               aria-label="Live model activity"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
             >
               <div className="agent-live-now">
                 <span className={`agent-status-dot ${liveTone}`} aria-hidden="true" />
@@ -373,7 +393,7 @@ export default function ActivityPane({
             </button>
           </div>
 
-          {error && <div className="activity-error" role="status">{error}</div>}
+          {error && <div className="activity-error" role="alert">{error}</div>}
           {visibleEvents.length === 0 ? (
             <p className="agent-activity-empty">
               {cloudEnabled
@@ -396,13 +416,12 @@ export default function ActivityPane({
                       <div className="activity-entry-meta">
                         <span>{actorLabel(event)}</span>
                         {event.undoable && (
-                          <button type="button" onClick={() => {
-                            onUndo(event.seq);
-                            setEvents((current) => current.map((item) => (
-                              item.seq === event.seq ? { ...item, undoable: false } : item
-                            )));
-                          }}>
-                            Undo
+                          <button
+                            type="button"
+                            disabled={undoingSeq !== null}
+                            onClick={() => void undoEvent(event.seq)}
+                          >
+                            {undoingSeq === event.seq ? 'Undoing…' : 'Undo'}
                           </button>
                         )}
                       </div>

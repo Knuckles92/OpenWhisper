@@ -1,12 +1,43 @@
 // WebSocket client: auto-reconnect with backoff; the server replays a full
 // `hello` snapshot on every (re)connect, so resync is handled by the reducer.
-import type { Op, ServerMessage } from './types';
+import type { ActionResultItem, Op, ServerMessage } from './types';
 
-export type SocketStatus = 'connecting' | 'open' | 'closed';
+export type SocketStatus =
+  | 'connecting'
+  | 'open'
+  | 'closed'
+  | 'unauthorized'
+  | 'name_required';
 
 const PING_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 15_000;
+const ACTION_TIMEOUT_MS = 15_000;
 const GUEST_ID_KEY = 'ow_meeting_guest_id';
+
+interface PendingAction {
+  resolve: (results: ActionResultItem[]) => void;
+  reject: (error: Error) => void;
+  timeout: number;
+}
+
+/** Terminal close codes must not enter the automatic reconnect loop. */
+export function socketStatusForCloseCode(code: number): SocketStatus | null {
+  if (code === 4400) return 'name_required';
+  if (code === 4401) return 'unauthorized';
+  return null;
+}
+
+export function socketStatusMessage(status: SocketStatus): string {
+  if (status === 'unauthorized') {
+    return 'This meeting link has expired. Ask the host for a new link.';
+  }
+  if (status === 'name_required') {
+    return 'A display name is required. Reload the page and join again.';
+  }
+  if (status === 'connecting') return 'Reconnecting to the meeting…';
+  if (status === 'closed') return 'You are offline. Your change was not sent.';
+  return '';
+}
 
 /** Action id generator; crypto.randomUUID is unavailable on plain-HTTP LAN. */
 export function newActionId(): string {
@@ -48,6 +79,8 @@ export class MeetingSocket {
   private attempt = 0;
   private reconnectTimer: number | null = null;
   private pingTimer: number | null = null;
+  private pendingActions = new Map<string, PendingAction>();
+  private terminalStatus: SocketStatus | null = null;
 
   constructor(opts: MeetingSocketOptions) {
     this.opts = opts;
@@ -58,7 +91,7 @@ export class MeetingSocket {
   }
 
   connect(): void {
-    if (this.closedByUser) return;
+    if (this.closedByUser || this.terminalStatus) return;
     this.clearReconnect();
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams({ token: this.opts.token });
@@ -85,11 +118,27 @@ export class MeetingSocket {
       } catch {
         return;
       }
+      if (msg.type === 'action_result') {
+        this.resolvePending(msg.client_action_id, msg.results);
+      }
       this.opts.onMessage(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       if (ws !== this.ws) return;
+      this.ws = null;
       this.stopPing();
+      const terminalStatus = socketStatusForCloseCode(event.code);
+      this.rejectPending(
+        terminalStatus
+          ? socketStatusMessage(terminalStatus)
+          : 'Connection interrupted before the server acknowledged the change.',
+      );
+      if (terminalStatus) {
+        this.terminalStatus = terminalStatus;
+        this.clearReconnect();
+        this.opts.onStatus(terminalStatus);
+        return;
+      }
       this.opts.onStatus('closed');
       if (!this.closedByUser) this.scheduleReconnect();
     };
@@ -101,26 +150,31 @@ export class MeetingSocket {
   /** Send a raw protocol message; false when the socket is not open. */
   send(message: unknown): boolean {
     if (!this.isOpen || !this.ws) return false;
-    this.ws.send(JSON.stringify(message));
-    return true;
+    try {
+      this.ws.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  /** Send a mutation op; returns the client_action_id, or null when offline. */
-  sendAction(op: Op): string | null {
+  /** Send a mutation and resolve only after its server acknowledgement arrives. */
+  sendAction(op: Op): Promise<ActionResultItem[]> {
     const id = newActionId();
-    return this.send({ type: 'action', client_action_id: id, op }) ? id : null;
+    return this.sendTracked(id, { type: 'action', client_action_id: id, op });
   }
 
-  /** Host-only undo of the event at `seq`; returns the action id or null. */
-  sendUndo(seq: number): string | null {
+  /** Host-only undo, resolved only after the server acknowledges it. */
+  sendUndo(seq: number): Promise<ActionResultItem[]> {
     const id = newActionId();
-    return this.send({ type: 'undo', client_action_id: id, seq }) ? id : null;
+    return this.sendTracked(id, { type: 'undo', client_action_id: id, seq });
   }
 
   close(): void {
     this.closedByUser = true;
     this.clearReconnect();
     this.stopPing();
+    this.rejectPending('The meeting connection was closed before the change was acknowledged.');
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;
@@ -137,6 +191,44 @@ export class MeetingSocket {
       Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(this.attempt, 6)) + Math.random() * 400;
     this.attempt += 1;
     this.reconnectTimer = window.setTimeout(() => this.connect(), delay);
+  }
+
+  private sendTracked(
+    id: string,
+    message: unknown,
+  ): Promise<ActionResultItem[]> {
+    return new Promise((resolve, reject) => {
+      if (!this.isOpen) {
+        reject(new Error(socketStatusMessage(this.terminalStatus ?? 'closed')));
+        return;
+      }
+      const timeout = window.setTimeout(() => {
+        this.pendingActions.delete(id);
+        reject(new Error('The server did not acknowledge the change. Check whether it applied before retrying.'));
+      }, ACTION_TIMEOUT_MS);
+      this.pendingActions.set(id, { resolve, reject, timeout });
+      if (!this.send(message)) {
+        window.clearTimeout(timeout);
+        this.pendingActions.delete(id);
+        reject(new Error('You are offline. Your change was not sent.'));
+      }
+    });
+  }
+
+  private resolvePending(id: string, results: ActionResultItem[]): void {
+    const pending = this.pendingActions.get(id);
+    if (!pending) return;
+    window.clearTimeout(pending.timeout);
+    this.pendingActions.delete(id);
+    pending.resolve(results);
+  }
+
+  private rejectPending(message: string): void {
+    for (const pending of this.pendingActions.values()) {
+      window.clearTimeout(pending.timeout);
+      pending.reject(new Error(message));
+    }
+    this.pendingActions.clear();
   }
 
   private clearReconnect(): void {

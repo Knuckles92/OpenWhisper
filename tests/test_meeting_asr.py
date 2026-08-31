@@ -20,9 +20,11 @@ from meeting.asr.engine import (
     MeetingAsrEngine,
 )
 from meeting.asr.offline import (
+    OfflineWindowError,
     drop_overlapped_prefix,
     offline_cut_ranges,
     offline_segment_id,
+    transcribe_session_audio,
 )
 from meeting.asr.revise import (
     REVISION_WINDOW_S,
@@ -520,6 +522,25 @@ class TestOverlapDrop:
         assert first == second
         assert first.startswith("sg_")
         assert first != other
+
+    def test_failed_window_aborts_instead_of_returning_partial_transcript(self):
+        model = MagicMock()
+        model.transcribe.side_effect = [
+            ([FakeWhisperSeg(0.0, 0.5, "first window")], SimpleNamespace()),
+            RuntimeError("decoder failed"),
+        ]
+        frames = np.full(2 * TARGET_RATE, 1000, dtype=np.int16)
+
+        with pytest.raises(OfflineWindowError, match=r"window 2/2"):
+            transcribe_session_audio(
+                model,
+                frames,
+                TARGET_RATE,
+                meeting_id="m1",
+                channel="mic",
+                target_sec=1.0,
+                max_sec=1.0,
+            )
 
 
 # Bounded rolling revision helpers and persistence.

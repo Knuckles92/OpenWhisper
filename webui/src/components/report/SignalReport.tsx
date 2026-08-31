@@ -168,6 +168,7 @@ export default function SignalReport({
                 key={segment.id}
                 type="button"
                 className="sg-pick"
+                aria-label={`Play ${speakerName(state.participants, segment.speaker_participant_id, segment.channel)} at ${clock(segment.start_s)}: ${segment.text}`}
                 onClick={() => {
                   onSeek?.(segment.start_s);
                   onEvidenceClick?.(segment.id);

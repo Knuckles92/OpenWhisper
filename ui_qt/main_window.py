@@ -134,18 +134,21 @@ class CustomTitleBar(QFrame):
         self.minimize_btn.setFixedSize(46, 32)
         self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.minimize_btn.setToolTip("Minimize")
+        self.minimize_btn.setAccessibleName("Minimize window")
         self.minimize_btn.clicked.connect(self._minimize)
 
         self.maximize_btn = QPushButton("□")
         self.maximize_btn.setFixedSize(46, 32)
         self.maximize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.maximize_btn.setToolTip("Maximize")
+        self.maximize_btn.setAccessibleName("Maximize window")
         self.maximize_btn.clicked.connect(self._toggle_maximize)
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(46, 32)
         self.close_btn.setStyleSheet(self._CLOSE_BUTTON_STYLE)
         self.close_btn.setToolTip("Close")
+        self.close_btn.setAccessibleName("Close window")
         self.close_btn.clicked.connect(self._close)
 
         layout.addWidget(self.minimize_btn)
@@ -165,11 +168,13 @@ class CustomTitleBar(QFrame):
                     self.parent_window.setGeometry(self._normal_geometry)
                 self.maximize_btn.setText("□")
                 self.maximize_btn.setToolTip("Maximize")
+                self.maximize_btn.setAccessibleName("Maximize window")
             else:
                 self._normal_geometry = self.parent_window.geometry()
                 self.parent_window.showMaximized()
                 self.maximize_btn.setText("❐")
                 self.maximize_btn.setToolTip("Restore")
+                self.maximize_btn.setAccessibleName("Restore window")
             self._is_maximized = not self._is_maximized
 
     def _close(self):

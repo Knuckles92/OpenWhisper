@@ -4,7 +4,7 @@ import { EvidenceRow } from './EvidenceChip';
 
 interface QuestionInboxProps {
   questions: Question[];
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
   /** When true, omit the outer panel chrome (embedded in Captured rail). */
   embedded?: boolean;
@@ -22,11 +22,12 @@ export function QuestionRow({
   readOnly = false,
 }: {
   q: Question;
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
   readOnly?: boolean;
 }) {
   const [answerDraft, setAnswerDraft] = useState(q.answer ?? '');
+  const [submitting, setSubmitting] = useState(false);
 
   const showSuggestion =
     q.status === 'open' &&
@@ -34,22 +35,32 @@ export function QuestionRow({
     (q.suggested_confidence ?? 0) >= SUGGEST_MEDIUM &&
     (q.suggested_confidence ?? 0) < SUGGEST_HIGH;
 
-  const submitAnswer = () => {
-    const trimmed = answerDraft.trim();
-    if (!trimmed) return;
-    onSendOp?.(ops.answerQuestion(q.id, trimmed));
-  };
-
-  const useSuggestion = () => {
-    if (q.suggested_answer) {
-      setAnswerDraft(q.suggested_answer);
-      onSendOp?.(ops.answerQuestion(q.id, q.suggested_answer));
+  const sendQuestionOp = async (op: Op): Promise<boolean> => {
+    if (!onSendOp || submitting) return false;
+    setSubmitting(true);
+    try {
+      return await onSendOp(op);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const addToNotes = () => {
+  const submitAnswer = async () => {
+    const trimmed = answerDraft.trim();
+    if (!trimmed) return;
+    await sendQuestionOp(ops.answerQuestion(q.id, trimmed));
+  };
+
+  const useSuggestion = async () => {
+    if (q.suggested_answer) {
+      setAnswerDraft(q.suggested_answer);
+      await sendQuestionOp(ops.answerQuestion(q.id, q.suggested_answer));
+    }
+  };
+
+  const addToNotes = async () => {
     const text = q.answer || q.suggested_answer || q.text;
-    if (text) onSendOp?.(ops.addItem('user_notes', text, undefined, q.evidence));
+    if (text) await sendQuestionOp(ops.addItem('user_notes', text, undefined, q.evidence));
   };
 
   return (
@@ -92,20 +103,36 @@ export function QuestionRow({
             value={answerDraft}
             onChange={(e) => setAnswerDraft(e.target.value)}
             rows={2}
+            disabled={submitting}
+            aria-label={`Answer question: ${q.text}`}
           />
           <div className="question-actions no-print">
-            <button type="button" className="primary" onClick={submitAnswer}>
-              Answer
+            <button
+              type="button"
+              className="primary"
+              disabled={submitting || !answerDraft.trim()}
+              onClick={() => void submitAnswer()}
+            >
+              {submitting ? 'Saving…' : 'Answer'}
             </button>
             {showSuggestion && (
-              <button type="button" onClick={useSuggestion}>
+              <button type="button" disabled={submitting} onClick={() => void useSuggestion()}>
                 Use suggestion
               </button>
             )}
-            <button type="button" onClick={() => onSendOp?.(ops.dismissQuestion(q.id))}>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => { void sendQuestionOp(ops.dismissQuestion(q.id)); }}
+            >
               Dismiss
             </button>
-            <button type="button" className="ghost" onClick={addToNotes}>
+            <button
+              type="button"
+              className="ghost"
+              disabled={submitting}
+              onClick={() => void addToNotes()}
+            >
               Add to notes
             </button>
           </div>
@@ -114,7 +141,11 @@ export function QuestionRow({
 
       {!readOnly && q.status === 'dismissed' && (
         <div className="question-actions no-print">
-          <button type="button" onClick={() => onSendOp?.(ops.reopenQuestion(q.id))}>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => { void sendQuestionOp(ops.reopenQuestion(q.id)); }}
+          >
             Reopen
           </button>
         </div>

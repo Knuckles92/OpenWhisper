@@ -24,6 +24,11 @@ class MeetingAudioConsentDialog(QDialog):
         self.result_action = self.RESULT_CANCEL
 
         self.setWindowTitle("Upload system audio for speaker identification")
+        self.setAccessibleName("Allow system-audio upload")
+        self.setAccessibleDescription(
+            "Consent choice for uploading the meeting's system-audio channel "
+            "to OpenAI after a meeting for speaker identification."
+        )
         self.setMinimumWidth(480)
         self.setModal(True)
 

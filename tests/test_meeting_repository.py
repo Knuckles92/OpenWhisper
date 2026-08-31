@@ -153,8 +153,73 @@ class TestMeetingLifecycle:
         assert meeting["title"] == "New title"
         assert json.loads(meeting["state_json"])["title"] == "New title"
 
+    def test_past_meeting_summary_page_is_bounded_searchable_and_aggregated(
+        self, repo
+    ):
+        for index in range(4):
+            meeting_id = f"m_page_{index}"
+            repo.create_meeting(
+                id=meeting_id,
+                title=f"Review {index}",
+                status="ended" if index < 3 else "active",
+                started_at=f"2026-08-0{index + 1}T09:00:00+00:00",
+                host_token="host-token",
+                guest_token="guest-token",
+                cloud_enabled=False,
+                spool_dir="/tmp/spool",
+            )
+        chunk_id = repo.register_chunk(
+            meeting_id="m_page_2",
+            channel="loopback",
+            seq=0,
+            file_path="/tmp/page.wav",
+            start_s=0.0,
+            duration_s=4.0,
+            sample_rate=16000,
+        )
+        segment = make_segment(
+            "m_page_2",
+            "sg_page",
+            text="quarterly capacity planning",
+            channel="loopback",
+        )
+        segment.chunk_id = chunk_id
+        repo.add_segments([segment])
+
+        page = repo.list_past_meeting_summaries(limit=2)
+
+        assert [row["id"] for row in page] == ["m_page_2", "m_page_1"]
+        summary = page[0]["content_summary"]
+        assert summary["audio_chunks"] == 1
+        assert summary["transcript_segments"] == 1
+        assert summary["can_rerun_speakers"] is True
+        assert summary["preview_text"] == "quarterly capacity planning"
+        assert [
+            row["id"]
+            for row in repo.list_past_meeting_summaries(
+                limit=2, query="capacity"
+            )
+        ] == ["m_page_2"]
+
 
 class TestChunks:
+    def test_recovery_registration_is_idempotent_by_channel_sequence(self, repo):
+        make_meeting(repo)
+        fields = {
+            "meeting_id": "m_test1", "channel": "mic", "seq": 4,
+            "file_path": "/tmp/recovered.wav", "start_s": 8.0,
+            "duration_s": 2.0, "sample_rate": 16000,
+            "asr_status": "pending",
+        }
+        first_id, first_created = repo.register_chunk_if_missing(**fields)
+        second_id, second_created = repo.register_chunk_if_missing(
+            **{**fields, "file_path": "/tmp/duplicate.wav"}
+        )
+        assert first_created is True
+        assert second_created is False
+        assert second_id == first_id
+        assert len(repo.get_audio_chunks("m_test1")) == 1
+
     def test_chunk_lifecycle_and_retry_visibility(self, repo):
         make_meeting(repo)
         chunk_id = repo.register_chunk(

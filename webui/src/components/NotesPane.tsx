@@ -9,10 +9,10 @@ interface NotesPaneProps {
   status: string;
   cloudEnabled: boolean;
   intelligenceOnline: boolean;
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
   /** Host-only: revert the event at `seq`. Omitted for guests. */
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   /** Newest event seq per item id, from the reducer. */
   lastSeqByTarget: Record<string, number>;
   /** Hide composer and edit actions (print / archive). */
@@ -51,15 +51,16 @@ function NoteBlock({
   readOnly = false,
 }: {
   item: CardItem;
-  onSendOp?: (op: Op) => void;
+  onSendOp?: (op: Op) => Promise<boolean>;
   onEvidenceClick: (segmentId: string) => void;
-  onUndo?: (seq: number) => void;
+  onUndo?: (seq: number) => Promise<boolean>;
   undoSeq?: number;
   readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [headingDraft, setHeadingDraft] = useState(noteHeading(item));
   const [bodyDraft, setBodyDraft] = useState(item.text);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!editing) {
@@ -73,15 +74,29 @@ function NoteBlock({
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';
   const startS = noteStartS(item);
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const body = bodyDraft.trim();
-    if (body && (body !== item.text || headingDraft.trim() !== noteHeading(item))) {
-      const data = { ...item.data };
-      if (headingDraft.trim()) data.heading = headingDraft.trim();
-      else delete data.heading;
-      onSendOp?.(ops.updateItem(item.id, { text: body, data }));
+    if (
+      !body
+      || (body === item.text && headingDraft.trim() === noteHeading(item))
+      || !onSendOp
+    ) {
+      setEditing(false);
+      return;
     }
-    setEditing(false);
+    const data = { ...item.data };
+    if (headingDraft.trim()) data.heading = headingDraft.trim();
+    else delete data.heading;
+    setSaving(true);
+    try {
+      if (await onSendOp(ops.updateItem(item.id, { text: body, data }))) {
+        setEditing(false);
+      }
+    } catch {
+      // Keep the editor and both drafts intact for retry.
+    } finally {
+      setSaving(false);
+    }
   };
 
   const beginEdit = () => {
@@ -97,6 +112,7 @@ function NoteBlock({
             className="note-heading-edit"
             value={headingDraft}
             onChange={(e) => setHeadingDraft(e.target.value)}
+            disabled={saving}
             placeholder="Heading (optional)"
             aria-label="Note heading"
           />
@@ -115,7 +131,8 @@ function NoteBlock({
           className="note-body-edit"
           value={bodyDraft}
           onChange={(e) => setBodyDraft(e.target.value)}
-          onBlur={saveEdit}
+          onBlur={() => void saveEdit()}
+          disabled={saving}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setEditing(false);
           }}
@@ -135,21 +152,21 @@ function NoteBlock({
         <div className="note-actions no-print">
           <span className="note-status">{statusLabel(item)}</span>
           <div className="note-action-buttons">
-            <button type="button" onClick={() => setEditing(true)}>
+            <button type="button" disabled={saving} onClick={() => setEditing(true)}>
               Edit
             </button>
             {item.status !== 'confirmed' && (
-              <button type="button" onClick={() => onSendOp?.(ops.confirmItem(item.id))}>
+              <button type="button" onClick={() => { void onSendOp?.(ops.confirmItem(item.id)); }}>
                 Confirm
               </button>
             )}
             <button
               type="button"
-              onClick={() => onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id))}
+              onClick={() => { void onSendOp?.(item.pinned ? ops.unpinItem(item.id) : ops.pinItem(item.id)); }}
             >
               {item.pinned ? 'Unpin' : 'Pin'}
             </button>
-            <button type="button" className="danger" onClick={() => onSendOp?.(ops.removeItem(item.id))}>
+            <button type="button" className="danger" onClick={() => { void onSendOp?.(ops.removeItem(item.id)); }}>
               Remove
             </button>
             {canUndo && (
@@ -157,7 +174,7 @@ function NoteBlock({
                 type="button"
                 className="ghost"
                 title="Undo the last change to this note"
-                onClick={() => onUndo?.(undoSeq as number)}
+                onClick={() => { void onUndo?.(undoSeq as number); }}
               >
                 Undo
               </button>
@@ -169,16 +186,28 @@ function NoteBlock({
   );
 }
 
-function NoteComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
+function NoteComposer({ onSendOp }: { onSendOp: (op: Op) => Promise<boolean> }) {
   const [heading, setHeading] = useState('');
   const [body, setBody] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const addNote = () => {
+  const addNote = async () => {
     const trimmed = body.trim();
-    if (!trimmed) return;
-    onSendOp(ops.addItem('live_notes', trimmed, heading.trim() ? { heading: heading.trim() } : undefined));
-    setHeading('');
-    setBody('');
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    try {
+      const added = await onSendOp(
+        ops.addItem('live_notes', trimmed, heading.trim() ? { heading: heading.trim() } : undefined),
+      );
+      if (added) {
+        setHeading('');
+        setBody('');
+      }
+    } catch {
+      // Preserve both fields for retry.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -195,12 +224,17 @@ function NoteComposer({ onSendOp }: { onSendOp: (op: Op) => void }) {
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) addNote();
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void addNote();
         }}
         aria-label="Note text"
       />
-      <button type="button" className="primary" onClick={addNote} disabled={!body.trim()}>
-        Add note
+      <button
+        type="button"
+        className="primary"
+        onClick={() => void addNote()}
+        disabled={!body.trim() || submitting}
+      >
+        {submitting ? 'Adding…' : 'Add note'}
       </button>
     </div>
   );

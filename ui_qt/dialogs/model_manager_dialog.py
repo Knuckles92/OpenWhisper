@@ -41,6 +41,7 @@ from services.components import (
 from services.hf_access import (
     CachedModelInfo,
     format_size_bytes,
+    peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
 )
@@ -124,11 +125,13 @@ class ModelManagerDialog(QDialog):
     #: lifetimes and already routes download progress signals.
     downloads_requested = pyqtSignal()
     _text_models_loaded = pyqtSignal(str, str, list, str)
+    _cache_scan_finished = pyqtSignal(int, object)
 
     def __init__(
         self,
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         parent=None,
+        background_cache_scan: bool = True,
     ):
         """Assign models, reporting which local model the engine has loaded.
 
@@ -139,6 +142,9 @@ class ModelManagerDialog(QDialog):
         """
         super().__init__(parent)
         self._get_loaded_model = get_loaded_model
+        self._background_cache_scan = bool(background_cache_scan)
+        self._cache_scan_generation = 0
+        self._cache_inventory_loading = False
         self._text_models_cache: Dict[tuple, list] = {}
         self._text_models_loading = set()
         self._active_text_provider = TranscriptCleanupProvider.OPENAI
@@ -161,6 +167,7 @@ class ModelManagerDialog(QDialog):
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
         self._text_models_loaded.connect(self._on_text_models_loaded)
+        self._cache_scan_finished.connect(self._on_cache_scan_finished)
         self.rail.select(ONDEMAND_VOICE)
         self.refresh()
 
@@ -641,12 +648,12 @@ class ModelManagerDialog(QDialog):
     def _on_runtime_changed(self, _text: str = "") -> None:
         """Persist shared device/quant and ask the controller to reload."""
         try:
-            settings = settings_manager.load_all_settings()
-            settings[SettingsKey.WHISPER_DEVICE] = self.device_combo.currentText()
-            settings[SettingsKey.WHISPER_COMPUTE_TYPE] = (
-                self.compute_combo.currentText()
-            )
-            settings_manager.save_all_settings(settings)
+            settings_manager.update_settings({
+                SettingsKey.WHISPER_DEVICE: self.device_combo.currentText(),
+                SettingsKey.WHISPER_COMPUTE_TYPE: (
+                    self.compute_combo.currentText()
+                ),
+            })
         except Exception as exc:
             logger.error("Couldn't save shared Whisper runtime: %s", exc)
             self.message_label.setText(f"Couldn't save device or quant: {exc}")
@@ -744,14 +751,14 @@ class ModelManagerDialog(QDialog):
             return
         payload = dialog.result_payload() or {}
         try:
-            settings = settings_manager.load_all_settings()
-            profile = upsert_custom_profile(
-                settings,
-                name=payload["name"],
-                base_url=payload["base_url"],
-                api_key_env=payload.get("api_key_env", ""),
+            profile = settings_manager.mutate_settings(
+                lambda settings: upsert_custom_profile(
+                    settings,
+                    name=payload["name"],
+                    base_url=payload["base_url"],
+                    api_key_env=payload.get("api_key_env", ""),
+                )
             )
-            settings_manager.save_all_settings(settings)
         except Exception as exc:
             logger.error("Couldn't add text endpoint: %s", exc)
             self.message_label.setText(f"Couldn't add endpoint: {exc}")
@@ -781,15 +788,15 @@ class ModelManagerDialog(QDialog):
             return
         payload = dialog.result_payload() or {}
         try:
-            settings = settings_manager.load_all_settings()
-            updated = upsert_custom_profile(
-                settings,
-                name=payload["name"],
-                base_url=payload["base_url"],
-                api_key_env=payload.get("api_key_env", ""),
-                profile_id=profile_id,
+            updated = settings_manager.mutate_settings(
+                lambda settings: upsert_custom_profile(
+                    settings,
+                    name=payload["name"],
+                    base_url=payload["base_url"],
+                    api_key_env=payload.get("api_key_env", ""),
+                    profile_id=profile_id,
+                )
             )
-            settings_manager.save_all_settings(settings)
         except Exception as exc:
             logger.error("Couldn't edit text endpoint: %s", exc)
             self.message_label.setText(f"Couldn't save endpoint: {exc}")
@@ -827,9 +834,9 @@ class ModelManagerDialog(QDialog):
         if confirmed != QMessageBox.StandardButton.Yes:
             return
         try:
-            stored = settings_manager.load_all_settings()
-            remove_custom_profile(stored, profile_id)
-            settings_manager.save_all_settings(stored)
+            settings_manager.mutate_settings(
+                lambda stored: remove_custom_profile(stored, profile_id)
+            )
         except Exception as exc:
             logger.error("Couldn't delete text endpoint: %s", exc)
             self.message_label.setText(f"Couldn't delete endpoint: {exc}")
@@ -975,10 +982,10 @@ class ModelManagerDialog(QDialog):
         ):
             return
         try:
-            settings = settings_manager.load_all_settings()
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = provider
-            settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] = model
-            settings_manager.save_all_settings(settings)
+            settings_manager.update_settings({
+                SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
+                SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+            })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
             self.message_label.setText(f"Couldn't set text model: {exc}")
@@ -1007,10 +1014,10 @@ class ModelManagerDialog(QDialog):
         ):
             return
         try:
-            settings = settings_manager.load_all_settings()
-            settings[SettingsKey.MEETING_LLM_PROVIDER] = provider
-            settings[SettingsKey.MEETING_LLM_MODEL] = model
-            settings_manager.save_all_settings(settings)
+            settings_manager.update_settings({
+                SettingsKey.MEETING_LLM_PROVIDER: provider,
+                SettingsKey.MEETING_LLM_MODEL: model,
+            })
         except Exception as exc:
             logger.error("Couldn't activate meeting LLM model: %s", exc)
             self.message_label.setText(f"Couldn't set meeting model: {exc}")
@@ -1195,7 +1202,39 @@ class ModelManagerDialog(QDialog):
         self._load_text_settings()
         self._load_meeting_settings()
         self._load_engine_and_runtime()
-        cached = scan_cached_models()
+        if not self._background_cache_scan:
+            self._cache_inventory_loading = False
+            self._refresh_cached_model_state(
+                scan_cached_models(max_age_seconds=30.0)
+            )
+            return
+
+        cached = peek_cached_models()
+        self._cache_inventory_loading = cached is None
+        self._refresh_cached_model_state(cached or {})
+        self._cache_scan_generation += 1
+        generation = self._cache_scan_generation
+
+        def load() -> None:
+            result = scan_cached_models(max_age_seconds=30.0)
+            self._cache_scan_finished.emit(generation, result)
+
+        threading.Thread(
+            target=load,
+            name="model-manager-cache-scan",
+            daemon=True,
+        ).start()
+
+    def _on_cache_scan_finished(self, generation: int, cached) -> None:
+        if generation != self._cache_scan_generation:
+            return
+        self._cache_inventory_loading = False
+        self._refresh_cached_model_state(dict(cached or {}))
+
+    def _refresh_cached_model_state(
+        self,
+        cached: Dict[str, CachedModelInfo],
+    ) -> None:
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
@@ -1224,6 +1263,9 @@ class ModelManagerDialog(QDialog):
 
     def _update_cache_summary(self, cached: Dict[str, CachedModelInfo]) -> None:
         """Report cache totals in the rail footer, next to the Downloads button."""
+        if self._cache_inventory_loading:
+            self.cache_summary_label.setText("Checking downloaded models…")
+            return
         catalog_repos = {
             resolve_model_repo(model_name)
             for model_name in config.WHISPER_MODEL_CHOICES

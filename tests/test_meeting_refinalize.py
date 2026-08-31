@@ -6,7 +6,7 @@ import pytest
 
 
 from meeting.interfaces import AgentResult, TranscriptSegment
-from meeting.refinalize import rerun_finalization
+from meeting.refinalize import rerun_finalization, rerun_polish
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
 
 
@@ -89,9 +89,10 @@ DEFAULT_STEPS = [
 class FakeAgentCore:
     """Minimal agent that can polish and consolidate."""
 
-    def __init__(self, ops=None, fail_polish=False):
+    def __init__(self, ops=None, fail_polish=False, fail_polish_after=None):
         self.ops = ops or []
         self.fail_polish = fail_polish
+        self.fail_polish_after = fail_polish_after
         self.cfg = None
         self.tools = None
         self.payload = None
@@ -104,7 +105,10 @@ class FakeAgentCore:
 
     def checkpoint(self, payload):
         self.polish_payloads.append(payload)
-        if self.fail_polish:
+        if self.fail_polish or (
+            self.fail_polish_after is not None
+            and len(self.polish_payloads) > self.fail_polish_after
+        ):
             return AgentResult(ok=False, error="polish failed")
         return AgentResult(ok=True)
 
@@ -311,6 +315,34 @@ class TestStepSelection:
         assert polish["status"] == "failed"
         assert result["finalization"]["status"] == "failed"
         assert core.payload is not None
+
+    def test_later_polish_block_failure_is_not_reported_as_success(
+            self, repo, monkeypatch):
+        core = FakeAgentCore(fail_polish_after=1)
+        make_meeting(
+            repo,
+            state_json=seeded_state("m_retry", DEFAULT_STEPS),
+        )
+        repo.add_segments([
+            TranscriptSegment(
+                segment_id=f"sg_{idx}", meeting_id="m_retry", chunk_id=None,
+                channel="mic", start_s=float(idx), end_s=float(idx + 1),
+                text=f"segment {idx}",
+            )
+            for idx in range(401)
+        ])
+        install_cores(monkeypatch, core)
+
+        result = rerun_polish(
+            repo,
+            "m_retry",
+            provider="openrouter",
+            model="m",
+        )
+
+        assert len(core.polish_payloads) == 2
+        assert result["ok"] is False
+        assert result["error"] == "polish failed"
 
 
 class TestProtection:

@@ -123,6 +123,35 @@ class TestRecordingRotation:
         remaining = os.listdir(self.recordings_dir)
         assert remaining == ["recording_20260103_120000.wav"]
 
+    @patch("services.history_manager.db")
+    @patch("services.history_manager.datetime")
+    def test_same_second_recordings_never_overwrite_each_other(
+        self, mock_datetime, _mock_db
+    ):
+        mock_datetime.now.return_value.strftime.return_value = "20260103_120000"
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        first_source = os.path.join(self.temp_dir, "first.wav")
+        second_source = os.path.join(self.temp_dir, "second.wav")
+        with open(first_source, "wb") as handle:
+            handle.write(b"first")
+        with open(second_source, "wb") as handle:
+            handle.write(b"second")
+
+        first_name = manager._save_recording(first_source)
+        second_name = manager._save_recording(second_source)
+
+        assert first_name == "recording_20260103_120000.wav"
+        assert second_name == "recording_20260103_120000-2.wav"
+        with open(os.path.join(self.recordings_dir, first_name), "rb") as handle:
+            assert handle.read() == b"first"
+        with open(os.path.join(self.recordings_dir, second_name), "rb") as handle:
+            assert handle.read() == b"second"
+        os.remove(first_source)
+        os.remove(second_source)
+
 
 class TestHistoryEntryDeletion:
     @pytest.fixture(autouse=True)
@@ -212,5 +241,4 @@ class TestRecordingRetentionPersistence:
         })
         loaded = self.manager.load_all_settings()
         assert resolve_max_saved_recordings(loaded) is None
-
 

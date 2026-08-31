@@ -9,6 +9,7 @@ requested model is missing from the local cache AND the persisted
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Final, Optional, Set, Tuple
 
@@ -22,6 +23,13 @@ from services.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+_cache_scan_lock = threading.RLock()
+_cache_scan_condition = threading.Condition(_cache_scan_lock)
+_cache_scan_in_progress = False
+_cache_scan_epoch = 0
+_cached_model_snapshot: Optional[Dict[str, "CachedModelInfo"]] = None
+_cached_model_snapshot_at = 0.0
 
 
 # Approximate download sizes (MB) for the CTranslate2 model repositories,
@@ -184,6 +192,7 @@ def download_model_files(
 
     logger.info(f"Downloading model '{model_name}' from Hugging Face...")
     path = snapshot_download(repo_id, **kwargs)
+    invalidate_cached_models_snapshot()
     logger.info(f"Model '{model_name}' downloaded to {path}")
     return path
 
@@ -213,29 +222,81 @@ def get_hf_cache_dir() -> str:
         )
 
 
-def scan_cached_models() -> Dict[str, CachedModelInfo]:
+def peek_cached_models() -> Optional[Dict[str, CachedModelInfo]]:
+    """Return the last completed cache snapshot without touching the disk."""
+    with _cache_scan_lock:
+        if _cached_model_snapshot is None:
+            return None
+        return dict(_cached_model_snapshot)
+
+
+def invalidate_cached_models_snapshot() -> None:
+    """Discard the cache inventory after a successful download or delete."""
+    global _cache_scan_epoch, _cached_model_snapshot, _cached_model_snapshot_at
+    with _cache_scan_lock:
+        _cache_scan_epoch += 1
+        _cached_model_snapshot = None
+        _cached_model_snapshot_at = 0.0
+
+
+def scan_cached_models(
+    *,
+    max_age_seconds: float = 0.0,
+) -> Dict[str, CachedModelInfo]:
     """Enumerate model repositories in the local HF cache. No network.
 
     Keys are repository IDs because reverse mapping to short names is ambiguous.
+    A positive ``max_age_seconds`` reuses the shared snapshot so Model Manager
+    and Downloads do not independently traverse every cached repository.
     """
-    try:
-        from huggingface_hub import scan_cache_dir
-        cache_info = scan_cache_dir()
-    except Exception as e:
-        logger.debug(f"HF cache scan unavailable: {e}")
-        return {}
+    global _cache_scan_in_progress
+    global _cached_model_snapshot, _cached_model_snapshot_at
+    max_age = max(0.0, float(max_age_seconds))
+    while True:
+        with _cache_scan_condition:
+            now = time.monotonic()
+            if (
+                max_age > 0.0
+                and _cached_model_snapshot is not None
+                and now - _cached_model_snapshot_at <= max_age
+            ):
+                return dict(_cached_model_snapshot)
+            if _cache_scan_in_progress:
+                _cache_scan_condition.wait()
+                if _cached_model_snapshot is not None:
+                    return dict(_cached_model_snapshot)
+                continue
+            _cache_scan_in_progress = True
+            scan_epoch = _cache_scan_epoch
 
-    cached: Dict[str, CachedModelInfo] = {}
-    for repo in cache_info.repos:
-        if getattr(repo, "repo_type", "model") != "model":
-            continue
-        cached[repo.repo_id] = CachedModelInfo(
-            repo_id=repo.repo_id,
-            size_bytes=repo.size_on_disk,
-            path=str(repo.repo_path),
-            revision_hashes=tuple(rev.commit_hash for rev in repo.revisions),
-        )
-    return cached
+        try:
+            from huggingface_hub import scan_cache_dir
+            cache_info = scan_cache_dir()
+            cached: Dict[str, CachedModelInfo] = {}
+            for repo in cache_info.repos:
+                if getattr(repo, "repo_type", "model") != "model":
+                    continue
+                cached[repo.repo_id] = CachedModelInfo(
+                    repo_id=repo.repo_id,
+                    size_bytes=repo.size_on_disk,
+                    path=str(repo.repo_path),
+                    revision_hashes=tuple(
+                        rev.commit_hash for rev in repo.revisions
+                    ),
+                )
+        except Exception as e:
+            logger.debug(f"HF cache scan unavailable: {e}")
+            cached = {}
+        with _cache_scan_condition:
+            _cache_scan_in_progress = False
+            if scan_epoch == _cache_scan_epoch:
+                _cached_model_snapshot = dict(cached)
+                _cached_model_snapshot_at = time.monotonic()
+                _cache_scan_condition.notify_all()
+                return dict(cached)
+            # A successful model mutation invalidated this scan while it was
+            # walking the cache. Wake waiters and take a fresh snapshot.
+            _cache_scan_condition.notify_all()
 
 
 def delete_model_from_cache(model_name: str) -> None:
@@ -258,6 +319,7 @@ def delete_model_from_cache(model_name: str) -> None:
         f"({format_size_bytes(strategy.expected_freed_size)} to free)"
     )
     strategy.execute()
+    invalidate_cached_models_snapshot()
     logger.info(f"Deleted '{repo_id}' from HF cache")
 class HuggingFaceAccessCoordinator:
     """Coordinates cache detection, policy evaluation, one-time grants, and

@@ -29,6 +29,7 @@ export default function ReportTimestamp({
             key={id}
             type="button"
             className="t"
+            aria-label={`Play evidence at ${clock(segment.start_s)}`}
             onClick={() => {
               onSeek?.(segment.start_s);
               onEvidenceClick?.(id);

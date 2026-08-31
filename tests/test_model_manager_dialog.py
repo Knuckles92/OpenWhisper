@@ -67,6 +67,16 @@ class _FakeSettings:
         self.values.clear()
         self.values.update(settings)
 
+    def update_settings(self, updates, *, remove=()):
+        self.values.update(updates)
+        for key in remove:
+            self.values.pop(key, None)
+        return dict(self.values)
+
+    def mutate_settings(self, mutator):
+        result = mutator(self.values)
+        return result
+
     def load_model_selection(self):
         return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")
 
@@ -138,7 +148,10 @@ class _DialogTestCase:
         for patcher in patchers:
             patcher.start()
             self._started.append(patcher)
-        return ModelManagerDialog(get_loaded_model=lambda: loaded_model), values
+        return ModelManagerDialog(
+            get_loaded_model=lambda: loaded_model,
+            background_cache_scan=False,
+        ), values
 
 
 class TestDialogShell(_DialogTestCase):

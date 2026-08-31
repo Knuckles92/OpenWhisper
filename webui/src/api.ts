@@ -28,7 +28,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = '';
     try {
-      detail = await res.text();
+      const body = await res.text();
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown; message?: unknown };
+        const serverMessage = parsed.detail ?? parsed.message;
+        detail = typeof serverMessage === 'string' ? serverMessage : body;
+      } catch {
+        detail = body;
+      }
     } catch {
       /* body unavailable */
     }

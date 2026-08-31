@@ -32,7 +32,7 @@ export default function ReportDownload({
 
   return (
     <details ref={detailsRef} className="report-download">
-      <summary>Download</summary>
+      <summary aria-label="Download meeting report">Download</summary>
       <div className="report-download-menu">
         <button type="button" onClick={() => download('summary')}>
           Summary — {REPORT_VIEW_META[active]?.label}
