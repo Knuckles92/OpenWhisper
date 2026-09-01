@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 
+import logging
 import os
 import sys
-import logging
 
-from services.audio_processor import audio_processor
+import pytest
+
 from config import config
+from services.audio_processor import audio_processor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def test_chunking():
+def _run_chunking_check():
     test_file = "test_chunking_audio.wav"
 
     if not os.path.exists(test_file):
@@ -66,6 +68,14 @@ def test_chunking():
         audio_processor.cleanup_temp_files()
         return False
 
+
+def test_chunking():
+    """Run the manual large-file check only when its fixture is available."""
+    if not os.path.exists("test_chunking_audio.wav"):
+        pytest.skip("manual test_chunking_audio.wav fixture is not present")
+    assert _run_chunking_check()
+
+
 if __name__ == "__main__":
-    success = test_chunking()
+    success = _run_chunking_check()
     sys.exit(0 if success else 1)
