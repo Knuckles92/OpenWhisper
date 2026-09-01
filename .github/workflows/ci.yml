@@ -28,6 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libegl1 libgl1 libportaudio2 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
             libxkbcommon-x11-0 xauth xvfb
           python -m pip install --upgrade pip
           python -m pip install \
