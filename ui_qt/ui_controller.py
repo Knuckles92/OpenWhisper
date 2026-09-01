@@ -27,6 +27,7 @@ from services.app_update_apply import (
 )
 from services.update_contract import decode_native_result
 from services.hotkey_manager import format_hotkey_display
+from ui_qt.clipboard import ClipboardStageResult, TemporaryClipboard
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
 from ui_qt.overlays import WaveformOverlay
@@ -98,6 +99,13 @@ class UIController(QObject):
 
     def __init__(self):
         super().__init__()
+
+        self._temporary_clipboard = TemporaryClipboard(
+            QApplication.clipboard(), self
+        )
+        self._temporary_clipboard.restore_failed.connect(
+            self._on_clipboard_restore_failed
+        )
 
         self.main_window = MainWindow()
         self.overlay = WaveformOverlay()
@@ -480,16 +488,27 @@ class UIController(QObject):
 
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to the Qt clipboard. Returns True if the write succeeded."""
-        try:
-            clipboard = QApplication.clipboard()
-            if clipboard is None:
-                logger.error("No Qt clipboard available")
-                return False
-            clipboard.setText(text or "")
-            return True
-        except Exception as exc:
-            logger.error(f"Failed to copy to clipboard: {exc}")
+        return self._temporary_clipboard.write_text(text)
+
+    def stage_transcript_for_paste(self, text: str) -> ClipboardStageResult:
+        return self._temporary_clipboard.stage_text(text)
+
+    def schedule_clipboard_restore(self, stage: ClipboardStageResult) -> bool:
+        if stage.lease is None:
             return False
+        return self._temporary_clipboard.schedule_restore(
+            stage.lease, config.AUTO_PASTE_CLIPBOARD_RESTORE_DELAY_MS
+        )
+
+    def commit_transcript_clipboard(
+        self, stage: ClipboardStageResult, text: str
+    ) -> bool:
+        if stage.lease is None:
+            return stage.written
+        return self._temporary_clipboard.commit_text(stage.lease, text)
+
+    def _on_clipboard_restore_failed(self, _message: str) -> None:
+        self.set_status("Ready (Pasted; clipboard restore failed)")
 
     def show_streaming_overlay(self):
         self.streaming_flow_active = True
@@ -1484,6 +1503,11 @@ class UIController(QObject):
 
     def cleanup(self):
         logger.info("Starting UI Controller cleanup...")
+
+        try:
+            self._temporary_clipboard.cleanup()
+        except Exception as e:
+            logger.debug(f"Error restoring clipboard during cleanup: {e}")
 
         try:
             if self.cancel_animation_timer.isActive():

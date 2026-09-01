@@ -200,6 +200,7 @@ class AppConfig:
 
     # Timing settings
     HOTKEY_DEBOUNCE_MS: int = 300
+    AUTO_PASTE_CLIPBOARD_RESTORE_DELAY_MS: int = 250
     # Shortest push-and-hold that counts as a recording; shorter holds cancel.
     RECORD_MIN_HOLD_MS: int = 250
     OVERLAY_HIDE_DELAY_MS: int = 1500

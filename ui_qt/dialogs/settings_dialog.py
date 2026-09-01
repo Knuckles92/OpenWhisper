@@ -435,12 +435,23 @@ class SettingsDialog(QDialog):
         self.auto_paste_check = QCheckBox(
             "Auto-paste transcription to active window"
         )
+        auto_paste_tooltip = (
+            "Uses the clipboard temporarily, then restores its previous contents "
+            "after a successful paste. If the clipboard was blank, the transcript "
+            "stays there."
+        )
         if self._native_wayland:
-            self.auto_paste_check.setToolTip(
+            auto_paste_tooltip += (
+                "\n\n"
                 "Native Wayland blocks reliable cross-application key injection. "
                 "Use clipboard copy or an X11 session when auto-paste does not work."
             )
+        self.auto_paste_check.setToolTip(auto_paste_tooltip)
         self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
+        self.copy_clipboard_check.setToolTip(
+            "Keeps the transcript in the clipboard when auto-paste is off or "
+            "unavailable. Successful auto-paste restores prior non-blank content."
+        )
         self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
         if not self._tray_available:
             self.minimize_tray_check.setEnabled(False)

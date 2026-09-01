@@ -494,7 +494,50 @@ class TranscriptionRuntime:
         # permission. Without it, degrade to clipboard so the text isn't lost and
         # the user can paste manually with Cmd+V.
         paste_blocked = auto_paste and not is_accessibility_trusted()
-        should_copy = copy_clipboard or auto_paste or paste_blocked
+
+        if auto_paste and not paste_blocked:
+            stage = self.controller.ui_controller.stage_transcript_for_paste(
+                transcript
+            )
+            if not stage.written:
+                logger.error("Failed to copy transcription for auto-paste")
+                self.controller.ui_controller.set_status(
+                    "Transcription complete (copy failed)"
+                )
+                return
+
+            logger.info("Transcription copied to clipboard for auto-paste")
+            try:
+                send_paste()
+                logger.info("Transcription auto-pasted")
+            except Exception as exc:
+                logger.error(f"Failed to auto-paste: {exc}")
+                if not self.controller.ui_controller.commit_transcript_clipboard(
+                    stage, transcript
+                ):
+                    logger.warning(
+                        "Could not leave transcription in clipboard after paste failure"
+                    )
+                self.controller.ui_controller.set_status(
+                    "Transcription complete (paste failed)"
+                )
+                return
+
+            if stage.restore_unavailable:
+                logger.warning(
+                    "Transcription pasted, but the previous clipboard could not be captured"
+                )
+                self.controller.ui_controller.set_status(
+                    "Ready (Pasted; clipboard restore unavailable)"
+                )
+                return
+
+            self.controller.ui_controller.set_status("Ready (Pasted)")
+            if stage.lease is not None:
+                self.controller.ui_controller.schedule_clipboard_restore(stage)
+            return
+
+        should_copy = copy_clipboard or paste_blocked
         copy_ok = False
         if should_copy:
             copy_ok = bool(
@@ -504,23 +547,6 @@ class TranscriptionRuntime:
                 logger.info("Transcription copied to clipboard")
             else:
                 logger.error("Failed to copy to clipboard")
-
-        if auto_paste and not paste_blocked:
-            if not copy_ok:
-                self.controller.ui_controller.set_status(
-                    "Transcription complete (copy failed)"
-                )
-                return
-            try:
-                send_paste()
-                logger.info("Transcription auto-pasted")
-                self.controller.ui_controller.set_status("Ready (Pasted)")
-            except Exception as exc:
-                logger.error(f"Failed to auto-paste: {exc}")
-                self.controller.ui_controller.set_status(
-                    "Transcription complete (paste failed)"
-                )
-            return
 
         if paste_blocked:
             if copy_ok:

@@ -406,6 +406,11 @@ class DummyUIController:
         self.cleaned_up = False
         self.copied = []
         self.copy_succeeds = True
+        self.clipboard_stage_needs_restore = True
+        self.clipboard_restore_unavailable = False
+        self.clipboard_stages = []
+        self.clipboard_restores = []
+        self.clipboard_commits = []
         self.streaming_overlay_shown = 0
         self.streaming_overlay_hidden = 0
         self.consent_requests = []
@@ -564,6 +569,33 @@ class DummyUIController:
         self.transcription_raw = raw
 
     def copy_to_clipboard(self, text):
+        if not self.copy_succeeds:
+            return False
+        self.copied.append(text)
+        return True
+
+    def stage_transcript_for_paste(self, text):
+        if not self.copy_succeeds:
+            return types.SimpleNamespace(
+                written=False,
+                lease=None,
+                restore_unavailable=False,
+            )
+        self.copied.append(text)
+        stage = types.SimpleNamespace(
+            written=True,
+            lease=object() if self.clipboard_stage_needs_restore else None,
+            restore_unavailable=self.clipboard_restore_unavailable,
+        )
+        self.clipboard_stages.append((text, stage))
+        return stage
+
+    def schedule_clipboard_restore(self, stage):
+        self.clipboard_restores.append(stage)
+        return True
+
+    def commit_transcript_clipboard(self, stage, text):
+        self.clipboard_commits.append((stage, text))
         if not self.copy_succeeds:
             return False
         self.copied.append(text)
@@ -1062,6 +1094,86 @@ class TestApplicationController:
             == "Transcription complete (copy failed)"
         )
         assert len(self.history_manager.entries) == 1
+
+    def test_auto_paste_schedules_clipboard_restore_even_when_copy_is_enabled(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["copy_clipboard"] = True
+
+        controller._on_transcription_complete("hello world", None)
+
+        ui = controller.ui_controller
+        assert self.keyboard.sent == ["ctrl+v"]
+        assert [text for text, _stage in ui.clipboard_stages] == ["hello world"]
+        assert len(ui.clipboard_restores) == 1
+        assert ui.clipboard_commits == []
+        assert ui.statuses[-1] == "Ready (Pasted)"
+
+    def test_auto_paste_leaves_transcript_when_clipboard_started_blank(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        controller.ui_controller.clipboard_stage_needs_restore = False
+
+        controller._on_transcription_complete("hello world", None)
+
+        ui = controller.ui_controller
+        assert self.keyboard.sent == ["ctrl+v"]
+        assert ui.copied[-1] == "hello world"
+        assert ui.clipboard_restores == []
+        assert ui.statuses[-1] == "Ready (Pasted)"
+
+    def test_auto_paste_reports_when_clipboard_snapshot_is_unavailable(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        ui = controller.ui_controller
+        ui.clipboard_stage_needs_restore = False
+        ui.clipboard_restore_unavailable = True
+
+        controller._on_transcription_complete("hello world", None)
+
+        assert self.keyboard.sent == ["ctrl+v"]
+        assert ui.clipboard_restores == []
+        assert (
+            ui.statuses[-1]
+            == "Ready (Pasted; clipboard restore unavailable)"
+        )
+
+    def test_auto_paste_failure_keeps_transcript_and_cancels_restore(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        runtime_module = sys.modules[
+            type(controller.transcription_runtime).__module__
+        ]
+
+        with patch.object(
+            runtime_module, "send_paste", side_effect=RuntimeError("blocked")
+        ):
+            controller._on_transcription_complete("hello world", None)
+
+        ui = controller.ui_controller
+        assert len(ui.clipboard_commits) == 1
+        assert ui.clipboard_commits[0][1] == "hello world"
+        assert ui.clipboard_restores == []
+        assert ui.statuses[-1] == "Transcription complete (paste failed)"
+
+    def test_blocked_auto_paste_leaves_transcript_for_manual_paste(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["copy_clipboard"] = False
+        runtime_module = sys.modules[
+            type(controller.transcription_runtime).__module__
+        ]
+
+        with patch.object(
+            runtime_module, "is_accessibility_trusted", return_value=False
+        ):
+            controller._on_transcription_complete("hello world", None)
+
+        ui = controller.ui_controller
+        assert self.keyboard.sent == []
+        assert ui.clipboard_stages == []
+        assert ui.copied[-1] == "hello world"
+        assert "Copied to clipboard" in ui.statuses[-1]
 
     def test_upload_audio_file_uses_preview_duration(self):
         controller = self._create_controller()
