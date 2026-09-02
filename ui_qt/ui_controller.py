@@ -126,6 +126,8 @@ class UIController(QObject):
         self.on_recording_trigger_mode_changed: Optional[Callable] = None
         self.on_retranscribe: Optional[Callable] = None
         self.on_upload_audio: Optional[Callable] = None
+        self.on_upload_audio_files: Optional[Callable] = None
+        self.on_upload_cancel: Optional[Callable] = None
         self.on_whisper_settings_changed: Optional[Callable] = None
         self.on_audio_device_changed: Optional[Callable] = None
         self.on_streaming_settings_changed: Optional[Callable] = None
@@ -197,6 +199,8 @@ class UIController(QObject):
         )
         self.main_window.retranscribe_requested.connect(self._on_retranscribe_requested)
         self.main_window.upload_file_requested.connect(self._on_upload_file_transcribe)
+        self.main_window.upload_files_requested.connect(self._on_upload_files_transcribe)
+        self.main_window.upload_cancel_requested.connect(self._on_upload_cancel)
         self.main_window.upload_copy_requested.connect(self._on_upload_copy)
         self.main_window.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
@@ -1265,6 +1269,40 @@ class UIController(QObject):
         logger.info(f"Upload tab transcription started: {audio_path}")
         if self.on_upload_audio:
             self.on_upload_audio(audio_path, duration_seconds)
+
+    def _on_upload_files_transcribe(self, request) -> None:
+        self._transcription_source_tab = TabbedContentWidget.TAB_UPLOAD_FILE
+        logger.info(
+            "Upload tab batch transcription started: %d files", len(request.items)
+        )
+        if self.on_upload_audio_files:
+            self.on_upload_audio_files(request)
+
+    def _on_upload_cancel(self) -> None:
+        """Stop an upload job without touching the recording state.
+
+        ``cancel_recording`` is for the Quick Record tab: it flips the recording
+        flag and clears that tab's transcript, neither of which an upload owns.
+        """
+        if not self._upload_job_active():
+            return
+        callback = self.on_upload_cancel or self.on_record_cancel
+        if callback:
+            callback()
+
+    def set_batch_progress(self, position: int, total: int, source_name: str) -> None:
+        if self._upload_job_active():
+            self.main_window.upload_file_tab.set_batch_progress(
+                position, total, source_name
+            )
+
+    def set_batch_item_finished(
+        self, position: int, success: bool, transcript: str = ""
+    ) -> None:
+        if self._upload_job_active():
+            self.main_window.upload_file_tab.set_batch_item_finished(
+                position, success, transcript
+            )
 
     def _on_upload_copy(self, text: str):
         """Copy Upload File transcript text through the shared clipboard path."""

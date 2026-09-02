@@ -12,8 +12,15 @@ import time
 from enum import Enum
 from typing import Final, Optional
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ui_qt.overlay_state import OverlayState
 from ui_qt.widgets.animated_progress_bar import AnimatedProgressBar
@@ -60,6 +67,15 @@ _STAGE_STEP_INDEX: Final[dict[ProgressStage, int]] = {
 }
 
 _STEP_TITLES: Final[tuple[str, str, str]] = ("Prepare", "Transcribe", "Clean up")
+
+#: How far through one file of a batch each stage counts as, so the bar moves
+#: within a file rather than only when the next one starts.
+_BATCH_STAGE_WEIGHT: Final[dict[ProgressStage, float]] = {
+    ProgressStage.PREPARING: 0.05,
+    ProgressStage.SPLITTING: 0.1,
+    ProgressStage.TRANSCRIBING: 0.2,
+    ProgressStage.CLEANING: 0.85,
+}
 
 _ELAPSED_TICK_MS: Final[int] = 1000
 
@@ -114,11 +130,17 @@ class TranscriptionProgressPanel(QFrame):
     """Stage title, sweeping bar, and a three-step stepper for one job.
 
     The bar sweeps while work is in flight because none of the backends report
-    a fraction; it fills on completion so the end reads as an end. The panel
-    keeps its own clock because the stats widget only appears afterwards, and a
-    CPU transcription of a long file can run for minutes with nothing else on
-    screen changing.
+    a fraction; it fills on completion so the end reads as an end. A batch of
+    files does have a fraction (files finished over files total), so the bar
+    turns determinate for one. The panel keeps its own clock because the stats
+    widget only appears afterwards, and a CPU transcription of a long file can
+    run for minutes with nothing else on screen changing.
+
+    The batch position has its own label rather than sharing ``detail_label``,
+    which the runtime's status messages overwrite continuously.
     """
+
+    stop_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,6 +148,8 @@ class TranscriptionProgressPanel(QFrame):
         self._stage: Optional[ProgressStage] = None
         self._started_at: Optional[float] = None
         self._with_cleanup = True
+        self._batch_total = 1
+        self._batch_position = 1
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -137,7 +161,12 @@ class TranscriptionProgressPanel(QFrame):
 
         self.title_label = QLabel()
         self.title_label.setObjectName("uploadProgressTitle")
-        header.addWidget(self.title_label, stretch=1)
+        header.addWidget(self.title_label)
+
+        self.batch_label = ElidingLabel()
+        self.batch_label.setObjectName("uploadProgressBatch")
+        self.batch_label.hide()
+        header.addWidget(self.batch_label, stretch=1)
 
         self.elapsed_label = QLabel("0:00")
         self.elapsed_label.setObjectName("uploadProgressElapsed")
@@ -145,6 +174,13 @@ class TranscriptionProgressPanel(QFrame):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         header.addWidget(self.elapsed_label)
+
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setObjectName("uploadStopButton")
+        self.stop_btn.setFlat(True)
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.clicked.connect(self.stop_clicked.emit)
+        header.addWidget(self.stop_btn)
         layout.addLayout(header)
 
         self.bar = AnimatedProgressBar(bar_height=6)
@@ -189,22 +225,44 @@ class TranscriptionProgressPanel(QFrame):
         """True from ``start`` until a terminal stage is reached."""
         return self._stage is not None and self._stage not in TERMINAL_STAGES
 
-    def start(self, with_cleanup: bool) -> None:
+    @property
+    def is_batch(self) -> bool:
+        return self._batch_total > 1
+
+    def start(self, with_cleanup: bool, total_files: int = 1) -> None:
         """Begin a job at the preparing stage.
 
         Args:
             with_cleanup: Whether the AI cleanup pass is switched on, which
                 decides whether the stepper shows its third step at all.
+            total_files: Files in the job. More than one turns the bar
+                determinate and shows the position label.
         """
         self._with_cleanup = with_cleanup
+        self._batch_total = max(1, total_files)
+        self._batch_position = 1
         self.steps[2].setVisible(with_cleanup)
         self._connectors[1].setVisible(with_cleanup)
         self._started_at = time.monotonic()
         self.elapsed_label.setText(format_elapsed(0))
         self.detail_label.setText("")
-        self.bar.set_indeterminate()
+        self.batch_label.setText("")
+        self.batch_label.setVisible(self.is_batch)
+        self.stop_btn.setEnabled(True)
+        if self.is_batch:
+            self.bar.set_fraction(0.0, animate=False)
+        else:
+            self.bar.set_indeterminate()
         self._clock.start()
         self.set_stage(ProgressStage.PREPARING)
+
+    def set_batch_position(self, position: int, total: int, filename: str) -> None:
+        """Announce which file of the batch is starting (1-based)."""
+        self._batch_total = max(1, total)
+        self._batch_position = max(1, min(position, self._batch_total))
+        self.batch_label.setText(f"File {position} of {total}  ·  {filename}")
+        self.batch_label.setVisible(self.is_batch)
+        self.bar.set_fraction((self._batch_position - 1) / self._batch_total)
 
     def set_stage(self, stage: ProgressStage, detail: Optional[str] = None) -> None:
         self._stage = stage
@@ -219,15 +277,29 @@ class TranscriptionProgressPanel(QFrame):
         if stage in TERMINAL_STAGES:
             self._clock.stop()
             self._tick()
+            self.stop_btn.setEnabled(False)
             if stage is ProgressStage.DONE:
                 self.bar.set_fraction(1.0)
             else:
                 self.bar.reset()
+        elif self.is_batch:
+            weight = _BATCH_STAGE_WEIGHT.get(stage, 0.0)
+            self.bar.set_fraction(
+                (self._batch_position - 1 + weight) / self._batch_total
+            )
         elif not self.bar.is_indeterminate:
             self.bar.set_indeterminate()
 
     def set_detail(self, text: str) -> None:
         self.detail_label.setText(text)
+
+    def set_stopping(self) -> None:
+        """Acknowledge a Stop press while the runtime winds the job down."""
+        self.stop_btn.setEnabled(False)
+        self.detail_label.setText("Canceling…")
+
+    def set_stop_enabled(self, enabled: bool) -> None:
+        self.stop_btn.setEnabled(enabled)
 
     def set_large_file(self, file_size_mb: float, is_splitting: bool) -> None:
         stage = ProgressStage.SPLITTING if is_splitting else ProgressStage.PREPARING

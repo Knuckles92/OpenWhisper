@@ -307,13 +307,21 @@ class TranscriptCleanup:
             return {"extra_body": {"reasoning": {"effort": self.reasoning}}}
         return {"reasoning_effort": self.reasoning}
 
-    def cleanup(self, text: str, system_prompt: Optional[str] = None) -> str:
+    def cleanup(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        timeout_s: Optional[float] = None,
+    ) -> str:
         """Clean up transcript text, falling back to the original on failure.
 
         Args:
             text: Raw ASR transcript.
             system_prompt: Optional system prompt. Falls back to the config
                 default when empty or omitted.
+            timeout_s: Per-request timeout that overrides the client's
+                default for this call only, e.g. for a stitched multi-file
+                transcript that is far longer than a dictation.
 
         Returns:
             Cleaned text, or the original text if cleanup is skipped or fails.
@@ -329,6 +337,9 @@ class TranscriptCleanup:
             return text
 
         prompt = (system_prompt or "").strip() or config.TRANSCRIPT_CLEANUP_PROMPT
+        request_kwargs = self._request_options()
+        if timeout_s is not None:
+            request_kwargs["timeout"] = timeout_s
 
         try:
             response = self.client.chat.completions.create(
@@ -337,7 +348,7 @@ class TranscriptCleanup:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": text},
                 ],
-                **self._request_options(),
+                **request_kwargs,
             )
             cleaned = (response.choices[0].message.content or "").strip()
             if not cleaned:

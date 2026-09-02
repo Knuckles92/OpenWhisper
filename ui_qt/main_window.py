@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
     check_for_updates_requested = pyqtSignal()
     retranscribe_requested = pyqtSignal(str)  # audio_path
     upload_file_requested = pyqtSignal(str, float)
+    upload_files_requested = pyqtSignal(object)  # BatchUploadRequest
+    upload_cancel_requested = pyqtSignal()
     upload_copy_requested = pyqtSignal(str)
     meeting_dashboard_requested = pyqtSignal()
     past_meeting_requested = pyqtSignal(str)
@@ -408,6 +410,10 @@ class MainWindow(QMainWindow):
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
+        self.upload_file_tab.upload_files_requested.connect(
+            self.upload_files_requested.emit
+        )
+        self.upload_file_tab.cancel_requested.connect(self.upload_cancel_requested.emit)
         self.upload_file_tab.copy_requested.connect(self.upload_copy_requested.emit)
 
         main_area_layout.addWidget(self.tabbed_content)

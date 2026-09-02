@@ -317,7 +317,7 @@ class FakeAudioProcessor:
         return " ".join(transcriptions)
 
     def cleanup_temp_files(self):
-        pass
+        self.cleanups = getattr(self, "cleanups", 0) + 1
 
 
 class FakeKeyboard:
@@ -442,6 +442,16 @@ class DummyUIController:
         self.update_download_results = []
         self.on_record_start = None
         self.large_file_states = []
+        self.batch_progress_events = []
+        self.batch_item_events = []
+        self.batch_item_transcripts = []
+
+    def set_batch_progress(self, position, total, source_name):
+        self.batch_progress_events.append((position, total, source_name))
+
+    def set_batch_item_finished(self, position, success, transcript=""):
+        self.batch_item_events.append((position, success))
+        self.batch_item_transcripts.append(transcript)
 
     def show_large_file_state(self, file_size_mb, is_splitting):
         self.large_file_states.append((file_size_mb, is_splitting))
@@ -1299,6 +1309,326 @@ class TestApplicationController:
         assert entry.get("raw_text") is None
         assert entry.get("cleanup_provider") is None
         assert entry.get("cleanup_model") is None
+
+    # Multi-file uploads
+
+    def _batch_request(self, names, relation="separate", **kwargs):
+        from services.batch_upload import BatchItem, BatchUploadRequest
+
+        items = []
+        for name in names:
+            path = Path(self.temp_dir.name) / name
+            path.write_bytes(b"x" * 256)
+            items.append(BatchItem(str(path), duration_seconds=10.0))
+        return BatchUploadRequest(items=tuple(items), relation=relation, **kwargs)
+
+    @staticmethod
+    def _run_batch(controller):
+        fn, args = controller.executor.submissions[0]
+        assert fn.__name__ == "transcribe_batch"
+        fn(*args)
+
+    def _capturing_cleanup(self, controller, reply="Cleaned."):
+        """Enable cleanup and record every call's prompt and timeout."""
+        self.settings.all_settings["transcript_cleanup_enabled"] = True
+        cleanup = controller.transcription_runtime._transcript_cleanup
+        cleanup.is_available = lambda: True
+        calls = []
+
+        def fake_cleanup(text, system_prompt=None, timeout_s=None):
+            calls.append(
+                {"text": text, "system_prompt": system_prompt, "timeout_s": timeout_s}
+            )
+            cleanup.last_error = None
+            return reply
+
+        cleanup.cleanup = fake_cleanup
+        return calls
+
+    def test_batch_upload_claims_one_job_slot_and_refuses_a_second_upload(self):
+        controller = self._create_controller()
+        request = self._batch_request(["a.wav", "b.wav"])
+
+        controller.upload_audio_files(request)
+
+        assert controller.transcription_runtime.has_active_job
+        assert len(controller.executor.submissions) == 1
+        assert controller.executor.submissions[0][0].__name__ == "transcribe_batch"
+        assert controller._pending_source_name is None
+
+        controller.upload_audio_file(request.items[0].audio_path, 3.0)
+
+        assert len(controller.executor.submissions) == 1
+        assert "already in progress" in controller.ui_controller.statuses[-1]
+
+    def test_single_item_batch_request_uses_the_single_file_path(self):
+        controller = self._create_controller()
+        request = self._batch_request(["a.wav"])
+
+        controller.upload_audio_files(request)
+
+        assert controller.executor.submissions[0][0].__name__ == "transcribe_audio_file"
+        assert controller._pending_source_name == "a.wav"
+
+    def test_separate_batch_writes_one_history_row_per_file_and_stays_in_the_window(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["copy_clipboard"] = True
+        ui = controller.ui_controller
+        request = self._batch_request(["a.wav", "b.wav", "c.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        entries = self.history_manager.entries
+        assert [e["source_name"] for e in entries] == ["a.wav", "b.wav", "c.wav"]
+        assert all(e["source_audio_path"] is None for e in entries)
+        assert all(e["audio_duration"] == 10.0 for e in entries)
+        # Uploads are started from inside the window, so nothing is pasted or
+        # copied; the tab's own Copy buttons do that on request.
+        assert self.keyboard.sent == []
+        assert ui.copied == []
+        assert ui.clipboard_stages == []
+        assert ui.transcription_text.startswith("## a.wav\n\nlocal:")
+        assert "## b.wav" in ui.transcription_text
+        assert ui.statuses[-1] == "Ready"
+        assert ui.batch_progress_events == [
+            (1, 3, "a.wav"), (2, 3, "b.wav"), (3, 3, "c.wav")
+        ]
+        assert ui.batch_item_events == [(1, True), (2, True), (3, True)]
+        assert [t.startswith("local:") for t in ui.batch_item_transcripts] == [True] * 3
+        assert ui.stats[1] == 30.0
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_single_upload_result_is_neither_copied_nor_pasted(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["copy_clipboard"] = True
+        clip_path = str(Path(self.temp_dir.name) / "upload.wav")
+        Path(clip_path).write_bytes(b"x" * 256)
+
+        controller.upload_audio_file(clip_path, duration_seconds=3.0)
+        fn, args = controller.executor.submissions[0]
+        fn(*args)
+
+        ui = controller.ui_controller
+        assert self.keyboard.sent == []
+        assert ui.copied == []
+        assert ui.clipboard_stages == []
+        assert ui.statuses[-1] == "Ready"
+        assert len(self.history_manager.entries) == 1
+        assert not controller.transcription_runtime.has_active_job
+
+        # The next dictation pastes again: the upload's choice does not stick.
+        controller._on_transcription_complete("hello world", None)
+        assert self.keyboard.sent == ["ctrl+v"]
+
+    def test_sequential_batch_writes_one_row_with_joined_text_and_batch_context(self):
+        controller = self._create_controller()
+        calls = self._capturing_cleanup(controller, reply="Stitched.")
+        request = self._batch_request(["a.wav", "b.wav"], relation="sequential")
+        a_path, b_path = (item.audio_path for item in request.items)
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert len(self.history_manager.entries) == 1
+        entry = self.history_manager.entries[0]
+        assert entry["text"] == "Stitched."
+        assert entry["raw_text"] == f"local:{a_path}\n\nlocal:{b_path}"
+        assert entry["source_name"].startswith("2 files: ")
+        assert entry["audio_duration"] == 20.0
+        assert len(calls) == 1
+        assert config.TRANSCRIPT_BATCH_CONTEXT_HEADER in calls[0]["system_prompt"]
+        assert "consecutive parts" in calls[0]["system_prompt"]
+        assert config.TRANSCRIPT_BATCH_CONTEXT_GUARD in calls[0]["system_prompt"]
+        assert calls[0]["timeout_s"] == config.TRANSCRIPT_BATCH_CLEANUP_TIMEOUT_S
+        assert controller.ui_controller.transcription_text == "Stitched."
+        assert controller.ui_controller.statuses[-1] == "Ready"
+        # One stitched transcript: the rows have no finished text of their own.
+        assert controller.ui_controller.batch_item_transcripts == ["", ""]
+
+    def test_separate_batch_cleanup_does_not_pass_a_batch_context(self):
+        """Separate must clean each file exactly like a single upload."""
+        controller = self._create_controller()
+        calls = self._capturing_cleanup(controller)
+        request = self._batch_request(["a.wav", "b.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert len(calls) == 2
+        for call in calls:
+            assert config.TRANSCRIPT_BATCH_CONTEXT_HEADER not in call["system_prompt"]
+            assert call["timeout_s"] is None
+        assert [e["text"] for e in self.history_manager.entries] == ["Cleaned.", "Cleaned."]
+
+    def test_custom_batch_per_file_passes_instructions_to_each_cleanup(self):
+        controller = self._create_controller()
+        calls = self._capturing_cleanup(controller)
+        request = self._batch_request(
+            ["a.wav", "b.wav"],
+            relation="custom",
+            custom_instructions="Voice memos about the Q3 budget.",
+            custom_combine=False,
+        )
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert len(calls) == 2
+        assert all("Q3 budget" in c["system_prompt"] for c in calls)
+        assert "This transcript is a.wav" in calls[0]["system_prompt"]
+        assert "This transcript is b.wav" in calls[1]["system_prompt"]
+        assert len(self.history_manager.entries) == 2
+
+    def test_combined_cleanup_failure_shows_raw_text_and_says_so_in_status(self):
+        controller = self._create_controller()
+        self.settings.all_settings["transcript_cleanup_enabled"] = True
+        cleanup = controller.transcription_runtime._transcript_cleanup
+        cleanup.is_available = lambda: True
+
+        def failing_cleanup(text, system_prompt=None, timeout_s=None):
+            cleanup.last_error = "timed out"
+            return text
+
+        cleanup.cleanup = failing_cleanup
+        request = self._batch_request(["a.wav", "b.wav"], relation="sequential")
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        entry = self.history_manager.entries[0]
+        assert entry["text"].startswith("local:")
+        assert "\n\n" in entry["text"]
+        assert entry.get("raw_text") is None
+        status = controller.ui_controller.statuses[-1]
+        assert status.startswith("Ready")
+        assert "AI cleanup failed (timed out)" in status
+
+    def _canceling_backend(self, controller, cancel_on):
+        class _Backend:
+            requires_file_splitting = False
+            is_transcribing = False
+
+            def is_available(self):
+                return True
+
+            def transcribe(self, audio_path):
+                self.is_transcribing = True
+                try:
+                    if cancel_on in audio_path:
+                        controller.cancel()
+                        raise Exception("Transcription canceled")
+                    return f"text:{audio_path}"
+                finally:
+                    self.is_transcribing = False
+
+            def cancel_transcription(self):
+                pass
+
+        backend = _Backend()
+        controller.current_backend = backend
+        return backend
+
+    def test_cancel_mid_separate_batch_keeps_finished_files(self):
+        controller = self._create_controller()
+        self.settings.all_settings["auto_paste"] = True
+        self._canceling_backend(controller, cancel_on="b.wav")
+        request = self._batch_request(["a.wav", "b.wav", "c.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert [e["source_name"] for e in self.history_manager.entries] == ["a.wav"]
+        assert controller.ui_controller.statuses[-1] == "Canceled — kept 1 of 3 files"
+        assert self.keyboard.sent == []
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_cancel_mid_sequential_batch_discards_everything(self):
+        controller = self._create_controller()
+        self._canceling_backend(controller, cancel_on="b.wav")
+        request = self._batch_request(["a.wav", "b.wav"], relation="sequential")
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert self.history_manager.entries == []
+        assert controller.ui_controller.transcription_text == "Error: Transcription canceled"
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_batch_routes_large_files_through_split_per_file(self):
+        controller = self._create_controller()
+        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        self.audio_processor.check_result = (True, 30.0)
+        request = self._batch_request(["a.wav", "b.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert controller.ui_controller.large_file_states == [(30.0, True), (30.0, True)]
+        assert [e["text"] for e in self.history_manager.entries] == ["api chunks", "api chunks"]
+        assert self.audio_processor.cleanups == 2
+
+    def test_batch_failure_in_one_file_keeps_the_others_in_separate_mode(self):
+        controller = self._create_controller()
+
+        class _Backend:
+            requires_file_splitting = False
+            is_transcribing = False
+
+            def is_available(self):
+                return True
+
+            def transcribe(self, audio_path):
+                if "b.wav" in audio_path:
+                    raise Exception("boom")
+                return f"text:{audio_path}"
+
+        controller.current_backend = _Backend()
+        request = self._batch_request(["a.wav", "b.wav", "c.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert [e["source_name"] for e in self.history_manager.entries] == ["a.wav", "c.wav"]
+        assert "## b.wav\n\nError: boom" in controller.ui_controller.transcription_text
+        assert controller.ui_controller.batch_item_events == [(1, True), (2, False), (3, True)]
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_batch_with_every_file_failing_reports_an_error(self):
+        controller = self._create_controller()
+
+        class _Backend:
+            requires_file_splitting = False
+            is_transcribing = False
+
+            def is_available(self):
+                return True
+
+            def transcribe(self, _audio_path):
+                raise Exception("boom")
+
+        controller.current_backend = _Backend()
+        request = self._batch_request(["a.wav", "b.wav"])
+
+        controller.upload_audio_files(request)
+        self._run_batch(controller)
+
+        assert self.history_manager.entries == []
+        assert controller.ui_controller.transcription_text.startswith("Error: All 2 files failed")
+        assert not controller.transcription_runtime.has_active_job
+
+    def test_transcribe_large_audio_file_still_cleans_temp_files_after_extraction(self):
+        controller = self._create_controller()
+        clip_path = str(Path(self.temp_dir.name) / "big.wav")
+        Path(clip_path).write_bytes(b"x" * 256)
+        controller._pending_source_name = "big.wav"
+
+        controller.transcription_runtime.transcribe_large_audio_file(clip_path)
+
+        assert self.audio_processor.cleanups == 1
+        assert self.history_manager.entries[0]["text"] == f"{clip_path}.part1 {clip_path}.part2"
 
     def test_transcribe_clip_delegates_to_current_backend(self):
         controller = self._create_controller()

@@ -1218,7 +1218,141 @@ QPushButton#meetingModelManagerLink:pressed {
     color: #0a84ff;
 }
 
-/* Fixed / Raw transcript version toggle */
+/* Transcript pane: one surface for the Fixed / Raw switch and the text. The
+   text edit inside is borderless and gives up most of its top padding while
+   the switch is up, so the two do not each add a full margin above line one. */
+QFrame#transcriptPane {
+    background-color: #2c2c2e;
+    border: none;
+    border-radius: 12px;
+}
+
+QWidget#transcriptSwitchRow {
+    background-color: transparent;
+}
+
+QTextEdit#transcriptText,
+QTextEdit#transcriptText:focus {
+    background-color: transparent;
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+QTextEdit#transcriptText[headed="true"] {
+    padding-top: 6px;
+}
+
+QFrame#transcriptSwitch {
+    background-color: #1c1c1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 7px;
+}
+
+QPushButton#transcriptSwitchBtn {
+    background-color: transparent;
+    color: #8e8e93;
+    border: none;
+    border-radius: 5px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#transcriptSwitchBtn:checked {
+    background-color: #0a84ff;
+    color: #ffffff;
+}
+
+QPushButton#transcriptSwitchBtn:hover:!checked {
+    background-color: #2c2c2e;
+    color: #f5f5f7;
+}
+
+/* Floating "open in a window" action in the pane's top-right corner. It sits
+   over the text's padding, so it is transparent until hovered. */
+QPushButton#transcriptExpandButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+
+QPushButton#transcriptExpandButton:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+QPushButton#transcriptExpandButton:pressed {
+    background-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Transcript reading window */
+QDialog#transcriptViewerDialog {
+    background-color: #1c1c1e;
+}
+
+QFrame#transcriptViewerToolbar {
+    background-color: #1c1c1e;
+    border: none;
+    border-bottom: 1px solid #2c2c2e;
+}
+
+QLabel#transcriptViewerTitle {
+    color: #f5f5f7;
+    background-color: transparent;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QTextBrowser#transcriptViewerText,
+QTextBrowser#transcriptViewerText:focus {
+    background-color: #1c1c1e;
+    color: #f5f5f7;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    selection-background-color: #0a84ff;
+}
+
+QPushButton#transcriptViewerZoomButton {
+    background-color: #2c2c2e;
+    color: #f5f5f7;
+    border: 1px solid #3a3a3c;
+    border-radius: 7px;
+    padding: 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QPushButton#transcriptViewerZoomButton:hover {
+    background-color: #3a3a3c;
+}
+
+QPushButton#transcriptViewerZoomButton:disabled {
+    color: #5c5c60;
+    background-color: #242426;
+}
+
+QPushButton#transcriptViewerCopyButton {
+    background-color: rgba(10, 132, 255, 0.14);
+    color: #0a84ff;
+    border: none;
+    border-radius: 7px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#transcriptViewerCopyButton:hover {
+    background-color: rgba(10, 132, 255, 0.24);
+}
+
+QPushButton#transcriptViewerCopyButton:disabled {
+    color: #5c5c60;
+    background-color: #242426;
+}
+
+/* Fixed / Raw transcript version toggle (History entry dialog) */
 QPushButton#transcriptVersionBtn {
     background-color: #2c2c2e;
     color: #8e8e93;
@@ -2679,5 +2813,241 @@ QPushButton#uploadCopyButton[inactive="true"]:pressed {
 QLabel#uploadResultNote {
     color: #8e8e93;
     font-size: 12px;
+    background-color: transparent;
+}
+
+/* Multi-file upload: the queue that replaces the single-file header when two
+   or more files are dropped. Containers are plain widgets and must not pick
+   up the global QWidget fill; rows are frames that carry their state. */
+QWidget#uploadFileHeader,
+QWidget#uploadQueue,
+QWidget#uploadRelationRow {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#uploadQueueTitle {
+    color: #f5f5f7;
+    font-size: 14px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QLabel#uploadQueueNote {
+    color: #8e8e93;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#uploadQueueNote[tone="warn"] {
+    color: #ff9f0a;
+}
+
+QFrame#uploadQueueRow {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid #3a3a3c;
+    border-radius: 10px;
+}
+
+QFrame#uploadQueueRow[state="active"] {
+    border-color: #0a84ff;
+    background-color: rgba(10, 132, 255, 0.08);
+}
+
+QFrame#uploadQueueRow[state="done"] {
+    border-color: rgba(48, 209, 88, 0.45);
+}
+
+QFrame#uploadQueueRow[state="failed"] {
+    border-color: rgba(255, 69, 58, 0.55);
+    background-color: rgba(255, 69, 58, 0.06);
+}
+
+QLabel#uploadQueueRowIcon {
+    background-color: rgba(10, 132, 255, 0.14);
+    border-radius: 8px;
+}
+
+QLabel#uploadQueueRowName {
+    color: #f5f5f7;
+    font-size: 13px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QLabel#uploadRowState {
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: #1c1c1e;
+    color: #8e8e93;
+}
+
+QLabel#uploadRowState[state="active"] {
+    background-color: rgba(10, 132, 255, 0.16);
+    color: #0a84ff;
+}
+
+QLabel#uploadRowState[state="done"] {
+    background-color: rgba(48, 209, 88, 0.14);
+    color: #30d158;
+}
+
+QLabel#uploadRowState[state="failed"] {
+    background-color: rgba(255, 69, 58, 0.14);
+    color: #ff453a;
+}
+
+QPushButton#uploadRowMoveButton,
+QPushButton#uploadRowRemoveButton,
+QPushButton#uploadRowCopyButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+
+QPushButton#uploadRowMoveButton:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+QPushButton#uploadRowCopyButton:hover {
+    background-color: rgba(10, 132, 255, 0.16);
+}
+
+QPushButton#uploadRowRemoveButton:hover {
+    background-color: rgba(255, 69, 58, 0.16);
+}
+
+QPushButton#uploadRowMoveButton:disabled,
+QPushButton#uploadRowRemoveButton:disabled {
+    background-color: transparent;
+}
+
+QPushButton#uploadAddFilesButton {
+    background-color: rgba(10, 132, 255, 0.12);
+    color: #0a84ff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+QPushButton#uploadAddFilesButton:hover {
+    background-color: rgba(10, 132, 255, 0.22);
+}
+
+QPushButton#uploadAddFilesButton:disabled {
+    background-color: transparent;
+    color: #48484a;
+}
+
+QLabel#uploadRelationLabel {
+    color: #c7c7cc;
+    font-size: 12px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QComboBox#uploadRelationCombo {
+    padding: 5px 12px;
+    font-size: 13px;
+    min-height: 28px;
+}
+
+QLabel#uploadRelationHint {
+    color: #8e8e93;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+QPushButton#uploadRelationEditButton {
+    background-color: transparent;
+    color: #0a84ff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+QPushButton#uploadRelationEditButton:hover {
+    background-color: rgba(10, 132, 255, 0.12);
+}
+
+QLabel#uploadProgressBatch {
+    color: #c7c7cc;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QPushButton#uploadStopButton {
+    background-color: transparent;
+    color: #8e8e93;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 6px;
+}
+
+QPushButton#uploadStopButton:hover {
+    background-color: rgba(255, 69, 58, 0.14);
+    color: #ff453a;
+}
+
+QPushButton#uploadStopButton:disabled {
+    color: #48484a;
+    background-color: transparent;
+}
+
+/* Custom relation dialog for a multi-file upload. */
+QDialog#batchRelationDialog {
+    background-color: #1c1c1e;
+}
+
+QLabel#batchRelationTitle {
+    color: #f5f5f7;
+    background-color: transparent;
+}
+
+QLabel#batchRelationInfo {
+    color: #8e8e93;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QFrame#batchRelationFilesCard,
+QFrame#batchRelationEditorCard {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 12px;
+}
+
+QLabel#batchRelationFilesLabel,
+QLabel#batchRelationEditorLabel {
+    color: #8e8e93;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    background-color: transparent;
+}
+
+QLabel#batchRelationFileName {
+    color: #c7c7cc;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QTextEdit#batchRelationEditor {
+    background-color: #1c1c1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    color: #f5f5f7;
+    padding: 8px;
+}
+
+QCheckBox#batchRelationCombine {
+    color: #f5f5f7;
+    font-size: 13px;
     background-color: transparent;
 }

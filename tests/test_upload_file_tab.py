@@ -1,6 +1,6 @@
 import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 from services.audio_processor import AudioFilePreview
+from services.batch_upload import BatchRelation
 from services.format_utils import format_sample_rate
 from ui_qt.overlay_state import OverlayState
 from ui_qt.widgets.transcription_progress import (
@@ -18,9 +19,15 @@ from ui_qt.widgets.transcription_progress import (
     stage_for_overlay_state,
 )
 from services.settings import SettingsKey
+from ui_qt.dialogs.batch_relation_dialog import BatchRelationDialog
 from ui_qt.widgets.engine_field import EngineStatus
 from ui_qt.widgets.decode_label import DecodeLabel
-from ui_qt.widgets.upload_file_tab import UploadFileTab, DropZoneWidget, FileInfoCard
+from ui_qt.widgets.upload_file_tab import (
+    DropZoneWidget,
+    FileInfoCard,
+    UploadFileTab,
+    _audio_paths_from_mime,
+)
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
 
@@ -28,6 +35,39 @@ from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+def _inline_threads():
+    """Run the preview worker on the calling thread so results land at once."""
+    return patch(
+        "ui_qt.widgets.upload_file_tab._run_in_thread",
+        side_effect=lambda target, name: target(),
+    )
+
+
+def _isolated_settings(saved=None):
+    """Keep the tab's relation preset off the developer's real settings file."""
+    manager = MagicMock()
+    manager.load_all_settings.return_value = {}
+    if saved is not None:
+        manager.save_setting.side_effect = lambda key, value: saved.append((key, value))
+    return patch("ui_qt.widgets.upload_file_tab.settings_manager", manager)
+
+
+def _drop_event(paths):
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    event = QDropEvent(
+        QPointF(10, 10),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    # The event does not own its mime data; without this the QMimeData is
+    # freed when this function returns and the handler reads a dangling pointer.
+    event._mime_data = mime_data
+    return event
 
 
 class TestDropZoneWidget:
@@ -79,24 +119,52 @@ class TestDropZoneWidget:
         widget.dragEnterEvent(event)
         assert not event.isAccepted()
 
-    def test_drop_event_emits_file_selected(self):
+    def test_drop_event_emits_files_selected(self):
         widget = DropZoneWidget()
         emitted = []
-        widget.file_selected.connect(emitted.append)
+        widget.files_selected.connect(lambda paths, skipped: emitted.append((paths, skipped)))
 
-        mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile("/path/to/sample.mp3")])
-
-        event = QDropEvent(
-            QPointF(10, 10),
-            Qt.DropAction.CopyAction,
-            mime_data,
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
+        event = _drop_event(["/path/to/sample.mp3"])
         widget.dropEvent(event)
+
         assert len(emitted) == 1
-        assert "sample.mp3" in emitted[0]
+        paths, skipped = emitted[0]
+        assert len(paths) == 1 and "sample.mp3" in paths[0]
+        assert skipped == 0
+        assert event.isAccepted()
+
+    def test_drop_with_mixed_files_emits_the_audio_paths_in_order_and_counts_the_rest(self):
+        widget = DropZoneWidget()
+        emitted = []
+        widget.files_selected.connect(lambda paths, skipped: emitted.append((paths, skipped)))
+
+        widget.dropEvent(
+            _drop_event(["/path/a.mp3", "/path/notes.txt", "/path/b.wav"])
+        )
+
+        paths, skipped = emitted[0]
+        assert [os.path.basename(p) for p in paths] == ["a.mp3", "b.wav"]
+        assert skipped == 1
+
+    def test_drop_with_no_audio_is_ignored(self):
+        widget = DropZoneWidget()
+        emitted = []
+        widget.files_selected.connect(lambda paths, skipped: emitted.append(paths))
+
+        event = _drop_event(["/path/notes.txt"])
+        widget.dropEvent(event)
+
+        assert emitted == []
+        assert not event.isAccepted()
+
+    def test_audio_paths_from_mime_ignores_non_local_urls(self):
+        mime_data = QMimeData()
+        mime_data.setUrls([QUrl("https://example.com/a.mp3"), QUrl.fromLocalFile("/x/b.mp3")])
+
+        paths, skipped = _audio_paths_from_mime(mime_data)
+
+        assert [os.path.basename(p) for p in paths] == ["b.mp3"]
+        assert skipped == 1
 
 
 def _preview(**overrides):
@@ -190,6 +258,54 @@ class TestFileInfoCard:
         card.set_copy_enabled(False)
         assert not card.copy_btn._active
 
+    def test_stop_emits_cancel(self):
+        card = FileInfoCard()
+        canceled = []
+        card.cancel_clicked.connect(lambda: canceled.append(True))
+        card.set_transcribing(True)
+        assert card.progress.stop_btn.isEnabled()
+
+        card.progress.stop_btn.click()
+        assert canceled == [True]
+
+    def test_a_canceled_panel_stays_canceled_when_the_job_ends(self):
+        """The runtime follows a cancel with an error transcript; that is not a failure."""
+        card = FileInfoCard()
+        card.set_transcribing(True, with_cleanup=True)
+        card.progress.set_stage(ProgressStage.TRANSCRIBING)
+        card.progress.apply_overlay_state(OverlayState.CANCELING)
+
+        card.finish_transcribing(success=False)
+
+        assert card.progress.stage is ProgressStage.CANCELED
+        assert not card.is_transcribing
+        assert card._settle_timer.isActive()
+
+    def test_readiness_gates_transcribe_without_latching(self):
+        card = FileInfoCard()
+        card.set_ready(False)
+        assert not card.transcribe_btn.isEnabled()
+
+        card.set_transcribing(True)
+        card.finish_transcribing(success=True)
+        assert not card.transcribe_btn.isEnabled()
+
+        card.set_ready(True)
+        assert card.transcribe_btn.isEnabled()
+
+    def test_single_mode_shows_the_header_and_queue_mode_swaps_it(self):
+        card = FileInfoCard()
+        assert card.mode == "single"
+        assert card.queue.isHidden()
+
+        card.set_mode("queue")
+        assert card.header_row.isHidden()
+        assert not card.queue.isHidden()
+
+        card.set_mode("single")
+        assert not card.header_row.isHidden()
+        assert card.queue.isHidden()
+
 
 class TestTranscriptionProgressPanel:
     def test_overlay_states_map_onto_stages(self):
@@ -241,6 +357,51 @@ class TestTranscriptionProgressPanel:
     def test_elapsed_format(self):
         assert format_elapsed(0) == "0:00"
         assert format_elapsed(65.9) == "1:05"
+
+    def test_batch_position_sets_the_header_label_and_a_determinate_fraction(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=True, total_files=3)
+        assert panel.is_batch
+        assert not panel.bar.is_indeterminate
+        assert not panel.batch_label.isHidden()
+
+        panel.set_batch_position(2, 3, "b.mp3")
+        assert panel.batch_label.text() == "File 2 of 3  ·  b.mp3"
+        assert panel.bar.fraction == pytest.approx(1 / 3)
+
+    def test_stage_changes_do_not_rearm_the_sweep_during_a_batch(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=True, total_files=2)
+
+        panel.set_stage(ProgressStage.TRANSCRIBING)
+        assert not panel.bar.is_indeterminate
+        assert panel.bar.fraction == pytest.approx(0.2 / 2)
+
+        panel.set_batch_position(2, 2, "b.mp3")
+        panel.set_stage(ProgressStage.CLEANING)
+        assert panel.bar.fraction == pytest.approx((1 + 0.85) / 2)
+
+    def test_single_file_bar_still_sweeps(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=False)
+        assert not panel.is_batch
+        assert panel.batch_label.isHidden()
+
+        panel.set_stage(ProgressStage.TRANSCRIBING)
+        assert panel.bar.is_indeterminate
+
+    def test_stop_is_disabled_once_the_job_ends(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=False)
+        assert panel.stop_btn.isEnabled()
+
+        panel.set_stopping()
+        assert not panel.stop_btn.isEnabled()
+        assert panel.detail_label.text() == "Canceling…"
+
+        panel.start(with_cleanup=False)
+        panel.finish(success=True)
+        assert not panel.stop_btn.isEnabled()
 
 
 class TestDecodeLabel:
@@ -301,7 +462,10 @@ class TestUploadFileTab:
         assert tab.scroll_area.widgetResizable()
         assert not tab.drop_zone.isHidden()
         assert tab.file_info_card.isHidden()
-        assert tab.status_label.text() == "Select an audio file to transcribe"
+        # The drop zone, the card, and the progress panel each say their own
+        # state; the shared status line stays out of this tab.
+        assert tab.status_label.isHidden()
+        assert tab.drop_zone.notice.isHidden()
         assert tab.is_transcription_collapsed()
 
     @patch("ui_qt.widgets.upload_file_tab.audio_processor.preview_file")
@@ -318,12 +482,57 @@ class TestUploadFileTab:
         )
 
         tab = UploadFileTab()
-        tab._on_file_selected("recording.wav")
+        with _inline_threads():
+            tab._on_file_selected("recording.wav")
 
         assert tab.drop_zone.isHidden()
         assert not tab.file_info_card.isHidden()
-        assert tab.status_label.text() == "Ready to transcribe"
+        assert tab.file_info_card.transcribe_btn.isEnabled()
         assert tab._audio_path == "recording.wav"
+        assert tab.file_info_card.mode == "single"
+
+    def test_single_file_card_appears_before_its_preview_lands(self):
+        """Reading the file happens off the UI thread; the card must not wait for it."""
+        tab = UploadFileTab()
+        pending = []
+        with patch(
+            "ui_qt.widgets.upload_file_tab._run_in_thread",
+            side_effect=lambda target, name: pending.append(target),
+        ):
+            tab._on_file_selected("recording.wav")
+
+        assert not tab.file_info_card.isHidden()
+        assert tab.file_info_card.filename_label.text() == "recording.wav"
+        assert not tab.file_info_card.transcribe_btn.isEnabled()
+
+        with patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            return_value=_preview(file_name="recording.wav"),
+        ):
+            pending[0]()
+
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+
+    def test_unreadable_single_file_returns_to_the_drop_zone_with_the_reason(self):
+        tab = UploadFileTab()
+        with _inline_threads(), patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            side_effect=ValueError("bad header"),
+        ):
+            tab._on_file_selected("broken.wav")
+
+        assert not tab.drop_zone.isHidden()
+        assert tab.file_info_card.isHidden()
+        assert not tab.drop_zone.notice.isHidden()
+        assert tab.drop_zone.notice.text() == "Invalid audio file: bad header"
+        assert tab._audio_path is None
+
+        with _inline_threads(), patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            return_value=_preview(file_name="good.wav"),
+        ):
+            tab._on_file_selected("good.wav")
+        assert tab.drop_zone.notice.isHidden()
 
     def test_clear_file_flow(self):
         tab = UploadFileTab()
@@ -335,7 +544,6 @@ class TestUploadFileTab:
         assert tab._audio_path is None
         assert not tab.drop_zone.isHidden()
         assert tab.file_info_card.isHidden()
-        assert tab.status_label.text() == "Select an audio file to transcribe"
 
     def test_transcript_display_and_copy_signal(self):
         tab = UploadFileTab()
@@ -349,16 +557,462 @@ class TestUploadFileTab:
         tab._on_copy()
         assert copied == ["Hello world transcription"]
 
+    def test_transcript_renders_markdown_but_copies_the_source(self):
+        tab = UploadFileTab()
+        copied = []
+        tab.copy_requested.connect(copied.append)
+
+        tab.set_transcript("## a.mp3\n\nHello **world**")
+        first = tab.transcript_text.document().begin()
+        assert first.blockFormat().headingLevel() == 2
+        assert tab.transcript_text.toPlainText() == "a.mp3\nHello world"
+
+        tab._on_copy()
+        assert copied == ["## a.mp3\n\nHello **world**"]
+
+    def test_raw_view_renders_the_same_way(self):
+        tab = UploadFileTab()
+        tab.set_transcript("## a.mp3\n\nclean", raw="## a.mp3\n\nraw um")
+        tab.raw_btn.click()
+        assert tab.transcript_text.toPlainText() == "a.mp3\nraw um"
+        assert tab.transcript_text.document().begin().blockFormat().headingLevel() == 2
+        assert tab.shown_transcript() == "## a.mp3\n\nraw um"
+
+    def test_expand_button_sits_in_the_pane_corner_only_while_there_is_a_transcript(self):
+        tab = UploadFileTab()
+        tab.resize(700, 600)
+        tab.show()
+        assert tab.expand_btn.isHidden()
+
+        tab.set_transcript("Hello")
+        assert not tab.expand_btn.isHidden()
+        assert tab.expand_btn.parent() is tab.transcript_pane
+        pane = tab.transcript_pane
+        assert tab.expand_btn.geometry().right() == (
+            pane.width() - 1 - pane.CORNER_INSET_X
+        )
+        assert tab.expand_btn.y() == pane.CORNER_INSET_Y
+
+        tab.set_transcript("Error: Transcription canceled")
+        assert tab.expand_btn.isHidden()
+        tab.set_transcript("Hello again")
+        tab.clear_transcription()
+        assert tab.expand_btn.isHidden()
+
+    def test_viewer_opens_on_the_current_transcript_and_follows_changes(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab.set_transcript("## recording.wav\n\nfirst", raw="first raw")
+        tab.open_transcript_viewer()
+        viewer = tab._viewer
+        assert viewer.isVisible()
+        assert viewer.shown_text() == "## recording.wav\n\nfirst"
+        assert viewer.title_label.text() == "recording.wav"
+        assert not viewer.version_toggle.isHidden()
+
+        tab.set_transcript("second")
+        assert viewer.shown_text() == "second"
+        assert viewer.version_toggle.isHidden()
+
+        tab.open_transcript_viewer()
+        assert tab._viewer is viewer
+
+        tab.clear_transcription()
+        assert viewer.shown_text() == ""
+
+    def test_viewer_copy_goes_through_the_tab(self):
+        tab = UploadFileTab()
+        copied = []
+        tab.copy_requested.connect(copied.append)
+        tab.set_transcript("body text")
+        tab.open_transcript_viewer()
+        tab._viewer.copy_btn.click()
+        assert copied == ["body text"]
+
     def _tab_with_file(self, tmp_path):
         audio = tmp_path / "recording.wav"
         audio.write_bytes(b"\0" * 64)
         tab = UploadFileTab()
-        with patch(
+        with _inline_threads(), patch(
             "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
             return_value=_preview(file_path=str(audio), file_name="recording.wav"),
         ):
             tab._on_file_selected(str(audio))
         return tab
+
+    @staticmethod
+    def _preview_for(path):
+        return _preview(file_path=path, file_name=os.path.basename(path))
+
+    def _tab_with_files(self, tmp_path, names=("a.wav", "b.wav"), saved=None):
+        paths = []
+        for name in names:
+            audio = tmp_path / name
+            audio.write_bytes(b"\0" * 64)
+            paths.append(str(audio))
+        with _isolated_settings(saved):
+            tab = UploadFileTab()
+        with _inline_threads(), patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            side_effect=self._preview_for,
+        ):
+            tab._on_files_selected(paths, 0)
+        return tab, paths
+
+    def test_two_files_show_the_queue_with_separate_recordings_selected(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        card = tab.file_info_card
+
+        assert card.mode == "queue"
+        assert card.header_row.isHidden()
+        assert not card.queue.isHidden()
+        assert card.queue.picker.relation() == BatchRelation.SEPARATE
+        assert [row.name_label.text() for row in card.queue.rows()] == ["a.wav", "b.wav"]
+        assert card.queue.title_label.text() == "2 files"
+        assert card.queue.note_label.isHidden()
+        assert card.copy_btn.text() == "Copy all"
+        assert card.transcribe_btn.isEnabled()
+        assert tab._audio_path is None
+
+    def test_two_files_emit_one_batch_request_in_order(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        single, batch = [], []
+        tab.upload_requested.connect(lambda path, duration: single.append(path))
+        tab.upload_files_requested.connect(batch.append)
+
+        tab._on_transcribe()
+
+        assert single == []
+        request = batch[0]
+        assert [item.audio_path for item in request.items] == paths
+        assert all(item.duration_seconds == 60.0 for item in request.items)
+        assert request.relation == BatchRelation.SEPARATE
+        assert request.combine is False
+        assert tab.is_transcribing
+        assert tab.file_info_card.progress.is_batch
+        assert all(row.state == "pending" for row in tab.file_info_card.queue.rows())
+
+    def test_transcribe_waits_until_every_preview_has_arrived(self, tmp_path):
+        pending = []
+        paths = [str(tmp_path / n) for n in ("a.wav", "b.wav")]
+        with _isolated_settings():
+            tab = UploadFileTab()
+        with patch(
+            "ui_qt.widgets.upload_file_tab._run_in_thread",
+            side_effect=lambda target, name: pending.append(target),
+        ):
+            tab._on_files_selected(paths, 0)
+
+        assert not tab.file_info_card.transcribe_btn.isEnabled()
+        assert all(row.state == "reading" for row in tab.file_info_card.queue.rows())
+
+        with patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            side_effect=self._preview_for,
+        ):
+            pending[0]()
+
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+
+    def test_previews_arriving_out_of_order_land_on_the_right_row(self, tmp_path):
+        paths = [str(tmp_path / n) for n in ("a.wav", "b.wav")]
+        with _isolated_settings():
+            tab = UploadFileTab()
+        with patch("ui_qt.widgets.upload_file_tab._run_in_thread"):
+            tab._on_files_selected(paths, 0)
+
+        tab._on_preview_ready(paths[1], _preview(file_name="b.wav", duration_seconds=120.0))
+        tab._on_preview_ready(paths[0], _preview(file_name="a.wav", duration_seconds=60.0))
+
+        queue = tab.file_info_card.queue
+        assert queue.row_for(paths[0]).duration_chip.text() == "1m 0s"
+        assert queue.row_for(paths[1]).duration_chip.text() == "2m 0s"
+        assert [row.name_label.text() for row in queue.rows()] == ["a.wav", "b.wav"]
+
+    def test_a_failed_preview_marks_its_row_and_removing_it_unblocks_transcribe(self, tmp_path):
+        paths = [str(tmp_path / n) for n in ("a.wav", "b.wav")]
+        with _isolated_settings():
+            tab = UploadFileTab()
+        with patch("ui_qt.widgets.upload_file_tab._run_in_thread"):
+            tab._on_files_selected(paths, 0)
+
+        tab._on_preview_ready(paths[0], _preview(file_name="a.wav"))
+        tab._on_preview_ready(paths[1], "Invalid audio file: bad header")
+
+        queue = tab.file_info_card.queue
+        assert queue.row_for(paths[1]).state == "failed"
+        assert not tab.file_info_card.transcribe_btn.isEnabled()
+        assert "1 could not be read" in queue.note_label.text()
+        assert queue.note_label.property("tone") == "warn"
+
+        tab._remove(paths[1])
+
+        assert tab.file_info_card.mode == "single"
+        assert tab._audio_path == paths[0]
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+        assert queue.note_label.isHidden()
+
+    def test_reorder_buttons_swap_rows_and_the_request_order(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path, names=("a.wav", "b.wav", "c.wav"))
+        queue = tab.file_info_card.queue
+        assert not queue.rows()[0].up_btn.isEnabled()
+        assert not queue.rows()[-1].down_btn.isEnabled()
+
+        queue.row_for(paths[0]).down_btn.click()
+        assert tab.queued_paths == [paths[1], paths[0], paths[2]]
+
+        queue.row_for(paths[2]).up_btn.click()
+        assert tab.queued_paths == [paths[1], paths[2], paths[0]]
+
+        requests = []
+        tab.upload_files_requested.connect(requests.append)
+        tab._on_transcribe()
+        assert [item.audio_path for item in requests[0].items] == [paths[1], paths[2], paths[0]]
+
+    def test_removing_down_to_one_file_collapses_back_to_the_single_card(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+
+        tab._remove(paths[1])
+
+        card = tab.file_info_card
+        assert card.mode == "single"
+        assert not card.header_row.isHidden()
+        assert card.filename_label.text() == "a.wav"
+        assert card.copy_btn.text() == "Copy"
+        assert tab._audio_path == paths[0]
+
+    def test_removing_the_last_file_returns_to_the_drop_zone(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+
+        tab._remove(paths[0])
+        tab._remove(paths[1])
+
+        assert not tab.drop_zone.isHidden()
+        assert tab.file_info_card.isHidden()
+        assert tab.queued_paths == []
+
+    def test_dropping_on_the_card_appends_to_the_queue(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        extra = tmp_path / "c.wav"
+        extra.write_bytes(b"\0" * 64)
+
+        event = _drop_event([str(extra), str(tmp_path / "notes.txt")])
+        with _inline_threads(), patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            side_effect=self._preview_for,
+        ):
+            tab.file_info_card.dropEvent(event)
+
+        assert event.isAccepted()
+        assert [os.path.basename(p) for p in tab.queued_paths] == ["a.wav", "b.wav", "c.wav"]
+        note = tab.file_info_card.queue.note_label
+        assert not note.isHidden()
+        assert note.text() == "·  1 skipped (not audio)"
+        assert note.property("tone") == ""
+
+    def test_duplicate_paths_are_added_once(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+
+        with _inline_threads():
+            tab._on_files_selected([paths[0]], 0)
+
+        assert tab.queued_paths == paths
+        assert "1 already queued" in tab.file_info_card.queue.note_label.text()
+
+    def test_a_drop_with_no_audio_leaves_the_drop_zone_up(self):
+        with _isolated_settings():
+            tab = UploadFileTab()
+
+        tab._on_files_selected([], 3)
+
+        assert not tab.drop_zone.isHidden()
+        assert tab.drop_zone.notice.text() == "None of the dropped items are audio files"
+
+    def test_adding_files_is_refused_while_a_job_runs(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+
+        tab._on_files_selected([str(tmp_path / "c.wav")], 0)
+
+        assert tab.queued_paths == paths
+
+    def test_sequential_preset_implies_combine_and_is_remembered(self, tmp_path):
+        saved = []
+        tab, paths = self._tab_with_files(tmp_path, saved=saved)
+        picker = tab.file_info_card.queue.picker
+        requests = []
+        tab.upload_files_requested.connect(requests.append)
+
+        with _isolated_settings(saved):
+            picker.combo.setCurrentIndex(picker.combo.findData(BatchRelation.SEQUENTIAL))
+        tab._on_transcribe()
+
+        assert tab.relation == BatchRelation.SEQUENTIAL
+        assert requests[0].combine is True
+        assert (SettingsKey.TRANSCRIPT_BATCH_RELATION, "sequential") in saved
+        assert "Stitched" in picker.hint.text()
+
+    def test_custom_relation_opens_the_dialog_and_stores_the_description(self, tmp_path):
+        saved = []
+        tab, paths = self._tab_with_files(tmp_path, saved=saved)
+        picker = tab.file_info_card.queue.picker
+        requests = []
+        tab.upload_files_requested.connect(requests.append)
+
+        with _isolated_settings(saved), patch.object(
+            BatchRelationDialog, "exec", return_value=1
+        ), patch.object(
+            BatchRelationDialog, "instructions_text", return_value="Two halves of one call."
+        ), patch.object(BatchRelationDialog, "combine_checked", return_value=True):
+            picker.combo.setCurrentIndex(picker.combo.findData(BatchRelation.CUSTOM))
+        tab._on_transcribe()
+
+        assert tab.relation == BatchRelation.CUSTOM
+        request = requests[0]
+        assert request.custom_instructions == "Two halves of one call."
+        assert request.custom_combine is True
+        assert request.combine is True
+        assert (SettingsKey.TRANSCRIPT_BATCH_RELATION, "custom") in saved
+        assert (SettingsKey.TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS, "Two halves of one call.") in saved
+        assert (SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE, True) in saved
+        assert picker.hint.text().startswith("One combined transcript")
+        assert not picker.edit_btn.isHidden()
+
+    def test_rejecting_the_custom_dialog_reverts_the_combo(self, tmp_path):
+        saved = []
+        tab, paths = self._tab_with_files(tmp_path, saved=saved)
+        picker = tab.file_info_card.queue.picker
+
+        with _isolated_settings(saved), patch.object(
+            BatchRelationDialog, "exec", return_value=0
+        ):
+            picker.combo.setCurrentIndex(picker.combo.findData(BatchRelation.CUSTOM))
+
+        assert tab.relation == BatchRelation.SEPARATE
+        assert picker.relation() == BatchRelation.SEPARATE
+        assert saved == []
+        assert picker.edit_btn.isHidden()
+
+    def test_batch_progress_marks_rows_and_the_panel(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+        queue = tab.file_info_card.queue
+        panel = tab.file_info_card.progress
+
+        tab.set_batch_progress(1, 2, "a.wav")
+        assert queue.rows()[0].state == "active"
+        assert panel.batch_label.text() == "File 1 of 2  ·  a.wav"
+
+        tab.set_batch_item_finished(1, True)
+        tab.set_batch_progress(2, 2, "b.wav")
+        assert [row.state for row in queue.rows()] == ["done", "active"]
+        assert panel.bar.fraction == pytest.approx(0.5)
+
+        tab.set_batch_item_finished(2, False)
+        assert queue.rows()[1].state == "failed"
+
+    def test_finished_files_get_their_own_copy_button(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        copied = []
+        tab.copy_requested.connect(copied.append)
+        queue = tab.file_info_card.queue
+        tab._on_transcribe()
+        assert all(row.copy_btn.isHidden() for row in queue.rows())
+
+        tab.set_batch_item_finished(1, True, "Hello from a")
+        assert not queue.row_for(paths[0]).copy_btn.isHidden()
+        assert queue.row_for(paths[1]).copy_btn.isHidden()
+
+        queue.row_for(paths[0]).copy_btn.click()
+        assert copied == ["Hello from a"]
+
+        tab.set_batch_item_finished(2, False, "")
+        assert queue.row_for(paths[1]).copy_btn.isHidden()
+
+    def test_row_copy_survives_the_job_ending_and_clears_when_the_next_starts(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        queue = tab.file_info_card.queue
+        tab._on_transcribe()
+        tab.set_batch_item_finished(1, True, "Hello from a")
+        tab.set_transcript("## a.wav\n\nHello from a\n\n## b.wav\n\nThere")
+        assert not queue.row_for(paths[0]).copy_btn.isHidden()
+        assert not queue.row_for(paths[0]).remove_btn.isHidden()
+
+        tab._on_transcribe()
+        assert queue.row_for(paths[0]).copy_btn.isHidden()
+        # A combined job reports no per-file text, so the row stays plain.
+        tab.set_batch_item_finished(1, True, "")
+        assert queue.row_for(paths[0]).copy_btn.isHidden()
+
+    def test_missing_files_at_transcribe_time_are_noted_in_the_queue_header(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path, names=("a.wav", "b.wav", "c.wav"))
+        os.remove(paths[1])
+        requests = []
+        tab.upload_files_requested.connect(requests.append)
+
+        tab._on_transcribe()
+
+        assert requests == []
+        assert tab.queued_paths == [paths[0], paths[2]]
+        note = tab.file_info_card.queue.note_label
+        assert "1 file no longer exists and was removed" in note.text()
+
+        tab._on_transcribe()
+        assert len(requests) == 1
+        assert note.isHidden()
+
+    def test_fixed_raw_switch_lives_inside_the_transcript_pane(self):
+        tab = UploadFileTab()
+        assert tab.version_toggle.parent() is tab.transcript_pane
+        assert tab.transcript_text.parent() is tab.transcript_pane
+        assert tab.version_toggle.isHidden()
+
+        tab.set_transcript("Fixed text", raw="raw text")
+        assert not tab.version_toggle.isHidden()
+        assert tab.transcript_text.property("headed") is True
+
+        tab.set_transcript("Only text")
+        assert tab.version_toggle.isHidden()
+        assert not tab.transcript_text.property("headed")
+
+    def test_stop_emits_cancel_requested_and_keeps_the_tab_locked(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        canceled = []
+        tab.cancel_requested.connect(lambda: canceled.append(True))
+        tab._on_transcribe()
+
+        tab.file_info_card.progress.stop_btn.click()
+
+        assert canceled == [True]
+        assert tab.is_transcribing
+        assert not tab.file_info_card.progress.stop_btn.isEnabled()
+        assert tab.file_info_card.progress.detail_label.text() == "Canceling…"
+
+    def test_a_canceled_job_stays_canceled_when_the_error_transcript_lands(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+
+        tab.set_progress_state(OverlayState.CANCELING)
+        tab.set_transcript("Error: Transcription canceled")
+
+        assert tab.file_info_card.progress.stage is ProgressStage.CANCELED
+        assert not tab.is_transcribing
+        assert tab.model_combo.isEnabled()
+        assert tab.file_info_card._settle_timer.isActive()
+
+    def test_queue_controls_hide_while_a_job_runs(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        queue = tab.file_info_card.queue
+
+        tab._on_transcribe()
+        assert not queue.add_btn.isEnabled()
+        assert not queue.picker.combo.isEnabled()
+        assert queue.rows()[0].remove_btn.isHidden()
+
+        tab.set_transcript("## a.wav\n\nHello\n\n## b.wav\n\nThere")
+        assert queue.add_btn.isEnabled()
+        assert queue.picker.combo.isEnabled()
+        assert not queue.rows()[0].remove_btn.isHidden()
+        assert tab.file_info_card.copy_btn._active
 
     def test_transcribe_locks_the_tab_and_shows_progress_in_the_card(self, tmp_path):
         tab = self._tab_with_file(tmp_path)
@@ -386,9 +1040,8 @@ class TestUploadFileTab:
 
         tab.set_status("Transcribing chunk 1/3...")
         assert panel.detail_label.text() == "Transcribing chunk 1/3..."
-        assert tab.status_label.text() == "Transcribing chunk 1/3..."
 
-    def test_transcript_finishes_the_job_and_restores_the_status_line(self, tmp_path):
+    def test_transcript_finishes_the_job_and_returns_the_actions(self, tmp_path):
         tab = self._tab_with_file(tmp_path)
         tab._on_transcribe()
 
@@ -404,7 +1057,7 @@ class TestUploadFileTab:
 
         tab.file_info_card._settle_timer.timeout.emit()
         assert not tab.file_info_card.is_progress_shown
-        assert not tab.status_label.isHidden()
+        assert tab.status_label.isHidden()
 
     def test_stats_land_in_the_card_not_the_strip(self, tmp_path):
         """Duration and size are already chips; only the time is new information."""

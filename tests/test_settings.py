@@ -311,6 +311,67 @@ class TestTranscriptCleanupRules:
             os.rmdir(temp_dir)
 
 
+class TestTranscriptBatchSettings:
+    """Multi-file upload relation preset and Custom description."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from services.settings import (
+            resolve_transcript_batch_custom_combine,
+            resolve_transcript_batch_custom_instructions,
+            resolve_transcript_batch_relation,
+        )
+        self.resolve_relation = resolve_transcript_batch_relation
+        self.resolve_instructions = resolve_transcript_batch_custom_instructions
+        self.resolve_combine = resolve_transcript_batch_custom_combine
+
+    def test_relation_defaults_to_separate(self):
+        assert self.resolve_relation({}) == "separate"
+        assert config.TRANSCRIPT_BATCH_RELATION == "separate"
+
+    def test_relation_accepts_known_presets_only(self):
+        key = SettingsKey.TRANSCRIPT_BATCH_RELATION
+        assert self.resolve_relation({key: "sequential"}) == "sequential"
+        assert self.resolve_relation({key: "custom"}) == "custom"
+        assert self.resolve_relation({key: "stitched"}) == "separate"
+        assert self.resolve_relation({key: 3}) == "separate"
+
+    def test_instructions_are_stripped_and_capped(self):
+        key = SettingsKey.TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS
+        assert self.resolve_instructions({key: "  memo set  "}) == "memo set"
+        assert self.resolve_instructions({key: 12}) == ""
+        assert self.resolve_instructions({}) == ""
+        long = "x" * (config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS + 50)
+        assert len(self.resolve_instructions({key: long})) == (
+            config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS
+        )
+
+    def test_combine_is_a_strict_bool(self):
+        key = SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE
+        assert self.resolve_combine({key: True}) is True
+        assert self.resolve_combine({key: "yes"}) is False
+        assert self.resolve_combine({}) is False
+
+    def test_values_round_trip_through_settings_file(self):
+        temp_dir = tempfile.mkdtemp()
+        path = os.path.join(temp_dir, "settings.json")
+        try:
+            manager = SettingsManager(path)
+            manager.save_setting(SettingsKey.TRANSCRIPT_BATCH_RELATION, "custom")
+            manager.save_setting(
+                SettingsKey.TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS, "Two halves."
+            )
+            manager.save_setting(SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE, True)
+            loaded = manager.load_all_settings()
+            assert self.resolve_relation(loaded) == "custom"
+            assert self.resolve_instructions(loaded) == "Two halves."
+            assert self.resolve_combine(loaded) is True
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+            os.rmdir(temp_dir)
+
+
 class TestMeetingSettings:
     """Meeting Mode resolvers backing the Settings dialog's Meeting tab."""
 

@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
+from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.engine_field import (
@@ -26,6 +27,42 @@ from ui_qt.widgets.local_engine_controls import LocalEngineControls
 logger = logging.getLogger(__name__)
 
 
+class TranscriptPane(QFrame):
+    """The transcript's painted surface, with room for one floating corner action.
+
+    The corner widget is parented to the pane and laid over the text's top-right
+    padding rather than given a row of its own, so it costs the preview no
+    height. The Fixed / Raw switch row ends in a stretch, so the two never meet
+    when both are shown.
+    """
+
+    #: Clears the text edit's vertical scrollbar as well as its padding.
+    CORNER_INSET_X = 14
+    CORNER_INSET_Y = 10
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._corner_widget: Optional[QWidget] = None
+
+    def set_corner_widget(self, widget: QWidget) -> None:
+        self._corner_widget = widget
+        widget.setParent(self)
+        widget.raise_()
+        self._place_corner_widget()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_corner_widget()
+
+    def _place_corner_widget(self) -> None:
+        widget = self._corner_widget
+        if widget is None:
+            return
+        size = widget.size()
+        widget.move(self.width() - size.width() - self.CORNER_INSET_X, self.CORNER_INSET_Y)
+        widget.raise_()
+
+
 class TranscriptionTabBase(QWidget):
     """Base widget for tabs that select a model and display a transcript."""
 
@@ -37,6 +74,10 @@ class TranscriptionTabBase(QWidget):
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
     INITIAL_STATUS = ""
     TRANSCRIPT_PLACEHOLDER = "Transcription will appear here..."
+
+    #: Render the transcript as Markdown. Off for dictation, whose cleanup
+    #: returns prose; on where the transcript carries structure of its own.
+    TRANSCRIPT_MARKDOWN = False
 
     #: Keeps the longest backend label ("API: GPT-4o Mini Transcribe") from
     #: pushing the rest of the bar off the row; it elides instead.
@@ -171,11 +212,26 @@ class TranscriptionTabBase(QWidget):
 
         self.transcription_card = HeaderCard("Transcription", collapsible=True)
 
+        # One painted surface holds the Fixed / Raw switch and the text, and
+        # the text edit inside it is borderless, so the switch reads as the
+        # corner of the box rather than a row of buttons floating above it.
+        self.transcript_pane = TranscriptPane()
+        self.transcript_pane.setObjectName("transcriptPane")
+        pane_layout = QVBoxLayout(self.transcript_pane)
+        pane_layout.setContentsMargins(0, 0, 0, 0)
+        pane_layout.setSpacing(0)
+
         self.version_toggle = QWidget()
+        self.version_toggle.setObjectName("transcriptSwitchRow")
         version_row = QHBoxLayout(self.version_toggle)
-        version_row.setContentsMargins(0, 0, 0, 8)
-        version_row.setSpacing(6)
-        version_row.addStretch()
+        version_row.setContentsMargins(12, 10, 12, 0)
+        version_row.setSpacing(0)
+
+        switch = QFrame()
+        switch.setObjectName("transcriptSwitch")
+        switch_layout = QHBoxLayout(switch)
+        switch_layout.setContentsMargins(2, 2, 2, 2)
+        switch_layout.setSpacing(2)
 
         self._version_group = QButtonGroup(self)
         self.fixed_btn = QPushButton("Fixed")
@@ -183,22 +239,26 @@ class TranscriptionTabBase(QWidget):
         for btn in (self.fixed_btn, self.raw_btn):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setObjectName("transcriptVersionBtn")
-            btn.setMinimumHeight(28)
+            btn.setObjectName("transcriptSwitchBtn")
+            btn.setFixedHeight(22)
             self._version_group.addButton(btn)
-            version_row.addWidget(btn)
+            switch_layout.addWidget(btn)
+        version_row.addWidget(switch)
         version_row.addStretch()
         self.fixed_btn.setChecked(True)
         self.version_toggle.hide()
 
         self.transcript_text = QTextEdit()
+        self.transcript_text.setObjectName("transcriptText")
         self.transcript_text.setReadOnly(True)
         self.transcript_text.setMinimumHeight(130)
         self.transcript_text.setFont(QFont("Segoe UI", 13))
         self.transcript_text.setPlaceholderText(self.TRANSCRIPT_PLACEHOLDER)
 
-        self.transcription_card.add_content_widget(self.version_toggle)
-        self.transcription_card.add_content_widget(self.transcript_text)
+        pane_layout.addWidget(self.version_toggle)
+        pane_layout.addWidget(self.transcript_text, stretch=1)
+
+        self.transcription_card.add_content_widget(self.transcript_pane)
         self.transcription_card.toggled.connect(self._on_transcription_toggled)
 
         # The transcription card is the elastic element: it expands to fill
@@ -250,9 +310,21 @@ class TranscriptionTabBase(QWidget):
         show_raw = self.raw_btn.isChecked()
         self._showing_raw = show_raw
         if show_raw and self._raw_text is not None:
-            self.transcript_text.setText(self._raw_text)
+            self._show_transcript_text(self._raw_text)
         else:
-            self.transcript_text.setText(self._fixed_text)
+            self._show_transcript_text(self._fixed_text)
+
+    def _show_transcript_text(self, text: str) -> None:
+        if self.TRANSCRIPT_MARKDOWN:
+            render_markdown(self.transcript_text.document(), text, PREVIEW_STYLE)
+        else:
+            self.transcript_text.setPlainText(text)
+
+    def shown_transcript(self) -> str:
+        """The source text of the version currently displayed (Fixed or Raw)."""
+        if self._showing_raw and self._raw_text is not None:
+            return self._raw_text
+        return self._fixed_text
 
     def _on_backend_changed(self, display_name: str):
         self.current_model = display_name
@@ -363,8 +435,7 @@ class TranscriptionTabBase(QWidget):
         self._raw_text = raw if raw and raw != text else None
         self._showing_raw = False
 
-        has_raw = self._raw_text is not None
-        self.version_toggle.setVisible(has_raw)
+        self._show_version_toggle(self._raw_text is not None)
         self.fixed_btn.blockSignals(True)
         self.raw_btn.blockSignals(True)
         self.fixed_btn.setChecked(True)
@@ -372,14 +443,27 @@ class TranscriptionTabBase(QWidget):
         self.fixed_btn.blockSignals(False)
         self.raw_btn.blockSignals(False)
 
-        self.transcript_text.setText(self._fixed_text)
+        self._show_transcript_text(self._fixed_text)
 
     def clear_transcription(self):
         self._fixed_text = ""
         self._raw_text = None
         self._showing_raw = False
-        self.version_toggle.hide()
+        self._show_version_toggle(False)
         self.transcript_text.clear()
+
+    def _show_version_toggle(self, visible: bool) -> None:
+        """Show or hide the Fixed / Raw switch in the pane's top corner.
+
+        The text edit gives up most of its top padding while the switch is
+        up, so the two do not stack a full margin each above the first line.
+        """
+        self.version_toggle.setVisible(visible)
+        text = self.transcript_text
+        if bool(text.property("headed")) != visible:
+            text.setProperty("headed", visible)
+            text.style().unpolish(text)
+            text.style().polish(text)
 
     def set_transcription_stats(
         self,

@@ -468,8 +468,9 @@ class SettingsDialog(QDialog):
 
     def _build_general_page(self, layout: QVBoxLayout) -> None:
         auto_paste_description = (
-            "Types the transcript into whichever window has focus. The "
-            "clipboard is borrowed for the paste and restored afterward."
+            "Types a dictated transcript into whichever window has focus. The "
+            "clipboard is borrowed for the paste and restored afterward. "
+            "Upload File results stay in the window with their own Copy buttons."
         )
         if self._native_wayland:
             auto_paste_description += (

@@ -59,6 +59,33 @@ class TestTranscriptCleanup:
         result = cleaner.cleanup("raw transcript")
         assert result == "raw transcript"
 
+    def test_timeout_override_is_sent_per_request(self):
+        cleaner = TranscriptCleanup(api_key="test-key")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Done."))]
+        )
+        cleaner.client = mock_client
+
+        cleaner.cleanup("raw text", timeout_s=120.0)
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["timeout"] == 120.0
+
+    def test_no_timeout_kwarg_when_not_overridden(self):
+        """The dictation path keeps the client-level timeout untouched."""
+        cleaner = TranscriptCleanup(api_key="test-key")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Done."))]
+        )
+        cleaner.client = mock_client
+
+        cleaner.cleanup("raw text")
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "timeout" not in kwargs
+
     def test_empty_model_response_falls_back_to_raw(self):
         cleaner = TranscriptCleanup(api_key="test-key")
         mock_client = MagicMock()

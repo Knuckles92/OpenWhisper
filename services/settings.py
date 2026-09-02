@@ -6,6 +6,7 @@ import tempfile
 import threading
 from typing import Callable, Dict, Any, Final, List, Tuple, Optional, TypeVar
 from config import config
+from services.batch_upload import BatchRelation
 
 logger = logging.getLogger(__name__)
 SettingsMutationResult = TypeVar("SettingsMutationResult")
@@ -36,6 +37,13 @@ class SettingsKey:
     TEXT_LLM_PROFILES: Final[str] = "text_llm_profiles"
     # JSON list of user-taught rule strings appended to the cleanup prompt
     TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
+    # Multi-file upload: last relation preset (BatchRelation) and the Custom
+    # preset's description and combine choice
+    TRANSCRIPT_BATCH_RELATION: Final[str] = "transcript_batch_relation"
+    TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS: Final[str] = (
+        "transcript_batch_custom_instructions"
+    )
+    TRANSCRIPT_BATCH_CUSTOM_COMBINE: Final[str] = "transcript_batch_custom_combine"
     MINIMIZE_TRAY: Final[str] = "minimize_tray"
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
@@ -673,6 +681,42 @@ def resolve_transcript_cleanup_rules(
         return []
     rules = [r.strip() for r in raw if isinstance(r, str) and r.strip()]
     return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
+
+
+def resolve_transcript_batch_relation(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the last multi-file relation preset, or the default."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    relation = settings.get(SettingsKey.TRANSCRIPT_BATCH_RELATION)
+    if relation in BatchRelation.ALL:
+        return relation
+    return config.TRANSCRIPT_BATCH_RELATION
+
+
+def resolve_transcript_batch_custom_instructions(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the remembered Custom description, stripped and capped."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS)
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()[: config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS]
+
+
+def resolve_transcript_batch_custom_combine(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    return _resolve_bool_setting(
+        settings,
+        SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
+        config.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
+    )
 
 
 def resolve_meeting_whisper_model(

@@ -34,7 +34,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **API Options** – OpenAI Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
 - **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach custom spelling and style rules via text or voice dictation
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
-- **Auto-paste** – Transcription automatically pastes to your active window
+- **Auto-paste** – Dictated transcription automatically pastes to your active window (Upload File results stay in the app, with Copy buttons)
 - **System Tray** – Minimize to tray when the desktop session provides one
 - **Smart Splitting (API)** – Large audio files split automatically to avoid API limits
 - **Audio Device Selection** – Choose your preferred microphone input

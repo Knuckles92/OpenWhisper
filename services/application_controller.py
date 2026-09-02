@@ -57,6 +57,18 @@ class ApplicationController(QObject):
     # fixed text, optional raw text, optional CleanupInfo
     transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
+    # Multi-file upload, emitted from the batch worker thread.
+    # (1-based position, total, source name) as each file starts
+    batch_progress = pyqtSignal(int, int, str)
+    # (1-based position, succeeded, the file's own transcript) as each file
+    # ends. The transcript is empty on failure and for a combined job, whose
+    # files have no finished text of their own.
+    batch_item_finished = pyqtSignal(int, bool, str)
+    # BatchResult; also emitted on a per-file cancel with the finished items
+    batch_completed = pyqtSignal(object)
+    # (file size in MB, will be split) for a large file inside a batch. The
+    # single-file path announces this on the caller thread before submitting.
+    large_file_detected = pyqtSignal(float, bool)
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
@@ -218,6 +230,8 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_retranscribe = self.retranscribe_audio
         self.ui_controller.on_upload_audio = self.upload_audio_file
+        self.ui_controller.on_upload_audio_files = self.upload_audio_files
+        self.ui_controller.on_upload_cancel = self.cancel
         self.ui_controller.on_whisper_settings_changed = self.reload_whisper_model
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
@@ -1342,6 +1356,10 @@ class ApplicationController(QObject):
                 audio_path, duration_seconds=duration_seconds
             )
 
+    def upload_audio_files(self, request) -> None:
+        if not self._refuse_dictation_during_meeting():
+            self.transcription_runtime.upload_audio_files(request)
+
     def on_model_changed(self, model_name: str) -> None:
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.on_model_changed(model_name)
@@ -1396,6 +1414,10 @@ class ApplicationController(QObject):
     def _connect_signals(self) -> None:
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
+        self.batch_completed.connect(self._on_batch_complete)
+        self.batch_progress.connect(self.ui_controller.set_batch_progress)
+        self.batch_item_finished.connect(self.ui_controller.set_batch_item_finished)
+        self.large_file_detected.connect(self.ui_controller.show_large_file_state)
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
@@ -1488,6 +1510,9 @@ class ApplicationController(QObject):
 
     def _on_transcription_error(self, error_message: str) -> None:
         self.transcription_runtime.on_transcription_error(error_message)
+
+    def _on_batch_complete(self, result) -> None:
+        self.transcription_runtime.on_batch_complete(result)
 
     def cleanup(self) -> None:
         """Release application resources in dependency order."""
