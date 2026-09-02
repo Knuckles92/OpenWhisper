@@ -620,14 +620,10 @@ class TranscriptionRuntime:
             # Streaming preview requires Local Whisper; rebuild when backend changes.
             self.controller.streaming_runtime.reconfigure_streaming()
 
-    def show_large_file_overlay(self, file_size_mb: float, is_splitting: bool) -> None:
-        overlay = self.controller.ui_controller.overlay
-        overlay.set_large_file_info(file_size_mb)
-
-        if is_splitting:
-            overlay.show_at_cursor(overlay.STATE_LARGE_FILE_SPLITTING)
-        else:
-            overlay.show_at_cursor(overlay.STATE_LARGE_FILE_PROCESSING)
+    def show_large_file_state(self, file_size_mb: float, is_splitting: bool) -> None:
+        self.controller.ui_controller.show_large_file_state(
+            file_size_mb, is_splitting
+        )
 
     def _submit_transcription_job(self, audio_path: str) -> None:
         backend = self.controller.current_backend
@@ -649,7 +645,7 @@ class TranscriptionRuntime:
             logger.info(
                 f"Large file ({file_size_mb:.2f} MB), backend requires splitting"
             )
-            self.show_large_file_overlay(file_size_mb, is_splitting=True)
+            self.show_large_file_state(file_size_mb, is_splitting=True)
             self.controller.status_update.emit(
                 f"Splitting large file ({file_size_mb:.1f} MB)..."
             )
@@ -660,7 +656,7 @@ class TranscriptionRuntime:
             logger.info(
                 f"Large file ({file_size_mb:.2f} MB), processing without splitting"
             )
-            self.show_large_file_overlay(file_size_mb, is_splitting=False)
+            self.show_large_file_state(file_size_mb, is_splitting=False)
             self.controller.status_update.emit(
                 f"Processing large file ({file_size_mb:.1f} MB)..."
             )

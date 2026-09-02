@@ -1,16 +1,30 @@
 """Audio file upload and transcription tab."""
 import logging
 import os
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QFrame
-)
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QMouseEvent
+from pathlib import Path
 
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QMouseEvent, QPixmap
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config import bundle_root
 from services.audio_processor import AudioFilePreview, audio_processor
+from services.format_utils import format_audio_duration, format_sample_rate
 from services.runtime.transcription import EMPTY_ASR_MESSAGE
-from ui_qt.widgets.cards import Card
-from ui_qt.widgets.buttons import PrimaryButton, Button
+from ui_qt.overlay_state import OverlayState
+from ui_qt.widgets.buttons import Button, PrimaryButton
+from ui_qt.widgets.decode_label import DecodeLabel
+from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.transcription_progress import TranscriptionProgressPanel
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
 logger = logging.getLogger(__name__)
@@ -21,39 +35,71 @@ AUDIO_FILTERS = (
     "WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*.*)"
 )
 
+#: How long the finished progress panel stays up before the action row returns.
+RESULT_HOLD_MS = 1400
+
+
+def _tabler_pixmap(name: str, size: int) -> QPixmap:
+    path = Path(bundle_root()) / "ui_qt" / "assets" / "tabler" / name
+    return QIcon(str(path)).pixmap(QSize(size, size))
+
+
+def _repolish(widget: QWidget, prop: str, value: str) -> None:
+    widget.setProperty(prop, value)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
 
 class DropZoneWidget(QFrame):
-    """Drag-and-drop zone that also opens a file browser on click."""
+    """Drag-and-drop zone that also opens a file browser on click.
+
+    Styles itself because the border and fill change with the drag state, and
+    each variant has to carry the child rules too: a stylesheet set on a widget
+    replaces, rather than layers over, the one it had before.
+    """
 
     file_selected = pyqtSignal(str)
 
-    _LABEL_RESET = "background: transparent; border: none;"
-
+    # The icon rule repeats the ancestor so it outranks the blanket label rule;
+    # on its own, ``QLabel#dropZoneIcon`` is the less specific selector.
+    _CHILD_STYLE = """
+        QFrame#dropZone QLabel {
+            background-color: transparent;
+            border: none;
+        }
+        QFrame#dropZone QLabel#dropZoneIcon {
+            background-color: rgba(10, 132, 255, 0.14);
+            border-radius: 16px;
+        }
+    """
     _IDLE_STYLE = """
         QFrame#dropZone {
-            background-color: #2c2c2e;
+            background-color: rgba(255, 255, 255, 0.025);
             border: 2px dashed #48484a;
             border-radius: 16px;
         }
         QFrame#dropZone:hover {
             border-color: #0a84ff;
-            background-color: #3a3a3c;
+            background-color: rgba(10, 132, 255, 0.06);
         }
-    """
+    """ + _CHILD_STYLE
     _HOVER_STYLE = """
         QFrame#dropZone {
-            background-color: rgba(10, 132, 255, 0.15);
+            background-color: rgba(10, 132, 255, 0.12);
             border: 2px solid #0a84ff;
             border-radius: 16px;
         }
-    """
+        QFrame#dropZone QLabel#dropZoneIcon {
+            background-color: rgba(10, 132, 255, 0.28);
+        }
+    """ + _CHILD_STYLE
     _REJECT_STYLE = """
         QFrame#dropZone {
-            background-color: rgba(255, 69, 58, 0.12);
+            background-color: rgba(255, 69, 58, 0.10);
             border: 2px dashed #ff453a;
             border-radius: 16px;
         }
-    """
+    """ + _CHILD_STYLE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,34 +111,35 @@ class DropZoneWidget(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(3)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(4)
 
-        icon_label = QLabel("\U0001F3B5")
-        icon_label.setFont(QFont("Segoe UI Emoji", 30))
-        icon_label.setStyleSheet(self._LABEL_RESET)
+        icon_label = QLabel()
+        icon_label.setObjectName("dropZoneIcon")
+        icon_label.setFixedSize(52, 52)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
+        icon_label.setPixmap(_tabler_pixmap("cloud-upload-blue.svg", 26))
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        layout.addSpacing(4)
+        layout.addSpacing(8)
 
-        title = QLabel("Drag and drop audio file here")
+        title = QLabel("Drop an audio file here")
         title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        title.setStyleSheet(f"color: #f5f5f7; {self._LABEL_RESET}")
+        title.setStyleSheet("color: #f5f5f7;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("or click to browse")
         subtitle.setFont(QFont("Segoe UI", 11))
-        subtitle.setStyleSheet(f"color: #8e8e93; {self._LABEL_RESET}")
+        subtitle.setStyleSheet("color: #8e8e93;")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
-        layout.addSpacing(6)
+        layout.addSpacing(8)
 
         formats = QLabel("WAV  ·  MP3  ·  M4A  ·  OGG  ·  FLAC  ·  WMA")
         formats.setFont(QFont("Segoe UI", 10))
-        formats.setStyleSheet(f"color: #636366; {self._LABEL_RESET}")
+        formats.setStyleSheet("color: #636366;")
         formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(formats)
 
@@ -133,101 +180,233 @@ class DropZoneWidget(QFrame):
             self.file_selected.emit(audio_path)
 
 
-class FileInfoCard(Card):
-    """Inline file information display with Transcribe and Remove buttons."""
+class FileInfoCard(QFrame):
+    """The loaded file: its name, its facts as chips, and a footer that is the
+    action row or, while a job runs, the inline progress panel.
+
+    The footer is a QStackedWidget so the card keeps one height whichever page
+    is showing; swapping visible widgets instead would jog everything below it
+    twice per job.
+    """
 
     transcribe_clicked = pyqtSignal()
     remove_clicked = pyqtSignal()
     copy_clicked = pyqtSignal()
+    #: True while the footer shows the progress panel rather than the actions.
+    progress_shown = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("uploadFileCard")
         self._preview: AudioFilePreview | None = None
+        self._transcribing = False
+
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.setInterval(RESULT_HOLD_MS)
+        self._settle_timer.timeout.connect(self._show_actions)
+
         self._setup_ui()
 
     def _setup_ui(self):
-        self.filename_label = QLabel()
-        self.filename_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        self.filename_label.setStyleSheet("color: #0a84ff;")
-        self.filename_label.setWordWrap(True)
-        self.layout.addWidget(self.filename_label)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(14)
 
-        self.details_label = QLabel()
-        self.details_label.setFont(QFont("Segoe UI", 11))
-        self.details_label.setStyleSheet("color: #f5f5f7;")
-        self.layout.addWidget(self.details_label)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(14)
 
-        self.audio_info_label = QLabel()
-        self.audio_info_label.setFont(QFont("Segoe UI", 10))
-        self.audio_info_label.setStyleSheet("color: #8e8e93;")
-        self.layout.addWidget(self.audio_info_label)
+        self.icon_label = QLabel()
+        self.icon_label.setObjectName("uploadFileIcon")
+        self.icon_label.setFixedSize(44, 44)
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setPixmap(_tabler_pixmap("file-music-blue.svg", 24))
+        header.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignTop)
 
-        self.chunk_label = QLabel()
-        self.chunk_label.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-        self.chunk_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.chunk_label.hide()
-        self.layout.addWidget(self.chunk_label)
+        text_column = QVBoxLayout()
+        text_column.setContentsMargins(0, 2, 0, 0)
+        text_column.setSpacing(7)
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
+        self.filename_label = ElidingLabel()
+        self.filename_label.setObjectName("uploadFileName")
+        text_column.addWidget(self.filename_label)
 
-        self.remove_btn = Button("Remove")
+        chips = QHBoxLayout()
+        chips.setContentsMargins(0, 0, 0, 0)
+        chips.setSpacing(6)
+        self.size_chip = self._chip()
+        self.duration_chip = self._chip()
+        self.rate_chip = self._chip()
+        self.channels_chip = self._chip()
+        self.chunk_label = self._chip("uploadChunkChip")
+        for chip in (
+            self.size_chip,
+            self.duration_chip,
+            self.rate_chip,
+            self.channels_chip,
+            self.chunk_label,
+        ):
+            chips.addWidget(chip)
+        chips.addStretch()
+        text_column.addLayout(chips)
+        header.addLayout(text_column, stretch=1)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.setObjectName("uploadRemoveButton")
+        self.remove_btn.setFlat(True)
+        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.remove_btn.clicked.connect(self.remove_clicked.emit)
-        btn_layout.addWidget(self.remove_btn)
+        header.addWidget(self.remove_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header)
+
+        divider = QFrame()
+        divider.setObjectName("uploadCardDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+
+        self.footer = QStackedWidget()
+        self.footer.setObjectName("uploadFooter")
+
+        self.actions_page = QWidget()
+        self.actions_page.setObjectName("uploadActions")
+        actions = QHBoxLayout(self.actions_page)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(12)
 
         self.copy_btn = Button("Copy")
+        self.copy_btn.setObjectName("uploadCopyButton")
+        self.copy_btn.set_base_minimum_size(96, 42)
         self.copy_btn.set_active(False)
         self.copy_btn.clicked.connect(self.copy_clicked.emit)
-        btn_layout.addWidget(self.copy_btn)
+        actions.addWidget(self.copy_btn)
 
-        btn_layout.addStretch()
+        actions.addStretch()
+        # Duration and size already sit in the chips, so the only new fact a
+        # finished job brings is how long it took; it lives between the actions
+        # rather than in the stats strip the Quick Record tab uses.
+        self.result_label = DecodeLabel()
+        self.result_label.setObjectName("uploadResultNote")
+        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.result_label.hide()
+        actions.addWidget(self.result_label)
+        actions.addStretch()
 
         self.transcribe_btn = PrimaryButton("Transcribe")
-        self.transcribe_btn.setMinimumWidth(120)
+        self.transcribe_btn.set_base_minimum_size(150, 44)
         self.transcribe_btn.clicked.connect(self.transcribe_clicked.emit)
-        btn_layout.addWidget(self.transcribe_btn)
+        actions.addWidget(self.transcribe_btn)
+        self.footer.addWidget(self.actions_page)
 
-        self.layout.addLayout(btn_layout)
+        self.progress = TranscriptionProgressPanel()
+        self.footer.addWidget(self.progress)
+
+        layout.addWidget(self.footer)
+
+    @staticmethod
+    def _chip(object_name: str = "uploadMetaChip") -> QLabel:
+        chip = QLabel()
+        chip.setObjectName(object_name)
+        chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return chip
+
+    @property
+    def is_transcribing(self) -> bool:
+        return self._transcribing
+
+    @property
+    def is_progress_shown(self) -> bool:
+        return self.footer.currentWidget() is self.progress
 
     def set_preview(self, preview: AudioFilePreview):
         self._preview = preview
         self.filename_label.setText(preview.file_name)
-        self.details_label.setText(
-            f"Size: {preview.file_size_formatted}    "
-            f"Duration: {preview.duration_formatted}"
-        )
-        stereo_mono = "Stereo" if preview.channels == 2 else "Mono"
-        self.audio_info_label.setText(
-            f"{preview.sample_rate} Hz, {stereo_mono}"
-        )
+        self.size_chip.setText(preview.file_size_formatted)
+        self.duration_chip.setText(preview.duration_formatted)
+        self.rate_chip.setText(format_sample_rate(preview.sample_rate))
+        if preview.channels == 1:
+            channels = "Mono"
+        elif preview.channels == 2:
+            channels = "Stereo"
+        else:
+            channels = f"{preview.channels} ch"
+        self.channels_chip.setText(channels)
 
         if preview.needs_splitting:
-            self.chunk_label.setText(
-                f"⚠ Will be split into {preview.estimated_chunks} chunks"
-            )
-            self.chunk_label.setStyleSheet(
-                "color: #ff9f0a; font-size: 11px; font-weight: bold;"
-            )
-            self.chunk_label.show()
+            self.chunk_label.setText(f"{preview.estimated_chunks} chunks")
+            _repolish(self.chunk_label, "tone", "warn")
         else:
-            self.chunk_label.setText("Will be transcribed in one pass")
-            self.chunk_label.setStyleSheet(
-                "color: #30d158; font-size: 11px; font-weight: bold;"
-            )
-            self.chunk_label.show()
+            self.chunk_label.setText("One pass")
+            _repolish(self.chunk_label, "tone", "ok")
 
-    def set_transcribing(self, active: bool):
+    def set_transcribing(self, active: bool, with_cleanup: bool = False):
+        """Lock the card for a job, or return it to idle at once.
+
+        Args:
+            active: True when a job is starting, False to reset immediately
+                (used when the file is removed).
+            with_cleanup: Whether the AI cleanup pass is on, so the stepper
+                knows whether to show a third step.
+        """
+        self._settle_timer.stop()
+        self._transcribing = active
         self.transcribe_btn.setEnabled(not active)
         self.remove_btn.setEnabled(not active)
         if active:
             self.copy_btn.set_active(False)
-            self.transcribe_btn.setText("Transcribing...")
+            self.clear_result()
+            self.progress.start(with_cleanup)
+            self._show_progress()
         else:
-            self.transcribe_btn.setText("Transcribe")
+            self._show_actions()
+
+    def finish_transcribing(self, success: bool):
+        """End the job. The result stays up briefly before the actions return."""
+        was_running = self._transcribing
+        self._transcribing = False
+        self.transcribe_btn.setEnabled(True)
+        self.remove_btn.setEnabled(True)
+        if was_running:
+            self.progress.finish(success)
+            self._settle_timer.start()
+        elif self.is_progress_shown:
+            self._show_actions()
 
     def set_copy_enabled(self, enabled: bool):
         """Enable Copy only when a non-empty transcript is available."""
         self.copy_btn.set_active(enabled)
+
+    def set_result(self, transcription_time: float, audio_duration: float):
+        """Show how long the job took, and how that compares to the audio."""
+        segments = [
+            ("Transcribed in ", False),
+            (format_audio_duration(transcription_time), True),
+        ]
+        if transcription_time > 0 and audio_duration > 0:
+            speed = audio_duration / transcription_time
+            segments += [
+                ("  ·  ", False),
+                (f"{speed:.1f}×", True),
+                (" realtime", False),
+            ]
+        # The reveal runs when the action row next comes into view, which is
+        # after the progress panel has held its Done state.
+        self.result_label.set_segments(segments)
+        self.result_label.show()
+
+    def clear_result(self):
+        self.result_label.clear()
+        self.result_label.hide()
+
+    def _show_progress(self):
+        if not self.is_progress_shown:
+            self.footer.setCurrentWidget(self.progress)
+            self.progress_shown.emit(True)
+
+    def _show_actions(self):
+        if self.is_progress_shown:
+            self.footer.setCurrentWidget(self.actions_page)
+            self.progress_shown.emit(False)
 
 
 class UploadFileTab(TranscriptionTabBase):
@@ -265,6 +444,40 @@ class UploadFileTab(TranscriptionTabBase):
         self.file_info_card.transcribe_clicked.connect(self._on_transcribe)
         self.file_info_card.remove_clicked.connect(self.clear_file)
         self.file_info_card.copy_clicked.connect(self._on_copy)
+        self.file_info_card.progress_shown.connect(self._on_progress_shown)
+
+    @property
+    def is_transcribing(self) -> bool:
+        """Whether a job started from this tab is still running."""
+        return self.file_info_card.is_transcribing
+
+    def _on_progress_shown(self, shown: bool):
+        # The panel carries the status line while it is up; keeping the
+        # standalone label as well would print the same text twice.
+        self.status_label.setVisible(not shown)
+
+    def set_status(self, status_text: str):
+        super().set_status(status_text)
+        if self.file_info_card.is_progress_shown:
+            self.file_info_card.progress.set_detail(status_text)
+
+    def set_progress_state(self, state: OverlayState) -> None:
+        """Take a stage that hotkey dictation would have shown on the overlay.
+
+        ``NONE`` while the job is still marked running means it ended without a
+        transcript reaching this tab, so the card is released as a failure.
+        """
+        if not self.is_transcribing:
+            return
+        if state is OverlayState.NONE:
+            self.file_info_card.finish_transcribing(success=False)
+            self._unlock_engine()
+            return
+        self.file_info_card.progress.apply_overlay_state(state)
+
+    def set_large_file_stage(self, file_size_mb: float, is_splitting: bool) -> None:
+        if self.is_transcribing:
+            self.file_info_card.progress.set_large_file(file_size_mb, is_splitting)
 
     def _on_file_selected(self, path: str):
         try:
@@ -296,21 +509,35 @@ class UploadFileTab(TranscriptionTabBase):
             self.set_status("File no longer exists — please select again")
             self.clear_file()
             return
-        self.file_info_card.set_transcribing(True)
+        self.file_info_card.set_transcribing(
+            True, with_cleanup=self.cleanup_check.isChecked()
+        )
         self.set_backend_enabled(False)
         self.local_engine.set_busy(True)
-        self.set_status("Transcribing...")
         duration = self._preview.duration_seconds if self._preview else 0.0
         self.upload_requested.emit(self._audio_path, duration)
 
     def set_transcript(self, text: str, raw=None):
         super().set_transcript(text, raw=raw)
-        self.file_info_card.set_transcribing(False)
+        stripped = (text or "").strip()
+        failed = stripped.startswith("Error:")
+        copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
+        self.file_info_card.finish_transcribing(success=not failed)
+        self._unlock_engine()
+        self.file_info_card.set_copy_enabled(copyable)
+
+    def _unlock_engine(self):
         self.set_backend_enabled(True)
         self.local_engine.set_busy(False)
-        stripped = (text or "").strip()
-        copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not stripped.startswith("Error:")
-        self.file_info_card.set_copy_enabled(copyable)
+
+    def set_transcription_stats(
+        self, transcription_time: float, audio_duration: float, file_size: int
+    ):
+        """Report the result in the card; this tab never shows the stats strip."""
+        self.file_info_card.set_result(transcription_time, audio_duration)
+
+    def clear_transcription_stats(self):
+        self.file_info_card.clear_result()
 
     def _on_copy(self):
         """Emit the current display transcript for the shared clipboard path."""
@@ -325,9 +552,8 @@ class UploadFileTab(TranscriptionTabBase):
         self.file_info_card.set_transcribing(False)
         self.file_info_card.set_copy_enabled(False)
         self.drop_zone.show()
-        self.set_backend_enabled(True)
-        self.local_engine.set_busy(False)
-        self.set_status("Select an audio file to transcribe")
+        self._unlock_engine()
+        self.set_status(self.INITIAL_STATUS)
 
     def set_file(self, audio_path: str):
         self._on_file_selected(audio_path)

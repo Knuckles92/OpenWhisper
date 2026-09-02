@@ -14,13 +14,13 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
     QTextEdit,
@@ -97,7 +97,9 @@ from ui_qt.widgets import (
     DangerButton,
     ElidingComboBox,
     NoWheelSpinBox,
+    FieldTile,
     PrimaryButton,
+    SettingTile,
     WrappedLabel,
 )
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
@@ -426,58 +428,107 @@ class SettingsDialog(QDialog):
         button.setMinimumWidth(fitted)
         button.setMaximumWidth(fitted)
 
-    def _expanding_check(self, checkbox) -> None:
-        checkbox.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-        )
+    def _tile_group(
+        self,
+        layout: QVBoxLayout,
+        title: str,
+        tiles: list,
+        *,
+        columns: int = 2,
+        intro: str = "",
+    ) -> tuple:
+        """Caption, optional intro line, and a grid of tiles.
+
+        A trailing odd tile spans the rest of its row so no column is left
+        empty. Returns the caption and intro labels for callers that gate them.
+        """
+        caption = QLabel(title.upper())
+        caption.setObjectName("settingsTileGroupTitle")
+        layout.addWidget(caption)
+        intro_label = None
+        if intro:
+            intro_label = self._caption(intro)
+            layout.addWidget(intro_label)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
+        for column in range(columns):
+            grid.setColumnStretch(column, 1)
+        for index, tile in enumerate(tiles):
+            row, column = divmod(index, columns)
+            is_last = index == len(tiles) - 1
+            if is_last and column < columns - 1:
+                grid.addWidget(tile, row, column, 1, columns - column)
+            else:
+                grid.addWidget(tile, row, column)
+        layout.addLayout(grid)
+        layout.addSpacing(6)
+        return caption, intro_label
 
     def _build_general_page(self, layout: QVBoxLayout) -> None:
-        self.auto_paste_check = QCheckBox(
-            "Auto-paste transcription to active window"
-        )
-        auto_paste_tooltip = (
-            "Uses the clipboard temporarily, then restores its previous contents "
-            "after a successful paste. If the clipboard was blank, the transcript "
-            "stays there."
+        auto_paste_description = (
+            "Types the transcript into whichever window has focus. The "
+            "clipboard is borrowed for the paste and restored afterward."
         )
         if self._native_wayland:
-            auto_paste_tooltip += (
-                "\n\n"
-                "Native Wayland blocks reliable cross-application key injection. "
-                "Use clipboard copy or an X11 session when auto-paste does not work."
+            auto_paste_description += (
+                " Native Wayland blocks cross-application key injection; use "
+                "clipboard copy or an X11 session if pasting does not work."
             )
-        self.auto_paste_check.setToolTip(auto_paste_tooltip)
-        self.copy_clipboard_check = QCheckBox("Copy transcription to clipboard")
-        self.copy_clipboard_check.setToolTip(
-            "Keeps the transcript in the clipboard when auto-paste is off or "
-            "unavailable. Successful auto-paste restores prior non-blank content."
+        self.auto_paste_tile = SettingTile(
+            "Paste into the active window",
+            auto_paste_description,
+            _design_icon("bolt-green.svg"),
         )
-        self.minimize_tray_check = QCheckBox("Minimize to system tray on close")
+        self.auto_paste_check = self.auto_paste_tile.checkbox
+
+        self.copy_clipboard_tile = SettingTile(
+            "Copy to the clipboard",
+            "Keeps the transcript on the clipboard when auto-paste is off or "
+            "unavailable. A successful paste restores what was there before.",
+            _design_icon("stack-slate.svg"),
+        )
+        self.copy_clipboard_check = self.copy_clipboard_tile.checkbox
+
+        self.minimize_tray_tile = SettingTile(
+            "Minimize to the system tray on close",
+            "Closing the window keeps OpenWhisper running in the tray, so "
+            "hotkeys and recording stay available.",
+            _design_icon("box-blue.svg"),
+        )
+        self.minimize_tray_check = self.minimize_tray_tile.checkbox
         if not self._tray_available:
-            self.minimize_tray_check.setEnabled(False)
-            self.minimize_tray_check.setToolTip(
+            self.minimize_tray_tile.setEnabled(False)
+            self.minimize_tray_tile.set_description(
                 "This desktop session does not provide a system tray."
             )
-        self.update_check_check = QCheckBox("Check for updates automatically")
-        self.update_check_check.setObjectName("updateCheckEnabledCheck")
-        self.update_notify_check = QCheckBox(
-            "Notify me when an update is available"
-        )
-        self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
-        for box in (
-            self.auto_paste_check,
-            self.copy_clipboard_check,
-            self.minimize_tray_check,
-            self.update_check_check,
-            self.update_notify_check,
-        ):
-            self._expanding_check(box)
 
-        layout.addWidget(self.auto_paste_check)
-        layout.addWidget(self.copy_clipboard_check)
-        layout.addWidget(self.minimize_tray_check)
-        layout.addWidget(self.update_check_check)
-        layout.addWidget(self.update_notify_check)
+        self.update_check_tile = SettingTile(
+            "Check for updates automatically",
+            "Looks for new OpenWhisper releases in the background. Nothing "
+            "is installed without your approval.",
+            _design_icon("refresh-blue.svg"),
+        )
+        self.update_check_check = self.update_check_tile.checkbox
+        self.update_check_check.setObjectName("updateCheckEnabledCheck")
+
+        self.update_notify_tile = SettingTile(
+            "Notify me about updates",
+            "Opens the update dialog when a newer release is found. Requires "
+            "automatic checks.",
+            _design_icon("info-blue.svg"),
+        )
+        self.update_notify_check = self.update_notify_tile.checkbox
+        self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
+
+        self._tile_group(
+            layout, "Output", [self.auto_paste_tile, self.copy_clipboard_tile]
+        )
+        self._tile_group(layout, "Window", [self.minimize_tray_tile])
+        self._tile_group(
+            layout, "Updates", [self.update_check_tile, self.update_notify_tile]
+        )
 
         self.auto_paste_check.toggled.connect(
             lambda checked: self._persist(SettingsKey.AUTO_PASTE, bool(checked))
@@ -507,8 +558,13 @@ class SettingsDialog(QDialog):
         self.audio_device_combo.currentIndexChanged.connect(
             self._on_audio_device_changed
         )
-        layout.addWidget(self._field("Input device", self.audio_device_combo))
-        layout.addWidget(self._caption("Select the microphone used for recording."))
+        self.audio_device_tile = FieldTile(
+            "Input device",
+            "The microphone used for dictation and meetings.",
+            self.audio_device_combo,
+            _design_icon("microphone-blue.svg"),
+        )
+        self._tile_group(layout, "Microphone", [self.audio_device_tile])
 
         self.recording_retention_combo = ElidingComboBox()
         self.recording_retention_combo.addItem(
@@ -521,8 +577,12 @@ class SettingsDialog(QDialog):
         self.recording_retention_combo.currentIndexChanged.connect(
             self._on_retention_mode_changed
         )
-        layout.addWidget(
-            self._field("Keep recordings", self.recording_retention_combo)
+        self.recording_retention_tile = FieldTile(
+            "Keep recordings",
+            "Older audio files are deleted automatically when the limit is "
+            "exceeded. Transcription history text is kept separately.",
+            self.recording_retention_combo,
+            _design_icon("box-blue.svg"),
         )
 
         self.max_recordings_label = QLabel("Number to keep:")
@@ -535,35 +595,25 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.valueChanged.connect(
             self._on_max_recordings_changed
         )
-        retention_form = QFormLayout()
-        retention_form.setLabelAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        self.recording_retention_tile.add_body_layout(
+            self._spin_form(self.max_recordings_label, self.max_recordings_spinbox)
         )
-        retention_form.setFormAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        retention_form.setHorizontalSpacing(16)
-        retention_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
-        )
-        retention_form.addRow(
-            self.max_recordings_label, self.max_recordings_spinbox
-        )
-        layout.addLayout(retention_form)
-        layout.addWidget(
-            self._caption(
-                "Older audio files are deleted automatically when the limit is "
-                "exceeded. Transcription history text is kept separately."
-            )
+        self._tile_group(
+            layout, "Saved recordings", [self.recording_retention_tile]
         )
 
-        self.streaming_enabled_check = QCheckBox(
-            "Enable real-time transcription preview (while recording)"
+        self.streaming_enabled_tile = SettingTile(
+            "Real-time transcription preview",
+            "Shows text as you speak on the near-cursor overlay using a "
+            "dedicated tiny.en preview model. Requires Local Whisper. The "
+            "final transcript still uses your selected model and the General "
+            "paste and clipboard settings.",
+            _design_icon("bolt-green.svg"),
         )
+        self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
         self.streaming_enabled_check.toggled.connect(
             self._on_streaming_enabled_changed
         )
-        layout.addWidget(self.streaming_enabled_check)
 
         self.streaming_font_size_label = QLabel("Preview font size:")
         self.streaming_font_size_spinbox = NoWheelSpinBox()
@@ -576,29 +626,30 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_spinbox.valueChanged.connect(
             self._on_streaming_font_changed
         )
-        font_form = QFormLayout()
-        font_form.setLabelAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        font_form.setFormAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        font_form.setHorizontalSpacing(16)
-        font_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
-        )
-        font_form.addRow(
-            self.streaming_font_size_label, self.streaming_font_size_spinbox
-        )
-        layout.addLayout(font_form)
-        layout.addWidget(
-            self._caption(
-                "Shows transcribed text as you speak on the near-cursor overlay "
-                "using a dedicated tiny.en preview model. Requires Local "
-                "Whisper. Final transcription still uses your selected model "
-                "and the General paste / clipboard settings."
+        self.streaming_enabled_tile.add_body_layout(
+            self._spin_form(
+                self.streaming_font_size_label, self.streaming_font_size_spinbox
             )
         )
+        self._tile_group(layout, "Live preview", [self.streaming_enabled_tile])
+
+    @staticmethod
+    def _spin_form(label: QLabel, spinbox: QWidget) -> QFormLayout:
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        form.setHorizontalSpacing(16)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
+        label.setObjectName("settingsTileFieldLabel")
+        form.addRow(label, spinbox)
+        return form
 
     def _build_cleanup_page(self, layout: QVBoxLayout) -> None:
         self.transcript_cleanup_check = QCheckBox(
@@ -877,53 +928,42 @@ class SettingsDialog(QDialog):
         model_card_layout.addWidget(model_hint)
         layout.addWidget(model_card)
 
-        layout.addWidget(
-            self._caption(
-                "Transcript text and meeting state are sent to the provider — "
-                "cloud intelligence does not upload audio."
-            )
+        self.meeting_past_recall_tile = SettingTile(
+            "Search past transcripts",
+            "Off by default. The agent can look up names and prior decisions "
+            "from stored meetings. Excerpts leave this machine the same way "
+            "the current transcript does.",
+            _design_icon("stack-purple.svg"),
         )
-
-        self.meeting_past_recall_check = QCheckBox(
-            "Let the meeting agent search past transcripts"
-        )
+        self.meeting_past_recall_check = self.meeting_past_recall_tile.checkbox
         self.meeting_past_recall_check.setObjectName("meetingPastRecallCheck")
-        self.meeting_past_recall_check.setToolTip(
-            "When enabled, cloud intelligence may send excerpts from earlier "
-            "meetings to the model. Off by default."
-        )
         self.meeting_past_recall_check.toggled.connect(
             lambda checked: self._persist(
                 SettingsKey.MEETING_PAST_RECALL_ENABLED, bool(checked)
             )
         )
-        layout.addWidget(self.meeting_past_recall_check)
-        layout.addWidget(
-            self._caption(
-                "Off by default. The agent can then look up names and prior "
-                "decisions from stored meetings. Excerpts leave this machine "
-                "the same way the current transcript does."
-            )
-        )
 
-        self.meeting_context_folder_check = QCheckBox(
-            "Let the meeting agent search a knowledge folder"
+        self.meeting_context_folder_tile = SettingTile(
+            "Search a knowledge folder",
+            "Choose a local folder, for example an Obsidian vault. Matched "
+            "excerpts leave this machine the same way the current transcript "
+            "does. Images, audio, and video are not read.",
+            _design_icon("stack-slate.svg"),
+        )
+        self.meeting_context_folder_check = (
+            self.meeting_context_folder_tile.checkbox
         )
         self.meeting_context_folder_check.setObjectName(
             "meetingContextFolderCheck"
-        )
-        self.meeting_context_folder_check.setToolTip(
-            "When enabled, cloud intelligence may send excerpts from files "
-            "in the selected folder to the model. Off by default."
         )
         self.meeting_context_folder_check.toggled.connect(
             lambda checked: self._persist(
                 SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, bool(checked)
             )
         )
-        layout.addWidget(self.meeting_context_folder_check)
 
         folder_row = QHBoxLayout()
+        folder_row.setContentsMargins(0, 0, 0, 0)
         folder_row.setSpacing(8)
         self.meeting_context_folder_path = QLineEdit()
         self.meeting_context_folder_path.setObjectName(
@@ -942,74 +982,90 @@ class SettingsDialog(QDialog):
         clear_btn.setObjectName("meetingContextFolderClear")
         clear_btn.clicked.connect(self._clear_context_folder)
         folder_row.addWidget(clear_btn)
-        layout.addLayout(folder_row)
-        layout.addWidget(
-            self._caption(
-                "Choose a local folder (for example an Obsidian vault). "
-                "Matched excerpts leave this machine the same way the current "
-                "transcript does. Images, audio, and video are not read."
-            )
+        self.meeting_context_folder_tile.add_body_layout(folder_row)
+
+        self._tile_group(
+            layout,
+            "What the agent may search",
+            [self.meeting_past_recall_tile, self.meeting_context_folder_tile],
+            columns=1,
+            intro=(
+                "Transcript text and meeting state are sent to the provider. "
+                "Cloud intelligence does not upload audio."
+            ),
         )
 
     def _build_meeting_after_page(self, layout: QVBoxLayout) -> None:
-        layout.addWidget(
-            self._caption(
-                "Live captions stay on short chunks so text appears quickly. "
-                "These steps run after End. Cloud intelligence must be on for "
-                "polish and the final report."
-            )
-        )
-        self.meeting_end_redecode_check = QCheckBox(
-            "Re-transcribe with longer pauses (full recording)"
-        )
-        self.meeting_end_redecode_check.setToolTip(
+        self.meeting_end_redecode_tile = SettingTile(
+            "Re-transcribe the full recording",
             "After End, recut the continuous session audio on longer quiet "
-            "gaps and run Whisper again. Live capture is unchanged."
+            "gaps and run Whisper again. Live capture is unchanged.",
+            _design_icon("microphone-blue.svg"),
         )
+        self.meeting_end_redecode_check = self.meeting_end_redecode_tile.checkbox
         self.meeting_end_redecode_check.toggled.connect(
             lambda checked: self._persist(
                 SettingsKey.MEETING_END_REDECODE, bool(checked)
             )
         )
-        layout.addWidget(self.meeting_end_redecode_check)
 
-        self.meeting_end_polish_check = QCheckBox(
-            "Clean up the transcript with the LLM"
+        self.meeting_end_polish_tile = SettingTile(
+            "Clean up the transcript with the LLM",
+            "Rewrites the finished transcript for readability. Needs cloud "
+            "intelligence on for the meeting.",
+            _design_icon("stack-purple.svg"),
         )
+        self.meeting_end_polish_check = self.meeting_end_polish_tile.checkbox
         self.meeting_end_polish_check.toggled.connect(
             lambda checked: self._persist(
                 SettingsKey.MEETING_END_POLISH, bool(checked)
             )
         )
-        layout.addWidget(self.meeting_end_polish_check)
 
-        self.meeting_end_report_check = QCheckBox(
-            "Write the final report (topic, summary, cards)"
+        self.meeting_end_report_tile = SettingTile(
+            "Write the final report",
+            "Topic, summary, and cards, generated once live captions finish. "
+            "Needs cloud intelligence on for the meeting.",
+            _design_icon("check-green.svg"),
         )
+        self.meeting_end_report_check = self.meeting_end_report_tile.checkbox
         self.meeting_end_report_check.toggled.connect(
             self._on_end_report_toggled
         )
-        layout.addWidget(self.meeting_end_report_check)
 
-        self.meeting_report_views_title = QLabel("Report views")
-        self.meeting_report_views_title.setObjectName("sectionLabel")
-        layout.addWidget(self.meeting_report_views_title)
-        self.meeting_report_views_info = self._caption(
-            "Each enabled view is generated at End. Turning Ribbon off skips "
-            "timeline beats and polished minutes, which is the main token "
-            "cost. Brief and Signal reuse the same cards."
+        self._tile_group(
+            layout,
+            "After End",
+            [
+                self.meeting_end_redecode_tile,
+                self.meeting_end_polish_tile,
+                self.meeting_end_report_tile,
+            ],
+            intro=(
+                "Live captions stay on short chunks so text appears quickly. "
+                "These steps run afterward."
+            ),
         )
-        layout.addWidget(self.meeting_report_views_info)
 
-        self.meeting_report_ribbon_check = QCheckBox(
-            "Ribbon — timeline walk (adds timeline beats and polished minutes)"
+        self.meeting_report_ribbon_tile = SettingTile(
+            "Ribbon",
+            "Timeline walk. Adds timeline beats and polished minutes, which "
+            "is the main token cost.",
+            _design_icon("stack-slate.svg"),
         )
-        self.meeting_report_brief_check = QCheckBox(
-            "Brief — one-page editorial summary"
+        self.meeting_report_brief_tile = SettingTile(
+            "Brief",
+            "One-page editorial summary. Reuses the same cards as Signal.",
+            _design_icon("box-blue.svg"),
         )
-        self.meeting_report_signal_check = QCheckBox(
-            "Signal — one-screen glance"
+        self.meeting_report_signal_tile = SettingTile(
+            "Signal",
+            "One-screen glance. Reuses the same cards as Brief.",
+            _design_icon("bolt-green.svg"),
         )
+        self.meeting_report_ribbon_check = self.meeting_report_ribbon_tile.checkbox
+        self.meeting_report_brief_check = self.meeting_report_brief_tile.checkbox
+        self.meeting_report_signal_check = self.meeting_report_signal_tile.checkbox
         for check, key in (
             (self.meeting_report_ribbon_check, SettingsKey.MEETING_REPORT_RIBBON),
             (self.meeting_report_brief_check, SettingsKey.MEETING_REPORT_BRIEF),
@@ -1020,7 +1076,22 @@ class SettingsDialog(QDialog):
                     setting, checked
                 )
             )
-            layout.addWidget(check)
+
+        self.meeting_report_views_title, self.meeting_report_views_info = (
+            self._tile_group(
+                layout,
+                "Report views",
+                [
+                    self.meeting_report_ribbon_tile,
+                    self.meeting_report_brief_tile,
+                    self.meeting_report_signal_tile,
+                ],
+                intro=(
+                    "Each enabled view is generated at End. At least one view "
+                    "stays on."
+                ),
+            )
+        )
 
         self.meeting_report_views_hint = self._caption(
             "At least one view is required. Ribbon stays on."
@@ -1041,19 +1112,23 @@ class SettingsDialog(QDialog):
         self.meeting_bind_combo.currentIndexChanged.connect(
             self._on_meeting_bind_changed
         )
-        layout.addWidget(
-            self._field("Who can open the dashboard", self.meeting_bind_combo)
+        self.meeting_bind_tile = FieldTile(
+            "Who can open the dashboard",
+            "Localhost keeps the live dashboard on this computer. Sharing "
+            "serves it to other devices on your local network.",
+            self.meeting_bind_combo,
+            _design_icon("box-blue.svg"),
         )
 
-        self.meeting_bind_warning = QLabel(
+        self.meeting_bind_warning = WrappedLabel(
             "Sharing on the local network serves the live meeting — running "
             "transcript, notes, insights, and audio playback — over plain, "
             "unencrypted HTTP. Anyone holding the guest link can read and "
             "edit the meeting and play the raw meeting recording."
         )
         self.meeting_bind_warning.setObjectName("meetingBindWarning")
-        self.meeting_bind_warning.setWordWrap(True)
-        layout.addWidget(self.meeting_bind_warning)
+        self.meeting_bind_tile.add_body(self.meeting_bind_warning)
+        self._tile_group(layout, "Access", [self.meeting_bind_tile])
 
         self.meeting_port_spinbox = NoWheelSpinBox()
         self.meeting_port_spinbox.setMinimum(0)
@@ -1061,14 +1136,17 @@ class SettingsDialog(QDialog):
         self.meeting_port_spinbox.setSpecialValueText("Automatic")
         self.meeting_port_spinbox.setValue(config.MEETING_SERVER_PORT)
         self.meeting_port_spinbox.setMinimumHeight(36)
+        self.meeting_port_spinbox.setMinimumWidth(110)
         self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
-        layout.addWidget(self._field("Dashboard port", self.meeting_port_spinbox))
-        layout.addWidget(
-            self._caption(
-                "0 (Automatic) lets the meeting server pick a free port each "
-                "session. Pick a fixed port only if you need a stable link."
-            )
+        self.meeting_port_tile = FieldTile(
+            "Dashboard port",
+            "Automatic lets the meeting server pick a free port each session. "
+            "Pick a fixed port only if you need a stable link.",
+            self.meeting_port_spinbox,
+            _design_icon("bolt-green.svg"),
+            compact=True,
         )
+        self._tile_group(layout, "Port", [self.meeting_port_tile])
 
     def _build_api_keys_page(self, layout: QVBoxLayout) -> None:
         self.api_key_combo = ElidingComboBox()
@@ -1792,7 +1870,7 @@ class SettingsDialog(QDialog):
         return format_hotkey_display(raw) or "Not set"
 
     def _on_update_check_toggled(self, checked: bool) -> None:
-        self.update_notify_check.setEnabled(bool(checked))
+        self.update_notify_tile.setEnabled(bool(checked))
         self._persist(SettingsKey.UPDATE_CHECK_ENABLED, bool(checked))
 
     def _on_audio_device_changed(self, _index: int = 0) -> None:
@@ -2255,8 +2333,12 @@ class SettingsDialog(QDialog):
         enabled = self.meeting_end_report_check.isChecked()
         self.meeting_report_views_title.setEnabled(enabled)
         self.meeting_report_views_info.setEnabled(enabled)
-        for check in self._report_view_checks():
-            check.setEnabled(enabled)
+        for tile in (
+            self.meeting_report_ribbon_tile,
+            self.meeting_report_brief_tile,
+            self.meeting_report_signal_tile,
+        ):
+            tile.setEnabled(enabled)
         if not enabled:
             self.meeting_report_views_hint.hide()
 
@@ -2525,7 +2607,7 @@ class SettingsDialog(QDialog):
             self.update_notify_check.setChecked(
                 resolve_update_notify_enabled(settings)
             )
-            self.update_notify_check.setEnabled(
+            self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
             )
 
@@ -2602,7 +2684,7 @@ class SettingsDialog(QDialog):
             self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
             self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
-            self.update_notify_check.setEnabled(
+            self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
             )
             retention_index = self.recording_retention_combo.findData(

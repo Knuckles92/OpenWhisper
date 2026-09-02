@@ -35,6 +35,7 @@ from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
 from ui_qt.widgets import TabbedContentWidget
+from ui_qt.widgets.transcription_progress import stage_for_overlay_state
 from services.settings import SettingsKey, settings_manager
 
 logger = logging.getLogger(__name__)
@@ -428,8 +429,13 @@ class UIController(QObject):
         """Route an explicit overlay-state change to the correct overlay component.
 
         Centralizes all "show waveform vs streaming overlay vs hide everything"
-        logic in one place.
+        logic in one place. A job the user started from the Upload File tab
+        reports inside that tab instead: the overlay is feedback for a hotkey
+        pressed while another application is in front.
         """
+        if self._upload_job_active() and self._route_upload_progress(state):
+            return
+
         if state is OverlayState.CANCELING:
             self.tray_manager.set_recording(False)
             self._start_cancel_animation()
@@ -464,6 +470,44 @@ class UIController(QObject):
             self._show_or_set_overlay(self.overlay.STATE_STT_ENABLE)
         elif state is OverlayState.STT_DISABLED:
             self._show_or_set_overlay(self.overlay.STATE_STT_DISABLE)
+
+    def _upload_job_active(self) -> bool:
+        return (
+            self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE
+            and self.main_window.upload_file_tab.is_transcribing
+        )
+
+    def _route_upload_progress(self, state: OverlayState) -> bool:
+        """Send an upload job's stage to the Upload File card.
+
+        Returns:
+            True when the state was handled inline and the overlay must stay
+            out of it. ``NONE`` is passed to the card as well but returns
+            False so the shared teardown still runs.
+        """
+        tab = self.main_window.upload_file_tab
+        if state is OverlayState.NONE:
+            tab.set_progress_state(state)
+            return False
+        if stage_for_overlay_state(state) is None:
+            return False
+        self.tray_manager.set_recording(False)
+        self.hide_overlay()
+        tab.set_progress_state(state)
+        return True
+
+    def show_large_file_state(self, file_size_mb: float, is_splitting: bool) -> None:
+        """Announce a large file: inline for an upload job, on the overlay otherwise."""
+        if self._upload_job_active():
+            self.main_window.upload_file_tab.set_large_file_stage(
+                file_size_mb, is_splitting
+            )
+            return
+        self.overlay.set_large_file_info(file_size_mb)
+        if is_splitting:
+            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
+        else:
+            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_PROCESSING)
 
     def _dismiss_streaming_preview_for_waveform(self, waveform_state: str) -> None:
         self.streaming_flow_active = False

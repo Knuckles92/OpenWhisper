@@ -57,6 +57,19 @@ def format_size_bytes(size_bytes: int) -> str:
     return f"{size_bytes} B"
 
 
+def format_sample_rate(hertz: int) -> str:
+    """Format a sample rate the way audio tools label it (``44.1 kHz``)."""
+    try:
+        value = int(hertz)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    if value % 1000 == 0:
+        return f"{value // 1000} kHz"
+    return f"{value / 1000:.1f} kHz"
+
+
 def format_file_size(size_bytes: float) -> str:
     """Format local file sizes with binary units."""
     if size_bytes < 1024:

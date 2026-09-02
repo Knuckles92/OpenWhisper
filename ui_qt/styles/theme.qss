@@ -778,6 +778,102 @@ QLabel#batchDestPath {
     font-size: 11px;
 }
 
+/* Settings > General: one rounded tile per on/off setting. The tile, not
+   just the indicator, is the click target, so hover and the checked tint tell
+   the user the whole card reacts. */
+QLabel#settingsTileGroupTitle {
+    color: #8d9aa7;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding-top: 2px;
+}
+
+QFrame#settingsTile {
+    background-color: #141b22;
+    border: 1px solid #303b45;
+    border-radius: 12px;
+}
+
+QFrame#settingsTile:hover {
+    background-color: #182028;
+    border-color: #3d4a57;
+}
+
+QFrame#settingsTile[checked="true"] {
+    background-color: #142130;
+    border-color: #2a5382;
+}
+
+QFrame#settingsTile[checked="true"]:hover {
+    background-color: #17263a;
+    border-color: #3a6aa3;
+}
+
+/* Value tiles are not click targets, so they keep the resting colors. */
+QFrame#settingsTile[kind="field"]:hover {
+    background-color: #141b22;
+    border-color: #303b45;
+}
+
+QWidget#settingsTileBody {
+    background-color: transparent;
+}
+
+QLabel#settingsTileFieldLabel {
+    color: #c7d0d9;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+}
+
+QFrame#settingsTile QLabel#settingsTileGroupTitle,
+QFrame#settingsTile QLabel#infoLabel {
+    padding-top: 0;
+}
+
+QFrame#settingsTile:disabled {
+    background-color: #12181e;
+    border-color: #263038;
+}
+
+QLabel#settingsTileIcon {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#settingsTileTitle {
+    color: #e8edf2;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#settingsTileDescription {
+    color: #98a3b0;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#settingsTileTitle:disabled,
+QLabel#settingsTileDescription:disabled {
+    color: #5d6873;
+}
+
+QFrame#settingsTile QCheckBox::indicator:disabled {
+    background-color: #1c242c;
+    border-color: #2c363f;
+}
+
+QFrame#settingsTile QCheckBox::indicator:checked:disabled {
+    background-color: #24425f;
+    border-color: #24425f;
+}
+
 /* Integrated Hotkeys destination */
 QFrame#hotkeyInstructionCard,
 QFrame#hotkeyShortcutCard {
@@ -1068,9 +1164,9 @@ QTabBar::tab:hover {
 
 QFrame#cleanupModelSummaryCard,
 QFrame#meetingModelSummaryCard {
-    background-color: #232325;
-    border: 1px solid #3a3a3c;
-    border-radius: 10px;
+    background-color: #141b22;
+    border: 1px solid #303b45;
+    border-radius: 12px;
 }
 
 QLabel#cleanupModelSummaryEyebrow,
@@ -2288,12 +2384,12 @@ QPushButton#meetingIntroGotItButton {
 }
 
 QLabel#meetingBindWarning {
-    background-color: #3a2a1c;
-    border: 1px solid #ff9f0a;
+    background-color: #2b2118;
+    border: 1px solid #8a5a14;
     border-radius: 8px;
     color: #ffd60a;
     font-size: 12px;
-    padding: 10px 12px;
+    padding: 8px 10px;
 }
 
 /* Update dialog */
@@ -2405,4 +2501,183 @@ QDialog#appUpdateDialog QCheckBox::indicator {
 QDialog#appUpdateDialog QPushButton {
     padding: 9px 18px;
     font-size: 13px;
+}
+
+/* Upload File: the loaded-file card and the inline progress it shows while a
+   job runs. A QFrame so the surface paints; every label inside sets its own
+   transparent background because the global QWidget fill would otherwise
+   paint a dark block behind each one. */
+QFrame#uploadFileCard {
+    background-color: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 16px;
+}
+
+QStackedWidget#uploadFooter,
+QWidget#uploadActions,
+QFrame#uploadProgressPanel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#uploadFileIcon {
+    background-color: rgba(10, 132, 255, 0.14);
+    border-radius: 12px;
+}
+
+QLabel#uploadFileName {
+    color: #f5f5f7;
+    font-size: 15px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QLabel#uploadMetaChip {
+    background-color: #1c1c1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #c7c7cc;
+}
+
+QLabel#uploadChunkChip {
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#uploadChunkChip[tone="ok"] {
+    background-color: rgba(48, 209, 88, 0.14);
+    color: #30d158;
+}
+
+QLabel#uploadChunkChip[tone="warn"] {
+    background-color: rgba(255, 159, 10, 0.16);
+    color: #ff9f0a;
+}
+
+QPushButton#uploadRemoveButton {
+    background-color: transparent;
+    color: #8e8e93;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+QPushButton#uploadRemoveButton:hover {
+    background-color: rgba(255, 69, 58, 0.14);
+    color: #ff453a;
+}
+
+QPushButton#uploadRemoveButton:disabled {
+    color: #48484a;
+    background-color: transparent;
+}
+
+QFrame#uploadCardDivider {
+    background-color: #3a3a3c;
+}
+
+QLabel#uploadProgressTitle {
+    color: #f5f5f7;
+    font-size: 14px;
+    font-weight: 600;
+    background-color: transparent;
+}
+
+QLabel#uploadProgressTitle[stage="done"] {
+    color: #30d158;
+}
+
+QLabel#uploadProgressTitle[stage="failed"] {
+    color: #ff453a;
+}
+
+QLabel#uploadProgressTitle[stage="canceled"] {
+    color: #ff9f0a;
+}
+
+QLabel#uploadProgressElapsed {
+    color: #8e8e93;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#uploadProgressDetail {
+    color: #8e8e93;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+QFrame#uploadStepConnector {
+    background-color: #3a3a3c;
+}
+
+QLabel#uploadStepDot {
+    border-radius: 4px;
+    background-color: #48484a;
+}
+
+QLabel#uploadStepDot[stepState="active"] {
+    background-color: #0a84ff;
+}
+
+QLabel#uploadStepDot[stepState="done"] {
+    background-color: #30d158;
+}
+
+QLabel#uploadStepDot[stepState="failed"] {
+    background-color: #ff453a;
+}
+
+QLabel#uploadStepTitle {
+    color: #8e8e93;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+QLabel#uploadStepTitle[stepState="active"] {
+    color: #f5f5f7;
+    font-weight: 600;
+}
+
+QLabel#uploadStepTitle[stepState="done"] {
+    color: #c7c7cc;
+}
+
+QLabel#uploadStepTitle[stepState="failed"] {
+    color: #ff453a;
+}
+
+/* Copy sits on the card, and the default button fill is the card color, so it
+   needs its own surface. Inactive (no transcript yet) reads as an outline. */
+QPushButton#uploadCopyButton {
+    background-color: #3a3a3c;
+    color: #f5f5f7;
+    font-size: 14px;
+}
+
+QPushButton#uploadCopyButton:hover {
+    background-color: #48484a;
+}
+
+QPushButton#uploadCopyButton:pressed {
+    background-color: #2c2c2e;
+}
+
+QPushButton#uploadCopyButton[inactive="true"],
+QPushButton#uploadCopyButton[inactive="true"]:hover,
+QPushButton#uploadCopyButton[inactive="true"]:pressed {
+    background-color: transparent;
+    color: #636366;
+    border: 1px solid #3a3a3c;
+}
+
+QLabel#uploadResultNote {
+    color: #8e8e93;
+    font-size: 12px;
+    background-color: transparent;
 }

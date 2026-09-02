@@ -441,6 +441,15 @@ class DummyUIController:
         self.update_download_progress_events = []
         self.update_download_results = []
         self.on_record_start = None
+        self.large_file_states = []
+
+    def show_large_file_state(self, file_size_mb, is_splitting):
+        self.large_file_states.append((file_size_mb, is_splitting))
+        self.overlay.set_large_file_info(file_size_mb)
+        if is_splitting:
+            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_SPLITTING)
+        else:
+            self.overlay.show_at_cursor(self.overlay.STATE_LARGE_FILE_PROCESSING)
 
     def start_recording(self):
         """Mirror UIController.start_recording, including refusal rollback."""
@@ -982,6 +991,19 @@ class TestApplicationController:
         assert controller.executor.submissions[0][0].__name__ == "transcribe_large_audio_file"
         assert controller.ui_controller.overlay.large_file_info == 30.0
         assert controller.ui_controller.overlay.STATE_LARGE_FILE_SPLITTING in controller.ui_controller.overlay.shown_states
+
+    def test_upload_reports_large_file_through_the_ui_controller(self):
+        """The Upload tab decides whether the notice goes inline or on the overlay."""
+        controller = self._create_controller()
+        audio_path = Path(self.temp_dir.name) / "upload.wav"
+        audio_path.write_bytes(b"0" * 256)
+        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        self.audio_processor.check_result = (True, 30.0)
+
+        controller.upload_audio_file(str(audio_path), 12.0)
+
+        assert controller.ui_controller.large_file_states == [(30.0, True)]
+        assert controller.executor.submissions[0][0].__name__ == "transcribe_large_audio_file"
 
     def test_transcription_complete_saves_history_and_resets_pending_state(self):
         controller = self._create_controller()

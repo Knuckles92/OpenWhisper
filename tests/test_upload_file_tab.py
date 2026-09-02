@@ -4,13 +4,22 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QScrollArea
+from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
 from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 from services.audio_processor import AudioFilePreview
+from services.format_utils import format_sample_rate
+from ui_qt.overlay_state import OverlayState
+from ui_qt.widgets.transcription_progress import (
+    ProgressStage,
+    TranscriptionProgressPanel,
+    format_elapsed,
+    stage_for_overlay_state,
+)
 from services.settings import SettingsKey
 from ui_qt.widgets.engine_field import EngineStatus
+from ui_qt.widgets.decode_label import DecodeLabel
 from ui_qt.widgets.upload_file_tab import UploadFileTab, DropZoneWidget, FileInfoCard
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
@@ -90,38 +99,88 @@ class TestDropZoneWidget:
         assert "sample.mp3" in emitted[0]
 
 
+def _preview(**overrides):
+    values = dict(
+        file_path="sample.wav",
+        file_name="sample.wav",
+        file_size_mb=1.0,
+        duration_seconds=60.0,
+        sample_rate=44100,
+        channels=2,
+        needs_splitting=False,
+        estimated_chunks=1,
+    )
+    values.update(overrides)
+    return AudioFilePreview(**values)
+
+
 class TestFileInfoCard:
-    def test_set_preview(self):
+    def test_set_preview_fills_the_chips(self):
         card = FileInfoCard()
-        preview = AudioFilePreview(
-            file_path="sample.wav",
-            file_name="sample.wav",
-            file_size_mb=1.0,
-            duration_seconds=60.0,
-            sample_rate=44100,
-            channels=2,
-            needs_splitting=False,
-            estimated_chunks=1,
-        )
-        card.set_preview(preview)
+        card.set_preview(_preview())
 
         assert card.filename_label.text() == "sample.wav"
-        assert "1.0 MB" in card.details_label.text()
-        assert "1m 0s" in card.details_label.text()
-        assert "44100 Hz, Stereo" in card.audio_info_label.text()
-        assert not card.chunk_label.isHidden()
+        assert card.size_chip.text() == "1.0 MB"
+        assert card.duration_chip.text() == "1m 0s"
+        assert card.rate_chip.text() == "44.1 kHz"
+        assert card.channels_chip.text() == "Stereo"
+        assert card.chunk_label.text() == "One pass"
+        assert card.chunk_label.property("tone") == "ok"
 
-    def test_set_transcribing_toggles_button_states(self):
+    def test_large_file_shows_the_chunk_count_as_a_warning(self):
         card = FileInfoCard()
-        card.set_transcribing(True)
+        card.set_preview(_preview(needs_splitting=True, estimated_chunks=5))
+
+        assert card.chunk_label.text() == "5 chunks"
+        assert card.chunk_label.property("tone") == "warn"
+
+    def test_set_transcribing_swaps_the_footer_for_progress(self):
+        card = FileInfoCard()
+        card.set_transcribing(True, with_cleanup=True)
+        assert card.is_transcribing
+        assert card.is_progress_shown
         assert not card.transcribe_btn.isEnabled()
         assert not card.remove_btn.isEnabled()
-        assert card.transcribe_btn.text() == "Transcribing..."
+        assert card.progress.stage is ProgressStage.PREPARING
+        assert not card.progress.steps[2].isHidden()
 
         card.set_transcribing(False)
+        assert not card.is_transcribing
+        assert not card.is_progress_shown
         assert card.transcribe_btn.isEnabled()
         assert card.remove_btn.isEnabled()
-        assert card.transcribe_btn.text() == "Transcribe"
+
+    def test_cleanup_step_only_appears_when_cleanup_is_on(self):
+        card = FileInfoCard()
+        card.set_transcribing(True, with_cleanup=False)
+        assert card.progress.steps[2].isHidden()
+
+    def test_finish_holds_the_result_before_the_actions_return(self):
+        """The user should see Done land, not have the panel vanish under them."""
+        card = FileInfoCard()
+        shown = []
+        card.progress_shown.connect(shown.append)
+        card.set_transcribing(True, with_cleanup=True)
+
+        card.finish_transcribing(success=True)
+        assert not card.is_transcribing
+        assert card.is_progress_shown
+        assert card.progress.stage is ProgressStage.DONE
+        assert all(chip.state == "done" for chip in card.progress.steps)
+        assert card._settle_timer.isActive()
+
+        card._settle_timer.timeout.emit()
+        assert not card.is_progress_shown
+        assert shown == [True, False]
+
+    def test_starting_again_cancels_a_pending_return_to_actions(self):
+        card = FileInfoCard()
+        card.set_transcribing(True)
+        card.finish_transcribing(success=True)
+
+        card.set_transcribing(True)
+        assert not card._settle_timer.isActive()
+        assert card.progress.stage is ProgressStage.PREPARING
 
     def test_set_copy_enabled(self):
         card = FileInfoCard()
@@ -130,6 +189,109 @@ class TestFileInfoCard:
 
         card.set_copy_enabled(False)
         assert not card.copy_btn._active
+
+
+class TestTranscriptionProgressPanel:
+    def test_overlay_states_map_onto_stages(self):
+        assert stage_for_overlay_state(OverlayState.PROCESSING) is ProgressStage.PREPARING
+        assert stage_for_overlay_state(OverlayState.TRANSCRIBING) is ProgressStage.TRANSCRIBING
+        assert stage_for_overlay_state(OverlayState.CLEANING) is ProgressStage.CLEANING
+        assert stage_for_overlay_state(OverlayState.CANCELING) is ProgressStage.CANCELED
+        assert stage_for_overlay_state(OverlayState.RECORDING) is None
+        assert stage_for_overlay_state(OverlayState.NONE) is None
+
+    def test_steps_follow_the_stage(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=True)
+        assert [chip.state for chip in panel.steps] == ["active", "pending", "pending"]
+
+        panel.set_stage(ProgressStage.TRANSCRIBING)
+        assert [chip.state for chip in panel.steps] == ["done", "active", "pending"]
+
+        panel.set_stage(ProgressStage.CLEANING)
+        assert [chip.state for chip in panel.steps] == ["done", "done", "active"]
+
+    def test_cancel_marks_the_step_that_was_running(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=True)
+        panel.set_stage(ProgressStage.TRANSCRIBING)
+
+        panel.apply_overlay_state(OverlayState.CANCELING)
+        assert panel.stage is ProgressStage.CANCELED
+        assert not panel.is_running
+        assert [chip.state for chip in panel.steps] == ["done", "failed", "pending"]
+
+    def test_large_file_notice_names_the_size(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=False)
+
+        panel.set_large_file(30.0, is_splitting=True)
+        assert panel.stage is ProgressStage.SPLITTING
+        assert panel.detail_label.text() == "30.0 MB file"
+
+    def test_bar_sweeps_while_running_and_fills_when_done(self):
+        panel = TranscriptionProgressPanel()
+        panel.start(with_cleanup=False)
+        assert panel.bar.is_indeterminate
+
+        panel.finish(success=True)
+        assert not panel.bar.is_indeterminate
+        assert panel.bar.fraction == 1.0
+
+    def test_elapsed_format(self):
+        assert format_elapsed(0) == "0:00"
+        assert format_elapsed(65.9) == "1:05"
+
+
+class TestDecodeLabel:
+    SEGMENTS = [("Transcribed in ", False), ("6.9s", True)]
+
+    def test_immediate_text_renders_emphasis(self):
+        label = DecodeLabel()
+        label.set_segments(self.SEGMENTS, animate=False)
+        assert "Transcribed in " in label.text()
+        assert "<span style='color:#f5f5f7; font-weight:600'>6.9s</span>" in label.text()
+        assert not label.is_revealing
+
+    def test_reveal_waits_until_the_label_is_shown(self):
+        """A result arriving behind the progress panel must not spend its animation unseen."""
+        label = DecodeLabel()
+        label.set_segments(self.SEGMENTS)
+        assert not label.is_revealing
+        assert "6.9s" in label.text()
+
+        label.show()
+        QApplication.processEvents()
+        assert label.is_revealing
+
+    def test_partial_frame_scrambles_ahead_of_the_locked_run(self):
+        label = DecodeLabel()
+        label.set_segments(self.SEGMENTS, animate=False)
+        frame = label._render(locked=5, scramble_head=3)
+        assert frame.startswith("Trans")
+        assert frame.count("color:#0a84ff") == 3
+        assert "6.9s" not in frame
+
+    def test_finished_frame_matches_the_immediate_text(self):
+        label = DecodeLabel()
+        label.set_segments(self.SEGMENTS, animate=False)
+        assert label._render(locked=len("Transcribed in 6.9s")) == label.text()
+
+    def test_hiding_mid_reveal_lands_on_the_final_text(self):
+        label = DecodeLabel()
+        label.set_segments(self.SEGMENTS)
+        label.show()
+        QApplication.processEvents()
+        label.hide()
+        assert not label.is_revealing
+        assert QLabel.text(label) == label.text()
+
+
+def test_format_sample_rate():
+    assert format_sample_rate(44100) == "44.1 kHz"
+    assert format_sample_rate(16000) == "16 kHz"
+    assert format_sample_rate(48000) == "48 kHz"
+    assert format_sample_rate(0) == ""
 
 
 class TestUploadFileTab:
@@ -186,6 +348,110 @@ class TestUploadFileTab:
 
         tab._on_copy()
         assert copied == ["Hello world transcription"]
+
+    def _tab_with_file(self, tmp_path):
+        audio = tmp_path / "recording.wav"
+        audio.write_bytes(b"\0" * 64)
+        tab = UploadFileTab()
+        with patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            return_value=_preview(file_path=str(audio), file_name="recording.wav"),
+        ):
+            tab._on_file_selected(str(audio))
+        return tab
+
+    def test_transcribe_locks_the_tab_and_shows_progress_in_the_card(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        requested = []
+        tab.upload_requested.connect(lambda path, duration: requested.append((path, duration)))
+
+        tab._on_transcribe()
+
+        assert requested and requested[0][1] == 60.0
+        assert tab.is_transcribing
+        assert tab.file_info_card.is_progress_shown
+        assert tab.status_label.isHidden()
+        assert not tab.model_combo.isEnabled()
+
+    def test_overlay_states_and_status_text_land_in_the_panel(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        panel = tab.file_info_card.progress
+
+        tab.set_large_file_stage(30.0, is_splitting=True)
+        assert panel.stage is ProgressStage.SPLITTING
+
+        tab.set_progress_state(OverlayState.TRANSCRIBING)
+        assert panel.stage is ProgressStage.TRANSCRIBING
+
+        tab.set_status("Transcribing chunk 1/3...")
+        assert panel.detail_label.text() == "Transcribing chunk 1/3..."
+        assert tab.status_label.text() == "Transcribing chunk 1/3..."
+
+    def test_transcript_finishes_the_job_and_restores_the_status_line(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+
+        tab.set_transcript("Hello there")
+        assert not tab.is_transcribing
+        assert tab.file_info_card.progress.stage is ProgressStage.DONE
+        assert tab.model_combo.isEnabled()
+        assert tab.file_info_card.copy_btn._active
+
+        # A NONE routed after the result is a no-op: the job is already over.
+        tab.set_progress_state(OverlayState.NONE)
+        assert tab.file_info_card.progress.stage is ProgressStage.DONE
+
+        tab.file_info_card._settle_timer.timeout.emit()
+        assert not tab.file_info_card.is_progress_shown
+        assert not tab.status_label.isHidden()
+
+    def test_stats_land_in_the_card_not_the_strip(self, tmp_path):
+        """Duration and size are already chips; only the time is new information."""
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_transcript("Hello there")
+
+        tab.set_transcription_stats(6.9, 10.2, 875 * 1024)
+
+        note = tab.file_info_card.result_label
+        assert not note.isHidden()
+        assert "6.9s" in note.text()
+        assert "1.5\u00d7" in note.text()
+        assert tab.stats_widget.isHidden()
+
+        tab.clear_transcription_stats()
+        assert note.isHidden()
+
+    def test_starting_a_job_clears_the_previous_result_note(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab.set_transcription_stats(6.9, 10.2, 1024)
+
+        tab._on_transcribe()
+        assert tab.file_info_card.result_label.isHidden()
+
+    def test_error_transcript_marks_the_job_failed(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+
+        tab.set_transcript("Error: model not downloaded")
+        assert tab.file_info_card.progress.stage is ProgressStage.FAILED
+        assert not tab.file_info_card.copy_btn._active
+
+    def test_none_while_running_releases_the_card(self, tmp_path):
+        """A job refused before it produced anything must not leave the tab locked."""
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+
+        tab.set_progress_state(OverlayState.NONE)
+        assert not tab.is_transcribing
+        assert tab.model_combo.isEnabled()
+        assert tab.file_info_card.progress.stage is ProgressStage.FAILED
+
+    def test_progress_state_is_ignored_when_nothing_is_running(self):
+        tab = UploadFileTab()
+        tab.set_progress_state(OverlayState.TRANSCRIBING)
+        assert tab.file_info_card.progress.stage is None
 
     def test_scroll_area_handles_constrained_height(self):
         """Scroll area preserves layout and avoids overlapping under short window."""
