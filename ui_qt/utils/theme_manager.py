@@ -46,6 +46,12 @@ class ThemeManager(QObject):
     def stylesheet(self) -> str:
         return self._stylesheet
 
+    def scaled_stylesheet(self, scale: float) -> str:
+        """The cached theme with every ``font-size`` multiplied by ``scale``."""
+        from ui_qt.utils.font_scale import scale_qss_fonts
+
+        return scale_qss_fonts(self._stylesheet, scale)
+
     def set_theme(self, theme_name: str):
         self.current_theme = theme_name
 

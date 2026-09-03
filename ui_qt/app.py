@@ -6,10 +6,10 @@ import logging
 import sys
 from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
 
+from services.settings import resolve_ui_font_scale
 from ui_qt.utils.app_icon import app_icon
+from ui_qt.utils.font_scale import FontScaleFilter, apply_ui_font_scale
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
 
@@ -88,8 +88,9 @@ class QtApplication:
         self._tooltip_filter = RoundedTooltipFilter(self.app)
         self.app.installEventFilter(self._tooltip_filter)
         self._setup_tooltip_style()
-        self._setup_fonts()
-        self._apply_theme()
+        self._font_scale_filter = FontScaleFilter(self.app)
+        self.app.installEventFilter(self._font_scale_filter)
+        self.apply_font_scale(resolve_ui_font_scale())
 
     def _setup_tooltip_style(self):
         """Wrap the platform style so native tooltips show without the long delay."""
@@ -100,14 +101,13 @@ class QtApplication:
             self._tooltip_style = SnappyTooltipStyle(base_style)
             self.app.setStyle(self._tooltip_style)
 
-    def _setup_fonts(self):
-        default_font = QFont("Segoe UI", 10)
-        self.app.setFont(default_font)
+    def apply_font_scale(self, percent: int) -> None:
+        apply_ui_font_scale(
+            percent, app=self.app, theme_manager=self.theme_manager
+        )
 
     def _apply_theme(self):
-        stylesheet = self.theme_manager.stylesheet
-        if stylesheet:
-            self.app.setStyleSheet(stylesheet)
+        self.apply_font_scale(resolve_ui_font_scale())
 
     def set_theme(self, theme_name: str):
         self.theme_manager.set_theme(theme_name)

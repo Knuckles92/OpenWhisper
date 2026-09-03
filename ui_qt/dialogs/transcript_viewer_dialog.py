@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.batch_upload import BatchResult, format_batch_transcript
+from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import READER_STYLE, render_markdown
 from ui_qt.widgets.eliding_label import ElidingLabel
 
@@ -329,6 +330,9 @@ class TranscriptViewerDialog(QDialog):
         self._refresh_zoom_buttons()
         self._render(keep_position=True)
 
+    def refresh_typography(self) -> None:
+        self._render(keep_position=True)
+
     def reset_zoom(self) -> None:
         if self._zoom_index == self.DEFAULT_ZOOM_INDEX:
             return
@@ -354,7 +358,7 @@ class TranscriptViewerDialog(QDialog):
         render_markdown(
             self.view.document(),
             self.shown_text(),
-            READER_STYLE.scaled(self.zoom_factor),
+            READER_STYLE.scaled(current_ui_font_scale() * self.zoom_factor),
         )
         self.copy_btn.setEnabled(bool(self.shown_text().strip()))
         if keep_position:

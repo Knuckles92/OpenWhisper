@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Settings → General → Font size** - Small, Default, Large, and Extra large scale text in OpenWhisper windows and dialogs immediately. The main window's title bar grows when a larger size needs the room, so the File / View / Help menu stays visible. The live transcription overlay keeps its own size under Recording.
+
 ## [2.5.0] - 2026-09-02
 
 ### Added

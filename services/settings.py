@@ -48,6 +48,8 @@ class SettingsKey:
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
     STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
+    # Application chrome type size as a percent of the designed theme (90–130).
+    UI_FONT_SCALE: Final[str] = "ui_font_scale"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
@@ -117,6 +119,25 @@ class RecordingTriggerMode:
     PUSH_HOLD: Final[str] = "push_hold"
 
     ALL: Final[Tuple[str, ...]] = (TOGGLE, PUSH_HOLD)
+
+
+class UiFontScale:
+    """Values for ``SettingsKey.UI_FONT_SCALE``.
+
+    Percents of the designed theme. Labels are what Settings shows.
+    """
+    SMALL: Final[int] = 90
+    DEFAULT: Final[int] = 100
+    LARGE: Final[int] = 115
+    EXTRA_LARGE: Final[int] = 130
+
+    ALL: Final[Tuple[int, ...]] = (SMALL, DEFAULT, LARGE, EXTRA_LARGE)
+    LABELS: Final[Dict[int, str]] = {
+        SMALL: "Small",
+        DEFAULT: "Default",
+        LARGE: "Large",
+        EXTRA_LARGE: "Extra large",
+    }
 
 
 class TranscriptCleanupProvider:
@@ -537,6 +558,23 @@ def resolve_recording_trigger_mode(
     if mode in RecordingTriggerMode.ALL:
         return mode
     return config.RECORDING_TRIGGER_MODE
+
+
+def resolve_ui_font_scale(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return a valid UI font-scale percent, defaulting to 100."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.UI_FONT_SCALE, config.UI_FONT_SCALE)
+    try:
+        percent = int(raw)
+    except (TypeError, ValueError):
+        return config.UI_FONT_SCALE
+    if percent in UiFontScale.ALL:
+        return percent
+    return config.UI_FONT_SCALE
 
 
 def resolve_streaming_overlay_font_size(

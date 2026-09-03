@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont
 from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
+from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -314,9 +315,16 @@ class TranscriptionTabBase(QWidget):
         else:
             self._show_transcript_text(self._fixed_text)
 
+    def redraw_transcript(self) -> None:
+        self._show_transcript_text(self.shown_transcript())
+
     def _show_transcript_text(self, text: str) -> None:
         if self.TRANSCRIPT_MARKDOWN:
-            render_markdown(self.transcript_text.document(), text, PREVIEW_STYLE)
+            render_markdown(
+                self.transcript_text.document(),
+                text,
+                PREVIEW_STYLE.scaled(current_ui_font_scale()),
+            )
         else:
             self.transcript_text.setPlainText(text)
 

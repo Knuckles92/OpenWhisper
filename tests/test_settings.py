@@ -9,7 +9,9 @@ from services.settings import (
     RecordingTriggerMode,
     SettingsKey,
     SettingsManager,
+    UiFontScale,
     resolve_recording_trigger_mode,
+    resolve_ui_font_scale,
 )
 from config import config
 
@@ -665,6 +667,20 @@ class TestRecordingTriggerMode:
     def test_invalid_value_falls_back_to_config_default(self):
         settings = {SettingsKey.RECORDING_TRIGGER_MODE: "pressy"}
         assert resolve_recording_trigger_mode(settings) == "toggle"
+
+
+class TestUiFontScale:
+    def test_missing_key_falls_back_to_default(self):
+        assert config.UI_FONT_SCALE == UiFontScale.DEFAULT
+        assert resolve_ui_font_scale({}) == UiFontScale.DEFAULT
+
+    def test_saved_percent_round_trips(self):
+        settings = {SettingsKey.UI_FONT_SCALE: UiFontScale.LARGE}
+        assert resolve_ui_font_scale(settings) == UiFontScale.LARGE
+
+    def test_invalid_value_falls_back_to_default(self):
+        assert resolve_ui_font_scale({SettingsKey.UI_FONT_SCALE: 150}) == 100
+        assert resolve_ui_font_scale({SettingsKey.UI_FONT_SCALE: "large"}) == 100
 
 
 class TestUpdatePreferences:

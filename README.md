@@ -453,7 +453,7 @@ On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Optio
 
 Access settings via **File > Settings** or the system tray menu. Available options:
 
-- **General:** Auto-paste, copy to clipboard, minimize to system tray on close, automatic update checks and notifications, saved recordings retention policy, and real-time streaming transcription preview toggle and font size.
+- **General:** Auto-paste, copy to clipboard, minimize to system tray on close, UI font size (Small / Default / Large / Extra large), automatic update checks and notifications, saved recordings retention policy, and real-time streaming transcription preview toggle and font size.
 - **Audio:** Sample rate, channels, silence threshold, and microphone input device selection.
 - **Hotkeys:** Customize all global shortcuts and choose how the record hotkey activates (toggle, or push-and-hold like a walkie-talkie).
 - **Cleanup:** AI transcript cleanup settings (enable/disable, thinking level, custom prompt) and **Learned Rules** library (teach personal spelling and formatting rules via text or voice dictation). Text provider and model selection are configured in **Model Manager**.

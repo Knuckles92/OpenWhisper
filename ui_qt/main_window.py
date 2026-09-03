@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 class CustomTitleBar(QFrame):
+    # Height at the default font scale. The bar grows when a larger UI font
+    # makes the menu items taller: QMenuBar hides every item that does not
+    # fit inside its rect behind an overflow button.
+    BASE_HEIGHT = 32
+
     _MENU_BAR_STYLE = """
         QMenuBar {
             background-color: transparent;
@@ -35,7 +40,7 @@ class CustomTitleBar(QFrame):
         }
         QMenuBar::item {
             background-color: transparent;
-            padding: 8px 10px 4px 10px;
+            padding: 4px 10px;
         }
         QMenuBar::item:selected {
             background-color: #3a3a3c;
@@ -102,7 +107,7 @@ class CustomTitleBar(QFrame):
         self._drag_position = None
         self._is_maximized = False
         self._normal_geometry = None
-        self.setFixedHeight(32)
+        self.setFixedHeight(self.BASE_HEIGHT)
         self.setObjectName("customTitleBar")
         self.setAutoFillBackground(True)
 
@@ -117,12 +122,13 @@ class CustomTitleBar(QFrame):
         self._build_window_buttons(layout)
 
         self.setStyleSheet(self._TITLE_BAR_STYLE)
+        self._sync_height()
 
     def _build_menu_bar(self, layout: QHBoxLayout) -> None:
         from PyQt6.QtWidgets import QMenuBar
         self.menu_bar = QMenuBar()
         self.menu_bar.setStyleSheet(self._MENU_BAR_STYLE)
-        layout.addWidget(self.menu_bar)
+        layout.addWidget(self.menu_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _build_title_label(self, layout: QHBoxLayout) -> None:
         self.title_label = QLabel("OpenWhisper")
@@ -131,21 +137,21 @@ class CustomTitleBar(QFrame):
 
     def _build_window_buttons(self, layout: QHBoxLayout) -> None:
         self.minimize_btn = QPushButton("─")
-        self.minimize_btn.setFixedSize(46, 32)
+        self.minimize_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.minimize_btn.setToolTip("Minimize")
         self.minimize_btn.setAccessibleName("Minimize window")
         self.minimize_btn.clicked.connect(self._minimize)
 
         self.maximize_btn = QPushButton("□")
-        self.maximize_btn.setFixedSize(46, 32)
+        self.maximize_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.maximize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.maximize_btn.setToolTip("Maximize")
         self.maximize_btn.setAccessibleName("Maximize window")
         self.maximize_btn.clicked.connect(self._toggle_maximize)
 
         self.close_btn = QPushButton("✕")
-        self.close_btn.setFixedSize(46, 32)
+        self.close_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.close_btn.setStyleSheet(self._CLOSE_BUTTON_STYLE)
         self.close_btn.setToolTip("Close")
         self.close_btn.setAccessibleName("Close window")
@@ -154,6 +160,22 @@ class CustomTitleBar(QFrame):
         layout.addWidget(self.minimize_btn)
         layout.addWidget(self.maximize_btn)
         layout.addWidget(self.close_btn)
+
+    def _sync_height(self) -> None:
+        border = self.height() - self.contentsRect().height()
+        height = max(self.BASE_HEIGHT, self.menu_bar.sizeHint().height() + border)
+        if height == self.height():
+            return
+        self.setFixedHeight(height)
+        for button in (self.minimize_btn, self.maximize_btn, self.close_btn):
+            button.setFixedSize(button.width(), height)
+
+    def event(self, event):
+        # A font-scale change re-styles the menu bar, which invalidates this
+        # layout; that is the moment the menu's size hint changes.
+        if event.type() == QEvent.Type.LayoutRequest:
+            self._sync_height()
+        return super().event(event)
 
     def _minimize(self):
         if self.parent_window:

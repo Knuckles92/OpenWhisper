@@ -34,6 +34,7 @@ from ui_qt.overlays import WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
+from ui_qt.utils.font_scale import apply_ui_font_scale
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
 from services.settings import SettingsKey, settings_manager
@@ -628,6 +629,7 @@ class UIController(QObject):
         dialog.on_audio_device_changed = self.on_audio_device_changed
         dialog.on_streaming_settings_changed = self.on_streaming_settings_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
+        dialog.on_ui_font_scale_changed = self._apply_ui_font_scale
         dialog.on_hf_policy_changed = self.on_hf_policy_changed
         dialog.on_api_keys_changed = self._on_api_keys_changed
         dialog.on_developer_mode_changed = (
@@ -661,6 +663,14 @@ class UIController(QObject):
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
         self.main_window.upload_file_tab.load_cleanup_setting()
+
+    def _apply_ui_font_scale(self, percent: int) -> None:
+        apply_ui_font_scale(percent)
+        self.main_window.quick_record_tab.redraw_transcript()
+        self.main_window.upload_file_tab.redraw_transcript()
+        viewer = getattr(self.main_window.upload_file_tab, "_viewer", None)
+        if viewer is not None:
+            viewer.refresh_typography()
 
     def _on_api_keys_changed(self):
         """A key was saved or removed: rebuild clients, then redraw key status."""

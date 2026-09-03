@@ -53,6 +53,7 @@ from services.settings import (
     RecordingTriggerMode,
     SettingsKey,
     TranscriptCleanupReasoning,
+    UiFontScale,
     resolve_developer_mode,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
@@ -74,6 +75,7 @@ from services.settings import (
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
     resolve_streaming_overlay_font_size,
+    resolve_ui_font_scale,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
@@ -155,11 +157,11 @@ class SettingsDialog(QDialog):
     re-raises it instead of stacking copies.
     """
 
-    #: 760 clears the 566 px the Cleanup destination needs under themed
-    #: fonts, plus chrome. Learned rules is next at 493 once the empty
-    #: state and the rule list are mutually exclusive.
-    DEFAULT_SIZE = QSize(980, 760)
-    MINIMUM_SIZE = QSize(840, 700)
+    #: 810 clears General after the font-size tile (the tallest destination
+    #: under themed fonts), plus chrome. Cleanup is next at 566; Learned
+    #: rules is 493 once the empty state and the rule list are exclusive.
+    DEFAULT_SIZE = QSize(980, 810)
+    MINIMUM_SIZE = QSize(840, 750)
 
     model_manager_requested = pyqtSignal(str)
     _cleanup_rule_polished = pyqtSignal(str, str, str)
@@ -169,6 +171,7 @@ class SettingsDialog(QDialog):
     on_audio_device_changed: Optional[Callable] = None
     on_streaming_settings_changed: Optional[Callable] = None
     on_streaming_font_changed: Optional[Callable] = None
+    on_ui_font_scale_changed: Optional[Callable[[int], None]] = None
     on_hf_policy_changed: Optional[Callable] = None
     on_api_keys_changed: Optional[Callable[[], None]] = None
     on_developer_mode_changed: Optional[Callable] = None
@@ -523,10 +526,34 @@ class SettingsDialog(QDialog):
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
 
+        self.ui_font_scale_combo = ElidingComboBox()
+        self.ui_font_scale_combo.setObjectName("settingsUiFontScaleCombo")
+        self.ui_font_scale_combo.setMinimumHeight(40)
+        self.ui_font_scale_combo.setMinimumWidth(140)
+        for percent in UiFontScale.ALL:
+            self.ui_font_scale_combo.addItem(
+                UiFontScale.LABELS[percent], percent
+            )
+        self.ui_font_scale_combo.setCurrentIndex(
+            max(0, self.ui_font_scale_combo.findData(UiFontScale.DEFAULT))
+        )
+        self.ui_font_scale_combo.currentIndexChanged.connect(
+            self._on_ui_font_scale_changed
+        )
+        self.ui_font_scale_tile = FieldTile(
+            "Font size",
+            "Scales text in OpenWhisper windows and dialogs. The live "
+            "transcription overlay has its own size under Recording.",
+            self.ui_font_scale_combo,
+            _design_icon("typography-blue.svg"),
+            compact=True,
+        )
+
         self._tile_group(
             layout, "Output", [self.auto_paste_tile, self.copy_clipboard_tile]
         )
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
+        self._tile_group(layout, "Appearance", [self.ui_font_scale_tile])
         self._tile_group(
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
@@ -1935,6 +1962,15 @@ class SettingsDialog(QDialog):
         if self.on_streaming_settings_changed:
             self.on_streaming_settings_changed()
 
+    def _on_ui_font_scale_changed(self, _index: int = 0) -> None:
+        percent = self.ui_font_scale_combo.currentData()
+        if percent is None:
+            return
+        if not self._persist(SettingsKey.UI_FONT_SCALE, int(percent)):
+            return
+        if self.on_ui_font_scale_changed:
+            self.on_ui_font_scale_changed(int(percent))
+
     def _on_streaming_font_changed(self, _value: int = 0) -> None:
         if not self._persist(
             SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
@@ -2611,6 +2647,10 @@ class SettingsDialog(QDialog):
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
             )
+            scale_index = self.ui_font_scale_combo.findData(
+                resolve_ui_font_scale(settings)
+            )
+            self.ui_font_scale_combo.setCurrentIndex(max(0, scale_index))
 
             retention_mode = settings.get(
                 SettingsKey.RECORDING_RETENTION_MODE,
@@ -2687,6 +2727,9 @@ class SettingsDialog(QDialog):
             self.update_notify_check.setChecked(config.UPDATE_NOTIFY_ENABLED)
             self.update_notify_tile.setEnabled(
                 self.update_check_check.isChecked()
+            )
+            self.ui_font_scale_combo.setCurrentIndex(
+                max(0, self.ui_font_scale_combo.findData(UiFontScale.DEFAULT))
             )
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM

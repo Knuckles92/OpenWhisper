@@ -64,16 +64,22 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
             self.assertEqual(len(tiles), 5)
+            self.assertEqual(len(general.findChildren(FieldTile)), 1)
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(
                 dialog.update_notify_check, dialog.update_notify_tile.checkbox
+            )
+            self.assertIs(
+                dialog.ui_font_scale_tile.control, dialog.ui_font_scale_combo
             )
             group_titles = [
                 label.text()
                 for label in general.findChildren(QLabel)
                 if label.objectName() == "settingsTileGroupTitle"
             ]
-            self.assertEqual(group_titles, ["OUTPUT", "WINDOW", "UPDATES"])
+            self.assertEqual(
+                group_titles, ["OUTPUT", "WINDOW", "APPEARANCE", "UPDATES"]
+            )
             recording = dialog._pages[RECORDING]
             forms = recording.findChildren(QFormLayout)
             self.assertGreaterEqual(len(forms), 2)
@@ -176,9 +182,9 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         try:
             dialog.show()
             self.app.processEvents()
-            self.assertEqual((dialog.width(), dialog.height()), (980, 760))
+            self.assertEqual((dialog.width(), dialog.height()), (980, 810))
             self.assertEqual(
-                (dialog.minimumWidth(), dialog.minimumHeight()), (840, 700)
+                (dialog.minimumWidth(), dialog.minimumHeight()), (840, 750)
             )
             for key in dialog.rail.keys():
                 dialog.rail.select(key)

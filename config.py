@@ -198,6 +198,10 @@ class AppConfig:
     # Streaming text overlay settings
     STREAMING_OVERLAY_FONT_SIZE: int = 16
 
+    # Application UI type size as a percent of the designed 14px theme.
+    # Settings → General → Font size. 100 is the shipped default.
+    UI_FONT_SCALE: int = 100
+
     # Timing settings
     HOTKEY_DEBOUNCE_MS: int = 300
     AUTO_PASTE_CLIPBOARD_RESTORE_DELAY_MS: int = 250
