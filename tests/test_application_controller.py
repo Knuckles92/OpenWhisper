@@ -2059,6 +2059,10 @@ class TestApplicationController:
             self.app_controller_module, "install_component", lambda *a, **k: None
         ), patch.object(
             self.app_controller_module, "activate_component", lambda cid: (True, "")
+        ), patch.object(
+            self.app_controller_module.component_coordinator,
+            "catalog_entry",
+            return_value={"version": "node22-pi1"},
         ):
             controller._component_install_worker("meeting-agent", threading.Event())
 

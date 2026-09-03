@@ -202,6 +202,8 @@ def test_release_artifact_name_is_versioned_and_arch_specific():
     assert "lintian --fail-on error" in script
     assert "-perm /0022" in script
     assert 'bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar' in script
+    assert '--format=mtree' in script
+    assert '-cf - .PKGINFO usr' in script
     assert "zstd -T0 -19" in script
     assert ".PKGINFO" in script
     assert 'gzip -n -9 >"$PACMAN_ROOT/.MTREE"' in script

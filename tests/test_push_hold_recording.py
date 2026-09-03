@@ -230,7 +230,17 @@ class TestPynputBackendPushHold(unittest.TestCase):
         manager._on_press(self.module.pynput_keyboard.KeyCode(char="r"))
 
     def test_available_backend_starts_global_listener(self):
-        manager = self.module.HotkeyManager(dict(self.HOTKEYS))
+        listener_class = self.module._pynput_keyboard_module.Listener
+        with patch.object(
+            self.module.HotkeyManager,
+            "_setup_carbon_hotkeys",
+            return_value=False,
+        ), patch.object(
+            self.module,
+            "get_listener_class",
+            return_value=listener_class,
+        ):
+            manager = self.module.HotkeyManager(dict(self.HOTKEYS))
 
         self.assertTrue(manager.backend_available)
         self.assertEqual(manager.backend_name, "pynput")

@@ -372,7 +372,7 @@ touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.PKGINFO"
     bsdtar --uid 0 --gid 0 --uname root --gname root \
         --format=mtree \
         --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
-        .PKGINFO usr
+        -cf - .PKGINFO usr
 ) | gzip -n -9 >"$PACMAN_ROOT/.MTREE"
 chmod 0644 "$PACMAN_ROOT/.MTREE"
 touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.MTREE"

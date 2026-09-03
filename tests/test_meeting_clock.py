@@ -35,12 +35,14 @@ class TestMeetingClock:
         clock = MeetingClock()
         clock.start()
         time.sleep(0.05)
+        before_pause = clock.now_s()
         clock.pause()
         time.sleep(0.1)
         clock.resume()
         after = clock.now_s()
-        # Meeting time should be ~0.05, not ~0.15
-        assert after < 0.1
+        # Scheduler delays before pause belong to meeting time; only the
+        # paused span should disappear.
+        assert abs(after - before_pause) < 0.05
         assert clock.paused_total_s() >= 0.09
 
     def test_pause_resume_idempotent(self):

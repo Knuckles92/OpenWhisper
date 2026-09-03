@@ -269,9 +269,10 @@ jobs:
       - name: Check ASGI test stack compatibility
         run: ./venv/bin/python scripts/check_testclient_compat.py --timeout 15
       - name: Run test suite
+        timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./venv/bin/python -m pytest
+        run: ./venv/bin/python -m pytest -vv --maxfail=1
       - name: Build and verify DMG
         # Ad-hoc signed and unnotarized by design. No Apple Developer secrets.
         run: ./scripts/build_installer_macos.sh --clean
