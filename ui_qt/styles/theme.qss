@@ -218,12 +218,17 @@ QLineEdit:focus {
 QDialog#modelManagerDialog,
 QDialog#downloadsDialog,
 QDialog#settingsDialog,
-QDialog#componentDetailsDialog {
+QDialog#componentDetailsDialog,
+QDialog#batchDownloadDialog {
     background-color: #10161c;
 }
 
 QWidget#modelManagerBody,
-QWidget#modelManagerStack {
+QWidget#modelManagerStack,
+QWidget#downloadsCatalogColumn,
+QWidget#downloadsSelectionBar,
+QWidget#downloadsListContainer,
+QWidget#downloadsInspectorContent {
     background-color: transparent;
 }
 
@@ -758,6 +763,10 @@ QDialog#downloadsDialog QPushButton#primaryButton {
 
 /* Batch selection in the Downloads window: flat link actions, running
    total, and the multi-model confirmation. */
+QWidget#downloadsSelectionBar {
+    background-color: transparent;
+}
+
 QPushButton#downloadsFlatButton {
     color: #6fb1ff;
     background-color: transparent;

@@ -66,6 +66,7 @@ class BatchDownloadDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Download models")
         self.setWindowIcon(app_icon())
+        self.setObjectName("batchDownloadDialog")
         self.setModal(True)
         self.setMinimumWidth(420)
 
@@ -290,6 +291,7 @@ class DownloadsDialog(QDialog):
     def _build_catalog_column(self) -> QWidget:
         """Stack the filters directly above the rows they filter."""
         column = QWidget()
+        column.setObjectName("downloadsCatalogColumn")
         column_layout = QVBoxLayout(column)
         column_layout.setContentsMargins(0, 0, 0, 0)
         column_layout.setSpacing(8)
@@ -370,6 +372,7 @@ class DownloadsDialog(QDialog):
         self.library_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
 
         list_container = QWidget()
+        list_container.setObjectName("downloadsListContainer")
         self.list_layout = QVBoxLayout(list_container)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(6)
@@ -470,6 +473,7 @@ class DownloadsDialog(QDialog):
         self.inspector_detail_scroll = detail_scroll
 
         content = QWidget()
+        content.setObjectName("downloadsInspectorContent")
         detail = QVBoxLayout(content)
         detail.setContentsMargins(0, 0, 6, 0)
         detail.setSpacing(12)

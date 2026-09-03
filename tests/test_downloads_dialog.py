@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea, QWidget
 
 from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
@@ -160,6 +160,27 @@ class TestWindowShell(_DialogTestCase):
                 abs(right_edge(dialog.rows["tiny"]) - right_edge(dialog.sort_combo))
                 <= 1
             )
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+
+    def test_catalog_column_and_selection_bar_have_transparent_surface(self):
+        """The catalog column and selection bar must not paint a mismatched box."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            self.app.processEvents()
+
+            bar = dialog.findChild(QWidget, "downloadsSelectionBar")
+            col = dialog.findChild(QWidget, "downloadsCatalogColumn")
+            assert bar is not None
+            assert col is not None
+
+            image = dialog.grab().toImage()
+            dialog_bg = image.pixelColor(QPoint(10, 10)).name()
+            bar_color = image.pixelColor(bar.mapTo(dialog, bar.rect().center())).name()
+            assert bar_color == dialog_bg == "#10161c"
         finally:
             self.app.setStyleSheet(previous_stylesheet)
 
