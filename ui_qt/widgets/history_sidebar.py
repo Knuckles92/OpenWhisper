@@ -26,6 +26,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_EASING,
 )
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -210,10 +211,9 @@ class HistoryItemWidget(QFrame):
 
         source_name = (getattr(self.entry, "source_name", None) or "").strip()
         if source_name:
-            self.title_label = QLabel(source_name)
+            self.title_label = WrappedLabel(source_name)
             self.title_label.setObjectName("historyTitle")
             self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-            self.title_label.setWordWrap(True)
             self.title_label.setAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
@@ -222,9 +222,8 @@ class HistoryItemWidget(QFrame):
         # Preview text is already truncated by HistoryEntry.preview_text, so
         # let it size naturally — a hard maxHeight was clipping glyphs mid-line
         # and making the footer button look like it was cutting the text off.
-        self.preview_label = QLabel(self.entry.preview_text)
+        self.preview_label = WrappedLabel(self.entry.preview_text)
         self.preview_label.setObjectName("historyPreview")
-        self.preview_label.setWordWrap(True)
         self.preview_label.setFont(QFont("Segoe UI", 11))
         self.preview_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
@@ -470,6 +469,10 @@ class HistorySidebar(QWidget):
         self.history_header = QLabel("HISTORY")
         self.history_header.setObjectName("sectionHeader")
         self.history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        self.history_header.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         scroll_layout.addWidget(self.history_header)
 
         self.history_list_layout = QVBoxLayout()
