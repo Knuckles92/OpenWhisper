@@ -540,7 +540,9 @@ def pcm_slice_to_wav(
                 )
                 written += int(out.size)
                 remaining -= int(frames.size)
-        with open(tmp_path, "rb") as handle:
+        # Windows' _commit rejects read-only descriptors even though POSIX
+        # fsync accepts them, so reopen the completed file with write access.
+        with open(tmp_path, "r+b") as handle:
             os.fsync(handle.fileno())
         os.replace(tmp_path, wav_path)
         return written

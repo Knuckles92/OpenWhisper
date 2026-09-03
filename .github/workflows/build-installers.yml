@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing draft release tag to upload to (optional, e.g. v2.4.9)"
+        description: "Existing draft release tag to upload to (optional, e.g. v2.5.0)"
         required: false
         type: string
 
