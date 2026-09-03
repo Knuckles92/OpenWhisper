@@ -183,6 +183,8 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "pacman -Qkk openwhisper" in workflow
+    assert 'package_info="$(pacman -Qi openwhisper)"' in workflow
+    assert '<<<"$package_info"' in workflow
     assert "GPL-3.0-only" in workflow
     assert "LGPL-3.0-only" in workflow
     assert "/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in workflow

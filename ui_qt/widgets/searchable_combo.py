@@ -8,7 +8,7 @@ dropdown holds the input grab. SearchableComboBox instead hides
 non-matching rows in the combo's own view, so typing narrows the visible
 dropdown directly whether it was opened by clicking or by typing.
 """
-from PyQt6.QtCore import QCoreApplication, QEvent, Qt
+from PyQt6.QtCore import QCoreApplication, QEvent, QTimer, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -56,6 +56,10 @@ class SearchableComboBox(NoWheelComboBox):
         self._search_started = False
         # Popup container and list get event filters the first time they appear.
         self._popup_filter_installed = False
+        self._activation_count = 0
+        self._text_activation_count = 0
+        self.activated.connect(self._record_activation)
+        self.textActivated.connect(self._record_text_activation)
 
         # Created after the line edit so it stacks above the editor. The
         # application stylesheet never reaches a QComboBox's own children, so
@@ -198,15 +202,45 @@ class SearchableComboBox(NoWheelComboBox):
             index = view.currentIndex()
             if index.isValid() and not view.isRowHidden(index.row()):
                 text = model.data(index) or ""
+                activation_count = self._activation_count
+                text_activation_count = self._text_activation_count
                 self.setCurrentText(text)
                 self.hidePopup()
-                # Qt emits these itself for its own list activation; this
-                # branch replaces that path, so listeners still see a pick.
-                self.activated.emit(index.row())
-                self.textActivated.emit(text)
+                # Cocoa emits the native activation even though this filter
+                # accepts Return; Windows and Linux do not. Wait until Qt has
+                # finished dispatching the key, then fill in only signals the
+                # platform did not already emit.
+                QTimer.singleShot(
+                    0,
+                    lambda row=index.row(), value=text: self._finish_key_activation(
+                        row,
+                        value,
+                        activation_count,
+                        text_activation_count,
+                    ),
+                )
                 event.accept()
                 return True
         return False
+
+    def _record_activation(self, _index: int) -> None:
+        self._activation_count += 1
+
+    def _record_text_activation(self, _text: str) -> None:
+        self._text_activation_count += 1
+
+    def _finish_key_activation(
+        self,
+        row: int,
+        text: str,
+        activation_count: int,
+        text_activation_count: int,
+    ) -> None:
+        """Emit any keyboard-pick signals Qt did not emit natively."""
+        if self._activation_count == activation_count:
+            self.activated.emit(row)
+        if self._text_activation_count == text_activation_count:
+            self.textActivated.emit(text)
 
     def _on_text_edited(self, text: str):
         """Narrow the dropdown to rows containing the typed text."""
