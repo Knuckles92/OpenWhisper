@@ -1361,7 +1361,7 @@ class TestLocalEngineFields:
         """The reload reads settings, so a partial write would revert the rest."""
         saved = []
         controls = self._controls(saved)
-        controls.set_values("small", "cuda", "int8")
+        controls.set_values("small", "cpu", "int8")
 
         with patch(
             "ui_qt.widgets.local_engine_controls.settings_manager"
@@ -1374,7 +1374,7 @@ class TestLocalEngineFields:
 
         assert saved[-1] == {
             SettingsKey.WHISPER_MODEL: "medium",
-            SettingsKey.WHISPER_DEVICE: "cuda",
+            SettingsKey.WHISPER_DEVICE: "cpu",
             SettingsKey.WHISPER_COMPUTE_TYPE: "int8",
         }
 
@@ -1383,10 +1383,10 @@ class TestLocalEngineFields:
         reloads = []
         controls.engine_settings_changed.connect(lambda: reloads.append(True))
 
-        controls.set_values("small", "cuda", "float16")
+        controls.set_values("small", "cpu", "float16")
         assert reloads == []
         assert controls.model_combo.currentText() == "small"
-        assert controls.device_combo.currentText() == "cuda"
+        assert controls.device_combo.currentText() == "cpu"
         assert controls.compute_combo.currentText() == "float16"
 
     def test_busy_locks_every_field(self):
