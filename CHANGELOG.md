@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Settings → General → Font size** - Small, Default, Large, and Extra large scale text in OpenWhisper windows and dialogs immediately. The main window's title bar grows when a larger size needs the room, so the File / View / Help menu stays visible. The live transcription overlay keeps its own size under Recording.
 
+### Changed
+- **Learned rules explains why it is locked** - When AI cleanup is off, Settings → Learned rules shows a notice that teaching and editing stay locked until Clean up transcripts with AI is on, with a link that opens that Cleanup toggle.
+- **Every Settings page uses the same tile design** - Cleanup, Learned rules, Meeting intelligence, API keys, and Advanced now match General, Recording, and the other redesigned destinations: one rounded tile per setting with an icon, a title, and its explanation, grouped under uppercase captions. The bare checkboxes, the purple model summary cards, and the Learned rules banner are gone; the text model summary now carries the Thinking level control, the cleanup prompt has its own tile with the editor buttons, the API key form is split into a Credential tile and a New key tile, and Developer mode and the Hugging Face policy are tiles with their explanations attached.
+- **Downloads window matches Model Manager** - Model and component rows, the search and filter controls, and the toolbar buttons use the same slate surfaces and borders as the Settings tiles instead of the older translucent grey, the Components section gets a caption of its own, and the batch download button sits at toolbar height.
+- **Settings pages no longer sit in a grey box** - Every Settings section (and Model Manager page) now shares the dialog's dark surface instead of painting a lighter rectangle behind its cards.
+- **Number steppers show real up/down chevrons** - Settings fields such as Number to keep, Preview font size, and Dashboard port use a stacked chevron rail instead of the two-border corner marks that did not read as increase/decrease.
+
 ## [2.5.0] - 2026-09-02
 
 ### Added
@@ -31,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings pages are laid out as tiles** - General, Recording, Meeting intelligence, After the meeting, and Dashboard now present each option as a rounded card with an icon, a title, and a visible description in place of a tooltip, grouped under short captions. Toggle tiles switch when clicked anywhere and carry a blue tint while on; value tiles hold their combo or spin box, and dependent controls such as the knowledge-folder path, the preview font size, and the network-sharing warning live inside the tile that owns them so they dim together.
 
 ### Fixed
+- **Dashboard port no longer clips "Automatic"** - The stacked chevron rail on number fields is now reserved in the spin box size, so the special Automatic label on Settings → Dashboard stays fully visible.
 - **Interrupted Meeting Mode audio recovers on Windows** - Recovery now flushes a reconstructed WAV through a Windows-compatible writable descriptor before atomically publishing it. The previous read-only descriptor made Windows reject the durability flush and leave the recoverable PCM tail stranded.
 
 ### Removed

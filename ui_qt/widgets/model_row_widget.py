@@ -38,53 +38,54 @@ logger = logging.getLogger(__name__)
 # otherwise paints dark rectangles on top of the lighter row fill.
 _ROW_STYLE = """
     QFrame#modelRow {
-        background-color: rgba(44, 44, 46, 0.55);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 10px;
+        background-color: #141b22;
+        border: 1px solid #303b45;
+        border-radius: 12px;
     }
     QFrame#modelRow:hover {
-        background-color: rgba(58, 58, 60, 0.65);
-        border: 1px solid rgba(10, 132, 255, 0.28);
+        background-color: #182028;
+        border: 1px solid #3d4a57;
     }
     QFrame#modelRow:focus {
-        border: 1px solid rgba(10, 132, 255, 0.65);
+        border: 1px solid #2a5382;
         outline: none;
     }
-    QFrame#modelRow[selected="true"] {
-        background-color: rgba(58, 58, 60, 0.85);
-        border: 1px solid rgba(10, 132, 255, 0.55);
-    }
     QFrame#modelRow[active="true"] {
-        background-color: rgba(10, 132, 255, 0.12);
-        border: 1px solid rgba(10, 132, 255, 0.22);
+        background-color: #12222f;
+        border: 1px solid #245079;
     }
     QFrame#modelRow[active="true"]:hover {
-        background-color: rgba(10, 132, 255, 0.18);
-        border: 1px solid rgba(10, 132, 255, 0.35);
+        background-color: #15283a;
+        border: 1px solid #2f6396;
+    }
+    QFrame#modelRow[selected="true"],
+    QFrame#modelRow[selected="true"]:hover {
+        background-color: #17263a;
+        border: 1px solid #3a6aa3;
     }
     QLabel#modelRowName {
-        color: #f5f5f7;
+        color: #e8edf2;
         background-color: transparent;
         border: none;
         font-weight: 600;
     }
     QLabel#modelRowSummary {
-        color: #8e8e93;
+        color: #98a3b0;
         background-color: transparent;
         border: none;
     }
     QLabel#modelRowSize {
-        color: #aeaeb2;
+        color: #c7d0d9;
         background-color: transparent;
         border: none;
     }
     QLabel#modelRowSize[muted="true"] {
-        color: #636366;
+        color: #6f7b87;
     }
     QLabel#modelRowBadge {
-        background-color: rgba(142, 142, 147, 0.14);
-        color: #aeaeb2;
-        border: 1px solid rgba(142, 142, 147, 0.28);
+        background-color: rgba(141, 154, 167, 0.12);
+        color: #aeb8c3;
+        border: 1px solid rgba(141, 154, 167, 0.28);
         border-radius: 6px;
         padding: 2px 8px;
         font-size: 10px;
@@ -139,34 +140,34 @@ _ROW_STYLE = """
         border: 1px solid rgba(10, 132, 255, 0.5);
     }
     QPushButton#modelDownloadButton:disabled {
-        background-color: rgba(58, 58, 60, 0.4);
-        color: #636366;
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background-color: #1b252e;
+        color: #5d6873;
+        border: 1px solid #263038;
     }
     QPushButton#modelSetActiveButton {
-        background-color: rgba(255, 255, 255, 0.06);
-        color: #f5f5f7;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: #1b252e;
+        color: #e8edf2;
+        border: 1px solid #35404a;
     }
     QPushButton#modelSetActiveButton:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(10, 132, 255, 0.35);
+        background-color: #22303b;
+        border: 1px solid #4b5966;
     }
     QPushButton#modelDeleteButton {
         background-color: transparent;
         color: #ff6961;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        border: 1px solid #3b4752;
     }
     QPushButton#modelDeleteButton:hover {
         background-color: rgba(255, 69, 58, 0.14);
         border: 1px solid rgba(255, 69, 58, 0.45);
     }
     QPushButton#modelDeleteButton:disabled {
-        color: #636366;
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        color: #5d6873;
+        border: 1px solid #263038;
     }
     QProgressBar#modelRowProgress {
-        background-color: rgba(255, 255, 255, 0.08);
+        background-color: #243039;
         border: none;
         border-radius: 3px;
         min-height: 6px;

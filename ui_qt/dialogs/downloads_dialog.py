@@ -103,7 +103,7 @@ class BatchDownloadDialog(QDialog):
         layout.addWidget(total_label)
         self.total_label = total_label
 
-        destination_caption = QLabel("Destination")
+        destination_caption = QLabel("DESTINATION")
         destination_caption.setObjectName("downloadsEyebrow")
         layout.addWidget(destination_caption)
         # Eliding keeps a long cache path from stretching the window; the
@@ -229,6 +229,7 @@ class DownloadsDialog(QDialog):
         header_row.addStretch()
 
         self.download_all_button = Button("Download all…")
+        self.download_all_button.setObjectName("downloadsToolButton")
         self._compact_button(self.download_all_button, 0)
         self.download_all_button.setToolTip(
             "Queue every model that is not downloaded yet"
@@ -237,6 +238,7 @@ class DownloadsDialog(QDialog):
         header_row.addWidget(self.download_all_button)
 
         open_folder_btn = Button("Open folder")
+        open_folder_btn.setObjectName("downloadsToolButton")
         self._compact_button(open_folder_btn, 110)
         open_folder_btn.setToolTip(
             "Open the folder where downloaded models are stored"
@@ -273,6 +275,7 @@ class DownloadsDialog(QDialog):
         self.message_label.setObjectName("downloadsMessage")
         self.message_row.addWidget(self.message_label, stretch=1)
         self.stop_batch_button = Button("Stop after current")
+        self.stop_batch_button.setObjectName("downloadsToolButton")
         self._compact_button(self.stop_batch_button, 0)
         self.stop_batch_button.setToolTip(
             "Finish the model now downloading, then stop the queue"
@@ -437,7 +440,7 @@ class DownloadsDialog(QDialog):
         outer.setContentsMargins(16, 14, 16, 14)
         outer.setSpacing(10)
 
-        eyebrow = QLabel("Selected model")
+        eyebrow = QLabel("SELECTED MODEL")
         eyebrow.setObjectName("downloadsEyebrow")
         outer.addWidget(eyebrow)
 
@@ -547,25 +550,22 @@ class DownloadsDialog(QDialog):
         strip = QFrame()
         strip.setObjectName("downloadsComponentStrip")
         layout = QVBoxLayout(strip)
-        layout.setContentsMargins(0, 10, 0, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 12, 0, 12)
+        layout.setSpacing(8)
 
         infos = component_coordinator.list_components()
         if not infos:
             strip.setVisible(False)
             return strip
 
-        heading_row = QHBoxLayout()
-        heading_row.setSpacing(10)
-        heading = QLabel("Components")
+        heading = QLabel("COMPONENTS")
         heading.setObjectName("downloadsEyebrow")
-        heading_row.addWidget(heading, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(heading)
         caption = WrappedLabel(
             "Optional add-ons, downloaded on demand so the installer stays small."
         )
         caption.setObjectName("infoLabel")
-        heading_row.addWidget(caption, stretch=1)
-        layout.addLayout(heading_row)
+        layout.addWidget(caption)
 
         for info in infos:
             row = ComponentRowWidget(info.component_id)

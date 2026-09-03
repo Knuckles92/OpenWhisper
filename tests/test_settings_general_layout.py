@@ -30,7 +30,7 @@ from ui_qt.dialogs.settings_dialog import (
     SettingsDialog,
 )
 from ui_qt.utils.theme_manager import ThemeManager
-from ui_qt.widgets.setting_tile import FieldTile, SettingTile, TileBase
+from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile, TileBase
 from ui_qt.widgets.nav_rail import NavRail
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -108,12 +108,90 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.meeting_bind_warning.parentWidget(),
                 dialog.meeting_bind_tile.body,
             )
-            self.assertGreaterEqual(dialog.max_recordings_spinbox.minimumWidth(), 110)
+            self.assertGreaterEqual(dialog.max_recordings_spinbox.minimumWidth(), 120)
             self.assertGreaterEqual(
-                dialog.streaming_font_size_spinbox.minimumWidth(), 110
+                dialog.streaming_font_size_spinbox.minimumWidth(), 120
+            )
+            port = dialog.meeting_port_spinbox
+            self.assertEqual(port.specialValueText(), "Automatic")
+            port.adjustSize()
+            port.show()
+            self.app.processEvents()
+            edit = port.lineEdit()
+            self.assertIsNotNone(edit)
+            margins = edit.textMargins()
+            available = edit.width() - margins.left() - margins.right()
+            self.assertGreaterEqual(
+                available,
+                port.fontMetrics().horizontalAdvance("Automatic"),
+            )
+            self.assertEqual(
+                dialog.max_recordings_spinbox.up_button.objectName(), "spinStepUp"
+            )
+            self.assertEqual(
+                dialog.max_recordings_spinbox.down_button.objectName(),
+                "spinStepDown",
             )
             helpers = recording.findChildren(WrappedLabel)
             self.assertGreaterEqual(len(helpers), 2)
+            cleanup = dialog._pages[CLEANUP]
+            self.assertEqual(len(cleanup.findChildren(SettingTile)), 1)
+            self.assertEqual(len(cleanup.findChildren(FieldTile)), 1)
+            self.assertEqual(len(cleanup.findChildren(InfoTile)), 1)
+            self.assertIs(
+                dialog.transcript_cleanup_check,
+                dialog.transcript_cleanup_tile.checkbox,
+            )
+            self.assertIs(
+                dialog.cleanup_prompt_tile.control, dialog.cleanup_prompt_edit
+            )
+            self.assertIs(
+                dialog.cleanup_reasoning_combo.parentWidget(),
+                dialog.cleanup_model_tile.body,
+            )
+            self.assertLessEqual(dialog.cleanup_prompt_edit.maximumHeight(), 120)
+            rules = dialog._pages[CLEANUP_RULES]
+            self.assertEqual(len(rules.findChildren(InfoTile)), 3)
+            self.assertEqual(len(rules.findChildren(SettingTile)), 0)
+            self.assertIs(dialog.cleanup_rules_gate_tile.parentWidget(), rules)
+            self.assertIs(
+                dialog.open_cleanup_btn.parentWidget(),
+                dialog.cleanup_rules_gate_tile,
+            )
+            self.assertIs(
+                dialog.cleanup_rule_input.parentWidget(),
+                dialog.cleanup_rules_composer_tile.body,
+            )
+            self.assertIs(
+                dialog.cleanup_rules_list.parentWidget(),
+                dialog.cleanup_rules_library_tile.body,
+            )
+            self.assertEqual(len(intelligence.findChildren(InfoTile)), 1)
+            self.assertIs(
+                dialog.meeting_model_summary.parentWidget(),
+                dialog.meeting_model_tile.body,
+            )
+            api_keys = dialog._pages[API_KEYS]
+            self.assertEqual(len(api_keys.findChildren(FieldTile)), 1)
+            self.assertEqual(len(api_keys.findChildren(InfoTile)), 1)
+            self.assertIs(
+                dialog.api_key_credential_tile.control, dialog.api_key_combo
+            )
+            self.assertIs(
+                dialog.api_key_edit.parentWidget().parentWidget(),
+                dialog.api_key_entry_tile.body,
+            )
+            self.assertIs(
+                dialog.api_key_store_caption,
+                dialog.api_key_entry_tile.description_label,
+            )
+            advanced = dialog._pages[ADVANCED]
+            self.assertEqual(len(advanced.findChildren(SettingTile)), 1)
+            self.assertEqual(len(advanced.findChildren(FieldTile)), 1)
+            self.assertIs(
+                dialog.developer_mode_check, dialog.developer_mode_tile.checkbox
+            )
+            self.assertIs(dialog.hf_policy_tile.control, dialog.hf_policy_combo)
             hotkeys = dialog._pages[HOTKEYS]
             shortcut_cards = [
                 card
@@ -153,6 +231,53 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog.update_check_check.setChecked(False)
             self.assertFalse(dialog.update_notify_tile.isEnabled())
             self.assertFalse(dialog.update_notify_check.isEnabled())
+        finally:
+            dialog.close()
+
+    def test_cleanup_toggle_gates_the_prompt_and_rule_tiles(self):
+        with patch.object(SettingsDialog, "_load_settings", lambda self: None):
+            dialog = SettingsDialog()
+        try:
+            dialog.transcript_cleanup_check.setChecked(True)
+            self.assertTrue(dialog.cleanup_prompt_tile.isEnabled())
+            self.assertTrue(dialog.cleanup_rules_composer_tile.isEnabled())
+            self.assertTrue(dialog.cleanup_rules_gate_tile.isHidden())
+            dialog.transcript_cleanup_check.setChecked(False)
+            for tile in (
+                dialog.cleanup_prompt_tile,
+                dialog.cleanup_rules_composer_tile,
+                dialog.cleanup_rules_library_tile,
+            ):
+                self.assertFalse(tile.isEnabled())
+            self.assertFalse(dialog.cleanup_reasoning_combo.isEnabled())
+            self.assertFalse(dialog.cleanup_rule_add_btn.isEnabled())
+            # The model summary stays live so Model Manager is still reachable.
+            self.assertTrue(dialog.cleanup_model_tile.isEnabled())
+            self.assertTrue(dialog.open_model_manager_btn.isEnabled())
+            self.assertFalse(dialog.cleanup_rules_gate_tile.isHidden())
+            self.assertTrue(dialog.cleanup_rules_gate_tile.isEnabled())
+            self.assertTrue(dialog.open_cleanup_btn.isEnabled())
+            self.assertIn(
+                "Clean up transcripts with AI",
+                dialog.cleanup_rules_gate_tile.description_label.text(),
+            )
+        finally:
+            dialog.close()
+
+    def test_learned_rules_gate_link_opens_cleanup(self):
+        with patch.object(SettingsDialog, "_load_settings", lambda self: None):
+            dialog = SettingsDialog()
+        try:
+            dialog.show()
+            self.app.processEvents()
+            dialog.transcript_cleanup_check.setChecked(False)
+            dialog.rail.select(CLEANUP_RULES)
+            self.assertEqual(dialog.rail.current_key(), CLEANUP_RULES)
+            dialog.open_cleanup_btn.click()
+            self.app.processEvents()
+            self.assertEqual(dialog.rail.current_key(), CLEANUP)
+            self.assertIs(dialog.stack.currentWidget(), dialog._pages[CLEANUP])
+            self.assertTrue(dialog.transcript_cleanup_check.hasFocus())
         finally:
             dialog.close()
 

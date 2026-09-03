@@ -9,7 +9,6 @@ from typing import Callable, Dict, Optional
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -100,6 +99,7 @@ from ui_qt.widgets import (
     ElidingComboBox,
     NoWheelSpinBox,
     FieldTile,
+    InfoTile,
     PrimaryButton,
     SettingTile,
     WrappedLabel,
@@ -158,8 +158,9 @@ class SettingsDialog(QDialog):
     """
 
     #: 810 clears General after the font-size tile (the tallest destination
-    #: under themed fonts), plus chrome. Cleanup is next at 566; Learned
-    #: rules is 493 once the empty state and the rule list are exclusive.
+    #: under themed fonts), plus chrome. Cleanup is next at 587 with the
+    #: prompt editor capped; Learned rules is 433 once the empty state and
+    #: the rule list are exclusive.
     DEFAULT_SIZE = QSize(980, 810)
     MINIMUM_SIZE = QSize(840, 750)
 
@@ -618,8 +619,8 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.setMinimum(1)
         self.max_recordings_spinbox.setMaximum(1000)
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
-        self.max_recordings_spinbox.setMinimumHeight(36)
-        self.max_recordings_spinbox.setMinimumWidth(110)
+        self.max_recordings_spinbox.setMinimumHeight(40)
+        self.max_recordings_spinbox.setMinimumWidth(120)
         self.max_recordings_spinbox.valueChanged.connect(
             self._on_max_recordings_changed
         )
@@ -649,8 +650,8 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_spinbox.setMaximum(48)
         self.streaming_font_size_spinbox.setSuffix(" pt")
         self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
-        self.streaming_font_size_spinbox.setMinimumHeight(36)
-        self.streaming_font_size_spinbox.setMinimumWidth(110)
+        self.streaming_font_size_spinbox.setMinimumHeight(40)
+        self.streaming_font_size_spinbox.setMinimumWidth(120)
         self.streaming_font_size_spinbox.valueChanged.connect(
             self._on_streaming_font_changed
         )
@@ -680,26 +681,24 @@ class SettingsDialog(QDialog):
         return form
 
     def _build_cleanup_page(self, layout: QVBoxLayout) -> None:
-        self.transcript_cleanup_check = QCheckBox(
-            "Clean up transcript with AI after transcription"
+        self.transcript_cleanup_tile = SettingTile(
+            "Clean up transcripts with AI",
+            "Runs the selected chat model on each dictated transcript after "
+            "transcription, together with your learned rules. The provider's "
+            "key lives under API keys.",
+            _design_icon("stack-purple.svg"),
         )
+        self.transcript_cleanup_check = self.transcript_cleanup_tile.checkbox
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
-        layout.addWidget(self.transcript_cleanup_check)
+        self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
 
-        model_card = QFrame()
-        model_card.setObjectName("cleanupModelSummaryCard")
-        model_card_layout = QVBoxLayout(model_card)
-        model_card_layout.setContentsMargins(16, 12, 16, 12)
-        model_card_layout.setSpacing(6)
-        model_header = QHBoxLayout()
-        model_header.setContentsMargins(0, 0, 0, 0)
-        model_header.setSpacing(8)
-        model_eyebrow = QLabel("TEXT MODEL")
-        model_eyebrow.setObjectName("cleanupModelSummaryEyebrow")
-        model_header.addWidget(model_eyebrow)
-        model_header.addStretch()
+        self.cleanup_model_tile = InfoTile(
+            "Text model",
+            "Provider and model selection live in Model Manager → On-demand.",
+            _design_icon("box-blue.svg"),
+        )
         self.open_model_manager_btn = QPushButton("Open Model Manager…")
         self.open_model_manager_btn.setObjectName("cleanupModelManagerLink")
         self.open_model_manager_btn.setFlat(True)
@@ -711,20 +710,13 @@ class SettingsDialog(QDialog):
         self.open_model_manager_btn.clicked.connect(
             lambda: self.model_manager_requested.emit("text")
         )
-        model_header.addWidget(self.open_model_manager_btn)
-        model_card_layout.addLayout(model_header)
+        self.cleanup_model_tile.add_trailing(self.open_model_manager_btn)
         self.cleanup_model_summary = QLabel("")
         self.cleanup_model_summary.setObjectName("cleanupModelSummary")
         self.cleanup_model_summary.setWordWrap(True)
-        model_card_layout.addWidget(self.cleanup_model_summary)
-        model_hint = QLabel(
-            "Provider and model selection live in Model Manager → On-demand."
-        )
-        model_hint.setObjectName("cleanupModelSummaryHint")
-        model_hint.setWordWrap(True)
-        model_card_layout.addWidget(model_hint)
-        layout.addWidget(model_card)
+        self.cleanup_model_tile.add_body(self.cleanup_model_summary)
 
+        self.cleanup_reasoning_label = QLabel("Thinking level:")
         self.cleanup_reasoning_combo = ElidingComboBox()
         self.cleanup_reasoning_combo.addItem("Off", TranscriptCleanupReasoning.OFF)
         self.cleanup_reasoning_combo.addItem("Low", TranscriptCleanupReasoning.LOW)
@@ -733,95 +725,81 @@ class SettingsDialog(QDialog):
         )
         self.cleanup_reasoning_combo.addItem("High", TranscriptCleanupReasoning.HIGH)
         self.cleanup_reasoning_combo.setMinimumHeight(40)
+        self.cleanup_reasoning_combo.setMinimumWidth(160)
         self.cleanup_reasoning_combo.currentIndexChanged.connect(
             self._on_cleanup_reasoning_changed
         )
-        layout.addWidget(
-            self._field("Thinking level", self.cleanup_reasoning_combo)
+        self.cleanup_model_tile.add_body_layout(
+            self._spin_form(
+                self.cleanup_reasoning_label, self.cleanup_reasoning_combo
+            )
         )
         self.cleanup_reasoning_info = self._caption(
-            "Requests extra thinking effort from reasoning models "
-            "(e.g. o4-mini). Leave Off for regular chat models."
+            "Extra thinking effort for reasoning models such as o4-mini. "
+            "Leave Off for regular chat models."
         )
-        layout.addWidget(self.cleanup_reasoning_info)
+        self.cleanup_model_tile.add_body(self.cleanup_reasoning_info)
+        self._tile_group(layout, "Model", [self.cleanup_model_tile])
 
         self.cleanup_prompt_edit = QTextEdit()
         self.cleanup_prompt_edit.setAcceptRichText(False)
         self.cleanup_prompt_edit.setFont(QFont("Segoe UI", 11))
-        self.cleanup_prompt_edit.setMinimumHeight(80)
+        self.cleanup_prompt_edit.setMinimumHeight(96)
+        self.cleanup_prompt_edit.setMaximumHeight(120)
         self.cleanup_prompt_edit.setPlaceholderText(
             "Instructions for how the AI should clean up transcripts…"
         )
         self.cleanup_prompt_edit.installEventFilter(self)
-        layout.addWidget(self._field("Cleanup prompt", self.cleanup_prompt_edit))
+        self.cleanup_prompt_tile = FieldTile(
+            "Cleanup prompt",
+            "Instructions the model follows when rewriting a transcript.",
+            self.cleanup_prompt_edit,
+            _design_icon("typography-blue.svg"),
+        )
 
         cleanup_btn_row = QHBoxLayout()
+        cleanup_btn_row.setContentsMargins(0, 0, 0, 0)
         cleanup_btn_row.setSpacing(8)
         self.cleanup_prompt_edit_btn = Button("Open editor…")
+        self._compact_button(self.cleanup_prompt_edit_btn, 120)
         self.cleanup_prompt_edit_btn.clicked.connect(self._open_cleanup_prompt_editor)
         cleanup_btn_row.addWidget(self.cleanup_prompt_edit_btn)
         self.cleanup_prompt_reset_btn = Button("Reset to default")
+        self._compact_button(self.cleanup_prompt_reset_btn, 140)
         self.cleanup_prompt_reset_btn.clicked.connect(self._reset_cleanup_prompt)
         cleanup_btn_row.addWidget(self.cleanup_prompt_reset_btn)
         cleanup_btn_row.addStretch()
-        layout.addLayout(cleanup_btn_row)
-
-        self.cleanup_prompt_info = self._caption(
-            "Runs the selected chat model on each transcript after "
-            "transcription. Built-in OpenAI/OpenRouter keys and any custom "
-            "endpoint variable come from the environment or .env. Edit the "
-            "prompt to change cleanup style (e.g. bullets, email tone)."
-        )
-        layout.addWidget(self.cleanup_prompt_info)
+        self.cleanup_prompt_tile.add_body_layout(cleanup_btn_row)
+        self._tile_group(layout, "Prompt", [self.cleanup_prompt_tile])
 
     def _build_cleanup_rules_page(self, layout: QVBoxLayout) -> None:
-        hero = QFrame()
-        hero.setObjectName("cleanupRulesHero")
-        hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(14, 10, 14, 10)
-        hero_layout.setSpacing(10)
-        hero_copy = QVBoxLayout()
-        hero_copy.setContentsMargins(0, 0, 0, 0)
-        hero_copy.setSpacing(4)
-        eyebrow = QLabel("PERSONAL CLEANUP PROFILE")
-        eyebrow.setObjectName("cleanupRulesEyebrow")
-        hero_copy.addWidget(eyebrow)
-        title = QLabel("Make every transcript sound like you")
-        title.setObjectName("cleanupRulesTitle")
-        title.setWordWrap(True)
-        hero_copy.addWidget(title)
-        self.cleanup_rules_info = QLabel(
-            "Teach preferred spellings, terminology, and formatting. These "
-            "instructions apply automatically whenever AI cleanup runs."
+        self.cleanup_rules_gate_tile = InfoTile(
+            "AI cleanup is off",
+            "Learned rules only apply when cleanup runs. Teaching and "
+            "editing stay locked until you turn on Clean up transcripts "
+            "with AI.",
+            _design_icon("info-warning.svg"),
         )
-        self.cleanup_rules_info.setObjectName("cleanupRulesDescription")
-        self.cleanup_rules_info.setWordWrap(True)
-        hero_copy.addWidget(self.cleanup_rules_info)
-        hero_layout.addLayout(hero_copy, stretch=1)
-        hero_mark = QLabel("AI")
-        hero_mark.setObjectName("cleanupRulesHeroMark")
-        hero_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hero_mark.setFixedSize(44, 44)
-        hero_layout.addWidget(hero_mark, alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(hero)
-
-        composer = QFrame()
-        composer.setObjectName("cleanupRulesCard")
-        composer_layout = QVBoxLayout(composer)
-        composer_layout.setContentsMargins(14, 10, 14, 10)
-        composer_layout.setSpacing(6)
-        composer_title = QLabel("Teach a new rule")
-        composer_title.setObjectName("cleanupRulesSectionTitle")
-        composer_layout.addWidget(composer_title)
-        composer_hint = QLabel(
-            "Write a natural instruction. The AI will turn it into a clear, "
-            "reusable rule before saving."
+        self.cleanup_rules_gate_tile.setProperty("kind", "notice")
+        self.open_cleanup_btn = QPushButton("Open Cleanup")
+        self.open_cleanup_btn.setObjectName("cleanupRulesOpenCleanupLink")
+        self.open_cleanup_btn.setFlat(True)
+        self.open_cleanup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_cleanup_btn.setToolTip(
+            "Open Cleanup to turn on Clean up transcripts with AI"
         )
-        composer_hint.setObjectName("cleanupRulesSectionHint")
-        composer_hint.setWordWrap(True)
-        composer_layout.addWidget(composer_hint)
+        self.open_cleanup_btn.clicked.connect(self.focus_cleanup_toggle)
+        self.cleanup_rules_gate_tile.add_trailing(self.open_cleanup_btn)
+        layout.addWidget(self.cleanup_rules_gate_tile)
 
+        self.cleanup_rules_composer_tile = InfoTile(
+            "Teach a new rule",
+            "Type or dictate a natural instruction. The AI turns it into a "
+            "clear, reusable rule before saving.",
+            _design_icon("plus-blue.svg"),
+        )
         rule_input_row = QHBoxLayout()
+        rule_input_row.setContentsMargins(0, 0, 0, 0)
         rule_input_row.setSpacing(8)
         self.cleanup_rule_input = QLineEdit()
         self.cleanup_rule_input.setObjectName("cleanupRuleInput")
@@ -839,34 +817,30 @@ class SettingsDialog(QDialog):
         )
         self.cleanup_rule_mic_btn.clicked.connect(self._toggle_rule_dictation)
         rule_input_row.addWidget(self.cleanup_rule_mic_btn)
-        self.cleanup_rule_add_btn = PrimaryButton("+ Add rule")
+        self.cleanup_rule_add_btn = PrimaryButton("Add rule")
         self.cleanup_rule_add_btn.setObjectName("cleanupRuleAddButton")
-        self.cleanup_rule_add_btn.set_base_minimum_size(112, 40)
+        self.cleanup_rule_add_btn.set_base_minimum_size(104, 40)
         self.cleanup_rule_add_btn.clicked.connect(self._add_cleanup_rule)
         rule_input_row.addWidget(self.cleanup_rule_add_btn)
-        composer_layout.addLayout(rule_input_row)
+        self.cleanup_rules_composer_tile.add_body_layout(rule_input_row)
         self.cleanup_rule_status = QLabel("")
         self.cleanup_rule_status.setObjectName("cleanupRuleStatus")
         self.cleanup_rule_status.setWordWrap(True)
-        composer_layout.addWidget(self.cleanup_rule_status)
-        layout.addWidget(composer)
+        self.cleanup_rules_composer_tile.add_body(self.cleanup_rule_status)
+        self._tile_group(
+            layout, "Teach a rule", [self.cleanup_rules_composer_tile], columns=1
+        )
 
-        library = QFrame()
-        library.setObjectName("cleanupRulesCard")
-        library_layout = QVBoxLayout(library)
-        library_layout.setContentsMargins(14, 10, 14, 10)
-        library_layout.setSpacing(6)
-        library_header = QHBoxLayout()
-        library_header.setContentsMargins(0, 0, 0, 0)
-        self.cleanup_rules_label = QLabel("Your rule library")
-        self.cleanup_rules_label.setObjectName("cleanupRulesSectionTitle")
-        library_header.addWidget(self.cleanup_rules_label)
-        library_header.addStretch()
+        self.cleanup_rules_library_tile = InfoTile(
+            "Your rules",
+            "Select a rule or double-click it to edit. Every rule applies "
+            "whenever AI cleanup runs.",
+            _design_icon("stack-slate.svg"),
+        )
         self.cleanup_rules_count = QLabel()
         self.cleanup_rules_count.setObjectName("cleanupRulesCount")
         self.cleanup_rules_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        library_header.addWidget(self.cleanup_rules_count)
-        library_layout.addLayout(library_header)
+        self.cleanup_rules_library_tile.add_trailing(self.cleanup_rules_count)
 
         self.cleanup_rules_list = QListWidget()
         self.cleanup_rules_list.setObjectName("cleanupRulesList")
@@ -879,7 +853,7 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_list.itemDoubleClicked.connect(
             lambda _item: self._edit_cleanup_rule()
         )
-        library_layout.addWidget(self.cleanup_rules_list)
+        self.cleanup_rules_library_tile.add_body(self.cleanup_rules_list)
 
         self.cleanup_rules_empty = QLabel(
             "No rules yet\n\nAdd your first instruction above to start "
@@ -889,14 +863,10 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cleanup_rules_empty.setWordWrap(True)
         self.cleanup_rules_empty.setMinimumHeight(88)
-        library_layout.addWidget(self.cleanup_rules_empty)
-
-        interaction_hint = QLabel("Select a rule or double-click it to edit")
-        interaction_hint.setObjectName("cleanupRulesInteractionHint")
-        interaction_hint.setWordWrap(True)
-        library_layout.addWidget(interaction_hint)
+        self.cleanup_rules_library_tile.add_body(self.cleanup_rules_empty)
 
         rule_btn_row = QHBoxLayout()
+        rule_btn_row.setContentsMargins(0, 0, 0, 0)
         rule_btn_row.setSpacing(8)
         rule_btn_row.addStretch()
         self.cleanup_rule_edit_btn = Button("Edit rule")
@@ -909,23 +879,19 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_delete_btn.set_base_minimum_size(88, 34)
         self.cleanup_rule_delete_btn.clicked.connect(self._delete_cleanup_rule)
         rule_btn_row.addWidget(self.cleanup_rule_delete_btn)
-        library_layout.addLayout(rule_btn_row)
-        layout.addWidget(library)
-        self._update_cleanup_rule_controls()
+        self.cleanup_rules_library_tile.add_body_layout(rule_btn_row)
+        self._tile_group(
+            layout, "Rule library", [self.cleanup_rules_library_tile], columns=1
+        )
+        self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        model_card = QFrame()
-        model_card.setObjectName("meetingModelSummaryCard")
-        model_card_layout = QVBoxLayout(model_card)
-        model_card_layout.setContentsMargins(16, 12, 16, 12)
-        model_card_layout.setSpacing(6)
-        model_header = QHBoxLayout()
-        model_header.setContentsMargins(0, 0, 0, 0)
-        model_header.setSpacing(8)
-        model_eyebrow = QLabel("MEETING MODELS")
-        model_eyebrow.setObjectName("meetingModelSummaryEyebrow")
-        model_header.addWidget(model_eyebrow)
-        model_header.addStretch()
+        self.meeting_model_tile = InfoTile(
+            "Meeting models",
+            "Whisper, spoken language, speaker identification, the chat "
+            "model, and the agent core live in Model Manager → Meeting Mode.",
+            _design_icon("box-blue.svg"),
+        )
         self.open_meeting_model_manager_btn = QPushButton("Open Model Manager…")
         self.open_meeting_model_manager_btn.setObjectName(
             "meetingModelManagerLink"
@@ -941,20 +907,12 @@ class SettingsDialog(QDialog):
         self.open_meeting_model_manager_btn.clicked.connect(
             lambda: self.model_manager_requested.emit("meeting")
         )
-        model_header.addWidget(self.open_meeting_model_manager_btn)
-        model_card_layout.addLayout(model_header)
+        self.meeting_model_tile.add_trailing(self.open_meeting_model_manager_btn)
         self.meeting_model_summary = QLabel("")
         self.meeting_model_summary.setObjectName("meetingModelSummary")
         self.meeting_model_summary.setWordWrap(True)
-        model_card_layout.addWidget(self.meeting_model_summary)
-        model_hint = QLabel(
-            "Whisper, spoken language, speaker identification, the chat "
-            "model, and the agent core live in Model Manager → Meeting Mode."
-        )
-        model_hint.setObjectName("meetingModelSummaryHint")
-        model_hint.setWordWrap(True)
-        model_card_layout.addWidget(model_hint)
-        layout.addWidget(model_card)
+        self.meeting_model_tile.add_body(self.meeting_model_summary)
+        self._tile_group(layout, "Models", [self.meeting_model_tile], columns=1)
 
         self.meeting_past_recall_tile = SettingTile(
             "Search past transcripts",
@@ -1163,8 +1121,8 @@ class SettingsDialog(QDialog):
         self.meeting_port_spinbox.setMaximum(65535)
         self.meeting_port_spinbox.setSpecialValueText("Automatic")
         self.meeting_port_spinbox.setValue(config.MEETING_SERVER_PORT)
-        self.meeting_port_spinbox.setMinimumHeight(36)
-        self.meeting_port_spinbox.setMinimumWidth(110)
+        self.meeting_port_spinbox.setMinimumHeight(40)
+        self.meeting_port_spinbox.setMinimumWidth(120)
         self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
         self.meeting_port_tile = FieldTile(
             "Dashboard port",
@@ -1183,9 +1141,16 @@ class SettingsDialog(QDialog):
         self.api_key_combo.currentIndexChanged.connect(
             self._on_api_key_credential_changed
         )
-        layout.addWidget(self._field("Credential", self.api_key_combo))
+        self.api_key_credential_tile = FieldTile(
+            "Credential",
+            "One entry per endpoint that needs a key. Pick the one to view, "
+            "save, or test.",
+            self.api_key_combo,
+            _design_icon("key-blue.svg"),
+        )
 
         status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
         status_row.setSpacing(8)
         self.api_key_status_icon = QLabel()
         self.api_key_status_icon.setObjectName("apiKeyStatusIcon")
@@ -1196,7 +1161,19 @@ class SettingsDialog(QDialog):
             self.api_key_status_icon, alignment=Qt.AlignmentFlag.AlignTop
         )
         status_row.addWidget(self.api_key_status, stretch=1)
-        layout.addLayout(status_row)
+        self.api_key_credential_tile.add_body_layout(status_row)
+        self.api_key_uses_caption = self._caption("")
+        self.api_key_credential_tile.add_body(self.api_key_uses_caption)
+        self._tile_group(
+            layout, "Credential", [self.api_key_credential_tile], columns=1
+        )
+
+        self.api_key_entry_tile = InfoTile(
+            "Add or replace a key",
+            self._api_key_store_copy(),
+            _design_icon("plus-blue.svg"),
+        )
+        self.api_key_store_caption = self.api_key_entry_tile.description_label
 
         # Password echo also makes Qt refuse copy/cut from the field, and the
         # input-method hints keep IMEs and predictive text from retaining it.
@@ -1217,17 +1194,21 @@ class SettingsDialog(QDialog):
         self.api_key_show_button = Button("Show")
         self.api_key_show_button.setObjectName("apiKeyShowButton")
         self.api_key_show_button.setCheckable(True)
-        self._compact_button(self.api_key_show_button, 80)
+        self.api_key_show_button.set_base_minimum_size(80, 40)
+        self.api_key_show_button.setMinimumHeight(40)
+        self.api_key_show_button.setMaximumHeight(40)
         self.api_key_show_button.toggled.connect(self._on_api_key_show_toggled)
         input_row = QWidget()
+        input_row.setObjectName("modelManagerFieldGroup")
         input_layout = QHBoxLayout(input_row)
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
         input_layout.addWidget(self.api_key_edit, stretch=1)
         input_layout.addWidget(self.api_key_show_button)
-        layout.addWidget(self._field("New key", input_row))
+        self.api_key_entry_tile.add_body(input_row)
 
         buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
         self.api_key_save_button = PrimaryButton("Save key")
         self.api_key_save_button.setObjectName("apiKeySaveButton")
@@ -1245,12 +1226,8 @@ class SettingsDialog(QDialog):
         buttons.addWidget(self.api_key_test_button)
         buttons.addStretch()
         buttons.addWidget(self.api_key_remove_button)
-        layout.addLayout(buttons)
-
-        self.api_key_uses_caption = self._caption("")
-        layout.addWidget(self.api_key_uses_caption)
-        self.api_key_store_caption = self._caption(self._api_key_store_copy())
-        layout.addWidget(self.api_key_store_caption)
+        self.api_key_entry_tile.add_body_layout(buttons)
+        self._tile_group(layout, "New key", [self.api_key_entry_tile], columns=1)
 
     @staticmethod
     def _api_key_store_copy() -> str:
@@ -1718,18 +1695,18 @@ class SettingsDialog(QDialog):
         return card
 
     def _build_advanced_page(self, layout: QVBoxLayout) -> None:
-        self.developer_mode_check = QCheckBox("Developer mode")
+        self.developer_mode_tile = SettingTile(
+            "Developer mode",
+            "Unlocks a Load demo meeting control on the Meeting Mode tab. The "
+            "demo opens the dashboard with a fake transcript so you can test "
+            "end-of-meeting cleanup and the final report without recording a "
+            "real meeting.",
+            _design_icon("bolt-green.svg"),
+        )
+        self.developer_mode_check = self.developer_mode_tile.checkbox
         self.developer_mode_check.setObjectName("developerModeCheck")
         self.developer_mode_check.toggled.connect(self._on_developer_mode_changed)
-        layout.addWidget(self.developer_mode_check)
-        layout.addWidget(
-            self._caption(
-                "Unlocks a Load demo meeting control on the Meeting Mode tab. "
-                "The demo opens the dashboard with a fake transcript so you "
-                "can test end-of-meeting cleanup and the final report without "
-                "recording a real meeting."
-            )
-        )
+        self._tile_group(layout, "Developer", [self.developer_mode_tile])
 
         self.hf_policy_combo = ElidingComboBox()
         self.hf_policy_combo.setObjectName("hfPolicyCombo")
@@ -1744,20 +1721,18 @@ class SettingsDialog(QDialog):
         )
         self.hf_policy_combo.setMinimumHeight(40)
         self.hf_policy_combo.currentIndexChanged.connect(self._on_hf_policy_changed)
-        layout.addWidget(
-            self._field(
-                "When a model is missing from this computer",
-                self.hf_policy_combo,
-            )
+        self.hf_policy_tile = FieldTile(
+            "When a model is missing from this computer",
+            "Models already on this computer always load locally without any "
+            "network checks. Hugging Face is only contacted to download a "
+            "missing model, and only when this policy or a one-time approval "
+            "allows it. An external HF_HUB_OFFLINE=1 environment variable "
+            "disables downloads entirely.",
+            self.hf_policy_combo,
+            _design_icon("cloud-upload-blue.svg"),
         )
-        layout.addWidget(
-            self._caption(
-                "Models already on this computer always load locally without "
-                "any network checks. Hugging Face is only contacted to "
-                "download a missing model, and only when this policy (or a "
-                "one-time approval) allows it. An external HF_HUB_OFFLINE=1 "
-                "environment variable disables downloads entirely."
-            )
+        self._tile_group(
+            layout, "Hugging Face downloads", [self.hf_policy_tile]
         )
 
     def select_destination(self, key: str) -> None:
@@ -1769,6 +1744,11 @@ class SettingsDialog(QDialog):
         """Open Advanced with the Hugging Face policy control focused."""
         self.select_destination(ADVANCED)
         self.hf_policy_combo.setFocus()
+
+    def focus_cleanup_toggle(self) -> None:
+        """Open Cleanup with the AI cleanup toggle focused."""
+        self.select_destination(CLEANUP)
+        self.transcript_cleanup_check.setFocus()
 
     def _on_destination_changed(self, key: str) -> None:
         if key != HOTKEYS:
@@ -2113,18 +2093,15 @@ class SettingsDialog(QDialog):
     def _update_cleanup_prompt_ui(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
+            self.cleanup_reasoning_label,
             self.cleanup_reasoning_combo,
             self.cleanup_reasoning_info,
-            self.cleanup_prompt_edit,
-            self.cleanup_prompt_edit_btn,
-            self.cleanup_prompt_reset_btn,
-            self.cleanup_prompt_info,
-            self.cleanup_rules_label,
-            self.cleanup_rules_info,
-            self.cleanup_rule_status,
-            self.cleanup_rules_list,
+            self.cleanup_prompt_tile,
+            self.cleanup_rules_composer_tile,
+            self.cleanup_rules_library_tile,
         ):
             widget.setEnabled(enabled)
+        self.cleanup_rules_gate_tile.setVisible(not enabled)
         self._update_cleanup_rule_controls()
 
     def _open_cleanup_prompt_editor(self) -> None:

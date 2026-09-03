@@ -166,3 +166,21 @@ class FieldTile(TileBase):
             self.add_trailing(control)
         else:
             self.add_body(control)
+
+
+class InfoTile(TileBase):
+    """Tile for a read-only value or a group of related controls.
+
+    It is not a click target, so it keeps the resting colors like
+    ``FieldTile``; callers fill the trailing slot and the body themselves.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        description: str,
+        icon: Optional[QIcon] = None,
+        parent=None,
+    ):
+        super().__init__(title, description, icon, parent)
+        self.setProperty("kind", "field")

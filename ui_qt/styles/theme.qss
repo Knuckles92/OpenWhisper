@@ -227,6 +227,13 @@ QWidget#modelManagerStack {
     background-color: transparent;
 }
 
+/* Each page in the stack sits directly on the dialog surface. Without this
+   the generic QWidget grey (#1c1c1e) frames the whole page in a lighter box
+   against the #10161c body, visible in every Settings section. */
+QWidget#modelManagerStack > QWidget {
+    background-color: transparent;
+}
+
 /* Let the page surface show through the scroll area, its viewport, and the
    scrolled content (the three-level selector Qt needs for the latter two).
    Otherwise the default widget grey frames every card in a lighter inset. */
@@ -597,11 +604,20 @@ QPushButton#modelManagerCloseButton:hover {
 QLineEdit#modelManagerSearch,
 QComboBox#modelManagerSort,
 QComboBox#modelManagerStatusFilter {
+    color: #eef2f6;
+    background-color: #161e26;
+    border: 1px solid #3b4752;
     min-height: 32px;
     max-height: 32px;
     border-radius: 8px;
     padding: 4px 12px;
     font-size: 12px;
+}
+
+QLineEdit#modelManagerSearch:focus,
+QComboBox#modelManagerSort:focus,
+QComboBox#modelManagerStatusFilter:focus {
+    border-color: #0a84ff;
 }
 
 QComboBox#modelManagerSort {
@@ -634,24 +650,26 @@ QLabel#downloadsTitle {
 
 QLabel#downloadsSubtitle,
 QLabel#downloadsMessage {
-    color: #8e99a6;
+    color: #9da8b5;
     background-color: transparent;
     border: none;
-    font-size: 11px;
+    font-size: 12px;
 }
 
 QFrame#downloadsInspector {
     background-color: #141b22;
-    border: 1px solid #35404a;
+    border: 1px solid #303b45;
     border-radius: 12px;
 }
 
+/* Same voice as the Settings tile group captions. */
 QLabel#downloadsEyebrow {
-    color: #6b7885;
+    color: #8d9aa7;
     background-color: transparent;
     border: none;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
+    letter-spacing: 1px;
 }
 
 QLabel#downloadsInspectorName {
@@ -706,6 +724,7 @@ QLabel#downloadsSourceNote {
 
 QPushButton#downloadsRepoButton,
 QPushButton#downloadsOriginButton,
+QPushButton#downloadsToolButton,
 QPushButton#downloadsCloseButton {
     color: #aeb8c3;
     background-color: #151c23;
@@ -716,6 +735,7 @@ QPushButton#downloadsCloseButton {
 
 QPushButton#downloadsRepoButton:hover,
 QPushButton#downloadsOriginButton:hover,
+QPushButton#downloadsToolButton:hover,
 QPushButton#downloadsCloseButton:hover {
     color: #f0f3f6;
     background-color: #1b252e;
@@ -726,6 +746,14 @@ QFrame#downloadsComponentStrip {
     background-color: transparent;
     border: none;
     border-top: 1px solid #232d36;
+}
+
+/* The batch action sits in a 34 px toolbar row, so it drops the
+   primary button's dialog-scale padding. */
+QDialog#downloadsDialog QPushButton#primaryButton {
+    font-size: 13px;
+    padding: 6px 16px;
+    border-radius: 8px;
 }
 
 /* Batch selection in the Downloads window: flat link actions, running
@@ -816,6 +844,17 @@ QFrame#settingsTile[checked="true"]:hover {
 QFrame#settingsTile[kind="field"]:hover {
     background-color: #141b22;
     border-color: #303b45;
+}
+
+/* Callout for a page locked by a setting on another destination. */
+QFrame#settingsTile[kind="notice"] {
+    background-color: #1c1914;
+    border-color: #5a4a2a;
+}
+
+QFrame#settingsTile[kind="notice"]:hover {
+    background-color: #1c1914;
+    border-color: #5a4a2a;
 }
 
 QWidget#settingsTileBody {
@@ -948,7 +987,10 @@ QPushButton#hotkeyResetButton:hover {
     border-color: #4b5966;
 }
 
-/* Spin boxes */
+/* Spin boxes. Native arrows stay hidden on NoWheelSpinBox; the stacked
+   chevron rail is a child widget. The ::up-arrow / ::down-arrow rules still
+   use SVG images (never two borders) so a leftover native arrow cannot
+   read as a crop mark the way combo arrows used to. */
 QSpinBox {
     background-color: #2c2c2e;
     color: #f5f5f7;
@@ -963,26 +1005,91 @@ QSpinBox:focus {
     border: 1px solid #0a84ff;
 }
 
-QSpinBox::up-button, QSpinBox::down-button {
+QSpinBox:disabled {
+    color: #636366;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 24px;
     background-color: transparent;
     border: none;
-    width: 20px;
+    border-left: 1px solid #3a3a3c;
+}
+
+QSpinBox::up-button {
+    subcontrol-position: top right;
+}
+
+QSpinBox::down-button {
+    subcontrol-position: bottom right;
+}
+
+QSpinBox::up-button:hover,
+QSpinBox::down-button:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+QSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed {
+    background-color: rgba(255, 255, 255, 0.14);
 }
 
 QSpinBox::up-arrow {
-    border-left: 2px solid #8e8e93;
-    border-top: 2px solid #8e8e93;
-    width: 6px;
-    height: 6px;
-    margin-top: 4px;
+    image: url(ui_qt/assets/tabler/chevron-up-gray.svg);
+    border: none;
+    width: 14px;
+    height: 14px;
 }
 
 QSpinBox::down-arrow {
-    border-left: 2px solid #8e8e93;
-    border-bottom: 2px solid #8e8e93;
-    width: 6px;
-    height: 6px;
-    margin-bottom: 4px;
+    image: url(ui_qt/assets/tabler/chevron-down-gray.svg);
+    border: none;
+    width: 14px;
+    height: 14px;
+}
+
+QWidget#spinStepper {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: none;
+    border-left: 1px solid #3a3a3c;
+}
+
+QFrame#spinStepperDivider {
+    background-color: #3a3a3c;
+    border: none;
+}
+
+QToolButton#spinStepUp,
+QToolButton#spinStepDown {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    color: #c7d0d9;
+}
+
+QToolButton#spinStepUp {
+    border-top-right-radius: 7px;
+}
+
+QToolButton#spinStepDown {
+    border-bottom-right-radius: 7px;
+}
+
+QToolButton#spinStepUp:hover,
+QToolButton#spinStepDown:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+QToolButton#spinStepUp:pressed,
+QToolButton#spinStepDown:pressed {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+QToolButton#spinStepUp:disabled,
+QToolButton#spinStepDown:disabled {
+    background-color: transparent;
 }
 
 /* Sliders */
@@ -1162,42 +1269,20 @@ QTabBar::tab:hover {
     border: none;
 }
 
-QFrame#cleanupModelSummaryCard,
-QFrame#meetingModelSummaryCard {
-    background-color: #141b22;
-    border: 1px solid #303b45;
-    border-radius: 12px;
-}
-
-QLabel#cleanupModelSummaryEyebrow,
-QLabel#meetingModelSummaryEyebrow {
-    color: #bf5af2;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    background-color: transparent;
-    border: none;
-}
-
+/* Settings model summaries sit in an InfoTile; the value line is the tile's
+   headline figure. */
 QLabel#cleanupModelSummary,
 QLabel#meetingModelSummary {
-    color: #f5f5f7;
+    color: #e8edf2;
     font-size: 13px;
     font-weight: 600;
     background-color: transparent;
     border: none;
 }
 
-QLabel#cleanupModelSummaryHint,
-QLabel#meetingModelSummaryHint {
-    color: #8e8e93;
-    font-size: 11px;
-    background-color: transparent;
-    border: none;
-}
-
 QPushButton#cleanupModelManagerLink,
-QPushButton#meetingModelManagerLink {
+QPushButton#meetingModelManagerLink,
+QPushButton#cleanupRulesOpenCleanupLink {
     color: #0a84ff;
     background-color: transparent;
     border: none;
@@ -1208,13 +1293,15 @@ QPushButton#meetingModelManagerLink {
 }
 
 QPushButton#cleanupModelManagerLink:hover,
-QPushButton#meetingModelManagerLink:hover {
+QPushButton#meetingModelManagerLink:hover,
+QPushButton#cleanupRulesOpenCleanupLink:hover {
     color: #409cff;
     text-decoration: underline;
 }
 
 QPushButton#cleanupModelManagerLink:pressed,
-QPushButton#meetingModelManagerLink:pressed {
+QPushButton#meetingModelManagerLink:pressed,
+QPushButton#cleanupRulesOpenCleanupLink:pressed {
     color: #0a84ff;
 }
 
@@ -1657,35 +1744,8 @@ QToolTip {
     font-size: 12px;
 }
 
-/* Learned Rules: layered profile, composer, and library surfaces */
-QFrame#cleanupRulesHero {
-    background-color: #202b3a;
-    border: 1px solid #2d4a69;
-    border-radius: 16px;
-}
-
-QLabel#cleanupRulesEyebrow {
-    color: #64b5ff;
-    background-color: transparent;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-}
-
-QLabel#cleanupRulesTitle {
-    color: #ffffff;
-    background-color: transparent;
-    font-size: 21px;
-    font-weight: 700;
-}
-
-QLabel#cleanupRulesDescription {
-    color: #aeb9c6;
-    background-color: transparent;
-    font-size: 12px;
-}
-
-QLabel#cleanupRulesHeroMark,
+/* Learned Rules: the composer and the library are InfoTiles; these rules tune
+   the controls inside them to the tile palette. */
 QLabel#cleanupRuleDialogMark {
     color: #ffffff;
     background-color: #0a84ff;
@@ -1695,30 +1755,10 @@ QLabel#cleanupRuleDialogMark {
     font-weight: 800;
 }
 
-QFrame#cleanupRulesCard {
-    background-color: #242426;
-    border: 1px solid #39393d;
-    border-radius: 14px;
-}
-
-QLabel#cleanupRulesSectionTitle {
-    color: #f5f5f7;
-    background-color: transparent;
-    font-size: 15px;
-    font-weight: 700;
-}
-
-QLabel#cleanupRulesSectionHint,
-QLabel#cleanupRulesInteractionHint {
-    color: #8e8e93;
-    background-color: transparent;
-    font-size: 11px;
-}
-
 QLabel#cleanupRulesCount {
-    color: #64b5ff;
-    background-color: #17283a;
-    border: 1px solid #294866;
+    color: #6fb1ff;
+    background-color: rgba(10, 132, 255, 0.12);
+    border: 1px solid rgba(10, 132, 255, 0.25);
     border-radius: 10px;
     padding: 3px 9px;
     font-size: 10px;
@@ -1726,28 +1766,35 @@ QLabel#cleanupRulesCount {
 }
 
 QLineEdit#cleanupRuleInput {
-    background-color: #1c1c1e;
-    border: 1px solid #48484a;
-    border-radius: 10px;
-    padding: 9px 13px;
+    background-color: #161e26;
+    border: 1px solid #3b4752;
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
 }
 
 QLineEdit#cleanupRuleInput:hover {
-    border-color: #636366;
+    border-color: #4b5966;
 }
 
 QLineEdit#cleanupRuleInput:focus {
-    background-color: #202022;
     border: 1px solid #0a84ff;
 }
 
 QPushButton#cleanupRuleDictateButton,
-QPushButton#cleanupRuleEditButton,
-QPushButton#cleanupRuleDeleteButton,
 QPushButton#cleanupRuleAddButton {
-    min-height: 44px;
-    max-height: 44px;
-    border-radius: 10px;
+    min-height: 40px;
+    max-height: 40px;
+    border-radius: 9px;
+    padding: 0 15px;
+    font-size: 12px;
+}
+
+QPushButton#cleanupRuleEditButton,
+QPushButton#cleanupRuleDeleteButton {
+    min-height: 34px;
+    max-height: 34px;
+    border-radius: 9px;
     padding: 0 15px;
     font-size: 12px;
 }
@@ -1763,17 +1810,36 @@ QPushButton#cleanupRuleAddButton:hover {
 }
 
 QPushButton#cleanupRuleAddButton:disabled {
-    color: #636366;
-    background-color: #2c2c2e;
-    border-color: #3a3a3c;
+    color: #5d6873;
+    background-color: #1b252e;
+    border-color: #303b45;
+}
+
+QPushButton#cleanupRuleDictateButton,
+QPushButton#cleanupRuleEditButton {
+    color: #aeb8c3;
+    background-color: #151c23;
+    border: 1px solid #35404a;
+}
+
+QPushButton#cleanupRuleDictateButton:hover,
+QPushButton#cleanupRuleEditButton:hover {
+    color: #f0f3f6;
+    background-color: #1b252e;
+    border-color: #4b5966;
+}
+
+QPushButton#cleanupRuleDictateButton:disabled,
+QPushButton#cleanupRuleEditButton:disabled {
+    color: #5d6873;
+    background-color: #12181e;
+    border-color: #263038;
 }
 
 QPushButton#cleanupRuleDeleteButton {
-    min-height: 38px;
-    max-height: 38px;
     color: #ff6961;
     background-color: transparent;
-    border: 1px solid #5b3434;
+    border: 1px solid #3b4752;
 }
 
 QPushButton#cleanupRuleDeleteButton:hover {
@@ -1783,25 +1849,20 @@ QPushButton#cleanupRuleDeleteButton:hover {
 }
 
 QPushButton#cleanupRuleDeleteButton:disabled {
-    color: #636366;
+    color: #5d6873;
     background-color: transparent;
-    border-color: #3a3a3c;
-}
-
-QPushButton#cleanupRuleEditButton {
-    min-height: 38px;
-    max-height: 38px;
+    border-color: #263038;
 }
 
 QLabel#cleanupRuleStatus {
-    color: #8e8e93;
+    color: #98a3b0;
     background-color: transparent;
     min-height: 14px;
     font-size: 11px;
 }
 
 QListWidget#cleanupRulesList {
-    color: #f5f5f7;
+    color: #e8edf2;
     background-color: transparent;
     border: none;
     outline: none;
@@ -1809,15 +1870,15 @@ QListWidget#cleanupRulesList {
 }
 
 QListWidget#cleanupRulesList::item {
-    background-color: #1c1c1e;
-    border: 1px solid #3a3a3c;
+    background-color: #1a232c;
+    border: 1px solid #303b45;
     border-radius: 9px;
-    padding: 11px 13px;
+    padding: 10px 13px;
 }
 
 QListWidget#cleanupRulesList::item:hover {
-    background-color: #2c2c2e;
-    border-color: #545456;
+    background-color: #1f2a35;
+    border-color: #3d4a57;
 }
 
 QListWidget#cleanupRulesList::item:selected {
@@ -1827,11 +1888,11 @@ QListWidget#cleanupRulesList::item:selected {
 }
 
 QLabel#cleanupRulesEmpty {
-    color: #77777c;
-    background-color: #1f1f21;
-    border: 1px dashed #48484a;
+    color: #6f7b87;
+    background-color: #12181e;
+    border: 1px dashed #3a4650;
     border-radius: 10px;
-    padding: 24px;
+    padding: 22px;
     font-size: 12px;
 }
 

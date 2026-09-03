@@ -39,7 +39,7 @@ from ui_qt.widgets.no_wheel import (
 )
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.searchable_combo import SearchableComboBox
-from ui_qt.widgets.setting_tile import FieldTile, SettingTile
+from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 __all__ = [
@@ -81,6 +81,7 @@ __all__ = [
     "NoWheelSpinBox",
     "SearchableComboBox",
     "FieldTile",
+    "InfoTile",
     "SettingTile",
     "WrappedLabel",
 ]
