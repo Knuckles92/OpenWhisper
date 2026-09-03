@@ -619,6 +619,38 @@ class TestUploadFileTab:
         tab.clear_transcription()
         assert viewer.shown_text() == ""
 
+    def test_viewer_receives_completed_batch_structure(self, tmp_path):
+        from services.batch_upload import (
+            BatchItem,
+            BatchItemResult,
+            BatchResult,
+            BatchUploadRequest,
+        )
+
+        tab, paths = self._tab_with_files(tmp_path)
+        request = BatchUploadRequest(
+            items=tuple(BatchItem(path) for path in paths),
+            relation=BatchRelation.SEPARATE,
+        )
+        result = BatchResult(
+            request=request,
+            items=tuple(
+                BatchItemResult(item, text=f"Text {position}")
+                for position, item in enumerate(request.items, start=1)
+            ),
+        )
+        tab.set_transcript("## a.wav\n\nText 1\n\n## b.wav\n\nText 2")
+        tab.set_batch_result(result)
+        tab.open_transcript_viewer()
+
+        viewer = tab._viewer
+        assert [
+            viewer.page_tabs.tabText(index)
+            for index in range(viewer.page_tabs.count())
+        ] == ["Overview", "Trans. 1", "Trans. 2"]
+        viewer.page_tabs.setCurrentIndex(2)
+        assert viewer.shown_text() == "## b.wav\n\nText 2"
+
     def test_viewer_copy_goes_through_the_tab(self):
         tab = UploadFileTab()
         copied = []
@@ -1075,6 +1107,33 @@ class TestUploadFileTab:
 
         tab.clear_transcription_stats()
         assert note.isHidden()
+
+    def test_transcription_stats_includes_cleanup_time_when_provided(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_transcript("Hello there")
+
+        tab.set_transcription_stats(24.7, 73.3, 875 * 1024, cleanup_time=4.2)
+
+        note = tab.file_info_card.result_label
+        assert not note.isHidden()
+        assert "24.7s" in note.text()
+        assert "3.0×" in note.text()
+        assert "Cleaned in" in note.text()
+        assert "4.2s" in note.text()
+
+    def test_transcription_stats_omits_cleanup_time_when_none_or_zero(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        tab._on_transcribe()
+        tab.set_transcript("Hello there")
+
+        tab.set_transcription_stats(24.7, 73.3, 875 * 1024, cleanup_time=None)
+        note = tab.file_info_card.result_label
+        assert not note.isHidden()
+        assert "Cleaned in" not in note.text()
+
+        tab.set_transcription_stats(24.7, 73.3, 875 * 1024, cleanup_time=0.0)
+        assert "Cleaned in" not in note.text()
 
     def test_starting_a_job_clears_the_previous_result_note(self, tmp_path):
         tab = self._tab_with_file(tmp_path)

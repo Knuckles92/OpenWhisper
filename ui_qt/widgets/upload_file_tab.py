@@ -21,7 +21,12 @@ from PyQt6.QtWidgets import (
 
 from config import bundle_root
 from services.audio_processor import AudioFilePreview, audio_processor
-from services.batch_upload import BatchItem, BatchRelation, BatchUploadRequest
+from services.batch_upload import (
+    BatchItem,
+    BatchRelation,
+    BatchResult,
+    BatchUploadRequest,
+)
 from services.format_utils import format_audio_duration, format_sample_rate
 from services.runtime.transcription import EMPTY_ASR_MESSAGE
 from services.settings import (
@@ -908,7 +913,12 @@ class FileInfoCard(QFrame):
         """Enable Copy only when a non-empty transcript is available."""
         self.copy_btn.set_active(enabled)
 
-    def set_result(self, transcription_time: float, audio_duration: float):
+    def set_result(
+        self,
+        transcription_time: float,
+        audio_duration: float,
+        cleanup_time: Optional[float] = None,
+    ):
         """Show how long the job took, and how that compares to the audio."""
         segments = [
             ("Transcribed in ", False),
@@ -920,6 +930,12 @@ class FileInfoCard(QFrame):
                 ("  ·  ", False),
                 (f"{speed:.1f}×", True),
                 (" realtime", False),
+            ]
+        if cleanup_time is not None and cleanup_time > 0:
+            segments += [
+                ("  ·  ", False),
+                ("Cleaned in ", False),
+                (format_audio_duration(cleanup_time), True),
             ]
         # The reveal runs when the action row next comes into view, which is
         # after the progress panel has held its Done state.
@@ -971,6 +987,7 @@ class UploadFileTab(TranscriptionTabBase):
         self.status_label.hide()
 
         self._viewer = None
+        self._batch_result: BatchResult | None = None
         self.expand_btn = QPushButton()
         self.expand_btn.setObjectName("transcriptExpandButton")
         self.expand_btn.setIcon(_tabler_icon("arrows-diagonal-gray.svg"))
@@ -1368,6 +1385,7 @@ class UploadFileTab(TranscriptionTabBase):
         self.cancel_requested.emit()
 
     def set_transcript(self, text: str, raw=None):
+        self._batch_result = None
         super().set_transcript(text, raw=raw)
         stripped = (text or "").strip()
         failed = stripped.startswith("Error:")
@@ -1379,7 +1397,13 @@ class UploadFileTab(TranscriptionTabBase):
         self.expand_btn.setVisible(copyable)
         self._sync_viewer()
 
+    def set_batch_result(self, result: BatchResult) -> None:
+        """Give the reading window the per-file structure behind a batch."""
+        self._batch_result = result
+        self._sync_viewer()
+
     def clear_transcription(self):
+        self._batch_result = None
         super().clear_transcription()
         self.expand_btn.hide()
         self._sync_viewer()
@@ -1398,9 +1422,18 @@ class UploadFileTab(TranscriptionTabBase):
 
     def _sync_viewer(self):
         if self._viewer is not None:
-            self._viewer.set_transcript(
-                self._fixed_text, self._raw_text, title=self._viewer_title()
-            )
+            title = self._viewer_title()
+            if self._batch_result is not None:
+                self._viewer.set_batch_result(
+                    self._batch_result,
+                    self._fixed_text,
+                    self._raw_text,
+                    title=title,
+                )
+            else:
+                self._viewer.set_transcript(
+                    self._fixed_text, self._raw_text, title=title
+                )
 
     def _viewer_title(self) -> str:
         names = [os.path.basename(item.path) for item in self._items]
@@ -1415,10 +1448,16 @@ class UploadFileTab(TranscriptionTabBase):
         self.local_engine.set_busy(False)
 
     def set_transcription_stats(
-        self, transcription_time: float, audio_duration: float, file_size: int
+        self,
+        transcription_time: float,
+        audio_duration: float,
+        file_size: int,
+        cleanup_time: Optional[float] = None,
     ):
         """Report the result in the card; this tab never shows the stats strip."""
-        self.file_info_card.set_result(transcription_time, audio_duration)
+        self.file_info_card.set_result(
+            transcription_time, audio_duration, cleanup_time
+        )
 
     def clear_transcription_stats(self):
         self.file_info_card.clear_result()

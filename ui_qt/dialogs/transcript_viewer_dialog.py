@@ -1,6 +1,7 @@
-"""Reading window for a transcript, rendered as Markdown at a comfortable measure."""
+"""Reading window for transcripts, rendered as Markdown at a comfortable measure."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -11,13 +12,23 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QPushButton,
+    QTabBar,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
+from services.batch_upload import BatchResult, format_batch_transcript
 from ui_qt.utils.markdown_render import READER_STYLE, render_markdown
 from ui_qt.widgets.eliding_label import ElidingLabel
+
+
+@dataclass(frozen=True)
+class _ViewerPage:
+    label: str
+    text: str
+    raw: Optional[str] = None
+    tooltip: str = ""
 
 
 class _ReaderView(QTextBrowser):
@@ -61,13 +72,14 @@ class _ReaderView(QTextBrowser):
 
 
 class TranscriptViewerDialog(QDialog):
-    """Non-modal window that shows one transcript as formatted Markdown.
+    """Non-modal window that shows transcripts as formatted Markdown.
 
     The owning tab keeps a single instance and refreshes it through
-    ``set_transcript`` as results arrive, so the window follows the tab's
-    current transcript rather than freezing on the one it opened with. Text
-    size and window geometry persist for the session because the dialog is
-    hidden on close, not destroyed.
+    ``set_transcript`` or ``set_batch_result`` as results arrive, so the window
+    follows the tab rather than freezing on the result it opened with. A batch
+    with multiple completed files gets an overview and one page per file, plus
+    an AI Output page when cleanup ran. Text size and window geometry persist
+    for the session because the dialog is hidden on close, not destroyed.
     """
 
     copy_requested = pyqtSignal(str)
@@ -81,6 +93,7 @@ class TranscriptViewerDialog(QDialog):
         self._raw_text: Optional[str] = None
         self._showing_raw = False
         self._zoom_index = self.DEFAULT_ZOOM_INDEX
+        self._pages: tuple[_ViewerPage, ...] = ()
 
         self.setObjectName("transcriptViewerDialog")
         self.setWindowTitle("Transcript")
@@ -106,7 +119,23 @@ class TranscriptViewerDialog(QDialog):
 
         self.title_label = ElidingLabel("Transcript")
         self.title_label.setObjectName("transcriptViewerTitle")
-        bar.addWidget(self.title_label, stretch=1)
+        bar.addWidget(self.title_label)
+
+        self.page_tabs = QTabBar()
+        self.page_tabs.setObjectName("transcriptViewerTabs")
+        self.page_tabs.setDocumentMode(True)
+        self.page_tabs.setDrawBase(False)
+        self.page_tabs.setExpanding(False)
+        self.page_tabs.setUsesScrollButtons(True)
+        self.page_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.page_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.page_tabs.currentChanged.connect(self._on_page_changed)
+        self.page_tabs.hide()
+        bar.addWidget(self.page_tabs, stretch=1)
+
+        self._toolbar_spacer = QWidget()
+        self._toolbar_spacer.setObjectName("transcriptViewerToolbarSpacer")
+        bar.addWidget(self._toolbar_spacer, stretch=1)
 
         self.version_toggle = QWidget()
         self.version_toggle.setObjectName("transcriptSwitchRow")
@@ -181,10 +210,95 @@ class TranscriptViewerDialog(QDialog):
 
     def set_transcript(self, text: str, raw: Optional[str] = None, title: str = "") -> None:
         """Show ``text``, with ``raw`` behind the Raw switch when it differs."""
-        self._fixed_text = text or ""
-        self._raw_text = raw if raw and raw != text else None
+        self._set_pages((_ViewerPage("Transcript", text or "", raw),), title)
+
+    def set_batch_result(
+        self,
+        result: BatchResult,
+        overview: str,
+        overview_raw: Optional[str] = None,
+        title: str = "",
+    ) -> None:
+        """Show navigation for every completed transcript in ``result``.
+
+        The Overview page remains the exact document shown in the Upload File
+        tab. Individual pages use the same Fixed / Raw contract as the rest of
+        the transcript UI. AI Output is included only when a cleanup provider
+        produced output for this batch.
+        """
+        completed = [item for item in result.items if item.succeeded]
+        if len(completed) < 2:
+            self.set_transcript(overview, overview_raw, title)
+            return
+
+        pages = [
+            _ViewerPage(
+                "Overview",
+                overview or "",
+                overview_raw,
+                "All completed transcriptions",
+            )
+        ]
+        for position, item_result in enumerate(completed, start=1):
+            name = item_result.item.source_name
+            pages.append(
+                _ViewerPage(
+                    f"Trans. {position}",
+                    format_batch_transcript(((name, item_result.text),)),
+                    (
+                        format_batch_transcript(((name, item_result.raw_text),))
+                        if item_result.raw_text
+                        else None
+                    ),
+                    name,
+                )
+            )
+
+        cleanup_ran = bool(
+            result.combined_cleanup_provider
+            or result.combined_cleanup_model
+            or any(
+                item.cleanup_provider or item.cleanup_model for item in completed
+            )
+        )
+        if cleanup_ran:
+            pages.append(
+                _ViewerPage(
+                    "AI Output",
+                    overview or "",
+                    tooltip="Output after AI cleanup",
+                )
+            )
+        self._set_pages(tuple(pages), title)
+
+    def _set_pages(self, pages: tuple[_ViewerPage, ...], title: str) -> None:
+        self._pages = pages
         self.title_label.setText(title or "Transcript")
         self.setWindowTitle(f"Transcript — {title}" if title else "Transcript")
+
+        self.page_tabs.blockSignals(True)
+        while self.page_tabs.count():
+            self.page_tabs.removeTab(0)
+        for page in pages:
+            index = self.page_tabs.addTab(page.label)
+            if page.tooltip:
+                self.page_tabs.setTabToolTip(index, page.tooltip)
+        self.page_tabs.setCurrentIndex(0)
+        self.page_tabs.blockSignals(False)
+        show_tabs = len(pages) > 1
+        self.page_tabs.setVisible(show_tabs)
+        self._toolbar_spacer.setVisible(not show_tabs)
+        self._show_page(0)
+
+    def _on_page_changed(self, index: int) -> None:
+        self._show_page(index)
+
+    def _show_page(self, index: int) -> None:
+        if not 0 <= index < len(self._pages):
+            return
+        page = self._pages[index]
+        self._fixed_text = page.text or ""
+        self._raw_text = page.raw if page.raw and page.raw != page.text else None
         self.version_toggle.setVisible(self._raw_text is not None)
         self.fixed_btn.blockSignals(True)
         self.raw_btn.blockSignals(True)

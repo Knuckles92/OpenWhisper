@@ -850,10 +850,11 @@ class MainWindow(QMainWindow):
         self,
         transcription_time: float,
         audio_duration: float,
-        file_size: int
+        file_size: int,
+        cleanup_time: Optional[float] = None,
     ):
         self.quick_record_tab.set_transcription_stats(
-            transcription_time, audio_duration, file_size
+            transcription_time, audio_duration, file_size, cleanup_time
         )
 
     def clear_transcription_stats(self):

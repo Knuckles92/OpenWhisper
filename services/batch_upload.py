@@ -90,6 +90,7 @@ class BatchItemResult:
     cleanup_provider: Optional[str] = None
     cleanup_model: Optional[str] = None
     elapsed_s: float = 0.0
+    cleanup_elapsed_s: float = 0.0
     file_size: Optional[int] = None
     error: Optional[str] = None
 
@@ -111,6 +112,8 @@ class BatchResult:
     cleanup_error: Optional[str] = None
     canceled: bool = False
     total_elapsed_s: float = 0.0
+    transcription_time_s: float = 0.0
+    cleanup_time_s: float = 0.0
 
     @property
     def total_duration_seconds(self) -> float:
@@ -119,6 +122,23 @@ class BatchResult:
     @property
     def total_file_size(self) -> int:
         return sum(r.file_size or 0 for r in self.items)
+
+    @property
+    def effective_transcription_time_s(self) -> float:
+        """Pure speech-to-text time across items, falling back to total elapsed."""
+        if self.transcription_time_s > 0:
+            return self.transcription_time_s
+        summed = sum(r.elapsed_s for r in self.items)
+        if summed > 0:
+            return summed
+        return self.total_elapsed_s
+
+    @property
+    def effective_cleanup_time_s(self) -> float:
+        """Cleanup duration for the batch (combined pass or sum of per-item passes)."""
+        if self.cleanup_time_s > 0:
+            return self.cleanup_time_s
+        return sum(r.cleanup_elapsed_s for r in self.items)
 
 
 def compose_batch_cleanup_prompt(base_prompt: str, batch_context: str) -> str:

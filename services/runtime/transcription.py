@@ -419,6 +419,7 @@ class TranscriptionRuntime:
                     self.controller.batch_item_finished.emit(position, False, "")
                     continue
 
+                item_asr_elapsed = time.time() - item_started
                 # A combined job has one transcript, so its rows get no text
                 # of their own: the per-file ASR is an unfinished part of it.
                 own_transcript = ""
@@ -428,13 +429,16 @@ class TranscriptionRuntime:
                         BatchItemResult(
                             item,
                             text=raw,
-                            elapsed_s=time.time() - item_started,
+                            elapsed_s=item_asr_elapsed,
                             file_size=file_size,
                         )
                     )
                 else:
                     fixed, raw_text, info = self._maybe_cleanup_transcript(
                         raw, batch_context=request.batch_context(item)
+                    )
+                    item_cleanup_elapsed = (
+                        info.elapsed_s if info is not None else 0.0
                     )
                     results.append(
                         BatchItemResult(
@@ -443,7 +447,8 @@ class TranscriptionRuntime:
                             raw_text=raw_text,
                             cleanup_provider=info.provider if info else None,
                             cleanup_model=info.model if info else None,
-                            elapsed_s=time.time() - item_started,
+                            elapsed_s=item_asr_elapsed,
+                            cleanup_elapsed_s=item_cleanup_elapsed,
                             file_size=file_size,
                         )
                     )
@@ -453,6 +458,7 @@ class TranscriptionRuntime:
                 )
 
             total_elapsed = time.time() - started
+            total_transcription_time = sum(r.elapsed_s for r in results)
             if request.combine:
                 if canceled:
                     self.controller.transcription_failed.emit(
@@ -465,6 +471,9 @@ class TranscriptionRuntime:
                     batch_context=request.batch_context(),
                     timeout_s=config.TRANSCRIPT_BATCH_CLEANUP_TIMEOUT_S,
                 )
+                combined_cleanup_elapsed = (
+                    info.elapsed_s if info is not None else 0.0
+                )
                 result = BatchResult(
                     request=request,
                     items=tuple(results),
@@ -474,13 +483,18 @@ class TranscriptionRuntime:
                     combined_cleanup_model=info.model if info else None,
                     cleanup_error=self._last_cleanup_failure,
                     total_elapsed_s=total_elapsed,
+                    transcription_time_s=total_transcription_time,
+                    cleanup_time_s=combined_cleanup_elapsed,
                 )
             else:
+                total_cleanup_time = sum(r.cleanup_elapsed_s for r in results)
                 result = BatchResult(
                     request=request,
                     items=tuple(results),
                     canceled=canceled,
                     total_elapsed_s=total_elapsed,
+                    transcription_time_s=total_transcription_time,
+                    cleanup_time_s=total_cleanup_time,
                 )
             self.controller.batch_completed.emit(result)
         except Exception as exc:
@@ -579,9 +593,14 @@ class TranscriptionRuntime:
         ui.set_transcript(display, raw=raw_display)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         ui.set_transcription_stats(
-            result.total_elapsed_s,
+            result.effective_transcription_time_s,
             result.total_duration_seconds,
             result.total_file_size,
+            cleanup_time=(
+                result.effective_cleanup_time_s
+                if result.effective_cleanup_time_s > 0
+                else None
+            ),
         )
 
         if is_empty:
@@ -597,7 +616,7 @@ class TranscriptionRuntime:
                     text=result.combined_text,
                     model=model_info,
                     source_audio_path=None,
-                    transcription_time=result.total_elapsed_s,
+                    transcription_time=result.effective_transcription_time_s,
                     audio_duration=result.total_duration_seconds,
                     file_size=result.total_file_size,
                     raw_text=result.combined_raw_text,
@@ -690,9 +709,11 @@ class TranscriptionRuntime:
         # The dictation path passes no timeout so the call stays identical to
         # the one existing stubs of cleanup() accept.
         extra = {} if timeout_s is None else {"timeout_s": timeout_s}
+        cleanup_start = time.time()
         fixed = self._transcript_cleanup.cleanup(
             raw, system_prompt=prompt, **extra
         )
+        cleanup_elapsed = time.time() - cleanup_start
         # A changed transcript also proves cleanup ran, covering stubs that
         # bypass the real cleanup() and never touch last_error.
         cleaned = self._transcript_cleanup.last_error is None or fixed != raw
@@ -704,6 +725,7 @@ class TranscriptionRuntime:
             CleanupInfo(
                 provider=self._transcript_cleanup.provider,
                 model=self._transcript_cleanup.model,
+                elapsed_s=cleanup_elapsed,
             )
             if cleaned
             else None
@@ -720,6 +742,10 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
             raw = self.controller.current_backend.transcribe(audio_path)
+            self.controller._transcription_elapsed = (
+                time.time() - self.controller._transcription_start_time
+            )
+            self.controller._transcription_start_time = None
             fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
@@ -761,6 +787,10 @@ class TranscriptionRuntime:
         self.controller._transcription_start_time = time.time()
         try:
             raw = self._transcribe_split(audio_path)
+            self.controller._transcription_elapsed = (
+                time.time() - self.controller._transcription_start_time
+            )
+            self.controller._transcription_start_time = None
             fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
@@ -787,17 +817,32 @@ class TranscriptionRuntime:
         )
         self.controller.overlay_state_update.emit(OverlayState.NONE)
 
-        transcription_time = None
-        if self.controller._transcription_start_time is not None:
+        transcription_time = getattr(self.controller, "_transcription_elapsed", None)
+        self.controller._transcription_elapsed = None
+        if transcription_time is None and self.controller._transcription_start_time is not None:
             transcription_time = time.time() - self.controller._transcription_start_time
             self.controller._transcription_start_time = None
 
+        cleanup_time = (
+            cleanup_info.elapsed_s
+            if cleanup_info and cleanup_info.elapsed_s > 0
+            else None
+        )
+
         if transcription_time is not None:
-            self.controller.ui_controller.set_transcription_stats(
-                transcription_time,
-                self.controller._pending_audio_duration or 0.0,
-                self.controller._pending_file_size or 0,
-            )
+            try:
+                self.controller.ui_controller.set_transcription_stats(
+                    transcription_time,
+                    self.controller._pending_audio_duration or 0.0,
+                    self.controller._pending_file_size or 0,
+                    cleanup_time=cleanup_time,
+                )
+            except TypeError:
+                self.controller.ui_controller.set_transcription_stats(
+                    transcription_time,
+                    self.controller._pending_audio_duration or 0.0,
+                    self.controller._pending_file_size or 0,
+                )
 
         source_name = getattr(self.controller, "_pending_source_name", None)
 
@@ -959,6 +1004,7 @@ class TranscriptionRuntime:
         self.controller.ui_controller.set_transcript(f"Error: {error_message}")
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         self.controller._transcription_start_time = None
+        self.controller._transcription_elapsed = None
         self._clear_pending_audio_metadata()
         self._finish_job()
 

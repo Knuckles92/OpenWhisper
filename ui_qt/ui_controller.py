@@ -411,15 +411,16 @@ class UIController(QObject):
         self,
         transcription_time: float,
         audio_duration: float,
-        file_size: int
+        file_size: int,
+        cleanup_time: Optional[float] = None,
     ):
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_transcription_stats(
-                transcription_time, audio_duration, file_size
+                transcription_time, audio_duration, file_size, cleanup_time
             )
         else:
             self.main_window.set_transcription_stats(
-                transcription_time, audio_duration, file_size
+                transcription_time, audio_duration, file_size, cleanup_time
             )
 
     def clear_transcription_stats(self):
@@ -1303,6 +1304,11 @@ class UIController(QObject):
             self.main_window.upload_file_tab.set_batch_item_finished(
                 position, success, transcript
             )
+
+    def set_batch_result(self, result) -> None:
+        """Pass completed batch structure to the Upload File reading window."""
+        if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
+            self.main_window.upload_file_tab.set_batch_result(result)
 
     def _on_upload_copy(self, text: str):
         """Copy Upload File transcript text through the shared clipboard path."""

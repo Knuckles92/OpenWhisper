@@ -470,8 +470,11 @@ class TranscriptionTabBase(QWidget):
         transcription_time: float,
         audio_duration: float,
         file_size: int,
+        cleanup_time: Optional[float] = None,
     ):
-        self.stats_widget.set_stats(transcription_time, audio_duration, file_size)
+        self.stats_widget.set_stats(
+            transcription_time, audio_duration, file_size, cleanup_time
+        )
 
     def clear_transcription_stats(self):
         self.stats_widget.clear()

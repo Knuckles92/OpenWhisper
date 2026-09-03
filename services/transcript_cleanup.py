@@ -68,6 +68,7 @@ class CleanupInfo:
 
     provider: str
     model: str
+    elapsed_s: float = 0.0
 
 
 def provider_env_key(provider: str) -> str:

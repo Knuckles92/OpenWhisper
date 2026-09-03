@@ -166,6 +166,7 @@ class ApplicationController(QObject):
         self._pending_file_size: Optional[int] = None
         self._pending_source_name: Optional[str] = None
         self._transcription_start_time: Optional[float] = None
+        self._transcription_elapsed: Optional[float] = None
 
         # Debounced, background whisper reload. The ~1s model swap (cleanup +
         # load) must not run on the UI thread, and rapid combo changes are

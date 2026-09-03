@@ -1,3 +1,5 @@
+from typing import Optional
+
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -77,7 +79,8 @@ class TranscriptionStatsWidget(QWidget):
         self,
         transcription_time: float,
         audio_duration: float,
-        file_size: int
+        file_size: int,
+        cleanup_time: Optional[float] = None,
     ):
         self.transcription_time_widget.value_label.setText(
             format_audio_duration(transcription_time)

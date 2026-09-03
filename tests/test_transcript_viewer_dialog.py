@@ -6,6 +6,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+from services.batch_upload import (
+    BatchItem,
+    BatchItemResult,
+    BatchRelation,
+    BatchResult,
+    BatchUploadRequest,
+)
 from ui_qt.dialogs.transcript_viewer_dialog import TranscriptViewerDialog, _ReaderView
 from ui_qt.utils.markdown_render import READER_STYLE
 
@@ -17,6 +24,29 @@ def qapp():
 
 def _first_block_heading_level(dialog):
     return dialog.view.document().begin().blockFormat().headingLevel()
+
+
+def _batch_result(*, cleanup=False, second_failed=False):
+    request = BatchUploadRequest(
+        items=(BatchItem("a.wav"), BatchItem("b.wav")),
+        relation=BatchRelation.SEPARATE,
+    )
+    first = BatchItemResult(
+        request.items[0],
+        text="Clean a" if cleanup else "Raw a",
+        raw_text="Raw a" if cleanup else None,
+        cleanup_provider="openai" if cleanup else None,
+        cleanup_model="gpt-test" if cleanup else None,
+    )
+    second = BatchItemResult(
+        request.items[1],
+        text="Clean b" if cleanup else "Raw b",
+        raw_text="Raw b" if cleanup else None,
+        cleanup_provider="openai" if cleanup else None,
+        cleanup_model="gpt-test" if cleanup else None,
+        error="failed" if second_failed else None,
+    )
+    return BatchResult(request=request, items=(first, second))
 
 
 class TestTranscriptViewerDialog:
@@ -88,6 +118,100 @@ class TestTranscriptViewerDialog:
         zoomed = dialog.view.document().defaultFont().pointSizeF()
         dialog.set_transcript("two")
         assert dialog.view.document().defaultFont().pointSizeF() == zoomed
+
+    def test_batch_tabs_show_overview_and_each_completed_transcript(self):
+        dialog = TranscriptViewerDialog()
+        copied = []
+        dialog.copy_requested.connect(copied.append)
+        dialog.set_batch_result(
+            _batch_result(),
+            "## a.wav\n\nRaw a\n\n## b.wav\n\nRaw b",
+            title="2 files",
+        )
+
+        assert not dialog.page_tabs.isHidden()
+        assert [
+            dialog.page_tabs.tabText(index)
+            for index in range(dialog.page_tabs.count())
+        ] == ["Overview", "Trans. 1", "Trans. 2"]
+        assert dialog.shown_text().startswith("## a.wav")
+
+        dialog.page_tabs.setCurrentIndex(1)
+        assert dialog.shown_text() == "## a.wav\n\nRaw a"
+        assert dialog.view.toPlainText() == "a.wav\nRaw a"
+        assert dialog.page_tabs.tabToolTip(1) == "a.wav"
+        dialog.copy_btn.click()
+        assert copied == ["## a.wav\n\nRaw a"]
+
+        dialog.page_tabs.setCurrentIndex(2)
+        assert dialog.shown_text() == "## b.wav\n\nRaw b"
+
+    def test_ai_output_tab_appears_only_when_cleanup_ran(self):
+        dialog = TranscriptViewerDialog()
+        overview = "## a.wav\n\nClean a\n\n## b.wav\n\nClean b"
+        raw = "## a.wav\n\nRaw a\n\n## b.wav\n\nRaw b"
+        dialog.set_batch_result(
+            _batch_result(cleanup=True),
+            overview,
+            raw,
+            title="2 files",
+        )
+
+        labels = [
+            dialog.page_tabs.tabText(index)
+            for index in range(dialog.page_tabs.count())
+        ]
+        assert labels == ["Overview", "Trans. 1", "Trans. 2", "AI Output"]
+
+        dialog.page_tabs.setCurrentIndex(1)
+        assert not dialog.version_toggle.isHidden()
+        dialog.raw_btn.click()
+        assert dialog.shown_text() == "## a.wav\n\nRaw a"
+
+        dialog.page_tabs.setCurrentIndex(3)
+        assert dialog.shown_text() == overview
+        assert dialog.version_toggle.isHidden()
+
+    def test_stitched_batch_keeps_source_parts_beside_ai_output(self):
+        request = BatchUploadRequest(
+            items=(BatchItem("part-1.wav"), BatchItem("part-2.wav")),
+            relation=BatchRelation.SEQUENTIAL,
+        )
+        result = BatchResult(
+            request=request,
+            items=(
+                BatchItemResult(request.items[0], text="Raw first part"),
+                BatchItemResult(request.items[1], text="Raw second part"),
+            ),
+            combined_text="One cleaned transcript.",
+            combined_raw_text="Raw first part\n\nRaw second part",
+            combined_cleanup_provider="openai",
+            combined_cleanup_model="gpt-test",
+        )
+        dialog = TranscriptViewerDialog()
+        dialog.set_batch_result(
+            result,
+            result.combined_text,
+            result.combined_raw_text,
+            title="2 files",
+        )
+
+        dialog.page_tabs.setCurrentIndex(1)
+        assert dialog.shown_text() == "## part-1.wav\n\nRaw first part"
+        dialog.page_tabs.setCurrentIndex(2)
+        assert dialog.shown_text() == "## part-2.wav\n\nRaw second part"
+        dialog.page_tabs.setCurrentIndex(3)
+        assert dialog.shown_text() == "One cleaned transcript."
+
+    def test_tabs_stay_hidden_without_multiple_completed_transcriptions(self):
+        dialog = TranscriptViewerDialog()
+        dialog.set_batch_result(
+            _batch_result(second_failed=True),
+            "## a.wav\n\nRaw a\n\n## b.wav\n\nError: failed",
+            title="2 files",
+        )
+        assert dialog.page_tabs.isHidden()
+        assert dialog.page_tabs.count() == 1
 
     def test_is_a_resizable_non_modal_window(self):
         dialog = TranscriptViewerDialog()

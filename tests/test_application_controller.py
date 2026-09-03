@@ -620,8 +620,9 @@ class DummyUIController:
         self.copied.append(text)
         return True
 
-    def set_transcription_stats(self, transcription_time, audio_duration, file_size):
+    def set_transcription_stats(self, transcription_time, audio_duration, file_size, cleanup_time=None):
         self.stats = (transcription_time, audio_duration, file_size)
+        self.cleanup_time = cleanup_time
 
     def refresh_history(self):
         self.refreshed_history = True
@@ -1037,6 +1038,21 @@ class TestApplicationController:
         assert controller._pending_audio_duration is None
         assert controller._pending_file_size is None
         assert controller._pending_source_name is None
+
+    def test_transcription_complete_passes_cleanup_time_to_ui(self):
+        from services.transcript_cleanup import CleanupInfo
+
+        controller = self._create_controller()
+        controller._pending_audio_path = "source.wav"
+        controller._pending_audio_duration = 10.0
+        controller._pending_file_size = 2048
+        controller._transcription_start_time = time.time() - 2.5
+        cleanup_info = CleanupInfo(provider="openai", model="gpt-4o", elapsed_s=1.2)
+
+        controller._on_transcription_complete("Cleaned text", "raw text", cleanup_info)
+
+        assert controller.ui_controller.stats is not None
+        assert controller.ui_controller.cleanup_time == 1.2
 
     def test_transcription_complete_stores_raw_and_fixed_text(self):
         controller = self._create_controller()

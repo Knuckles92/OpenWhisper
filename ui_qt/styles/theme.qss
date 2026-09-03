@@ -1304,6 +1304,33 @@ QLabel#transcriptViewerTitle {
     font-weight: 600;
 }
 
+QTabBar#transcriptViewerTabs {
+    background-color: transparent;
+}
+
+QTabBar#transcriptViewerTabs::tab {
+    background-color: transparent;
+    color: #8e8e93;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 12px 7px 12px;
+    margin: 0 2px;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 58px;
+    max-width: 112px;
+}
+
+QTabBar#transcriptViewerTabs::tab:selected {
+    color: #f5f5f7;
+    border-bottom-color: #0a84ff;
+}
+
+QTabBar#transcriptViewerTabs::tab:hover:!selected {
+    color: #f5f5f7;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
 QTextBrowser#transcriptViewerText,
 QTextBrowser#transcriptViewerText:focus {
     background-color: #1c1c1e;
