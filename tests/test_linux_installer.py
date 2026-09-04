@@ -198,6 +198,9 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in smoke
     assert "/usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt" in smoke
     assert "/usr/share/doc/openwhisper/linux-system-audio.md" in smoke
+    assert 'dynamic_loader="/usr/lib/ld-linux-x86-64.so.2"' in smoke
+    assert '"$dynamic_loader" --list "$candidate"' in smoke
+    assert "LD_LIBRARY_PATH=/usr/lib/openwhisper/_internal ldd" not in smoke
 
 
 def test_release_artifact_name_is_versioned_and_arch_specific():

@@ -50,9 +50,14 @@ namcap /tmp/openwhisper.pkg.tar.zst || \
 set +x
 
 failures="$(mktemp)"
+dynamic_loader="/usr/lib/ld-linux-x86-64.so.2"
+test -x "$dynamic_loader"
 while IFS= read -r -d "" candidate; do
     file -b "$candidate" | grep -q ELF || continue
-    if ! output="$(LD_LIBRARY_PATH=/usr/lib/openwhisper/_internal ldd "$candidate" 2>&1)"; then
+    # Arch's ldd is a Bash script. Starting it with the bundle on
+    # LD_LIBRARY_PATH can make Bash load the bundled libreadline and crash.
+    if ! output="$(LD_LIBRARY_PATH=/usr/lib/openwhisper/_internal \
+        "$dynamic_loader" --list "$candidate" 2>&1)"; then
         printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
     elif grep -q "not found" <<<"$output"; then
         printf "%s\n%s\n" "$candidate" "$output" >>"$failures"
