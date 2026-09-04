@@ -180,6 +180,8 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "pacman-key --init" in workflow
     assert "pacman-key --populate archlinux" in workflow
     assert "pacman -Sy --noconfirm archlinux-keyring" in workflow
+    assert "/etc/pacman.conf.d/noextract.conf" in workflow
+    assert "NoExtract = !usr/share/doc/openwhisper/*" in workflow
     # Combined release candidate ships five application artifacts (Win×2,
     # Linux×2, macOS DMG). The historical four-file inventory is retired.
     assert '-eq 5' in workflow

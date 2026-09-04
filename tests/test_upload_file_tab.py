@@ -1,4 +1,6 @@
 import os
+import sys
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +20,7 @@ from ui_qt.widgets.transcription_progress import (
     format_elapsed,
     stage_for_overlay_state,
 )
-from services.settings import SettingsKey
+from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs.batch_relation_dialog import BatchRelationDialog
 from ui_qt.widgets.engine_field import EngineStatus
 from ui_qt.widgets.decode_label import DecodeLabel
@@ -1411,26 +1413,48 @@ class TestLocalEngineFields:
 
 
 class TestMainWindowUploadTabIntegration:
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason=(
+            "A visible MainWindow near the end of the full suite can nest a "
+            "Cocoa event loop under QT_QPA_PLATFORM=offscreen; Ubuntu CI "
+            "covers the scroll invariant."
+        ),
+    )
     @patch.object(TranscriptionTabBase, "load_cleanup_setting")
     def test_transcription_tabs_do_not_scroll_at_minimum_height(self, _mock_setting):
         from ui_qt.main_window import MainWindow
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
         from config import config
 
-        window = MainWindow()
-        window.resize(config.MAIN_WINDOW_DEFAULT_WIDTH, config.MAIN_WINDOW_MIN_HEIGHT)
-        window.show()
-        QApplication.processEvents()
-
-        for index, tab in (
-            (TabbedContentWidget.TAB_QUICK_RECORD, window.quick_record_tab),
-            (TabbedContentWidget.TAB_UPLOAD_FILE, window.upload_file_tab),
+        with patch(
+            "ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro",
+            return_value=False,
+        ), patch.object(
+            settings_manager,
+            "load_all_settings",
+            return_value={SettingsKey.LAST_TAB_INDEX: 0},
+        ), patch.object(
+            settings_manager,
+            "get",
+            side_effect=lambda key, default=None: default,
+        ), patch.object(
+            settings_manager, "save_setting"
         ):
-            window.tabbed_content.set_current_index(index)
+            window = MainWindow()
+            window.resize(config.MAIN_WINDOW_DEFAULT_WIDTH, config.MAIN_WINDOW_MIN_HEIGHT)
+            window.show()
             QApplication.processEvents()
-            assert tab.isVisibleTo(window)
-            assert tab.scroll_area.verticalScrollBar().maximum() == 0
 
-        window._force_quit = True
-        window.close()
-        QApplication.processEvents()
+            for index, tab in (
+                (TabbedContentWidget.TAB_QUICK_RECORD, window.quick_record_tab),
+                (TabbedContentWidget.TAB_UPLOAD_FILE, window.upload_file_tab),
+            ):
+                window.tabbed_content.set_current_index(index)
+                QApplication.processEvents()
+                assert tab.isVisibleTo(window)
+                assert tab.scroll_area.verticalScrollBar().maximum() == 0
+
+            window._force_quit = True
+            window.close()
+            QApplication.processEvents()

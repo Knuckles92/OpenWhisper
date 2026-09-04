@@ -183,6 +183,12 @@ jobs:
               pacman -Sy --noconfirm archlinux-keyring
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed file namcap xorg-server-xvfb
+              # Official archlinux images NoExtract usr/share/doc/* to stay small.
+              # The package ships the Linux audio guide there; the smoke asserts it.
+              if [ -f /etc/pacman.conf.d/noextract.conf ]; then
+                sed -i 's/ usr\/share\/doc\/\*//' /etc/pacman.conf.d/noextract.conf
+              fi
+              printf '%s\n' '[options]' 'NoExtract = !usr/share/doc/openwhisper/*' >> /etc/pacman.conf
               pacman -U --noconfirm /tmp/openwhisper.pkg.tar.zst
               set -x
               test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
