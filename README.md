@@ -97,26 +97,26 @@ With CUDA enabled, faster-whisper runs 2-4x faster than CPU-only. Streaming tran
 
 ### Windows — installer (recommended)
 
-Download **OpenWhisper-Setup-2.5.1.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
+Download **OpenWhisper-Setup-2.5.2.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
 
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
 - A speech model (~150 MB) downloads on first use, with a consent prompt.
-- **Help → Check for Updates** fetches the latest GitHub release. Per-user Windows installs download a verified update archive and apply it in-app (no Inno wizard). Elevated / Program Files installs, or a missing archive, still use the verified setup exe. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
+- **Help → Check for Updates** fetches the latest GitHub release. Per-user Windows installs download a verified update archive and apply it in-app (no Inno wizard). Elevated / Program Files installs, or a missing archive, still use the verified setup exe. Version 2.5.2 uses the setup path to install the repaired updater. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
-> Get-FileHash .\OpenWhisper-Setup-2.5.1.exe -Algorithm SHA256
+> Get-FileHash .\OpenWhisper-Setup-2.5.2.exe -Algorithm SHA256
 > ```
 
 To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whether to keep your settings and history.
 
 ### Linux — native Debian package (recommended)
 
-Download **OpenWhisper-2.5.1-linux-amd64.deb** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install it with APT so required audio and Qt system libraries are resolved automatically:
+Download **OpenWhisper-2.5.2-linux-amd64.deb** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install it with APT so required audio and Qt system libraries are resolved automatically:
 
 ```bash
-sudo apt install ./OpenWhisper-2.5.1-linux-amd64.deb
+sudo apt install ./OpenWhisper-2.5.2-linux-amd64.deb
 ```
 
 - Supports x86-64 Debian 12+, Ubuntu 22.04+, and compatible derivatives.
@@ -136,10 +136,10 @@ Remove the application with `sudo apt remove openwhisper`. To also remove OpenWh
 
 ### Linux — native Arch package
 
-Download **OpenWhisper-2.5.1-linux-x86_64.pkg.tar.zst** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install it with pacman so required audio and Qt system libraries are resolved automatically:
+Download **OpenWhisper-2.5.2-linux-x86_64.pkg.tar.zst** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install it with pacman so required audio and Qt system libraries are resolved automatically:
 
 ```bash
-sudo pacman -U ./OpenWhisper-2.5.1-linux-x86_64.pkg.tar.zst
+sudo pacman -U ./OpenWhisper-2.5.2-linux-x86_64.pkg.tar.zst
 ```
 
 - Supports x86-64 Arch Linux and compatible derivatives (Manjaro, EndeavourOS).
