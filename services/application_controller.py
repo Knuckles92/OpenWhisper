@@ -308,6 +308,9 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_retry_step = (
             self.meeting_runtime.retry_finalization
         )
+        self.ui_controller.on_meeting_background = (
+            self.meeting_runtime.continue_in_background
+        )
         self.ui_controller.on_meeting_defer_insights = (
             self.meeting_runtime.defer_finalization_card
         )

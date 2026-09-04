@@ -145,7 +145,10 @@ class TabbedContentWidget(QWidget):
 
     def _apply_meeting_tab_tooltip(self) -> None:
         if meeting_mode_supported():
-            self.tab_bar.setTabToolTip(self.TAB_MEETING_MODE, "")
+            self.tab_bar.setTabToolTip(
+                self.TAB_MEETING_MODE,
+                "Meeting Mode is in beta. Transcripts and insights may be inaccurate.",
+            )
             return
         os_name = meeting_unsupported_os_name()
         try:

@@ -120,6 +120,7 @@ class MeetingModeTab(QWidget):
     retry_insights_requested = pyqtSignal()
     retry_speakers_requested = pyqtSignal()
     retry_step_requested = pyqtSignal(str)
+    background_requested = pyqtSignal()
     defer_insights_requested = pyqtSignal()
     start_new_meeting_requested = pyqtSignal(bool)  # cloud_enabled
     #: Emitted whenever the visible controls change, so the window can keep
@@ -135,6 +136,7 @@ class MeetingModeTab(QWidget):
         )
 
         self._active = False
+        self._background_available = False
         self._starting = False
         self._paused = False
         self._elapsed_base_s = 0.0
@@ -265,7 +267,24 @@ class MeetingModeTab(QWidget):
         title.setObjectName("headerLabel")
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.DemiBold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_card.layout.addWidget(title)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addStretch()
+        title_row.addWidget(title)
+        beta_badge = QLabel("Beta")
+        beta_badge.setObjectName("meetingBetaBadge")
+        beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        beta_badge.setAccessibleName("Meeting Mode is in beta")
+        title_row.addWidget(beta_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch()
+        intro_card.layout.addLayout(title_row)
+
+        beta_notice = WrappedLabel(
+            "Meeting Mode is in beta. Transcripts and insights may be inaccurate."
+        )
+        beta_notice.setObjectName("meetingBetaNotice")
+        beta_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        intro_card.layout.addWidget(beta_notice)
 
         subtitle_copy, platform_copy = meeting_audio_support_copy()
         self.subtitle = WrappedLabel(subtitle_copy)
@@ -586,6 +605,18 @@ class MeetingModeTab(QWidget):
         decisions_layout.setSpacing(10)
         decisions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self.finalization_background_button = self._decision_button(
+            "Continue in the background",
+            "meetingFinalizationBackgroundButton",
+            "Keep preparing this meeting in the background and return to "
+            "Start Meeting. Results will be available in Past Meetings.",
+        )
+        self.finalization_background_button.clicked.connect(
+            self.background_requested.emit
+        )
+        self.finalization_background_button.hide()
+        decisions_layout.addWidget(self.finalization_background_button)
+
         self.finalization_keep_later_button = self._decision_button(
             "Keep for later",
             "meetingFinalizationKeepLaterButton",
@@ -631,6 +662,11 @@ class MeetingModeTab(QWidget):
         footer_layout.addWidget(self.finalization_decisions_row)
         self.finalization_card.layout.addWidget(self.finalization_footer)
         content_layout.addWidget(self.finalization_card)
+
+        self.background_notice = WrappedLabel("")
+        self.background_notice.setAccessibleName("Background meeting processing")
+        self.background_notice.hide()
+        content_layout.addWidget(self.background_notice)
 
         content_layout.addStretch()
 
@@ -711,6 +747,13 @@ class MeetingModeTab(QWidget):
         if not isinstance(payload, dict):
             return
 
+        if "background_available" in payload:
+            self._background_available = bool(payload["background_available"])
+        if "background_message" in payload:
+            message = str(payload["background_message"] or "")
+            self.background_notice.setText(message)
+            self.background_notice.setVisible(bool(message))
+
         if "cloud_enabled" in payload:
             self.cloud_checkbox.blockSignals(True)
             self.cloud_checkbox.setChecked(bool(payload["cloud_enabled"]))
@@ -733,6 +776,7 @@ class MeetingModeTab(QWidget):
             self._starting = status == "starting"
             # A new meeting start clears any previous finalization result.
             if status == "starting":
+                self._background_available = False
                 self._finalization = None
                 self._identity = {}
 
@@ -914,6 +958,9 @@ class MeetingModeTab(QWidget):
         self.demo_button.setVisible(show_demo)
         self.demo_hint.setVisible(show_demo)
         self.finalization_card.setVisible(show_finalization)
+        self.finalization_background_button.setVisible(
+            show_finalization and running_finalization and self._background_available
+        )
         self.pause_button.setEnabled(self._active)
         self.end_button.setEnabled(self._active)
         self.guest_link_button.setEnabled(self._active and self._has_dashboard)

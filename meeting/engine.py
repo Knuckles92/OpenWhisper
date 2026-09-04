@@ -209,7 +209,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting listener raised for %s event", kind)
 
-    def _stop_asr(self, context: str) -> None:
+    def _stop_asr(self, context: str) -> bool:
         """Stop the ASR engine and announce that its model is freed.
 
         ``asr_released`` is deliberately a separate event from ``ended``:
@@ -222,12 +222,15 @@ class MeetingEngine:
         """
         asr = self._asr
         if asr is None:
-            return
+            return True
         try:
             asr.stop()
         except Exception:
             logger.exception("ASR stop failed (%s)", context)
+            return False
+        self._asr = None
         self._emit("asr_released", {"meeting_id": self.meeting_id})
+        return True
 
     def _broadcast(self, message: Dict[str, Any], *,
                    host_only: bool = False) -> None:
@@ -901,6 +904,11 @@ class MeetingEngine:
                     "High-accuracy re-decoding complete" if offline_ok else "Re-decoding failed; kept live transcript",
                 )
 
+            # The remaining passes use saved audio/text. Free Whisper before
+            # cloud work so another meeting can own the local model.
+            if self._stop_asr("end"):
+                self._emit("background_ready", {"meeting_id": self.meeting_id})
+
             speaker_ok = False
             speaker_skipped = False
             speaker_error = ""
@@ -1209,7 +1217,6 @@ class MeetingEngine:
                 except Exception:
                     logger.exception("Scheduler stop failed")
                 self._scheduler = None
-            self._stop_asr("end")
             self._shutdown_agent_core()
         except Exception as exc:
             logger.exception("Meeting end failed")
@@ -1603,6 +1610,13 @@ class MeetingEngine:
             "canceled": True,
             "status": "failed",
         })
+
+    def wait_for_end(self) -> None:
+        """Wait for the end worker without interrupting its remaining passes."""
+        with self._lifecycle_lock:
+            worker = self._end_thread
+        if worker is not None and worker is not threading.current_thread():
+            worker.join()
 
     def shutdown(self) -> None:
         """Full teardown for app exit, including the web server.

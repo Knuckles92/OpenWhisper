@@ -1219,3 +1219,139 @@ def test_clear_past_meetings_with_recordings_status(runtime, monkeypatch):
     assert statuses[-1] == "Meetings and recordings cleared"
 
 
+
+
+@pytest.fixture
+def background_meeting(runtime, monkeypatch):
+    import threading
+
+    rt, controller = runtime
+    released = threading.Event()
+    engine = MagicMock()
+    engine.meeting_id = "m_background"
+    engine.is_active.return_value = False
+    engine.wait_for_end.side_effect = lambda: released.wait(10)
+    engine.store.with_state.return_value = {"status": "completed", "steps": []}
+    rt._engine = engine
+    rt._card_meeting_id = engine.meeting_id
+    rt._finalizing = True
+    rt._finalization = {"status": "running"}
+    rt._background_ready = True
+    monkeypatch.setattr(rt, "_persist_card_deferred", MagicMock(return_value=True))
+    yield rt, controller, engine, released
+    with rt._lock:
+        workers = list(rt._background_workers.values())
+    released.set()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+
+
+def test_background_handoff_keeps_work_running_and_allows_start(
+    background_meeting, monkeypatch
+):
+    rt, controller, engine, _ = background_meeting
+    launched = _record_launch(rt, monkeypatch)
+    states = []
+    controller.meeting_state_changed.connect(states.append)
+
+    assert rt.continue_in_background() is True
+    assert rt.continue_in_background() is False
+    assert rt._engine is None
+    assert rt.is_finalizing is False
+    assert rt._card_meeting_id is None
+    assert rt._background_engines == {engine.meeting_id: engine}
+    engine.shutdown.assert_not_called()
+    assert states[-1]["dashboard_available"] is False
+    assert "1 meeting" in states[-1]["background_message"]
+
+    rt.start_meeting(False)
+    assert len(launched) == 1
+
+
+def test_background_handoff_waits_for_local_model_release(background_meeting):
+    rt, _, engine, _ = background_meeting
+    rt._background_ready = False
+
+    assert rt.continue_in_background() is False
+    assert rt._engine is engine
+    assert rt.is_finalizing is True
+    rt._persist_card_deferred.assert_not_called()
+
+
+def test_background_handoff_persistence_failure_keeps_card(background_meeting):
+    rt, _, engine, _ = background_meeting
+    rt._persist_card_deferred.return_value = False
+
+    assert rt.continue_in_background() is False
+    assert rt._engine is engine
+    assert rt._card_meeting_id == engine.meeting_id
+    assert not rt._background_engines
+
+
+@pytest.mark.parametrize("status,steps,attention", [
+    ("completed", [], False),
+    ("failed", [], True),
+    ("completed", [{"status": "failed"}], True),
+])
+def test_background_outcome_does_not_replace_new_meeting(
+    background_meeting, qapp, status, steps, attention
+):
+    rt, controller, old, released = background_meeting
+    old.store.with_state.return_value = {"status": status, "steps": steps}
+    assert rt.continue_in_background()
+    worker = rt._background_workers[old.meeting_id]
+    current = MagicMock()
+    current.meeting_id = "m_new"
+    current.is_active.return_value = True
+    rt._engine = current
+    controller.meeting_active = True
+    states, errors, urls = [], [], []
+    controller.meeting_state_changed.connect(states.append)
+    controller.meeting_error.connect(errors.append)
+    controller.meeting_server_started.connect(urls.append)
+    for kind, payload in [
+        ("status", {"status": "ended", "finalization": {"status": "failed"}}),
+        ("ended", {"status": "ended"}),
+        ("asr_released", {}),
+        ("background_ready", {}),
+        ("error", {"message": "old error"}),
+        ("server_started", {"host_url": "old-url"}),
+    ]:
+        rt._route_engine_event(old, kind, payload)
+    assert not states and not errors and not urls
+    assert controller.engine_lease == []
+
+    released.set()
+    worker.join(5)
+    qapp.processEvents()
+    assert not worker.is_alive()
+    assert controller.meeting_active is True
+    assert rt._engine is current
+    assert rt._finalization is None
+    assert rt._card_meeting_id is None
+    assert all(set(state) == {"background_message"} for state in states)
+    assert ("needs attention" in states[-1]["background_message"]) is attention
+    assert not rt._background_engines
+    old.shutdown.assert_called_once()
+
+
+def test_background_history_does_not_hydrate_or_delete_running_job(
+    background_meeting, monkeypatch
+):
+    rt, _, engine, _ = background_meeting
+    assert rt.continue_in_background()
+    rt._repo = MagicMock()
+    rt._repo.get_meeting.return_value = _ended_meeting(engine.meeting_id)
+    monkeypatch.setattr(rt, "_meeting_content_summary", lambda *a, **kw: {})
+    assert not rt._hydrate_finalization_card(_ended_meeting(engine.meeting_id), reveal=True)
+    assert rt._card_meeting_id is None
+    delete = MagicMock()
+    clear = MagicMock()
+    monkeypatch.setattr("meeting.persist.data_lifecycle.delete_meeting_data", delete)
+    monkeypatch.setattr("meeting.persist.data_lifecycle.clear_meetings", clear)
+    rt.delete_past_meeting(engine.meeting_id)
+    rt._delete_past_meeting_worker(engine.meeting_id)
+    rt._clear_past_meetings_worker(True)
+    delete.assert_not_called()
+    assert engine.meeting_id in clear.call_args.kwargs["skip_ids"]

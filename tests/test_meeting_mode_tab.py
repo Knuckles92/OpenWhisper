@@ -575,6 +575,36 @@ class TestMeetingModeTabState(unittest.TestCase):
             self.tab.finalization_keep_hint.text(),
         )
 
+    def test_continue_in_background_appears_after_local_pass_and_emits(self):
+        clicked = []
+        self.tab.background_requested.connect(lambda: clicked.append(True))
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "running"},
+        })
+        self.assertTrue(self.tab.finalization_background_button.isHidden())
+        self.tab.set_meeting_state({"background_available": True})
+        button = self.tab.finalization_background_button
+        self.assertFalse(button.isHidden())
+        self.assertEqual(button.text(), "Continue in the background")
+        button.click()
+        self.assertEqual(clicked, [True])
+
+        self.tab.set_meeting_state({
+            "finalization": None, "meeting_id": None,
+            "background_available": False,
+            "background_message": "1 meeting finishing in the background.",
+        })
+        self.assertFalse(self.tab.idle_card.isHidden())
+        self.assertTrue(self.tab.finalization_card.isHidden())
+        self.assertFalse(self.tab.background_notice.isHidden())
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.tab.set_meeting_state({"background_message": "Background meeting finished."})
+        self.assertFalse(self.tab.session_card.isHidden())
+        self.assertTrue(self.tab.finalization_card.isHidden())
+        self.assertTrue(self.tab.end_button.isEnabled())
+
     def test_finalization_footer_elements_are_centered(self):
         """Footer links, keep hint, and decisions are horizontally centered."""
         links_layout = self.tab.finalization_links_row.layout()

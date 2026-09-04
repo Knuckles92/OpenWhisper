@@ -1993,6 +1993,22 @@ QWidget#meetingModeScrollHost {
     background-color: transparent;
 }
 
+QLabel#meetingBetaBadge {
+    color: #ff9f0a;
+    background-color: rgba(255, 159, 10, 0.12);
+    border: 1px solid rgba(255, 159, 10, 0.3);
+    border-radius: 8px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#meetingBetaNotice {
+    color: #d1d1d6;
+    background-color: transparent;
+    font-size: 12px;
+}
+
 QLabel#meetingModeSubtitle {
     color: #8e8e93;
     background-color: transparent;

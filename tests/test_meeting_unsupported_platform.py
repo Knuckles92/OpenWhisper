@@ -299,7 +299,10 @@ class TestMeetingTabUnsupportedLock(unittest.TestCase):
         tabs = self._make_tabs(supported=True)
         self.assertFalse(tabs.meeting_tab_is_locked())
         self.assertNotEqual(tabs.tab_bar.property("unsupportedMeeting"), True)
-        self.assertEqual(tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE), "")
+        self.assertEqual(
+            tabs.tab_bar.tabToolTip(tabs.TAB_MEETING_MODE),
+            "Meeting Mode is in beta. Transcripts and insights may be inaccurate.",
+        )
 
     def test_unsupported_tab_is_muted_and_locked_until_ack(self):
         with patch(

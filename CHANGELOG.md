@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Meeting finalization offers **Continue in the background** after local transcription finishes, freeing Meeting Mode for another session while cleanup and reports finish. Background outcomes remain available in Past Meetings.
+
 ## [2.5.2] - 2026-09-04
 
 ### Fixed

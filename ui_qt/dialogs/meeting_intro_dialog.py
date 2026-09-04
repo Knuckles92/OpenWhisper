@@ -50,7 +50,7 @@ class MeetingModeIntroDialog(QDialog):
         self.setObjectName("meetingIntroDialog")
         self.result_action = self.RESULT_SKIP
 
-        self.setWindowTitle("Meeting Mode")
+        self.setWindowTitle("Meeting Mode (Beta)")
         self.setAccessibleName("Welcome to Meeting Mode")
         self.setAccessibleDescription(
             "Overview of meeting capture, the browser dashboard, and Meeting settings."
@@ -73,7 +73,8 @@ class MeetingModeIntroDialog(QDialog):
 
         lead = QLabel(
             "Record a meeting — your mic and the other side — and follow "
-            "a live transcript in the browser."
+            "a live transcript in the browser.\n\n"
+            "Meeting Mode is in beta. Transcripts and insights may be inaccurate."
         )
         lead.setObjectName("meetingIntroLead")
         lead.setWordWrap(True)

@@ -164,6 +164,7 @@ class UIController(QObject):
         self.on_meeting_retry_insights: Optional[Callable] = None
         self.on_meeting_retry_speakers: Optional[Callable] = None
         self.on_meeting_retry_step: Optional[Callable] = None  # (step_id: str)
+        self.on_meeting_background: Optional[Callable] = None
         self.on_meeting_defer_insights: Optional[Callable] = None
         self.on_meeting_start_new: Optional[Callable] = None  # (cloud: Optional[bool])
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
@@ -238,6 +239,9 @@ class UIController(QObject):
             self._on_meeting_retry_speakers
         )
         meeting_tab.retry_step_requested.connect(self._on_meeting_retry_step)
+        meeting_tab.background_requested.connect(
+            lambda: self.on_meeting_background and self.on_meeting_background()
+        )
         meeting_tab.defer_insights_requested.connect(
             self._on_meeting_defer_insights
         )
@@ -1105,6 +1109,8 @@ class UIController(QObject):
         """
         if not isinstance(payload, dict):
             return
+        if payload.get("dashboard_available") is False:
+            self._meeting_urls = {}
         has_dashboard = bool(
             self._meeting_urls.get("host_url") or self._meeting_urls.get("url")
         )

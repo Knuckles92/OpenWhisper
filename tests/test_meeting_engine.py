@@ -712,6 +712,10 @@ class TestEndLifecycle:
             engine.end()
             assert consolidation_entered.wait(timeout=5.0)
 
+            assert events_of(engine, "background_ready")
+            assert engine._asr is None
+            assert FakeAsr.instances[-1].stops == 1
+
             ended = events_of(engine, "ended")
             assert ended, "end must be published before final insight polish"
             assert engine.is_active() is False
@@ -1487,3 +1491,88 @@ def test_capture_recovery_budget_fits_twelve_seconds():
     )
     assert worst <= float(engine_module.CAPTURE_RECOVERY_BUDGET_S)
     assert float(engine_module.CAPTURE_RECOVERY_BUDGET_S) <= 12.0
+
+
+def test_background_ready_waits_for_offline_pass(make_engine, fakes, monkeypatch):
+    engine = make_engine(cloud_enabled=True, end_redecode=True)
+    engine.start()
+    entered, released = threading.Event(), threading.Event()
+
+    def offline_pass(**kwargs):
+        entered.set()
+        assert released.wait(5)
+        assert FakeAsr.instances[-1].stops == 0
+        return True
+
+    monkeypatch.setattr(engine, "_run_offline_final_pass", offline_pass)
+    try:
+        engine.end()
+        assert entered.wait(5)
+        assert not events_of(engine, "background_ready")
+        assert not events_of(engine, "asr_released")
+    finally:
+        released.set()
+        engine.wait_for_end()
+    kinds = [kind for kind, _ in engine.events]
+    assert kinds.index("background_ready") > kinds.index("asr_released")
+
+
+def test_background_end_persists_report_while_next_meeting_runs(
+    make_engine, repo, fakes, monkeypatch
+):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from meeting.agent.scheduler import ConsolidationOutcome
+    from services.runtime.meeting import MeetingRuntime
+
+    controller = SimpleNamespace(
+        meeting_active=False, meeting_status_update=MagicMock(),
+        meeting_state_changed=MagicMock(), meeting_server_started=MagicMock(),
+        meeting_error=MagicMock(), past_meetings_refresh_requested=MagicMock(),
+        restore_local_engine=MagicMock(),
+    )
+    runtime = MeetingRuntime(controller)
+    runtime._repo = repo
+    old = make_engine(cloud_enabled=True)
+    runtime._engine = old
+    old.add_listener(lambda kind, payload: runtime._route_engine_event(old, kind, payload))
+    old.start()
+    entered, released = threading.Event(), threading.Event()
+
+    def consolidate(**kwargs):
+        entered.set()
+        assert released.wait(10)
+        return ConsolidationOutcome(status="completed", message="Report ready")
+
+    fakes.schedulers[0].run_consolidation = consolidate
+    worker = None
+    try:
+        old.end()
+        assert entered.wait(5)
+        assert runtime.continue_in_background()
+        worker = runtime._background_workers[old.meeting_id]
+        new = make_engine(cloud_enabled=False)
+        runtime._engine = new
+        new.add_listener(lambda kind, payload: runtime._route_engine_event(new, kind, payload))
+        new.start()
+        controller.meeting_active = True
+        controller.meeting_state_changed.reset_mock()
+        controller.restore_local_engine.reset_mock()
+        released.set()
+        worker.join(5)
+        assert not worker.is_alive()
+        assert new.is_active()
+        assert controller.meeting_active is True
+        controller.restore_local_engine.assert_not_called()
+        for call in controller.meeting_state_changed.emit.call_args_list:
+            assert set(call.args[0]) == {"background_message"}
+        stored = repo.get_meeting(old.meeting_id)
+        import json
+        finalization = json.loads(stored["state_json"])["finalization"]
+        assert finalization["status"] == "completed"
+        assert finalization["card_deferred"] is True
+        assert old._server is None
+    finally:
+        released.set()
+        if worker is not None:
+            worker.join(5)
