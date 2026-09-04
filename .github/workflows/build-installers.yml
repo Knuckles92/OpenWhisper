@@ -59,9 +59,51 @@ jobs:
       - name: Check ASGI test stack compatibility
         shell: pwsh
         run: .\venv\Scripts\python scripts\check_testclient_compat.py --timeout 15
+      - name: Run Windows updater regressions
+        shell: pwsh
+        run: |
+          . .\venv\Scripts\Activate.ps1
+          python -m pytest tests/test_app_update.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
       - name: Build and verify
         shell: pwsh
         run: .\scripts\build_installer.ps1 -Clean
+      - name: Verify frozen setup helper protocol
+        shell: pwsh
+        env:
+          OPENWHISPER_TEST_FROZEN_HELPER: dist/OpenWhisper/OpenWhisperUpdater.exe
+        run: |
+          . .\venv\Scripts\Activate.ps1
+          python -m pytest tests/test_frozen_updater.py -q
+      - name: Upgrade previous stable installation and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP 'previous-release'
+          New-Item -ItemType Directory -Force -Path $previous | Out-Null
+          $release = gh api "repos/$env:RELEASE_REPOSITORY/releases/latest" | ConvertFrom-Json
+          $asset = @($release.assets | Where-Object { $_.name -like 'OpenWhisper-Setup-*.exe' })
+          if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:[a-f0-9]{64}$') {
+            throw 'Previous stable release needs one verified setup asset.'
+          }
+          gh release download $release.tag_name --repo $env:RELEASE_REPOSITORY --pattern $asset[0].name --dir $previous
+          if ($LASTEXITCODE -ne 0) { throw 'Previous setup download failed.' }
+          $previousSetup = Join-Path $previous $asset[0].name
+          if ((Get-FileHash -LiteralPath $previousSetup -Algorithm SHA256).Hash.ToLower() -ne $asset[0].digest.Substring(7)) {
+            throw 'Previous setup digest mismatch.'
+          }
+          . .\venv\Scripts\Activate.ps1
+          $version = python -c "import _version; print(_version.__version__)"
+          .\scripts\smoke_windows_setup.ps1 -PreviousSetup $previousSetup -NewSetup "installer/Output/OpenWhisper-Setup-$version.exe" -Version $version
+      - name: Preserve Windows lifecycle logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-setup-logs
+          path: ${{ runner.temp }}/openwhisper-setup-logs
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwhisper-windows
@@ -265,6 +307,8 @@ jobs:
           BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SETUP_ONLY_WINDOWS: ${{ inputs.setup_only_windows }}
         run: |
+          bridge="$(python3 -c 'from _version import __version__; from services.update_contract import is_setup_bridge_release; print(str(is_setup_bridge_release(__version__)).lower())')"
+          if [[ "$bridge" == "true" ]]; then export SETUP_ONLY_WINDOWS=true; fi
           if [[ "$SETUP_ONLY_WINDOWS" == "true" ]]; then
             rm -f release/OpenWhisper-*-win64.tar.xz
             expected_artifacts=4
@@ -286,6 +330,7 @@ jobs:
 
           metadata = {
               "schema_version": 1,
+              "windows_setup_only": os.environ["SETUP_ONLY_WINDOWS"] == "true",
               "version": os.environ["BUILD_VERSION"],
               "commit_sha": os.environ["BUILD_COMMIT"],
               "source_ref": os.environ["BUILD_REF"],

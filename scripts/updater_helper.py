@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from services.app_update_apply import (  # noqa: E402
     UpdateApplyError,
+    _wait_for_pid,
     cleanup_transaction_after_parent,
     commit_prepared_update,
     leave_launch_directory,
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     setup_updater_logging()
+    if "--setup-action" in args:
+        return _run_setup(args)
     transaction_id = parse_transaction_id(args)
     if not transaction_id:
         native_message_box("OpenWhisper updater was started without a transaction.")
@@ -45,6 +48,9 @@ def main(argv: list[str] | None = None) -> int:
         if CLEANUP_ARG in args:
             return _run_cleanup(transaction_id, args)
         if RECOVER_ARG in args:
+            parent_pid = parse_parent_pid(args)
+            if parent_pid:
+                _wait_for_pid(parent_pid, 120.0)
             recover_transaction(transaction_id)
             return 0
         journal = load_journal(transaction_id)
@@ -55,6 +61,26 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except Exception as exc:  # noqa: BLE001 - last-resort helper failure
         native_message_box(f"The update failed: {exc}")
+        return 1
+
+
+def _run_setup(args: list[str]) -> int:
+    import argparse
+
+    from services.setup_update import finish_setup, prepare_setup, rollback_setup
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--setup-action", choices=("prepare", "finish", "rollback"), required=True)
+    parser.add_argument("--app-dir", required=True)
+    parser.add_argument("--error-file", required=True)
+    options = parser.parse_args(args)
+    try:
+        actions = {"prepare": prepare_setup, "finish": finish_setup, "rollback": rollback_setup}
+        actions[options.setup_action](options.app_dir)
+        return 0
+    except Exception as exc:
+        logger.exception("Setup %s failed", options.setup_action)
+        Path(options.error_file).write_text(str(exc), encoding="utf-8")
         return 1
 
 

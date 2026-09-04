@@ -52,6 +52,7 @@ node_modules/
 /build/
 /dist/
 /installer/Output/
+/.tmp/
 
 # Pi sidecar bundle: a ~15 MB build artifact rebuilt by `node sidecar/build.mjs`
 # and shipped inside the meeting-agent component archive, never read from the

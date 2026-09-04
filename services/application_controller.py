@@ -131,8 +131,8 @@ class ApplicationController(QObject):
     past_meetings_refresh_requested = pyqtSignal()
     # App updater: (result_or_none, error, manual).
     update_check_finished = pyqtSignal(object, str, bool)
-    update_download_progress = pyqtSignal(str, int, int)
-    update_download_finished = pyqtSignal(object, str)
+    update_download_progress = pyqtSignal(object, str, int, int)
+    update_download_finished = pyqtSignal(object, object, str)
 
     def __init__(self, ui_controller, local_backend: Optional[LocalWhisperBackend] = None):
         super().__init__()
@@ -182,6 +182,8 @@ class ApplicationController(QObject):
         self._update_check_timer.timeout.connect(self._maybe_start_update_check)
         self._update_cancel = threading.Event()
         self._update_attempt = None
+        self._update_download_lock = threading.Lock()
+        self.update_readiness_error = ""
 
         # Exclusive mode: True while a meeting session runs; dictation start
         # paths and engine reloads refuse while set (owned by MeetingRuntime).
@@ -255,6 +257,7 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_update_download = self.request_update_download
         self.ui_controller.on_update_cancel = self.cancel_update_download
+        self.ui_controller.on_update_abandon = self.discard_update_handoff
         self.ui_controller.get_transcribing = self.is_transcribing
         self.ui_controller.get_component_installing = (
             lambda: component_coordinator.is_any_installing()
@@ -514,33 +517,57 @@ class ApplicationController(QObject):
         release = getattr(result, "release", None)
         if release is None:
             if is_current():
-                self.update_download_finished.emit(None, "No installer is available.")
+                self.update_download_finished.emit(attempt, None, "No installer is available.")
             return
 
         def progress(phase: str, done: int, total: int) -> None:
             if is_current() and not token.is_set():
-                self.update_download_progress.emit(phase, done, total)
+                self.update_download_progress.emit(attempt, phase, done, total)
 
         from services.app_update import apply_update
 
         try:
-            handoff = apply_update(
-                result,
-                progress=progress,
-                cancel=token,
-                force_setup=force_setup,
-            )
+            with self._update_download_lock:
+                handoff = apply_update(
+                    result,
+                    progress=progress,
+                    cancel=token,
+                    force_setup=force_setup,
+                )
         except Exception as exc:
             logger.warning("Update download failed: %s", exc)
             message = str(exc) if str(exc) else "The download failed."
             if is_current():
-                self.update_download_finished.emit(None, message)
+                self.update_download_finished.emit(attempt, None, message)
             return
         if token.is_set() or not is_current():
+            from services.app_update import discard_prepared_result
+
+            discard_prepared_result(handoff)
             if is_current():
-                self.update_download_finished.emit(None, "The download was cancelled.")
+                self.update_download_finished.emit(attempt, None, "The download was canceled.")
             return
-        self.update_download_finished.emit(handoff, "")
+        self.update_download_finished.emit(attempt, handoff, "")
+
+    def discard_update_handoff(self, handoff: str) -> None:
+        from services.app_update import discard_prepared_result
+
+        self.component_executor.submit(discard_prepared_result, handoff)
+
+    def _on_update_download_progress(self, attempt, phase, done, total) -> None:
+        if attempt is self._update_attempt and not self._update_cancel.is_set():
+            self.ui_controller.on_update_download_progress(phase, done, total)
+
+    def _on_update_download_finished(self, attempt, handoff, error) -> None:
+        if attempt is not self._update_attempt or self._update_cancel.is_set():
+            if handoff:
+                self.discard_update_handoff(handoff)
+            if attempt is self._update_attempt:
+                self.ui_controller.on_update_download_finished(
+                    None, "The update was canceled."
+                )
+            return
+        self.ui_controller.on_update_download_finished(handoff, error)
 
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.
@@ -574,7 +601,8 @@ class ApplicationController(QObject):
         # the two setup workers do not race create_all on a missing file.
         try:
             db.ensure_initialized()
-        except Exception:
+        except Exception as exc:
+            self.update_readiness_error = str(exc) or "Could not initialize the database"
             logger.exception("Could not initialize the database")
         QTimer.singleShot(0, self.meeting_runtime.setup)
         self.component_executor.submit(self._prune_update_leftovers)
@@ -598,6 +626,9 @@ class ApplicationController(QObject):
                 )
         try:
             transactions = prune_abandoned_transactions()
+            from services.setup_update import cleanup_setup_backup
+            from services.app_update_apply import running_app_dir
+            cleanup_setup_backup(running_app_dir())
         except Exception:
             logger.exception("Could not prune abandoned update transactions")
             return
@@ -1478,10 +1509,10 @@ class ApplicationController(QObject):
         )
         self.update_check_finished.connect(self._on_update_check_finished)
         self.update_download_progress.connect(
-            self.ui_controller.on_update_download_progress
+            self._on_update_download_progress
         )
         self.update_download_finished.connect(
-            self.ui_controller.on_update_download_finished
+            self._on_update_download_finished
         )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)

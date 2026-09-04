@@ -306,7 +306,10 @@ def main() -> int:
         )
 
         health_token = parse_health_token()
-        ui_controller.show_apply_error_if_any()
+        if not health_token:
+            ui_controller.show_apply_error_if_any()
+        else:
+            ui_controller.main_window.setEnabled(False)
 
         # Whisper load, HF consent, meeting recovery, and streaming setup
         # run after the window is visible — never on the splash path.
@@ -316,10 +319,18 @@ def main() -> int:
 
             # A visible window is not enough: let the real event loop process
             # deferred runtime setup before making the helper discard rollback.
-            QTimer.singleShot(
-                1500,
-                lambda token=health_token: write_health_acknowledgement(token),
-            )
+            def acknowledge_update():
+                if app_controller.update_readiness_error:
+                    logging.error("Update readiness failed: %s", app_controller.update_readiness_error)
+                    qt_app.app.exit(1)
+                    return
+                if write_health_acknowledgement(health_token):
+                    ui_controller.main_window.setEnabled(True)
+                else:
+                    logging.error("Could not acknowledge the update transaction")
+                    qt_app.app.exit(1)
+
+            QTimer.singleShot(1500, acknowledge_update)
 
         profiler.log_summary()
         summary_logged = True

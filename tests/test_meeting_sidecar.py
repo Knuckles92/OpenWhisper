@@ -1221,7 +1221,10 @@ class TestResolveNodeCmd:
         node.write_text("#!/bin/sh\n", encoding="utf-8")
         node.chmod(0o644)
         agent = PiSidecarAgent(str(tmp_path))
-        with patch.object(pi_mod.sys, "platform", "linux"):
+        # Windows chmod does not implement POSIX executable permission bits.
+        with patch.object(pi_mod.sys, "platform", "linux"), patch.object(
+            pi_mod.os, "access", return_value=False
+        ):
             with pytest.raises(RuntimeError, match="not executable"):
                 agent._resolve_node_cmd()
 

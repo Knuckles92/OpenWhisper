@@ -233,3 +233,52 @@ class TestCudaPreloadSummary:
         info.assert_not_called()
 
 
+
+
+@pytest.mark.parametrize("readiness_error,acknowledged", [("database unavailable", True), ("", False), ("", True)])
+def test_update_health_requires_database_and_matching_transaction(monkeypatch, readiness_error, acknowledged):
+    from unittest.mock import MagicMock
+    from PyQt6.QtCore import QTimer
+    from services import app_update_apply
+
+    timers = []
+    qt_app = _FakeQtApplication()
+    qt_app.app = MagicMock()
+    ui = _FakeUIController()
+    ui.main_window = MagicMock()
+    loading = _FakeLoadingScreen()
+
+    class Controller(_FakeApplicationController):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.update_readiness_error = readiness_error
+
+    def run(window):
+        for callback in timers:
+            callback()
+        return 0
+
+    qt_app.run = run
+    monkeypatch.setattr(bootstrap, "get_early_runtime_components", lambda: (lambda: qt_app, lambda: loading))
+    monkeypatch.setattr(bootstrap, "get_late_runtime_components", lambda: (lambda: ui, Controller))
+    monkeypatch.setattr(bootstrap, "create_deferred_local_whisper_backend", lambda: None)
+    monkeypatch.setattr(bootstrap, "process_qt_events", lambda: None)
+    monkeypatch.setattr(bootstrap, "setup_logging", lambda: None)
+    monkeypatch.setattr(bootstrap, "run_with_ui_pulse", lambda fn: fn())
+    monkeypatch.setattr(app_update_apply, "parse_health_token", lambda: "b" * 32)
+    ack = MagicMock(return_value=acknowledged)
+    monkeypatch.setattr(app_update_apply, "write_health_acknowledgement", ack)
+    monkeypatch.setattr(QTimer, "singleShot", lambda delay, callback: timers.append(callback))
+    assert bootstrap.main() == 0
+    assert not ui.apply_error_checked
+    assert ui.main_window.setEnabled.call_args_list[0].args == (False,)
+    if readiness_error:
+        ack.assert_not_called()
+    else:
+        ack.assert_called_once_with("b" * 32)
+    if readiness_error or not acknowledged:
+        qt_app.app.exit.assert_called_once_with(1)
+        assert ui.main_window.setEnabled.call_count == 1
+    else:
+        qt_app.app.exit.assert_not_called()
+        assert ui.main_window.setEnabled.call_args.args == (True,)

@@ -62,14 +62,13 @@ class TestMeetingLinuxAudioDialog(unittest.TestCase):
         open_url.assert_called_once()
 
     def test_frozen_guide_url_resolves_beneath_bundle_root(self):
+        root = Path(__file__).resolve().parent / "frozen-bundle"
         with patch(
             "ui_qt.dialogs.meeting_linux_audio_dialog.bundle_root",
-            return_value="/tmp/openwhisper-bundle",
+            return_value=str(root),
         ):
             url = MeetingLinuxAudioDialog._default_guide_url()
-        expected = Path(
-            "/tmp/openwhisper-bundle/docs/linux-system-audio.md"
-        ).as_uri()
+        expected = (root / "docs" / "linux-system-audio.md").as_uri()
         self.assertEqual(url, expected)
 
     def test_retry_ready_finishes(self):

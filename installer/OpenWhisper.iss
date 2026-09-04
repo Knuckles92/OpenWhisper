@@ -81,7 +81,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Name: "startupicon"; Description: "Start {#AppName} when I sign in"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion; BeforeInstall: CloseRunningApp
+Source: "{#SourceDir}\OpenWhisperUpdater.exe"; Flags: dontcopy
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -100,8 +100,18 @@ Type: filesandordirs; Name: "{localappdata}\{#AppName}\updates"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: IsInAppUpdate
 
 [Code]
+var
+  SetupPrepared: Boolean;
+  SetupFinished: Boolean;
+
+function IsInAppUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:OPENWHISPERUPDATE|0}') = '1';
+end;
+
 function UserDataDir(): String;
 begin
   Result := ExpandConstant('{localappdata}\{#AppName}');
@@ -149,6 +159,70 @@ begin
   { taskkill returns 128 when nothing matched, which is the normal case. }
   if ResultCode = 0 then
     Sleep(500);
+end;
+
+function RunSetupHelper(Action: String): String;
+var
+  ResultCode: Integer;
+  ErrorFile: String;
+  ErrorText: AnsiString;
+begin
+  ErrorFile := ExpandConstant('{tmp}\openwhisper-setup-error.txt');
+  DeleteFile(ErrorFile);
+  Result := '';
+  if not Exec(
+    ExpandConstant('{tmp}\OpenWhisperUpdater.exe'),
+    '--setup-action ' + Action + ' --app-dir "' + ExpandConstant('{app}') +
+      '" --error-file "' + ErrorFile + '"',
+    ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode
+  ) then
+    Result := 'Could not start the update helper. Please retry Setup.'
+  else if ResultCode <> 0 then
+  begin
+    if LoadStringFromFile(ErrorFile, ErrorText) then
+      Result := String(ErrorText)
+    else
+      Result := 'The update could not finish. Please retry Setup.';
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  if SetupPrepared then
+  begin
+    Result := '';
+    Exit;
+  end;
+  CloseRunningApp();
+  ExtractTemporaryFile('OpenWhisperUpdater.exe');
+  Result := RunSetupHelper('prepare');
+  SetupPrepared := Result = '';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ErrorText: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ErrorText := RunSetupHelper('finish');
+    if ErrorText <> '' then
+      RaiseException(ErrorText);
+    SetupFinished := True;
+  end;
+end;
+
+procedure DeinitializeSetup();
+var
+  ErrorText: String;
+begin
+  if SetupPrepared and not SetupFinished then
+  begin
+    ErrorText := RunSetupHelper('rollback');
+    if ErrorText <> '' then
+      MsgBox('Setup could not restore the previous version. Run Setup again.' + #13#10 +
+        ErrorText, mbError, MB_OK);
+  end;
 end;
 
 {

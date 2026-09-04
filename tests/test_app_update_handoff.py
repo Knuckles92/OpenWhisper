@@ -36,6 +36,9 @@ class _FakeController:
         self._last_update_result = None
         self.status = None
 
+    def _confirm_update_while_busy(self):
+        return True
+
     def exit_for_update(self):
         UIController.exit_for_update(self)
 

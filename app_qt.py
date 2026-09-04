@@ -275,9 +275,12 @@ def _early_update_gate() -> None:
     from services.app_update_apply import (
         acquire_application_mutex_or_exit,
         maybe_exit_if_update_in_progress,
+        recover_before_start,
     )
 
     maybe_exit_if_update_in_progress()
+    if recover_before_start():
+        raise SystemExit(0)
     acquire_application_mutex_or_exit()
 
 

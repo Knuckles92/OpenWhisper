@@ -26,7 +26,7 @@ NVIDIA_RELATIVE: Final[str] = os.path.join(INTERNAL_DIRNAME, "nvidia")
 MANIFEST_SCHEMA_VERSION: Final[int] = 1
 TOPOLOGY_REVISION: Final[int] = 1
 ARCHITECTURE: Final[str] = "win-x64"
-MINIMUM_UPDATER_VERSION: Final[str] = "2.4.0"
+MINIMUM_UPDATER_VERSION: Final[str] = "2.5.2"
 
 SETUP_NAME_PREFIX: Final[str] = "OpenWhisper-Setup-"
 ARCHIVE_NAME_SUFFIX: Final[str] = "-win64.tar.xz"
@@ -76,11 +76,13 @@ _TRANSACTION_ID_RE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}\Z")
 class TransactionState:
     """Durable helper states. Every transition must be idempotent."""
 
+    PREPARING: Final[str] = "preparing"
     PREPARED: Final[str] = "prepared"
     OLD_MOVED: Final[str] = "old_moved"
     NEW_ACTIVE: Final[str] = "new_active"
     HEALTHY: Final[str] = "healthy"
     ROLLED_BACK: Final[str] = "rolled_back"
+    SUPERSEDED: Final[str] = "superseded"
 
 
 class ApplyMode:
@@ -115,6 +117,11 @@ def parse_strict_version(raw: str) -> Tuple[int, int, int]:
 def is_newer_version(current: str, candidate: str) -> bool:
     """Return True when ``candidate`` is a strictly newer release than ``current``."""
     return parse_strict_version(candidate) > parse_strict_version(current)
+
+
+def is_setup_bridge_release(version: str) -> bool:
+    """Old installed helpers must receive setup before this native protocol."""
+    return parse_strict_version(version) <= parse_strict_version(MINIMUM_UPDATER_VERSION)
 
 
 def setup_asset_name(version: str) -> str:

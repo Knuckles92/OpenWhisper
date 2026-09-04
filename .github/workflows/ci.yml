@@ -40,6 +40,28 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: timeout 20m xvfb-run -a python -m pytest
 
+  windows-updater:
+    name: Windows updater regression tests
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test runtime
+        shell: pwsh
+        run: |
+          python -m venv venv
+          . .\venv\Scripts\Activate.ps1
+          python -m pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
+      - name: Run updater and controller tests
+        shell: pwsh
+        run: |
+          . .\venv\Scripts\Activate.ps1
+          python -m pytest tests/test_app_update.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
+
   webui:
     name: Dashboard typecheck and bundle
     runs-on: ubuntu-22.04

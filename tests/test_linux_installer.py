@@ -17,9 +17,9 @@ BUILD_SCRIPT = ROOT / "scripts" / "build_installer.sh"
 def test_build_script_is_executable_and_valid_bash():
     assert os.access(BUILD_SCRIPT, os.X_OK)
     completed = subprocess.run(
-        ["bash", "-n", str(BUILD_SCRIPT)],
+        ["bash", "-n"],
+        input=BUILD_SCRIPT.read_bytes().replace(b"\r\n", b"\n"),
         capture_output=True,
-        text=True,
         check=False,
     )
     assert completed.returncode == 0, completed.stderr

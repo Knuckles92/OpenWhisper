@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-09-04
+
+### Fixed
+- Windows setup replaces the managed runtime cleanly, removes obsolete dependencies, and restores its backup if installation fails. User data and legacy GPU libraries are preserved.
+- Setup retires interrupted native updates so an old recovery cannot undo a newer repair.
+- Canceling or retrying an update cannot trigger a stale restart. Prepared updates and locked leftovers are cleaned up safely.
+- Interrupted downloads resume correctly, including complete partial files and expired Range requests.
+- Native rollback restores pre-update settings and database contents, and startup recovers interrupted transactions before loading the application.
+- Restarted applications and updater helpers start with independent PyInstaller runtime settings.
+
+### Changed
+- This release is a required setup-only bridge. Subsequent native archives require updater 2.5.2, protecting users who skip this release.
+- Windows builds now have updater regressions, frozen-helper checks, and a previous-release setup upgrade and uninstall gate.
+
 ## [2.5.1] - 2026-09-04
 
 ### Changed

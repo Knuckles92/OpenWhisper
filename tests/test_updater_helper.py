@@ -128,39 +128,13 @@ def test_helper_exits_after_handing_off_to_a_restarted_copy():
     box.assert_not_called()
 
 
-def test_start_detached_tuple_is_unpacked():
-    class _Proc:
-        @staticmethod
-        def startDetached(program, arguments, working_directory=""):
-            return (False, 0)
-
-    with patch("PyQt6.QtCore.QProcess", _Proc):
-        assert _start_detached("x.exe", []) is False
-
-    class _Ok:
-        @staticmethod
-        def startDetached(program, arguments, working_directory=""):
-            return (True, 42)
-
-    with patch("PyQt6.QtCore.QProcess", _Ok):
-        assert _start_detached("x.exe", []) is True
 
 
-def test_start_detached_runs_the_program_from_its_own_directory():
-    """The helper must not inherit the app's working directory.
 
-    Shortcuts start the app inside the install directory, and a child that
-    keeps that directory as its working directory blocks renaming it.
-    """
-    seen = {}
-
-    class _Proc:
-        @staticmethod
-        def startDetached(program, arguments, working_directory=""):
-            seen["cwd"] = working_directory
-            return (True, 1)
-
-    helper = str(Path("C:/appdata/updates/tx/abc/OpenWhisperUpdater.exe"))
-    with patch("PyQt6.QtCore.QProcess", _Proc):
-        assert _start_detached(helper, ["--transaction-id", "abc"]) is True
-    assert seen["cwd"] == str(Path("C:/appdata/updates/tx/abc"))
+def test_start_detached_uses_independent_process_and_reports_failure():
+    from services.app_update_apply import UpdateApplyError
+    with patch("services.app_update_apply._launch_exe") as launch:
+        assert _start_detached("helper.exe", ["--recover"])
+        launch.assert_called_once_with("helper.exe", ["--recover"])
+    with patch("services.app_update_apply._launch_exe", side_effect=UpdateApplyError("blocked")):
+        assert not _start_detached("helper.exe", [])

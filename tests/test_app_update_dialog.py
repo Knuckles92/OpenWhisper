@@ -2,6 +2,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton
@@ -17,6 +19,15 @@ from services.app_update import (
     UpdateStatus,
 )
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
+
+
+@pytest.fixture(autouse=True)
+def isolated_update_preferences(tmp_path, monkeypatch):
+    from services.settings import settings_manager
+
+    monkeypatch.setattr(
+        settings_manager, "settings_file", str(tmp_path / "settings.json")
+    )
 
 
 def _result(

@@ -71,7 +71,7 @@ def isolated_mutex_names(monkeypatch):
     monkeypatch.setattr(apply_module, "SETUP_MUTEX_NAME", f"Local\\{unique}-setup")
 
 
-def _bundle(root: Path, version: str = "2.4.1", payload: bytes = b"new") -> Path:
+def _bundle(root: Path, version: str = "2.5.3", payload: bytes = b"new") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / APP_EXE_NAME).write_bytes(payload)
     (root / UPDATER_EXE_NAME).write_bytes(b"helper")
@@ -88,7 +88,7 @@ def _registration(app_dir: Path) -> InstallRegistration:
         key_path=r"Software\Microsoft\Windows\CurrentVersion\Uninstall\test",
         install_location=str(app_dir),
         uninstall_string=str(app_dir / "unins000.exe"),
-        display_version="2.4.0",
+        display_version="2.5.2",
     )
 
 
@@ -111,10 +111,10 @@ def _tar_with(members, destination: Path) -> Path:
 class TestStrictVersion:
     def test_rejects_prerelease(self):
         with pytest.raises(ValueError):
-            parse_strict_version("2.4.0-rc.1")
+            parse_strict_version("2.5.2-rc.1")
 
     def test_accepts_plain(self):
-        assert parse_strict_version("v2.4.1") == (2, 4, 1)
+        assert parse_strict_version("v2.5.3") == (2, 5, 3)
 
 
 class TestArchiveMemberNames:
@@ -152,8 +152,8 @@ class TestSafeExtract:
     def test_round_trip_bundle(self, tmp_path):
         src = _bundle(tmp_path / "src")
         (src / "_internal" / "empty.pxd").write_bytes(b"")
-        write_manifest_file(str(src), "2.4.1")
-        archive = tmp_path / "OpenWhisper-2.4.1-win64.tar.xz"
+        write_manifest_file(str(src), "2.5.3")
+        archive = tmp_path / "OpenWhisper-2.5.3-win64.tar.xz"
         pack_tar_xz(str(src), str(archive))
         dest = tmp_path / "out"
         dest.mkdir()
@@ -214,7 +214,7 @@ class TestManifest:
         (root / "_internal").mkdir()
         (root / "_internal" / "x").write_text("x")
         with pytest.raises(UpdateApplyError, match="OpenWhisper.exe"):
-            build_update_manifest(str(root), "2.4.1")
+            build_update_manifest(str(root), "2.5.3")
 
     def test_mismatch_detected(self, tmp_path):
         src = _bundle(tmp_path / "src")
@@ -227,7 +227,7 @@ class TestManifest:
         root = _bundle(tmp_path / "src")
         (root / "new-top-level.dll").write_bytes(b"x")
         with pytest.raises(UpdateApplyError, match="unmanaged"):
-            build_update_manifest(str(root), "2.4.1")
+            build_update_manifest(str(root), "2.5.3")
 
     def test_transaction_id_cannot_escape_root(self, tmp_path):
         with pytest.raises(ValueError):
@@ -238,8 +238,8 @@ class TestPreserveAndEligibility:
     def test_preserves_uninstaller_and_nvidia(self, tmp_path):
         app = tmp_path / "app"
         cand = tmp_path / "cand"
-        _bundle(app, "2.4.0", b"old")
-        _bundle(cand, "2.4.1", b"new")
+        _bundle(app, "2.5.2", b"old")
+        _bundle(cand, "2.5.3", b"new")
         (app / "unins000.exe").write_bytes(b"unins")
         (app / "unins000.dat").write_bytes(b"data")
         nvidia = app / "_internal" / "nvidia" / "cublas" / "bin"
@@ -262,7 +262,7 @@ class TestPreserveAndEligibility:
             key_path="x",
             install_location=str(app),
             uninstall_string="unins000.exe",
-            display_version="2.4.0",
+            display_version="2.5.2",
         )
         assert not native_apply_eligible(
             registration=reg, app_dir=str(app), helper_present=True
@@ -313,9 +313,9 @@ class TestCommitAndRecover:
             app_dir=str(app),
             candidate_dir=str(candidate),
             rollback_dir=str(app) + ".old-aaaaaaaa",
-            old_version="2.4.0",
-            new_version="2.4.1",
-            old_display_version="2.4.0",
+            old_version="2.5.2",
+            new_version="2.5.3",
+            old_display_version="2.5.2",
             old_estimated_size_kb=None,
             old_install_date="20260825",
             old_exe_sha256=file_sha256(str(app / APP_EXE_NAME)),
@@ -335,10 +335,10 @@ class TestCommitAndRecover:
         )
 
     def test_swap_and_cleanup(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
-        write_completion_sentinel(str(candidate), "2.4.1")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         write_json_atomic(
             str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
@@ -356,10 +356,10 @@ class TestCommitAndRecover:
         assert not Path(str(app) + ".old-aaaaaaaa").exists()
 
     def test_injected_failure_after_old_moved_rolls_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
-        write_completion_sentinel(str(candidate), "2.4.1")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         write_json_atomic(
             str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
@@ -382,9 +382,9 @@ class TestCommitAndRecover:
         assert error and "injected" in error
 
     def test_recover_prepared_abandons_candidate(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
         journal = self._journal(tmp_path, app, candidate)
         write_json_atomic(
             str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
@@ -398,10 +398,10 @@ class TestCommitAndRecover:
         assert not candidate.exists()
 
     def test_recover_prepared_after_old_rename_restores_rollback(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
         journal = self._journal(tmp_path, app, candidate)
         write_json_atomic(
@@ -423,10 +423,10 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_recover_old_moved_after_candidate_rename_rolls_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
         journal = self._journal(tmp_path, app, candidate)
         journal.state = TransactionState.OLD_MOVED
@@ -450,10 +450,10 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_empty_health_file_is_not_success(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
         journal = self._journal(tmp_path, app, candidate)
         journal.state = TransactionState.NEW_ACTIVE
@@ -481,12 +481,12 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_tampered_candidate_is_rejected_before_swap(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
-        write_completion_sentinel(str(candidate), "2.4.1")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         write_json_atomic(
             str(
@@ -509,12 +509,12 @@ class TestCommitAndRecover:
         assert (app / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_existing_rollback_tree_is_never_activated(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
-        write_completion_sentinel(str(candidate), "2.4.1")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         rollback = Path(journal.rollback_dir)
         rollback.mkdir()
@@ -530,12 +530,12 @@ class TestCommitAndRecover:
         assert (rollback / APP_EXE_NAME).read_bytes() == b"untrusted"
 
     def test_damaged_healthy_tree_is_rolled_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
-        write_completion_sentinel(str(candidate), "2.4.1")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         journal.state = TransactionState.NEW_ACTIVE
         write_json_atomic(
@@ -564,12 +564,12 @@ class TestCommitAndRecover:
         assert (app / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_unconfirmed_new_tree_without_rollback_keeps_recovery(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new"
+            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
         )
-        write_completion_sentinel(str(candidate), "2.4.1")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
         journal.state = TransactionState.NEW_ACTIVE
         write_json_atomic(
@@ -608,10 +608,10 @@ class TestLiveParent:
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only commit path")
     def test_running_parent_is_not_reported_as_a_failed_rollback(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
-        write_completion_sentinel(str(candidate), "2.4.1")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = TestCommitAndRecover()._journal(tmp_path, app, candidate)
         journal.parent_pid = os.getpid()
         write_json_atomic(
@@ -671,10 +671,10 @@ class TestLiveParent:
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only commit path")
     def test_parent_that_never_exits_is_closed_and_the_update_lands(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.4.1", b"new")
-        write_completion_sentinel(str(candidate), "2.4.1")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
+        write_completion_sentinel(str(candidate), "2.5.3")
         journal = TestCommitAndRecover()._journal(tmp_path, app, candidate)
         parent = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(120)"]
@@ -747,13 +747,13 @@ class TestLiveParent:
 
 class TestPrepareCandidate:
     def test_stale_registered_version_is_repaired_by_native_update(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.8", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         appdata = tmp_path / "appdata"
         updates = appdata / "updates"
         updates.mkdir(parents=True)
-        source = _bundle(tmp_path / "src", "2.5.1", b"new")
-        archive = updates / "OpenWhisper-2.5.1-win64.tar.xz"
+        source = _bundle(tmp_path / "src", "2.5.3", b"new")
+        archive = updates / "OpenWhisper-2.5.3-win64.tar.xz"
         pack_tar_xz(str(source), str(archive))
         registration = InstallRegistration(
             hive="HKCU",
@@ -768,28 +768,28 @@ class TestPrepareCandidate:
         ):
             journal = prepare_candidate(
                 str(archive),
-                release_version="2.5.1",
-                current_version="2.4.8",
+                release_version="2.5.3",
+                current_version="2.5.2",
                 app_dir=str(app),
                 registration=registration,
                 appdata=str(appdata),
                 parent_pid=os.getpid(),
             )
 
-        assert journal.old_version == "2.4.8"
+        assert journal.old_version == "2.5.2"
         assert journal.old_display_version == "2.4.7"
-        assert journal.new_version == "2.5.1"
+        assert journal.new_version == "2.5.3"
 
 
 class TestPrepareCancel:
     def test_cancel_after_extraction_still_cancels(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         appdata = tmp_path / "appdata"
         updates = appdata / "updates"
         updates.mkdir(parents=True)
-        source = _bundle(tmp_path / "src", "2.4.1", b"new")
-        archive = updates / "OpenWhisper-2.4.1-win64.tar.xz"
+        source = _bundle(tmp_path / "src", "2.5.3", b"new")
+        archive = updates / "OpenWhisper-2.5.3-win64.tar.xz"
         pack_tar_xz(str(source), str(archive))
 
         cancel = threading.Event()
@@ -807,8 +807,8 @@ class TestPrepareCancel:
             with pytest.raises(UpdateCanceled):
                 prepare_candidate(
                     str(archive),
-                    release_version="2.4.1",
-                    current_version="2.4.0",
+                    release_version="2.5.3",
+                    current_version="2.5.2",
                     app_dir=str(app),
                     registration=_registration(app),
                     progress=progress,
@@ -917,7 +917,7 @@ class TestLockedFiles:
         )
         with patch.object(apply_module, "_LOCK_POLL_S", 0.01), patch.object(
             apply_module, "load_journal", return_value=journal
-        ), patch.object(apply_module, "_wait_for_pid"), patch.object(
+        ), patch.object(apply_module, "_wait_for_pid"), patch.object(apply_module, "_remove_transaction_payloads", return_value=True), patch.object(
             apply_module.shutil, "rmtree", flaky
         ):
             apply_module.cleanup_transaction_after_parent(TX_ID, 4321, str(appdata))
@@ -932,6 +932,7 @@ class TestAbandonedTransactions:
         stale = Path(transaction_dir("c" * 32, str(appdata)))
         stale.mkdir(parents=True)
         (stale / UPDATER_EXE_NAME).write_bytes(b"helper")
+        os.utime(stale, (0, 0))
         live = Path(transaction_dir(TX_ID, str(appdata)))
         live.mkdir(parents=True)
         write_json_atomic(str(live / "journal.json"), {"transaction_id": TX_ID})
@@ -949,20 +950,18 @@ class TestAbandonedTransactions:
         "state", [TransactionState.HEALTHY, TransactionState.ROLLED_BACK]
     )
     def test_a_finished_transaction_is_collected(self, tmp_path, state):
-        """Cleanup gives up on an updater that sits in its error dialog."""
-        appdata = tmp_path / "appdata"
-        finished = Path(transaction_dir("d" * 32, str(appdata)))
-        finished.mkdir(parents=True)
-        (finished / UPDATER_EXE_NAME).write_bytes(b"helper")
-        write_json_atomic(
-            str(finished / "journal.json"),
-            {"transaction_id": "d" * 32, "state": state},
-        )
+        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
+        (app / "unins000.exe").write_bytes(b"uninstaller")
+        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa")
+        journal = TestCommitAndRecover()._journal(tmp_path, app, candidate)
+        journal.state = state
+        apply_module.save_journal(journal)
+        finished = Path(transaction_dir(TX_ID, journal.appdata))
 
-        removed = apply_module.prune_abandoned_transactions(str(appdata))
-
-        assert removed == ["d" * 32]
+        assert apply_module.prune_abandoned_transactions(journal.appdata) == [TX_ID]
         assert not finished.exists()
+        assert not candidate.exists()
+        assert (app / APP_EXE_NAME).read_bytes() == b"old"
 
     @pytest.mark.parametrize(
         "state",

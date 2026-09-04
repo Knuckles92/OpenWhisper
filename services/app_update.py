@@ -35,6 +35,7 @@ from services.app_update_apply import (
     InstallRegistration,
     UpdateApplyError,
     UpdateCanceled,
+    UpdateRequiresSetup,
     discover_install_registration,
     prepare_candidate,
     resolve_apply_mode,
@@ -745,7 +746,7 @@ def download_release_asset(
     if cancel is None:
         cancel = threading.Event()
     if cancel.is_set():
-        raise AppUpdateError("The download was cancelled.")
+        raise AppUpdateError("The download was canceled.")
 
     directory = destination_dir if destination_dir is not None else updates_dir()
     destination = os.path.join(directory, asset.name)
@@ -757,7 +758,7 @@ def download_release_asset(
             else ""
         )
         if cancel.is_set():
-            raise AppUpdateError("The download was cancelled.")
+            raise AppUpdateError("The download was canceled.")
         if existing == digest:
             progress(DownloadPhase.VERIFYING, asset.size_bytes, asset.size_bytes)
             return destination
@@ -836,8 +837,13 @@ def apply_update(
                 parent_pid=os.getpid(),
             )
             return encode_native_result(journal.transaction_id)
+        except UpdateRequiresSetup:
+            if _asset_ready(release.setup_asset):
+                logger.info("Using setup for an incompatible native payload")
+                return download_installer(release, progress=progress, cancel=cancel)
+            raise
         except UpdateCanceled:
-            raise AppUpdateError("The update was cancelled.") from None
+            raise AppUpdateError("The update was canceled.") from None
         except UpdateApplyError as exc:
             raise AppUpdateError(str(exc)) from exc
     if mode in (ApplyMode.SETUP, ApplyMode.NATIVE) and _asset_ready(release.setup_asset):
@@ -845,6 +851,15 @@ def apply_update(
     raise AppUpdateError(
         "This copy of OpenWhisper cannot install the Windows setup package."
     )
+
+
+def discard_prepared_result(handoff: str) -> None:
+    from services.app_update_apply import abandon_prepared_update
+    from services.update_contract import decode_native_result
+
+    transaction_id = decode_native_result(handoff)
+    if transaction_id:
+        abandon_prepared_update(transaction_id)
 
 
 def _parsed_url_is_well_formed(parts: urllib.parse.SplitResult) -> bool:
@@ -989,6 +1004,10 @@ def _discard_regular_file(path: str) -> None:
         pass
 
 
+class _DownloadInterrupted(AppUpdateError):
+    """A truncated transfer whose prefix can be resumed on retry."""
+
+
 def _download_verified(
     url: str,
     sha256_hex: str,
@@ -1035,7 +1054,7 @@ def _download_verified(
             remaining = resume_from
             while remaining:
                 if cancel.is_set():
-                    raise AppUpdateError("The download was cancelled.")
+                    raise AppUpdateError("The download was canceled.")
                 block = out.read(min(_CHUNK_BYTES, remaining))
                 if not block:
                     raise AppUpdateError("The partial update could not be read.")
@@ -1043,72 +1062,89 @@ def _download_verified(
                 remaining -= len(block)
 
             if cancel.is_set():
-                raise AppUpdateError("The download was cancelled.")
-            headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
-            with _open(url, headers) as response:
-                status = getattr(response, "status", None)
-                if resume_from and status != 206:
-                    logger.info("Server ignored Range header; restarting download")
+                raise AppUpdateError("The download was canceled.")
+            if resume_from == size_bytes and digest.hexdigest() != sha256_hex.lower():
+                out.seek(0)
+                out.truncate(0)
+                resume_from = 0
+                digest = hashlib.sha256()
+            if resume_from < size_bytes:
+                headers = {"Range": f"bytes={resume_from}-"} if resume_from else None
+                try:
+                    response = _open(url, headers)
+                except urllib.error.HTTPError as exc:
+                    if exc.code != 416 or not resume_from:
+                        raise
+                    exc.close()
                     resume_from = 0
                     digest = hashlib.sha256()
                     out.seek(0)
                     out.truncate(0)
-                elif resume_from:
-                    content_range = _response_header(response, "Content-Range") or ""
-                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
-                    if (
-                        match is None
-                        or int(match.group(1)) != resume_from
-                        or int(match.group(2)) >= size_bytes
-                        or int(match.group(3)) != size_bytes
-                    ):
-                        raise AppUpdateError(
-                            "The update server returned an invalid resume response."
-                        )
+                    response = _open(url)
+                with response:
+                    status = getattr(response, "status", None)
+                    if resume_from and status != 206:
+                        logger.info("Server ignored Range header; restarting download")
+                        resume_from = 0
+                        digest = hashlib.sha256()
+                        out.seek(0)
+                        out.truncate(0)
+                    elif resume_from:
+                        content_range = _response_header(response, "Content-Range") or ""
+                        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
+                        if (
+                            match is None
+                            or int(match.group(1)) != resume_from
+                            or int(match.group(2)) != size_bytes - 1
+                            or int(match.group(3)) != size_bytes
+                        ):
+                            raise AppUpdateError(
+                                "The update server returned an invalid resume response."
+                            )
 
-                expected_response_bytes = size_bytes - resume_from
-                content_length = _response_header(response, "Content-Length")
-                if content_length is not None:
-                    try:
-                        declared_response_bytes = int(content_length)
-                    except ValueError as exc:
-                        raise AppUpdateError(
-                            "The update server returned an invalid download size."
-                        ) from exc
-                    if declared_response_bytes != expected_response_bytes:
-                        raise AppUpdateError(
-                            "The update server returned an unexpected download size."
-                        )
+                    expected_response_bytes = size_bytes - resume_from
+                    content_length = _response_header(response, "Content-Length")
+                    if content_length is not None:
+                        try:
+                            declared_response_bytes = int(content_length)
+                        except ValueError as exc:
+                            raise AppUpdateError(
+                                "The update server returned an invalid download size."
+                            ) from exc
+                        if declared_response_bytes != expected_response_bytes:
+                            raise AppUpdateError(
+                                "The update server returned an unexpected download size."
+                            )
 
-                out.seek(resume_from)
-                written = resume_from
-                while True:
-                    if cancel.is_set():
-                        raise AppUpdateError("The download was cancelled.")
-                    chunk = response.read(_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    if written + len(chunk) > size_bytes:
-                        raise AppUpdateError(
-                            "The update server returned more data than expected."
-                        )
-                    out.write(chunk)
-                    digest.update(chunk)
-                    written += len(chunk)
-                    progress(DownloadPhase.DOWNLOADING, written, size_bytes)
+                    out.seek(resume_from)
+                    written = resume_from
+                    while True:
+                        if cancel.is_set():
+                            raise AppUpdateError("The download was canceled.")
+                        chunk = response.read(_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        if written + len(chunk) > size_bytes:
+                            raise AppUpdateError(
+                                "The update server returned more data than expected."
+                            )
+                        out.write(chunk)
+                        digest.update(chunk)
+                        written += len(chunk)
+                        progress(DownloadPhase.DOWNLOADING, written, size_bytes)
 
             if cancel.is_set():
-                raise AppUpdateError("The download was cancelled.")
+                raise AppUpdateError("The download was canceled.")
             actual_size = out.tell()
             if actual_size != size_bytes:
-                raise AppUpdateError(
+                raise _DownloadInterrupted(
                     "The download did not complete "
                     f"({format_size_bytes(actual_size)} of "
                     f"{format_size_bytes(size_bytes)})."
                 )
             progress(DownloadPhase.VERIFYING, actual_size, actual_size)
             if cancel.is_set():
-                raise AppUpdateError("The download was cancelled.")
+                raise AppUpdateError("The download was canceled.")
             if digest.hexdigest() != sha256_hex.lower():
                 raise AppUpdateError(
                     "The download failed its integrity check and was discarded. "
@@ -1117,7 +1153,9 @@ def _download_verified(
             out.flush()
             os.fsync(out.fileno())
             if cancel.is_set():
-                raise AppUpdateError("The download was cancelled.")
+                raise AppUpdateError("The download was canceled.")
+    except _DownloadInterrupted:
+        raise
     except AppUpdateError:
         _discard_regular_file(part_path)
         raise
@@ -1126,7 +1164,7 @@ def _download_verified(
 
     if cancel.is_set():
         _discard_regular_file(part_path)
-        raise AppUpdateError("The download was cancelled.")
+        raise AppUpdateError("The download was canceled.")
     try:
         os.replace(part_path, destination)
         try:
@@ -1141,8 +1179,7 @@ def _download_verified(
             finally:
                 os.close(directory_fd)
     except OSError as exc:
-        _discard_regular_file(part_path)
-        raise AppUpdateError("The verified update could not be finalized.") from exc
+        raise AppUpdateError("The verified update could not be finalized. Please retry.") from exc
     if cancel.is_set():
         _discard_regular_file(destination)
-        raise AppUpdateError("The download was cancelled.")
+        raise AppUpdateError("The download was canceled.")

@@ -76,20 +76,14 @@ def arm_handoff_watchdog(grace_s: float = HANDOFF_EXIT_GRACE_S) -> threading.Tim
 
 
 def _start_detached(program: str, arguments: list) -> bool:
-    """Return True when ``QProcess.startDetached`` actually launched.
+    from services.app_update_apply import UpdateApplyError, _launch_exe
 
-    The child runs from its own directory, never from ours. Shortcuts start
-    OpenWhisper in the install directory, and a Windows process holds its
-    current directory open without ``FILE_SHARE_DELETE``: had the updater
-    inherited it, renaming the install directory would fail with a sharing
-    violation for as long as the updater lived.
-    """
-    from PyQt6.QtCore import QProcess
-
-    result = QProcess.startDetached(program, arguments, os.path.dirname(program))
-    if isinstance(result, tuple):
-        return bool(result[0])
-    return bool(result)
+    try:
+        _launch_exe(program, arguments)
+    except UpdateApplyError:
+        logger.exception("Could not launch the update")
+        return False
+    return True
 
 
 class UIController(QObject):
@@ -147,6 +141,7 @@ class UIController(QObject):
         self.on_check_for_updates: Optional[Callable] = None
         self.on_update_download: Optional[Callable] = None
         self.on_update_cancel: Optional[Callable] = None
+        self.on_update_abandon: Optional[Callable] = None
         self.get_transcribing: Optional[Callable[[], bool]] = None
         self.get_component_installing: Optional[Callable[[], bool]] = None
         self._last_update_result: Optional[UpdateCheckResult] = None
@@ -1363,6 +1358,10 @@ class UIController(QObject):
         manual: bool = False,
     ) -> None:
         """Show the update dialog for a manual check or an allowed auto-notify."""
+        if self._update_dialog is not None:
+            self._update_dialog.raise_()
+            self._update_dialog.activateWindow()
+            return
         if result is not None:
             self._last_update_result = result
         if not manual:
@@ -1440,6 +1439,10 @@ class UIController(QObject):
             self.on_update_download(result)
 
     def _on_update_setup_requested(self, result: UpdateCheckResult) -> None:
+        if not self._confirm_update_while_busy():
+            if self._update_dialog is not None:
+                self._update_dialog.set_error("The update was not started.")
+            return
         self._update_canceled = False
         if self.on_update_download:
             self.on_update_download(result, True)
@@ -1479,8 +1482,21 @@ class UIController(QObject):
                     self.main_window, "Update failed", error
                 )
             return
-        if self._update_canceled and self._update_dialog is None:
-            logger.info("Update finished after a cancel that arrived too late")
+        if self._update_canceled:
+            abandon = getattr(self, "on_update_abandon", None)
+            if abandon:
+                abandon(path)
+            if self._update_dialog is not None:
+                self._update_dialog.set_error("The update was canceled.")
+            return
+
+        if not self._confirm_update_while_busy():
+            abandon = getattr(self, "on_update_abandon", None)
+            if abandon:
+                abandon(path)
+            if self._update_dialog is not None:
+                self._update_dialog.set_error("The update was not installed. Your work is still open.")
+            return
 
         transaction_id = decode_native_result(path)
         if transaction_id:
@@ -1489,6 +1505,9 @@ class UIController(QObject):
                 exe = helper_exe_for(journal)
                 args = helper_argv(journal)
             except Exception as exc:
+                abandon = getattr(self, "on_update_abandon", None)
+                if abandon:
+                    abandon(path)
                 message = str(exc) or "The updater helper could not be prepared."
                 if self._update_dialog is not None:
                     self._update_dialog.set_error(message, offer_setup=True)
@@ -1498,12 +1517,25 @@ class UIController(QObject):
             if self._update_dialog is not None:
                 self._update_dialog.set_progress(DownloadPhase.RESTARTING, 1, 1)
         else:
+            from services.app_update_apply import discover_install_registration, running_app_dir
+            from services.app_update import updates_dir
+
             exe = path
-            args = []
+            registration = discover_install_registration()
+            scope = "/ALLUSERS" if registration and registration.hive == "HKLM" else "/CURRENTUSER"
+            args = [
+                "/SP-", "/SILENT", "/NORESTART", "/OPENWHISPERUPDATE=1", scope,
+                "/DIR=" + running_app_dir(),
+                "/LOG=" + os.path.join(updates_dir(), "setup.log"),
+            ]
             release_application_mutex_for_setup()
 
         launched = _start_detached(exe, args)
         if not launched:
+            if transaction_id:
+                abandon = getattr(self, "on_update_abandon", None)
+                if abandon:
+                    abandon(path)
             if not transaction_id:
                 acquire_application_mutex_or_exit()
             message = (

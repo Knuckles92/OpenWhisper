@@ -215,7 +215,17 @@ if ($SignPfx -and (Test-Path $SignPfx)) {
 Write-Step "Packing the native update archive"
 $OutputDir = Join-Path $RepoRoot 'installer\Output'
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-$ArchivePath = Join-Path $OutputDir "OpenWhisper-$Version-win64.tar.xz"
+$SetupOnlyWindows = (& $Python -c "from services.update_contract import is_setup_bridge_release; print(is_setup_bridge_release('$Version'))").Trim() -eq 'True'
+$ArchiveDir = $OutputDir
+if ($SetupOnlyWindows) {
+    $ArchiveDir = Join-Path $RepoRoot '.tmp\update-validation'
+    New-Item -ItemType Directory -Force -Path $ArchiveDir | Out-Null
+    $StaleBridgeArchive = Join-Path $OutputDir "OpenWhisper-$Version-win64.tar.xz"
+    if (Test-Path -LiteralPath $StaleBridgeArchive) {
+        Move-Item -LiteralPath $StaleBridgeArchive -Destination (Join-Path $ArchiveDir "previous-OpenWhisper-$Version-win64.tar.xz") -Force
+    }
+}
+$ArchivePath = Join-Path $ArchiveDir "OpenWhisper-$Version-win64.tar.xz"
 if (Test-Path $ArchivePath) { Remove-Item -Force $ArchivePath }
 Invoke-Native $Python @(
     'scripts\pack_update_archive.py',
@@ -286,7 +296,10 @@ Write-Host "  Archive   : $(Format-Size $ArchiveSize)"
 Write-Host "  Setup SHA-256   : $Hash"
 Write-Host "  Archive SHA-256 : $ArchiveHash"
 Write-Host ""
-Write-Host "  Upload both Windows artifacts and the matching Linux .deb to a draft"
-Write-Host "  GitHub release, wait for every digest field, then publish. Old Windows"
-Write-Host "  clients only understand the setup exe."
+if ($SetupOnlyWindows) {
+    Write-Host "  This is a required setup-only bridge release."
+    Write-Host "  Publish only the setup exe from installer\Output; the archive is validation-only."
+} else {
+    Write-Host "  Upload both Windows artifacts to a draft release and wait for every digest field."
+}
 Write-Host ""

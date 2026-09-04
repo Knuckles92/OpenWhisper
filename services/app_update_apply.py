@@ -114,6 +114,10 @@ class UpdateApplyError(Exception):
     """User-facing native-update failure."""
 
 
+class UpdateRequiresSetup(UpdateApplyError):
+    """The payload requires a newer updater or installation layout."""
+
+
 class UpdateCanceled(UpdateApplyError):
     """The user cancelled download or preparation."""
 
@@ -157,6 +161,7 @@ class UpdateJournal:
     nvidia_preserved: bool = False
     appdata: str = ""
     archive_path: str = ""
+    cleanup_rollback: bool = False
 
     def to_dict(self) -> Dict:
         return {
@@ -182,6 +187,7 @@ class UpdateJournal:
             "nvidia_preserved": self.nvidia_preserved,
             "appdata": self.appdata,
             "archive_path": self.archive_path,
+            "cleanup_rollback": self.cleanup_rollback,
         }
 
     @classmethod
@@ -213,11 +219,13 @@ class UpdateJournal:
         transaction_id = validate_transaction_id(str(payload["transaction_id"]))
         state = str(payload["state"])
         if state not in {
+            TransactionState.PREPARING,
             TransactionState.PREPARED,
             TransactionState.OLD_MOVED,
             TransactionState.NEW_ACTIVE,
             TransactionState.HEALTHY,
             TransactionState.ROLLED_BACK,
+            TransactionState.SUPERSEDED,
         }:
             raise UpdateApplyError("The update journal has an invalid state.")
         return cls(
@@ -251,6 +259,7 @@ class UpdateJournal:
             nvidia_preserved=bool(payload.get("nvidia_preserved")),
             appdata=str(payload.get("appdata") or ""),
             archive_path=str(payload.get("archive_path") or ""),
+            cleanup_rollback=bool(payload.get("cleanup_rollback", state == TransactionState.HEALTHY)),
         )
 
 
@@ -366,11 +375,21 @@ def leave_launch_directory(
 
 
 def _environment_without_bootstrap() -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if not key.upper().startswith("_PYI_") and key.upper() != "_MEIPASS2"
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.upper().startswith("_PYI_")
+        and key.upper() not in {"_MEIPASS2", _RELAUNCHED_ENV}
     }
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    runtime = getattr(sys, "_MEIPASS", None)
+    if runtime:
+        for key in list(environment):
+            if key.upper() == "PATH":
+                environment[key] = os.pathsep.join(
+                    item for item in environment[key].split(os.pathsep)
+                    if item and not _is_within(item, runtime)
+                )
+    return environment
 
 
 def _is_within(path: str, root: str) -> bool:
@@ -612,13 +631,13 @@ def validate_manifest(
     current_updater_version: Optional[str] = None,
 ) -> None:
     if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        raise UpdateApplyError("This update uses an unsupported manifest schema.")
+        raise UpdateRequiresSetup("This update uses an unsupported manifest schema.")
     if manifest.get("product") != APP_NAME or manifest.get("app_id") != APP_ID:
         raise UpdateApplyError("The update package is not for OpenWhisper.")
     if manifest.get("architecture") != ARCHITECTURE:
         raise UpdateApplyError("The update package is not for this architecture.")
     if manifest.get("topology_revision") != TOPOLOGY_REVISION:
-        raise UpdateApplyError(
+        raise UpdateRequiresSetup(
             "This update changes the install layout and must use the installer."
         )
     version = str(manifest.get("version") or "")
@@ -629,7 +648,7 @@ def validate_manifest(
     if current_updater_version and parse_strict_version(
         minimum
     ) > parse_strict_version(current_updater_version):
-        raise UpdateApplyError(
+        raise UpdateRequiresSetup(
             "This update needs a newer updater and must use the installer."
         )
     files = manifest.get("files")
@@ -1240,6 +1259,27 @@ def _fsync_tree(root: str) -> None:
                 os.fsync(handle.fileno())
 
 
+def _exclusive_preparation(function):
+    from functools import wraps
+
+    @wraps(function)
+    def run(*args, **kwargs):
+        setup_gate = create_named_mutex(SETUP_MUTEX_NAME)
+        if setup_gate is None:
+            raise UpdateApplyError("Setup is already running.")
+        gates = None
+        try:
+            gates = acquire_named_mutexes(UPDATE_MUTEX_NAMES, 0.0)
+            if gates is None:
+                raise UpdateApplyError("Another update is already in progress.")
+            return function(*args, **kwargs)
+        finally:
+            release_mutexes(gates)
+            release_mutex(setup_gate)
+    return run
+
+
+@_exclusive_preparation
 def prepare_candidate(
     archive_path: str,
     *,
@@ -1309,7 +1349,40 @@ def prepare_candidate(
         shutil.rmtree(tx_dir, ignore_errors=True)
         raise
 
+    journal = None
     try:
+        selected_parent_pid = int(
+            parent_pid if parent_pid is not None else os.getpid()
+        )
+        parent_exe, parent_creation_time = process_identity(selected_parent_pid)
+        if sys.platform == "win32" and (
+            not parent_exe or not parent_creation_time
+        ):
+            raise UpdateApplyError("Could not identify the running OpenWhisper process.")
+        journal = UpdateJournal(
+            transaction_id=transaction_id,
+            state=TransactionState.PREPARING,
+            app_dir=canonical_path(app_dir),
+            candidate_dir=canonical_path(candidate_dir),
+            rollback_dir=canonical_path(rollback_dir),
+            old_version=current_version,
+            new_version=release_version,
+            old_display_version=registration.display_version,
+            old_estimated_size_kb=registration.estimated_size_kb,
+            old_install_date=registration.install_date,
+            old_exe_sha256=file_sha256(os.path.join(app_dir, APP_EXE_NAME)),
+            new_exe_sha256=manifest["files"][APP_EXE_NAME]["sha256"],
+            parent_pid=selected_parent_pid,
+            parent_exe=parent_exe,
+            parent_creation_time=parent_creation_time,
+            health_token=uuid.uuid4().hex,
+            uninstaller_files=[],
+            compatibility_files={},
+            nvidia_preserved=False,
+            appdata=appdata_root,
+            archive_path=archive_path,
+        )
+        save_journal(journal)
         os.makedirs(candidate_dir, exist_ok=False)
         safe_extract_tar_xz(
             archive_path,
@@ -1349,45 +1422,23 @@ def prepare_candidate(
         old_exe = os.path.join(app_dir, APP_EXE_NAME)
         if not os.path.isfile(old_exe):
             raise UpdateApplyError("The installed executable is missing.")
-        new_exe = os.path.join(candidate_dir, APP_EXE_NAME)
-        selected_parent_pid = int(
-            parent_pid if parent_pid is not None else os.getpid()
-        )
-        parent_exe, parent_creation_time = process_identity(selected_parent_pid)
-        if sys.platform == "win32" and (
-            not parent_exe or not parent_creation_time
-        ):
-            raise UpdateApplyError("Could not identify the running OpenWhisper process.")
-        journal = UpdateJournal(
-            transaction_id=transaction_id,
-            state=TransactionState.PREPARED,
-            app_dir=canonical_path(app_dir),
-            candidate_dir=canonical_path(candidate_dir),
-            rollback_dir=canonical_path(rollback_dir),
-            old_version=current_version,
-            new_version=release_version,
-            old_display_version=registration.display_version,
-            old_estimated_size_kb=registration.estimated_size_kb,
-            old_install_date=registration.install_date,
-            old_exe_sha256=file_sha256(old_exe),
-            new_exe_sha256=file_sha256(new_exe),
-            parent_pid=selected_parent_pid,
-            parent_exe=parent_exe,
-            parent_creation_time=parent_creation_time,
-            health_token=uuid.uuid4().hex,
-            uninstaller_files=preserved,
-            compatibility_files=compatibility_files,
-            nvidia_preserved=nvidia,
-            appdata=appdata_root,
-            archive_path=archive_path,
-        )
+        journal.uninstaller_files = preserved
+        journal.compatibility_files = compatibility_files
+        journal.nvidia_preserved = nvidia
+        journal.state = TransactionState.PREPARED
         _check_cancel(cancel)
         save_journal(journal)
         return journal
     except Exception:
-        if os.path.isdir(candidate_dir):
-            shutil.rmtree(candidate_dir, ignore_errors=True)
-        shutil.rmtree(tx_dir, ignore_errors=True)
+        if journal is not None:
+            journal.state = TransactionState.ROLLED_BACK
+            try:
+                save_journal(journal)
+                _cleanup_transaction(journal)
+            except (OSError, UpdateApplyError):
+                logger.info("Interrupted preparation will be cleaned on next start", exc_info=True)
+        else:
+            shutil.rmtree(tx_dir, ignore_errors=True)
         raise
 
 
@@ -1420,44 +1471,47 @@ def parse_parent_pid(argv: Optional[List[str]] = None) -> Optional[int]:
 
 
 def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
-    """Delete transaction directories that are over.
-
-    A transaction is cleaned by a copy of the updater, which cannot delete the
-    executable the original ran from, and which gives up if the original sits
-    in its error dialog for longer than the cleanup waits. What survives is a
-    directory holding that executable, with or without a journal that has
-    already reached a terminal state: recovery has nothing to do with either,
-    and nothing else collects them.
-    """
-    tx_root = os.path.join(updates_root(appdata), "tx")
+    gates = acquire_named_mutexes(UPDATE_MUTEX_NAMES, 0.0)
+    if gates is None:
+        return []
     removed: List[str] = []
     try:
-        names = sorted(os.listdir(tx_root))
-    except OSError:
-        return removed
-    for name in names:
-        path = os.path.join(tx_root, name)
-        if not os.path.isdir(path) or os.path.islink(path):
-            continue
-        if not _transaction_is_over(os.path.join(path, JOURNAL_NAME)):
-            continue
-        shutil.rmtree(path, ignore_errors=True)
-        if not os.path.exists(path):
-            removed.append(name)
+        tx_root = os.path.join(updates_root(appdata), "tx")
+        reject_reparse_chain(tx_root, "Update transaction root")
+        if not os.path.isdir(tx_root):
+            return removed
+        for name in sorted(os.listdir(tx_root)):
+            try:
+                path = transaction_dir(name, appdata)
+                reject_reparse_chain(path, "Update transaction")
+                if not os.path.isdir(path):
+                    continue
+                if not os.path.isfile(os.path.join(path, JOURNAL_NAME)):
+                    # Legacy preparations had no journal until extraction ended.
+                    # Keep recent entries in case an older app is still preparing.
+                    if time.time() - os.path.getmtime(path) > 86400:
+                        shutil.rmtree(path)
+                        removed.append(name)
+                    continue
+                journal = load_journal(name, appdata)
+                if journal.state not in {
+                    TransactionState.HEALTHY, TransactionState.ROLLED_BACK,
+                    TransactionState.SUPERSEDED,
+                }:
+                    continue
+                _cleanup_transaction(journal)
+                if not os.path.exists(path):
+                    removed.append(name)
+            except (OSError, UpdateApplyError, ValueError):
+                continue
+    except (OSError, UpdateApplyError):
+        logger.info("Update cleanup will retry on next start", exc_info=True)
+    finally:
+        release_mutexes(gates)
     return removed
 
 
-def _transaction_is_over(journal_file: str) -> bool:
-    if not os.path.isfile(journal_file):
-        return True
-    try:
-        with open(journal_file, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, ValueError):
-        # Recovery owns anything it might still be able to read.
-        return False
-    state = payload.get("state") if isinstance(payload, dict) else None
-    return state in {TransactionState.HEALTHY, TransactionState.ROLLED_BACK}
+
 
 
 def cleanup_transaction_after_parent(
@@ -1465,18 +1519,17 @@ def cleanup_transaction_after_parent(
     parent_pid: int,
     appdata: Optional[str] = None,
 ) -> None:
-    """Delete a terminal transaction after the updater executable unlocks."""
     journal = load_journal(transaction_id, appdata)
     if journal.state not in {
-        TransactionState.HEALTHY,
-        TransactionState.ROLLED_BACK,
+        TransactionState.HEALTHY, TransactionState.ROLLED_BACK,
+        TransactionState.SUPERSEDED,
     }:
         raise UpdateApplyError("Refusing to clean a non-terminal transaction.")
     _wait_for_pid(parent_pid, 120.0)
+    if not _remove_transaction_payloads(journal):
+        return
     tx = transaction_dir(journal.transaction_id, journal.appdata or None)
-    # The updater that asked for this cleanup can outlive the wait: it holds a
-    # message box open, and Windows denies deleting the image of a process that
-    # is still running. Whatever survives the wait is collected at next start.
+    reject_reparse_chain(tx, "Update transaction")
     _retry_while_locked(tx, lambda: shutil.rmtree(tx), timeout_s=_CLEANUP_LOCK_WAIT_S)
 
 
@@ -1818,19 +1871,50 @@ def maybe_exit_if_update_in_progress(argv: Optional[List[str]] = None) -> None:
         time.sleep(0.25)
 
 
+def recover_before_start(appdata: Optional[str] = None) -> bool:
+    """Dispatch pending recovery before this launch acquires the app mutex."""
+    if parse_health_token() or any(mutex_exists(name) for name in APP_MUTEX_NAMES):
+        return False
+    target = running_app_dir()
+    tx_root = os.path.join(updates_root(appdata), "tx")
+    if not os.path.isdir(tx_root):
+        return False
+    for token in sorted(os.listdir(tx_root)):
+        try:
+            journal = load_journal(token, appdata)
+        except (OSError, UpdateApplyError, ValueError):
+            continue
+        if not paths_equal(journal.app_dir, target):
+            continue
+        if journal.state in {TransactionState.PREPARING, TransactionState.PREPARED}:
+            identity = process_identity(journal.parent_pid)
+            if identity != (journal.parent_exe, journal.parent_creation_time) or not identity[1]:
+                abandon_prepared_update(token, appdata)
+        elif journal.state in {TransactionState.OLD_MOVED, TransactionState.NEW_ACTIVE}:
+            _launch_exe(
+                helper_exe_for(journal),
+                [*helper_argv(journal, recover=True), PARENT_PID_ARG, str(os.getpid())],
+            )
+            return True
+    return False
+
+
 def _refuse_launch(message: str) -> None:
     """Explain a dropped launch. A windowed frozen build has no ``sys.stderr``."""
     native_message_box(message)
     raise SystemExit(0)
 
 
-def write_health_acknowledgement(token: str, appdata: Optional[str] = None) -> None:
+def write_health_acknowledgement(token: str, appdata: Optional[str] = None) -> bool:
     root = updates_root(appdata)
     tx_root = os.path.join(root, "tx")
     if not os.path.isdir(tx_root):
-        return
+        return False
     for name in os.listdir(tx_root):
-        path = journal_path(name, appdata)
+        try:
+            path = journal_path(name, appdata)
+        except ValueError:
+            continue
         if not os.path.isfile(path):
             continue
         try:
@@ -1850,7 +1934,8 @@ def write_health_acknowledgement(token: str, appdata: Optional[str] = None) -> N
                 handle.write(token)
                 handle.flush()
                 os.fsync(handle.fileno())
-            return
+            return True
+    return False
 
 
 def _set_runonce(command: str) -> None:
@@ -1862,6 +1947,31 @@ def _set_runonce(command: str) -> None:
     try:
         winreg.SetValueEx(handle, RUNONCE_VALUE_NAME, 0, winreg.REG_SZ, command)
         winreg.FlushKey(handle)
+    finally:
+        winreg.CloseKey(handle)
+
+
+def clear_transaction_runonce(journal: UpdateJournal) -> None:
+    if sys.platform != "win32":
+        return
+    winreg = _winreg()
+    try:
+        handle = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\RunOnce",
+            0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE,
+        )
+    except OSError:
+        return
+    try:
+        try:
+            command, _kind = winreg.QueryValueEx(handle, RUNONCE_VALUE_NAME)
+        except FileNotFoundError:
+            return
+        expected = f'"{helper_exe_for(journal)}" {TRANSACTION_ARG} {journal.transaction_id} {RECOVER_ARG}'
+        if str(command).casefold() == expected.casefold():
+            winreg.DeleteValue(handle, RUNONCE_VALUE_NAME)
+            winreg.FlushKey(handle)
     finally:
         winreg.CloseKey(handle)
 
@@ -1979,6 +2089,28 @@ def _force_close_pid(
         kernel32.CloseHandle(handle)
 
 
+def _independent_dll_search():
+    from contextlib import contextmanager
+
+    @contextmanager
+    def clean():
+        if sys.platform != "win32" or not getattr(sys, "frozen", False):
+            yield
+            return
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        size = kernel.GetDllDirectoryW(0, None)
+        previous = ctypes.create_unicode_buffer(size + 1)
+        kernel.GetDllDirectoryW(len(previous), previous)
+        if not kernel.SetDllDirectoryW(None):
+            raise UpdateApplyError("Could not prepare an independent update process.")
+        try:
+            yield
+        finally:
+            kernel.SetDllDirectoryW(previous.value or None)
+    return clean()
+
+
 def _launch_exe(
     path: str,
     args: List[str],
@@ -1996,13 +2128,14 @@ def _launch_exe(
         if hasattr(subprocess, "CREATE_NO_WINDOW"):
             creation |= subprocess.CREATE_NO_WINDOW
     try:
-        proc = subprocess.Popen(
-            [path, *args],
-            cwd=cwd or os.path.dirname(path),
-            env=env,
-            close_fds=True,
-            creationflags=creation,
-        )
+        with _independent_dll_search():
+            proc = subprocess.Popen(
+                [path, *args],
+                cwd=cwd or os.path.dirname(path),
+                env=env if env is not None else _environment_without_bootstrap(),
+                close_fds=True,
+                creationflags=creation,
+            )
     except OSError as exc:
         raise UpdateApplyError(f"Could not start {os.path.basename(path)}.") from exc
     return proc
@@ -2026,10 +2159,12 @@ def _terminate_process(process, timeout_s: float = 30.0) -> None:
             ) from exc
 
 
-def _wait_for_health(journal: UpdateJournal, timeout_s: float) -> bool:
+def _wait_for_health(journal: UpdateJournal, timeout_s: float, process=None) -> bool:
     path = health_path(journal.transaction_id, journal.appdata or None)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
         if os.path.isfile(path):
             try:
                 with open(path, encoding="utf-8") as handle:
@@ -2201,85 +2336,102 @@ def restore_arp_after_rollback(
 
 
 def _cleanup_transaction(
-    journal: UpdateJournal, *, include_rollback: bool = True
-) -> None:
-    """Delete a finished transaction's trees, archive, and journal.
-
-    ``include_rollback`` must stay False for a transaction that never renamed
-    anything: a rollback tree that exists in that case was not created here and
-    is not ours to delete.
-    """
-    trees = [journal.candidate_dir]
-    if include_rollback:
-        trees.append(journal.rollback_dir)
-    for path in trees:
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
-    if journal.archive_path and os.path.isfile(journal.archive_path):
-        try:
-            os.unlink(journal.archive_path)
-        except OSError:
-            pass
+    journal: UpdateJournal, *, include_rollback: Optional[bool] = None
+) -> bool:
+    """Keep the terminal journal until all owned payloads have been removed."""
+    if include_rollback is not None:
+        journal.cleanup_rollback = include_rollback
+        save_journal(journal)
+    if not _remove_transaction_payloads(journal):
+        return False
     tx = transaction_dir(journal.transaction_id, journal.appdata or None)
-    if (
-        getattr(sys, "frozen", False)
-        and os.path.basename(sys.executable).lower() == UPDATER_EXE_NAME.lower()
-    ):
-        cleanup_exe = os.path.join(
-            updates_root(journal.appdata or None),
-            "OpenWhisperUpdaterCleanup.exe",
-        )
-        reject_reparse_chain(os.path.dirname(cleanup_exe), "Update cleanup root")
-        if os.path.lexists(cleanup_exe) and has_reparse_point(cleanup_exe):
-            raise UpdateApplyError("The update cleanup helper path is unsafe.")
-        shutil.copy2(sys.executable, cleanup_exe)
-        with open(cleanup_exe, "rb+") as handle:
-            os.fsync(handle.fileno())
-        _launch_exe(
-            cleanup_exe,
-            [
-                CLEANUP_ARG,
-                TRANSACTION_ARG,
-                journal.transaction_id,
-                PARENT_PID_ARG,
-                str(os.getpid()),
-            ],
-        )
+    try:
+        if (
+            getattr(sys, "frozen", False)
+            and os.path.basename(sys.executable).lower() == UPDATER_EXE_NAME.lower()
+        ):
+            cleanup_exe = os.path.join(
+                updates_root(journal.appdata or None),
+                f"OpenWhisperUpdaterCleanup-{journal.transaction_id}.exe",
+            )
+            reject_reparse_chain(cleanup_exe, "Update cleanup helper")
+            shutil.copy2(sys.executable, cleanup_exe)
+            with open(cleanup_exe, "rb+") as handle:
+                os.fsync(handle.fileno())
+            _launch_exe(
+                cleanup_exe,
+                [CLEANUP_ARG, TRANSACTION_ARG, journal.transaction_id,
+                 PARENT_PID_ARG, str(os.getpid())],
+            )
+            return False
+        reject_reparse_chain(tx, "Update transaction")
+        shutil.rmtree(tx)
+        return True
+    except (OSError, UpdateApplyError):
+        logger.info("Update completed; cleanup will retry on next start", exc_info=True)
+        return False
+
+
+def _remove_transaction_payloads(journal: UpdateJournal) -> bool:
+    validate_journal_binding(journal, journal.appdata or None)
+    trees = [journal.candidate_dir]
+    if journal.cleanup_rollback:
+        trees.extend((journal.rollback_dir, journal.app_dir + f".failed-{journal.transaction_id[:8]}"))
+    complete = True
+    for path in trees:
+        try:
+            reject_reparse_chain(path, "Update cleanup tree")
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+        except (OSError, UpdateApplyError):
+            complete = False
+            logger.info("Retaining cleanup record for %s", path, exc_info=True)
+    if journal.archive_path:
+        try:
+            reject_reparse_chain(journal.archive_path, "Update archive")
+            if os.path.isfile(journal.archive_path):
+                os.unlink(journal.archive_path)
+        except (OSError, UpdateApplyError):
+            complete = False
+    return complete
+
+
+def abandon_prepared_update(transaction_id: str, appdata: Optional[str] = None) -> None:
+    """Release an unlaunched preparation without touching the installed tree."""
+    gates = acquire_named_mutexes(UPDATE_MUTEX_NAMES, 0.0)
+    if gates is None:
         return
-    shutil.rmtree(tx, ignore_errors=True)
+    try:
+        journal = load_journal(transaction_id, appdata)
+        if journal.state not in {TransactionState.PREPARING, TransactionState.PREPARED}:
+            return
+        journal.state = TransactionState.ROLLED_BACK
+        journal.cleanup_rollback = False
+        save_journal(journal)
+        _cleanup_transaction(journal)
+    except (OSError, UpdateApplyError, ValueError):
+        logger.warning("Could not abandon prepared update %s", transaction_id, exc_info=True)
+    finally:
+        release_mutexes(gates)
 
 
 def _restore_rollback(journal: UpdateJournal) -> None:
-    failed = journal.app_dir.rstrip("\\/") + ".failed"
+    failed = journal.app_dir + f".failed-{journal.transaction_id[:8]}"
+    reject_reparse_chain(failed, "Failed update tree")
     if os.path.isdir(journal.rollback_dir):
         _verify_old_tree(journal.rollback_dir, journal)
-    if os.path.isdir(journal.app_dir) and os.path.isdir(journal.rollback_dir):
-        if os.path.lexists(failed):
-            shutil.rmtree(failed, ignore_errors=True)
-        _replace_path_write_through(
-            journal.app_dir, failed, replace_existing=False
-        )
+        if os.path.isdir(journal.app_dir):
+            # Never consume an existing recovery copy to make room for another.
+            _rename_dir(journal.app_dir, failed)
         try:
-            _replace_path_write_through(
-                journal.rollback_dir, journal.app_dir, replace_existing=False
-            )
+            _rename_dir(journal.rollback_dir, journal.app_dir)
         except OSError:
             if os.path.isdir(failed) and not os.path.isdir(journal.app_dir):
-                _replace_path_write_through(
-                    failed, journal.app_dir, replace_existing=False
-                )
+                _rename_dir(failed, journal.app_dir)
             raise
-        shutil.rmtree(failed, ignore_errors=True)
         return
-    if os.path.isdir(journal.rollback_dir) and not os.path.isdir(journal.app_dir):
-        _replace_path_write_through(
-            journal.rollback_dir, journal.app_dir, replace_existing=False
-        )
-        shutil.rmtree(failed, ignore_errors=True)
-        return
-    if os.path.isdir(journal.app_dir) and not os.path.isdir(journal.rollback_dir):
+    if os.path.isdir(journal.app_dir):
         _verify_old_tree(journal.app_dir, journal)
-        shutil.rmtree(failed, ignore_errors=True)
         return
     raise UpdateApplyError("Neither a usable install nor rollback tree remains.")
 
@@ -2377,6 +2529,9 @@ def commit_prepared_update(
         logger.info("Verifying the prepared tree")
         _verify_candidate_for_commit(journal)
 
+        from services.update_data import snapshot_data
+
+        snapshot_data(journal)
         recover_cmd = (
             f'"{helper_exe_for(journal)}" {TRANSACTION_ARG} '
             f"{journal.transaction_id} {RECOVER_ARG}"
@@ -2386,6 +2541,7 @@ def commit_prepared_update(
 
         # Persist intent before each rename. Recovery reconciles the journal
         # with all three directory trees, so power loss in either gap is safe.
+        journal.cleanup_rollback = True
         journal.state = TransactionState.OLD_MOVED
         save_journal(journal)
         destructive_started = True
@@ -2411,7 +2567,7 @@ def commit_prepared_update(
             launched_process = _launch_exe(
                 new_exe, [HEALTH_ARG, journal.health_token]
             )
-            if not _wait_for_health(journal, health_timeout_s):
+            if not _wait_for_health(journal, health_timeout_s, process=launched_process):
                 raise UpdateApplyError(
                     "The new version started but did not become ready."
                 )
@@ -2457,6 +2613,8 @@ def commit_prepared_update(
                     )
             if destructive_started:
                 _restore_rollback(journal)
+                from services.update_data import restore_data
+                restore_data(journal)
                 restore_arp_after_rollback(journal, registration)
             else:
                 _verify_old_tree(journal.app_dir, journal)
@@ -2531,6 +2689,16 @@ def recover_transaction(
         if app_mutexes is None:
             raise UpdateApplyError("OpenWhisper is still running.")
         journal = load_journal(token, appdata)
+        if journal.state in {
+            TransactionState.SUPERSEDED, TransactionState.PREPARING,
+            TransactionState.ROLLED_BACK,
+        }:
+            if journal.state == TransactionState.PREPARING:
+                journal.state = TransactionState.SUPERSEDED
+            save_journal(journal)
+            clear_transaction_runonce(journal)
+            _cleanup_transaction(journal)
+            return journal.state
         registration = registration or discover_install_registration()
         if (
             registration is None
@@ -2555,6 +2723,9 @@ def recover_transaction(
             if os.path.lexists(path):
                 reject_reparse_chain(path, "Update tree")
 
+        if journal.state in {TransactionState.OLD_MOVED, TransactionState.NEW_ACTIVE}:
+            journal.cleanup_rollback = True
+            save_journal(journal)
         app_exists = os.path.isdir(journal.app_dir)
         candidate_exists = os.path.isdir(journal.candidate_dir)
         rollback_exists = os.path.isdir(journal.rollback_dir)
@@ -2591,9 +2762,20 @@ def recover_transaction(
             return journal.state
 
         if active_is_old:
-            if rollback_valid:
-                shutil.rmtree(journal.rollback_dir)
+            journal.cleanup_rollback = journal.cleanup_rollback or rollback_valid
         elif rollback_valid:
+            active_exe = os.path.join(journal.app_dir, APP_EXE_NAME)
+            if os.path.isfile(active_exe) and file_sha256(active_exe) not in {
+                journal.old_exe_sha256, journal.new_exe_sha256,
+            }:
+                # Setup or another repair now owns this installation. An old
+                # recovery must not replace an executable it did not install.
+                journal.state = TransactionState.SUPERSEDED
+                journal.cleanup_rollback = True
+                save_journal(journal)
+                _clear_runonce()
+                _cleanup_transaction(journal)
+                return journal.state
             _restore_rollback(journal)
         else:
             raise UpdateApplyError(
@@ -2603,6 +2785,9 @@ def recover_transaction(
         if candidate_exists and os.path.isdir(journal.candidate_dir):
             shutil.rmtree(journal.candidate_dir, ignore_errors=True)
         _verify_old_tree(journal.app_dir, journal)
+        if not health_confirmed:
+            from services.update_data import restore_data
+            restore_data(journal)
         restore_arp_after_rollback(journal, registration)
         journal.state = TransactionState.ROLLED_BACK
         save_journal(journal)
@@ -2611,6 +2796,7 @@ def recover_transaction(
             journal.appdata or None,
         )
         _clear_runonce()
+        _cleanup_transaction(journal)
         relaunch = True
         return journal.state
     finally:
