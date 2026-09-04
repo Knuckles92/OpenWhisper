@@ -141,8 +141,8 @@ def test_release_workflow_includes_macos_arm64_dmg():
     assert "./scripts/build_installer_macos.sh --clean" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "needs: [windows, linux, macos]" in workflow
-    assert '-eq 5' in workflow
-    assert 'release/OpenWhisper-"$version"-macos-arm64.dmg' in workflow
+    assert "expected_artifacts=5" in workflow
+    assert 'gh release upload "$RELEASE_TAG" release/* --clobber' in workflow
     # No Apple secrets or notarization in the first path.
     assert "notarytool" not in workflow
     assert "APPLE_ID" not in workflow
@@ -191,9 +191,11 @@ def test_frozen_macos_install_channel_is_notify_only():
     )
 
 
-def test_linux_workflow_contract_still_expects_five_total_artifacts():
-    """Keep the Linux static inventory test in sync with the five-artifact set."""
+def test_release_workflow_supports_documented_setup_only_recovery():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    # The historical four-artifact assertion must not reappear.
-    assert not re.search(r'test "\$\(find release -maxdepth 1 -type f \| wc -l\)" -eq 4', workflow)
-    assert re.search(r'test "\$\(find release -maxdepth 1 -type f \| wc -l\)" -eq 5', workflow)
+    assert "setup_only_windows:" in workflow
+    assert "rm -f release/OpenWhisper-*-win64.tar.xz" in workflow
+    assert "expected_artifacts=4" in workflow
+    assert "expected_artifacts=5" in workflow
+    assert 'gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes' in workflow
+    assert 'release/* --clobber' in workflow

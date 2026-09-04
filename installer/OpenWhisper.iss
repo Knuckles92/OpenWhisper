@@ -107,6 +107,26 @@ begin
   Result := ExpandConstant('{localappdata}\{#AppName}');
 end;
 
+function IsExistingInstall(): Boolean;
+var
+  UninstallKey: String;
+begin
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+    '{CA36AD0A-13B9-4737-87AD-ADB54A28EFC9}_is1';
+  Result := RegKeyExists(HKEY_CURRENT_USER, UninstallKey) or
+    RegKeyExists(HKEY_LOCAL_MACHINE, UninstallKey);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := IsExistingInstall() and
+    ((PageID = wpWelcome) or
+     (PageID = wpLicense) or
+     (PageID = wpSelectDir) or
+     (PageID = wpSelectProgramGroup) or
+     (PageID = wpSelectTasks));
+end;
+
 {
   Belt and braces for CloseApplications=force, which is reported to leave some
   processes running. Setup is the recovery path for a build that cannot quit

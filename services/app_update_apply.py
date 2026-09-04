@@ -1261,8 +1261,20 @@ def prepare_candidate(
         raise UpdateApplyError("Refusing to apply a version that is not newer.")
     if not native_apply_eligible(registration=registration, app_dir=app_dir):
         raise UpdateApplyError("This installation cannot apply a native update.")
-    if registration.display_version != current_version:
-        raise UpdateApplyError("The registered version does not match this application.")
+    if parse_strict_version(registration.display_version) != parse_strict_version(
+        current_version
+    ):
+        # DisplayVersion is descriptive state, not the installation identity.
+        # The HKCU key, install path, registered uninstaller, and updater helper
+        # were already bound by native_apply_eligible().  A prior native update
+        # can leave only this value stale; the successful commit below rewrites
+        # it, while rollback restores the value recorded in the journal.
+        logger.warning(
+            "The registered version (%s) differs from the running application "
+            "(%s); the native update will repair it",
+            registration.display_version,
+            current_version,
+        )
 
     appdata_root = canonical_path(appdata if appdata is not None else local_app_dir())
     transaction_id = uuid.uuid4().hex

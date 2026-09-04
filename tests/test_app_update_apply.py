@@ -745,6 +745,42 @@ class TestLiveParent:
             parent.wait(timeout=30)
 
 
+class TestPrepareCandidate:
+    def test_stale_registered_version_is_repaired_by_native_update(self, tmp_path):
+        app = _bundle(tmp_path / "OpenWhisper", "2.4.8", b"old")
+        (app / "unins000.exe").write_bytes(b"uninstaller")
+        appdata = tmp_path / "appdata"
+        updates = appdata / "updates"
+        updates.mkdir(parents=True)
+        source = _bundle(tmp_path / "src", "2.5.1", b"new")
+        archive = updates / "OpenWhisper-2.5.1-win64.tar.xz"
+        pack_tar_xz(str(source), str(archive))
+        registration = InstallRegistration(
+            hive="HKCU",
+            key_path=r"Software\Microsoft\Windows\CurrentVersion\Uninstall\test",
+            install_location=str(app),
+            uninstall_string=str(app / "unins000.exe"),
+            display_version="2.4.7",
+        )
+
+        with patch(
+            "services.app_update_apply.native_apply_eligible", return_value=True
+        ):
+            journal = prepare_candidate(
+                str(archive),
+                release_version="2.5.1",
+                current_version="2.4.8",
+                app_dir=str(app),
+                registration=registration,
+                appdata=str(appdata),
+                parent_pid=os.getpid(),
+            )
+
+        assert journal.old_version == "2.4.8"
+        assert journal.old_display_version == "2.4.7"
+        assert journal.new_version == "2.5.1"
+
+
 class TestPrepareCancel:
     def test_cancel_after_extraction_still_cancels(self, tmp_path):
         app = _bundle(tmp_path / "OpenWhisper", "2.4.0", b"old")

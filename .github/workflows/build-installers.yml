@@ -7,6 +7,11 @@ on:
         description: "Existing draft release tag to upload to (optional, e.g. v2.5.0)"
         required: false
         type: string
+      setup_only_windows:
+        description: "Emergency release: omit the Windows native-update archive"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -258,9 +263,18 @@ jobs:
           BUILD_RUN_ID: ${{ github.run_id }}
           BUILD_RUN_ATTEMPT: ${{ github.run_attempt }}
           BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SETUP_ONLY_WINDOWS: ${{ inputs.setup_only_windows }}
         run: |
-          # Five application artifacts: Win setup, Win archive, deb, Arch, macOS DMG.
-          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 5
+          if [[ "$SETUP_ONLY_WINDOWS" == "true" ]]; then
+            rm -f release/OpenWhisper-*-win64.tar.xz
+            expected_artifacts=4
+          else
+            expected_artifacts=5
+          fi
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq "$expected_artifacts"
+          test "$(find release -maxdepth 1 -name 'OpenWhisper-Setup-*.exe' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-linux-amd64.deb' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-linux-x86_64.pkg.tar.zst' | wc -l)" -eq 1
           test "$(find release -maxdepth 1 -name 'OpenWhisper-*-macos-arm64.dmg' | wc -l)" -eq 1
           export BUILD_COMMIT="$(git rev-parse HEAD)"
           export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
@@ -312,7 +326,7 @@ jobs:
         with:
           name: openwhisper-release-candidate
           path: release
-      - name: Verify draft and upload all native artifacts
+      - name: Verify draft and upload release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -321,15 +335,12 @@ jobs:
           test "$RELEASE_TAG" = "v$version"
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           release_api="$(gh release view "$RELEASE_TAG" --json apiUrl --jq .apiUrl)"
-          gh release upload "$RELEASE_TAG" \
-            release/OpenWhisper-Setup-"$version".exe \
-            release/OpenWhisper-"$version"-win64.tar.xz \
-            release/OpenWhisper-"$version"-linux-amd64.deb \
-            release/OpenWhisper-"$version"-linux-x86_64.pkg.tar.zst \
-            release/OpenWhisper-"$version"-macos-arm64.dmg \
-            release/BUILD-METADATA.json \
-            release/SHA256SUMS.txt \
-            --clobber
+          archive_name="OpenWhisper-$version-win64.tar.xz"
+          if [[ ! -f "release/$archive_name" ]] && gh release view "$RELEASE_TAG" \
+              --json assets --jq '.assets[].name' | grep -Fxq "$archive_name"; then
+            gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber
 
           for file in release/*; do
             name="$(basename "$file")"

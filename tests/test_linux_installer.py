@@ -185,9 +185,10 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "pacman -Sy --noconfirm archlinux-keyring" in smoke
     assert "/^NoExtract/{next}" in smoke
     assert "rm -f /etc/pacman.conf.d/noextract.conf" in smoke
-    # Combined release candidate ships five application artifacts (Win×2,
-    # Linux×2, macOS DMG). The historical four-file inventory is retired.
-    assert '-eq 5' in workflow
+    # Normal releases ship five application artifacts; the documented
+    # Windows recovery switch may omit only the native archive.
+    assert "expected_artifacts=5" in workflow
+    assert "expected_artifacts=4" in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "pacman -Qkk openwhisper" in smoke

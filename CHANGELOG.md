@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-09-04
+
+### Changed
+- **Windows recovery update is setup-only** - The 2.5.1 release omits the Windows native-update archive so affected 2.4.x installations go straight to the verified per-user setup package. Existing installations skip the fresh-install wizard pages and keep settings, history, recordings, components, and model caches.
+
+### Fixed
+- **A stale Windows version registration no longer blocks native updates** - The updater still binds the per-user registration to the running install path, registered uninstaller, and updater helper, but treats a parseable `DisplayVersion` mismatch as repairable metadata instead of rejecting the update. A successful update rewrites the registration to the new version; rollback restores its prior value.
+
 ## [2.5.0] - 2026-09-03
 
 ### Added
