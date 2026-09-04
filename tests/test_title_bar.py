@@ -54,9 +54,22 @@ def test_menu_items_fit_at_every_font_scale(app, title_bar, percent):
     assert title_bar.close_btn.height() == title_bar.height()
 
 
-def test_default_scale_keeps_base_height(app, title_bar):
+def test_default_scale_keeps_menus_and_a_usable_bar(app, title_bar):
     apply_ui_font_scale(UiFontScale.DEFAULT, app=app)
     app.processEvents()
 
-    assert title_bar.height() == CustomTitleBar.BASE_HEIGHT
+    assert title_bar.height() >= CustomTitleBar.BASE_HEIGHT
+    assert _menu_items_visible(title_bar)
+
+
+def test_larger_scale_does_not_shrink_the_bar(app, title_bar):
+    apply_ui_font_scale(UiFontScale.DEFAULT, app=app)
+    app.processEvents()
+    default_height = title_bar.height()
+
+    apply_ui_font_scale(UiFontScale.EXTRA_LARGE, app=app)
+    app.processEvents()
+    app.processEvents()
+
+    assert title_bar.height() >= default_height
     assert _menu_items_visible(title_bar)

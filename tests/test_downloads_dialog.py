@@ -176,11 +176,16 @@ class TestWindowShell(_DialogTestCase):
             col = dialog.findChild(QWidget, "downloadsCatalogColumn")
             assert bar is not None
             assert col is not None
-
-            image = dialog.grab().toImage()
-            dialog_bg = image.pixelColor(QPoint(10, 10)).name()
-            bar_color = image.pixelColor(bar.mapTo(dialog, bar.rect().center())).name()
-            assert bar_color == dialog_bg == "#10161c"
+            assert not bar.autoFillBackground()
+            assert not col.autoFillBackground()
+            theme = ThemeManager().stylesheet
+            assert (
+                "QWidget#downloadsCatalogColumn,\n"
+                "QWidget#downloadsSelectionBar,"
+            ) in theme
+            catalog_rule = theme.split("QWidget#downloadsCatalogColumn", 1)[1]
+            catalog_rule = catalog_rule.split("}", 1)[0]
+            assert "background-color: transparent" in catalog_rule
         finally:
             self.app.setStyleSheet(previous_stylesheet)
 

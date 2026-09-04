@@ -177,6 +177,9 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "debian:12" in workflow
     assert "archlinux:latest" in workflow
     assert "archlinux" in workflow
+    assert "pacman-key --init" in workflow
+    assert "pacman-key --populate archlinux" in workflow
+    assert "pacman -Sy --noconfirm archlinux-keyring" in workflow
     # Combined release candidate ships five application artifacts (Win×2,
     # Linux×2, macOS DMG). The historical four-file inventory is retired.
     assert '-eq 5' in workflow

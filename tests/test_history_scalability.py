@@ -71,11 +71,15 @@ def test_large_history_does_not_stretch_section_header():
         for index in range(sidebar.MAX_HISTORY_ITEMS + 1)
     ]
     sidebar._history_load_generation = 1
-    sidebar._apply_history_results(1, "", entries, "")
+    sidebar._apply_history_results(1, "", [], "")
     sidebar.show()
     app.processEvents()
+    empty_header_height = sidebar.history_header.height()
 
-    assert sidebar.history_header.height() <= 30
+    sidebar._apply_history_results(1, "", entries, "")
+    app.processEvents()
+
+    assert sidebar.history_header.height() == empty_header_height
     first_item = sidebar.history_list_layout.itemAt(0).widget()
     assert first_item.y() - sidebar.history_header.geometry().bottom() <= 13
 

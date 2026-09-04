@@ -178,6 +178,8 @@ jobs:
             -e EXPECTED_VERSION="$version" \
             -v "$artifact:/tmp/openwhisper.pkg.tar.zst:ro" \
             archlinux:latest bash -euo pipefail -c '
+              pacman-key --init
+              pacman-key --populate archlinux
               pacman -Sy --noconfirm archlinux-keyring
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed file namcap xorg-server-xvfb
