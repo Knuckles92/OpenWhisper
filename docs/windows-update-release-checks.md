@@ -18,6 +18,12 @@ Before publishing a candidate, require the Windows workflow to pass:
    and uninstall without deleting retained user data.
 5. Release inventory, build metadata, and GitHub asset digests.
 
+The setup lifecycle script supplies its own silent flags. Passing it proves
+installation and data preservation, but does not prove that the old app launches
+setup silently. The 2.5.1 launcher supplies no arguments, so updating to the
+2.5.2 bridge opens the wizard. Release notes must state this. The setup handoff
+regression tests protect the silent flags and restart marker in 2.5.2 onward.
+
 scripts/smoke_windows_setup.ps1 refuses to run outside a disposable GitHub Actions
 runner or over an existing registered installation. Logs are preserved as a
 workflow artifact. Never use a developer's live installation for this gate.

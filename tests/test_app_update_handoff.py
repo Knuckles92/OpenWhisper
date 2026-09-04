@@ -111,6 +111,50 @@ class TestNativeHandoff(unittest.TestCase):
         self.assertEqual(controller.main_window.quit_calls, 1)
 
 
+
+class TestSetupHandoff(unittest.TestCase):
+    def test_setup_fallback_skips_wizard_preserves_install_and_restarts(self):
+        for hive, scope in (("HKCU", "/CURRENTUSER"), ("HKLM", "/ALLUSERS"), (None, "/CURRENTUSER")):
+            with self.subTest(hive=hive):
+                controller = _FakeController(MagicMock())
+                controller.exit_for_update = MagicMock()
+                registration = MagicMock(hive=hive) if hive else None
+                with patch("services.app_update_apply.discover_install_registration", return_value=registration), \
+                        patch("services.app_update_apply.running_app_dir", return_value="C:/Custom Install/OpenWhisper"), \
+                        patch("services.app_update.updates_dir", return_value="C:/User Data/updates"), \
+                        patch("ui_qt.ui_controller.release_application_mutex_for_setup") as release, \
+                        patch("ui_qt.ui_controller._start_detached", return_value=True) as launch:
+                    UIController.on_update_download_finished(controller, "verified-setup.exe", "")
+
+                program, arguments = launch.call_args.args
+                self.assertEqual(program, "verified-setup.exe")
+                self.assertTrue({"/SILENT", "/VERYSILENT"}.intersection(arguments))
+                self.assertIn("/SP-", arguments)
+                self.assertIn("/NORESTART", arguments)
+                self.assertIn("/OPENWHISPERUPDATE=1", arguments)
+                self.assertIn(scope, arguments)
+                self.assertNotIn("/CURRENTUSER" if scope == "/ALLUSERS" else "/ALLUSERS", arguments)
+                self.assertIn("/DIR=C:/Custom Install/OpenWhisper", arguments)
+                release.assert_called_once_with()
+                controller.exit_for_update.assert_called_once_with()
+
+    def test_failed_setup_launch_reacquires_mutex_and_keeps_work_open(self):
+        controller = _FakeController(MagicMock())
+        controller.exit_for_update = MagicMock()
+        with patch("services.app_update_apply.discover_install_registration", return_value=None), \
+                patch("services.app_update_apply.running_app_dir", return_value="C:/OpenWhisper"), \
+                patch("services.app_update.updates_dir", return_value="C:/updates"), \
+                patch("ui_qt.ui_controller.release_application_mutex_for_setup"), \
+                patch("ui_qt.ui_controller.acquire_application_mutex_or_exit") as reacquire, \
+                patch("ui_qt.ui_controller._start_detached", return_value=False):
+            UIController.on_update_download_finished(controller, "verified-setup.exe", "")
+
+        reacquire.assert_called_once_with()
+        controller.exit_for_update.assert_not_called()
+        controller._update_dialog.set_error.assert_called_once_with(
+            "The installer could not be started.", offer_setup=False
+        )
+
 class TestHandoffWatchdog(unittest.TestCase):
     """A stalled shutdown must not cost the user the update."""
 

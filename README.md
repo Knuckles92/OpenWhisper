@@ -102,7 +102,7 @@ Download **OpenWhisper-Setup-2.5.2.exe** from [openwhisper.fiorilabs.tech](https
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
 - A speech model (~150 MB) downloads on first use, with a consent prompt.
-- **Help → Check for Updates** fetches the latest GitHub release. Per-user Windows installs download a verified update archive and apply it in-app (no Inno wizard). Elevated / Program Files installs, or a missing archive, still use the verified setup exe. Version 2.5.2 uses the setup path to install the repaired updater. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
+- **Help → Check for Updates** fetches the latest GitHub release. Per-user Windows installs download a verified update archive and apply it in-app (no Inno wizard). Elevated / Program Files installs, or a missing archive, still use the verified setup exe. Updating from 2.5.1 to 2.5.2 opens the setup wizard once to install the repaired updater. Native updates resume when a later release includes a compatible update archive. Turn automatic checks or notifications off in **Settings → General**, or on the first update prompt.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
