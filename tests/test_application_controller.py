@@ -1723,6 +1723,143 @@ class TestApplicationController:
         with pytest.raises(RuntimeError):
             controller.transcribe_clip("dictation.wav")
 
+    _ENGINE_REFUSAL = "End the meeting before changing the engine"
+
+    def test_whisper_reload_is_refused_during_a_meeting(self):
+        """A meeting owns the Whisper engine; a reload must not preempt it."""
+        controller = self._create_controller()
+        controller.meeting_active = True
+
+        controller.reload_whisper_model()
+
+        assert len(controller.executor.submissions) == 0
+        assert self._ENGINE_REFUSAL in controller.ui_controller.statuses
+
+    def test_hf_worker_does_not_load_into_the_engine_during_a_meeting(self):
+        """The HF workers reach reload_model without passing the UI gate.
+
+        Loading here would sit a second copy of the weights beside the
+        meeting's own model, which is what the engine lease avoids.
+        """
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model_name = "base"
+        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+        controller.meeting_active = True
+
+        controller._hf_model_worker("turbo")
+
+        assert backend.model_name == "base"
+        assert backend.device_info == "cpu"
+        assert self._ENGINE_REFUSAL in controller.ui_controller.statuses
+
+    def test_cache_fetch_does_not_revive_the_engine_during_a_meeting(self):
+        """The download still succeeds; only the engine revival waits."""
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model_name = "turbo"
+        backend.is_model_missing = True
+        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+        controller.meeting_active = True
+
+        assert controller._download_model_to_cache("turbo") is True
+
+        assert backend.is_model_missing is True
+        assert self._ENGINE_REFUSAL in controller.ui_controller.statuses
+
+    def test_hf_worker_loads_into_the_engine_without_a_meeting(self):
+        """The gate must not block the ordinary path."""
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        self._coordinator().evaluate_access = (
+            lambda model, consume_grant=True: decision
+        )
+
+        controller._hf_model_worker("turbo")
+
+        assert backend.model_name == "turbo"
+        assert self._ENGINE_REFUSAL not in controller.ui_controller.statuses
+
+    # ── The engine lease ───────────────────────────────────────────
+
+    def test_release_frees_the_local_model_and_owes_a_reload(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+
+        assert controller.release_local_engine() is True
+
+        assert backend.cleaned_up
+        assert controller._engine_released_for_lease is True
+        assert len(controller.executor.submissions) == 0
+
+    def test_release_is_a_noop_when_no_model_is_loaded(self):
+        """An API-only user never loaded one, so nothing is owed."""
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model = None
+
+        assert controller.release_local_engine() is False
+
+        assert controller._engine_released_for_lease is False
+
+    def test_restore_reloads_only_after_a_release(self):
+        controller = self._create_controller()
+
+        controller.restore_local_engine()
+        assert len(controller.executor.submissions) == 0
+
+        controller.release_local_engine()
+        controller.restore_local_engine()
+
+        assert len(controller.executor.submissions) == 1
+        assert controller.executor.submissions[0][0].__name__ == "_reload_worker"
+        assert controller._engine_released_for_lease is False
+
+    def test_restore_is_idempotent(self):
+        """Failure paths and the asr_released event may both call it."""
+        controller = self._create_controller()
+        controller.release_local_engine()
+
+        controller.restore_local_engine()
+        controller.restore_local_engine()
+
+        assert len(controller.executor.submissions) == 1
+
+    def test_asr_released_event_restores_the_engine(self):
+        controller = self._create_controller()
+        controller.release_local_engine()
+
+        controller.meeting_runtime._on_engine_event(
+            "asr_released", {"meeting_id": "m_1"}
+        )
+
+        assert len(controller.executor.submissions) == 1
+        assert controller.executor.submissions[0][0].__name__ == "_reload_worker"
+
+    def test_ended_event_does_not_restore_the_engine(self):
+        """The ordering trap: "ended" fires before the offline final pass.
+
+        That pass still decodes on the meeting's model, so reloading here
+        would put both models in memory at once — the exact thing the lease
+        exists to prevent. Only "asr_released" may restore.
+        """
+        controller = self._create_controller()
+        controller.release_local_engine()
+
+        controller.meeting_runtime._on_engine_event(
+            "ended", {"meeting_id": "m_1", "status": "ended"}
+        )
+
+        assert len(controller.executor.submissions) == 0
+        assert controller._engine_released_for_lease is True
+
     def test_hotkey_toggle_requires_unsupported_platform_ack(self):
         """A declined Mac/Linux warning must not start a meeting."""
         controller = self._create_controller()

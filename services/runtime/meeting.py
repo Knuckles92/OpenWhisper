@@ -715,6 +715,13 @@ class MeetingRuntime:
             # in-flight start, so an early handle is safe.
             with self._lock:
                 self._engine = engine
+            # Free the dictation model before start() loads the meeting's own.
+            # Both resolve "auto" through the same whisper_model setting, so
+            # without this the identical weights sit in memory twice. Safe on
+            # this thread: dictation is already refused for the whole meeting,
+            # and cleanup()'s ~1s of CUDA teardown is hidden behind the
+            # "Starting meeting..." status.
+            self.controller.release_local_engine()
             result = engine.start()
             if not (result.get("host_url") or result.get("url")):
                 abort = getattr(engine, "_abort_start", None)
@@ -736,6 +743,11 @@ class MeetingRuntime:
                 self._card_meeting_id = None
                 self._deferred_start_errors = []
             self.controller.meeting_active = False
+            # A start that failed before _start_asr ran emits no
+            # "asr_released", so the lease has to be released here.
+            # restore_local_engine is flag-guarded, so a duplicate call from
+            # the event is a no-op.
+            self.controller.restore_local_engine()
             message = str(exc)
             if message.startswith("LINUX_SYSTEM_AUDIO_REQUIRED:"):
                 message = (
@@ -922,6 +934,7 @@ class MeetingRuntime:
             logger.error(f"Failed to cancel meeting: {exc}")
         finally:
             self.controller.meeting_active = False
+            self.controller.restore_local_engine()
             self.controller.meeting_status_update.emit("Meeting canceled")
             self.controller.meeting_state_changed.emit(
                 {"active": False, "status": "canceled"}
@@ -1041,6 +1054,13 @@ class MeetingRuntime:
                     language=resolve_meeting_language(settings),
                     speaker_api_key=find_api_key("openai") or "",
                     progress_cb=_progress,
+                    # Only the redecode step loads a model, and only it takes
+                    # the lease — a polish-only retry never touches the
+                    # dictation engine.
+                    model_lease=(
+                        self.controller.release_local_engine,
+                        self.controller.restore_local_engine,
+                    ),
                 )
                 finalization = dict(result.get("finalization") or {})
                 status = str(finalization.get("status") or (
@@ -1358,6 +1378,10 @@ class MeetingRuntime:
                 repository,
                 meeting,
                 asr_language=resolve_meeting_language(settings),
+                model_lease=(
+                    self.controller.release_local_engine,
+                    self.controller.restore_local_engine,
+                ),
             ):
                 self.controller.meeting_error.emit(
                     "Could not finalize the meeting — "
@@ -1588,6 +1612,10 @@ class MeetingRuntime:
                         self._deferred_start_errors.append(str(message))
                         return
                 self.controller.meeting_error.emit(str(message))
+            elif kind == "asr_released":
+                # Not on "ended": that fires before the offline final pass,
+                # which still decodes on the meeting's model.
+                self.controller.restore_local_engine()
             elif kind == "ended":
                 self.controller.meeting_active = False
                 status = str(payload.get("status") or "ended")

@@ -1,6 +1,6 @@
 """Local transcription with faster-whisper."""
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, Tuple
 from faster_whisper import WhisperModel
 from .base import TranscriptionBackend
 from config import config
@@ -419,65 +419,6 @@ class LocalWhisperBackend(TranscriptionBackend):
         finally:
             self.is_transcribing = False
 
-    def transcribe_chunks(self, chunk_files: List[str]) -> str:
-        """Transcribe chunks sequentially and combine their text."""
-        if not self.is_available():
-            raise Exception("Faster-whisper model is not available.")
-
-        try:
-            self.is_transcribing = True
-            self.reset_cancel_flag()
-
-            transcriptions = []
-
-            vad_params = None
-            if config.FASTER_WHISPER_VAD_ENABLED:
-                vad_params = dict(
-                    min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
-                )
-
-            for i, chunk_file in enumerate(chunk_files):
-                if self.should_cancel:
-                    logger.info("Chunked transcription canceled by user")
-                    raise Exception("Transcription canceled")
-
-                logger.info(f"Processing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
-
-                segments, info = self.model.transcribe(
-                    chunk_file,
-                    beam_size=config.FASTER_WHISPER_BEAM_SIZE,
-                    vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
-                    vad_parameters=vad_params
-                )
-
-                text_parts = []
-                for segment in segments:
-                    if self.should_cancel:
-                        logger.info("Transcription canceled during chunk processing")
-                        raise Exception("Transcription canceled")
-                    text_parts.append(segment.text)
-
-                chunk_text = " ".join(text_parts).strip()
-                transcriptions.append(chunk_text)
-
-                logger.info(f"Chunk {i+1}/{len(chunk_files)} completed. "
-                           f"Length: {len(chunk_text)} characters")
-
-            from services.audio_processor import audio_processor
-            combined_text = audio_processor.combine_transcriptions(transcriptions)
-
-            logger.info(f"Chunked transcription complete. "
-                        f"Total length: {len(combined_text)} characters")
-
-            return combined_text
-
-        except Exception as e:
-            if "canceled" not in str(e).lower():
-                logger.error(f"Chunked transcription failed: {e}")
-            raise
-        finally:
-            self.is_transcribing = False
-
     def is_available(self) -> bool:
         """Return whether a model is loaded."""
         return self.model is not None
@@ -588,5 +529,12 @@ class LocalWhisperBackend(TranscriptionBackend):
 
     @property
     def requires_file_splitting(self) -> bool:
-        """Return False because faster-whisper streams arbitrarily long audio."""
+        """Return False because faster-whisper streams arbitrarily long audio.
+
+        Load-bearing: the base class defaults to True, so removing this
+        override would route large files into the split path and transcribe
+        them through ``TranscriptionBackend.transcribe_chunks`` instead of one
+        streaming pass. This class deliberately has no ``transcribe_chunks``
+        of its own for that reason.
+        """
         return False

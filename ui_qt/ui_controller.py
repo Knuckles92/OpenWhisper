@@ -198,6 +198,7 @@ class UIController(QObject):
         self.main_window.upload_files_requested.connect(self._on_upload_files_transcribe)
         self.main_window.upload_cancel_requested.connect(self._on_upload_cancel)
         self.main_window.upload_copy_requested.connect(self._on_upload_copy)
+        self.main_window.quick_record_copy_requested.connect(self._on_quick_record_copy)
         self.main_window.meeting_dashboard_requested.connect(
             self._on_meeting_open_dashboard
         )
@@ -1314,6 +1315,10 @@ class UIController(QObject):
         """Pass completed batch structure to the Upload File reading window."""
         if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_batch_result(result)
+
+    def _on_quick_record_copy(self, text: str):
+        succeeded = self.copy_to_clipboard(text)
+        self.main_window.quick_record_tab.show_copy_result(succeeded)
 
     def _on_upload_copy(self, text: str):
         """Copy Upload File transcript text through the shared clipboard path."""

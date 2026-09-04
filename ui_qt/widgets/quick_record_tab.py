@@ -1,6 +1,11 @@
 import logging
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from pathlib import Path
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon
+
+from config import bundle_root
 
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
@@ -12,6 +17,7 @@ logger = logging.getLogger(__name__)
 class QuickRecordTab(TranscriptionTabBase):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
+    copy_requested = pyqtSignal(str)
 
     CONTENT_OBJECT_NAME = "quickRecordContent"
     INITIAL_STATUS = "Ready to record"
@@ -28,6 +34,69 @@ class QuickRecordTab(TranscriptionTabBase):
         self.is_recording = False
 
         self._partial_buffer = []
+
+        icons = Path(bundle_root()) / "ui_qt" / "assets" / "tabler"
+        self._copy_icon = QIcon(str(icons / "copy-gray.svg"))
+        self._copied_icon = QIcon(str(icons / "check-green.svg"))
+        self.copy_button = QPushButton()
+        self.collapsed_copy_button = QPushButton("Copy")
+        for button in (self.copy_button, self.collapsed_copy_button):
+            button.setObjectName("transcriptCopyButton")
+            button.setIconSize(QSize(16, 16))
+            button.setFixedHeight(26)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName("Copy transcript")
+            button.clicked.connect(self._request_copy)
+        self.copy_button.setFixedWidth(26)
+        self.transcript_pane.set_corner_widget(self.copy_button)
+        self.transcription_card.header_layout.insertWidget(
+            2, self.collapsed_copy_button
+        )
+        self._copy_feedback_timer = QTimer(self)
+        self._copy_feedback_timer.setSingleShot(True)
+        self._copy_feedback_timer.setInterval(1500)
+        self._copy_feedback_timer.timeout.connect(self._reset_copy_feedback)
+        self.transcript_text.textChanged.connect(self._sync_copy_actions)
+        self.transcription_card.toggled.connect(self._sync_copy_actions)
+        self._sync_copy_actions()
+
+    def set_transcription_collapsed(self, collapsed: bool):
+        super().set_transcription_collapsed(collapsed)
+        if hasattr(self, "copy_button"):
+            self._sync_copy_actions()
+
+    def _sync_copy_actions(self):
+        self._copy_feedback_timer.stop()
+        self._reset_copy_feedback()
+        has_text = bool(self.shown_transcript().strip())
+        self.copy_button.setEnabled(has_text)
+        self.collapsed_copy_button.setVisible(
+            has_text and self.is_transcription_collapsed()
+        )
+        if self.is_transcription_collapsed():
+            self.transcription_card.setMaximumHeight(
+                self.transcription_card.sizeHint().height()
+            )
+
+    def _request_copy(self):
+        text = self.shown_transcript()
+        if text.strip():
+            self.copy_requested.emit(text)
+
+    def show_copy_result(self, succeeded: bool):
+        for button in (self.copy_button, self.collapsed_copy_button):
+            button.setIcon(self._copied_icon if succeeded else self._copy_icon)
+            button.setToolTip(
+                "Copied to clipboard" if succeeded else "Copy failed. Try again."
+            )
+        self.collapsed_copy_button.setText("Copied" if succeeded else "Retry copy")
+        self._copy_feedback_timer.start()
+
+    def _reset_copy_feedback(self):
+        for button in (self.copy_button, self.collapsed_copy_button):
+            button.setIcon(self._copy_icon)
+            button.setToolTip("Copy transcript")
+        self.collapsed_copy_button.setText("Copy")
 
     def _build_content_after_status(self, layout: QVBoxLayout):
         control_panel = ControlPanel()
@@ -101,10 +170,10 @@ class QuickRecordTab(TranscriptionTabBase):
             self.status_label.setText("Ready to record")
 
     def append_transcription(self, text: str):
+        self.set_transcript(self.shown_transcript() + text)
         cursor = self.transcript_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.transcript_text.setTextCursor(cursor)
-        self.transcript_text.insertPlainText(text)
 
     def set_partial_transcription(self, text: str, is_final: bool):
         if is_final:
@@ -118,7 +187,7 @@ class QuickRecordTab(TranscriptionTabBase):
                 combined += " "
             combined += text + " ..."
 
-        self.transcript_text.setPlainText(combined)
+        self.set_transcript(combined)
 
         cursor = self.transcript_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)

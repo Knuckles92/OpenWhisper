@@ -1339,6 +1339,16 @@ QTextEdit#transcriptText[headed="true"] {
     padding-top: 6px;
 }
 
+QWidget#quickRecordContent QTextEdit#transcriptText,
+QWidget#quickRecordContent QTextEdit#transcriptText:focus {
+    padding: 16px 48px 16px 16px;
+}
+
+QWidget#quickRecordContent QTextEdit#transcriptText[headed="true"],
+QWidget#quickRecordContent QTextEdit#transcriptText[headed="true"]:focus {
+    padding: 6px 48px 16px 16px;
+}
+
 QFrame#transcriptSwitch {
     background-color: #1c1c1e;
     border: 1px solid #3a3a3c;
@@ -1365,20 +1375,28 @@ QPushButton#transcriptSwitchBtn:hover:!checked {
     color: #f5f5f7;
 }
 
-/* Floating "open in a window" action in the pane's top-right corner. It sits
-   over the text's padding, so it is transparent until hovered. */
-QPushButton#transcriptExpandButton {
+QPushButton#transcriptExpandButton,
+QPushButton#transcriptCopyButton {
     background-color: transparent;
     border: none;
     border-radius: 6px;
     padding: 0;
 }
 
-QPushButton#transcriptExpandButton:hover {
+QPushButton#transcriptCopyButton {
+    color: #aeaeb2;
+    font-size: 11px;
+    padding: 0 4px;
+}
+
+QPushButton#transcriptExpandButton:hover,
+QPushButton#transcriptCopyButton:hover,
+QPushButton#transcriptCopyButton:focus {
     background-color: rgba(255, 255, 255, 0.10);
 }
 
-QPushButton#transcriptExpandButton:pressed {
+QPushButton#transcriptExpandButton:pressed,
+QPushButton#transcriptCopyButton:pressed {
     background-color: rgba(255, 255, 255, 0.16);
 }
 

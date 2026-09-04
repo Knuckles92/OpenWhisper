@@ -209,6 +209,26 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting listener raised for %s event", kind)
 
+    def _stop_asr(self, context: str) -> None:
+        """Stop the ASR engine and announce that its model is freed.
+
+        ``asr_released`` is deliberately a separate event from ``ended``:
+        that one fires before the offline final pass, which reuses the
+        still-loaded model. Only after ``stop()`` are the weights actually
+        gone, so only then may a listener load an engine of its own.
+
+        Args:
+            context: Short description of the teardown path, for logging.
+        """
+        asr = self._asr
+        if asr is None:
+            return
+        try:
+            asr.stop()
+        except Exception:
+            logger.exception("ASR stop failed (%s)", context)
+        self._emit("asr_released", {"meeting_id": self.meeting_id})
+
     def _broadcast(self, message: Dict[str, Any], *,
                    host_only: bool = False) -> None:
         """Push a message to dashboard clients, optionally to hosts only.
@@ -1189,11 +1209,7 @@ class MeetingEngine:
                 except Exception:
                     logger.exception("Scheduler stop failed")
                 self._scheduler = None
-            if self._asr is not None:
-                try:
-                    self._asr.stop()
-                except Exception:
-                    logger.exception("ASR stop failed")
+            self._stop_asr("end")
             self._shutdown_agent_core()
         except Exception as exc:
             logger.exception("Meeting end failed")
@@ -1492,12 +1508,7 @@ class MeetingEngine:
             ended_persisted: True when the meeting row was already marked
                 ended before the failure.
         """
-        asr = self._asr
-        if asr is not None:
-            try:
-                asr.stop()
-            except Exception:
-                logger.exception("ASR stop failed after a failed end")
+        self._stop_asr("failed end")
         self.revoke_agent_writes()
         self._shutdown_agent_core()
         try:
@@ -1565,11 +1576,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Agent cancel failed")
         self._shutdown_agent_core()
-        if self._asr is not None:
-            try:
-                self._asr.stop()
-            except Exception:
-                logger.exception("ASR stop failed during cancel")
+        self._stop_asr("cancel")
         # After ASR is down: releases each spool's writer thread and leaves
         # the last partial chunk on disk as a recoverable pending row.
         self._flush_spools()
@@ -1672,12 +1679,8 @@ class MeetingEngine:
         self.revoke_agent_writes()
         self._stop_capture()
         self._flush_spools()  # releases the spool writer threads
-        if self._asr is not None:
-            try:
-                self._asr.stop()
-            except Exception:
-                logger.exception("ASR stop failed during start abort")
-            self._asr = None
+        self._stop_asr("start abort")
+        self._asr = None
         scheduler = self._scheduler
         self._scheduler = None
         if scheduler is not None:

@@ -173,6 +173,11 @@ class ApplicationController(QObject):
         # coalesced into a single reload via this single-shot timer.
         self._reload_in_flight = False
         self._pending_streaming_setup = False
+        # True while the local Whisper model has been released so a
+        # Meeting Mode consumer can load its own. Only ``release_local_engine``
+        # sets it, so an API-only user (whose local model never loaded) is
+        # never handed one by ``restore_local_engine``.
+        self._engine_released_for_lease = False
         self._reload_timer = QTimer()
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._do_reload_whisper_model)
@@ -395,6 +400,56 @@ class ApplicationController(QObject):
         self._reload_in_flight = True
         self.engine_busy_changed.emit(True)
         self.status_update.emit("Loading whisper engine...")
+        self.executor.submit(self._reload_worker)
+
+    def release_local_engine(self) -> bool:
+        """Free the local Whisper model so a heavier consumer can load one.
+
+        Meeting Mode, redecode retry and recovery each load their own model.
+        Dictation is already refused while those run (see
+        ``_refuse_dictation_during_meeting``), so the dictation model is not
+        merely idle in that window — it is unreachable. Holding it keeps a
+        second copy of the weights resident, which on a 4 GB card is enough to
+        push the meeting's own load onto the CPU.
+
+        ``cleanup()`` runs synchronously and costs roughly a second of CUDA
+        synchronize plus a collect, so call this from a worker thread and never
+        from the Qt thread.
+
+        Returns:
+            True when a loaded model was released, meaning
+            ``restore_local_engine`` now owes a reload.
+        """
+        backend = self.transcription_backends.get("local_whisper")
+        if backend is None or getattr(backend, "model", None) is None:
+            return False
+        try:
+            backend.cleanup()
+        except Exception:
+            logger.exception("Failed to release the local Whisper engine")
+            return False
+        self._engine_released_for_lease = True
+        logger.info("Local Whisper engine released for a Meeting Mode consumer")
+        self.device_info_update.emit("released while Meeting Mode runs", False)
+        return True
+
+    def restore_local_engine(self) -> None:
+        """Reload the local model released by ``release_local_engine``.
+
+        A no-op unless a release actually happened. Reuses ``_reload_worker``
+        so the restore takes the same path as any other reload: it re-reads the
+        model setting, reports device info, and routes a missing model through
+        the consent flow.
+        """
+        if not self._engine_released_for_lease:
+            return
+        self._engine_released_for_lease = False
+        if self._reload_in_flight:
+            # A reload already queued by another path will load the model.
+            return
+        self._reload_in_flight = True
+        self.engine_busy_changed.emit(True)
+        self.status_update.emit("Reloading whisper engine...")
         self.executor.submit(self._reload_worker)
 
     def local_whisper_loading_message(self) -> Optional[str]:
@@ -1115,6 +1170,8 @@ class ApplicationController(QObject):
             if not load_into_engine:
                 success = self._download_model_to_cache(model_name)
             else:
+                if self._refuse_engine_load_during_meeting():
+                    return
                 decision = hf_access_coordinator.evaluate_access(model_name)
                 if decision == AccessDecision.LOAD_CACHED:
                     self.status_update.emit(f"Loading model '{model_name}'...")
@@ -1189,6 +1246,10 @@ class ApplicationController(QObject):
             and getattr(backend, "is_model_missing", False)
             and backend.model_name == model_name
         ):
+            # The download itself succeeded, so this still reports True; only
+            # reviving the engine waits for the meeting to end.
+            if self._refuse_engine_load_during_meeting():
+                return True
             backend.reload_model(model_name)
             if backend.is_available():
                 self.device_info_update.emit(backend.device_info, True)
@@ -1325,6 +1386,24 @@ class ApplicationController(QObject):
         self.status_update.emit(
             "Meeting Mode is active — end the meeting to use dictation"
         )
+        return True
+
+    def _refuse_engine_load_during_meeting(self) -> bool:
+        """Refuse loading a model into the dictation engine mid-meeting.
+
+        ``reload_whisper_model`` already gates the UI edge, but the Hugging
+        Face workers reach ``reload_model`` / ``download_and_load`` directly
+        on an executor thread without passing through it. A load landing
+        mid-meeting would put a second copy of the weights beside the
+        meeting's own model, which is what the engine lease exists to avoid.
+
+        Returns:
+            True when the caller must not load into the engine.
+        """
+        if not self.is_meeting_active():
+            return False
+        logger.info("Engine load refused: a meeting owns the Whisper engine")
+        self.status_update.emit("End the meeting before changing the engine")
         return True
 
     def cancel(self) -> None:

@@ -19,6 +19,7 @@ import wave
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.interfaces import CHANNELS, SpooledChunk
+from meeting.refinalize import acquire_model_lease, release_model_lease
 from meeting.state.schema import FinalizationState, now_iso
 from meeting.time_utils import seconds_since
 
@@ -512,7 +513,9 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
 def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                      asr_model: str = "auto",
                      asr_language: str = "auto",
-                     on_progress: Optional[Callable[[int, int], None]] = None) -> bool:
+                     on_progress: Optional[Callable[[int, int], None]] = None,
+                     model_lease: Optional[Tuple[Callable[[], bool],
+                                                 Callable[[], None]]] = None) -> bool:
     """Headless finalization: transcribe remaining chunks and mark ended.
 
     Rebuilds a minimal pipeline — ASR engine only, no capture, no web server,
@@ -528,6 +531,9 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
         asr_language: Spoken-language preference (``auto`` or ISO-639-1).
         on_progress: Optional ``cb(done_chunks, total_chunks)`` progress hint,
             invoked as chunk transcriptions complete.
+        model_lease: Optional ``(acquire, release)`` pair invoked around the
+            ASR model's lifetime. The app passes its dictation-engine lease
+            here so only one Whisper model is resident.
 
     Returns:
         True when all pending chunks were processed and the meeting was
@@ -566,9 +572,12 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
 
     drained = True
     engine = None
+    leased = False
     try:
         if total:
             from meeting.asr.engine import MeetingAsrEngine
+
+            leased = acquire_model_lease(model_lease)
             language = (asr_language or "auto").strip().lower()
             engine = MeetingAsrEngine(
                 model_name,
@@ -608,6 +617,8 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
             except Exception:
                 logger.exception("ASR stop failed after finalize of %s",
                                  meeting_id)
+        if leased:
+            release_model_lease(model_lease)
     if not drained:
         logger.error("ASR drain timed out finalizing meeting %s", meeting_id)
         return False

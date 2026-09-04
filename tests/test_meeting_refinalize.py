@@ -6,7 +6,7 @@ import pytest
 
 
 from meeting.interfaces import AgentResult, TranscriptSegment
-from meeting.refinalize import rerun_finalization, rerun_polish
+from meeting.refinalize import rerun_finalization, rerun_polish, rerun_redecode
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
 
 
@@ -459,3 +459,68 @@ class TestCardDeferred:
         assert result["state"]["finalization"]["card_deferred"] is True
         stored = json.loads(repo.get_meeting("m_retry")["state_json"])
         assert stored["finalization"]["card_deferred"] is True
+
+
+class TestRedecodeReleasesModel:
+    """The local-backend branch of ``rerun_redecode`` must free its model.
+
+    Exercised only here: every other test in this file injects
+    ``transcribe_fn``, which skips the branch that loads a Whisper model.
+    A retained model keeps a second copy of the weights resident alongside
+    the dictation engine for the rest of the session.
+    """
+
+    @staticmethod
+    def _install_backend(monkeypatch, *, available, released):
+        import transcriber.local_backend as local_backend
+
+        class FakeBackend:
+            is_model_missing = not available
+
+            def __init__(self, model_name=None, **_kwargs):
+                self.model_name = model_name
+                self.model = object() if available else None
+
+            def is_available(self):
+                return available
+
+            def cleanup(self):
+                released.append(self.model_name)
+
+        monkeypatch.setattr(local_backend, "LocalWhisperBackend", FakeBackend)
+
+    def test_model_is_released_after_a_successful_redecode(
+        self, repo, monkeypatch
+    ):
+        import meeting.asr.offline as offline
+
+        released = []
+        self._install_backend(monkeypatch, available=True, released=released)
+        monkeypatch.setattr(
+            offline,
+            "transcribe_meeting_sessions",
+            lambda *args, **kwargs: [
+                TranscriptSegment(
+                    segment_id="sg_1", meeting_id="m_retry", chunk_id=None,
+                    channel="mic", start_s=0.0, end_s=2.0,
+                    text="Re-decoded transcript text for the meeting.",
+                ),
+            ],
+        )
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+
+        result = rerun_redecode(repo, "m_retry", asr_model_name="base")
+
+        assert result["ok"] is True
+        assert released == ["base"]
+
+    def test_model_is_released_when_it_fails_to_load(self, repo, monkeypatch):
+        released = []
+        self._install_backend(monkeypatch, available=False, released=released)
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+
+        result = rerun_redecode(repo, "m_retry", asr_model_name="base")
+
+        assert result["ok"] is False
+        assert "not available" in result["error"]
+        assert released == ["base"]

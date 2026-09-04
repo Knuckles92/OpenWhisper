@@ -81,26 +81,6 @@ def provider_env_key(provider: str) -> str:
     )
 
 
-def _provider_base_url(provider: str) -> Optional[str]:
-    profile = get_profile(provider)
-    if profile is not None:
-        return profile.base_url
-    if provider == TranscriptCleanupProvider.OPENROUTER:
-        return config.OPENROUTER_BASE_URL
-    return None
-
-
-def _provider_headers(provider: str) -> Optional[dict]:
-    profile = get_profile(provider)
-    if profile is not None and profile.kind == TranscriptCleanupProvider.OPENROUTER:
-        from services.text_llm import provider_headers
-
-        return provider_headers(profile)
-    if provider == TranscriptCleanupProvider.OPENROUTER:
-        return {"X-Title": "OpenWhisper"}
-    return None
-
-
 def find_api_key(provider: str) -> Optional[str]:
     """Resolve credentials, including a dummy key for auth-free endpoints."""
     profile = get_profile(provider)
@@ -123,33 +103,9 @@ def list_cleanup_models(
 ) -> List[str]:
     """Fetch chat model IDs, preserving requested OpenRouter server ranking."""
     profile = get_profile(provider)
-    if profile is not None:
-        return list_chat_models(profile, api_key=api_key, sort=sort)
-    key = api_key or find_api_key(provider)
-    if not key:
-        raise RuntimeError(
-            f"No API key found for {provider} (set {provider_env_key(provider)})"
-        )
-    client = OpenAI(
-        api_key=key,
-        base_url=_provider_base_url(provider),
-        default_headers=_provider_headers(provider),
-        timeout=15.0,
-    )
-    server_sort = (
-        provider == TranscriptCleanupProvider.OPENROUTER
-        and sort
-        and sort != TranscriptCleanupModelSort.ALPHABETICAL
-    )
-    if server_sort:
-        return [
-            model.id
-            for model in client.models.list(extra_query={"sort": sort})
-        ]
-    model_ids = [model.id for model in client.models.list()]
-    if provider == TranscriptCleanupProvider.OPENAI:
-        model_ids = _filter_openai_chat_models(model_ids)
-    return sorted(model_ids)
+    if profile is None:
+        raise RuntimeError(f"Unknown text model endpoint '{provider}'")
+    return list_chat_models(profile, api_key=api_key, sort=sort)
 
 
 def polish_cleanup_rule(
@@ -206,62 +162,43 @@ class TranscriptCleanup:
 
     def _initialize_client(self) -> None:
         profile = get_profile(self.provider)
-        if profile is not None:
-            key = self.api_key or find_api_key(self.provider)
-            self.api_key = key
-            if not key:
-                logger.debug(
-                    "No %s API key; transcript cleanup unavailable",
-                    profile.api_key_env,
-                )
-                self.client = None
-                self._connection = None
-                return
-            try:
-                self.client = create_openai_client(
-                    profile,
-                    timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
-                    api_key=key,
-                )
-                self._connection = connection_fingerprint(profile)
-                logger.info(
-                    "Transcript cleanup client initialized (%s)", profile.id
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to initialize transcript cleanup client: %s", exc
-                )
-                self.client = None
-                self._connection = None
+        if profile is None:
+            # ``_normalize_provider`` only returns ids that resolve, so this
+            # guards a config default pointing at a deleted endpoint rather
+            # than a reachable user path. Cleanup is optional: stay quiet and
+            # unavailable instead of raising out of the constructor.
+            logger.debug(
+                "No text model endpoint '%s'; transcript cleanup unavailable",
+                self.provider,
+            )
+            self.client = None
+            self._connection = None
             return
 
-        if self.api_key:
-            try:
-                self.client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=_provider_base_url(self.provider),
-                    default_headers=_provider_headers(self.provider),
-                    timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
-                )
-                self._connection = (
-                    self.provider,
-                    _provider_base_url(self.provider),
-                    provider_env_key(self.provider),
-                    self.api_key,
-                )
-                logger.info(
-                    "Transcript cleanup client initialized (%s)", self.provider
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to initialize transcript cleanup client: %s", exc
-                )
-                self.client = None
-                self._connection = None
-        else:
+        key = self.api_key or find_api_key(self.provider)
+        self.api_key = key
+        if not key:
             logger.debug(
                 "No %s API key; transcript cleanup unavailable",
-                provider_env_key(self.provider),
+                profile.api_key_env,
+            )
+            self.client = None
+            self._connection = None
+            return
+
+        try:
+            self.client = create_openai_client(
+                profile,
+                timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
+                api_key=key,
+            )
+            self._connection = connection_fingerprint(profile)
+            logger.info(
+                "Transcript cleanup client initialized (%s)", profile.id
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize transcript cleanup client: %s", exc
             )
             self.client = None
             self._connection = None

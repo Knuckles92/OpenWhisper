@@ -91,11 +91,19 @@ OPTIONAL_RERUN_STEPS = frozenset({
 })
 ProgressCb = Callable[[Dict[str, Any]], None]
 TranscribeFn = Callable[..., Any]
+#: ``(acquire, release)``. ``acquire`` frees whatever else holds a Whisper
+#: model and returns True when it did; ``release`` restores it. Passing a pair
+#: rather than importing the app's controller keeps ``meeting`` usable
+#: standalone, and keeps the "who owns the engine" policy in the services layer.
+ModelLease = Tuple[Callable[[], bool], Callable[[], None]]
 
 __all__ = [
     "rerun_finalization",
     "rerun_redecode",
     "rerun_polish",
+    "ModelLease",
+    "acquire_model_lease",
+    "release_model_lease",
     "DEFAULT_TIMEOUT_S",
     "POLISH_TIMEOUT_S",
     "OPTIONAL_RERUN_STEPS",
@@ -444,6 +452,27 @@ def _collect_summary_stats(
     return stats
 
 
+def acquire_model_lease(lease: Optional[ModelLease]) -> bool:
+    """Run a lease's acquire half. Never raises; returns True when it took."""
+    if not lease:
+        return False
+    try:
+        return bool(lease[0]())
+    except Exception:
+        logger.exception("Model lease acquire failed; continuing without it")
+        return False
+
+
+def release_model_lease(lease: Optional[ModelLease]) -> None:
+    """Run a lease's release half. Never raises."""
+    if not lease:
+        return
+    try:
+        lease[1]()
+    except Exception:
+        logger.exception("Model lease release failed")
+
+
 def rerun_redecode(
     repository: Any,
     meeting_id: str,
@@ -453,6 +482,7 @@ def rerun_redecode(
     language: Optional[str] = None,
     transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    model_lease: Optional[ModelLease] = None,
 ) -> Dict[str, Any]:
     """Re-decode session audio and replace the stored draft transcript.
 
@@ -468,6 +498,10 @@ def rerun_redecode(
         language: Optional ISO-639-1 language pin.
         transcribe_fn: Injectable decoder (tests).
         progress_cb: Optional window-progress callback.
+        model_lease: Optional ``(acquire, release)`` pair invoked around the
+            Whisper load. The app passes its dictation-engine lease here so
+            only one model is ever resident; ``meeting`` itself stays
+            independent of the services layer.
 
     Returns:
         ``{ok, error}``. Failures are reported here, not raised, except
@@ -484,6 +518,11 @@ def rerun_redecode(
     except Exception:
         logger.exception("Could not load audio chunks for redecode retry")
         chunks = []
+    # Released in the ``finally`` below rather than at each exit: this block
+    # has several early returns, and a retained model keeps a second copy of
+    # the weights resident alongside the dictation engine.
+    backend = None
+    leased = False
     try:
         if transcribe_fn is not None:
             try:
@@ -497,6 +536,7 @@ def rerun_redecode(
             from meeting.asr.offline import transcribe_meeting_sessions
             from transcriber.local_backend import LocalWhisperBackend
 
+            leased = acquire_model_lease(model_lease)
             backend = LocalWhisperBackend(model_name=asr_model_name or "auto")
             if not backend.is_available() or getattr(backend, "model", None) is None:
                 missing = bool(getattr(backend, "is_model_missing", False))
@@ -520,6 +560,14 @@ def rerun_redecode(
     except Exception as exc:
         logger.exception("Redeocde transcription failed for %s", meeting_id)
         return {"ok": False, "error": str(exc)}
+    finally:
+        if backend is not None:
+            try:
+                backend.cleanup()
+            except Exception:
+                logger.exception("Error releasing the redecode Whisper model")
+        if leased:
+            release_model_lease(model_lease)
     if not decoded:
         return {"ok": False, "error": "Re-decoding produced no transcript."}
     try:
@@ -715,6 +763,7 @@ def rerun_finalization(
     speaker_api_key: Optional[str] = None,
     speaker_transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[ProgressCb] = None,
+    model_lease: Optional[ModelLease] = None,
 ) -> Dict[str, Any]:
     """Retry post-meeting steps from ``from_step`` through dependents.
 
@@ -798,6 +847,7 @@ def rerun_finalization(
                 language=language,
                 transcribe_fn=transcribe_fn,
                 progress_cb=_offline_progress,
+                model_lease=model_lease,
             )
             if result.get("ok"):
                 _set_step(

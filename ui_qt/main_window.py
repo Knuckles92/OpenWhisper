@@ -276,6 +276,7 @@ class MainWindow(QMainWindow):
     upload_files_requested = pyqtSignal(object)  # BatchUploadRequest
     upload_cancel_requested = pyqtSignal()
     upload_copy_requested = pyqtSignal(str)
+    quick_record_copy_requested = pyqtSignal(str)
     meeting_dashboard_requested = pyqtSignal()
     past_meeting_requested = pyqtSignal(str)
     past_meeting_copy_requested = pyqtSignal(str)
@@ -431,6 +432,7 @@ class MainWindow(QMainWindow):
 
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
+        self.quick_record_tab.copy_requested.connect(self.quick_record_copy_requested)
         self.upload_file_tab.upload_requested.connect(self._on_upload_file_transcribe)
         self.upload_file_tab.upload_files_requested.connect(
             self.upload_files_requested.emit
