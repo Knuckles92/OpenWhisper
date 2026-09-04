@@ -654,6 +654,40 @@ class TestEndLifecycle:
         assert fakes.schedulers[0].consolidations == 1
         assert fakes.cores[0].shutdowns == 1
 
+    def test_asr_released_follows_the_stop_and_trails_ended(
+            self, make_engine, repo, fakes):
+        """``asr_released`` is the app's cue to reload its own Whisper model.
+
+        It must land only once the ASR engine has actually released the
+        weights — which is *after* ``ended``, because the offline final pass
+        still decodes on that model. Reloading on ``ended`` instead would put
+        two copies in memory at once.
+        """
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+
+        kinds = [kind for kind, _payload in engine.events]
+        assert "asr_released" in kinds, "the app never learns the model is free"
+        assert kinds.index("asr_released") > kinds.index("ended")
+        assert FakeAsr.instances[-1].stops == 1
+        assert events_of(engine, "asr_released")[-1]["meeting_id"] == (
+            engine.meeting_id
+        )
+
+    def test_cancel_also_announces_the_released_model(
+            self, make_engine, repo, fakes):
+        """A canceled meeting must not strand the released dictation engine."""
+        engine = make_engine(cloud_enabled=False)
+        engine.start()
+
+        engine.cancel()
+
+        assert events_of(engine, "asr_released")
+        assert FakeAsr.instances[-1].stops == 1
+
     def test_end_event_precedes_slow_consolidation(
             self, make_engine, repo, fakes):
         from meeting.agent.scheduler import ConsolidationOutcome

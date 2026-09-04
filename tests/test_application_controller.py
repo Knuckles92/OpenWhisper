@@ -306,11 +306,13 @@ class FakeHistoryManager:
 class FakeAudioProcessor:
     def __init__(self):
         self.check_result = (False, 1.0)
+        self.split_calls = []
 
     def check_file_size(self, _audio_path):
         return self.check_result
 
     def split_audio_file(self, audio_path, _callback):
+        self.split_calls.append(audio_path)
         return [audio_path + ".part1", audio_path + ".part2"]
 
     def combine_transcriptions(self, transcriptions):
@@ -982,13 +984,29 @@ class TestApplicationController:
         assert controller.ui_controller.consent_requests[-1][0] == "tiny.en"
 
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
+        """The whole teardown is one worker, so drive it and watch the effect.
+
+        Asserting on the transcript rather than on a submitted function name:
+        the split decision now happens inside the worker, not as a second
+        executor submission.
+        """
         controller = self._create_controller()
+        transcripts = []
+        controller.transcription_completed.connect(
+            lambda text, *_rest: transcripts.append(text)
+        )
 
         controller.recorder.is_recording = True
         self.audio_processor.check_result = (False, 1.0)
         controller.stop_recording()
         assert len(controller.executor.submissions) == 1
-        assert controller.executor.submissions[0][0].__name__ == "transcribe_audio_file"
+        finish, args = controller.executor.submissions[0]
+        assert finish.__name__ == "finish_recording_job"
+        finish(*args)
+
+        # A local backend never splits, so this is one straight transcribe.
+        assert transcripts == [f"local:{config.RECORDED_AUDIO_FILE}"]
+        assert self.audio_processor.split_calls == []
 
         # The second half models a later job, after the first result completed.
         controller.transcription_runtime._finish_job()
@@ -999,7 +1017,12 @@ class TestApplicationController:
         self.audio_processor.check_result = (True, 30.0)
         controller.stop_recording()
         assert len(controller.executor.submissions) == 1
-        assert controller.executor.submissions[0][0].__name__ == "transcribe_large_audio_file"
+        finish, args = controller.executor.submissions[0]
+        finish(*args)
+
+        # An API backend does split, and the notice still reaches the overlay
+        # — now over large_file_detected rather than a direct UI call.
+        assert self.audio_processor.split_calls == [config.RECORDED_AUDIO_FILE]
         assert controller.ui_controller.overlay.large_file_info == 30.0
         assert controller.ui_controller.overlay.STATE_LARGE_FILE_SPLITTING in controller.ui_controller.overlay.shown_states
 
@@ -1112,6 +1135,83 @@ class TestApplicationController:
         assert controller.ui_controller.stats[1] == 3.7
         assert controller._pending_audio_path is None
         assert controller._pending_source_name is None
+
+    def test_empty_asr_falls_back_to_the_streaming_preview(self):
+        """A total loss becomes a recoverable one.
+
+        Whisper's VAD can discard quiet speech that the streaming model heard
+        (it decodes with VAD off). Showing that beats leaving the user with
+        nothing — but it stays out of history and off the clipboard, because
+        it is tiny.en at beam 1 with a repeated word at every chunk seam.
+        """
+        controller = self._create_controller()
+        controller._pending_audio_path = "source.wav"
+        controller._pending_audio_duration = 3.7
+        controller._pending_file_size = 2048
+        controller._pending_streaming_text = "  the quick brown fox  "
+        controller._transcription_start_time = time.time() - 1.0
+        self.settings.all_settings["auto_paste"] = True
+
+        controller._on_transcription_complete("   ", None)
+
+        assert (
+            controller.ui_controller.transcription_text == "the quick brown fox"
+        )
+        assert (
+            controller.ui_controller.statuses[-1]
+            == "No speech detected — showing the live preview (not saved)"
+        )
+        # Never persisted, never pasted.
+        assert self.history_manager.entries == []
+        assert controller.ui_controller.copied == []
+        assert self.keyboard.sent == []
+        assert controller._pending_streaming_text == ""
+
+    def test_streaming_preview_does_not_leak_into_a_later_job(self):
+        controller = self._create_controller()
+        controller._pending_streaming_text = "stale preview"
+
+        controller._on_transcription_complete("   ", None)
+        assert controller._pending_streaming_text == ""
+
+        controller._on_transcription_complete("   ", None)
+        assert (
+            controller.ui_controller.transcription_text
+            == "No speech detected (empty after VAD)"
+        )
+
+    def test_a_real_transcript_ignores_the_streaming_preview(self):
+        controller = self._create_controller()
+        controller._pending_streaming_text = "rough preview"
+
+        controller._on_transcription_complete("The real transcript.", None)
+
+        assert (
+            controller.ui_controller.transcription_text == "The real transcript."
+        )
+        assert self.history_manager.entries
+
+    def test_stop_recording_keeps_the_streaming_preview_text(self):
+        """The return value used to be dropped on the floor at the call site."""
+        controller = self._create_controller()
+        controller.streaming_transcriber = FakeStreamingTranscriber(
+            backend=controller.transcription_backends["local_whisper"],
+            chunk_duration_sec=3.0,
+        )
+        controller.recorder.is_recording = True
+
+        controller.stop_recording()
+
+        # FakeStreamingTranscriber.stop_streaming returns "partial text".
+        assert controller._pending_streaming_text == "partial text"
+
+    def test_stop_recording_without_streaming_keeps_no_preview(self):
+        controller = self._create_controller()
+        controller.recorder.is_recording = True
+
+        controller.stop_recording()
+
+        assert controller._pending_streaming_text == ""
 
     def test_transcription_failure_preserves_quick_recording(self):
         controller = self._create_controller()
@@ -1263,6 +1363,34 @@ class TestApplicationController:
         assert not controller.recorder.is_recording
         assert "already in progress" in controller.ui_controller.statuses[-1]
 
+    def test_stop_recording_does_not_block_the_qt_thread(self):
+        """Post-roll keeps capturing for POST_ROLL_MS after the stop request.
+
+        Waiting it out on the Qt thread froze the UI for over a second on
+        every dictation — with the "Processing" overlay on screen and unable
+        to animate. Nothing blocking may run before ``stop_recording`` returns.
+        """
+        controller = self._create_controller()
+        touched = []
+        controller.recorder.is_recording = True
+        controller.recorder.wait_for_stop_completion = (
+            lambda *_a, **_k: touched.append("waited") or True
+        )
+        original_save = controller.recorder.save_recording
+        controller.recorder.save_recording = (
+            lambda *a, **k: touched.append("saved") or original_save(*a, **k)
+        )
+
+        controller.stop_recording()
+
+        assert touched == [], "post-roll wait or WAV write ran on the Qt thread"
+        assert len(controller.executor.submissions) == 1
+
+        finish, args = controller.executor.submissions[0]
+        finish(*args)
+
+        assert touched == ["waited", "saved"]
+
     def test_stopped_recording_claims_job_before_post_roll_finishes(self):
         controller = self._create_controller()
         upload = str(Path(self.temp_dir.name) / "racing-upload.wav")
@@ -1274,13 +1402,31 @@ class TestApplicationController:
             return True
 
         controller.recorder.wait_for_stop_completion = race_upload_during_post_roll
+        # Captured at hand-off: running the transcription to completion would
+        # clear the pending metadata this test is about.
+        pending = {}
+        controller.transcription_runtime._run_transcription_job = (
+            lambda _path: pending.update(
+                source=controller._pending_source_name,
+                duration=controller._pending_audio_duration,
+                size=controller._pending_file_size,
+            )
+        )
 
         controller.stop_recording()
 
+        # The slot is claimed on the Qt thread before the worker is queued, so
+        # the upload racing inside the post-roll wait cannot take it.
         assert len(controller.executor.submissions) == 1
-        assert controller._pending_source_name == "Quick Record"
-        assert controller._pending_audio_duration == 12.5
-        assert controller._pending_file_size == 256
+        finish, args = controller.executor.submissions[0]
+        assert finish.__name__ == "finish_recording_job"
+        finish(*args)
+
+        assert pending == {
+            "source": "Quick Record",
+            "duration": 12.5,
+            "size": 256,
+        }
 
     def test_transcribe_audio_file_applies_cleanup_when_enabled(self):
         controller = self._create_controller()

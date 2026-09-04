@@ -41,6 +41,19 @@ class _Controller(QObject):
         self.meeting_active = False
         self.current_backend = None
         self.recorder = SimpleNamespace(is_recording=False)
+        # The engine lease: Meeting Mode consumers release the dictation
+        # model before loading their own, and restore it afterwards.
+        self.engine_lease = []
+        self._engine_released = False
+
+    def release_local_engine(self) -> bool:
+        self.engine_lease.append("release")
+        self._engine_released = True
+        return True
+
+    def restore_local_engine(self) -> None:
+        self.engine_lease.append("restore")
+        self._engine_released = False
 
 
 @pytest.fixture(scope="module")
@@ -138,6 +151,47 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
     assert rt._card_meeting_id is None
     assert rt._finalization is None
     assert "No audio devices" in errors[-1]
+    # The dictation model was freed before start() and must come back: this
+    # start failed before any ASR engine existed, so no "asr_released" event
+    # will ever arrive to do it.
+    assert controller.engine_lease == ["release", "restore"]
+
+
+def test_start_releases_the_dictation_engine_before_loading_its_own(
+    runtime, monkeypatch
+):
+    """Both models resolve "auto" through the same whisper_model setting.
+
+    Releasing after start() would mean holding two copies of identical
+    weights, which is what pushes a small GPU onto the CPU fallback.
+    """
+    rt, controller = runtime
+    order = []
+
+    class RecordingEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_listener(self, listener):
+            self.listener = listener
+
+        def start(self):
+            order.append("engine.start")
+            return {"host_url": "http://127.0.0.1:8765/host"}
+
+    monkeypatch.setattr("meeting.engine.MeetingEngine", RecordingEngine)
+    monkeypatch.setattr(rt, "_build_options", lambda *args, **kwargs: object())
+    monkeypatch.setattr(rt, "_refresh_past_meetings", lambda: None)
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS, "speaker_model_path", lambda: "/cached/model"
+    )
+    controller.release_local_engine = lambda: order.append("release") or True
+    rt._starting = True
+
+    rt._start_worker(False)
+
+    assert order == ["release", "engine.start"]
+    assert controller.meeting_active is True
 
 
 def test_nonfatal_engine_error_is_deferred_during_start(runtime):
@@ -958,11 +1012,12 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
     called = []
 
     def fake_finalize(repository, row, asr_model="auto", asr_language="auto",
-                      on_progress=None):
+                      on_progress=None, model_lease=None):
         called.append({
             "repository": repository,
             "meeting_id": row["id"],
             "asr_language": asr_language,
+            "model_lease": model_lease,
         })
         return True
 
@@ -977,6 +1032,11 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
     assert called[0]["meeting_id"] == "m_dead"
     assert called[0]["repository"] is repo
     assert called[0]["asr_language"] == "en"
+    # Recovery loads a Whisper model of its own, so it must be handed the
+    # lease that frees the dictation engine first.
+    acquire, release = called[0]["model_lease"]
+    assert acquire == controller.release_local_engine
+    assert release == controller.restore_local_engine
     assert "finalized" in statuses[-1].lower()
     assert errors == []
 

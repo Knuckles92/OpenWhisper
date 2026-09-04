@@ -165,6 +165,9 @@ class ApplicationController(QObject):
         self._pending_audio_duration: Optional[float] = None
         self._pending_file_size: Optional[int] = None
         self._pending_source_name: Optional[str] = None
+        # The streaming preview's text for the current job, kept only so an
+        # empty full-pass result can still show the user what was said.
+        self._pending_streaming_text: str = ""
         self._transcription_start_time: Optional[float] = None
         self._transcription_elapsed: Optional[float] = None
 

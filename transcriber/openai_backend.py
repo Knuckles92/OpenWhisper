@@ -1,5 +1,6 @@
 """OpenAI API transcription backend."""
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List
 from openai import OpenAI
 from .base import TranscriptionBackend
@@ -7,6 +8,11 @@ from config import config
 from services.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
+
+#: Chunk uploads run this many at a time. Deliberately small: the uploads have
+#: no retry path, so extra parallelism mostly raises the odds of a rate-limit
+#: rejection that would fail the whole transcription.
+CHUNK_UPLOAD_CONCURRENCY = 3
 
 
 class OpenAIBackend(TranscriptionBackend):
@@ -86,8 +92,34 @@ class OpenAIBackend(TranscriptionBackend):
         self.api_key = api_key
         self._initialize_client()
 
+    def _transcribe_one_chunk(self, chunk_file: str, api_model: str) -> str:
+        """Upload one chunk. Raises if the job was canceled before it started."""
+        if self.should_cancel:
+            raise Exception("Transcription canceled")
+
+        with open(chunk_file, "rb") as f:
+            response = self.client.audio.transcriptions.create(
+                model=api_model,
+                file=f,
+                response_format="text",
+            )
+        return response.strip()
+
     def transcribe_chunks(self, chunk_files: List[str]) -> str:
-        """Transcribe chunks sequentially and combine their text."""
+        """Transcribe chunks concurrently and combine their text in order.
+
+        Each chunk is an independent upload with no shared state, and the wall
+        clock here is almost entirely network, so a serial loop leaves a large
+        file waiting out one round trip after another.
+
+        The pool is local to this call rather than the controller's: that one
+        has two workers and ``transcribe_large_audio_file`` already occupies
+        one, so fanning out onto it would win nothing and would compete with
+        model loading and Hugging Face downloads.
+
+        ``CHUNK_UPLOAD_CONCURRENCY`` stays low on purpose — there is no retry
+        path here, so more parallelism mostly buys a higher chance of a 429.
+        """
         if not self.is_available():
             raise Exception("OpenAI API is not available (no API key or client initialization failed)")
 
@@ -96,28 +128,34 @@ class OpenAIBackend(TranscriptionBackend):
             self.reset_cancel_flag()
 
             api_model = self._get_api_model_name()
-            transcriptions = []
+            total = len(chunk_files)
 
-            logger.info(f"Starting chunked transcription with OpenAI API model: {api_model}")
+            logger.info(
+                f"Starting chunked transcription with OpenAI API model: {api_model} "
+                f"({total} chunks, up to {CHUNK_UPLOAD_CONCURRENCY} at a time)"
+            )
 
-            for i, chunk_file in enumerate(chunk_files):
-                if self.should_cancel:
-                    logger.info("Chunked transcription canceled by user")
-                    raise Exception("Transcription canceled")
-
-                logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with OpenAI API: {chunk_file}")
-
-                with open(chunk_file, "rb") as f:
-                    response = self.client.audio.transcriptions.create(
-                        model=api_model,
-                        file=f,
-                        response_format="text"
+            if total <= 1:
+                transcriptions = [
+                    self._transcribe_one_chunk(chunk, api_model)
+                    for chunk in chunk_files
+                ]
+            else:
+                workers = min(CHUNK_UPLOAD_CONCURRENCY, total)
+                with ThreadPoolExecutor(
+                    max_workers=workers, thread_name_prefix="chunk-upload"
+                ) as pool:
+                    # executor.map keeps results in submission order, which the
+                    # combined transcript depends on, and re-raises the first
+                    # failure once the in-flight uploads have finished.
+                    transcriptions = list(
+                        pool.map(
+                            lambda chunk: self._transcribe_one_chunk(
+                                chunk, api_model
+                            ),
+                            chunk_files,
+                        )
                     )
-
-                chunk_text = response.strip()
-                transcriptions.append(chunk_text)
-
-                logger.info(f"Chunk {i+1}/{len(chunk_files)} completed. Length: {len(chunk_text)} characters")
 
             from services.audio_processor import audio_processor
             combined_text = audio_processor.combine_transcriptions(transcriptions)

@@ -67,6 +67,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
+#: Shown when the full pass found nothing but the streaming preview did. Names
+#: the source, because the text on screen is tiny.en's and is not saved.
+EMPTY_PREVIEW_FALLBACK_MESSAGE = (
+    "No speech detected — showing the live preview (not saved)"
+)
 
 
 class TranscriptionRuntime:
@@ -152,7 +157,11 @@ class TranscriptionRuntime:
             # processing/transcribing states are the only post-stop UI.
             self.controller.streaming_overlay_hide.emit()
 
-        self.controller.streaming_runtime.stop_streaming_session()
+        # Kept, not dropped: when the full pass comes back empty this is the
+        # only record of what was said. See on_transcription_complete.
+        self.controller._pending_streaming_text = (
+            self.controller.streaming_runtime.stop_streaming_session()
+        )
 
         if not self.controller.recorder.stop_recording():
             self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -172,50 +181,94 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             return
 
-        if not self.controller.recorder.wait_for_stop_completion():
-            logger.warning(
-                "Proceeding without confirmed post-roll completion; "
-                "tail of recording may be short"
-            )
+        # Everything left is blocking: capture keeps running for
+        # POST_ROLL_MS after the stop request, so waiting it out here would
+        # freeze the Qt thread for over a second — exactly while the
+        # "Processing" overlay is meant to be animating — and the WAV write
+        # follows it. Both go to a worker; the job slot claimed above is what
+        # keeps a second recording or upload out in the meantime.
+        self.controller.executor.submit(self.finish_recording_job)
 
-        if not self.controller.recorder.has_recording_data():
-            logger.error("No recording data available")
-            self.on_transcription_error("No audio data recorded")
-            return
+    def finish_recording_job(self) -> None:
+        """Post-roll wait, WAV write, and transcription, off the Qt thread.
 
-        if not self.controller.recorder.save_recording():
-            logger.error("Failed to save recording")
-            self.on_transcription_error("Failed to save audio file")
-            return
-
-        if not os.path.exists(config.RECORDED_AUDIO_FILE):
-            logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
-            self.on_transcription_error("Audio file not created")
-            return
-
-        file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
-        logger.info(f"Audio file size: {file_size} bytes")
-        if file_size < 100:
-            logger.error(f"Audio file too small: {file_size} bytes")
-            self.on_transcription_error("Audio file is empty or corrupted")
-            return
-
-        self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
-        self.controller._pending_audio_duration = (
-            self.controller.recorder.get_recording_duration()
-        )
-        self.controller._pending_file_size = file_size
-        self.controller._pending_source_name = "Quick Record"
-
+        Runs on an executor worker, so every UI report here goes through a
+        signal. Owns the job slot claimed by ``stop_recording`` and must
+        release it on every exit — ``on_transcription_error`` does that for
+        the failure paths.
+        """
         try:
-            self._submit_transcription_job(config.RECORDED_AUDIO_FILE)
+            if not self.controller.recorder.wait_for_stop_completion():
+                logger.warning(
+                    "Proceeding without confirmed post-roll completion; "
+                    "tail of recording may be short"
+                )
+
+            if not self.controller.recorder.has_recording_data():
+                logger.error("No recording data available")
+                self.on_transcription_error("No audio data recorded")
+                return
+
+            if not self.controller.recorder.save_recording():
+                logger.error("Failed to save recording")
+                self.on_transcription_error("Failed to save audio file")
+                return
+
+            if not os.path.exists(config.RECORDED_AUDIO_FILE):
+                logger.error(f"Audio file not found: {config.RECORDED_AUDIO_FILE}")
+                self.on_transcription_error("Audio file not created")
+                return
+
+            file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
+            logger.info(f"Audio file size: {file_size} bytes")
+            if file_size < 100:
+                logger.error(f"Audio file too small: {file_size} bytes")
+                self.on_transcription_error("Audio file is empty or corrupted")
+                return
+
+            self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
+            self.controller._pending_audio_duration = (
+                self.controller.recorder.get_recording_duration()
+            )
+            self.controller._pending_file_size = file_size
+            self.controller._pending_source_name = "Quick Record"
+
             logger.info(
                 "Transcription started. Duration: "
                 f"{self.controller.recorder.get_recording_duration():.2f}s"
             )
+            self._run_transcription_job(config.RECORDED_AUDIO_FILE)
         except Exception as exc:
             logger.error(f"Failed to start transcription: {exc}")
             self.on_transcription_error(f"Failed to process audio: {exc}")
+
+    def _run_transcription_job(self, audio_path: str) -> None:
+        """Split-or-not dispatch for a job already on a worker thread.
+
+        The mirror of ``_submit_transcription_job``, which runs on the Qt
+        thread and therefore reports the large-file notice with a direct UI
+        call and hands the work to the executor. Here both differ: the notice
+        goes through ``large_file_detected`` (wired to the same UI method),
+        and the transcription runs inline because this already is the worker.
+        """
+        self._require_backend_ready()
+        needs_splitting, file_size_mb = audio_processor.check_file_size(audio_path)
+        should_split = (
+            needs_splitting and self.controller.current_backend.requires_file_splitting
+        )
+
+        if needs_splitting:
+            self.controller.large_file_detected.emit(file_size_mb, should_split)
+            self.controller.status_update.emit(
+                f"Splitting large file ({file_size_mb:.1f} MB)..."
+                if should_split
+                else f"Processing large file ({file_size_mb:.1f} MB)..."
+            )
+
+        if should_split:
+            self.transcribe_large_audio_file(audio_path)
+        else:
+            self.transcribe_audio_file(audio_path)
 
     def toggle_recording(self) -> None:
         logger.info(
@@ -811,7 +864,22 @@ class TranscriptionRuntime:
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
         is_empty = not (transcript or "").strip()
-        display_text = transcript if not is_empty else EMPTY_ASR_MESSAGE
+        preview = ""
+        if is_empty:
+            preview = (
+                getattr(self.controller, "_pending_streaming_text", "") or ""
+            ).strip()
+
+        if is_empty and preview:
+            # Whisper's VAD dropped everything, but the streaming model heard
+            # speech (it decodes with VAD off). Show that rather than leave the
+            # user with nothing — but it is tiny.en at beam 1, with a repeated
+            # word at each chunk seam, so it is never written to history and
+            # never reaches the clipboard. Recovering the words is worth a
+            # rough transcript; pasting one into whatever has focus is not.
+            display_text = preview
+        else:
+            display_text = transcript if not is_empty else EMPTY_ASR_MESSAGE
         self.controller.ui_controller.set_transcript(
             display_text, raw=raw_text
         )
@@ -850,7 +918,9 @@ class TranscriptionRuntime:
             logger.info(
                 "Empty ASR result; skipping history, clipboard, and paste"
             )
-            self.controller.ui_controller.set_status(EMPTY_ASR_MESSAGE)
+            self.controller.ui_controller.set_status(
+                EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
+            )
             self._clear_pending_audio_metadata()
             self._finish_job()
             return
@@ -891,6 +961,7 @@ class TranscriptionRuntime:
         self.controller._pending_audio_duration = None
         self.controller._pending_file_size = None
         self.controller._pending_source_name = None
+        self.controller._pending_streaming_text = ""
 
     def _model_info_for_history(self) -> str:
         model_info = self.controller._current_model_name

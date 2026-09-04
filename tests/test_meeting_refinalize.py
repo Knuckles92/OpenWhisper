@@ -514,6 +514,81 @@ class TestRedecodeReleasesModel:
         assert result["ok"] is True
         assert released == ["base"]
 
+    def test_lease_brackets_the_model_load(self, repo, monkeypatch):
+        """The dictation engine is freed before the redecode model loads.
+
+        The lease is a callable pair rather than a controller import so the
+        ``meeting`` package stays usable standalone.
+        """
+        import meeting.asr.offline as offline
+
+        order = []
+        released = []
+
+        import transcriber.local_backend as local_backend
+
+        class FakeBackend:
+            is_model_missing = False
+
+            def __init__(self, model_name=None, **_kwargs):
+                order.append("load")
+                self.model_name = model_name
+                self.model = object()
+
+            def is_available(self):
+                return True
+
+            def cleanup(self):
+                released.append(self.model_name)
+
+        monkeypatch.setattr(local_backend, "LocalWhisperBackend", FakeBackend)
+        monkeypatch.setattr(
+            offline,
+            "transcribe_meeting_sessions",
+            lambda *args, **kwargs: [
+                TranscriptSegment(
+                    segment_id="sg_1", meeting_id="m_retry", chunk_id=None,
+                    channel="mic", start_s=0.0, end_s=2.0,
+                    text="Re-decoded transcript text for the meeting.",
+                ),
+            ],
+        )
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+
+        result = rerun_redecode(
+            repo, "m_retry", asr_model_name="base",
+            model_lease=(
+                lambda: order.append("acquire") or True,
+                lambda: order.append("release"),
+            ),
+        )
+
+        assert result["ok"] is True
+        assert order == ["acquire", "load", "release"]
+        assert released == ["base"]
+
+    def test_lease_release_is_skipped_when_no_model_loads(self, repo):
+        """An injected decoder needs no Whisper model, so no lease is taken."""
+        order = []
+        make_meeting(repo, state_json=seeded_state("m_retry", DEFAULT_STEPS))
+
+        rerun_redecode(
+            repo, "m_retry",
+            transcribe_fn=lambda spool_dir, chunks, progress_cb=None: [
+                TranscriptSegment(
+                    segment_id="sg_1", meeting_id="m_retry", chunk_id=None,
+                    channel="mic", start_s=0.0, end_s=2.0,
+                    text="Injected transcript text for the meeting.",
+                ),
+            ],
+            model_lease=(
+                lambda: order.append("acquire") or True,
+                lambda: order.append("release"),
+            ),
+        )
+
+        assert order == []
+
     def test_model_is_released_when_it_fails_to_load(self, repo, monkeypatch):
         released = []
         self._install_backend(monkeypatch, available=False, released=released)
