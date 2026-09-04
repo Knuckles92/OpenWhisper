@@ -69,6 +69,8 @@ def isolated_mutex_names(monkeypatch):
         apply_module, "UPDATE_MUTEX_NAMES", (f"Local\\{unique}-update",)
     )
     monkeypatch.setattr(apply_module, "SETUP_MUTEX_NAME", f"Local\\{unique}-setup")
+    # These fixtures model a per-user install; hosted Windows runners are admins.
+    monkeypatch.setattr(apply_module, "is_process_elevated", lambda: False)
 
 
 def _bundle(root: Path, version: str = "2.5.3", payload: bytes = b"new") -> Path:
