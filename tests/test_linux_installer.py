@@ -173,26 +173,31 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     workflow = (ROOT / ".github" / "workflows" / "build-installers.yml").read_text(
         encoding="utf-8"
     )
+    smoke = (ROOT / "scripts" / "smoke_arch_package.sh").read_text(encoding="utf-8")
     assert "ubuntu:22.04" in workflow
     assert "debian:12" in workflow
     assert "archlinux:latest" in workflow
     assert "archlinux" in workflow
-    assert "pacman-key --init" in workflow
-    assert "pacman-key --populate archlinux" in workflow
-    assert "pacman -Sy --noconfirm archlinux-keyring" in workflow
-    assert "rm -f /etc/pacman.conf.d/noextract.conf" in workflow
+    assert "scripts/smoke_arch_package.sh:/tmp/smoke_arch_package.sh" in workflow
+    assert "bash /tmp/smoke_arch_package.sh" in workflow
+    assert "pacman-key --init" in smoke
+    assert "pacman-key --populate archlinux" in smoke
+    assert "pacman -Sy --noconfirm archlinux-keyring" in smoke
+    assert "/^NoExtract/{next}" in smoke
+    assert "rm -f /etc/pacman.conf.d/noextract.conf" in smoke
     # Combined release candidate ships five application artifacts (Win×2,
     # Linux×2, macOS DMG). The historical four-file inventory is retired.
     assert '-eq 5' in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
-    assert "pacman -Qkk openwhisper" in workflow
-    assert 'package_info="$(pacman -Qi openwhisper)"' in workflow
-    assert '<<<"$package_info"' in workflow
-    assert "GPL-3.0-only" in workflow
-    assert "LGPL-3.0-only" in workflow
-    assert "/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in workflow
-    assert "/usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt" in workflow
+    assert "pacman -Qkk openwhisper" in smoke
+    assert 'package_info="$(pacman -Qi openwhisper)"' in smoke
+    assert '<<<"$package_info"' in smoke
+    assert "GPL-3.0-only" in smoke
+    assert "LGPL-3.0-only" in smoke
+    assert "/usr/share/licenses/openwhisper/PyQt6-GPL-3.0.txt" in smoke
+    assert "/usr/share/licenses/openwhisper/Qt-LGPL-3.0.txt" in smoke
+    assert "/usr/share/doc/openwhisper/linux-system-audio.md" in smoke
 
 
 def test_release_artifact_name_is_versioned_and_arch_specific():
