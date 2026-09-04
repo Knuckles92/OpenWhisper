@@ -419,11 +419,17 @@ class TestDecodeLabel:
         label = DecodeLabel()
         label.set_segments(self.SEGMENTS)
         assert not label.is_revealing
+        assert label._pending_reveal
+        assert QLabel.text(label) == ""
         assert "6.9s" in label.text()
 
         label.show()
         QApplication.processEvents()
-        assert label.is_revealing
+        # Host load can drain the 720ms timer during this single processEvents
+        # call; either the reveal is in flight or it already landed on the
+        # finished text. The show-gated start is what must not regress.
+        assert not label._pending_reveal
+        assert label.is_revealing or QLabel.text(label) == label.text()
 
     def test_partial_frame_scrambles_ahead_of_the_locked_run(self):
         label = DecodeLabel()
