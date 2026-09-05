@@ -280,6 +280,8 @@ class UIController(QObject):
         logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
+        if self._model_manager_dialog is not None:
+            self._model_manager_dialog.refresh_engine_selection()
 
     def _on_whisper_engine_changed(self):
         """Handle a local-engine (model/device/quant) change from the main GUI.

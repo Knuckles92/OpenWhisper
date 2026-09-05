@@ -756,3 +756,37 @@ def test_config_version_tracks_version_module():
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@pytest.mark.parametrize("legacy, expected", [
+    ("api_whisper", "whisper-1"),
+    ("api_gpt4o", "gpt-4o-transcribe"),
+    ("api_gpt4o_mini", "gpt-4o-mini-transcribe"),
+])
+def test_api_backend_migration_preserves_model(tmp_path, legacy, expected):
+    manager = SettingsManager(str(tmp_path / "settings.json"))
+    manager.save_all_settings({SettingsKey.SELECTED_MODEL: legacy, "unrelated": True})
+    assert manager.load_model_selection() == "api"
+    settings = manager.load_all_settings()
+    assert settings[SettingsKey.API_TRANSCRIPTION_MODEL] == expected
+    assert settings[SettingsKey.SELECTED_MODEL] == "api"
+    assert settings["unrelated"] is True
+    restarted = SettingsManager(manager.settings_file)
+    assert restarted.load_model_selection() == "api"
+    restarted.save_model_selection("local_whisper")
+    restarted.save_model_selection("api")
+    assert restarted.get(SettingsKey.API_TRANSCRIPTION_MODEL) == expected
+
+
+def test_api_model_resolution_defaults_and_preserves_explicit_choice(tmp_path):
+    from services.settings import resolve_api_transcription_model
+
+    assert resolve_api_transcription_model({}) == "gpt-transcribe"
+    assert resolve_api_transcription_model({SettingsKey.API_TRANSCRIPTION_MODEL: []}) == "gpt-transcribe"
+    manager = SettingsManager(str(tmp_path / "settings.json"))
+    manager.save_all_settings({
+        SettingsKey.SELECTED_MODEL: "api_whisper",
+        SettingsKey.API_TRANSCRIPTION_MODEL: "gpt-4o-mini-transcribe",
+    })
+    assert manager.load_model_selection() == "api"
+    assert manager.get(SettingsKey.API_TRANSCRIPTION_MODEL) == "gpt-4o-mini-transcribe"

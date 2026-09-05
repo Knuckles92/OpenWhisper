@@ -27,6 +27,7 @@ class _Controller(QObject):
     """Minimal ApplicationController stand-in with meeting signals."""
 
     meeting_status_update = pyqtSignal(str)
+    meeting_engine_event = pyqtSignal(object, str, object)
     meeting_state_changed = pyqtSignal(object)
     meeting_error = pyqtSignal(str)
     meeting_server_started = pyqtSignal(object)
@@ -71,6 +72,7 @@ def runtime(qapp, monkeypatch):
     )
     controller = _Controller()
     rt = MeetingRuntime(controller)
+    controller.meeting_engine_event.connect(rt._route_engine_event)
     return rt, controller
 
 
@@ -1292,6 +1294,7 @@ def test_background_handoff_persistence_failure_keeps_card(background_meeting):
 @pytest.mark.parametrize("status,steps,attention", [
     ("completed", [], False),
     ("failed", [], True),
+    ("running", [], True),
     ("completed", [{"status": "failed"}], True),
 ])
 def test_background_outcome_does_not_replace_new_meeting(
@@ -1355,3 +1358,42 @@ def test_background_history_does_not_hydrate_or_delete_running_job(
     rt._clear_past_meetings_worker(True)
     delete.assert_not_called()
     assert engine.meeting_id in clear.call_args.kwargs["skip_ids"]
+
+
+def test_events_queued_before_background_handoff_are_discarded(
+    background_meeting, qapp
+):
+    import threading
+
+    rt, controller, old, _ = background_meeting
+    queued = threading.Thread(target=lambda: controller.meeting_engine_event.emit(
+        old, "ended", {"status": "ended"}
+    ))
+    queued.start()
+    queued.join(5)
+    assert rt.continue_in_background()
+    current = MagicMock()
+    current.is_active.return_value = True
+    rt._engine = current
+    controller.meeting_active = True
+    states = []
+    controller.meeting_state_changed.connect(states.append)
+    qapp.processEvents()
+    assert controller.meeting_active is True
+    assert states == []
+
+
+def test_open_background_meeting_reuses_its_processing_dashboard(
+    background_meeting, monkeypatch
+):
+    rt, _, old, _ = background_meeting
+    rt._host_url = "http://127.0.0.1:8765/h/background"
+    assert rt.continue_in_background()
+    rt._repo = MagicMock()
+    rt._repo.get_meeting.return_value = _ended_meeting(old.meeting_id)
+    opened = []
+    monkeypatch.setattr("services.runtime.meeting.webbrowser.open", opened.append)
+    rt._open_past_meeting_worker(old.meeting_id)
+    assert opened == ["http://127.0.0.1:8765/h/background"]
+    assert rt._archive_dashboard is None
+    assert rt._card_meeting_id is None

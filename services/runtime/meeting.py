@@ -162,12 +162,13 @@ class MeetingRuntime:
         # Claimed by start_meeting for the whole start attempt (including the
         # consent round-trip), before the engine exists to report itself.
         self._starting = False
-        # True while post-meeting cloud finalization is still running. Blocks a
-        # second Meeting Mode session only — not Quick Record / dictation.
+        # Foreground finalization blocks another meeting until the user sends
+        # it to the background; it does not claim Quick Record / dictation.
         self._finalizing = False
         self._background_ready = False
         self._background_engines: Dict[str, "MeetingEngine"] = {}
         self._background_workers: Dict[str, threading.Thread] = {}
+        self._background_host_urls: Dict[str, str] = {}
         self._finalization: Optional[Dict[str, Any]] = None
         # Meeting whose checklist is currently shown on the Meeting Mode tab.
         self._card_meeting_id: Optional[str] = None
@@ -418,6 +419,8 @@ class MeetingRuntime:
                 )
                 return False
             self._background_engines[meeting_id] = engine
+            if self._host_url:
+                self._background_host_urls[meeting_id] = self._host_url
             self._engine = None
             self._host_url = None
             self._guest_url = None
@@ -452,9 +455,9 @@ class MeetingRuntime:
             engine.wait_for_end()
             # Reassert after the last engine write, including a progress update
             # that raced with the initial card deferral.
-            self._persist_card_deferred(meeting_id, True)
+            deferred = self._persist_card_deferred(meeting_id, True)
             fin = engine.store.with_state(lambda state: state.finalization.to_dict())
-            if fin.get("status") in {"failed", "unavailable"} or any(
+            if not deferred or fin.get("status") not in {"completed", "disabled"} or any(
                 step.get("status") == "failed" for step in fin.get("steps", [])
             ):
                 outcome = "Background meeting needs attention. Open it from Past Meetings."
@@ -469,6 +472,7 @@ class MeetingRuntime:
             with self._lock:
                 self._background_engines.pop(meeting_id, None)
                 self._background_workers.pop(meeting_id, None)
+                self._background_host_urls.pop(meeting_id, None)
                 self.controller.meeting_state_changed.emit({
                     "background_message": self._background_message(outcome),
                 })
@@ -797,7 +801,9 @@ class MeetingRuntime:
                     options.server_port = 0
             engine = MeetingEngine(options, repository=self._repository())
             engine.add_listener(
-                lambda kind, payload: self._route_engine_event(engine, kind, payload)
+                lambda kind, payload: self.controller.meeting_engine_event.emit(
+                    engine, kind, payload
+                )
             )
             # Publish before starting: start() takes seconds to bring up
             # capture, ASR, the web server and the agent, and a cleanup()
@@ -1344,6 +1350,17 @@ class MeetingRuntime:
             if meeting is None:
                 self._report_dashboard_error("That meeting no longer exists")
                 return
+            with self._lock:
+                background_url = self._background_host_urls.get(meeting_id)
+                in_background = meeting_id in self._background_engines
+            if in_background:
+                if background_url:
+                    webbrowser.open(background_url)
+                else:
+                    self.controller.meeting_status_update.emit(
+                        "This meeting is still finishing in the background."
+                    )
+                return
             self._hydrate_finalization_card(meeting, reveal=True)
 
             url = self._host_url
@@ -1548,10 +1565,14 @@ class MeetingRuntime:
         if not target_id:
             return
         live_id = getattr(self._engine, "meeting_id", None)
+        if target_id in self._background_engines:
+            self.controller.meeting_status_update.emit(
+                "This meeting is still finishing in the background."
+            )
+            return
         if (
-            target_id in self._background_engines
-            or ((self.is_active or self.controller.meeting_active)
-                and live_id == target_id)
+            (self.is_active or self.controller.meeting_active)
+            and live_id == target_id
         ):
             self.controller.meeting_status_update.emit(
                 "Finish the current meeting first."
@@ -1676,8 +1697,8 @@ class MeetingRuntime:
     def _route_engine_event(
         self, engine: Any, kind: str, payload: Dict[str, Any]
     ) -> None:
-        # Serialize the source check with detachment. An old worker must never
-        # change a new meeting's card, URLs, active flag, or model lease.
+        # Dispatched on the Qt thread, so even events queued before detachment
+        # cannot change a new meeting's card, URLs, active flag, or model lease.
         with self._lock:
             if engine is self._engine:
                 self._on_engine_event(kind, payload)
@@ -1685,9 +1706,8 @@ class MeetingRuntime:
     def _on_engine_event(self, kind: str, payload: Dict[str, Any]) -> None:
         """Bridge one engine listener event to controller signals.
 
-        Runs on engine worker threads; only thread-safe ``pyqtSignal.emit``
-        calls are allowed here. Finalization outcomes are non-modal status
-        updates — never ``meeting_error``.
+        The source-checked Qt dispatch keeps detached engines out of this path.
+        Finalization outcomes are non-modal status updates — never meeting_error.
         """
         try:
             payload = payload or {}

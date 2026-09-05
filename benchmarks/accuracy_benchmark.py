@@ -362,7 +362,7 @@ class AccuracyBenchmark:
                 print(f"  ❌ {backend_key}: {str(e)[:60]}...")
 
         if not skip_api:
-            for backend_name in ['api_whisper', 'api_gpt4o', 'api_gpt4o_mini']:
+            for backend_name in config.API_MODEL_CHOICES:
                 try:
                     backend = OpenAIBackend(backend_name)
                     if backend.is_available():

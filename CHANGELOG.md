@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Transcription backend choices are now **Local Whisper** and **API**, with a separate API model selector in both transcription tabs and Model Manager. Existing API selections retain their model.
+- Added **GPT-Transcribe** as the default for new API selections, alongside GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper, with JSON response handling for single files and chunked uploads.
+
 ### Added
 - Meeting finalization offers **Continue in the background** after local transcription finishes, freeing Meeting Mode for another session while cleanup and reports finish. Background outcomes remain available in Past Meetings.
 

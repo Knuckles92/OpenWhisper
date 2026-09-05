@@ -11,6 +11,23 @@ from services.batch_upload import BatchRelation
 logger = logging.getLogger(__name__)
 SettingsMutationResult = TypeVar("SettingsMutationResult")
 
+LEGACY_API_MODELS = {
+    "api_whisper": "whisper-1",
+    "api_gpt4o": "gpt-4o-transcribe",
+    "api_gpt4o_mini": "gpt-4o-mini-transcribe",
+}
+
+
+def resolve_api_transcription_model(settings: dict[str, Any]) -> str:
+    model = settings.get(SettingsKey.API_TRANSCRIPTION_MODEL)
+    if isinstance(model, str) and model in config.API_MODEL_CHOICES:
+        return model
+    legacy = settings.get(SettingsKey.SELECTED_MODEL)
+    if isinstance(legacy, str) and legacy in LEGACY_API_MODELS:
+        return LEGACY_API_MODELS[legacy]
+    return config.DEFAULT_API_MODEL
+
+
 # Bump whenever the Linux preview disclosure changes meaning. Persisting the
 # version instead of a boolean prevents an older acknowledgement from silently
 # authorizing newly added capture behavior.
@@ -21,6 +38,7 @@ class SettingsKey:
     """Keys persisted in the settings JSON file."""
     HOTKEYS: Final[str] = "hotkeys"
     SELECTED_MODEL: Final[str] = "selected_model"
+    API_TRANSCRIPTION_MODEL: Final[str] = "api_transcription_model"
     AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
     WINDOW_GEOMETRY: Final[str] = "window_geometry"
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
@@ -433,7 +451,14 @@ class SettingsManager:
     def load_model_selection(self) -> str:
         """Load a valid backend selection or the default."""
         try:
-            selected_model = self.get(SettingsKey.SELECTED_MODEL)
+            settings = self.load_all_settings()
+            selected_model = settings.get(SettingsKey.SELECTED_MODEL)
+            if isinstance(selected_model, str) and selected_model in LEGACY_API_MODELS:
+                self.update_settings({
+                    SettingsKey.SELECTED_MODEL: "api",
+                    SettingsKey.API_TRANSCRIPTION_MODEL: resolve_api_transcription_model(settings),
+                })
+                return "api"
             if selected_model and selected_model in config.MODEL_VALUE_MAP.values():
                 return selected_model
         except Exception as e:

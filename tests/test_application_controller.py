@@ -854,9 +854,9 @@ class TestApplicationController:
     def test_model_switch_updates_backend_and_device_info(self):
         controller = self._create_controller()
 
-        controller.on_model_changed("API: GPT-4o Transcribe")
-        assert controller._current_model_name == "api_gpt4o"
-        assert self.settings.saved_model_selection == "api_gpt4o"
+        controller.on_model_changed("API")
+        assert controller._current_model_name == "api"
+        assert self.settings.saved_model_selection == "api"
         assert controller.ui_controller.device_infos[-1] == ""
 
         controller.on_model_changed("Local Whisper")
@@ -1012,7 +1012,7 @@ class TestApplicationController:
         controller.transcription_runtime._finish_job()
 
         controller.executor = FakeExecutor()
-        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        controller.current_backend = controller.transcription_backends["api"]
         controller.recorder.is_recording = True
         self.audio_processor.check_result = (True, 30.0)
         controller.stop_recording()
@@ -1031,7 +1031,7 @@ class TestApplicationController:
         controller = self._create_controller()
         audio_path = Path(self.temp_dir.name) / "upload.wav"
         audio_path.write_bytes(b"0" * 256)
-        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        controller.current_backend = controller.transcription_backends["api"]
         self.audio_processor.check_result = (True, 30.0)
 
         controller.upload_audio_file(str(audio_path), 12.0)
@@ -1721,7 +1721,7 @@ class TestApplicationController:
 
     def test_batch_routes_large_files_through_split_per_file(self):
         controller = self._create_controller()
-        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        controller.current_backend = controller.transcription_backends["api"]
         self.audio_processor.check_result = (True, 30.0)
         request = self._batch_request(["a.wav", "b.wav"])
 
@@ -2477,7 +2477,7 @@ class TestApplicationController:
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]
         backend.load_deferred = True
-        controller.current_backend = controller.transcription_backends["api_gpt4o"]
+        controller.current_backend = controller.transcription_backends["api"]
 
         controller.notify_main_ui_ready()
 
@@ -2509,8 +2509,8 @@ class TestApplicationController:
 
     def test_start_recording_refuses_unavailable_api_before_capture(self):
         controller = self._create_controller()
-        controller.current_backend = controller.transcription_backends["api_gpt4o"]
-        controller._current_model_name = "api_gpt4o"
+        controller.current_backend = controller.transcription_backends["api"]
+        controller._current_model_name = "api"
         controller.current_backend.is_available = lambda: False
 
         assert controller.start_recording() is False

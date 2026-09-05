@@ -183,6 +183,7 @@ def test_runtime_reuses_dashboard_and_opens_selected_history():
     from services.runtime.meeting import MeetingRuntime
 
     controller = type("Controller", (), {
+        "meeting_active": False,
         "meeting_status_update": FakeSignal(),
         "meeting_error": FakeSignal(),
         "meeting_state_changed": FakeSignal(),
@@ -236,6 +237,7 @@ def test_runtime_opens_report_view_on_history_url():
     from services.runtime.meeting import MeetingRuntime
 
     controller = type("Controller", (), {
+        "meeting_active": False,
         "meeting_status_update": FakeSignal(),
         "meeting_error": FakeSignal(),
         "meeting_state_changed": FakeSignal(),

@@ -664,6 +664,7 @@ class MeetingModeTab(QWidget):
         content_layout.addWidget(self.finalization_card)
 
         self.background_notice = WrappedLabel("")
+        self.background_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.background_notice.setAccessibleName("Background meeting processing")
         self.background_notice.hide()
         content_layout.addWidget(self.background_notice)

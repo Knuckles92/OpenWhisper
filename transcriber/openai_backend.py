@@ -6,6 +6,11 @@ from openai import OpenAI
 from .base import TranscriptionBackend
 from config import config
 from services.credentials import resolve_credential
+from services.settings import (
+    LEGACY_API_MODELS,
+    resolve_api_transcription_model,
+    settings_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +23,7 @@ CHUNK_UPLOAD_CONCURRENCY = 3
 class OpenAIBackend(TranscriptionBackend):
     """OpenAI API transcription backend."""
 
-    def __init__(self, model_type: str = "api_whisper", api_key: str = None):
+    def __init__(self, model_type: str = "api", api_key: str = None):
         super().__init__()
         self.model_type = model_type
         self.api_key = api_key or self._get_api_key()
@@ -41,12 +46,22 @@ class OpenAIBackend(TranscriptionBackend):
             self.client = None
 
     def _get_api_model_name(self) -> str:
-        if self.model_type == "api_gpt4o":
-            return "gpt-4o-transcribe"
-        elif self.model_type == "api_gpt4o_mini":
-            return "gpt-4o-mini-transcribe"
-        else:  # api_whisper or default
-            return "whisper-1"
+        if self.model_type == "api":
+            return resolve_api_transcription_model(settings_manager.load_all_settings())
+        if self.model_type in LEGACY_API_MODELS:
+            return LEGACY_API_MODELS[self.model_type]
+        if self.model_type in config.API_MODEL_CHOICES:
+            return self.model_type
+        raise ValueError(f"Unknown API transcription model: {self.model_type}")
+
+    def _transcribe_file(self, audio_path: str, api_model: str) -> str:
+        with open(audio_path, "rb") as audio_file:
+            response = self.client.audio.transcriptions.create(
+                model=api_model,
+                file=audio_file,
+                response_format="json" if api_model == "gpt-transcribe" else "text",
+            )
+        return (response if isinstance(response, str) else response.text).strip()
 
     def transcribe(self, audio_path: str) -> str:
         """Transcribe an audio file with the configured OpenAI model."""
@@ -61,18 +76,12 @@ class OpenAIBackend(TranscriptionBackend):
             logger.info(f"Using OpenAI API model: {api_model}")
             logger.info("Sending audio file to OpenAI API...")
 
-            with open(audio_path, "rb") as f:
-                response = self.client.audio.transcriptions.create(
-                    model=api_model,
-                    file=f,
-                    response_format="text"
-                )
+            transcript = self._transcribe_file(audio_path, api_model)
 
             if self.should_cancel:
                 logger.info("Transcription canceled by user")
                 raise Exception("Transcription canceled")
 
-            transcript = response.strip()
             logger.info(f"API transcription complete. Length: {len(transcript)} characters")
 
             return transcript
@@ -97,13 +106,7 @@ class OpenAIBackend(TranscriptionBackend):
         if self.should_cancel:
             raise Exception("Transcription canceled")
 
-        with open(chunk_file, "rb") as f:
-            response = self.client.audio.transcriptions.create(
-                model=api_model,
-                file=f,
-                response_format="text",
-            )
-        return response.strip()
+        return self._transcribe_file(chunk_file, api_model)
 
     def transcribe_chunks(self, chunk_files: List[str]) -> str:
         """Transcribe chunks concurrently and combine their text in order.
@@ -191,7 +194,7 @@ class OpenAIBackend(TranscriptionBackend):
 
     @property
     def name(self) -> str:
-        return f"OpenAI ({self.model_type})"
+        return f"OpenAI ({self._get_api_model_name()})"
 
     @property
     def requires_file_splitting(self) -> bool:

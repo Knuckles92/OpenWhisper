@@ -243,9 +243,9 @@ class TestRail(_DialogTestCase):
     def test_cloud_engine_reports_itself_instead_of_a_whisper_size(self):
         dialog, _values = self._make_dialog()
         dialog.engine_combo.setCurrentIndex(
-            dialog.engine_combo.findData("api_whisper")
+            dialog.engine_combo.findData("api")
         )
-        assert dialog.rail.value(ONDEMAND_VOICE) == "API: Whisper"
+        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
 
     def test_rail_footer_summarizes_the_cache_next_to_downloads(self):
         dialog, _values = self._make_dialog(
@@ -708,9 +708,9 @@ class TestOnDemandEngine(_DialogTestCase):
         dialog, _values = self._make_dialog()
         requested = []
         dialog.on_backend_changed = requested.append
-        index = dialog.engine_combo.findData("api_whisper")
+        index = dialog.engine_combo.findData("api")
         dialog.engine_combo.setCurrentIndex(index)
-        assert requested == ["API: Whisper"]
+        assert requested == ["API"]
         assert not dialog.ondemand_whisper_picker.isEnabled()
 
 
@@ -834,3 +834,22 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
 
                 assert requested == ["meeting"]
                 assert dialog.result() != dialog.DialogCode.Accepted
+
+
+class TestApiModelSelection(_DialogTestCase):
+    def test_model_selection_persists_and_updates_rail(self):
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.SELECTED_MODEL: "api",
+            SettingsKey.API_TRANSCRIPTION_MODEL: "whisper-1",
+        })
+        requested = []
+        dialog.on_backend_changed = requested.append
+        assert not dialog.api_model_field.isHidden()
+        assert dialog.ondemand_whisper_field.isHidden()
+        assert dialog.api_model_combo.currentText() == "whisper-1"
+        dialog.api_model_combo.setCurrentText("gpt-transcribe")
+        assert values[SettingsKey.API_TRANSCRIPTION_MODEL] == "gpt-transcribe"
+        assert requested == ["API"]
+        assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
+        dialog.refresh()
+        assert requested == ["API"]

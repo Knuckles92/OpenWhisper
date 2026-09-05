@@ -59,6 +59,7 @@ _MENU_STYLESHEET = """
 
 _MODEL_DISPLAY_NAMES = {
     'local_whisper': 'Local',
+    'api': 'API',
     'api_whisper': 'API',
     'api_gpt4o': 'GPT-4o',
     'api_gpt4o_mini': 'GPT-4o Mini',

@@ -10,7 +10,11 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
 from config import config
-from services.settings import SettingsKey, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_api_transcription_model,
+    settings_manager,
+)
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
@@ -80,8 +84,6 @@ class TranscriptionTabBase(QWidget):
     #: returns prose; on where the transcript carries structure of its own.
     TRANSCRIPT_MARKDOWN = False
 
-    #: Keeps the longest backend label ("API: GPT-4o Mini Transcribe") from
-    #: pushing the rest of the bar off the row; it elides instead.
     BACKEND_CHIP_MAX_WIDTH = 150
 
     _BACKEND_SECTION = "backend"
@@ -154,17 +156,21 @@ class TranscriptionTabBase(QWidget):
         self.model_combo = engine_combo(config.MODEL_CHOICES, primary=True)
         self._apply_backend_status(EngineStatus.UNKNOWN)
 
-        # Local model/device/quant. Only meaningful for the Local Whisper
-        # backend; the main window hides the group via
-        # set_local_engine_visible() and the trailing filler then absorbs its
-        # share, so Backend does not stretch across the whole card.
         self.local_engine = LocalEngineControls()
+        self.api_model_combo = engine_combo(config.API_MODEL_CHOICES)
+        self.api_model_combo.setToolTip(
+            "OpenAI transcription model. Requires an API key in Settings → API keys."
+        )
+        self.api_model_field = engine_field("Model", self.api_model_combo)
+        self.api_model_field.hide()
+        self.refresh_api_model()
 
         self._field_row = QHBoxLayout()
         self._field_row.setContentsMargins(0, 0, 0, 0)
         self._field_row.setSpacing(10)
         self._field_row.addWidget(engine_field("Backend", self.model_combo), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
+        self._field_row.addWidget(self.api_model_field, stretch=2)
         self._field_filler_index = self._field_row.count()
         self._field_row.addStretch(0)
         engine_layout.addLayout(self._field_row)
@@ -285,6 +291,7 @@ class TranscriptionTabBase(QWidget):
 
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
+        self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.manage_models_button.clicked.connect(self.manage_models_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
@@ -334,13 +341,28 @@ class TranscriptionTabBase(QWidget):
             return self._raw_text
         return self._fixed_text
 
+    def refresh_api_model(self):
+        model = resolve_api_transcription_model(settings_manager.load_all_settings())
+        blocked = self.api_model_combo.blockSignals(True)
+        self.api_model_combo.setCurrentText(model)
+        self.api_model_combo.blockSignals(blocked)
+
+    def _on_api_model_changed(self, model: str):
+        settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
+        self.model_changed.emit(self.current_model)
+
     def _on_backend_changed(self, display_name: str):
         self.current_model = display_name
+        self.refresh_api_model()
+        self.set_local_engine_visible(display_name == "Local Whisper")
         self.model_changed.emit(display_name)
 
     def choose_backend(self, display_name: str):
         """Select a backend and announce it, as if the user picked it."""
         if display_name == self.current_model:
+            if display_name == "API":
+                self.refresh_api_model()
+                self.model_changed.emit(display_name)
             return
         self.model_combo.setCurrentText(display_name)
 
@@ -357,10 +379,13 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.setCurrentIndex(index)
         self.model_combo.blockSignals(False)
         self.current_model = display_name
+        self.refresh_api_model()
+        self.set_local_engine_visible(display_name == "Local Whisper")
 
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""
         self.model_combo.setEnabled(enabled)
+        self.api_model_combo.setEnabled(enabled)
 
     def set_model_selection(self, model_value: str):
         """Select a backend by its internal value (e.g. ``local_whisper``)."""
@@ -393,17 +418,9 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.set_status(status)
 
     def set_local_engine_visible(self, visible: bool):
-        """Show or hide the Model/Device/Quant group.
-
-        The card keeps its footer either way, so the cleanup toggle and the
-        Model Manager link stay reachable on an API backend. The filler takes
-        half the freed room: enough for the longest backend name to stop
-        eliding, without one field spanning the whole card.
-
-        The status dots go with the group — they report on the local engine, and
-        an API backend has none to read.
-        """
+        """Switch between local runtime fields and the API model field."""
         self.local_engine.setVisible(visible)
+        self.api_model_field.setVisible(not visible)
         self._field_row.setStretch(self._field_filler_index, 0 if visible else 2)
         self.status_dot.setVisible(visible)
         self.model_combo.set_status_visible(visible)

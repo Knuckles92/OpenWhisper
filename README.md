@@ -31,7 +31,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 - **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
 - **Model Manager** – Manage voice and text models in one place: browse, download, and activate local Whisper models, or use a guided provider → model picker for OpenAI/OpenRouter cleanup models
-- **API Options** – OpenAI Whisper API, GPT-4o Transcribe, GPT-4o Mini Transcribe
+- **API Options** – Choose **API** as the backend, then select GPT-Transcribe (default), GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper in **Model**. **Local Whisper** keeps its own model, device, and quantization controls.
 - **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach custom spelling and style rules via text or voice dictation
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
 - **Auto-paste** – Dictated transcription automatically pastes to your active window (Upload File results stay in the app, with Copy buttons)
@@ -45,7 +45,9 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio
   into a durable, searchable meeting transcript; share a tokenized live
   dashboard, review evidence-linked insights, play the recording, and export
-  the result. Linux x86_64/aarch64 has an in-tree Pulse/PipeWire path gated
+  the result. After local transcription finishes, choose **Continue in the
+  background** to start another meeting while cleanup and reports finish;
+  open the results from Past Meetings. Linux x86_64/aarch64 has an in-tree Pulse/PipeWire path gated
   behind a versioned preview acknowledgement until hardware attestation.
 - **Window Memory** – Remembers window position and size between sessions
 

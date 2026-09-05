@@ -1,11 +1,7 @@
-"""Tests for the OpenAI API transcription backend.
-
-Focused on ``transcribe_chunks``, which fans large files out over several
-concurrent uploads: order and cancellation are the two properties that
-concurrency could plausibly break.
-"""
+"""Tests for API model selection, request formats, and chunked transcription."""
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +31,7 @@ class FakeTranscriptions:
                 time.sleep(self.delay)
             if self.fail_on and self.fail_on in name:
                 raise RuntimeError("upload rejected")
-            return f"  text for {name.rsplit('/', 1)[-1]}  "
+            return f"  text for {Path(name).name}  "
         finally:
             with self._lock:
                 self.in_flight -= 1
@@ -167,3 +163,70 @@ class TestChunkedTranscription:
 
         with pytest.raises(Exception, match="not available"):
             backend.transcribe_chunks(chunks)
+
+
+@pytest.mark.parametrize("model", [
+    "gpt-transcribe", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1",
+])
+@pytest.mark.parametrize("chunked", [False, True])
+def test_selected_api_model_and_response_format(monkeypatch, chunks, model, chunked):
+    from unittest.mock import Mock
+
+    from services.settings import SettingsKey
+    from transcriber import openai_backend as module
+
+    monkeypatch.setattr(module.settings_manager, "load_all_settings", lambda: {
+        SettingsKey.API_TRANSCRIPTION_MODEL: model,
+    })
+    api = Mock()
+    api.create.return_value = SimpleNamespace(text="  transcript  ") if model == "gpt-transcribe" else "  transcript  "
+    backend = make_backend(api)
+    backend.model_type = "api"
+    result = backend.transcribe_chunks(chunks[:2]) if chunked else backend.transcribe(chunks[0])
+    assert result == ("transcript transcript" if chunked else "transcript")
+    assert api.create.call_count == (2 if chunked else 1)
+    for call in api.create.call_args_list:
+        assert call.kwargs["model"] == model
+        assert call.kwargs["response_format"] == ("json" if model == "gpt-transcribe" else "text")
+
+
+def test_chunks_keep_model_when_setting_changes_mid_upload(monkeypatch, chunks):
+    from unittest.mock import Mock
+
+    from services.settings import SettingsKey
+    from transcriber import openai_backend as module
+
+    settings = {SettingsKey.API_TRANSCRIPTION_MODEL: "gpt-transcribe"}
+    monkeypatch.setattr(module.settings_manager, "load_all_settings", lambda: dict(settings))
+    def respond(**kwargs):
+        settings[SettingsKey.API_TRANSCRIPTION_MODEL] = "whisper-1"
+        return SimpleNamespace(text="transcript")
+    api = Mock()
+    api.create.side_effect = respond
+    backend = make_backend(api)
+    backend.model_type = "api"
+    backend.transcribe_chunks(chunks)
+    assert all(call.kwargs["model"] == "gpt-transcribe" for call in api.create.call_args_list)
+
+
+@pytest.mark.parametrize("model", ["gpt-transcribe", "whisper-1"])
+def test_sdk_sends_model_and_parses_response_without_network(chunks, model):
+    import httpx
+    from openai import OpenAI
+
+    requests = []
+    def respond(request):
+        requests.append(request.read().decode("utf-8"))
+        if model == "gpt-transcribe":
+            return httpx.Response(200, json={"text": "  hello  ", "languages": [{"code": "en"}]})
+        return httpx.Response(200, text="  hello  ")
+
+    with OpenAI(api_key="sk-test", http_client=httpx.Client(transport=httpx.MockTransport(respond))) as client:
+        backend = make_backend(None)
+        backend.client = client
+        backend.model_type = model
+        assert backend.transcribe(chunks[0]) == "hello"
+    assert len(requests) == 1
+    assert f'name="model"\r\n\r\n{model}\r\n' in requests[0]
+    response_format = "json" if model == "gpt-transcribe" else "text"
+    assert f'name="response_format"\r\n\r\n{response_format}\r\n' in requests[0]

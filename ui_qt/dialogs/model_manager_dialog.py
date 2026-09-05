@@ -53,6 +53,7 @@ from services.settings import (
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
+    resolve_api_transcription_model,
     resolve_meeting_agent_core,
     resolve_meeting_audio_upload_consent,
     resolve_meeting_language,
@@ -82,9 +83,7 @@ logger = logging.getLogger(__name__)
 
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
-    "api_whisper": "OpenAI cloud model whisper-1.",
-    "api_gpt4o": "OpenAI cloud model gpt-4o-transcribe.",
-    "api_gpt4o_mini": "OpenAI cloud model gpt-4o-mini-transcribe.",
+    "api": "OpenAI transcription. Enter your API key in Settings → API keys.",
 }
 
 # Rail destination keys. Stable identifiers used by callers that deep-link into
@@ -377,9 +376,17 @@ class ModelManagerDialog(QDialog):
         self.ondemand_whisper_picker.manage_downloads_requested.connect(
             self.downloads_requested.emit
         )
-        layout.addWidget(
-            self._field("Local Whisper model", self.ondemand_whisper_picker)
+        self.ondemand_whisper_field = self._field(
+            "Model", self.ondemand_whisper_picker
         )
+        layout.addWidget(self.ondemand_whisper_field)
+
+        self.api_model_combo = ElidingComboBox()
+        self.api_model_combo.setMinimumHeight(40)
+        self.api_model_combo.addItems(list(config.API_MODEL_CHOICES))
+        self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
+        self.api_model_field = self._field("Model", self.api_model_combo)
+        layout.addWidget(self.api_model_field)
 
         layout.addWidget(
             self._footnote(
@@ -643,6 +650,12 @@ class ModelManagerDialog(QDialog):
             self.on_backend_changed(display)
         self._update_engine_caption()
         self._update_ondemand_whisper_enabled()
+        self._refresh_rail_values()
+
+    def _on_api_model_changed(self, model: str) -> None:
+        settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
+        if self.on_backend_changed:
+            self.on_backend_changed("API")
         self._refresh_rail_values()
 
     def _on_runtime_changed(self, _text: str = "") -> None:
@@ -1085,6 +1098,10 @@ class ModelManagerDialog(QDialog):
         self.meeting_speaker_id_combo.blockSignals(blocker)
         self._refresh_speaker_id_status()
 
+    def refresh_engine_selection(self) -> None:
+        self._load_engine_and_runtime()
+        self._refresh_rail_values()
+
     def _load_engine_and_runtime(self) -> None:
         try:
             model_value = settings_manager.load_model_selection()
@@ -1099,6 +1116,9 @@ class ModelManagerDialog(QDialog):
         self._update_ondemand_whisper_enabled()
 
         settings = self._settings_snapshot()
+        blocker = self.api_model_combo.blockSignals(True)
+        self.api_model_combo.setCurrentText(resolve_api_transcription_model(settings))
+        self.api_model_combo.blockSignals(blocker)
         device = settings.get(SettingsKey.WHISPER_DEVICE, "auto")
         compute = settings.get(SettingsKey.WHISPER_COMPUTE_TYPE, "auto")
         if self.device_combo.findText(str(device)) < 0:
@@ -1120,11 +1140,8 @@ class ModelManagerDialog(QDialog):
     def _update_ondemand_whisper_enabled(self) -> None:
         is_local = self.engine_combo.currentData() == "local_whisper"
         self.ondemand_whisper_picker.setEnabled(is_local)
-        if not is_local:
-            self.ondemand_whisper_picker.set_caption(
-                "Local Whisper size is used only when the recording engine "
-                "is Local Whisper."
-            )
+        self.ondemand_whisper_field.setVisible(is_local)
+        self.api_model_field.setVisible(not is_local)
 
     def _refresh_meeting_runtime_label(self) -> None:
         device = self.device_combo.currentText() or "auto"
@@ -1288,6 +1305,8 @@ class ModelManagerDialog(QDialog):
             engine_display = (
                 f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
             )
+        else:
+            engine_display = f"API · {self.api_model_combo.currentText()}"
         self.rail.set_value(ONDEMAND_VOICE, engine_display)
         self.rail.set_value(
             ONDEMAND_TEXT,

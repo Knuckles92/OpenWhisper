@@ -113,6 +113,7 @@ class ApplicationController(QObject):
     # and raises a cause-specific warning on the Qt main thread.
     gpu_fallback_detected = pyqtSignal()
     # Meeting Mode signals may originate from engine worker threads.
+    meeting_engine_event = pyqtSignal(object, str, object)
     meeting_state_changed = pyqtSignal(object)
     meeting_status_update = pyqtSignal(str)
     meeting_error = pyqtSignal(str)
@@ -220,11 +221,10 @@ class ApplicationController(QObject):
         self.transcription_backends["local_whisper"] = (
             local_backend if local_backend is not None else LocalWhisperBackend()
         )
-        self.transcription_backends["api_whisper"] = OpenAIBackend("api_whisper")
-        self.transcription_backends["api_gpt4o"] = OpenAIBackend("api_gpt4o")
-        self.transcription_backends["api_gpt4o_mini"] = OpenAIBackend("api_gpt4o_mini")
+        self.transcription_backends["api"] = OpenAIBackend("api")
 
         saved_model = settings_manager.load_model_selection()
+        self._current_model_name = saved_model
         self.current_backend = self.transcription_backends.get(
             saved_model, self.transcription_backends["local_whisper"]
         )
@@ -489,7 +489,7 @@ class ApplicationController(QObject):
                 f"Whisper model '{backend.model_name}' is not downloaded — "
                 "finish the model download before recording"
             )
-        if self._current_model_name.startswith("api_"):
+        if self._current_model_name == "api":
             return "The selected API transcription engine needs a valid API key"
         return "The selected transcription engine is unavailable"
 
@@ -1573,6 +1573,7 @@ class ApplicationController(QObject):
         self.component_state_changed.connect(
             self.ui_controller.on_component_state_changed
         )
+        self.meeting_engine_event.connect(self.meeting_runtime._route_engine_event)
         self.meeting_state_changed.connect(
             self.ui_controller.on_meeting_state_changed
         )

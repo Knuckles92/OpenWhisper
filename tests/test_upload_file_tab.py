@@ -1257,9 +1257,9 @@ class TestEngineCard:
         announced = []
         tab.model_changed.connect(announced.append)
 
-        tab.set_backend("API: Whisper")
-        assert tab.current_backend() == "API: Whisper"
-        assert tab.model_combo.currentText() == "API: Whisper"
+        tab.set_backend("API")
+        assert tab.current_backend() == "API"
+        assert tab.model_combo.currentText() == "API"
         assert announced == []
 
         tab.choose_backend("Local Whisper")
@@ -1458,3 +1458,48 @@ class TestMainWindowUploadTabIntegration:
             window._force_quit = True
             window.close()
             QApplication.processEvents()
+
+
+class TestApiModelField:
+    def test_backend_switch_preserves_each_model_and_locks_api_choice(self, tmp_path, monkeypatch):
+        from services.settings import SettingsManager
+        from ui_qt.widgets import transcription_tab_base as module
+
+        manager = SettingsManager(str(tmp_path / "settings.json"))
+        monkeypatch.setattr(module, "settings_manager", manager)
+        tab = UploadFileTab()
+        local_model = tab.local_engine.model_combo.currentText()
+        assert [tab.model_combo.itemText(i) for i in range(tab.model_combo.count())] == ["Local Whisper", "API"]
+        tab.choose_backend("API")
+        assert tab.local_engine.isHidden()
+        assert not tab.api_model_field.isHidden()
+        tab.api_model_combo.setCurrentText("whisper-1")
+        assert manager.get(SettingsKey.API_TRANSCRIPTION_MODEL) == "whisper-1"
+        tab.choose_backend("Local Whisper")
+        assert tab.api_model_field.isHidden()
+        assert tab.local_engine.model_combo.currentText() == local_model
+        tab.choose_backend("API")
+        assert tab.api_model_combo.currentText() == "whisper-1"
+        tab.set_backend_enabled(False)
+        assert not tab.api_model_combo.isEnabled()
+        tab.set_backend_enabled(True)
+        assert tab.api_model_combo.isEnabled()
+
+    def test_model_change_syncs_other_tab_without_feedback(self, tmp_path, monkeypatch):
+        from services.settings import SettingsManager
+        from ui_qt.widgets import transcription_tab_base as module
+
+        manager = SettingsManager(str(tmp_path / "settings.json"))
+        monkeypatch.setattr(module, "settings_manager", manager)
+        first, second = UploadFileTab(), UploadFileTab()
+        first.set_backend("API")
+        second.set_backend("API")
+        announcements = []
+        second.model_changed.connect(announcements.append)
+        first.model_changed.connect(second.set_backend)
+        first.api_model_combo.setCurrentText("gpt-4o-mini-transcribe")
+        assert second.api_model_combo.currentText() == "gpt-4o-mini-transcribe"
+        assert announcements == []
+        manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, "whisper-1")
+        first.choose_backend("API")
+        assert first.api_model_combo.currentText() == second.api_model_combo.currentText() == "whisper-1"

@@ -155,12 +155,18 @@ class AppConfig:
     # Model configurations
     MODEL_CHOICES: Tuple[str, ...] = (
         'Local Whisper',
-        'API: Whisper',
-        'API: GPT-4o Transcribe',
-        'API: GPT-4o Mini Transcribe'
+        'API',
     )
 
     MODEL_VALUE_MAP: Dict[str, str] = None
+
+    API_MODEL_CHOICES: tuple[str, ...] = (
+        "gpt-transcribe",
+        "gpt-4o-transcribe",
+        "gpt-4o-mini-transcribe",
+        "whisper-1",
+    )
+    DEFAULT_API_MODEL: str = "gpt-transcribe"
 
     # Whisper model choices for faster-whisper
     WHISPER_MODEL_CHOICES: List[str] = None
@@ -380,9 +386,7 @@ class AppConfig:
         if self.MODEL_VALUE_MAP is None:
             self.MODEL_VALUE_MAP = {
                 'Local Whisper': 'local_whisper',
-                'API: Whisper': 'api_whisper',
-                'API: GPT-4o Transcribe': 'api_gpt4o',
-                'API: GPT-4o Mini Transcribe': 'api_gpt4o_mini'
+                'API': 'api',
             }
 
         if self.WHISPER_MODEL_CHOICES is None:

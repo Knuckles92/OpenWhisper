@@ -804,8 +804,7 @@ class MainWindow(QMainWindow):
 
         # Sync the other tabs without re-emitting the signal
         for tab in self.transcription_tabs:
-            if tab.current_backend() != model_name:
-                tab.set_backend(model_name)
+            tab.set_backend(model_name)
 
         self._apply_local_engine_visibility(model_name)
 
