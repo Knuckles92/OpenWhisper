@@ -233,7 +233,7 @@ class ModelManagerDialog(QDialog):
         self.downloads_button.setObjectName("modelManagerDownloadsButton")
         self.downloads_button.set_base_minimum_size(0, 34)
         self.downloads_button.setToolTip(
-            "Download Whisper models and optional components"
+            "Download speech models and optional components"
         )
         self.downloads_button.clicked.connect(self.downloads_requested.emit)
         footer.addWidget(self.downloads_button)
@@ -381,6 +381,13 @@ class ModelManagerDialog(QDialog):
         )
         layout.addWidget(self.ondemand_whisper_field)
 
+        from ui_qt.widgets.local_engine_controls import LocalEngineControls
+        self.speech_controls = LocalEngineControls()
+        self.speech_controls.engine_settings_changed.connect(self._on_speech_settings_changed)
+        layout.addWidget(self.speech_controls)
+        self.speech_download_button = Button("Get models and runtimes")
+        self.speech_download_button.clicked.connect(self.downloads_requested.emit)
+        layout.addWidget(self.speech_download_button)
         self.api_model_combo = ElidingComboBox()
         self.api_model_combo.setMinimumHeight(40)
         self.api_model_combo.addItems(list(config.API_MODEL_CHOICES))
@@ -390,8 +397,8 @@ class ModelManagerDialog(QDialog):
 
         layout.addWidget(
             self._footnote(
-                "Live streaming preview always uses a fixed tiny.en instance, "
-                "separate from the model chosen here."
+                "Whisper dictation can use a tiny.en live preview. Nemotron and "
+                "Moonshine provide native live previews in Meeting Mode."
             )
         )
 
@@ -420,7 +427,7 @@ class ModelManagerDialog(QDialog):
         )
 
     def _build_meeting_voice_page(self, layout: QVBoxLayout) -> None:
-        self.meeting_whisper_picker = LocalModelPicker()
+        self.meeting_whisper_picker = LocalModelPicker(include_speech_models=True)
         self.meeting_whisper_picker.model_changed.connect(
             self._on_meeting_set_active_clicked
         )
@@ -428,7 +435,7 @@ class ModelManagerDialog(QDialog):
             self.downloads_requested.emit
         )
         layout.addWidget(
-            self._field("Meeting Whisper model", self.meeting_whisper_picker)
+            self._field("Meeting speech model", self.meeting_whisper_picker)
         )
 
         self.meeting_language_combo = ElidingComboBox()
@@ -629,9 +636,11 @@ class ModelManagerDialog(QDialog):
 
     def _on_meeting_set_active_clicked(self, model_name: str) -> None:
         try:
-            settings_manager.save_setting(
-                SettingsKey.MEETING_WHISPER_MODEL, model_name
-            )
+            from services.local_asr.catalog import MODELS
+            if model_name in MODELS:
+                settings_manager.save_setting(SettingsKey.MEETING_ASR_MODEL, model_name)
+            else:
+                settings_manager.update_settings({SettingsKey.MEETING_ASR_MODEL: "", SettingsKey.MEETING_WHISPER_MODEL: model_name})
         except Exception as exc:
             logger.error("Couldn't set meeting Whisper model: %s", exc)
             self.message_label.setText(
@@ -650,6 +659,12 @@ class ModelManagerDialog(QDialog):
             self.on_backend_changed(display)
         self._update_engine_caption()
         self._update_ondemand_whisper_enabled()
+        self._refresh_rail_values()
+
+    def _on_speech_settings_changed(self):
+        self._refresh_meeting_runtime_label()
+        if self.on_runtime_settings_changed:
+            self.on_runtime_settings_changed()
         self._refresh_rail_values()
 
     def _on_api_model_changed(self, model: str) -> None:
@@ -1135,15 +1150,33 @@ class ModelManagerDialog(QDialog):
 
     def _update_engine_caption(self) -> None:
         value = self.engine_combo.currentData() or "local_whisper"
-        self.engine_caption.setText(_ENGINE_CAPTIONS.get(value, ""))
+        from services.local_asr.catalog import BACKENDS, DEFAULT_MODELS, MODELS
+        caption = MODELS[DEFAULT_MODELS[value]].purpose + ". Runs locally." if value in BACKENDS else _ENGINE_CAPTIONS.get(value, "")
+        self.engine_caption.setText(caption)
 
     def _update_ondemand_whisper_enabled(self) -> None:
         is_local = self.engine_combo.currentData() == "local_whisper"
         self.ondemand_whisper_picker.setEnabled(is_local)
         self.ondemand_whisper_field.setVisible(is_local)
-        self.api_model_field.setVisible(not is_local)
+        from services.local_asr.catalog import BACKENDS
+        backend = self.engine_combo.currentData()
+        is_speech = backend in BACKENDS
+        self.speech_controls.setVisible(is_speech)
+        self.speech_download_button.setVisible(is_speech)
+        if is_speech:
+            self.speech_controls.set_backend(backend)
+        self.api_model_field.setVisible(backend == "api")
 
     def _refresh_meeting_runtime_label(self) -> None:
+        from services.local_asr.catalog import MODELS, selected_device
+        model = resolve_meeting_whisper_model(self._settings_snapshot())
+        if model in MODELS:
+            device = selected_device(MODELS[model].backend, self._settings_snapshot())
+            self.meeting_runtime_label.setText(
+                f"Uses {MODELS[model].label} with its {device} device preference. "
+                "Set that engine's device under On-demand voice. Install its runtime and model in Downloads."
+            )
+            return
         device = self.device_combo.currentText() or "auto"
         compute = self.compute_combo.currentText() or "auto"
         self.meeting_runtime_label.setText(
@@ -1288,6 +1321,8 @@ class ModelManagerDialog(QDialog):
             for model_name in config.WHISPER_MODEL_CHOICES
             if model_name != "auto"
         }
+        from services.local_asr.catalog import MODELS
+        catalog_repos.update(resolve_model_repo(key) for key in MODELS)
         present = {
             repo: info for repo, info in cached.items() if repo in catalog_repos
         }
@@ -1305,16 +1340,20 @@ class ModelManagerDialog(QDialog):
             engine_display = (
                 f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
             )
-        else:
+        elif engine_value == "api":
             engine_display = f"API · {self.api_model_combo.currentText()}"
+        else:
+            engine_display = self.speech_controls.model_combo.currentText()
         self.rail.set_value(ONDEMAND_VOICE, engine_display)
         self.rail.set_value(
             ONDEMAND_TEXT,
             f"{profile_display_name(self._active_text_provider, self._settings_snapshot())}"
             f" · {self._active_text_model}",
         )
+        from services.local_asr.catalog import MODELS
+        meeting_model = self.meeting_whisper_picker.current_model()
         self.rail.set_value(
-            MEETING_VOICE, self.meeting_whisper_picker.current_model()
+            MEETING_VOICE, MODELS[meeting_model].label if meeting_model in MODELS else meeting_model
         )
         self.rail.set_value(
             MEETING_TEXT,

@@ -377,6 +377,27 @@ _CATALOG = {
     ),
 }
 
+from services.local_asr.catalog import MODELS as SPEECH_MODELS, artifacts as speech_artifacts
+for _key, _model in SPEECH_MODELS.items():
+    _spec = speech_artifacts(_key)
+    _source = ("https://github.com/moonshine-ai/moonshine" if _model.backend == "moonshine"
+               else "https://huggingface.co/" + _spec["repo"])
+    _CATALOG[_key] = ModelDetails(
+        model_name=_key, description=_model.purpose, origin_name=_model.label,
+        origin_url=_source, repository_id=_spec["repo"], repository_url=_source,
+        maintainer=_spec["repo"].split("/")[0], family=_model.backend,
+        language_support=_model.languages, task_support="Speech transcription",
+        parameter_count=("123 million" if _key == "moonshine-small" else "245 million" if _key == "moonshine-medium" else "1.7 billion" if _key == "qwen-1.7b" else "600 million"), relative_performance="Measure on your hardware; published throughput is not dictation latency.",
+        memory_guidance="CPU RAM / GPU memory use depends on model and audio length.",
+        download_size_mb=round(sum(f["size_bytes"] for f in _spec["files"])/1_000_000),
+        runtime_format="GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
+        license=_model.license, best_for=_model.purpose,
+        limitations=("Requires its optional Windows x64 runtime from Downloads.",
+                     "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
+                     "English only; CPU execution." if _model.backend == "moonshine" else
+                     "CPU and NVIDIA GPU use separately installed runtimes."),
+        source_urls=(_source, "https://github.com/NVIDIA/NeMo-Speech.cpp" if _model.backend in ("parakeet", "nemotron") else ("https://github.com/QwenLM/Qwen3-ASR" if _model.backend == "qwen_asr" else "https://moonshine-voice.readthedocs.io/")),
+    )
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 
 

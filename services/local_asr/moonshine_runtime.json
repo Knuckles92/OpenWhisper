@@ -1,0 +1,120 @@
+{
+  "version": "2026-09-04.1",
+  "component_api": 1,
+  "platform": "win_amd64",
+  "install_bytes": 103019750,
+  "archives": [
+    {
+      "name": "python-3.12.10-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+      "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+      "size_bytes": 11133606,
+      "extract": "zip"
+    },
+    {
+      "name": "moonshine_voice-0.1.5-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/ea/05/ad3457baa56170a13829c98327598a4d99d6cd4bdff8ae59df4c47ebdd11/moonshine_voice-0.1.5-py3-none-win_amd64.whl",
+      "sha256": "7fc9a84e827360ddb85c2735f44a1502c5575c27dcb476a2555646cd20a70e9d",
+      "size_bytes": 16542073,
+      "extract": "zip"
+    },
+    {
+      "name": "filelock-3.32.5-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/36/d2/b70a31e13d04456d28493f31d2aa087e99eeb2767ef0293b2625727ccb8c/filelock-3.32.5-py3-none-any.whl",
+      "sha256": "142cd9fa77a872c5e78c62329a0d15278fadc686eb89e760017968961a4fd6b2",
+      "size_bytes": 100003,
+      "extract": "zip"
+    },
+    {
+      "name": "google_crc32c-1.8.0-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/df/c0/87c2073e0c72515bb8733d4eef7b21548e8d189f094b5dad20b0ecaf64f6/google_crc32c-1.8.0-cp312-cp312-win_amd64.whl",
+      "sha256": "3cc0c8912038065eafa603b238abf252e204accab2a704c63b9e14837a854962",
+      "size_bytes": 34437,
+      "extract": "zip"
+    },
+    {
+      "name": "numpy-2.5.2-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/7f/b9/87fea2769fe1c47c1b5b01d8310772c9d1a85d485de7cf386ef7a3332b02/numpy-2.5.2-cp312-cp312-win_amd64.whl",
+      "sha256": "28ac63476ec7651484215ee7fa15a1f78b57c14621f01e392afe17b9a1390ce4",
+      "size_bytes": 12464674,
+      "extract": "zip"
+    },
+    {
+      "name": "platformdirs-4.11.7-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/27/6e/80993e10a0482f630cef528635789233224f36b1ffd11592aa15d13ff9ce/platformdirs-4.11.7-py3-none-any.whl",
+      "sha256": "8a02cb259042c79d1cd0450facc2fe6dc9d303ae7901afbe33bf8ea0b188cef6",
+      "size_bytes": 23938,
+      "extract": "zip"
+    },
+    {
+      "name": "requests-2.34.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "size_bytes": 73075,
+      "extract": "zip"
+    },
+    {
+      "name": "charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/9d/7a/4c6c298171e6b3e745633180ff59350fc0ca0db1ffd28df1e369e0579f71/charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+      "sha256": "3617ac3cfd8b9888f145ad89dd6e692285834b0201c6074a5eeaad3fd4d668c2",
+      "size_bytes": 200551,
+      "extract": "zip"
+    },
+    {
+      "name": "idna-3.19-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl",
+      "sha256": "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4",
+      "size_bytes": 68550,
+      "extract": "zip"
+    },
+    {
+      "name": "urllib3-2.7.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
+      "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
+      "size_bytes": 131087,
+      "extract": "zip"
+    },
+    {
+      "name": "certifi-2026.7.22-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "size_bytes": 136983,
+      "extract": "zip"
+    },
+    {
+      "name": "sounddevice-0.5.6-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/8d/3e/cbc593c31a5f0d817b3fe97e64aa8461bd0f55cb07b67ce1b776296ae336/sounddevice-0.5.6-py3-none-win_amd64.whl",
+      "sha256": "7f4162f514f007b0bf25a3ccfed3f1705bc2ec311888a90232729eec4f57a4f4",
+      "size_bytes": 1009630,
+      "extract": "zip"
+    },
+    {
+      "name": "cffi-2.1.1-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/d9/79/615cc094e2fb508cade7de88d3b4f6c4ec2bab695c97bce9153dc65aadf5/cffi-2.1.1-cp312-cp312-win_amd64.whl",
+      "sha256": "f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a",
+      "size_bytes": 185919,
+      "extract": "zip"
+    },
+    {
+      "name": "pycparser-3.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+      "size_bytes": 48172,
+      "extract": "zip"
+    },
+    {
+      "name": "tqdm-4.70.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl",
+      "sha256": "7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953",
+      "size_bytes": 80184,
+      "extract": "zip"
+    },
+    {
+      "name": "colorama-0.4.6-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "size_bytes": 25335,
+      "extract": "zip"
+    }
+  ]
+}

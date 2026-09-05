@@ -71,6 +71,10 @@ class SettingsKey:
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
+    LOCAL_ASR_MODELS: Final[str] = "local_asr_models"
+    LOCAL_ASR_DEVICES: Final[str] = "local_asr_devices"
+    LOCAL_ASR_LANGUAGE: Final[str] = "local_asr_language"
+    MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
     WHISPER_MODEL: Final[str] = "whisper_model"
     WHISPER_DEVICE: Final[str] = "whisper_device"
     WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
@@ -789,6 +793,10 @@ def resolve_meeting_whisper_model(
     if settings is None:
         settings = settings_manager.load_all_settings()
 
+    from services.local_asr.catalog import MODELS
+    extra = settings.get(SettingsKey.MEETING_ASR_MODEL)
+    if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
+        return extra
     model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
     if isinstance(model, str) and model in config.WHISPER_MODEL_CHOICES:
         return model

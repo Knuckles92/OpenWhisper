@@ -58,6 +58,13 @@ MODEL_DOWNLOAD_SIZE_MB: Final[Dict[str, int]] = {
 }
 
 
+from services.local_asr.catalog import MODELS as _SPEECH_MODELS, artifacts as _speech_artifacts
+MODEL_DOWNLOAD_SIZE_MB.update({
+    key: round(sum(f["size_bytes"] for f in _speech_artifacts(key)["files"])/1_000_000)
+    for key in _SPEECH_MODELS
+})
+
+
 class AccessDecision:
     """Outcome of evaluating a model request against cache and policy."""
     LOAD_CACHED: Final[str] = "load_cached"
@@ -80,6 +87,9 @@ class ConsentAction:
 
 def resolve_model_repo(model_name: str) -> str:
     """Resolve a faster-whisper name to its Hugging Face repository ID."""
+    from services.local_asr.catalog import MODELS, artifacts
+    if model_name in MODELS:
+        return artifacts(model_name)["repo"]
     try:
         from faster_whisper.utils import _MODELS
         return _MODELS.get(model_name, model_name)
@@ -89,12 +99,14 @@ def resolve_model_repo(model_name: str) -> str:
 
 def format_download_size(model_name: str) -> Optional[str]:
     """Return the bundled approximate download size, if known."""
-    size_mb = MODEL_DOWNLOAD_SIZE_MB.get(model_name)
+    from services.local_asr.catalog import MODELS, artifacts
+    size_mb = (sum(f["size_bytes"] for f in artifacts(model_name)["files"])/1_000_000
+               if model_name in MODELS else MODEL_DOWNLOAD_SIZE_MB.get(model_name))
     if size_mb is None:
         return None
     if size_mb >= 1000:
         return f"~{size_mb / 1000:.1f} GB"
-    return f"~{size_mb} MB"
+    return f"~{size_mb:.0f} MB"
 
 
 def is_model_cached(model_name: str) -> bool:
@@ -105,6 +117,10 @@ def is_model_cached(model_name: str) -> bool:
     files) raise and are treated as missing.
 
     """
+    from services.local_asr.catalog import MODELS
+    if model_name in MODELS:
+        from services.local_asr.cache import is_cached
+        return is_cached(model_name)
     if os.path.isdir(model_name):
         return True
     try:
@@ -163,6 +179,12 @@ def download_model_files(
     Failures must leave the model missing, never silently substituted.
     """
     from faster_whisper.utils import _MODELS, disabled_tqdm
+    from services.local_asr.catalog import MODELS
+    if model_name in MODELS:
+        from services.local_asr.cache import download
+        result = download(model_name, progress_callback)
+        invalidate_cached_models_snapshot()
+        return result
     from huggingface_hub import snapshot_download
 
     if "/" in model_name:
@@ -290,6 +312,11 @@ def scan_cached_models(
         with _cache_scan_condition:
             _cache_scan_in_progress = False
             if scan_epoch == _cache_scan_epoch:
+                from services.local_asr.cache import inventory
+                from services.local_asr.catalog import MODELS, artifacts
+                for key in MODELS:
+                    cached.pop(artifacts(key)["repo"], None)
+                cached.update(inventory())
                 _cached_model_snapshot = dict(cached)
                 _cached_model_snapshot_at = time.monotonic()
                 _cache_scan_condition.notify_all()
@@ -306,6 +333,12 @@ def delete_model_from_cache(model_name: str) -> None:
     blobs are all cleaned up (never a manual directory removal).
 
     """
+    from services.local_asr.catalog import MODELS
+    if model_name in MODELS:
+        from services.local_asr.cache import delete
+        delete(model_name)
+        invalidate_cached_models_snapshot()
+        return
     from huggingface_hub import scan_cache_dir
 
     repo_id = resolve_model_repo(model_name)

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { scrollChildIntoView } from '../scroll';
-import type { Participant, Segment } from '../types';
+import type { Participant, Segment, SpeechPreviewMsg } from '../types';
 
 interface TranscriptPaneProps {
   segments: Segment[];
+  previews?: SpeechPreviewMsg[];
   participants: Participant[];
   highlightSegmentId: string | null;
   onHighlightClear: () => void;
@@ -33,6 +34,7 @@ function speakerLabel(participants: Participant[], participantId: string | null,
 
 export default function TranscriptPane({
   segments,
+  previews = [],
   participants,
   highlightSegmentId,
   onHighlightClear,
@@ -74,6 +76,15 @@ export default function TranscriptPane({
       </div>
       {headerExtra && <div className="no-print">{headerExtra}</div>}
       <div className="panel-body">
+        {!readOnly && previews.filter(p => p.text.trim()).map(p => (
+          <div className="segment no-print" key={p.channel} aria-live="polite">
+            <time className="segment-time">{formatTime(p.start_s)}</time>
+            <div>
+              <div className="segment-meta">{p.channel === 'mic' ? 'Me' : 'Others'} · Live preview</div>
+              <p className="segment-text">{p.text}</p>
+            </div>
+          </div>
+        ))}
         {sorted.length === 0 ? (
           <p className="empty-state">
             {readOnly ? 'No transcript was captured.' : 'Waiting for speech…'}

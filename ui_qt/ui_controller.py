@@ -134,6 +134,7 @@ class UIController(QObject):
         self.on_model_batch_stop: Optional[Callable] = None
         self.on_dictation_transcribe: Optional[Callable] = None
         self.get_loaded_local_model: Optional[Callable] = None
+        self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
         self.on_component_cancel: Optional[Callable] = None
@@ -341,10 +342,12 @@ class UIController(QObject):
         self.hide_overlay()
 
     def _apply_status_to_main_window(self, status: str):
-        if self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
+        if self._upload_job_active():
             self.main_window.upload_file_tab.set_status(status)
         else:
             self.main_window.set_status(status)
+            if self.main_window.quick_record_tab._engine_busy:
+                self.main_window.upload_file_tab.set_engine_message(status)
 
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
@@ -405,8 +408,8 @@ class UIController(QObject):
         Args:
             busy: True to disable combos while the engine reloads, else False.
         """
-        self.main_window.quick_record_tab.local_engine.set_busy(busy)
-        self.main_window.upload_file_tab.local_engine.set_busy(busy)
+        self.main_window.quick_record_tab.set_engine_busy(busy)
+        self.main_window.upload_file_tab.set_engine_busy(busy)
         if not busy:
             self.refresh_model_manager()
 
@@ -443,6 +446,8 @@ class UIController(QObject):
         """
         if self._upload_job_active() and self._route_upload_progress(state):
             return
+
+        self.main_window.quick_record_tab.set_activity_state(state)
 
         if state is OverlayState.CANCELING:
             self.tray_manager.set_recording(False)
@@ -597,6 +602,7 @@ class UIController(QObject):
         }:
             return
         self.hide_overlay()
+        self.main_window.quick_record_tab.set_activity_state(OverlayState.NONE)
 
     def show_main_window(self):
         self.main_window.restore_from_tray()
@@ -709,7 +715,16 @@ class UIController(QObject):
                 ``\"meeting\"``, or ``\"runtime\"``. ``\"downloads\"`` and the
                 legacy ``\"library\"`` / ``\"voice\"`` open the Downloads
                 window, which now owns the catalog and components.
+                ``"engine_downloads"`` also focuses the selected engine's
+                missing runtime, when one has been reported.
         """
+        if tab == "engine_downloads":
+            component_id = (
+                self.get_missing_local_runtime()
+                if self.get_missing_local_runtime else None
+            )
+            self.open_downloads_dialog(component_id=component_id)
+            return
         if tab in ("downloads", "library", "voice"):
             self.open_downloads_dialog()
             return
@@ -741,7 +756,7 @@ class UIController(QObject):
             self._model_manager_dialog = dialog
         return self._model_manager_dialog
 
-    def open_downloads_dialog(self):
+    def open_downloads_dialog(self, component_id: Optional[str] = None):
         """Show the non-modal Downloads window (single instance, re-raised)."""
         from ui_qt.dialogs.downloads_dialog import DownloadsDialog
 
@@ -767,6 +782,8 @@ class UIController(QObject):
 
         self._downloads_dialog.refresh()
         self._raise_dialog(self._downloads_dialog)
+        if component_id:
+            self._downloads_dialog.focus_component(component_id)
 
     @staticmethod
     def _raise_dialog(dialog) -> None:

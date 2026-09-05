@@ -156,6 +156,7 @@ class AppConfig:
     MODEL_CHOICES: Tuple[str, ...] = (
         'Local Whisper',
         'API',
+        'Parakeet', 'Qwen3-ASR', 'Nemotron Streaming', 'Moonshine',
     )
 
     MODEL_VALUE_MAP: Dict[str, str] = None
@@ -387,6 +388,8 @@ class AppConfig:
             self.MODEL_VALUE_MAP = {
                 'Local Whisper': 'local_whisper',
                 'API': 'api',
+                'Parakeet': 'parakeet', 'Qwen3-ASR': 'qwen_asr',
+                'Nemotron Streaming': 'nemotron', 'Moonshine': 'moonshine',
             }
 
         if self.WHISPER_MODEL_CHOICES is None:

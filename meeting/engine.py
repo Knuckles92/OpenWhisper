@@ -2007,6 +2007,9 @@ class MeetingEngine:
                 return
             try:
                 spool.feed(block)
+                feed_preview = getattr(self._asr, "feed_preview", None)
+                if callable(feed_preview):
+                    feed_preview(block, self.clock.meeting_time(block.t_mono))
             except Exception:
                 if not error_logged[0]:
                     error_logged[0] = True
@@ -2027,6 +2030,9 @@ class MeetingEngine:
                 logger.exception("Capture source stop failed")
 
     def _flush_spools(self) -> None:
+        stop_preview = getattr(self._asr, "stop_preview", None)
+        if callable(stop_preview):
+            stop_preview()
         with self._capture_lock:
             spools = list(self._spools.values())
         for spool in spools:
@@ -2277,6 +2283,10 @@ class MeetingEngine:
             return
         asr.start(self._on_chunk_result)
         self._asr = asr
+        self._preview_frontiers = {}
+        start_preview = getattr(asr, "start_preview", None)
+        if callable(start_preview):
+            start_preview(self._on_speech_preview)
         requeue = getattr(asr, "requeue_pending", None)
         if callable(requeue):
             try:
@@ -2285,6 +2295,11 @@ class MeetingEngine:
                 logger.exception("requeue_pending failed")
         else:
             logger.debug("ASR engine exposes no requeue_pending; skipping")
+
+    def _on_speech_preview(self, payload) -> None:
+        frontier = getattr(self, "_preview_frontiers", {}).get(payload["channel"], -1)
+        if self._active and payload["end_s"] > frontier:
+            self._broadcast({"type": "speech_preview", **payload})
 
     def _on_chunk_result(
         self, chunk: SpooledChunk, segments: List[TranscriptSegment]
@@ -2299,6 +2314,12 @@ class MeetingEngine:
         )
         if not committed:
             return
+        frontier = chunk.start_s + chunk.duration_s
+        frontiers = getattr(self, "_preview_frontiers", {})
+        frontiers[chunk.channel] = max(frontiers.get(chunk.channel, 0), frontier)
+        self._preview_frontiers = frontiers
+        self._broadcast({"type": "speech_preview", "channel": chunk.channel,
+                         "text": "", "start_s": chunk.start_s, "end_s": frontier, "final": True})
         scheduler = self._scheduler
         if scheduler is not None:
             try:

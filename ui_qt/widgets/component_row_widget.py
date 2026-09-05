@@ -209,22 +209,22 @@ class ComponentRowWidget(QFrame):
         identity = QVBoxLayout()
         identity.setSpacing(2)
 
-        self.name_label = QLabel(self.component_id)
+        from ui_qt.widgets.eliding_label import ElidingLabel
+        self.name_label = ElidingLabel(self.component_id)
         self.name_label.setObjectName("componentRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
         self.name_label.setFont(name_font)
         identity.addWidget(self.name_label)
 
-        self.summary_label = QLabel("")
+        self.summary_label = ElidingLabel("")
         self.summary_label.setObjectName("componentRowSummary")
         self.summary_label.setFont(QFont("Segoe UI", 8))
-        self.summary_label.setWordWrap(True)
         identity.addWidget(self.summary_label)
 
         row.addLayout(identity, stretch=1)
 
-        self.size_label = QLabel("")
+        self.size_label = ElidingLabel("")
         self.size_label.setObjectName("componentRowSize")
         self.size_label.setFont(QFont("Segoe UI", 9))
         self.size_label.setMinimumWidth(110)

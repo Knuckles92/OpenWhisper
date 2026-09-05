@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a problem with transcription, recordings, meetings, or the app.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce, expected behavior, and the error shown.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version and installation
+      description: Include the version or source commit and whether you use an installer or source checkout.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and hardware
+      description: Include OS/version, CPU, and GPU/VRAM if relevant. The additional speech runtimes currently require Windows x64.
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Transcription backend
+      options:
+        - Not applicable / unsure
+        - Local Whisper
+        - API
+        - Parakeet
+        - Qwen3-ASR
+        - Nemotron Streaming
+        - Moonshine
+  - type: input
+    id: model
+    attributes:
+      label: Model and actual device
+      description: Copy the Model and device/status values. For meetings, include the separately selected meeting model. Mention installed speech runtime components if loading failed.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Relevant logs or screenshots
+      description: Include only relevant diagnostics; remove API keys and private transcript content.

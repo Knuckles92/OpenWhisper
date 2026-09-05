@@ -853,3 +853,15 @@ class TestApiModelSelection(_DialogTestCase):
         assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
         dialog.refresh()
         assert requested == ["API"]
+
+
+class TestOptionalSpeechSummary(_DialogTestCase):
+    def test_rail_reports_optional_family_and_meeting_model(self):
+        dialog, _ = self._make_dialog(extra_settings={
+            SettingsKey.SELECTED_MODEL: "parakeet",
+            SettingsKey.MEETING_ASR_MODEL: "moonshine-small",
+        })
+        assert dialog.rail.value(ONDEMAND_VOICE) == "Parakeet TDT 0.6B v3"
+        assert dialog.rail.value(MEETING_VOICE) == "Moonshine Streaming Small"
+        dialog.engine_combo.setCurrentIndex(dialog.engine_combo.findData("moonshine"))
+        assert "Moonshine" in dialog.rail.value(ONDEMAND_VOICE)

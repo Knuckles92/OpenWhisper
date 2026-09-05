@@ -13,6 +13,7 @@ import {
   type Role,
   type Segment,
   type ServerMessage,
+  type SpeechPreviewMsg,
 } from './types';
 import type { SocketStatus } from './ws';
 
@@ -24,6 +25,7 @@ export interface MeetingUiState {
   participantId: string | null;
   state: MeetingStateDoc | null;
   segments: Segment[];
+  speechPreviews: Record<string, SpeechPreviewMsg>;
   meeting: MeetingInfo | null;
   guestUrl: string | null;
   socketStatus: SocketStatus;
@@ -42,6 +44,7 @@ export const initialUiState: MeetingUiState = {
   participantId: null,
   state: null,
   segments: [],
+  speechPreviews: {},
   meeting: null,
   guestUrl: null,
   socketStatus: 'closed',
@@ -180,7 +183,8 @@ export type UiAction =
 export function meetingReducer(state: MeetingUiState, action: UiAction): MeetingUiState {
   switch (action.type) {
     case 'socket_status':
-      return { ...state, socketStatus: action.status };
+      return { ...state, socketStatus: action.status,
+        speechPreviews: action.status === 'open' ? state.speechPreviews : {} };
 
     case 'clear_error':
       return { ...state, lastError: null };
@@ -198,6 +202,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
           const h = msg as HelloMsg;
           return {
             ...state,
+            speechPreviews: {},
             role: h.role,
             participantId: h.participant_id,
             state: h.state,
@@ -241,6 +246,12 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             segments: nextSegments,
             lastSeqByTarget: trackSeqs(state.lastSeqByTarget, msg.results),
           };
+        }
+        case 'speech_preview': {
+          const previous = state.speechPreviews[msg.channel];
+          if (state.meetingEnded || msg.end_s < (previous?.end_s ?? -1)) return state;
+          if (previous && !previous.text && previous.end_s === msg.end_s && msg.text) return state;
+          return { ...state, speechPreviews: { ...state.speechPreviews, [msg.channel]: msg } };
         }
         case 'segments': {
           const withUpserts = mergeSegments(state.segments, msg.items ?? []);

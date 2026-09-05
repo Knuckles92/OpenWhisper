@@ -286,7 +286,7 @@ class DownloadsDialog(QDialog):
         self.message_row.addWidget(self.stop_batch_button)
         layout.addLayout(self.message_row)
 
-        layout.addWidget(self._build_component_strip())
+        # Runtime rows live inside the existing catalog scroller.
 
     def _build_catalog_column(self) -> QWidget:
         """Stack the filters directly above the rows they filter."""
@@ -378,7 +378,8 @@ class DownloadsDialog(QDialog):
         self.list_layout.setSpacing(6)
 
         self.rows: Dict[str, ModelRowWidget] = {}
-        for model_name in config.WHISPER_MODEL_CHOICES:
+        from services.local_asr.catalog import MODELS
+        for model_name in [*config.WHISPER_MODEL_CHOICES, *MODELS]:
             if model_name == "auto":
                 continue
             row = ModelRowWidget(model_name)
@@ -394,6 +395,7 @@ class DownloadsDialog(QDialog):
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setVisible(False)
         self.list_layout.addWidget(self.empty_label)
+        self.list_layout.addWidget(self._build_component_strip())
         self.list_layout.addStretch()
 
         self.library_scroll_area.setWidget(list_container)
@@ -447,11 +449,11 @@ class DownloadsDialog(QDialog):
         eyebrow.setObjectName("downloadsEyebrow")
         outer.addWidget(eyebrow)
 
-        self.inspector_name = QLabel("—")
+        self.inspector_name = ElidingLabel("—")
         self.inspector_name.setObjectName("downloadsInspectorName")
         outer.addWidget(self.inspector_name)
 
-        self.inspector_tags = QLabel("")
+        self.inspector_tags = ElidingLabel("")
         self.inspector_tags.setObjectName("downloadsInspectorTags")
         self.inspector_tags.setVisible(False)
         outer.addWidget(self.inspector_tags, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -623,7 +625,8 @@ class DownloadsDialog(QDialog):
             self._set_inspector_enabled(False)
             return
         self._set_inspector_enabled(True)
-        self.inspector_name.setText(details.model_name)
+        from services.local_asr.catalog import MODELS
+        self.inspector_name.setText(MODELS[details.model_name].label if details.model_name in MODELS else details.model_name)
         self.inspector_tags.setText(details.compact_tags)
         self.inspector_tags.setVisible(bool(details.compact_tags))
         self.inspector_description.setText(details.description)
@@ -631,6 +634,7 @@ class DownloadsDialog(QDialog):
         self.inspector_tradeoffs.setText(
             "\n".join(f"\u2022 {item}" for item in details.limitations)
         )
+        self.inspector_repo_button.setText("Hugging Face ↗" if "huggingface.co/" in details.repository_url else "Repository ↗")
         self.inspector_repo_button.setToolTip(details.repository_url)
         self.inspector_origin_button.setToolTip(details.origin_url)
 
@@ -652,6 +656,7 @@ class DownloadsDialog(QDialog):
             item = self.inspector_facts.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()
                 widget.deleteLater()
         self.fact_labels.clear()
         for index, (caption, value) in enumerate(rows):
@@ -698,7 +703,10 @@ class DownloadsDialog(QDialog):
             QDesktopServices.openUrl(QUrl(self._details.origin_url))
 
     def _on_open_cache_folder(self) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(get_hf_cache_dir()))
+        from services.local_asr.catalog import MODELS
+        from services.local_asr.cache import model_dir
+        path = str(model_dir(self._selected_model).parent) if self._selected_model in MODELS else get_hf_cache_dir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # ---- catalog actions ----
 
@@ -794,8 +802,8 @@ class DownloadsDialog(QDialog):
         if self.on_batch_cancel_requested:
             self.on_batch_cancel_requested()
 
-    def _show_component_details(self, component_id: str) -> None:
-        """Open the bundled profile popup for one component row."""
+    def focus_component(self, component_id: str) -> None:
+        """Bring a required runtime and its install action into view."""
         if component_id not in self._component_rows:
             return
         for cid, row in self._component_rows.items():
@@ -803,6 +811,15 @@ class DownloadsDialog(QDialog):
             row.style().unpolish(row)
             row.style().polish(row)
             row.update()
+        row = self._component_rows[component_id]
+        self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
+        row.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _show_component_details(self, component_id: str) -> None:
+        """Open the bundled profile popup for one component row."""
+        if component_id not in self._component_rows:
+            return
+        self.focus_component(component_id)
         dialog = ComponentDetailsDialog(component_id, self)
         dialog.exec()
         selected = self._component_rows.get(component_id)
@@ -863,12 +880,18 @@ class DownloadsDialog(QDialog):
         self,
         cached: Dict[str, CachedModelInfo],
     ) -> None:
+        from services.local_asr.cache import inventory
+        cached = {**cached, **inventory()}
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
         )
         if active_model not in config.WHISPER_MODEL_CHOICES:
             active_model = config.DEFAULT_WHISPER_MODEL
+        from services.local_asr.catalog import BACKENDS, selected_model
+        selected_backend = settings.get(SettingsKey.SELECTED_MODEL, "local_whisper")
+        if selected_backend in BACKENDS:
+            active_model = selected_model(selected_backend, settings)
         meeting_model = resolve_meeting_whisper_model(settings)
         loaded_model = self._get_loaded_model() if self._get_loaded_model else None
         dictation_resolved = active_model
@@ -917,7 +940,7 @@ class DownloadsDialog(QDialog):
             )
         else:
             self.stats_label.setText(
-                f"{len(seen_repos)} of {len(self.rows)} Whisper models · "
+                f"{len(seen_repos)} of {len(self.rows)} speech models · "
                 f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
             )
         self.refresh_components()

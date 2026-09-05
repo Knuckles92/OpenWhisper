@@ -85,6 +85,9 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
             logger.warning(f"Component '{component_id}' is not usable: {reason}")
             return False, reason
 
+        from services.local_asr.catalog import RUNTIME_IDS
+        if component_id in RUNTIME_IDS:
+            return True, ""
         bin_dir = os.path.join(component_dir(component_id), "bin")
         if os.path.isdir(bin_dir):
             if not register_dll_directory(bin_dir):

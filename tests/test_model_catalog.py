@@ -12,7 +12,8 @@ class TestModelCatalog:
     """Catalog coverage and internal consistency."""
 
     def test_catalog_covers_every_concrete_model(self):
-        expected = set(config.WHISPER_MODEL_CHOICES) - {"auto"}
+        from services.local_asr.catalog import MODELS
+        expected = (set(config.WHISPER_MODEL_CHOICES) - {"auto"}) | set(MODELS)
         assert set(MODEL_CATALOG) == expected
         with pytest.raises(KeyError):
             get_model_details("auto")
@@ -73,7 +74,7 @@ class TestModelCatalog:
             "distil-large-v2": "756 million",
             "distil-large-v3": "756 million",
         }
-        assert {name: item.parameter_count for name, item in MODEL_CATALOG.items()} == expected
+        assert {name: MODEL_CATALOG[name].parameter_count for name in expected} == expected
 
     def test_catalog_entries_are_immutable(self):
         details = get_model_details("base")

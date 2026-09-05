@@ -15,11 +15,12 @@ from services.settings import (
     resolve_api_transcription_model,
     settings_manager,
 )
+from ui_qt.overlay_state import OverlayState
 from ui_qt.utils.collapse_animation import SECTION_COLLAPSE_DURATION_MS
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.markdown_render import PREVIEW_STYLE, render_markdown
 from ui_qt.widgets.cards import HeaderCard
-from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
     EngineStatus,
     StatusDot,
@@ -74,6 +75,7 @@ class TranscriptionTabBase(QWidget):
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine chip changed
     manage_models_requested = pyqtSignal()  # "Manage models…" clicked
+    engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
 
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
@@ -94,6 +96,12 @@ class TranscriptionTabBase(QWidget):
         self._fixed_text = ""
         self._raw_text: Optional[str] = None
         self._showing_raw = False
+        self._device_info = ""
+        self._engine_status = EngineStatus.UNKNOWN
+        self._engine_busy = False
+        self._activity_state = OverlayState.NONE
+        self._status_message = self.INITIAL_STATUS
+        self._local_engine_visible = True
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
@@ -175,12 +183,11 @@ class TranscriptionTabBase(QWidget):
         self._field_row.addStretch(0)
         engine_layout.addLayout(self._field_row)
 
-        self.status_dot = StatusDot()
+        self.status_dot = StatusDot(diameter=16)
 
-        # Shows what "auto" actually resolved to after a model load, e.g.
-        # "turbo | cuda (float16)". Empty on the API backends.
-        self.resolved_label = ElidingLabel()
+        self.resolved_label = DownloadsLabel(self.INITIAL_STATUS)
         self.resolved_label.setObjectName("engineResolvedLabel")
+        self.resolved_label.downloads_requested.connect(self.engine_downloads_requested)
 
         self.cleanup_check = QCheckBox("AI cleanup")
         self.cleanup_check.setObjectName("engineCleanupCheck")
@@ -208,12 +215,6 @@ class TranscriptionTabBase(QWidget):
         content_layout.addWidget(self.engine_card)
 
         self._build_content_before_status(content_layout)
-
-        self.status_label = QLabel(self.INITIAL_STATUS)
-        self.status_label.setObjectName("statusLabel")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setFont(QFont("Segoe UI", 13))
-        content_layout.addWidget(self.status_label)
 
         self._build_content_after_status(content_layout)
 
@@ -284,10 +285,10 @@ class TranscriptionTabBase(QWidget):
         self.set_transcription_collapsed(True)
 
     def _build_content_before_status(self, layout: QVBoxLayout):
-        """Insert tab-specific widgets between the model card and status label."""
+        """Insert tab-specific widgets after the engine card."""
 
     def _build_content_after_status(self, layout: QVBoxLayout):
-        """Insert tab-specific widgets between the status label and transcription card."""
+        """Insert tab-specific widgets before the transcription card."""
 
     def _connect_signals(self):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
@@ -354,7 +355,8 @@ class TranscriptionTabBase(QWidget):
     def _on_backend_changed(self, display_name: str):
         self.current_model = display_name
         self.refresh_api_model()
-        self.set_local_engine_visible(display_name == "Local Whisper")
+        self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
+        self.set_local_engine_visible(display_name != "API")
         self.model_changed.emit(display_name)
 
     def choose_backend(self, display_name: str):
@@ -380,7 +382,8 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.blockSignals(False)
         self.current_model = display_name
         self.refresh_api_model()
-        self.set_local_engine_visible(display_name == "Local Whisper")
+        self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
+        self.set_local_engine_visible(display_name != "API")
 
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""
@@ -395,24 +398,68 @@ class TranscriptionTabBase(QWidget):
                 break
 
     def set_status(self, status_text: str):
-        self.status_label.setText(status_text)
+        self.set_engine_message(status_text)
+
+    def set_engine_message(self, status_text: str) -> None:
+        self._status_message = status_text
+        if status_text in ("Ready", "Ready to record", "Whisper engine ready"):
+            self._status_message = ""
+        self._refresh_engine_status()
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
-        """Set the resolved-engine readout (e.g., 'base | cuda (float16)').
+        """Update the idle readout and readiness from a completed engine probe."""
+        self._device_info = device_info
+        self._status_message = ""
+        self._engine_status = (
+            EngineStatus.UNKNOWN if ready is None
+            else EngineStatus.READY if ready else EngineStatus.ATTENTION
+        )
+        self._refresh_engine_status()
 
-        Args:
-            device_info: Device information string to display. Empty clears the
-                line, which is what the API backends report.
-            ready: Whether the engine is loaded and usable. ``None`` leaves the
-                dots neutral, which is the honest reading before a first load.
-        """
-        self.resolved_label.setText(device_info)
-        if ready is None:
-            status = EngineStatus.UNKNOWN
-        else:
-            status = EngineStatus.READY if ready else EngineStatus.ATTENTION
-        self.status_dot.set_status(status)
-        self._apply_backend_status(status)
+    def set_engine_busy(self, busy: bool) -> None:
+        self.local_engine.set_busy(busy)
+        self._engine_busy = busy
+        if busy:
+            self._status_message = "Loading speech engine..."
+        elif self._status_message in (
+            "Loading speech engine...", "Reloading speech engine...",
+        ):
+            self._status_message = ""
+        self._refresh_engine_status()
+
+    def set_activity_state(self, state: OverlayState) -> None:
+        """Drive activity feedback from the same explicit state as the overlay."""
+        messages = {
+            OverlayState.RECORDING: "Recording...",
+            OverlayState.PROCESSING: "Processing...",
+            OverlayState.TRANSCRIBING: "Transcribing...",
+            OverlayState.CLEANING: "Cleaning up...",
+            OverlayState.CANCELING: "Canceling...",
+        }
+        previous = self._activity_state
+        self._activity_state = state
+        if state in messages:
+            self._status_message = messages[state]
+        elif self._status_message == messages.get(previous):
+            self._status_message = ""
+        self._refresh_engine_status()
+
+    def _refresh_engine_status(self) -> None:
+        busy = self._engine_busy or self._activity_state in (
+            OverlayState.PROCESSING, OverlayState.TRANSCRIBING,
+            OverlayState.CLEANING, OverlayState.CANCELING,
+        )
+        message = self._status_message or (
+            "Loading speech engine..." if self._engine_busy else self._device_info
+        )
+        self.resolved_label.setText(message or self.INITIAL_STATUS)
+        self.resolved_label.setAccessibleName(message or self.INITIAL_STATUS)
+        self.status_dot.set_status(self._engine_status)
+        self.status_dot.set_busy(busy)
+        self.status_dot.setVisible(self._local_engine_visible or busy)
+        self._apply_backend_status(
+            EngineStatus.UNKNOWN if self._engine_busy else self._engine_status
+        )
 
     def _apply_backend_status(self, status: EngineStatus):
         self.model_combo.set_status(status)
@@ -422,7 +469,8 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.setVisible(visible)
         self.api_model_field.setVisible(not visible)
         self._field_row.setStretch(self._field_filler_index, 0 if visible else 2)
-        self.status_dot.setVisible(visible)
+        self._local_engine_visible = visible
+        self._refresh_engine_status()
         self.model_combo.set_status_visible(visible)
 
     def _apply_transcription_stretch(self, collapsed: bool):

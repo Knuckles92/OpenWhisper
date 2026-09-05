@@ -537,7 +537,13 @@ def rerun_redecode(
             from transcriber.local_backend import LocalWhisperBackend
 
             leased = acquire_model_lease(model_lease)
-            backend = LocalWhisperBackend(model_name=asr_model_name or "auto")
+            from services.local_asr.catalog import MODELS
+            if asr_model_name in MODELS:
+                from transcriber.optional_backend import LocalSpeechBackend
+                backend = LocalSpeechBackend(MODELS[asr_model_name].backend, model_name=asr_model_name)
+                backend.reload_model()
+            else:
+                backend = LocalWhisperBackend(model_name=asr_model_name or "auto")
             if not backend.is_available() or getattr(backend, "model", None) is None:
                 missing = bool(getattr(backend, "is_model_missing", False))
                 return {

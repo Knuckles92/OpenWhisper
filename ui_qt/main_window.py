@@ -427,6 +427,9 @@ class MainWindow(QMainWindow):
             tab.manage_models_requested.connect(
                 lambda: self.model_manager_requested.emit("downloads")
             )
+            tab.engine_downloads_requested.connect(
+                lambda: self.model_manager_requested.emit("engine_downloads")
+            )
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
 
@@ -811,7 +814,9 @@ class MainWindow(QMainWindow):
         self.model_changed.emit(model_name)
 
     def _apply_local_engine_visibility(self, model_name: str):
-        is_local = config.MODEL_VALUE_MAP.get(model_name) == "local_whisper"
+        from services.local_asr.catalog import BACKENDS
+        backend = config.MODEL_VALUE_MAP.get(model_name)
+        is_local = backend == "local_whisper" or backend in BACKENDS
         for tab in self.transcription_tabs:
             tab.set_local_engine_visible(is_local)
 

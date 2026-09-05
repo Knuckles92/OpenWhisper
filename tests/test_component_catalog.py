@@ -20,7 +20,8 @@ class TestComponentCatalog:
             ComponentId.MEETING_AGENT,
             ComponentId.SPEAKER_ID,
         }
-        assert set(COMPONENT_CATALOG) == expected
+        from services.local_asr.catalog import RUNTIME_IDS
+        assert set(COMPONENT_CATALOG) == expected | set(RUNTIME_IDS)
         with pytest.raises(KeyError):
             get_component_details("not-a-component")
 

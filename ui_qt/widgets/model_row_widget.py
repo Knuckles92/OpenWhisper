@@ -235,7 +235,8 @@ class ModelRowWidget(QFrame):
         identity = QVBoxLayout()
         identity.setSpacing(2)
 
-        name_label = ElidingLabel(self.model_name)
+        from services.local_asr.catalog import MODELS
+        name_label = ElidingLabel(MODELS[self.model_name].label if self.model_name in MODELS else self.model_name)
         name_label.setObjectName("modelRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
@@ -307,6 +308,10 @@ class ModelRowWidget(QFrame):
         self.progress.hide()
 
     def _model_summary(self) -> str:
+        from services.local_asr.catalog import MODELS
+        if self.model_name in MODELS:
+            model = MODELS[self.model_name]
+            return model.languages + (" / Live meetings" if model.streaming else "")
         language = "English only" if self.model_name.endswith(".en") else "Multilingual"
         family = "Distilled" if self.model_name.startswith("distil-") else ""
         return " / ".join(part for part in (language, family) if part)

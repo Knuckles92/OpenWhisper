@@ -234,6 +234,20 @@ not only open the DMG on the CI host.
 The macOS DMG is CPU-only and unnotarized. Intel Macs are out of scope for this
 artifact.
 
+## Validate optional Windows speech backends
+
+For a release containing the backend expansion, use a fresh Windows x64 installation and the runtime/model downloads offered by that build. Source-worker tests alone do not validate the frozen distribution.
+
+- Confirm the bundle contains `services/local_asr` worker source and JSON manifests, while optional PyTorch/Qwen/Moonshine SDKs and weights remain outside the base installer.
+- Install NVIDIA Speech CPU/GPU, Qwen3-ASR runtime, and Moonshine runtime through Downloads. Verify their version, hashes, disk checks, cancel/retry behavior, and removal/reinstallation.
+- Download and transcribe with all six new model choices: Parakeet v3, Qwen 0.6B/1.7B, Nemotron 3.5, and Moonshine Small/Medium. Check actual CPU and NVIDIA devices where supported; Moonshine remains CPU-only.
+- Exercise dictation and Upload File, long audio, silence, canceled inference, backend switches, missing runtimes, and a restart with models cached and networking unavailable. Keep the model-download policy and hard offline override effective.
+- Run meetings with Parakeet, Nemotron, and Moonshine; verify native previews for the latter two, final flush, durable transcript integrity, and engine restoration after stopping or failure. Qwen must not appear as a meeting choice.
+- Check current Whisper/API settings survive upgrade, and on-demand/meeting model selections remain independent. Verify CPU/NVIDIA family preferences are accurately displayed.
+- Keep the full model reference, setup guide, third-party notices, About description, issue form, and next release notes aligned with the packaged capabilities. Remove the version-specific Unreleased notices only when compatible installers are available. Do not add these features to old 2.5.2 release notes.
+
+The checked-in source benchmarks are evidence from one Windows machine, not proof of frozen packaging or broad accuracy. Preserve their hardware/sample limitations in release messaging.
+
 ## Draft, then publish
 
 Before publishing, confirm:

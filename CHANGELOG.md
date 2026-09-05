@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Transcription backend choices are now **Local Whisper** and **API**, with a separate API model selector in both transcription tabs and Model Manager. Existing API selections retain their model.
+- Cloud transcription choices are grouped under **API**, with a separate API model selector in both transcription tabs and Model Manager. Existing API selections retain their model.
 - Added **GPT-Transcribe** as the default for new API selections, alongside GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper, with JSON response handling for single files and chunked uploads.
 
 ### Added
+- Four optional local speech backends on Windows x64: Parakeet TDT v3, Qwen3-ASR (0.6B/1.7B), Nemotron 3.5 Streaming, and Moonshine Streaming (Small/Medium). Model Manager and Downloads include independent selections, verified runtime/model installation, CPU/NVIDIA device controls, cancellation, and offline inference.
+- Nemotron and Moonshine live Meeting Mode previews, plus Parakeet meeting transcription, with engine release/restoration and compatible recovery/refinalization.
+- Reproducible local transcription benchmarks and measured comparisons against Whisper Base CPU and Turbo GPU.
 - Meeting finalization offers **Continue in the background** after local transcription finishes, freeing Meeting Mode for another session while cleanup and reports finish. Background outcomes remain available in Past Meetings.
 
 ## [2.5.2] - 2026-09-04

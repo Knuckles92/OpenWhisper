@@ -56,6 +56,7 @@ def _distribution_license(package, suffix, destination):
 # use different licenses and ship their texts in separate wheel metadata trees,
 # which PyInstaller does not otherwise retain.
 datas = [
+    ("services/local_asr", "services/local_asr"),
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "webui" / "dist"), "webui/dist"),

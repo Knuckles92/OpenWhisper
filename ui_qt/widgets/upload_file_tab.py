@@ -981,10 +981,6 @@ class UploadFileTab(TranscriptionTabBase):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # This tab has no status line: the drop zone, the card, and the
-        # progress panel each say their own state, so a line under the card
-        # only repeated one of them.
-        self.status_label.hide()
 
         self._viewer = None
         self._batch_result: BatchResult | None = None

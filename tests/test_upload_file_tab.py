@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
 from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
+from config import config
 from services.audio_processor import AudioFilePreview
 from services.batch_upload import BatchRelation
 from services.format_utils import format_sample_rate
@@ -470,9 +471,7 @@ class TestUploadFileTab:
         assert tab.scroll_area.widgetResizable()
         assert not tab.drop_zone.isHidden()
         assert tab.file_info_card.isHidden()
-        # The drop zone, the card, and the progress panel each say their own
-        # state; the shared status line stays out of this tab.
-        assert tab.status_label.isHidden()
+        assert tab.findChild(QLabel, "statusLabel") is None
         assert tab.drop_zone.notice.isHidden()
         assert tab.is_transcription_collapsed()
 
@@ -1064,7 +1063,7 @@ class TestUploadFileTab:
         assert requested and requested[0][1] == 60.0
         assert tab.is_transcribing
         assert tab.file_info_card.is_progress_shown
-        assert tab.status_label.isHidden()
+        assert tab.findChild(QLabel, "statusLabel") is None
         assert not tab.model_combo.isEnabled()
 
     def test_overlay_states_and_status_text_land_in_the_panel(self, tmp_path):
@@ -1097,7 +1096,7 @@ class TestUploadFileTab:
 
         tab.file_info_card._settle_timer.timeout.emit()
         assert not tab.file_info_card.is_progress_shown
-        assert tab.status_label.isHidden()
+        assert tab.findChild(QLabel, "statusLabel") is None
 
     def test_stats_land_in_the_card_not_the_strip(self, tmp_path):
         """Duration and size are already chips; only the time is new information."""
@@ -1469,7 +1468,7 @@ class TestApiModelField:
         monkeypatch.setattr(module, "settings_manager", manager)
         tab = UploadFileTab()
         local_model = tab.local_engine.model_combo.currentText()
-        assert [tab.model_combo.itemText(i) for i in range(tab.model_combo.count())] == ["Local Whisper", "API"]
+        assert [tab.model_combo.itemText(i) for i in range(tab.model_combo.count())] == list(config.MODEL_CHOICES)
         tab.choose_backend("API")
         assert tab.local_engine.isHidden()
         assert not tab.api_model_field.isHidden()

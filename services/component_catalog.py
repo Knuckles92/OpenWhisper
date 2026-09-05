@@ -189,6 +189,24 @@ _CATALOG: dict[str, ComponentDetails] = {
     ),
 }
 
+for _id, _name, _source, _license, _description in (
+    ("asr-nvidia-cpu", "NVIDIA Speech CPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; Python PSF", "CPU runtime shared by Parakeet and Nemotron."),
+    ("asr-nvidia-cuda", "NVIDIA Speech GPU", "https://github.com/NVIDIA/NeMo-Speech.cpp", "Apache-2.0; NVIDIA CUDA; Python PSF", "NVIDIA GPU runtime shared by Parakeet and Nemotron."),
+    ("asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR", "Apache-2.0 and bundled dependency licenses", "Isolated Python, PyTorch CUDA 12.4, and Qwen3-ASR. Also supports CPU."),
+    ("asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine", "MIT and bundled dependency licenses", "Isolated Moonshine Voice runtime for CPU transcription."),
+):
+    _CATALOG[_id] = ComponentDetails(
+        component_id=_id, display_name=_name, summary=_description,
+        description=_description + " Models download separately. Runs in a dedicated process.",
+        origin_name=_name, origin_url=_source, origin_label="Project",
+        source_name="Pinned upstream archives", source_url=_source, source_label="Project",
+        maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
+        requires="Windows x64" + (" and a CUDA-compatible NVIDIA GPU" if _id.endswith("cuda") else ""),
+        payload="Portable Python 3.12 and verified runtime binaries",
+        local_format="Isolated worker process", license=_license,
+        best_for=_description, limitations=("Model weights are a separate download.",),
+        compact_tags="Local speech", source_note=_SOURCE_NOTE, source_urls=(_source, "https://www.python.org/downloads/release/python-31210/"),
+    )
 COMPONENT_CATALOG: Final[Mapping[str, ComponentDetails]] = MappingProxyType(_CATALOG)
 
 

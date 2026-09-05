@@ -383,7 +383,17 @@ export interface PongMsg {
   type: 'pong';
 }
 
+export interface SpeechPreviewMsg {
+  type: 'speech_preview';
+  channel: string;
+  text: string;
+  start_s: number;
+  end_s: number;
+  final: boolean;
+}
+
 export type ServerMessage =
+  | SpeechPreviewMsg
   | HelloMsg
   | PatchMsg
   | SegmentsMsg

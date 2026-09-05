@@ -1,0 +1,239 @@
+{
+  "date": "2026-09-04",
+  "hardware": {
+    "os": "Windows 11",
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "ram_gb": 48,
+    "gpu": "NVIDIA RTX 2060",
+    "vram_gb": 6,
+    "driver": "610.74",
+    "python": "3.12.10"
+  },
+  "source": "https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.1.0/test_files/asr/wav/test/jfk.wav",
+  "audio_s": 11,
+  "repeats": 3,
+  "limitations": [
+    "One short familiar English clip; not an accuracy ranking.",
+    "Decode calls exclude model loading, post-roll, paste, and cleanup.",
+    "RSS includes benchmark host process; VRAM peak was not measured.",
+    "Failed or CPU-fallback preliminary baseline runs are excluded; corrected device-verified baselines are used."
+  ],
+  "results": [
+    {
+      "model": "base",
+      "requested_device": "cpu",
+      "load_s": 0.3354836000362411,
+      "device_info": "base | cpu (int8)",
+      "first_decode_s": 0.773141200072132,
+      "warm_s": [
+        0.6520409999648109,
+        0.6949971000431105,
+        0.6679972999263555
+      ],
+      "warm_median_s": 0.6679972999263555,
+      "warm_p95_s": 0.6922971200314351,
+      "real_time_factor": 0.06072702726603232,
+      "transcript": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 583.733248
+    },
+    {
+      "model": "turbo",
+      "requested_device": "cuda",
+      "load_s": 4.372023700037971,
+      "device_info": "turbo | cuda (float16)",
+      "first_decode_s": 1.5631265999982134,
+      "warm_s": [
+        0.671375900041312,
+        0.6612013999838382,
+        0.6761292000301182
+      ],
+      "warm_median_s": 0.671375900041312,
+      "warm_p95_s": 0.6756538700312376,
+      "real_time_factor": 0.06103417273102836,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 2153.979904
+    },
+    {
+      "model": "parakeet-v3",
+      "requested_device": "cpu",
+      "load_s": 0.29046910000033677,
+      "device_info": "Parakeet TDT 0.6B v3 | cpu",
+      "first_decode_s": 0.9117953999666497,
+      "warm_s": [
+        0.7783912000013515,
+        0.7683697000611573,
+        0.7512582999188453
+      ],
+      "warm_median_s": 0.7683697000611573,
+      "warm_p95_s": 0.7773890500073322,
+      "real_time_factor": 0.06985179091465067,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 1169.199104
+    },
+    {
+      "model": "parakeet-v3",
+      "requested_device": "cuda",
+      "load_s": 0.2640675000147894,
+      "device_info": "Parakeet TDT 0.6B v3 | cuda",
+      "first_decode_s": 0.2904590000398457,
+      "warm_s": [
+        0.07185369997750968,
+        0.06427580001764,
+        0.06622799998149276
+      ],
+      "warm_median_s": 0.06622799998149276,
+      "warm_p95_s": 0.07129112997790799,
+      "real_time_factor": 0.006020727271044796,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 556.085248
+    },
+    {
+      "model": "qwen-0.6b",
+      "requested_device": "cpu",
+      "load_s": 6.052014099899679,
+      "device_info": "Qwen3-ASR 0.6B | cpu",
+      "first_decode_s": 3.344243500032462,
+      "warm_s": [
+        3.2313024998875335,
+        3.2416143000591546,
+        3.1843652999959886
+      ],
+      "warm_median_s": 3.2313024998875335,
+      "warm_p95_s": 3.2405831200419923,
+      "real_time_factor": 0.2937547727170485,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you; ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 6607.712256
+    },
+    {
+      "model": "qwen-0.6b",
+      "requested_device": "cuda",
+      "load_s": 5.9708792000310495,
+      "device_info": "Qwen3-ASR 0.6B | cuda",
+      "first_decode_s": 3.07223479996901,
+      "warm_s": [
+        0.788770699989982,
+        0.7659892999799922,
+        0.7455925000831485
+      ],
+      "warm_median_s": 0.7659892999799922,
+      "warm_p95_s": 0.7864925599889829,
+      "real_time_factor": 0.06963539090727201,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you; ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 3413.700608
+    },
+    {
+      "model": "qwen-1.7b",
+      "requested_device": "cpu",
+      "load_s": 11.738004500046372,
+      "device_info": "Qwen3-ASR 1.7B | cpu",
+      "first_decode_s": 7.552569799940102,
+      "warm_s": [
+        7.264611100079492,
+        7.295311399968341,
+        7.3040420999750495
+      ],
+      "warm_median_s": 7.295311399968341,
+      "warm_p95_s": 7.303169029974379,
+      "real_time_factor": 0.6632101272698492,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 13674.3936
+    },
+    {
+      "model": "qwen-1.7b",
+      "requested_device": "cuda",
+      "load_s": 7.338365299976431,
+      "device_info": "Qwen3-ASR 1.7B | cuda",
+      "first_decode_s": 1.1933906000340357,
+      "warm_s": [
+        0.8177280999952927,
+        0.8097364999121055,
+        0.8507806000998244
+      ],
+      "warm_median_s": 0.8177280999952927,
+      "warm_p95_s": 0.8474753500893712,
+      "real_time_factor": 0.07433891818139025,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 6097.420288
+    },
+    {
+      "model": "nemotron-3.5",
+      "requested_device": "cpu",
+      "load_s": 0.5171171999536455,
+      "device_info": "Nemotron 3.5 ASR 0.6B | cpu",
+      "first_decode_s": 6.801801199908368,
+      "warm_s": [
+        0.9480570000596344,
+        0.9656318000052124,
+        0.9583812999771908
+      ],
+      "warm_median_s": 0.9583812999771908,
+      "warm_p95_s": 0.9649067500024102,
+      "real_time_factor": 0.08712557272519916,
+      "transcript": "And so my fellow Americans ask not what your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 1253.629952
+    },
+    {
+      "model": "nemotron-3.5",
+      "requested_device": "cuda",
+      "load_s": 0.23837499995715916,
+      "device_info": "Nemotron 3.5 ASR 0.6B | cuda",
+      "first_decode_s": 0.310449399985373,
+      "warm_s": [
+        0.09562049992382526,
+        0.07895400002598763,
+        0.07611320004798472
+      ],
+      "warm_median_s": 0.07895400002598763,
+      "warm_p95_s": 0.0939538499340415,
+      "real_time_factor": 0.007177636365998875,
+      "transcript": "And so my fellow Americans ask not what your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 565.018624
+    },
+    {
+      "model": "moonshine-small",
+      "requested_device": "cpu",
+      "load_s": 0.446294599911198,
+      "device_info": "Moonshine Streaming Small | cpu",
+      "first_decode_s": 0.7217950999038294,
+      "warm_s": [
+        0.7032979000359774,
+        0.6841115000424907,
+        0.719321999931708
+      ],
+      "warm_median_s": 0.7032979000359774,
+      "warm_p95_s": 0.7177195899421349,
+      "real_time_factor": 0.0639361727305434,
+      "transcript": "And so my fellow Americans, Ask not. What your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 668.40576
+    },
+    {
+      "model": "moonshine-medium",
+      "requested_device": "cpu",
+      "load_s": 0.5234229000052437,
+      "device_info": "Moonshine Streaming Medium | cpu",
+      "first_decode_s": 0.991540199960582,
+      "warm_s": [
+        0.9682759999996051,
+        1.0008555999957025,
+        0.9562145000090823
+      ],
+      "warm_median_s": 0.9682759999996051,
+      "warm_p95_s": 0.9975976399960927,
+      "real_time_factor": 0.08802509090905501,
+      "transcript": "And so, my fellow Americans, Ask not. What your country can do for you. Ask what you can do for your country.",
+      "normalized_wer": 0.0,
+      "peak_process_tree_rss_mb": 848.6912
+    }
+  ]
+}

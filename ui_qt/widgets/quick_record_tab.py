@@ -159,7 +159,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.cancel_button.set_active(True)
             self.set_backend_enabled(False)
             self.local_engine.set_busy(True)
-            self.status_label.setText("Recording in progress...")
+            self.set_status("Recording in progress...")
         else:
             self.record_button.set_active(True)
             self.record_button.setText("Start Recording")
@@ -167,7 +167,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.cancel_button.set_active(False)
             self.set_backend_enabled(True)
             self.local_engine.set_busy(False)
-            self.status_label.setText("Ready to record")
+            self.set_status("Ready to record")
 
     def append_transcription(self, text: str):
         self.set_transcript(self.shown_transcript() + text)

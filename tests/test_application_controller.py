@@ -650,6 +650,8 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     from transcriber import GpuFallbackCause as _RealGpuFallbackCause
 
     transcriber_module = types.ModuleType("transcriber")
+    from pathlib import Path
+    transcriber_module.__path__ = [str(Path(__file__).resolve().parents[1] / "transcriber")]
     transcriber_module.TranscriptionBackend = object
     transcriber_module.GpuFallbackCause = _RealGpuFallbackCause
     transcriber_module.LocalWhisperBackend = FakeLocalBackend
@@ -2462,7 +2464,7 @@ class TestApplicationController:
 
         assert controller._reload_in_flight
         assert controller.ui_controller.engine_busy_states[-1] is True
-        assert "Loading whisper engine..." in controller.ui_controller.statuses
+        assert "Loading speech engine..." in controller.ui_controller.statuses
         assert len(controller.executor.submissions) == 1
 
         fn, args = controller.executor.submissions[0]
@@ -2517,3 +2519,102 @@ class TestApplicationController:
 
         assert controller.recorder.is_recording is False
         assert "API key" in controller.ui_controller.statuses[-1]
+
+    def test_optional_engine_switch_releases_whisper_before_loading(self):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        whisper = controller.transcription_backends["local_whisper"]
+        speech = controller.transcription_backends["parakeet"]
+        controller.current_backend = speech
+        controller._current_model_name = "parakeet"
+        def load():
+            assert whisper.cleaned_up
+        speech.reload_model = load
+        speech.is_available = lambda: True
+        controller._reload_worker()
+        assert "Parakeet" in controller.ui_controller.device_infos[-1]
+
+    def test_switching_from_optional_to_api_does_not_load_whisper(self):
+        controller = self._create_controller()
+        controller.current_backend = controller.transcription_backends["api"]
+        controller._current_model_name = "api"
+        called = []
+        controller._reload_whisper_worker = lambda: called.append(True)
+        controller._reload_worker()
+        assert called == []
+        assert not controller._reload_in_flight
+
+    @pytest.mark.parametrize("via_api", [False, True])
+    def test_returning_to_whisper_reloads_released_model(self, via_api):
+        controller = self._create_controller()
+        whisper = controller.transcription_backends["local_whisper"]
+        speech = controller.transcription_backends["parakeet"]
+        # The default fake keeps its model after cleanup; mirror real unloading.
+        whisper.cleanup = lambda: setattr(whisper, "model", None)
+        whisper.is_available = lambda: whisper.model is not None
+        speech.reload_model = lambda: None
+        speech.is_available = lambda: True
+        speech.cleanup = lambda: None
+
+        def finish_reload():
+            controller._reload_timer.timeout.emit()
+            worker, args = controller.executor.submissions.pop()
+            worker(*args)
+
+        controller.on_model_changed("Parakeet")
+        finish_reload()
+        assert not whisper.is_available()
+
+        if via_api:
+            controller.on_model_changed("API")
+            finish_reload()
+            assert not whisper.is_available()
+
+        with patch.object(controller._reload_timer, "start") as schedule:
+            controller.on_model_changed("Local Whisper")
+        schedule.assert_called_once_with(config.WHISPER_RELOAD_DEBOUNCE_MS)
+        finish_reload()
+
+        assert controller.current_backend is whisper
+        assert whisper.is_available()
+        assert controller.ui_controller.device_infos[-1] == "cpu-reloaded"
+        assert not controller._reload_in_flight
+
+    def test_repeated_lease_release_keeps_restore_obligation(self):
+        controller = self._create_controller()
+        assert controller.release_local_engine()
+        # The lightweight Whisper fake records cleanup but leaves its model sentinel.
+        controller.transcription_backends["local_whisper"].model = None
+        assert not controller.release_local_engine()
+        assert controller._engine_released_for_lease
+        controller.restore_local_engine()
+        assert len(controller.executor.submissions) == 1
+
+    def test_optional_download_never_marks_engine_busy(self):
+        controller = self._create_controller()
+        controller._start_hf_model_task("parakeet-v3")
+        fn, args = controller.executor.submissions[-1]
+        assert fn.__name__ == "_hf_model_worker"
+        assert args == ("parakeet-v3", False)
+
+    def test_declining_optional_download_preserves_whisper_settings(self):
+        controller = self._create_controller()
+        backend = controller.transcription_backends["local_whisper"]
+        backend.model = None
+        backend.last_loaded_model = "turbo"
+        self.settings.all_settings["whisper_model"] = "base"
+        controller._revert_declined_model_selection("parakeet-v3")
+        assert self.settings.all_settings["whisper_model"] == "base"
+
+    def test_runtime_removal_is_blocked_during_a_meeting(self):
+        controller = self._create_controller()
+        controller.meeting_active = True
+        with patch("services.application_controller.uninstall_component") as uninstall:
+            controller.request_component_uninstall("asr-nvidia-cpu")
+        uninstall.assert_not_called()
+
+    def test_optional_selection_cannot_change_while_a_job_is_active(self):
+        controller = self._create_controller()
+        controller.is_transcribing = lambda: True
+        controller.on_model_changed("Moonshine")
+        assert controller._current_model_name == "local_whisper"

@@ -284,6 +284,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             <aside className="workspace-conversation">
               <TranscriptPane
                 segments={ui.segments}
+                previews={ui.meetingEnded ? [] : Object.values(ui.speechPreviews)}
                 participants={participants}
                 highlightSegmentId={highlightSegmentId}
                 onHighlightClear={() => setHighlightSegmentId(null)}

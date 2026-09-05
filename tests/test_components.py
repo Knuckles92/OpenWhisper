@@ -225,6 +225,7 @@ def test_available_component_ids_by_platform():
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
+            *components.RUNTIME_IDS,
         )
 
 

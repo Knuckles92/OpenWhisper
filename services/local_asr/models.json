@@ -1,0 +1,254 @@
+{
+  "parakeet-v3": {
+    "repo": "nvidia/parakeet-tdt-0.6b-v3",
+    "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+    "files": [
+      {
+        "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+        "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+        "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+        "size_bytes": 713975456
+      }
+    ]
+  },
+  "nemotron-3.5": {
+    "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
+    "files": [
+      {
+        "name": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/1c8deaecc64b91f034d73e08dd8b64625eb3395d/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+        "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+        "size_bytes": 741548352
+      }
+    ]
+  },
+  "qwen-0.6b": {
+    "repo": "Qwen/Qwen3-ASR-0.6B",
+    "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+    "files": [
+      {
+        "name": "chat_template.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/chat_template.json",
+        "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff",
+        "size_bytes": 1161
+      },
+      {
+        "name": "config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/config.json",
+        "sha256": "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c",
+        "size_bytes": 6193
+      },
+      {
+        "name": "generation_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/generation_config.json",
+        "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c",
+        "size_bytes": 142
+      },
+      {
+        "name": "merges.txt",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/merges.txt",
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "size_bytes": 1671853
+      },
+      {
+        "name": "model.safetensors",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/model.safetensors",
+        "sha256": "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea",
+        "size_bytes": 1876091704
+      },
+      {
+        "name": "preprocessor_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/preprocessor_config.json",
+        "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d",
+        "size_bytes": 330
+      },
+      {
+        "name": "tokenizer_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/tokenizer_config.json",
+        "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c",
+        "size_bytes": 12487
+      },
+      {
+        "name": "vocab.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/vocab.json",
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "size_bytes": 2776833
+      }
+    ]
+  },
+  "qwen-1.7b": {
+    "repo": "Qwen/Qwen3-ASR-1.7B",
+    "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+    "files": [
+      {
+        "name": "chat_template.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/chat_template.json",
+        "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff",
+        "size_bytes": 1161
+      },
+      {
+        "name": "config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/config.json",
+        "sha256": "2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f",
+        "size_bytes": 6194
+      },
+      {
+        "name": "generation_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/generation_config.json",
+        "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c",
+        "size_bytes": 142
+      },
+      {
+        "name": "merges.txt",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/merges.txt",
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "size_bytes": 1671853
+      },
+      {
+        "name": "model-00001-of-00002.safetensors",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/model-00001-of-00002.safetensors",
+        "sha256": "a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6",
+        "size_bytes": 4220320824
+      },
+      {
+        "name": "model-00002-of-00002.safetensors",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/model-00002-of-00002.safetensors",
+        "sha256": "6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc",
+        "size_bytes": 478200688
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/model.safetensors.index.json",
+        "sha256": "f994739fe38e5210b9e3e8ce6c6307315e2ceac3cb630e7b7414d69dce520f60",
+        "size_bytes": 64821
+      },
+      {
+        "name": "preprocessor_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/preprocessor_config.json",
+        "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d",
+        "size_bytes": 330
+      },
+      {
+        "name": "tokenizer_config.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/tokenizer_config.json",
+        "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c",
+        "size_bytes": 12487
+      },
+      {
+        "name": "vocab.json",
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/vocab.json",
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "size_bytes": 2776833
+      }
+    ]
+  },
+  "moonshine-small": {
+    "repo": "moonshine-ai/moonshine-small",
+    "revision": "quantized_26_08_21",
+    "files": [
+      {
+        "name": "adapter.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/adapter.ort",
+        "sha256": "c665f742364febad597cc9ac1e0b341ffbee0e24a1466e2f3bde95e6e4771762",
+        "size_bytes": 2870368
+      },
+      {
+        "name": "cross_kv.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/cross_kv.ort",
+        "sha256": "e2d3417144e9514055ebfefe8dcc4c0a55a55adcb8530435844c75c53e352bf6",
+        "size_bytes": 5356536
+      },
+      {
+        "name": "decoder_kv.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/decoder_kv.ort",
+        "sha256": "1a05465b1dd955858dfcbee039c0020fb5dd982b0f5094c34e61735d518d771b",
+        "size_bytes": 81878600
+      },
+      {
+        "name": "encoder.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/encoder.ort",
+        "sha256": "2d4d973e91e8aca08c51e7e7efa28a46ab265b63d809d5294d18b86bcd85b993",
+        "size_bytes": 44148576
+      },
+      {
+        "name": "frontend.model.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/frontend.model.ort",
+        "sha256": "09b1210ae30dc5f0f3e45f0ebab914c254741323114f53fbbe5ae62cca35058f",
+        "size_bytes": 26944
+      },
+      {
+        "name": "frontend.weights.ort",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/frontend.weights.ort",
+        "sha256": "7ef97521bd4bad3928f5bb6808586f4fcc6e92bd5990394112eed7d4052ec338",
+        "size_bytes": 7769464
+      },
+      {
+        "name": "streaming_config.json",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/streaming_config.json",
+        "sha256": "26f02b6afb22d60871a5efd85c3d38e569cc0ddb6c5eb6e93d3260152ae8a47a",
+        "size_bytes": 512
+      },
+      {
+        "name": "tokenizer.bin",
+        "url": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21/tokenizer.bin",
+        "sha256": "6884b35fd6377d4c4d32336a0bc152f36b64d1e45b6503683cdc238250a8472d",
+        "size_bytes": 249974
+      }
+    ]
+  },
+  "moonshine-medium": {
+    "repo": "moonshine-ai/moonshine-medium",
+    "revision": "quantized_26_08_21",
+    "files": [
+      {
+        "name": "adapter.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/adapter.ort",
+        "sha256": "3f2a287def57cc094367a0eec3c4f5fc36a32ec420e86764b696920991b20281",
+        "size_bytes": 3651296
+      },
+      {
+        "name": "cross_kv.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/cross_kv.ort",
+        "sha256": "642f6e21cd305be79342207c6f9e6b681d469d55bc48c72b27b84846fb71fd1e",
+        "size_bytes": 11643776
+      },
+      {
+        "name": "decoder_kv.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/decoder_kv.ort",
+        "sha256": "193bb366492b74fc4ad338c6778e8d8eb916aaa11b5aa264f9057f4db7759486",
+        "size_bytes": 146972408
+      },
+      {
+        "name": "encoder.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/encoder.ort",
+        "sha256": "12915e76ebac7dd287c5ea63965d06103a53ba1ce242a4a34f318f3958c60c37",
+        "size_bytes": 94705376
+      },
+      {
+        "name": "frontend.model.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/frontend.model.ort",
+        "sha256": "95768855c70c8251eeecc05fedf69999da1b8ab16f605c9f457fd3354b0ad6b5",
+        "size_bytes": 28720
+      },
+      {
+        "name": "frontend.weights.ort",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/frontend.weights.ort",
+        "sha256": "5ac941f490cbe035b335b99a414cc393d62d4c6f9f2423495b286870d271d709",
+        "size_bytes": 11889560
+      },
+      {
+        "name": "streaming_config.json",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/streaming_config.json",
+        "sha256": "28e83b7a28e91472692a035e0dae3116422ae43aeb2bef5ed822c44ce89b88af",
+        "size_bytes": 513
+      },
+      {
+        "name": "tokenizer.bin",
+        "url": "https://download.moonshine.ai/model/medium-streaming-en/quantized_26_08_21/tokenizer.bin",
+        "sha256": "6884b35fd6377d4c4d32336a0bc152f36b64d1e45b6503683cdc238250a8472d",
+        "size_bytes": 249974
+      }
+    ]
+  }
+}

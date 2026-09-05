@@ -25,9 +25,10 @@ class LocalModelPicker(QWidget):
     model_changed = pyqtSignal(str)
     manage_downloads_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, include_speech_models=False):
         """Build the compact assignment combo and manage-downloads link."""
         super().__init__(parent)
+        self.include_speech_models = include_speech_models
         self.setObjectName("localModelPicker")
         self._selected = config.DEFAULT_WHISPER_MODEL
         self._setup_ui()
@@ -52,7 +53,7 @@ class LocalModelPicker(QWidget):
         self.manage_button.setFlat(True)
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.manage_button.setToolTip(
-            "Open Downloads to add or delete Whisper models"
+            "Open Downloads to add or delete speech models"
         )
         self.manage_button.clicked.connect(self.manage_downloads_requested)
         row.addWidget(self.manage_button)
@@ -92,16 +93,20 @@ class LocalModelPicker(QWidget):
             selected: Persisted model name, including ``auto``.
             resolved: Concrete model ``auto`` currently maps to, if known.
         """
-        if selected not in config.WHISPER_MODEL_CHOICES:
+        from services.local_asr.catalog import MODELS
+        choices = [*config.WHISPER_MODEL_CHOICES]
+        if self.include_speech_models:
+            choices.extend(key for key, model in MODELS.items() if model.meeting)
+        if selected not in choices:
             selected = config.DEFAULT_WHISPER_MODEL
         self._selected = selected
 
         names = ["auto"]
-        for name in config.WHISPER_MODEL_CHOICES:
+        for name in choices:
             if name == "auto":
                 continue
             repo_id = resolve_model_repo(name)
-            if repo_id in cached or name == selected:
+            if name in MODELS or repo_id in cached or name == selected:
                 names.append(name)
         if selected not in names:
             names.append(selected)
@@ -112,7 +117,7 @@ class LocalModelPicker(QWidget):
             if name == "auto":
                 label = "auto — turbo on GPU · base on CPU"
             else:
-                label = name
+                label = MODELS[name].label if name in MODELS else name
             self.model_combo.addItem(label, name)
         index = self.model_combo.findData(selected)
         self.model_combo.setCurrentIndex(max(0, index))

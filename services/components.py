@@ -296,6 +296,8 @@ _BUILTIN_CATALOG_RAW: Final[dict] = {
 }
 
 # Immutable source of truth. Public APIs always return thawed defensive copies.
+from services.local_asr.catalog import runtime_catalog, RUNTIME_IDS
+_BUILTIN_CATALOG_RAW["components"].update(runtime_catalog())
 _BUILTIN_CATALOG: Final[Any] = _freeze_catalog_value(_BUILTIN_CATALOG_RAW)
 
 # CTranslate2 4.8 loads exactly one CUDA library by name (plus nvcuda.dll from
@@ -328,6 +330,10 @@ class ComponentId:
     GPU_ACCEL: Final[str] = "gpu-accel"
     MEETING_AGENT: Final[str] = "meeting-agent"
     SPEAKER_ID: Final[str] = "speaker-id"
+    ASR_NVIDIA_CPU: Final[str] = "asr-nvidia-cpu"
+    ASR_NVIDIA_CUDA: Final[str] = "asr-nvidia-cuda"
+    ASR_QWEN: Final[str] = "asr-qwen"
+    ASR_MOONSHINE: Final[str] = "asr-moonshine"
 
 
 class ComponentState:
@@ -466,6 +472,7 @@ def available_component_ids(
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.SPEAKER_ID,
+            *RUNTIME_IDS,
         )
     elif tag in {PLATFORM_LINUX_X86_64, PLATFORM_LINUX_AARCH64}:
         candidates = (ComponentId.MEETING_AGENT,)
@@ -1246,6 +1253,21 @@ def _safe_extract_node_tar(
 
 
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
+    if component_id in RUNTIME_IDS:
+        required = ["python.exe", "python312.dll", "python312.zip"]
+        if component_id.startswith("asr-nvidia"):
+            required.append("bin/nemo_speech_asr_c.dll")
+        elif component_id == "asr-qwen":
+            required.extend(["qwen_asr/__init__.py", "torch/__init__.py"])
+        else:
+            required.append("moonshine_voice/__init__.py")
+        if any(not os.path.isfile(os.path.join(target_dir, name)) for name in required):
+            raise ComponentError("The speech runtime is missing required files.")
+        # Embedded Python searches only the verified component, never the
+        # application's site-packages or PYTHONPATH.
+        with open(os.path.join(target_dir, "python312._pth"), "w", encoding="utf-8") as output:
+            output.write("python312.zip\n.\nimport site\n")
+        return
     if component_id == ComponentId.GPU_ACCEL:
         bin_dir = os.path.join(target_dir, "bin")
         try:
@@ -1323,6 +1345,21 @@ def _validate_component_payload(component_id: str, target_dir: str) -> None:
         raise ComponentError("The sidecar bundle failed Node syntax validation.")
 
 
+def _replace_speech_runtime(source: str, destination: str, cancel: threading.Event) -> None:
+    # Windows scanners held newly extracted runtime files for about six seconds
+    # in installer validation. Retry the atomic swap without exposing a partial tree.
+    for attempt in range(31):
+        if cancel.is_set():
+            raise ComponentCanceled()
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == 30:
+                raise
+            cancel.wait(.5)
+
+
 def install_component(
     component_id: str,
     entry: dict,
@@ -1357,6 +1394,11 @@ def install_component(
     consumed = 0
     for archive in archives:
         target = os.path.join(cache_dir(), archive["name"])
+        if component_id in RUNTIME_IDS and os.path.exists(target):
+            with open(target, "rb") as cached_archive:
+                digest = hashlib.file_digest(cached_archive, "sha256").hexdigest()
+            if digest != archive["sha256"] or os.path.getsize(target) != archive["size_bytes"]:
+                os.unlink(target)
         if not os.path.exists(target):
             _download_verified(
                 archive["url"],
@@ -1400,6 +1442,8 @@ def install_component(
                 _safe_extract(archive_path, staging, progress, cancel)
 
         _validate_component_payload(component_id, staging)
+        if cancel.is_set():
+            raise ComponentCanceled()
 
         progress(InstallPhase.FINALIZING, 0, 0)
         with open(os.path.join(staging, _MANIFEST_NAME), "w", encoding="utf-8") as out:
@@ -1412,20 +1456,31 @@ def install_component(
         _rmtree(rollback)
         try:
             if os.path.isdir(destination):
-                os.replace(destination, rollback)
+                if component_id in RUNTIME_IDS:
+                    _replace_speech_runtime(destination, rollback, cancel)
+                else:
+                    os.replace(destination, rollback)
                 moved_aside = True
-            os.replace(staging, destination)
-        except OSError as exc:
+            if component_id in RUNTIME_IDS:
+                _replace_speech_runtime(staging, destination, cancel)
+            else:
+                os.replace(staging, destination)
+        except (OSError, ComponentCanceled) as exc:
             # Second rename failed after the live tree was moved aside: restore
             # the previous install before surfacing the error.
             if moved_aside and os.path.isdir(rollback) and not os.path.isdir(destination):
                 try:
-                    os.replace(rollback, destination)
+                    if component_id in RUNTIME_IDS:
+                        _replace_speech_runtime(rollback, destination, threading.Event())
+                    else:
+                        os.replace(rollback, destination)
                 except OSError:
                     logger.exception(
                         "Failed to restore previous %s install after swap error",
                         component_id,
                     )
+            if isinstance(exc, ComponentCanceled):
+                raise
             raise ComponentError(_describe_disk_error(exc)) from exc
 
         # Only drop the previous tree and cached archives once the new install

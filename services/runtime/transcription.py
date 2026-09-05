@@ -969,6 +969,9 @@ class TranscriptionRuntime:
             local_backend = self.controller.transcription_backends.get("local_whisper")
             if local_backend and hasattr(local_backend, "device_info"):
                 model_info = f"local_whisper ({local_backend.device_info})"
+        from transcriber.optional_backend import LocalSpeechBackend
+        if isinstance(self.controller.current_backend, LocalSpeechBackend):
+            model_info = f"{model_info} ({self.controller.current_backend.device_info})"
         return model_info
 
     def _apply_clipboard_and_paste(
@@ -1087,6 +1090,7 @@ class TranscriptionRuntime:
             return
         model_value = config.MODEL_VALUE_MAP.get(model_name)
         if model_value and model_value in self.controller.transcription_backends:
+            previous = self.controller.current_backend
             self.controller.current_backend = self.controller.transcription_backends[
                 model_value
             ]
@@ -1107,8 +1111,20 @@ class TranscriptionRuntime:
             else:
                 self.controller.ui_controller.set_device_info("", None)
 
-            # Streaming preview requires Local Whisper; rebuild when backend changes.
+            # Reconfigure preview before handing memory to the selected engine.
             self.controller.streaming_runtime.reconfigure_streaming()
+            from transcriber.optional_backend import LocalSpeechBackend
+            # Whisper may have been released before an intervening API selection.
+            needs_whisper_load = (
+                model_value == "local_whisper"
+                and not self.controller.current_backend.is_available()
+            )
+            if (
+                needs_whisper_load
+                or isinstance(self.controller.current_backend, LocalSpeechBackend)
+                or isinstance(previous, LocalSpeechBackend)
+            ):
+                self.controller.reload_whisper_model()
 
     def show_large_file_state(self, file_size_mb: float, is_splitting: bool) -> None:
         self.controller.ui_controller.show_large_file_state(
@@ -1117,6 +1133,13 @@ class TranscriptionRuntime:
 
     def _require_backend_ready(self) -> None:
         backend = self.controller.current_backend
+        from transcriber.optional_backend import LocalSpeechBackend
+        if isinstance(backend, LocalSpeechBackend) and not backend.is_available():
+            if backend.is_model_missing:
+                self.controller.ensure_local_model_available()
+            else:
+                self.controller.reload_whisper_model()
+            raise RuntimeError(backend.device_info)
         if not backend.is_available() and getattr(backend, "is_model_missing", False):
             # Trigger the consent/download flow, but never transcribe with a
             # model the user has not approved downloading.

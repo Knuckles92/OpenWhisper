@@ -175,6 +175,7 @@ class ApplicationController(QObject):
         # Debounced, background whisper reload. The ~1s model swap (cleanup +
         # load) must not run on the UI thread, and rapid combo changes are
         # coalesced into a single reload via this single-shot timer.
+        self._engine_lock = threading.RLock()
         self._reload_in_flight = False
         self._pending_streaming_setup = False
         # True while the local Whisper model has been released so a
@@ -223,6 +224,10 @@ class ApplicationController(QObject):
         )
         self.transcription_backends["api"] = OpenAIBackend("api")
 
+        from services.local_asr.catalog import BACKENDS
+        from transcriber.optional_backend import LocalSpeechBackend
+        for key in BACKENDS:
+            self.transcription_backends[key] = LocalSpeechBackend(key)
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
         self.current_backend = self.transcription_backends.get(
@@ -255,6 +260,7 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_model_batch_stop = self.cancel_model_batch_download
         self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
+        self.ui_controller.get_missing_local_runtime = self.get_missing_local_runtime
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
         self.ui_controller.get_meeting_active = self.is_meeting_active
         self.ui_controller.on_component_install = self.request_component_install
@@ -333,7 +339,7 @@ class ApplicationController(QObject):
             return
 
         backend = self.current_backend
-        if self.recorder.is_recording or getattr(backend, "is_transcribing", False):
+        if self.recorder.is_recording or self.is_transcribing():
             logger.info("Ignoring whisper reload: recording/transcribing in progress")
             self.status_update.emit("Finish recording before changing the engine")
             self.engine_busy_changed.emit(False)
@@ -342,6 +348,9 @@ class ApplicationController(QObject):
         self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
 
     def _do_reload_whisper_model(self) -> None:
+        if self.recorder.is_recording or self.is_transcribing():
+            self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
+            return
         if self.is_meeting_active():
             logger.info("Canceling queued whisper reload: meeting owns the engine")
             self.status_update.emit("End the meeting before changing the engine")
@@ -354,10 +363,46 @@ class ApplicationController(QObject):
 
         self._reload_in_flight = True
         self.engine_busy_changed.emit(True)
-        self.status_update.emit("Reloading whisper engine...")
+        self.status_update.emit("Reloading speech engine...")
         self.executor.submit(self._reload_worker)
 
     def _reload_worker(self) -> None:
+        with self._engine_lock:
+            if self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
+                self._reload_in_flight = False
+                self.engine_busy_changed.emit(False)
+                return
+            from transcriber.optional_backend import LocalSpeechBackend
+            from services.local_asr.catalog import BACKENDS
+            selected = self.current_backend
+            for key in ("local_whisper", *BACKENDS):
+                other = self.transcription_backends.get(key)
+                if other is not None and other is not selected:
+                    other.cleanup()
+            if isinstance(selected, LocalSpeechBackend):
+                try:
+                    selected.reload_model()
+                    if selected is not self.current_backend:
+                        selected.cleanup()
+                        return
+                    self.device_info_update.emit(selected.device_info, selected.is_available())
+                    self.status_update.emit(selected.device_info)
+                    if selected.is_model_missing:
+                        self.ensure_local_model_available()
+                except Exception as exc:
+                    self.status_update.emit(f"Engine load failed: {exc}")
+                    self.device_info_update.emit(str(exc), False)
+                finally:
+                    self._reload_in_flight = False
+                    self.engine_busy_changed.emit(False)
+                return
+            if self._current_model_name == "local_whisper":
+                self._reload_whisper_worker()
+            else:
+                self._reload_in_flight = False
+                self.engine_busy_changed.emit(False)
+
+    def _reload_whisper_worker(self) -> None:
         """Reload the local backend off the UI thread; report results via signals.
 
         Runs on a ThreadPoolExecutor worker, so it must NOT touch the UI
@@ -405,39 +450,25 @@ class ApplicationController(QObject):
             return
         self._reload_in_flight = True
         self.engine_busy_changed.emit(True)
-        self.status_update.emit("Loading whisper engine...")
+        self.status_update.emit("Loading speech engine...")
         self.executor.submit(self._reload_worker)
 
     def release_local_engine(self) -> bool:
-        """Free the local Whisper model so a heavier consumer can load one.
-
-        Meeting Mode, redecode retry and recovery each load their own model.
-        Dictation is already refused while those run (see
-        ``_refuse_dictation_during_meeting``), so the dictation model is not
-        merely idle in that window — it is unreachable. Holding it keeps a
-        second copy of the weights resident, which on a 4 GB card is enough to
-        push the meeting's own load onto the CPU.
-
-        ``cleanup()`` runs synchronously and costs roughly a second of CUDA
-        synchronize plus a collect, so call this from a worker thread and never
-        from the Qt thread.
-
-        Returns:
-            True when a loaded model was released, meaning
-            ``restore_local_engine`` now owes a reload.
-        """
-        backend = self.transcription_backends.get("local_whisper")
-        if backend is None or getattr(backend, "model", None) is None:
-            return False
-        try:
-            backend.cleanup()
-        except Exception:
-            logger.exception("Failed to release the local Whisper engine")
-            return False
-        self._engine_released_for_lease = True
-        logger.info("Local Whisper engine released for a Meeting Mode consumer")
-        self.device_info_update.emit("released while Meeting Mode runs", False)
-        return True
+        """Release resident speech weights before a meeting or final pass loads."""
+        with self._engine_lock:
+            released = False
+            for backend in self.transcription_backends.values():
+                if getattr(backend, "model", None) is not None:
+                    backend.cleanup()
+                    released = True
+            preview = getattr(self, "_streaming_backend", None)
+            if preview is not None:
+                self.streaming_runtime.cleanup()
+                self._pending_streaming_setup = True
+            self._engine_released_for_lease = self._engine_released_for_lease or released
+            if released:
+                self.device_info_update.emit("Released while Meeting Mode runs", False)
+            return released
 
     def restore_local_engine(self) -> None:
         """Reload the local model released by ``release_local_engine``.
@@ -455,7 +486,7 @@ class ApplicationController(QObject):
             return
         self._reload_in_flight = True
         self.engine_busy_changed.emit(True)
-        self.status_update.emit("Reloading whisper engine...")
+        self.status_update.emit("Reloading speech engine...")
         self.executor.submit(self._reload_worker)
 
     def local_whisper_loading_message(self) -> Optional[str]:
@@ -478,6 +509,16 @@ class ApplicationController(QObject):
         if backend.is_available():
             return None
 
+        from transcriber.optional_backend import LocalSpeechBackend
+        if isinstance(backend, LocalSpeechBackend):
+            if self._reload_in_flight:
+                return "Speech engine is still loading..."
+            if backend.is_model_missing:
+                self.ensure_local_model_available()
+            elif backend.should_cancel or not backend.last_error:
+                self.reload_whisper_model()
+                return "Reloading speech engine..."
+            return backend.device_info
         loading = self.local_whisper_loading_message()
         if loading:
             return loading
@@ -645,7 +686,10 @@ class ApplicationController(QObject):
         from the model load: it is reported here, once there is a UI to
         report it to.
         """
-        if isinstance(self.current_backend, LocalWhisperBackend):
+        from transcriber.optional_backend import LocalSpeechBackend
+        if isinstance(self.current_backend, LocalSpeechBackend):
+            self._start_initial_whisper_load()
+        elif isinstance(self.current_backend, LocalWhisperBackend):
             backend = self.transcription_backends.get("local_whisper")
             if backend is not None and getattr(backend, "load_deferred", False):
                 self._pending_streaming_setup = True
@@ -716,8 +760,9 @@ class ApplicationController(QObject):
         missing selected model can be fetched right away. Other policies take
         effect on the next model request without further action.
         """
+        from transcriber.optional_backend import LocalSpeechBackend
         if policy == HuggingFaceAccessPolicy.ALWAYS and isinstance(
-            self.current_backend, LocalWhisperBackend
+            self.current_backend, (LocalWhisperBackend, LocalSpeechBackend)
         ):
             self.ensure_local_model_available()
 
@@ -729,7 +774,7 @@ class ApplicationController(QObject):
         executor. Concurrent calls for the same model are deduplicated by the
         access coordinator so at most one dialog and one download exist.
         """
-        backend = self.transcription_backends.get("local_whisper")
+        backend = self.current_backend if self._current_model_name != "api" else self.transcription_backends.get("local_whisper")
         if backend is None or backend.is_available():
             return
         if not getattr(backend, "is_model_missing", False):
@@ -758,9 +803,21 @@ class ApplicationController(QObject):
         else:  # NEEDS_CONSENT
             self.hf_consent_requested.emit(model_name, False, True)
 
+    def get_missing_local_runtime(self) -> Optional[str]:
+        """Use the runtime resolved by the backend, including auto's CPU fallback."""
+        from services.components import is_installed
+        from transcriber.optional_backend import LocalSpeechBackend
+
+        backend = self.current_backend
+        if isinstance(backend, LocalSpeechBackend):
+            component_id = backend.runtime_component
+            if component_id and not is_installed(component_id):
+                return component_id
+        return None
+
     def get_loaded_local_model(self) -> Optional[str]:
         """Return the loaded model so its memory-mapped files cannot be deleted."""
-        backend = self.transcription_backends.get("local_whisper")
+        backend = self.current_backend if self._current_model_name != "api" else self.transcription_backends.get("local_whisper")
         if backend is not None and backend.is_available():
             return getattr(backend, "last_loaded_model", None)
         return None
@@ -839,7 +896,12 @@ class ApplicationController(QObject):
         concurrent download of the same model.
 
         """
-        backend = self.transcription_backends.get("local_whisper")
+        from services.local_asr.catalog import MODELS
+        if model_name in MODELS and self.is_meeting_active():
+            self.model_deleted.emit(model_name, False, "End the meeting before removing speech models")
+            return
+        backend = (self.transcription_backends.get(MODELS[model_name].backend)
+                   if model_name in MODELS else self.transcription_backends.get("local_whisper"))
         if backend is not None and backend.is_available():
             loaded = getattr(backend, "last_loaded_model", None)
             if loaded and resolve_model_repo(loaded) == resolve_model_repo(model_name):
@@ -858,7 +920,13 @@ class ApplicationController(QObject):
 
     def _model_delete_worker(self, model_name: str) -> None:
         try:
-            delete_model_from_cache(model_name)
+            with self._engine_lock:
+                from services.local_asr.catalog import MODELS
+                if model_name in MODELS:
+                    backend = self.transcription_backends.get(MODELS[model_name].backend)
+                    if self.is_meeting_active() or (backend and backend.is_available() and backend.last_loaded_model == model_name):
+                        raise RuntimeError("Model is in use — switch models first")
+                delete_model_from_cache(model_name)
         except (PermissionError, OSError) as exc:
             logger.error(f"Model delete failed for '{model_name}': {exc}")
             self.model_deleted.emit(
@@ -926,6 +994,9 @@ class ApplicationController(QObject):
         local cache — keeps the selection aligned with what can actually run.
         Runs on the Qt main thread (called from the consent slot).
         """
+        from services.local_asr.catalog import MODELS
+        if declined_model in MODELS:
+            return
         backend = self.transcription_backends.get("local_whisper")
         if backend is None or backend.is_available():
             return
@@ -948,6 +1019,16 @@ class ApplicationController(QObject):
 
     def request_component_install(self, component_id: str) -> None:
         """Start an install unless the same component is already in flight."""
+        from services.local_asr.catalog import RUNTIME_IDS
+        from transcriber.optional_backend import LocalSpeechBackend
+        if component_id in RUNTIME_IDS:
+            if (self.is_meeting_active() or self.recorder.is_recording
+                    or self.is_transcribing() or self._reload_in_flight):
+                self.status_update.emit("Finish the current speech job before installing its runtime")
+                return
+            for backend in self.transcription_backends.values():
+                if isinstance(backend, LocalSpeechBackend) and backend.runtime_component == component_id:
+                    backend.cleanup()
         cancel_event = component_coordinator.begin_install(component_id)
         if cancel_event is None:
             return
@@ -961,11 +1042,33 @@ class ApplicationController(QObject):
         component_coordinator.cancel_install(component_id)
 
     def request_component_uninstall(self, component_id: str) -> None:
+        from services.local_asr.catalog import RUNTIME_IDS
+        if component_id in RUNTIME_IDS:
+            if (self.is_meeting_active() or self.recorder.is_recording
+                    or self.is_transcribing() or self._reload_in_flight):
+                self.status_update.emit("Finish the current speech job before removing its runtime")
+                return
+            self.component_executor.submit(self._component_uninstall_worker, component_id)
+        else:
+            self._component_uninstall_worker(component_id)
+
+    def _component_uninstall_worker(self, component_id: str) -> None:
         try:
-            uninstall_component(component_id)
+            from services.local_asr.catalog import RUNTIME_IDS
+            from transcriber.optional_backend import LocalSpeechBackend
+            with self._engine_lock:
+                if component_id in RUNTIME_IDS:
+                    if (self.is_meeting_active() or self.recorder.is_recording
+                            or self.is_transcribing() or self._reload_in_flight):
+                        raise RuntimeError("Finish the current speech job before removing its runtime")
+                    for backend in self.transcription_backends.values():
+                        if isinstance(backend, LocalSpeechBackend) and backend.runtime_component == component_id:
+                            backend.cleanup()
+                            self.device_info_update.emit(backend.device_info, False)
+                uninstall_component(component_id)
             self.status_update.emit("Component removed")
         except Exception as exc:
-            logger.error(f"Failed to remove component '{component_id}': {exc}")
+            logger.error("Failed to remove component '%s': %s", component_id, exc)
             self.status_update.emit(f"Could not remove the component: {exc}")
         finally:
             self.component_state_changed.emit()
@@ -1048,6 +1151,11 @@ class ApplicationController(QObject):
         "auto" rather than "cuda" so machines without a usable GPU degrade
         silently instead of falling back again.
         """
+        from transcriber.optional_backend import LocalSpeechBackend
+        from services.local_asr.catalog import RUNTIME_IDS
+        if success and component_id in RUNTIME_IDS and isinstance(self.current_backend, LocalSpeechBackend):
+            self.reload_whisper_model()
+            return
         if not success or component_id != ComponentId.GPU_ACCEL:
             return
         if not gpu_runtime_available():
@@ -1146,6 +1254,11 @@ class ApplicationController(QObject):
 
     def _on_model_download_finished(self, model_name: str, success: bool) -> None:
         """Activate streaming preview once tiny.en is cached."""
+        from transcriber.optional_backend import LocalSpeechBackend
+        if success and isinstance(self.current_backend, LocalSpeechBackend):
+            if self.current_backend.model_name == model_name:
+                self.reload_whisper_model()
+            return
         if not success or model_name != "tiny.en":
             return
         if not is_model_cached("tiny.en"):
@@ -1156,64 +1269,54 @@ class ApplicationController(QObject):
 
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
         """Run an approved load or fetch-only download on a worker."""
+        from services.local_asr.catalog import MODELS
+        if model_name in MODELS:
+            load_into_engine = False
         if load_into_engine:
             self.engine_busy_changed.emit(True)
         self.model_download_started.emit(model_name)
         self.executor.submit(self._hf_model_worker, model_name, load_into_engine)
 
     def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
-        """Download (if permitted) and load the model off the Qt thread.
-
-        Re-evaluates access just before downloading so the one-time grant /
-        policy check stays centralized in the coordinator. A failed download
-        leaves the model unavailable — it is never treated as cached and never
-        falls back to another model.
-
-        """
+        from services.local_asr.catalog import MODELS
+        requested_load = load_into_engine
+        load_into_engine = load_into_engine and model_name not in MODELS
         backend = self.transcription_backends.get("local_whisper")
         success = False
         try:
             if not load_into_engine:
                 success = self._download_model_to_cache(model_name)
-            else:
-                if self._refuse_engine_load_during_meeting():
+                return
+            if self._refuse_engine_load_during_meeting():
+                return
+            decision = hf_access_coordinator.evaluate_access(model_name)
+            if decision == AccessDecision.DOWNLOAD_ALLOWED:
+                self.status_update.emit(f"Downloading model '{model_name}'...")
+                download_model_files(model_name, progress_callback=self._hf_download_progress(model_name))
+            elif decision != AccessDecision.LOAD_CACHED:
+                self.status_update.emit(f"Model '{model_name}' is unavailable")
+                return
+            success = True
+            # A download can finish after the user switched engines or started
+            # a meeting. Only the selected engine may acquire resident weights.
+            with self._engine_lock:
+                if self._refuse_engine_load_during_meeting() or self.current_backend is not backend:
                     return
-                decision = hf_access_coordinator.evaluate_access(model_name)
-                if decision == AccessDecision.LOAD_CACHED:
-                    self.status_update.emit(f"Loading model '{model_name}'...")
-                    backend.reload_model(model_name)
-                elif decision == AccessDecision.DOWNLOAD_ALLOWED:
-                    self.status_update.emit(
-                        f"Downloading model '{model_name}' from Hugging Face..."
-                    )
-                    backend.download_and_load(
-                        progress_callback=self._hf_download_progress(model_name)
-                    )
-                else:
-                    logger.warning(
-                        f"Model task for '{model_name}' aborted: access decision {decision}"
-                    )
-                    self.status_update.emit(f"Model '{model_name}' is unavailable")
-                    return
-
-                if backend.is_available():
-                    success = True
-                    self.device_info_update.emit(backend.device_info, True)
-                    self.status_update.emit("Whisper engine ready")
-                    logger.info(f"Model '{model_name}' ready: {backend.device_info}")
-                else:
-                    self.status_update.emit(f"Model '{model_name}' failed to load")
+                backend.reload_model(model_name)
+                success = backend.is_available()
+                self.device_info_update.emit(backend.device_info, success)
+                self.status_update.emit("Whisper engine ready" if success else "Model failed to load")
                 if getattr(backend, "gpu_fallback_note", None):
                     self.gpu_fallback_detected.emit()
         except Exception as exc:
-            logger.error(f"Model download/load failed for '{model_name}': {exc}")
+            logger.error("Model download/load failed for '%s': %s", model_name, exc)
             self.status_update.emit(f"Model download failed: {exc}")
         finally:
             hf_access_coordinator.end_request(model_name)
             self.model_download_finished.emit(model_name, success)
             if success:
                 self.model_cache_changed.emit()
-            if load_into_engine:
+            if requested_load:
                 self.engine_busy_changed.emit(False)
 
     def _download_model_to_cache(self, model_name: str) -> bool:
@@ -1249,6 +1352,7 @@ class ApplicationController(QObject):
         # revives the engine (now a pure cache hit, no consent re-entry).
         if (
             backend is not None
+            and self.current_backend is backend
             and getattr(backend, "is_model_missing", False)
             and backend.model_name == model_name
         ):
@@ -1256,7 +1360,10 @@ class ApplicationController(QObject):
             # reviving the engine waits for the meeting to end.
             if self._refuse_engine_load_during_meeting():
                 return True
-            backend.reload_model(model_name)
+            with self._engine_lock:
+                if self.is_meeting_active() or self.current_backend is not backend:
+                    return True
+                backend.reload_model(model_name)
             if backend.is_available():
                 self.device_info_update.emit(backend.device_info, True)
                 self.status_update.emit("Whisper engine ready")
@@ -1478,6 +1585,9 @@ class ApplicationController(QObject):
             self.transcription_runtime.upload_audio_files(request)
 
     def on_model_changed(self, model_name: str) -> None:
+        if self.recorder.is_recording or self.is_transcribing():
+            self.status_update.emit("Finish recording or transcription before changing engines")
+            return
         if not self._refuse_dictation_during_meeting():
             self.transcription_runtime.on_model_changed(model_name)
 

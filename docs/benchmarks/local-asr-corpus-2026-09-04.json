@@ -1,0 +1,213 @@
+{
+  "source": {
+    "dataset": "hf-internal-testing/librispeech_asr_dummy",
+    "split": "clean/validation",
+    "parquet_sha256": "4e69a06fa5edc90921e5e7e39a7084881f8b3ed9c805c574f4f39c6fde27c603",
+    "selection": "16 evenly spaced rows from 73 (numpy linspace integer indices)",
+    "speaker_ids": [
+      1272
+    ],
+    "noise": "White Gaussian noise, seed=row index, 10 dB whole-clip RMS SNR"
+  },
+  "normalization": "lowercase, Unicode word tokens; punctuation ignored; spelling, abbreviations, and number formatting count",
+  "limitations": [
+    "16 short clips, one speaker, 298 reference word tokens, 116.48 seconds per condition.",
+    "Noise is a synthetic 10 dB SNR stress test, not a real noisy-meeting sample.",
+    "These results are descriptive; not a statistically reliable broad accuracy ranking.",
+    "Corpus runs were not controlled for other host workload; use the separate short-clip benchmark for the speed comparison."
+  ],
+  "results": [
+    {
+      "model": "base",
+      "requested_device": "cpu",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 31,
+          "decode_s": 8.930564999813214,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.1040268456375839,
+          "real_time_factor": 0.07667041373380902
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 74,
+          "decode_s": 8.692453399766237,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.2483221476510067,
+          "real_time_factor": 0.0746261853013635
+        }
+      },
+      "load_s": 0.5917516999179497,
+      "actual_device": "cpu"
+    },
+    {
+      "model": "turbo",
+      "requested_device": "cuda",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 17,
+          "decode_s": 10.406374300015159,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.05704697986577181,
+          "real_time_factor": 0.08934048663972852
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 31,
+          "decode_s": 10.7321821001824,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.1040268456375839,
+          "real_time_factor": 0.09213760180960265
+        }
+      },
+      "load_s": 4.667451099958271,
+      "actual_device": "cuda"
+    },
+    {
+      "model": "parakeet-v3",
+      "requested_device": "cuda",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 14,
+          "decode_s": 0.9438996000681072,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.04697986577181208,
+          "real_time_factor": 0.008103538002568963
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 33,
+          "decode_s": 0.9278378001181409,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.11073825503355705,
+          "real_time_factor": 0.007965644728459278
+        }
+      },
+      "load_s": 0.5710423999698833,
+      "actual_device": "cuda"
+    },
+    {
+      "model": "qwen-0.6b",
+      "requested_device": "cuda",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 17,
+          "decode_s": 10.78089789999649,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.05704697986577181,
+          "real_time_factor": 0.09255583520549616
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 30,
+          "decode_s": 10.482336100190878,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.10067114093959731,
+          "real_time_factor": 0.08999263156533614
+        }
+      },
+      "load_s": 49.455958600039594,
+      "actual_device": "cuda"
+    },
+    {
+      "model": "qwen-1.7b",
+      "requested_device": "cuda",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 19,
+          "decode_s": 11.324238099972717,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.06375838926174497,
+          "real_time_factor": 0.09722050288679732
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 18,
+          "decode_s": 12.003956099739298,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.06040268456375839,
+          "real_time_factor": 0.10305599708738943
+        }
+      },
+      "load_s": 107.23811630008277,
+      "actual_device": "cuda"
+    },
+    {
+      "model": "nemotron-3.5",
+      "requested_device": "cuda",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 18,
+          "decode_s": 1.459155699936673,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.06040268456375839,
+          "real_time_factor": 0.012527098925827235
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 50,
+          "decode_s": 1.3619141998933628,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.16778523489932887,
+          "real_time_factor": 0.011692264171187105
+        }
+      },
+      "load_s": 0.49786000000312924,
+      "actual_device": "cuda"
+    },
+    {
+      "model": "moonshine-small",
+      "requested_device": "cpu",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 27,
+          "decode_s": 8.433689199970104,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.09060402684563758,
+          "real_time_factor": 0.07240465080065918
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 57,
+          "decode_s": 8.15059290023055,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.1912751677852349,
+          "real_time_factor": 0.0699742210990674
+        }
+      },
+      "load_s": 1.6129080000100657,
+      "actual_device": "cpu"
+    },
+    {
+      "model": "moonshine-medium",
+      "requested_device": "cpu",
+      "groups": {
+        "clean": {
+          "words": 298,
+          "errors": 18,
+          "decode_s": 12.050271500018425,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.06040268456375839,
+          "real_time_factor": 0.10345362264654744
+        },
+        "noise10db": {
+          "words": 298,
+          "errors": 44,
+          "decode_s": 11.589323900057934,
+          "audio_s": 116.47993749999996,
+          "normalized_wer": 0.1476510067114094,
+          "real_time_factor": 0.09949630939712634
+        }
+      },
+      "load_s": 3.1104680999414995,
+      "actual_device": "cpu"
+    }
+  ]
+}

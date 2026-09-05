@@ -2,7 +2,7 @@
 
 **Website:** [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/)
 
-A cross-platform desktop app (Windows, macOS, Linux) for recording audio and transcribing it to text using local Whisper models or OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste. The app detects your OS at runtime and adapts hotkey handling, auto-paste, and platform conventions automatically — see [Platform differences](#platform-differences).
+A cross-platform desktop app (Windows, macOS, Linux) for recording audio and transcribing it to text using local speech models or the OpenAI API. Features a modern PyQt6 GUI, system tray integration, global hotkeys, and auto-paste. The app detects your OS at runtime and adapts hotkey handling, auto-paste, and platform conventions automatically — see [Platform differences](#platform-differences).
 
 
 <p align="center">
@@ -30,7 +30,8 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 ## Features
 
 - **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
-- **Model Manager** – Manage voice and text models in one place: browse, download, and activate local Whisper models, or use a guided provider → model picker for OpenAI/OpenRouter cleanup models
+- **Additional local engines (Windows x64)** – Parakeet, Qwen3-ASR, Nemotron Streaming, and Moonshine, with optional verified runtime/model downloads. [Setup, capabilities, and measured CPU/GPU comparisons](docs/local-asr.md).
+- **Model Manager** – Manage voice and text models in one place: browse, download, and select local speech models, or use a guided provider → model picker for OpenAI/OpenRouter cleanup models
 - **API Options** – Choose **API** as the backend, then select GPT-Transcribe (default), GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper in **Model**. **Local Whisper** keeps its own model, device, and quantization controls.
 - **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach custom spelling and style rules via text or voice dictation
 - **Global Hotkeys** – Start/stop recording from any app (customizable)
@@ -41,7 +42,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Transcription History** – Browse past transcriptions with search/filter, retranscribe recordings, and export Markdown, plain text, or JSON
 - **Audio Upload** – Import existing audio files for transcription
 - **Real-time Visualization** – Animated waveform overlay shows recording status
-- **Live Streaming** – Real-time transcription preview while recording
+- **Live Streaming** – Whisper dictation preview while recording; Nemotron and Moonshine native live previews in Meeting Mode (Windows x64)
 - **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio
   into a durable, searchable meeting transcript; share a tokenized live
   dashboard, review evidence-linked insights, play the recording, and export
@@ -50,6 +51,21 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
   open the results from Past Meetings. Linux x86_64/aarch64 has an in-tree Pulse/PipeWire path gated
   behind a versioned preview acknowledgement until hardware attestation.
 - **Window Memory** – Remembers window position and size between sessions
+
+## Transcription backends and models
+
+The four additional Windows backend families below are **unreleased** and are not included in the linked 2.5.2 installers. Use a source checkout containing this implementation until a release ships them.
+
+| Backend | Model choices | Device support | Workflows |
+| --- | --- | --- | --- |
+| Local Whisper | auto, standard Whisper sizes, turbo, and Distil-Whisper | CPU; NVIDIA CUDA on Windows/Linux | Dictation, uploads, meetings; dictation preview |
+| Parakeet | TDT 0.6B v3 | Windows x64 CPU / NVIDIA GPU | Dictation, uploads, meeting chunks |
+| Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU | Dictation and uploads |
+| Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads, meetings with native preview |
+| Moonshine | Streaming Small, Streaming Medium; English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
+| API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network | Dictation and uploads |
+
+See the [complete model reference](docs/models.md) for exact IDs and the [local backend guide](docs/local-asr.md) for downloads, licenses, runtime requirements, and measured speed/quality. Voice recognition is separate from text cleanup and meeting intelligence.
 
 ## Platform differences
 
@@ -66,11 +82,13 @@ The same codebase runs on all three platforms; a few behaviors adapt to the OS:
 
 > On Linux, `pynput` cannot selectively swallow individual key events, so hotkey combinations also reach the focused app. Native Wayland security prevents `pynput` from reliably observing or injecting keys across other native Wayland applications; global hotkeys and auto-paste therefore require an X11 session (or may work only with XWayland windows). Recording, transcription, clipboard copy, and the rest of the UI remain available on Wayland. On macOS, Carbon hotkeys are registered with the OS (like VS Code or Slack) and do not require Accessibility permission; if Carbon registration fails, the app falls back to `pynput` and combos may leak to the focused app. The Control+Option defaults on macOS avoid clashing with Spotlight, 1Password, and other common shortcuts.
 
-## GPU Acceleration (Windows / Linux)
+## GPU Acceleration (Whisper on Windows / Linux)
+
+The additional speech backends use their own [optional runtimes](docs/local-asr.md#download-and-disk-sizes). The instructions below apply to Whisper.
 
 **Prerequisite (both platforms):** an NVIDIA driver providing CUDA 12 — version 525 or newer. The driver supplies `nvcuda.dll` / `libcuda.so.1` and never comes from pip. **You do not need the CUDA Toolkit installer.**
 
-> **Native packages ship CPU transcription only.** On Windows, NVIDIA GPU acceleration remains an optional ~633 MB verified download from **Manage models → Components**. The Linux packages do not currently install CUDA into their frozen runtime; Linux users who need NVIDIA acceleration should use the source install plus `requirements-gpu.txt` below.
+> **Native packages ship CPU transcription only.** On Windows, NVIDIA GPU acceleration remains an optional ~633 MB verified download from **Model Manager → Downloads → Components**. The Linux packages do not currently install CUDA into their frozen runtime; Linux users who need NVIDIA acceleration should use the source install plus `requirements-gpu.txt` below.
 
 Running **from source**, install the CUDA libraries faster-whisper's engine (CTranslate2) loads at runtime:
 
@@ -284,7 +302,7 @@ The **Build native installers** GitHub Actions workflow builds Windows, Linux, a
 
 ### Optional downloadable components
 
-The Windows installer is CPU-only. GPU acceleration (Windows) and the Meeting Intelligence Agent (Windows x64 and Linux x86_64/aarch64) are installed later from **Downloads** inside the app. Those URLs live in [`services/components.py`](services/components.py) — not on `/releases/latest`, and not on the website (except an unpublished speaker-id placeholder). Every archive is SHA-256 verified before extract.
+The base Windows installer ships Whisper CPU support. Whisper GPU acceleration, optional Windows speech runtimes, and the Meeting Intelligence Agent are installed from **Downloads**. Speech models are separate downloads. Existing component URLs live in [`services/components.py`](services/components.py); additional speech runtimes and models are pinned in [`services/local_asr/`](services/local_asr/). Every archive is SHA-256 verified before extraction. No new speech runtime is added to the base application dependencies.
 
 | What | Where the bytes come from | Moves when |
 | --- | --- | --- |
@@ -296,8 +314,14 @@ The Windows installer is CPU-only. GPU acceleration (Windows) and the Meeting In
 | `gpu-accel` | PyPI NVIDIA wheels | The CUDA pin in `requirements-gpu.txt` changes |
 | `meeting-agent` | nodejs.org + a zip on the GitHub tag in `MEETING_AGENT_RELEASE_TAG` | Node or the sidecar bundle changes |
 | `speaker-id` | Unpublished placeholder | — |
+| `asr-nvidia-cpu` / `asr-nvidia-cuda` | python.org + NVIDIA NeMo-Speech.cpp release archives | Pinned native runtime changes; shared by Parakeet/Nemotron |
+| `asr-qwen` | python.org + pinned PyPI/PyTorch wheels | Qwen runtime or its dependency closure changes |
+| `asr-moonshine` | python.org + pinned PyPI wheels | Moonshine native runtime changes |
+| Additional speech model weights | Pinned Hugging Face revisions; Moonshine model host | Model artifact manifest changes |
 
 An app patch updates all five application artifacts. Existing component pins stay put so Downloads keep working.
+
+For optional speech runtime updates, model additions, offline checks, and catalog synchronization, follow [Contributing](CONTRIBUTING.md#local-speech-backends-and-models). These runtimes have independent versions; changing Whisper CUDA pins does not update them.
 
 #### Updating the GPU component
 
@@ -464,7 +488,7 @@ Access settings via **File > Settings** or the system tray menu. Available optio
 
 ## Offline Usage and Model Downloads
 
-Model loading is **cache-first**: models already on your computer always load locally, with no Hugging Face network checks — not even a metadata call. Hugging Face is contacted only when a model you request is missing from the local cache, and only with your consent.
+Model loading is **cache-first**: complete cached models load locally without network metadata checks. Missing models follow the download policy below. The policy also covers additional speech models hosted outside Hugging Face, including Moonshine. Optional runtime installation is a separate explicit action in Downloads.
 
 The download policy lives in **Settings → Advanced → Hugging Face Downloads**:
 
@@ -472,7 +496,7 @@ The download policy lives in **Settings → Advanced → Hugging Face Downloads*
 - **Always allow downloads**: missing models download without prompting. Cached models are still never re-checked for updates.
 - **Never connect (fully offline)**: no downloads unless you explicitly approve a one-time override in the dialog.
 
-The **Downloads window** (opened from Model Manager) lists every Whisper model with its size and cache state. Each not-yet-downloaded row has a checkbox: tick a few and use **Download selected**, or use **Download all…** to queue everything that is missing. A confirmation dialog shows each model's estimated size, the total, and the destination folder before anything downloads; the queue then runs one model at a time, and **Stop after current** ends it once the in-flight model finishes.
+The **Downloads window** (opened from Model Manager) lists Whisper plus all six additional speech models with their sizes, profiles, and cache state. Each not-yet-downloaded row has a checkbox: tick a few and use **Download selected**, or use **Download all…** to queue everything that is missing. A confirmation dialog shows each model's estimated size, the total, and the destination folder before anything downloads; the queue then runs one model at a time, and **Stop after current** ends it once the in-flight model finishes.
 
 Setting `HF_HUB_OFFLINE=1` in the environment before launching is a hard override that disables downloads entirely (still supported for scripts and CI):
 
@@ -482,7 +506,7 @@ python3 app_qt.py
 ```
 
 ```powershell
-set HF_HUB_OFFLINE=1
+$env:HF_HUB_OFFLINE = "1"
 python app_qt.py
 ```
 
@@ -491,11 +515,12 @@ Upgrading from an older version: the previous **Skip HuggingFace network checks*
 ## Requirements
 
 - Python 3.11–3.12 recommended; 3.13 supported (needs `python3-dev` on Debian/Ubuntu for `evdev`)
-- Windows, macOS, or Linux
+- Windows, macOS, or Linux for the base app; the additional speech runtimes currently require Windows x64
+- Model-specific runtime, disk, and device requirements: [local backend guide](docs/local-asr.md#download-and-disk-sizes)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository's comment and docstring policy.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for backend/model changes, documentation requirements, validation, and code style. [Documentation index](docs/README.md).
 
 ## Credits
 
@@ -506,6 +531,10 @@ OpenWhisper builds on these projects:
 - [Systran models on Hugging Face](https://huggingface.co/Systran) – converted Whisper and Distil-Whisper weights for most local models
 - [Mobius Labs models on Hugging Face](https://huggingface.co/mobiuslabsgmbh) – turbo model weights (`faster-whisper-large-v3-turbo`)
 
+- [NVIDIA NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) – native Parakeet and Nemotron inference
+- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) – Qwen voice models and Transformers runtime
+- [Moonshine](https://github.com/moonshine-ai/moonshine) – CPU speech models and native streaming runtime
+
 ## License
 
-MIT License. Free to use, clone, and modify.
+OpenWhisper source is MIT licensed. Model weights and runtime dependencies retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md) and the [model license table](docs/local-asr.md#download-and-disk-sizes).

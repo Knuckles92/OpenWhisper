@@ -103,12 +103,19 @@ class MeetingAsrEngine:
         self.language = language.strip().lower() if language else None
         self.revisions_enabled = bool(enable_revisions)
         self._backend = None
+        self._preview = None
         self.is_available = False
 
         try:
             from transcriber.local_backend import LocalWhisperBackend
 
-            backend = LocalWhisperBackend(model_name=model_name)
+            from services.local_asr.catalog import MODELS
+            if model_name in MODELS:
+                from transcriber.optional_backend import LocalSpeechBackend
+                backend = LocalSpeechBackend(MODELS[model_name].backend, model_name=model_name)
+                backend.reload_model()
+            else:
+                backend = LocalWhisperBackend(model_name=model_name)
             if backend.is_available():
                 self._backend = backend
                 self.is_available = True
@@ -172,6 +179,24 @@ class MeetingAsrEngine:
             target=self._worker, name="meeting-asr", daemon=True
         )
         self._thread.start()
+
+    def start_preview(self, callback) -> None:
+        from transcriber.optional_backend import LocalSpeechBackend
+        from services.local_asr.catalog import MODELS
+        if isinstance(self._backend, LocalSpeechBackend) and MODELS[self._backend.model_name].streaming:
+            from meeting.asr.preview import MeetingSpeechPreview
+            self._preview = MeetingSpeechPreview(
+                self._backend, callback, lambda: self._outstanding > 0, self.language or "auto",
+            )
+
+    def feed_preview(self, block, start_s: float) -> None:
+        if self._preview is not None:
+            self._preview.feed(block, start_s)
+
+    def stop_preview(self) -> None:
+        preview, self._preview = self._preview, None
+        if preview is not None:
+            preview.stop()
 
     def enqueue(self, chunk: SpooledChunk) -> None:
         """Queue a finalized chunk for transcription."""
@@ -241,6 +266,7 @@ class MeetingAsrEngine:
 
     def stop(self) -> None:
         """Stop the worker and release the model."""
+        self.stop_preview()
         self._stopping = True
         thread = self._thread
         if thread is not None and thread.is_alive():
@@ -253,6 +279,7 @@ class MeetingAsrEngine:
 
         backend = self._backend
         self._backend = None
+        self._preview = None
         self.is_available = False
         if backend is not None:
             try:

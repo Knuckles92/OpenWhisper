@@ -5,8 +5,11 @@ being narrow: combos elide instead of reporting their longest item as a minimum
 width, which is what lets Device and Quant sit in a quarter of the row.
 """
 from enum import Enum
+from math import sin, tau
 from typing import Iterable
 
+from PyQt6.QtCore import QElapsedTimer, QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QConicalGradient, QPainter, QPen
 from PyQt6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
 
 from ui_qt.widgets.no_wheel import ElidingComboBox
@@ -39,30 +42,73 @@ _DOT_COLORS = {
 
 
 class StatusDot(QLabel):
-    """A filled dot reporting one :class:`EngineStatus`.
+    """Engine readiness, with an orbiting blue tail while work is in flight."""
 
-    Styles itself rather than relying on the application stylesheet, because one
-    of these is parented to a QComboBox to sit inside the closed field and an
-    application stylesheet never reaches a QComboBox's children.
-    """
-
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, diameter: int = DOT_DIAMETER):
         super().__init__(parent)
         self.setObjectName("engineStatusDot")
-        self.setFixedSize(DOT_DIAMETER, DOT_DIAMETER)
+        self.setFixedSize(diameter, diameter)
         self._status = EngineStatus.UNKNOWN
-        self.set_status(EngineStatus.UNKNOWN)
+        self._busy = False
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self.update)
 
     def status(self) -> EngineStatus:
         return self._status
 
     def set_status(self, status: EngineStatus):
         self._status = status
-        radius = DOT_DIAMETER // 2
-        self.setStyleSheet(
-            f"background-color: {_DOT_COLORS[status]};"
-            f"border: none; border-radius: {radius}px;"
-        )
+        self.update()
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if busy and not self._clock.isValid():
+            self._clock.start()
+        self._sync_animation()
+        self.update()
+
+    def _sync_animation(self) -> None:
+        if self._busy and self.isVisible():
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_animation()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        center = QRectF(self.rect()).center()
+        if not self._busy:
+            painter.setBrush(QColor(_DOT_COLORS[self._status]))
+            painter.drawEllipse(center, DOT_DIAMETER / 2, DOT_DIAMETER / 2)
+            return
+
+        phase = self._clock.elapsed() / 1200.0
+        ring = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(10, 132, 255, 40), 2))
+        painter.drawEllipse(ring)
+        tail = QConicalGradient(center, -phase * 360)
+        tail.setColorAt(0, QColor("#64d2ff"))
+        tail.setColorAt(0.18, QColor("#0a84ff"))
+        tail.setColorAt(0.75, QColor(10, 132, 255, 0))
+        tail.setColorAt(1, QColor(10, 132, 255, 0))
+        painter.setPen(QPen(tail, 2))
+        painter.drawEllipse(ring)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(100, 210, 255, int(130 + 70 * sin(phase * tau))))
+        painter.drawEllipse(center, 1.6, 1.6)
 
 
 class StatusFieldCombo(ElidingComboBox):
