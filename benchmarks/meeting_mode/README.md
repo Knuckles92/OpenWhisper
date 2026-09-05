@@ -132,6 +132,16 @@ and 31.98% (Medium) against 27.67% for Parakeet, 32.79% for Nemotron and
 beat Small. Exact counts for every run are in
 [the recorded evidence](../../docs/benchmarks/meeting-mode-parakeet-vs-whisper-2026-09-04.json).
 
+The LLM-judged product eval on the Parakeet run split the default slice:
+the clean End package won IN1007, the unpolished draft package won IN1005,
+and the IN1009 judge call returned an empty body twice and is recorded as
+unjudged. The deterministic signal behind the IN1005 loss is polish volume:
+Parakeet's offline transcript arrives as short, punctuated segments (647 on
+IN1005 against Whisper's 234), and the polish agent rewrote 34% of them
+where it rewrites about 6% of Whisper's, and the judge rated the polished
+excerpts less faithful than the draft. Reducing polish aggressiveness or
+merging optional-backend segments before polish is the open follow-up.
+
 ASR word error is not the product question. To compare the package a user
 keeps after End (topic, summary, cards, live notes, questions, readable
 transcript), the product eval first *simulates the live meeting*: rolling

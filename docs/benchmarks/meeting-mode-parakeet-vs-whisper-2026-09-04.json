@@ -7,13 +7,17 @@
   "notes": [
     "Whisper baseline is the August 2026 auto/auto run reused from results/; Parakeet was decoded today on the same machine.",
     "Parakeet offline pass beats its own live draft; Whisper offline is worse than its draft. The product End flow (meeting_end_redecode) keeps the offline transcript.",
-    "IN1012 is the worst Parakeet meeting (35.69% offline) and the only gate check Parakeet fails (worst meeting must be <= 35%)."
+    "IN1012 is the worst Parakeet meeting (35.69% offline) and the only gate check Parakeet fails (worst meeting must be <= 35%).",
+    "Nemotron 3.5 ran the full ten meetings on CUDA. Moonshine Small and Medium are CPU-only and ran the IN1009/IN1005/IN1007 slice (1.8 audio hours); their slice rows are directly comparable only to the same three meetings of the other runs.",
+    "Parakeet's live-draft deficit against Whisper grows with the share of overlapping reference words; IN1012 (48.5%) and IN1013 (45.3%) are the two most overlapped meetings.",
+    "Product eval (deepseek-v4-flash judge, default IN1009/IN1005/IN1007 slice) on Parakeet: clean won IN1007, legacy won IN1005, IN1009 judge returned empty content twice (recorded as tie with parse_error). Polish applied 223 of 647 offline segments on IN1005 versus 14 of 234 for Whisper."
   ],
   "runs": {
     "whisper_turbo_auto": {
       "model": "auto",
       "language": "auto",
       "results_dir": "auto-auto-draft-only-t5-m20-p50-offline",
+      "meetings": 10,
       "audio_hours": 8.157419340277778,
       "rtf": {
         "live": 0.07317166256074897,
@@ -172,6 +176,7 @@
       "model": "parakeet-v3",
       "language": "en",
       "results_dir": "parakeet-v3-en-draft-only-t5-m20-p50-offline",
+      "meetings": 10,
       "audio_hours": 8.157419340277778,
       "rtf": {
         "live": 0.010293809632081683,
@@ -325,6 +330,514 @@
           "offline_wer": 0.27527854569824917
         }
       ]
+    },
+    "nemotron_3_5_en": {
+      "model": "nemotron-3.5",
+      "language": "en",
+      "results_dir": "nemotron-3.5-en-draft-only-t5-m20-p50-offline",
+      "meetings": 10,
+      "audio_hours": 8.157419340277778,
+      "rtf": {
+        "live": 0.013895447222743943,
+        "offline": 0.016417961186544917,
+        "combined": 0.03031340840928886
+      },
+      "strict": {
+        "draft": {
+          "wer": 0.33847636347525584,
+          "substitution_rate": 0.06800762039785566,
+          "deletion_rate": 0.25706658987195957,
+          "insertion_rate": 0.013402153205440609,
+          "reference_words": 90284,
+          "hypothesis_words": 68285
+        },
+        "offline": {
+          "wer": 0.33739089982721193,
+          "substitution_rate": 0.06375437508307119,
+          "deletion_rate": 0.2593593549244606,
+          "insertion_rate": 0.01427716981968012,
+          "reference_words": 90284,
+          "hypothesis_words": 68157
+        }
+      },
+      "fillers_removed": {
+        "draft": {
+          "wer": 0.3058082243699071,
+          "substitution_rate": 0.06920361948076559,
+          "deletion_rate": 0.2208049080917188,
+          "insertion_rate": 0.01579969679742278,
+          "reference_words": 84432,
+          "hypothesis_words": 67123
+        },
+        "offline": {
+          "wer": 0.3037947697555429,
+          "substitution_rate": 0.06444239151032784,
+          "deletion_rate": 0.22262886109531932,
+          "insertion_rate": 0.016723517149895773,
+          "reference_words": 84432,
+          "hypothesis_words": 67047
+        }
+      },
+      "quality_gate": {
+        "passed": false,
+        "product": "offline",
+        "checks": {
+          "meeting_count": true,
+          "audio_hours": true,
+          "micro_tcwer": false,
+          "worst_meeting_tcwer": false,
+          "runtime_factor": true
+        },
+        "thresholds": {
+          "minimum_meetings": 10,
+          "minimum_audio_hours": 8.0,
+          "maximum_micro_tcwer": 0.3,
+          "maximum_meeting_tcwer": 0.35,
+          "maximum_runtime_factor": 0.5
+        },
+        "worst_meeting_tcwer": 0.39661471018022404
+      },
+      "per_meeting": [
+        {
+          "meeting_id": "IN1001",
+          "duration_s": 3463.749375,
+          "chunks": 403,
+          "rtf": 0.010206364512138444,
+          "offline_rtf": 0.013471198129021809,
+          "draft_wer": 0.35734657230379213,
+          "offline_wer": 0.35460019013415023
+        },
+        {
+          "meeting_id": "IN1002",
+          "duration_s": 2472.517375,
+          "chunks": 249,
+          "rtf": 0.010404015340819197,
+          "offline_rtf": 0.012498046611314437,
+          "draft_wer": 0.33097669547001835,
+          "offline_wer": 0.31709871694160774
+        },
+        {
+          "meeting_id": "IN1005",
+          "duration_s": 2798.832,
+          "chunks": 345,
+          "rtf": 0.01283484946580197,
+          "offline_rtf": 0.015304170775539314,
+          "draft_wer": 0.25477707006369427,
+          "offline_wer": 0.25377137110291653
+        },
+        {
+          "meeting_id": "IN1007",
+          "duration_s": 2411.333375,
+          "chunks": 220,
+          "rtf": 0.012245653672813429,
+          "offline_rtf": 0.014536198587609933,
+          "draft_wer": 0.39661471018022404,
+          "offline_wer": 0.39661471018022404
+        },
+        {
+          "meeting_id": "IN1008",
+          "duration_s": 3415.7066875,
+          "chunks": 416,
+          "rtf": 0.011934457062490826,
+          "offline_rtf": 0.015752843883510004,
+          "draft_wer": 0.29949121184088806,
+          "offline_wer": 0.2963691026827012
+        },
+        {
+          "meeting_id": "IN1009",
+          "duration_s": 1256.3466875,
+          "chunks": 159,
+          "rtf": 0.011218864299309525,
+          "offline_rtf": 0.010310750073131756,
+          "draft_wer": 0.3443526170798898,
+          "offline_wer": 0.3619146005509642
+        },
+        {
+          "meeting_id": "IN1012",
+          "duration_s": 3108.933375,
+          "chunks": 327,
+          "rtf": 0.011200794356024005,
+          "offline_rtf": 0.014061395928090895,
+          "draft_wer": 0.3913377508883127,
+          "offline_wer": 0.386728128301162
+        },
+        {
+          "meeting_id": "IN1013",
+          "duration_s": 3142.128,
+          "chunks": 287,
+          "rtf": 0.012739218262275575,
+          "offline_rtf": 0.01679294535420553,
+          "draft_wer": 0.3720216606498195,
+          "offline_wer": 0.3676895306859206
+        },
+        {
+          "meeting_id": "IN1014",
+          "duration_s": 3692.869375,
+          "chunks": 405,
+          "rtf": 0.01890332005039635,
+          "offline_rtf": 0.02660149483351427,
+          "draft_wer": 0.30826386371873865,
+          "offline_wer": 0.312250815512867
+        },
+        {
+          "meeting_id": "IN1016",
+          "duration_s": 3604.293375,
+          "chunks": 367,
+          "rtf": 0.022755796952865757,
+          "offline_rtf": 0.018093765799530724,
+          "draft_wer": 0.3285582642204909,
+          "offline_wer": 0.3345061573259613
+        }
+      ]
+    },
+    "moonshine_small_en": {
+      "model": "moonshine-small",
+      "language": "en",
+      "results_dir": "moonshine-small-en-draft-only-t5-m20-p50-offline",
+      "meetings": 3,
+      "audio_hours": 1.7962533506944445,
+      "rtf": {
+        "live": 0.10403528839006558,
+        "offline": 0.10125138442049615,
+        "combined": 0.20528667281056173
+      },
+      "strict": {
+        "draft": {
+          "wer": 0.310989284824321,
+          "substitution_rate": 0.11387989035634188,
+          "deletion_rate": 0.16700722651383004,
+          "insertion_rate": 0.030102167954149016,
+          "reference_words": 20065,
+          "hypothesis_words": 17318
+        },
+        "offline": {
+          "wer": 0.3114876650884625,
+          "substitution_rate": 0.11447794667331174,
+          "deletion_rate": 0.16635933217044604,
+          "insertion_rate": 0.03065038624470471,
+          "reference_words": 20065,
+          "hypothesis_words": 17342
+        }
+      },
+      "fillers_removed": {
+        "draft": {
+          "wer": 0.2904216995126086,
+          "substitution_rate": 0.11082856537401992,
+          "deletion_rate": 0.14431023521932612,
+          "insertion_rate": 0.035282898919262555,
+          "reference_words": 18876,
+          "hypothesis_words": 16818
+        },
+        "offline": {
+          "wer": 0.2910574274210638,
+          "substitution_rate": 0.11098749735113371,
+          "deletion_rate": 0.14293282475100658,
+          "insertion_rate": 0.0371371053189235,
+          "reference_words": 18876,
+          "hypothesis_words": 16879
+        }
+      },
+      "quality_gate": {
+        "passed": false,
+        "product": "offline",
+        "checks": {
+          "meeting_count": false,
+          "audio_hours": false,
+          "micro_tcwer": false,
+          "worst_meeting_tcwer": false,
+          "runtime_factor": true
+        },
+        "thresholds": {
+          "minimum_meetings": 10,
+          "minimum_audio_hours": 8.0,
+          "maximum_micro_tcwer": 0.3,
+          "maximum_meeting_tcwer": 0.35,
+          "maximum_runtime_factor": 0.5
+        },
+        "worst_meeting_tcwer": 0.3806624452021432
+      },
+      "per_meeting": [
+        {
+          "meeting_id": "IN1009",
+          "duration_s": 1256.3466875,
+          "chunks": 159,
+          "rtf": 0.08078800613708023,
+          "offline_rtf": 0.07901132918772859,
+          "draft_wer": 0.28891184573002754,
+          "offline_wer": 0.290633608815427
+        },
+        {
+          "meeting_id": "IN1005",
+          "duration_s": 2798.832,
+          "chunks": 345,
+          "rtf": 0.09844861549391604,
+          "offline_rtf": 0.105307275284834,
+          "draft_wer": 0.25466532573471895,
+          "offline_wer": 0.25477707006369427
+        },
+        {
+          "meeting_id": "IN1007",
+          "duration_s": 2411.333375,
+          "chunks": 220,
+          "rtf": 0.12263197244549681,
+          "offline_rtf": 0.10813117248874206,
+          "draft_wer": 0.3801753531417438,
+          "offline_wer": 0.3806624452021432
+        }
+      ]
+    },
+    "moonshine_medium_en": {
+      "model": "moonshine-medium",
+      "language": "en",
+      "results_dir": "moonshine-medium-en-draft-only-t5-m20-p50-offline",
+      "meetings": 3,
+      "audio_hours": 1.7962533506944445,
+      "rtf": {
+        "live": 0.1506540963944856,
+        "offline": 0.14569172672907058,
+        "combined": 0.2963458231235562
+      },
+      "strict": {
+        "draft": {
+          "wer": 0.310989284824321,
+          "substitution_rate": 0.0934961375529529,
+          "deletion_rate": 0.19182656366807874,
+          "insertion_rate": 0.02566658360328931,
+          "reference_words": 20065,
+          "hypothesis_words": 16731
+        },
+        "offline": {
+          "wer": 0.3197607774732121,
+          "substitution_rate": 0.09982556690755046,
+          "deletion_rate": 0.1915275355095938,
+          "insertion_rate": 0.02840767505606778,
+          "reference_words": 20065,
+          "hypothesis_words": 16792
+        }
+      },
+      "fillers_removed": {
+        "draft": {
+          "wer": 0.2913752913752914,
+          "substitution_rate": 0.08958465776647595,
+          "deletion_rate": 0.1719643992371265,
+          "insertion_rate": 0.029826234371688916,
+          "reference_words": 18876,
+          "hypothesis_words": 16193
+        },
+        "offline": {
+          "wer": 0.3003814367450731,
+          "substitution_rate": 0.09684255138800593,
+          "deletion_rate": 0.17037507946598857,
+          "insertion_rate": 0.03316380589107862,
+          "reference_words": 18876,
+          "hypothesis_words": 16286
+        }
+      },
+      "quality_gate": {
+        "passed": false,
+        "product": "offline",
+        "checks": {
+          "meeting_count": false,
+          "audio_hours": false,
+          "micro_tcwer": false,
+          "worst_meeting_tcwer": false,
+          "runtime_factor": true
+        },
+        "thresholds": {
+          "minimum_meetings": 10,
+          "minimum_audio_hours": 8.0,
+          "maximum_micro_tcwer": 0.3,
+          "maximum_meeting_tcwer": 0.35,
+          "maximum_runtime_factor": 0.5
+        },
+        "worst_meeting_tcwer": 0.39503166098392595
+      },
+      "per_meeting": [
+        {
+          "meeting_id": "IN1009",
+          "duration_s": 1256.3466875,
+          "chunks": 159,
+          "rtf": 0.13916443250855767,
+          "offline_rtf": 0.12460830156004145,
+          "draft_wer": 0.2868457300275482,
+          "offline_wer": 0.29820936639118456
+        },
+        {
+          "meeting_id": "IN1005",
+          "duration_s": 2798.832,
+          "chunks": 345,
+          "rtf": 0.1576717567899908,
+          "offline_rtf": 0.1566265215275653,
+          "draft_wer": 0.24851938764107723,
+          "offline_wer": 0.2576824226170522
+        },
+        {
+          "meeting_id": "IN1007",
+          "duration_s": 2411.333375,
+          "chunks": 220,
+          "rtf": 0.14849502068538808,
+          "offline_rtf": 0.1439845541473463,
+          "draft_wer": 0.38760350706283486,
+          "offline_wer": 0.39503166098392595
+        }
+      ]
     }
+  },
+  "product_eval_parakeet": {
+    "judge_model": "deepseek/deepseek-v4-flash-0731",
+    "wins": {
+      "legacy": 1,
+      "clean": 1,
+      "tie": 1
+    },
+    "meetings": [
+      {
+        "meeting_id": "IN1009",
+        "winner": "tie",
+        "legacy": null,
+        "clean": null
+      },
+      {
+        "meeting_id": "IN1005",
+        "winner": "legacy",
+        "legacy": {
+          "transcript_usefulness": 3,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 5,
+          "decisions_actions_precision": 5,
+          "notes_and_timeline_quality": 5,
+          "overall_record": 5
+        },
+        "clean": {
+          "transcript_usefulness": 2,
+          "topic_accuracy": 3,
+          "key_points_fidelity": 5,
+          "decisions_actions_precision": 5,
+          "notes_and_timeline_quality": 5,
+          "overall_record": 4
+        }
+      },
+      {
+        "meeting_id": "IN1007",
+        "winner": "clean",
+        "legacy": {
+          "transcript_usefulness": 4,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 4,
+          "decisions_actions_precision": 4,
+          "notes_and_timeline_quality": 3,
+          "overall_record": 3
+        },
+        "clean": {
+          "transcript_usefulness": 3,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 4,
+          "decisions_actions_precision": 5,
+          "notes_and_timeline_quality": 3,
+          "overall_record": 4
+        }
+      }
+    ]
+  },
+  "product_eval_whisper_run3": {
+    "judge_model": "deepseek/deepseek-v4-flash-0731",
+    "wins": {
+      "legacy": 1,
+      "clean": 2,
+      "tie": 0
+    },
+    "meetings": [
+      {
+        "meeting_id": "IN1009",
+        "winner": "clean",
+        "legacy": {
+          "transcript_usefulness": 3,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 4,
+          "decisions_actions_precision": 4,
+          "notes_and_timeline_quality": 2,
+          "overall_record": 3
+        },
+        "clean": {
+          "transcript_usefulness": 4,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 4,
+          "decisions_actions_precision": 3,
+          "notes_and_timeline_quality": 4,
+          "overall_record": 4
+        }
+      },
+      {
+        "meeting_id": "IN1005",
+        "winner": "legacy",
+        "legacy": {
+          "transcript_usefulness": 4,
+          "topic_accuracy": 4,
+          "key_points_fidelity": 3,
+          "decisions_actions_precision": 5,
+          "notes_and_timeline_quality": 3,
+          "overall_record": 4
+        },
+        "clean": {
+          "transcript_usefulness": 4,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 3,
+          "decisions_actions_precision": 2,
+          "notes_and_timeline_quality": 3,
+          "overall_record": 3
+        }
+      },
+      {
+        "meeting_id": "IN1007",
+        "winner": "clean",
+        "legacy": {
+          "transcript_usefulness": 4,
+          "topic_accuracy": 4,
+          "key_points_fidelity": 4,
+          "decisions_actions_precision": 4,
+          "notes_and_timeline_quality": 4,
+          "overall_record": 4
+        },
+        "clean": {
+          "transcript_usefulness": 5,
+          "topic_accuracy": 5,
+          "key_points_fidelity": 5,
+          "decisions_actions_precision": 5,
+          "notes_and_timeline_quality": 5,
+          "overall_record": 5
+        }
+      }
+    ]
+  },
+  "polish_volume": {
+    "whisper_run3": {
+      "IN1005": [
+        14,
+        234
+      ],
+      "IN1007": [
+        13,
+        159
+      ],
+      "IN1009": [
+        6,
+        102
+      ]
+    },
+    "parakeet": {
+      "IN1005": [
+        223,
+        647
+      ],
+      "IN1007": [
+        75,
+        629
+      ],
+      "IN1009": [
+        35,
+        276
+      ]
+    },
+    "format": "[revise_segment_text applied, offline segments]"
   }
 }

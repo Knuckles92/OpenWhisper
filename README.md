@@ -34,7 +34,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach spelling and style rules by text or voice
 - **Local and cloud engines** – Transcribe locally with **Whisper**, **Parakeet**, **Qwen3-ASR**, **Nemotron Streaming**, or **Moonshine**, or in the cloud with **GPT-Transcribe**, **GPT-4o Transcribe**, **GPT-4o Mini Transcribe**, or **Whisper**. [Setup and comparisons](docs/local-asr.md).
 - **Model Manager** – Browse, download, and select local speech models, or pick OpenAI/OpenRouter cleanup models with a guided provider → model picker
-- **Live preview** – While-you-speak preview where the engine supports it (Parakeet, Nemotron Streaming, and Whisper dictation; Nemotron and Moonshine in Meeting Mode on Windows x64)
+- **Live preview** – While-you-speak preview where the engine supports it (Parakeet, Nemotron Streaming, and Whisper dictation; Nemotron and Moonshine in Meeting Mode on Windows x64). Nemotron dictation follows the engine's native stream, so words appear sooner and are revised in place.
 - **Transcription History** – Search, retranscribe, and export Markdown, plain text, or JSON
 - **Real-time Visualization** – Animated waveform overlay shows recording status
 - **Smart Splitting (API)** – Large audio files split automatically to avoid API limits

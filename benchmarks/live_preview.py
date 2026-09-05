@@ -24,7 +24,7 @@ import numpy as np
 
 from benchmarks.meeting_mode.metrics import edit_counts, normalize_tokens
 from config import config
-from services.streaming_transcriber import StreamingTranscriber
+from services.streaming_transcriber import NativePreviewLedger, StreamingTranscriber
 
 
 def score(reference, hypothesis):
@@ -45,26 +45,9 @@ def visible_text(updates, at_s):
                  if u['visible_s'] <= at_s and not u['flush']), '')
 
 
-class NativeTranscript:
-    def __init__(self):
-        self.lines, self.committed, self.partial = {}, [], ''
-
-    def apply(self, events):
-        for event in events:
-            text = event['text'].strip()
-            if 'id' in event:
-                # Moonshine repeats/revises stable line IDs in each snapshot.
-                self.lines[event['id']] = event
-            elif event.get('final'):
-                self.committed.append(text)
-                self.partial = ''
-            else:
-                # NeMo interim text replaces the current utterance, not a delta.
-                self.partial = text
-        if self.lines:
-            return ' '.join(e['text'].strip() for e in
-                            sorted(self.lines.values(), key=lambda e: e['start'])).strip()
-        return ' '.join([*self.committed, self.partial]).strip()
+# The production dictation preview assembles native events with this ledger,
+# so the benchmark scores the text the app would show.
+NativeTranscript = NativePreviewLedger
 
 
 def replay(backend, audio, reference, *, mode, cadence, overlap, timed_words=None):

@@ -284,6 +284,22 @@ class AppConfig:
     # WER than tiny.en's 112 ms; Moonshine needed 547 ms per window on CPU and
     # Qwen was not measured, so they keep no dictation preview.
     STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    # Engines in STREAMING_PREVIEW_BACKENDS whose selected model advertises
+    # native streaming follow the worker's ``stream_audio`` session instead of
+    # re-decoding 3 s windows. The same benchmark measured Nemotron's native
+    # stream at 1.6 s to first text and 30% live WER against 3.1 s and 49%
+    # for its windows, because the decoder keeps state across updates and has
+    # no seams to repeat words at. Updates are pushed every
+    # STREAMING_NATIVE_UPDATE_SEC of new audio with no overlap and no silence
+    # skipping: the stream's endpointing needs the quiet too.
+    STREAMING_NATIVE_PREVIEW_BACKENDS: Tuple[str, ...] = ("nemotron",)
+    STREAMING_NATIVE_UPDATE_SEC: float = 0.75
+    # A native stream cannot drop recorder blocks without losing words, and
+    # the worker thread is blocked for the length of each push (60 ms warm on
+    # an RTX 2060; the 0.3 s cold first push is taken by a setup warmup, and
+    # CPU hosts are slower). Buffer this many seconds of recorder blocks
+    # instead of STREAMING_QUEUE_SIZE's 0.23 s.
+    STREAMING_NATIVE_QUEUE_SEC: float = 10.0
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False

@@ -69,9 +69,10 @@ advertising streaming: Nemotron and both Moonshine sizes. It uses 0.75-second
 updates quantized to recorder callbacks (0.7663 seconds), automatic language,
 and no repeated overlap audio. NeMo interim utterances replace their preceding
 partial; completed utterances append. Moonshine lines replace by stable ID.
-All raw text-changing events are retained in the detailed JSON. These are
-candidate dictation preview adapters using the production worker API, not an
-assertion that native dictation preview is wired into the current app.
+All raw text-changing events are retained in the detailed JSON. Text is
+assembled with the production `NativePreviewLedger`, which the Nemotron
+dictation preview now uses; the Moonshine native rows remain candidate adapters,
+since Moonshine has no dictation preview in the app.
 
 ## Metrics and limits
 

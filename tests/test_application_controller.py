@@ -276,6 +276,28 @@ class FakeStreamingTranscriber:
         self.cleaned_up = True
 
 
+class FakeNativeStreamingTranscriber:
+    def __init__(self, backend, update_interval_sec=None):
+        self.backend = backend
+        self.update_interval_sec = update_interval_sec
+        self.cleaned_up = False
+        self.started = False
+
+    def feed_audio(self, _audio):
+        pass
+
+    def start_streaming(self, sample_rate, callback):
+        self.started = True
+        self.sample_rate = sample_rate
+        self.callback = callback
+
+    def stop_streaming(self):
+        return "native partial text"
+
+    def cleanup(self):
+        self.cleaned_up = True
+
+
 class FakeExecutor:
     def __init__(self):
         self.submissions = []
@@ -762,6 +784,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
     streaming_module = types.ModuleType("services.streaming_transcriber")
     streaming_module.StreamingTranscriber = FakeStreamingTranscriber
+    streaming_module.NativeStreamingTranscriber = FakeNativeStreamingTranscriber
     from services.streaming_transcriber import (
         append_preview_text as _append_preview_text,
     )
@@ -1004,11 +1027,61 @@ class TestApplicationController:
         assert controller._streaming_enabled
         assert controller.streaming_transcriber.backend is speech
         assert controller.streaming_transcriber.chunk_duration_sec == 4.0
+        # Parakeet has no native stream, so it keeps the window preview.
+        assert isinstance(controller.streaming_transcriber, FakeStreamingTranscriber)
         # No second model was loaded, so the preview owns nothing to release.
         assert controller._streaming_backend is None
         controller.reconfigure_streaming()
         controller.streaming_runtime.cleanup()
         assert released == []
+
+    def test_streaming_preview_follows_the_nemotron_native_stream(self):
+        from config import config
+
+        controller = self._create_controller()
+        speech = self._select_optional_engine(controller, "nemotron", loaded=[True])
+        released = []
+        speech.cleanup = lambda: released.append(True)
+        warmups = []
+        speech.stream_audio = lambda session, audio, language=None, *, finish=False: (
+            warmups.append((session, len(audio), language, finish)) or []
+        )
+
+        controller.reconfigure_streaming()
+
+        assert controller._streaming_enabled
+        # One throwaway session is opened and finished so the first real push is warm.
+        assert warmups == [("dictation-preview-warmup", 8000, "auto", True)]
+        preview = controller.streaming_transcriber
+        assert isinstance(preview, FakeNativeStreamingTranscriber)
+        assert preview.backend is speech
+        # The window size setting (4.0 s here) does not apply to a native stream.
+        assert preview.update_interval_sec == config.STREAMING_NATIVE_UPDATE_SEC
+        assert controller._streaming_backend is None
+
+        controller.start_recording()
+        assert preview.started
+        assert controller.recorder.streaming_callback == preview.feed_audio
+        controller.stop_recording()
+        assert controller._pending_streaming_text == "native partial text"
+        assert controller.recorder.streaming_callback is None
+
+        controller.streaming_runtime.cleanup()
+        assert preview.cleaned_up
+        assert released == []
+
+    def test_native_stream_needs_a_streaming_model_not_just_the_backend(self, monkeypatch):
+        from services.runtime import streaming as streaming_runtime
+
+        controller = self._create_controller()
+        speech = self._select_optional_engine(controller, "nemotron", loaded=[True])
+        # A Nemotron model without the catalog streaming flag falls back to windows.
+        monkeypatch.setattr(speech, "model_name", "parakeet-v3")
+
+        controller.reconfigure_streaming()
+
+        assert not streaming_runtime.StreamingRuntime._streams_natively(speech)
+        assert isinstance(controller.streaming_transcriber, FakeStreamingTranscriber)
 
     def test_streaming_preview_waits_for_the_optional_engine_to_load(self):
         controller = self._create_controller()

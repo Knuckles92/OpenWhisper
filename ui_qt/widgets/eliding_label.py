@@ -5,7 +5,10 @@ long secondary line inside a row or card raises the minimum width of every
 ancestor up to the window. This caps that floor, elides to whatever width it is
 given, and keeps the full text available as a tooltip.
 """
+from math import ceil
+
 from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QFontMetricsF
 from PyQt6.QtWidgets import QLabel
 
 
@@ -54,9 +57,11 @@ class ElidingLabel(QLabel):
         return chrome
 
     def sizeHint(self) -> QSize:
-        metrics = self.fontMetrics()
+        # elidedText compares fractional advances; integer metrics can round
+        # down and elide text even when the layout grants our entire hint.
+        metrics = QFontMetricsF(self.font())
         return QSize(
-            metrics.horizontalAdvance(self._full_text) + self._chrome_width(),
+            ceil(metrics.horizontalAdvance(self._full_text)) + self._chrome_width(),
             super().sizeHint().height(),
         )
 

@@ -1,8 +1,13 @@
-"""Approximate previews during recording, decoded window by window.
+"""Approximate previews during recording.
 
-The backend only has to expose ``model.transcribe(audio, ...)`` returning
-``(segments, info)``: faster-whisper's model and the optional engines'
-``SpeechDecoder`` both do, so the preview can share the dictation engine.
+``StreamingTranscriber`` re-decodes overlapping windows. The backend only has
+to expose ``model.transcribe(audio, ...)`` returning ``(segments, info)``:
+faster-whisper's model and the optional engines' ``SpeechDecoder`` both do, so
+the preview can share the dictation engine.
+
+``NativeStreamingTranscriber`` has the same surface but follows an engine's
+own streaming decoder through ``backend.stream_audio``, for engines whose
+catalog entry advertises streaming (Nemotron today).
 """
 import queue
 import threading
@@ -55,6 +60,59 @@ def append_preview_text(existing: str, chunk_text: str) -> str:
     if not existing:
         return chunk_text
     return f"{existing} {chunk_text}".strip()
+
+
+def prepare_preview_audio(audio_array: np.ndarray, sample_rate: int) -> Optional[np.ndarray]:
+    """Recorder PCM (int16 or float, mono or interleaved) to 16 kHz float32 mono."""
+    if audio_array.dtype == np.int16:
+        audio_array = audio_array.astype(np.float32) / 32768.0
+    else:
+        audio_array = audio_array.astype(np.float32)
+
+    if len(audio_array.shape) > 1:
+        audio_array = audio_array.mean(axis=1)
+
+    if sample_rate != config.WHISPER_TARGET_SAMPLE_RATE:
+        num_samples = int(len(audio_array) * config.WHISPER_TARGET_SAMPLE_RATE / sample_rate)
+        if num_samples <= 0:
+            return None
+        audio_array = fft_resample(audio_array, num_samples)
+
+    return audio_array
+
+
+class NativePreviewLedger:
+    """Assemble a native stream's events into one preview string.
+
+    NeMo emits interim utterances that replace the current partial and final
+    utterances that commit; Moonshine repeats and revises lines by stable id.
+    Events are the worker's JSON dicts, never deltas.
+    """
+
+    def __init__(self):
+        self.lines: dict = {}
+        self.committed: List[str] = []
+        self.partial: str = ""
+
+    def apply(self, events) -> str:
+        for event in events or ():
+            text = (event.get("text") or "").strip()
+            if "id" in event:
+                self.lines[event["id"]] = dict(event, text=text)
+            elif event.get("final"):
+                if text:
+                    self.committed.append(text)
+                self.partial = ""
+            else:
+                self.partial = text
+        return self.text
+
+    @property
+    def text(self) -> str:
+        if self.lines:
+            ordered = sorted(self.lines.values(), key=lambda e: e.get("start", 0.0))
+            return " ".join(e["text"] for e in ordered if e["text"]).strip()
+        return " ".join([*self.committed, self.partial]).strip()
 
 
 class StreamingTranscriber:
@@ -252,23 +310,7 @@ class StreamingTranscriber:
             logger.error(f"Error in incremental transcription: {e}", exc_info=True)
 
     def _prepare_audio_for_whisper(self, audio_array: np.ndarray) -> Optional[np.ndarray]:
-        if audio_array.dtype == np.int16:
-            audio_array = audio_array.astype(np.float32) / 32768.0
-        else:
-            audio_array = audio_array.astype(np.float32)
-
-        if len(audio_array.shape) > 1:
-            audio_array = audio_array.mean(axis=1)
-
-        if self.sample_rate != config.WHISPER_TARGET_SAMPLE_RATE:
-            num_samples = int(
-                len(audio_array) * config.WHISPER_TARGET_SAMPLE_RATE / self.sample_rate
-            )
-            if num_samples <= 0:
-                return None
-            audio_array = fft_resample(audio_array, num_samples)
-
-        return audio_array
+        return prepare_preview_audio(audio_array, self.sample_rate)
 
     def cleanup(self):
         """Clean up resources and stop streaming."""
@@ -282,3 +324,205 @@ class StreamingTranscriber:
                 break
 
         logger.info("StreamingTranscriber cleaned up")
+
+
+class NativeStreamingTranscriber:
+    """Preview through an engine's own streaming decoder.
+
+    Same surface as ``StreamingTranscriber`` so ``StreamingRuntime`` can hold
+    either. The engine keeps decoder state across pushes, so new audio goes
+    out every ``update_interval_sec`` with no overlap, and quiet audio is never
+    skipped: the stream's endpointing is what turns a partial into a final.
+    One worker session named ``SESSION`` is opened by the first push and
+    closed by the ``finish`` push on stop, so the final utterance flushes.
+    """
+
+    SESSION = "dictation-preview"
+
+    def __init__(self, backend, update_interval_sec: Optional[float] = None):
+        self.backend = backend
+        self.update_interval_sec = (
+            update_interval_sec
+            if update_interval_sec is not None
+            else config.STREAMING_NATIVE_UPDATE_SEC
+        )
+
+        # Recorder blocks are CHUNK_SIZE frames; hold STREAMING_NATIVE_QUEUE_SEC
+        # of them so a slow push never costs the stream audio.
+        blocks = config.STREAMING_NATIVE_QUEUE_SEC * config.SAMPLE_RATE / config.CHUNK_SIZE
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=max(1, int(blocks)))
+
+        self.worker_thread: Optional[threading.Thread] = None
+        self.is_streaming = False
+        self._stop_requested = False
+
+        self.preview_text: str = ""
+        self._ledger = NativePreviewLedger()
+
+        self.sample_rate = 0
+        self.callback: Optional[Callable[[str, bool], None]] = None
+
+        self._update_count = 0
+        # True while the worker holds a stream handle for SESSION.
+        self._session_open = False
+        # Set by the first failed push; later pushes are skipped so one broken
+        # engine does not log once per update for the rest of the recording.
+        self._failed = False
+
+        logger.info(
+            "NativeStreamingTranscriber initialized "
+            f"(update_interval={self.update_interval_sec}s)"
+        )
+
+    def start_streaming(self, sample_rate: int, callback: Callable[[str, bool], None]):
+        """Start following the engine stream and report ``(text, True)`` on each change."""
+        if self.is_streaming:
+            logger.warning("Native streaming already active")
+            return
+
+        self.sample_rate = sample_rate
+        self.callback = callback
+        self.is_streaming = True
+        self._stop_requested = False
+        self.preview_text = ""
+        self._ledger = NativePreviewLedger()
+        self._update_count = 0
+        self._failed = False
+
+        if self._session_open:
+            # The previous session did not close; drop its handle before the
+            # engine would otherwise append this recording to it.
+            self._cancel_session()
+
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.worker_thread.start()
+
+        logger.info("Native streaming preview started")
+
+    def feed_audio(self, audio_chunk: np.ndarray):
+        """Queue an audio chunk without blocking the recorder callback."""
+        if not self.is_streaming:
+            return
+
+        try:
+            self.audio_queue.put_nowait(audio_chunk.copy())
+        except queue.Full:
+            logger.debug("Audio queue full, dropping chunk (native preview can't keep up)")
+
+    def stop_streaming(self) -> str:
+        """Finish the engine stream and return the assembled preview text."""
+        if not self.is_streaming:
+            return ""
+
+        logger.info("Stopping native streaming preview...")
+        self._stop_requested = True
+
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=5.0)
+            if self.worker_thread.is_alive():
+                logger.warning("Native preview worker did not finish in time")
+
+        self.is_streaming = False
+        self.worker_thread = None
+
+        final_text = self.preview_text.strip()
+        logger.info(
+            f"Native streaming stopped. Updates: {self._update_count}, "
+            f"Final length: {len(final_text)} chars"
+        )
+        return final_text
+
+    def _worker_loop(self):
+        logger.info("Native preview worker thread started")
+
+        pending: List[np.ndarray] = []
+        pending_samples = 0
+        threshold = int(self.update_interval_sec * self.sample_rate)
+
+        try:
+            while True:
+                try:
+                    audio_chunk = self.audio_queue.get(timeout=0.1)
+                    pending.append(audio_chunk)
+                    pending_samples += len(audio_chunk)
+                    if pending_samples >= threshold:
+                        self._push(pending, finish=False)
+                        pending = []
+                        pending_samples = 0
+                except queue.Empty:
+                    if self._stop_requested and self.audio_queue.empty():
+                        break
+        except Exception as e:
+            logger.error(f"Error in native preview worker loop: {e}", exc_info=True)
+        finally:
+            # Remaining audio plus the finish that emits the last utterance.
+            self._push(pending, finish=True)
+            logger.info("Native preview worker thread exiting")
+
+    def _push(self, chunks: List[np.ndarray], *, finish: bool):
+        if self._failed:
+            if finish and self._session_open:
+                self._cancel_session()
+            return
+        if not chunks and not (finish and self._session_open):
+            # Nothing new, and no engine stream to close.
+            return
+
+        try:
+            start_time = time.time()
+            if chunks:
+                prepared = prepare_preview_audio(np.concatenate(chunks), self.sample_rate)
+            else:
+                prepared = None
+            if prepared is None:
+                prepared = np.empty(0, dtype=np.float32)
+
+            # "auto" matches the window preview's language handling.
+            events = self.backend.stream_audio(
+                self.SESSION, prepared, "auto", finish=finish
+            )
+            self._session_open = not finish
+            self._update_count += 1
+
+            text = self._ledger.apply(events)
+            processing_time = time.time() - start_time
+            logger.debug(
+                f"Native preview update #{self._update_count}: "
+                f"{len(prepared) / config.WHISPER_TARGET_SAMPLE_RATE:.2f}s audio "
+                f"-> {processing_time:.3f}s, {len(events or ())} events"
+                f"{', finish' if finish else ''}"
+            )
+
+            if text != self.preview_text:
+                self.preview_text = text
+                if self.callback and text:
+                    # is_final=True means replace the full preview in the UI
+                    self.callback(text, True)
+        except Exception as e:
+            self._failed = True
+            logger.error(
+                "Native preview stream failed; the final transcription is unaffected: %s",
+                e,
+                exc_info=True,
+            )
+            self._cancel_session()
+
+    def _cancel_session(self):
+        try:
+            self.backend.cancel_stream(self.SESSION)
+        except Exception as e:
+            logger.debug(f"Native preview session cancel failed: {e}")
+        self._session_open = False
+
+    def cleanup(self):
+        """Clean up resources and stop streaming."""
+        if self.is_streaming:
+            self.stop_streaming()
+
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        logger.info("NativeStreamingTranscriber cleaned up")

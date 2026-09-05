@@ -19,7 +19,10 @@ if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
 else:
     AudioLevelCallback = Callable[[float], None]
-from services.streaming_transcriber import StreamingTranscriber
+from services.streaming_transcriber import (
+    NativeStreamingTranscriber,
+    StreamingTranscriber,
+)
 from transcriber import LocalWhisperBackend
 
 if TYPE_CHECKING:
@@ -124,6 +127,7 @@ class StreamingRuntime:
                 return
 
             backend = self.controller.current_backend
+            native = False
             if isinstance(backend, LocalWhisperBackend):
                 streaming_backend = self._load_dedicated_preview_backend()
                 if streaming_backend is None:
@@ -138,12 +142,28 @@ class StreamingRuntime:
                     self.controller._pending_streaming_setup = True
                     return
                 streaming_backend = backend
+                native = self._streams_natively(backend)
                 logger.info("Streaming preview shares the loaded %s engine", backend.name)
             else:
                 logger.info("Streaming requested but not available for this backend")
                 if not initial_setup:
                     self.controller.ui_controller.set_status(PREVIEW_UNAVAILABLE_STATUS)
                 self.controller._streaming_enabled = False
+                return
+
+            if native:
+                # The engine keeps its own decoder state, so the chunk-duration
+                # setting (a window size) does not apply here.
+                self._warmup_native_stream(streaming_backend)
+                self.controller.streaming_transcriber = NativeStreamingTranscriber(
+                    backend=streaming_backend,
+                    update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,
+                )
+                logger.info(
+                    "Streaming preview follows %s's native stream "
+                    f"(update_interval={config.STREAMING_NATIVE_UPDATE_SEC}s)",
+                    streaming_backend.name,
+                )
                 return
 
             chunk_duration = settings.get(
@@ -172,6 +192,17 @@ class StreamingRuntime:
             and backend.backend_id in config.STREAMING_PREVIEW_BACKENDS
         )
 
+    @staticmethod
+    def _streams_natively(backend) -> bool:
+        """True when the engine's selected model advertises a native stream."""
+        from services.local_asr.catalog import MODELS
+
+        model = MODELS.get(getattr(backend, "model_name", None))
+        return (
+            backend.backend_id in config.STREAMING_NATIVE_PREVIEW_BACKENDS
+            and bool(model and model.streaming)
+        )
+
     def _load_dedicated_preview_backend(self):
         """Load tiny.en for a Whisper dictation preview, or None if it cannot run yet."""
         from services.hf_access import is_model_cached
@@ -191,6 +222,23 @@ class StreamingRuntime:
             return None
         self._warmup_streaming_backend(streaming_backend)
         return streaming_backend
+
+    @staticmethod
+    def _warmup_native_stream(backend) -> None:
+        """Open and finish one throwaway stream so the first recording's push is warm.
+
+        The worker's first stream push measured 0.28 s on an RTX 2060 against
+        60 ms for every later one, and that cost is per process, not per
+        session. Non-fatal: a failure here only means the first push is slow.
+        """
+        try:
+            import numpy as np
+
+            silence = np.zeros(config.WHISPER_TARGET_SAMPLE_RATE // 2, dtype=np.float32)
+            backend.stream_audio("dictation-preview-warmup", silence, "auto", finish=True)
+            logger.info("Native streaming preview warmed up")
+        except Exception as exc:
+            logger.warning(f"Native streaming warmup failed (non-fatal): {exc}")
 
     def _warmup_streaming_backend(self, backend) -> None:
         try:

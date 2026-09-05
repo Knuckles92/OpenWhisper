@@ -78,7 +78,13 @@ jobs:
       - working-directory: webui
         run: npm run build
       - name: Require the committed dashboard bundle to match its source
-        run: git diff --exit-code -- webui/dist
+        run: |
+          changes=$(git status --porcelain --untracked-files=all -- webui/dist)
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            echo '::error::Dashboard bundle is stale. Run cd webui && npm ci && npm run build, then commit all webui/dist changes (including new and deleted assets).'
+            exit 1
+          fi
 
   sidecar:
     name: Meeting sidecar checks

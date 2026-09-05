@@ -40,9 +40,15 @@ def test_size_hint_reserves_the_stylesheet_chrome(app):
     assert label.sizeHint().width() >= advance + CHROME
 
 
-def test_full_text_is_shown_at_its_own_size_hint(app):
+@pytest.mark.parametrize("font_size", [10, 11, 12, 13, 14, 15])
+def test_full_text_is_shown_at_its_own_size_hint(app, font_size):
     text = "25 European languages"
     label = _padded(text)
+    label.setStyleSheet(
+        label.styleSheet()
+        + f"QLabel {{ font-size: {font_size}px; font-weight: 600; }}"
+    )
+    label.ensurePolished()
     label.resize(label.sizeHint())
     label.show()
     app.processEvents()

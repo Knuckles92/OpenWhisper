@@ -35,6 +35,23 @@ After activating the repository venv, run the appropriate Python regressions for
 
 For doc-only changes, check relative links, exact catalog IDs, platform claims, and release status; no model download or full regression run is needed. Historical release notes describe the binaries actually released. Announce the new families under Unreleased until compatible artifacts ship, then update the version-specific guidance and GitHub About description together with the release.
 
+## Dashboard bundle
+
+The meeting dashboard's `webui/dist` is committed because the Python app serves
+it directly. After changing dashboard source or its lockfile, rebuild with the
+locked dependencies before committing:
+
+```bash
+cd webui
+npm ci
+npm run build
+```
+
+Include all changes under `webui/dist`, including new hashed assets and deleted
+old assets. `npm run build` alone can use stale packages already in
+`node_modules`, producing a different bundle from CI. CI installs the lockfile
+with `npm ci` and requires the rebuilt directory to match the committed files.
+
 ## Source launchers
 
 From a source checkout you can register `ow` and `openwhisper` so the app launches from any terminal — no need to `cd` into the repo or activate the venv first. Native packages already provide those commands.

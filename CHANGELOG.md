@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added **GPT-Transcribe** as the default for new API selections, alongside GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper, with JSON response handling for single files and chunked uploads.
 - Parakeet TDT v3 is the default backend for new installations on Windows x64, where its runtime ships; macOS and Linux keep Local Whisper. Saved Backend selections are unchanged.
 - The real-time transcription preview runs on the loaded Parakeet or Nemotron Streaming engine when one of them is the dictation backend, so no separate preview model is loaded and preview windows return in about half the time of tiny.en. Local Whisper keeps its tiny.en preview; Qwen and Moonshine have no dictation preview.
+- With Nemotron Streaming as the dictation backend, the live preview follows the engine's native stream instead of re-decoding 3-second windows: text appears after about 1.6 s instead of 3 s, interim words are revised in place rather than repeated at window seams, and the stream is finished when recording stops so the last phrase shows. Parakeet keeps the window preview.
 
 ### Added
 - A **Live preview** checkbox beside **AI cleanup** in the Quick Record engine card. It is the same setting as Settings → Recording → Live preview, so either control updates the other and the preview engine reconfigures at once; it locks while a recording is in progress.
