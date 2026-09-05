@@ -47,6 +47,7 @@ class StatusDot(QLabel):
     def __init__(self, parent=None, diameter: int = DOT_DIAMETER):
         super().__init__(parent)
         self.setObjectName("engineStatusDot")
+        self.setStyleSheet("background: transparent; border: none;")
         self.setFixedSize(diameter, diameter)
         self._status = EngineStatus.UNKNOWN
         self._busy = False

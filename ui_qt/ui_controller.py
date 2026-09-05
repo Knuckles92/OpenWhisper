@@ -342,12 +342,13 @@ class UIController(QObject):
         self.hide_overlay()
 
     def _apply_status_to_main_window(self, status: str):
-        if self._upload_job_active():
+        if self.main_window.quick_record_tab.engine_loading:
+            self.main_window.set_status(status)
+            self.main_window.upload_file_tab.set_engine_message(status)
+        elif self._transcription_source_tab == TabbedContentWidget.TAB_UPLOAD_FILE:
             self.main_window.upload_file_tab.set_status(status)
         else:
             self.main_window.set_status(status)
-            if self.main_window.quick_record_tab._engine_busy:
-                self.main_window.upload_file_tab.set_engine_message(status)
 
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
@@ -829,6 +830,8 @@ class UIController(QObject):
             self._downloads_dialog.refresh()
 
     def on_model_download_started(self, model_name: str):
+        self.main_window.quick_record_tab.set_model_downloading(model_name, True)
+        self.main_window.upload_file_tab.set_model_downloading(model_name, True)
         if self._downloads_dialog is not None:
             self._downloads_dialog.set_downloading(model_name)
         if self._model_manager_dialog is not None:
@@ -854,6 +857,8 @@ class UIController(QObject):
         self._update_download_progress(model_name, done, total)
 
     def on_model_download_finished(self, model_name: str, success: bool):
+        self.main_window.quick_record_tab.set_model_downloading(model_name, False)
+        self.main_window.upload_file_tab.set_model_downloading(model_name, False)
         if self._downloads_dialog is not None:
             self._downloads_dialog.finish_download(model_name, success)
         if self._model_manager_dialog is not None:

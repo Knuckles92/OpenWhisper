@@ -99,6 +99,7 @@ class TranscriptionTabBase(QWidget):
         self._device_info = ""
         self._engine_status = EngineStatus.UNKNOWN
         self._engine_busy = False
+        self._model_downloads: set[str] = set()
         self._activity_state = OverlayState.NONE
         self._status_message = self.INITIAL_STATUS
         self._local_engine_visible = True
@@ -427,6 +428,20 @@ class TranscriptionTabBase(QWidget):
             self._status_message = ""
         self._refresh_engine_status()
 
+    @property
+    def engine_loading(self) -> bool:
+        return self._engine_busy or bool(self._model_downloads)
+
+    def set_model_downloading(self, model_name: str, downloading: bool) -> None:
+        if downloading:
+            self._model_downloads.add(model_name)
+            self._status_message = f"Downloading model '{model_name}'..."
+        else:
+            self._model_downloads.discard(model_name)
+            if self._status_message == f"Downloading model '{model_name}'...":
+                self._status_message = ""
+        self._refresh_engine_status()
+
     def set_activity_state(self, state: OverlayState) -> None:
         """Drive activity feedback from the same explicit state as the overlay."""
         messages = {
@@ -445,13 +460,16 @@ class TranscriptionTabBase(QWidget):
         self._refresh_engine_status()
 
     def _refresh_engine_status(self) -> None:
-        busy = self._engine_busy or self._activity_state in (
+        busy = self.engine_loading or self._activity_state in (
             OverlayState.PROCESSING, OverlayState.TRANSCRIBING,
             OverlayState.CLEANING, OverlayState.CANCELING,
         )
-        message = self._status_message or (
-            "Loading speech engine..." if self._engine_busy else self._device_info
-        )
+        idle_message = self._device_info
+        if self._engine_busy:
+            idle_message = "Loading speech engine..."
+        elif self._model_downloads:
+            idle_message = f"Downloading model '{next(iter(self._model_downloads))}'..."
+        message = self._status_message or idle_message
         self.resolved_label.setText(message or self.INITIAL_STATUS)
         self.resolved_label.setAccessibleName(message or self.INITIAL_STATUS)
         self.status_dot.set_status(self._engine_status)

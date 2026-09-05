@@ -95,6 +95,9 @@ def test_cloud_processing_has_an_indicator_without_claiming_local_readiness(tab)
 
 
 def test_long_messages_keep_details_and_download_action(tab):
+    tab.set_status("Install model in Downloads.")
+    QApplication.processEvents()
+    original_width = tab.engine_card.minimumSizeHint().width()
     message = "Install " + "a very long speech model name " * 8 + "in Downloads."
     opened = []
     tab.engine_downloads_requested.connect(lambda: opened.append(True))
@@ -104,15 +107,16 @@ def test_long_messages_keep_details_and_download_action(tab):
     assert 'href="downloads"' in QLabel.text(tab.resolved_label)
     tab.resolved_label.linkActivated.emit("downloads")
     assert opened == [True]
-    assert tab.engine_card.minimumSizeHint().width() <= 500
+    assert tab.engine_card.minimumSizeHint().width() <= original_width
 
 
 def test_engine_messages_after_an_upload_reach_the_visible_status(tab):
     from ui_qt.ui_controller import UIController
+    from ui_qt.widgets import TabbedContentWidget
     upload = MagicMock()
     window = SimpleNamespace(quick_record_tab=tab, upload_file_tab=upload,
                              set_status=tab.set_status)
-    controller = SimpleNamespace(main_window=window, _upload_job_active=lambda: False)
+    controller = SimpleNamespace(main_window=window, _transcription_source_tab=TabbedContentWidget.TAB_UPLOAD_FILE)
     tab.set_engine_busy(True)
     UIController._apply_status_to_main_window(controller, "Downloading model...")
     assert tab.resolved_label.text() == "Downloading model..."
@@ -121,10 +125,39 @@ def test_engine_messages_after_an_upload_reach_the_visible_status(tab):
 
 def test_upload_job_messages_stay_in_the_upload_panel(tab):
     from ui_qt.ui_controller import UIController
+    from ui_qt.widgets import TabbedContentWidget
     upload = MagicMock()
     window = SimpleNamespace(quick_record_tab=tab, upload_file_tab=upload,
                              set_status=MagicMock())
-    controller = SimpleNamespace(main_window=window, _upload_job_active=lambda: True)
+    controller = SimpleNamespace(main_window=window, _transcription_source_tab=TabbedContentWidget.TAB_UPLOAD_FILE)
     UIController._apply_status_to_main_window(controller, "Transcribing chunk 2/3...")
     upload.set_status.assert_called_once_with("Transcribing chunk 2/3...")
     window.set_status.assert_not_called()
+
+
+def test_download_and_reload_activity_end_independently(tab):
+    tab.set_model_downloading("tiny.en", True)
+    tab.set_model_downloading("base", True)
+    tab.set_engine_busy(True)
+    tab.set_model_downloading("tiny.en", False)
+    tab.set_model_downloading("base", False)
+    assert tab.status_dot._timer.isActive()
+    tab.set_device_info("base | cpu (int8)", True)
+    tab.set_engine_busy(False)
+    assert not tab.status_dot._timer.isActive()
+
+
+def test_download_failure_stops_animation_and_preserves_reason(tab):
+    tab.set_model_downloading("base", True)
+    tab.set_status("Model download failed: connection interrupted")
+    tab.set_model_downloading("base", False)
+    assert not tab.status_dot._timer.isActive()
+    assert tab.resolved_label.text() == "Model download failed: connection interrupted"
+
+
+def test_cached_download_completion_does_not_leave_a_loading_message(tab):
+    tab.set_device_info("base | cpu (int8)", True)
+    tab.set_model_downloading("tiny.en", True)
+    tab.set_model_downloading("tiny.en", False)
+    assert tab.resolved_label.text() == "base | cpu (int8)"
+    assert not tab.status_dot._timer.isActive()
