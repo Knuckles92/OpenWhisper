@@ -44,7 +44,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 ## Transcription backends and models
 
-The published 2.5.2 installers include Local Whisper and the OpenAI API. Parakeet, Qwen3-ASR, Nemotron Streaming, and Moonshine are in this source tree and need a checkout until a release ships them.
+Version 2.6.0 includes Parakeet, Qwen3-ASR, Nemotron Streaming, and Moonshine on Windows x64, alongside Local Whisper and the OpenAI API. Optional runtimes and model weights are installed separately through Downloads.
 
 | Backend | Model choices | Device support | Workflows |
 | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ The published 2.5.2 installers include Local Whisper and the OpenAI API. Parakee
 | Moonshine | Streaming Small, Streaming Medium; English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network | Dictation and uploads |
 
-New installations start on **Parakeet** on Windows x64 and on **Local Whisper** elsewhere. A saved Backend choice is always kept. On a fresh Windows source install the app asks to download the Parakeet weights and then points to Downloads for its runtime.
+New installations start on **Parakeet** on Windows x64 and on **Local Whisper** elsewhere. A saved Backend choice is always kept. On a fresh Windows x64 install the app asks to download the Parakeet weights and then points to Downloads for its runtime.
 
 See the [complete model reference](docs/models.md) for exact IDs and the [local backend guide](docs/local-asr.md) for downloads, licenses, runtime requirements, and measured speed/quality. Voice recognition is separate from text cleanup and meeting intelligence.
 
@@ -86,27 +86,27 @@ Library loading, cuDNN, `auto` device selection, and older-GPU fallbacks: [Whisp
 
 ### Windows — installer (recommended)
 
-Download **OpenWhisper-Setup-2.5.2.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
+Download **OpenWhisper-Setup-2.6.0.exe** from [openwhisper.fiorilabs.tech](https://openwhisper.fiorilabs.tech/) or the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then run it.
 
 - No Python, no admin rights, no UAC prompt — it installs per-user to `%LOCALAPPDATA%\Programs\OpenWhisper`.
 - Settings, history, and recordings live in `%LOCALAPPDATA%\OpenWhisper` and are kept if you reinstall.
-- The 2.5.2 installer prompts for Whisper Base (~150 MB) on first use. On this source tree, first-run size depends on the selected engine; see the [size table](docs/local-asr.md#download-and-disk-sizes).
+- New Windows x64 installations default to Parakeet. The app asks to download its weights and points to Downloads for its runtime; see the [size table](docs/local-asr.md#download-and-disk-sizes). Existing engine choices are preserved.
 
 > **SmartScreen warning:** the installer is not yet code-signed, so Windows shows *"Windows protected your PC"*. Click **More info → Run anyway**. Verify the download by comparing its SHA-256 against the checksum published next to the download link:
 > ```powershell
-> Get-FileHash .\OpenWhisper-Setup-2.5.2.exe -Algorithm SHA256
+> Get-FileHash .\OpenWhisper-Setup-2.6.0.exe -Algorithm SHA256
 > ```
 
 To uninstall, use *Settings → Apps → Installed apps*. You'll be asked whether to keep your settings and history.
 
 ### Linux — native packages (recommended)
 
-Download **OpenWhisper-2.5.2-linux-amd64.deb** or **OpenWhisper-2.5.2-linux-x86_64.pkg.tar.zst** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install so audio and Qt system libraries are resolved automatically:
+Download **OpenWhisper-2.6.0-linux-amd64.deb** or **OpenWhisper-2.6.0-linux-x86_64.pkg.tar.zst** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases), then install so audio and Qt system libraries are resolved automatically:
 
 ```bash
-sudo apt install ./OpenWhisper-2.5.2-linux-amd64.deb
+sudo apt install ./OpenWhisper-2.6.0-linux-amd64.deb
 # or
-sudo pacman -U ./OpenWhisper-2.5.2-linux-x86_64.pkg.tar.zst
+sudo pacman -U ./OpenWhisper-2.6.0-linux-x86_64.pkg.tar.zst
 ```
 
 - Debian 12+ / Ubuntu 22.04+ (`amd64`) or Arch and compatible derivatives (`x86_64`).
@@ -127,7 +127,7 @@ Remove with `sudo apt remove openwhisper` or `sudo pacman -R openwhisper`. To al
 
 ### macOS — Apple Silicon DMG (preview)
 
-Download **OpenWhisper-*-macos-arm64.dmg** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases).
+Download **OpenWhisper-2.6.0-macos-arm64.dmg** from the [Releases page](https://github.com/Knuckles92/OpenWhisper/releases).
 
 - **Apple Silicon only** (arm64). macOS **14 (Sonoma) or newer**.
 - Open the disk image and drag **OpenWhisper** into **Applications**.

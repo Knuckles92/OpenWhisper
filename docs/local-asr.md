@@ -1,6 +1,6 @@
 # Additional local speech engines
 
-**Release status:** this guide documents the unreleased Windows backend expansion. The published 2.5.2 installers do not contain these additions. See the [complete model reference](models.md) for exact catalog and settings IDs.
+**Release status:** the Windows x64 backend expansion is available in **2.6.0 and later**. Optional runtimes and model weights are installed separately through Downloads. See the [complete model reference](models.md) for exact catalog and settings IDs.
 
 OpenWhisper adds four optional local backends on **Windows x64**. Parakeet is the default backend for new installations there; a saved selection is never changed. Select any of them in the Backend field on Quick Record or Upload File, or in Model Manager → On-demand voice. Existing Whisper and API settings are preserved.
 

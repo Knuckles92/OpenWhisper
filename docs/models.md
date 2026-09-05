@@ -1,6 +1,6 @@
 # Transcription model reference
 
-The Windows backend expansion is **unreleased**; published 2.5.2 installers do not contain it. This reference covers the current implementation. [Setup and measurements](local-asr.md) · [Documentation index](README.md)
+The Windows x64 backend expansion is available in **2.6.0 and later**. Optional runtimes and weights are installed separately through Downloads. [Setup and measurements](local-asr.md) · [Documentation index](README.md)
 
 ## Optional local models (Windows x64)
 
