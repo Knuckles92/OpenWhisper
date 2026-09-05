@@ -104,6 +104,10 @@ class _DialogTestCase:
                 "is_hf_hub_offline_env_set",
                 return_value=env_blocked,
             ),
+            # The optional-backend inventory reads the real local cache; a
+            # machine with Parakeet or Moonshine installed would otherwise
+            # change counts, sort order, and status-filter results.
+            patch("services.local_asr.cache.inventory", return_value={}),
         ]
         for patcher in patchers:
             patcher.start()

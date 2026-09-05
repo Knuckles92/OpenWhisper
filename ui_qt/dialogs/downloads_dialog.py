@@ -13,7 +13,6 @@ from typing import Callable, Dict, List, Optional, Set
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -47,7 +46,7 @@ from services.settings import (
 )
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.widgets import Button, ElidingLabel, PrimaryButton
+from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -307,11 +306,16 @@ class DownloadsDialog(QDialog):
         self.filter_edit.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.filter_edit, stretch=1)
 
+        # Three combos share this row with the search box. Eliding combos
+        # keep a wide item ("Nemotron Streaming" at a large font scale) from
+        # squeezing the search field down to a few characters; the popup
+        # still shows every item in full.
+        #
         # One entry per speech backend, so "all the Parakeet models" is one
         # click: models are downloaded and run per backend, and a row's name
         # alone (base, qwen-0.6b) does not always say which one owns it.
         from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
-        self.backend_filter_combo = QComboBox()
+        self.backend_filter_combo = ElidingComboBox()
         self.backend_filter_combo.setObjectName("modelManagerBackendFilter")
         self.backend_filter_combo.addItem("All backends", "all")
         self.backend_filter_combo.addItem("Whisper", WHISPER_BACKEND)
@@ -321,7 +325,7 @@ class DownloadsDialog(QDialog):
         self.backend_filter_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.backend_filter_combo)
 
-        self.status_filter_combo = QComboBox()
+        self.status_filter_combo = ElidingComboBox()
         self.status_filter_combo.setObjectName("modelManagerStatusFilter")
         self.status_filter_combo.addItem("All", "all")
         self.status_filter_combo.addItem("Downloaded", "downloaded")
@@ -330,13 +334,13 @@ class DownloadsDialog(QDialog):
         self.status_filter_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.status_filter_combo)
 
-        self.sort_combo = QComboBox()
+        self.sort_combo = ElidingComboBox()
         self.sort_combo.setObjectName("modelManagerSort")
         self.sort_combo.addItem("Recommended", "recommended")
         self.sort_combo.addItem("Downloaded first", "downloaded")
         self.sort_combo.addItem("Smallest first", "size")
         self.sort_combo.addItem("Name A-Z", "name")
-        self.sort_combo.addItem("Grouped by backend", "backend")
+        self.sort_combo.addItem("By backend", "backend")
         self.sort_combo.setToolTip("Sort model list")
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.sort_combo)

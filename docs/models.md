@@ -15,7 +15,7 @@ Model keys are persisted identifiers; the app displays the friendly names. Each 
 | Moonshine | Moonshine Streaming Small | `moonshine-small` | 123 million | English | CPU |
 | Moonshine | Moonshine Streaming Medium | `moonshine-medium` | 245 million | English | CPU |
 
-Parakeet supports timestamped meeting chunks. Nemotron and Moonshine also provide native live meeting previews. Qwen is available for dictation and uploads; this integration does not provide its forced alignment or vLLM streaming path. The original Whisper dictation preview remains specific to Whisper.
+Parakeet supports timestamped meeting chunks. Nemotron and Moonshine also provide native live meeting previews. Qwen is available for dictation and uploads; this integration does not provide its forced alignment or vLLM streaming path. The dictation live preview shares the loaded Parakeet or Nemotron engine when one of them is selected; Whisper dictation previews with tiny.en. Qwen and Moonshine have no dictation preview.
 
 Download the selected weights and the matching optional runtime separately. Parakeet and Nemotron share NVIDIA Speech CPU/GPU components; Qwen uses one shared CPU/CUDA runtime; Moonshine uses its own CPU runtime. Runtime versions, sizes, weight licenses, and device tradeoffs are in [the installation guide](local-asr.md#download-and-disk-sizes).
 

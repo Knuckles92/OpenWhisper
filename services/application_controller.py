@@ -209,7 +209,7 @@ class ApplicationController(QObject):
         self.hotkey_runtime.setup_hotkeys()
         self.streaming_runtime.setup_audio_level_callback()
         self._connect_signals()
-        # Streaming (and its optional tiny.en load) waits until the main
+        # Streaming (and its optional preview-model load) waits until the main
         # window is shown — see notify_main_ui_ready.
         self.hotkey_runtime.setup_hook_watchdog()
 
@@ -395,6 +395,9 @@ class ApplicationController(QObject):
                 finally:
                     self._reload_in_flight = False
                     self.engine_busy_changed.emit(False)
+                    # The preview shares this worker, so it can only be set up
+                    # once the load has settled.
+                    self._flush_pending_streaming_setup()
                 return
             if self._current_model_name == "local_whisper":
                 self._reload_whisper_worker()
@@ -440,9 +443,12 @@ class ApplicationController(QObject):
         finally:
             self._reload_in_flight = False
             self.engine_busy_changed.emit(False)
-            if self._pending_streaming_setup:
-                self._pending_streaming_setup = False
-                self.streaming_setup_requested.emit()
+            self._flush_pending_streaming_setup()
+
+    def _flush_pending_streaming_setup(self) -> None:
+        if self._pending_streaming_setup:
+            self._pending_streaming_setup = False
+            self.streaming_setup_requested.emit()
 
     def _start_initial_whisper_load(self) -> None:
         """Load the deferred local model after the main window is shown."""
@@ -677,7 +683,9 @@ class ApplicationController(QObject):
         Local Whisper loads here on a worker when the saved backend is local
         and construction deferred the model. API-only users skip that load.
         Streaming setup waits until after first paint (and after the local
-        load when one is in flight) so tiny.en cannot block the splash.
+        load when one is in flight) so the preview model cannot block the
+        splash; an optional engine's preview shares its worker, so setup
+        always follows that load.
 
         For a new installation whose selected backend is Local Whisper with an
         uncached model, this is also the moment the consent dialog may first
@@ -688,6 +696,7 @@ class ApplicationController(QObject):
         """
         from transcriber.optional_backend import LocalSpeechBackend
         if isinstance(self.current_backend, LocalSpeechBackend):
+            self._pending_streaming_setup = True
             self._start_initial_whisper_load()
         elif isinstance(self.current_backend, LocalWhisperBackend):
             backend = self.transcription_backends.get("local_whisper")
@@ -1253,7 +1262,7 @@ class ApplicationController(QObject):
         return progress
 
     def _on_model_download_finished(self, model_name: str, success: bool) -> None:
-        """Activate streaming preview once tiny.en is cached."""
+        """Load a downloaded optional model, or activate the tiny.en preview."""
         from transcriber.optional_backend import LocalSpeechBackend
         if success and isinstance(self.current_backend, LocalSpeechBackend):
             if self.current_backend.model_name == model_name:

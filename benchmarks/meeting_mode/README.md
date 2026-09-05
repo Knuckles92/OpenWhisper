@@ -91,32 +91,45 @@ gate fails for offline as the product final (micro above 30%, worst meeting
 are still captured so a later cut/decode can be scored without changing the
 live path.
 
-## Parakeet TDT v3 on the same ten meetings
+## Optional local backends on the same ten meetings
 
-The September 2026 run decoded the same ten meetings with `--model
-parakeet-v3 --language en` (the NeMo-Speech.cpp CUDA runtime on an RTX 2060)
-using the identical chunking and offline-pass profile. Parakeet accepts no
-prompt and no beam size, so its draft is a context-free decode.
+The September 2026 runs decoded the same ten meetings with the optional
+Windows x64 backends through the identical chunking and offline-pass profile,
+pinned to `--language en` (the NeMo-Speech.cpp CUDA runtime on an RTX 2060;
+Moonshine is CPU-only). None of these backends accepts a prompt or a beam
+size, so their drafts are context-free decodes.
 
-| Path | Whisper `auto` | Parakeet v3 | Delta |
+| Path | Whisper `auto` | Parakeet v3 | Nemotron 3.5 |
 |---|---:|---:|---:|
-| Live draft tcWER | 28.83% | 29.07% | +0.24 |
-| Offline pass tcWER | 33.66% | 28.45% | -5.21 |
-| Live draft, fillers removed | 24.98% | 27.16% | +2.18 |
-| Offline pass, fillers removed | 29.46% | 26.38% | -3.08 |
-| Live RTF | 0.073 | 0.010 | 7x faster |
-| Combined RTF | 0.114 | 0.022 | 5x faster |
+| Live draft tcWER | 28.83% | 29.07% | 33.85% |
+| Offline pass tcWER | 33.66% | 28.45% | 33.74% |
+| Live draft, fillers removed | 24.98% | 27.16% | 30.58% |
+| Offline pass, fillers removed | 29.46% | 26.38% | 30.38% |
+| Live RTF | 0.073 | 0.010 | 0.014 |
+| Combined RTF | 0.114 | 0.022 | 0.030 |
+| Worst meeting (offline) | 39.89% | 35.69% | 39.66% |
 
-The live drafts tie on the strict metric only because Parakeet transcribes
-most `um` / `uh` fillers that the AMI reference keeps, while Whisper
-suppresses most of them; with fillers removed from both sides Whisper's
-draft still leads by about two points. The offline pass reverses the order:
-Parakeet's clean re-decode improves on its own draft on nine of ten meetings,
-so the transcript a user keeps after End is better with Parakeet by five
-points strict or three points on lexical content, at one fifth of the
-compute. Parakeet passes every gate check except the worst meeting
-(IN1012, 35.69% offline against the 35% ceiling); Whisper's offline product
-fails both the micro and the worst-meeting checks. Exact counts are in
+Whisper and Parakeet tie on the strict live draft only because Parakeet
+transcribes most `um` / `uh` fillers that the AMI reference keeps, while
+Whisper suppresses most of them; with fillers removed from both sides
+Whisper's draft still leads by about two points. The offline pass reverses
+the order: Parakeet's clean re-decode improves on its own draft on nine of
+ten meetings, so the transcript a user keeps after End is better with
+Parakeet by five points strict or three points on lexical content, at one
+fifth of the compute. Parakeet's draft deficit against Whisper grows with the
+share of reference words spoken over another speaker; IN1012 (48.5%
+overlap) and IN1013 (45.3%) are the two most overlapped meetings and the only
+ones where Parakeet's offline pass is not clearly ahead. Parakeet passes
+every gate check except the worst meeting (IN1012, 35.69% against the 35%
+ceiling); Whisper's and Nemotron's offline products fail both the micro and
+the worst-meeting checks. Nemotron is about five points behind Parakeet on
+every path and offers no offline gain.
+
+Moonshine Small and Medium are CPU-only, so they ran the `IN1009,IN1005,IN1007`
+slice (1.8 audio hours). On that slice the offline pass scored 31.15% (Small)
+and 31.98% (Medium) against 27.67% for Parakeet, 32.79% for Nemotron and
+33.75% for Whisper, at live RTF 0.10 and 0.15 on this CPU. Medium did not
+beat Small. Exact counts for every run are in
 [the recorded evidence](../../docs/benchmarks/meeting-mode-parakeet-vs-whisper-2026-09-04.json).
 
 ASR word error is not the product question. To compare the package a user

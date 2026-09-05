@@ -978,6 +978,8 @@ class UploadFileTab(TranscriptionTabBase):
     )
     # A multi-file job heads each file's text with its name.
     TRANSCRIPT_MARKDOWN = True
+    # Files are transcribed whole; there is no while-you-speak preview here.
+    LIVE_PREVIEW_CONTROL = False
 
     def __init__(self, parent=None):
         super().__init__(parent)

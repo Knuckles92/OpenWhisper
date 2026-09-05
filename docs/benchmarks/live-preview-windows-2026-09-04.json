@@ -1,0 +1,1201 @@
+{
+  "schema": 1,
+  "started_utc": "2026-09-05T05:11:35Z",
+  "hardware": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "python": "3.12.10",
+    "cpu_count": 16,
+    "gpu": "name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]\nNVIDIA GeForce RTX 2060, 610.74, 6144 MiB, 2663 MiB, 73 %"
+  },
+  "git_head": "37e804beaee953368e171dc91a0d14d53ec928df",
+  "git_status": "M CONTRIBUTING.md\n M README.md\n M benchmarks/live_preview.py\n M docs/README.md\n M docs/release-checklist.md\n M tests/test_downloads_dialog.py\n?? benchmarks/LIVE_PREVIEW.md\n?? docs/packaging.md\n?? docs/whisper-gpu.md\n?? tests/test_live_preview_benchmark.py",
+  "source": {
+    "librispeech": {
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "split": "clean/validation",
+      "parquet_sha256": "4e69a06fa5edc90921e5e7e39a7084881f8b3ed9c805c574f4f39c6fde27c603",
+      "selection": "16 evenly spaced rows from 73 (numpy linspace integer indices)",
+      "speaker_ids": [
+        1272
+      ],
+      "noise": "White Gaussian noise, seed=row index, 10 dB whole-clip RMS SNR"
+    },
+    "ami": {
+      "annotations": "AMI manual 1.6.2",
+      "license": "CC BY 4.0",
+      "selection": "Centered fixed-duration excerpt from each curated meeting; word midpoint determines membership",
+      "excerpts": [
+        {
+          "meeting": "IN1001",
+          "start_s": 1716.8746875,
+          "end_s": 1746.8746875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1001.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1001.A.words.xml": "16d3ba76a276f6fa8c29cf548f62606a2e24112090a64f376c243a49f9ee6cb0",
+            "IN1001.B.words.xml": "cbc7b1b44df373107814b92c0641118a3595988068e63a7d8321018f28ba44e3",
+            "IN1001.C.words.xml": "03decc23e77bec4b1b6eea82a1e421b09311c38c5d12e14fee22c6a3558a2e76",
+            "IN1001.D.words.xml": "5be2635a80e327a32ea7364b4caae0826572fdabcd7cc425a925482d113c6ee6"
+          }
+        },
+        {
+          "meeting": "IN1002",
+          "start_s": 1221.2586875,
+          "end_s": 1251.2586875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1002.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1002.A.words.xml": "07d8c834cb71466c592e5122d248bb76671f3588c8ff471caf4f9b0e389c808c",
+            "IN1002.B.words.xml": "ab57b539d7d6db59f46fc286775acc20a0c7704bf3303397916c36d17e7de30b",
+            "IN1002.C.words.xml": "af6cffe8951676a9e10db624ab5195adc598d64025adb81ac357f09ea53e46d7",
+            "IN1002.D.words.xml": "381a8ea97361922c2b4df14cb3fa0c279c0b7e7be1335655675d8923429a7133"
+          }
+        },
+        {
+          "meeting": "IN1005",
+          "start_s": 1384.416,
+          "end_s": 1414.416,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1005.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1005.A.words.xml": "d8f2b08896036b638b3c6f3e4edb9533ef9f198d1d28102386c5b0313e4aaa98",
+            "IN1005.B.words.xml": "447b277788164452380fda3a9668afff3f6bed4b67504d9058fedff5c497e37f",
+            "IN1005.C.words.xml": "728045f6f8d2fbda3d756e6aae1d849b01a492ab617f09d808e3674ec9c99ccd",
+            "IN1005.D.words.xml": "a129961f2e3cbdb5e52875763175461beca4a28518df1e37728bcc70da16112f"
+          }
+        },
+        {
+          "meeting": "IN1007",
+          "start_s": 1190.6666875,
+          "end_s": 1220.6666875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1007.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1007.A.words.xml": "d0f94c4bc9ae842dc29b84c381dd7005576355eed3d3263d617576deaffc24d0",
+            "IN1007.B.words.xml": "b27e2e1aa9a757998b38236ebf5de126c1b5148655aee67eed4adf51a7f6bede",
+            "IN1007.C.words.xml": "93a637cce2187e2d7ca21892d6cbfd40c63fc645eb80836c8a159125564c3e33",
+            "IN1007.D.words.xml": "46240d0eee2604cd0105cc248deed809c73c5647c9ecaad9a782aade6acd1808"
+          }
+        },
+        {
+          "meeting": "IN1008",
+          "start_s": 1692.8533125,
+          "end_s": 1722.8533125,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1008.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1008.A.words.xml": "a5af7cbb28bab89c83a5e1eff7d229fcc58ecc609d15c635127666b401ddf28f",
+            "IN1008.B.words.xml": "2932655422c9a97f4d04abc94ced43f759e2a5ff0a3004ac0679f7ef2b6ca93a",
+            "IN1008.C.words.xml": "4ca9d90448d80c9b3510238d764b98648b510c751d34c74912a89529a5fb3427",
+            "IN1008.D.words.xml": "bc1a2cd48cb32bd15a61d088e701043d24ffd996a665f2323d8b968066d0136b"
+          }
+        },
+        {
+          "meeting": "IN1009",
+          "start_s": 613.1733125,
+          "end_s": 643.1733125,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1009.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1009.A.words.xml": "b8da842fbd878e881b72b9bf11f7a2e579649ab5a293b7fabaa941df721e9c0f",
+            "IN1009.B.words.xml": "cf9b070e0d278acb4ecc4283f7974d50011341a70dbc5b4205d62d29c6401c5f",
+            "IN1009.C.words.xml": "4c58f522b7e7133f22314aae85b56615684930bb29e6a11a42218900bf0052e8",
+            "IN1009.D.words.xml": "38990bdb875fca1a569b578f2801687172bbe3601c33fc72c99479830634b084"
+          }
+        },
+        {
+          "meeting": "IN1012",
+          "start_s": 1539.4666875,
+          "end_s": 1569.4666875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1012.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1012.A.words.xml": "70f73ace9ea8e25d8a20ef68ad5636921da2c55941185a8b099002dccc6cc6ff",
+            "IN1012.B.words.xml": "3751c734c3cad12e6fc67386e1833379ffc468ad64ba3dcc13893b7b8ff37471",
+            "IN1012.C.words.xml": "3be60d61427902dc3f35e00419826ef73b5fcd3a3fc60f25332f03df8569496c",
+            "IN1012.D.words.xml": "48b0f05b6cff50bce84b63e62ca71ed7a5ccac40a775536247b0d5d06e03239b"
+          }
+        },
+        {
+          "meeting": "IN1013",
+          "start_s": 1556.064,
+          "end_s": 1586.064,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1013.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1013.A.words.xml": "0addf33da7ec397ae02ba742ddf2f0e002607dbd8f3328faa11b58fea614818e",
+            "IN1013.B.words.xml": "abefb76e70aefba129e47a118e788bb471eea433c1f83ab58f72606f867fb7dd",
+            "IN1013.C.words.xml": "cd10c37528701c402d4ce65f564775a1ca75d8d8548607351f0dce482f8d57ec",
+            "IN1013.D.words.xml": "67da4469920ed4ec3b4eedc8f01377ada21a79d685d325ed3e9a15bce4a80999"
+          }
+        },
+        {
+          "meeting": "IN1014",
+          "start_s": 1831.4346875,
+          "end_s": 1861.4346875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1014.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1014.A.words.xml": "24788a9aca64d73af7f5a89b4417af471c409fca3ff79b99eba9ee45d1d19784",
+            "IN1014.B.words.xml": "f02e39e83ee3e2821740f930dfd36a35a96a80771cec6340f7695bd99cfd7887",
+            "IN1014.C.words.xml": "fe2cc40cf0689ee7c2cd85dd0aa7477cf0f072c3856fd79e95424dbba10f1409",
+            "IN1014.D.words.xml": "f30151d8f734991fa016c82926c158ab2c27dc139eaa6ddc0a11406691911fbe"
+          }
+        },
+        {
+          "meeting": "IN1016",
+          "start_s": 1787.1466875,
+          "end_s": 1817.1466875,
+          "audio_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/HeadsetAudio/IN1016.Mix-Headset.wav",
+          "annotations_sha256": {
+            "IN1016.A.words.xml": "c27e97e5a2d51affd88e236e5649b4684b375235be851c0e0ad3b5640d4eb1ba",
+            "IN1016.B.words.xml": "2dc695b8b7fea024714639e301bd5672862b42ab175cce992c47b334a0a1e0fb",
+            "IN1016.C.words.xml": "c27de7f6fb4d97cbea9a54d413b03da8110a2f7b55b991081d751ef9e57b0ad3",
+            "IN1016.D.words.xml": "26f2391cedc463b83c8f7e4d3f184302af440c2d973f9a0f7e3a2aad060730d6"
+          }
+        }
+      ]
+    }
+  },
+  "manifest_sha256": "2d000826e2c22f20409c2f89fa8055c528bb13217739d9dc975af8eb24bb1b44",
+  "repeats": 1,
+  "sample_rate": 44100,
+  "callback_frames": 1024,
+  "chunk_s": 3.0,
+  "overlap_s": 0.75,
+  "native_cadence_s": 0.75,
+  "normalization": "meeting_mode.normalize_tokens: NFKC, lowercase; punctuation ignored, apostrophes retained, AMI acronym underscores removed; fillers/numbers retained",
+  "timing": "Measured serial service; predicted arrival=max(previous completion,audio end)+service. No sleeps, recorder queues/drops, GUI paint, or concurrent final ASR.",
+  "live_accuracy": "Full reference versus preview visible at audio EOF, before tail/finish; missing tails count as deletions.",
+  "drained_accuracy": "Diagnostic after remaining window decode or native finish; not the product final transcription or current stop_streaming behavior.",
+  "checkpoint_accuracy": "Timed clips: repeated prefix WER at common recorder-quantized 3 s checkpoints; reference words ending by checkpoint and updates completed by checkpoint.",
+  "corpus": [
+    {
+      "id": "1272-128104-0000",
+      "group": "clean",
+      "audio_sha256": "799f78ed4beb4de7ceae3a809262d4ce242394342ccd1d58cef7d49dbc2def46",
+      "duration_s": 5.855011337868481,
+      "reference": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL"
+    },
+    {
+      "id": "1272-128104-0000",
+      "group": "noise10db",
+      "audio_sha256": "6136982bb87778f308f591350d4b993a9100e4bbe07ae5bf1175dd4f059f6421",
+      "duration_s": 5.855011337868481,
+      "reference": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL"
+    },
+    {
+      "id": "1272-128104-0004",
+      "group": "clean",
+      "audio_sha256": "4798e34d9a323ed835ae6055172236f8965dd5ccf146c25758711023ecc8b2e6",
+      "duration_s": 29.4,
+      "reference": "LINNELL'S PICTURES ARE A SORT OF UP GUARDS AND AT EM PAINTINGS AND MASON'S EXQUISITE IDYLLS ARE AS NATIONAL AS A JINGO POEM MISTER BIRKET FOSTER'S LANDSCAPES SMILE AT ONE MUCH IN THE SAME WAY THAT MISTER CARKER USED TO FLASH HIS TEETH AND MISTER JOHN COLLIER GIVES HIS SITTER A CHEERFUL SLAP ON THE BACK BEFORE HE SAYS LIKE A SHAMPOOER IN A TURKISH BATH NEXT MAN"
+    },
+    {
+      "id": "1272-128104-0004",
+      "group": "noise10db",
+      "audio_sha256": "9a1894ef9f875016564f99f3064117f6b88591cbe127d219636a68438bd00bcc",
+      "duration_s": 29.4,
+      "reference": "LINNELL'S PICTURES ARE A SORT OF UP GUARDS AND AT EM PAINTINGS AND MASON'S EXQUISITE IDYLLS ARE AS NATIONAL AS A JINGO POEM MISTER BIRKET FOSTER'S LANDSCAPES SMILE AT ONE MUCH IN THE SAME WAY THAT MISTER CARKER USED TO FLASH HIS TEETH AND MISTER JOHN COLLIER GIVES HIS SITTER A CHEERFUL SLAP ON THE BACK BEFORE HE SAYS LIKE A SHAMPOOER IN A TURKISH BATH NEXT MAN"
+    },
+    {
+      "id": "1272-128104-0009",
+      "group": "clean",
+      "audio_sha256": "f91fae94e75d6e831eede05bff930beab5300cfc484a806ea196df2d6f219e19",
+      "duration_s": 18.29,
+      "reference": "HE LAMENTS MOST BITTERLY THE DIVORCE THAT HAS BEEN MADE BETWEEN DECORATIVE ART AND WHAT WE USUALLY CALL PICTURES MAKES THE CUSTOMARY APPEAL TO THE LAST JUDGMENT AND REMINDS US THAT IN THE GREAT DAYS OF ART MICHAEL ANGELO WAS THE FURNISHING UPHOLSTERER"
+    },
+    {
+      "id": "1272-128104-0009",
+      "group": "noise10db",
+      "audio_sha256": "55a5c78b9a9cdba85876076661cf5d010facbf6aa23671da97bbd2d8efce9c4e",
+      "duration_s": 18.29,
+      "reference": "HE LAMENTS MOST BITTERLY THE DIVORCE THAT HAS BEEN MADE BETWEEN DECORATIVE ART AND WHAT WE USUALLY CALL PICTURES MAKES THE CUSTOMARY APPEAL TO THE LAST JUDGMENT AND REMINDS US THAT IN THE GREAT DAYS OF ART MICHAEL ANGELO WAS THE FURNISHING UPHOLSTERER"
+    },
+    {
+      "id": "1272-128104-0014",
+      "group": "clean",
+      "audio_sha256": "b664cff5f3c9da7e2f3e37b3e0c1940aaf2db490fb68402f7e8afed8d75cceb1",
+      "duration_s": 2.2450113378684806,
+      "reference": "BY HARRY QUILTER M A"
+    },
+    {
+      "id": "1272-128104-0014",
+      "group": "noise10db",
+      "audio_sha256": "206fee37dbb364ccea9454b4b4e17c4cdba719065dfc4bdd1d63e25c05fc1b20",
+      "duration_s": 2.2450113378684806,
+      "reference": "BY HARRY QUILTER M A"
+    },
+    {
+      "id": "1272-135031-0004",
+      "group": "clean",
+      "audio_sha256": "f178932ba2b1c850182b15ee8a74132edb9ffa30112682d7b38c55e194045f7d",
+      "duration_s": 4.225011337868481,
+      "reference": "THE KING HAS FLED IN DISGRACE AND YOUR FRIENDS ARE ASKING FOR YOU"
+    },
+    {
+      "id": "1272-135031-0004",
+      "group": "noise10db",
+      "audio_sha256": "5fb710e6e117c760042d29353d8928ac946269f4c7f3edf60c4777affba6cdc7",
+      "duration_s": 4.225011337868481,
+      "reference": "THE KING HAS FLED IN DISGRACE AND YOUR FRIENDS ARE ASKING FOR YOU"
+    },
+    {
+      "id": "1272-135031-0009",
+      "group": "clean",
+      "audio_sha256": "11d6953d2a8ba28594088deee728160db098904fc3a539fafb49293ae3182af0",
+      "duration_s": 1.91,
+      "reference": "HE DOESN'T WORK AT ALL"
+    },
+    {
+      "id": "1272-135031-0009",
+      "group": "noise10db",
+      "audio_sha256": "7bf2145d2d456852f43e28232ca008b6f3bc6ac33fec211ad104c9b6093a0ab0",
+      "duration_s": 1.91,
+      "reference": "HE DOESN'T WORK AT ALL"
+    },
+    {
+      "id": "1272-135031-0013",
+      "group": "clean",
+      "audio_sha256": "1297682dd3faeb7c9e3c936eb707aaeb6c344c20ce468d4c752002035955a543",
+      "duration_s": 3.7,
+      "reference": "INQUIRED SHAGGY IN THE METAL FOREST"
+    },
+    {
+      "id": "1272-135031-0013",
+      "group": "noise10db",
+      "audio_sha256": "8becedab1134ff8752bcd7d6b6d62e8f50f7ec3f0e2b71b01a24341fd5dc05fd",
+      "duration_s": 3.7,
+      "reference": "INQUIRED SHAGGY IN THE METAL FOREST"
+    },
+    {
+      "id": "1272-135031-0018",
+      "group": "clean",
+      "audio_sha256": "43f9d0d754b72676c8066a2e5652d5cf951f4b97dbfbca87a4320e650de09f0d",
+      "duration_s": 2.4449433106575964,
+      "reference": "OH NO I'M QUITE SURE HE DIDN'T"
+    },
+    {
+      "id": "1272-135031-0018",
+      "group": "noise10db",
+      "audio_sha256": "fce25d9fa3c81c4151965369090ea37be38760c5e4a6c1f73351fd954d18dc02",
+      "duration_s": 2.4449433106575964,
+      "reference": "OH NO I'M QUITE SURE HE DIDN'T"
+    },
+    {
+      "id": "1272-135031-0023",
+      "group": "clean",
+      "audio_sha256": "01588e098b21a8e2f61a488c72fdd3620724e0c4b71129b0ba6078afa9eda4c8",
+      "duration_s": 7.52,
+      "reference": "KALIKO WENT TO THE BIG GONG AND POUNDED ON IT JUST AS RUGGEDO USED TO DO BUT NO ONE ANSWERED THE SUMMONS"
+    },
+    {
+      "id": "1272-135031-0023",
+      "group": "noise10db",
+      "audio_sha256": "f85d308c92f1bff8499cd7def3bdd36ad01595fcfd6c7c106a16fc4d7e539862",
+      "duration_s": 7.52,
+      "reference": "KALIKO WENT TO THE BIG GONG AND POUNDED ON IT JUST AS RUGGEDO USED TO DO BUT NO ONE ANSWERED THE SUMMONS"
+    },
+    {
+      "id": "1272-141231-0003",
+      "group": "clean",
+      "audio_sha256": "b16ad8caf71e3fa7233e303caa273ad8e655edd431b137446a51c9e064c81269",
+      "duration_s": 5.42,
+      "reference": "HIS INSTANT OF PANIC WAS FOLLOWED BY A SMALL SHARP BLOW HIGH ON HIS CHEST"
+    },
+    {
+      "id": "1272-141231-0003",
+      "group": "noise10db",
+      "audio_sha256": "376b47b980f2a0b1479b218d4789c741946ba7814f91300bb8d14f1028cf8198",
+      "duration_s": 5.42,
+      "reference": "HIS INSTANT OF PANIC WAS FOLLOWED BY A SMALL SHARP BLOW HIGH ON HIS CHEST"
+    },
+    {
+      "id": "1272-141231-0008",
+      "group": "clean",
+      "audio_sha256": "c6af31f1c30c6b835cc763f6161bb395c36d3959eccfcf5dab8faebef7fac993",
+      "duration_s": 4.595011337868481,
+      "reference": "HE WAS IN REVERIE SLIDING ALONG THE BORDERS OF CONSCIOUSNESS"
+    },
+    {
+      "id": "1272-141231-0008",
+      "group": "noise10db",
+      "audio_sha256": "e116a3214aceb29af854340d7fcd672393742bd19a1ebf9ba6b063854bb611bb",
+      "duration_s": 4.595011337868481,
+      "reference": "HE WAS IN REVERIE SLIDING ALONG THE BORDERS OF CONSCIOUSNESS"
+    },
+    {
+      "id": "1272-141231-0012",
+      "group": "clean",
+      "audio_sha256": "f62b01de78e084ede6e5de6480f79cb783b3fc77827833795d5004d7711b7051",
+      "duration_s": 7.74,
+      "reference": "I'M HERE BECAUSE THE MATTER IS OF UTMOST IMPORTANCE AND BRANDD IS THE ONE I MUST SEE NOW STAND ASIDE"
+    },
+    {
+      "id": "1272-141231-0012",
+      "group": "noise10db",
+      "audio_sha256": "645d205fd38e3e5290458a9b160081923ed901dc7cff260d1e8550f2f1272d80",
+      "duration_s": 7.74,
+      "reference": "I'M HERE BECAUSE THE MATTER IS OF UTMOST IMPORTANCE AND BRANDD IS THE ONE I MUST SEE NOW STAND ASIDE"
+    },
+    {
+      "id": "1272-141231-0017",
+      "group": "clean",
+      "audio_sha256": "eeb8c9b35a5e02400ff48c21403923f5a0b0d0a60306a101e7c27791cd5a869e",
+      "duration_s": 3.735011337868481,
+      "reference": "HE ASKED THE HANDLER WHO WAS KNEADING HIS ACHING MUSCLES"
+    },
+    {
+      "id": "1272-141231-0017",
+      "group": "noise10db",
+      "audio_sha256": "2243ee78f43ab977133839ee45cf2e81af8f94583a871e2d15572dd536ed00e4",
+      "duration_s": 3.735011337868481,
+      "reference": "HE ASKED THE HANDLER WHO WAS KNEADING HIS ACHING MUSCLES"
+    },
+    {
+      "id": "1272-141231-0022",
+      "group": "clean",
+      "audio_sha256": "44367a22506ceb74c0689e2222f642248b60b162e4610841a6794ee150949c6d",
+      "duration_s": 8.35,
+      "reference": "THERE APPEARED TO BE AN IMMEDIATE ASSOCIATION WITH THE DEATH TRAUMA AS IF THE TWO WERE INEXTRICABLY LINKED INTO ONE"
+    },
+    {
+      "id": "1272-141231-0022",
+      "group": "noise10db",
+      "audio_sha256": "d2e01e57d04dcd147ccce23b86800c876d8946749a345ece47d674530d7e1d86",
+      "duration_s": 8.35,
+      "reference": "THERE APPEARED TO BE AN IMMEDIATE ASSOCIATION WITH THE DEATH TRAUMA AS IF THE TWO WERE INEXTRICABLY LINKED INTO ONE"
+    },
+    {
+      "id": "1272-141231-0027",
+      "group": "clean",
+      "audio_sha256": "9f43668e78db67ae1f4458f61ab4e163c9b246379003996ff76e17aa11ddc36a",
+      "duration_s": 6.57,
+      "reference": "WHEN THE BUZZER SOUNDED HE PULLED HIS FOIL FROM HIS SECOND'S STARTLED GRASP AND RAN FORWARD"
+    },
+    {
+      "id": "1272-141231-0027",
+      "group": "noise10db",
+      "audio_sha256": "b7bf94c63b0cb085a17966ca50b73bf918fec7ffe18ed79a972fc3fbbd9883e1",
+      "duration_s": 6.57,
+      "reference": "WHEN THE BUZZER SOUNDED HE PULLED HIS FOIL FROM HIS SECOND'S STARTLED GRASP AND RAN FORWARD"
+    },
+    {
+      "id": "1272-141231-0032",
+      "group": "clean",
+      "audio_sha256": "202a6c1b07f83831254a24be988dd86c9e512674a00554e410c2370671657a3b",
+      "duration_s": 4.48,
+      "reference": "THEN THE POWERFUL TWIST THAT THRUST IT ASIDE IN AND UNDER THE GUARD"
+    },
+    {
+      "id": "1272-141231-0032",
+      "group": "noise10db",
+      "audio_sha256": "79f04bc5842b60d689d9a3212cc69806ee645c17512ee93d8af519e7bea345fd",
+      "duration_s": 4.48,
+      "reference": "THEN THE POWERFUL TWIST THAT THRUST IT ASIDE IN AND UNDER THE GUARD"
+    },
+    {
+      "id": "IN1001",
+      "group": "ami_conversation",
+      "audio_sha256": "47c81f4338723e170104996752b311ba0cae9289ffcdcbe396606d64bcf9a39a",
+      "duration_s": 30.0,
+      "reference": "Uh the on the D_V_D_ I saw that there are some other stuff I dunno This one Uh I think The in same the video there's two there's two video one is a real video and the other is a just uh introduction when you have the menu Okay Oops So this is vi okay This video is about four minutes five minutes right"
+    },
+    {
+      "id": "IN1002",
+      "group": "ami_conversation",
+      "audio_sha256": "a9d3ffb8352d1e9dcf7146cdf7dc06dfbacb3642ba0ce09a54ba2b127adc84ae",
+      "duration_s": 30.0,
+      "reference": "so it's like you know if you have a mm mm uh um if you have It's kind of like essentially if it is like hundred twenty hundred hundred G_B_ data space then it essentially will have a hun two hundred G_B_ only stu visible data f to you But then it can we as soon as they replace one of those hard disk i it can it can from the other one it can recover everything on that Uh it will have measures Inter like internally it can do that kind of"
+    },
+    {
+      "id": "IN1005",
+      "group": "ami_conversation",
+      "audio_sha256": "218de8f7245d35f10e9c5c0cc982fd8a5735251eb1559a9053c54af0dd5c4054",
+      "duration_s": 30.0,
+      "reference": "So I I So so think that's only to I say think that it's uh it's it can be really yeah infinitive clustering See the the thing about web pages I thought as well in that getting humans to evaluate it in some way is that you have most of the web pages that are uh well a lot of the web pages that are important in some way are are are home pages so Google dot com doesn't actually say the words search on it I think I maybe it says go but you only know it's about search through the Mm-hmm thing but someone looking at it can tell that it's a search"
+    },
+    {
+      "id": "IN1007",
+      "group": "ami_conversation",
+      "audio_sha256": "b66786a9b4d6b68822ffd1533300526862c9db62bf68c0e5a0d8453e045dacca",
+      "duration_s": 30.0,
+      "reference": "like there is one peak And and if the frequency doesn't change over the wa over over And frequency the lengths of more the or less doesn't uh change It's uh related to Yeah uh that frequency of the broad band or how Yeah it's called That If you add that's those filters nice which are Yeah uh wider and wider this is that centre frequency which is somehow related to this one Okay So And so then so you so can transmit the uh so the just broader fe bands do what on this picture L It's left worse and left worse Don't then you don't see any But anything but like f f cosine fortunately But because of"
+    },
+    {
+      "id": "IN1008",
+      "group": "ami_conversation",
+      "audio_sha256": "322d48896b07a50184f9994717bcab6cd175bd8894d0d37252db75c268fd9101",
+      "duration_s": 30.0,
+      "reference": "Yes Mm-hmm I'm not the person for hardware No So maybe w uh you could present a different work uh Yeah you have done And uh I don't know how they are Yeah I'll t I'll try to present uh I guess it corresponds to your questions So you told us it was different pieces more Yeah than one integrated device So the the lowest layer would be the first two questions Um you asked about how to detect um activity Currently Yes"
+    },
+    {
+      "id": "IN1009",
+      "group": "ami_conversation",
+      "audio_sha256": "825130693a9d6d4d42ba904735d27c80705aca85d56fc5e62c6fca4bd3cdb0e1",
+      "duration_s": 30.0,
+      "reference": "mm this is not the You might want Yes yes Okay You might might want to do Yes no but but in fact we have uh yes we are designing uh a noise sensitive table just f from your ring but we are also designing uh a prototype um to analyse the conversations Okay So uh we might Yeah add there a lot of uh features So yeah once you have locations it's"
+    },
+    {
+      "id": "IN1012",
+      "group": "ami_conversation",
+      "audio_sha256": "1520f47111d65767ed886f81804c301d9fe387921d7acdba498653347d59d852",
+      "duration_s": 30.0,
+      "reference": "paper but I saw the algorithm I have been using even that called temporal decomposition I don't know if you kn you know that Yeah like yeah yeah the temporal dec Uh I don't know who propose it I just had it from from BEAMbot for like a BEAMbot do you know the guy He's French Mm-hmm um somewhere now in Yeah teleconference like mm I don't know where he's working but th we were using it for uh speech coding Yeah so we just had a speech and you had decompose a speech into such segments temporal segments which were stationary inside Yeah And then you can more or"
+    },
+    {
+      "id": "IN1013",
+      "group": "ami_conversation",
+      "audio_sha256": "1f15764a3d97e8b86b14b83d76731792c05492429232de481dba3f6949f525c4",
+      "duration_s": 30.0,
+      "reference": "not one second but you have to go down because then you can get just voiced part and unvoiced part You know one Yeah second yeah it's usually mixed right somehow together Hmm But you don't do any voice un-voice decision Not no now no No Yeah and I the you wi that's even advantage uh I think you for wanna this avoid approach hard Yeah choices Yeah on Uh uh we don't Yeah no want voicing to do that decision yeah because yeah it's quite tricky sorta the modelling it's really another issue like Well Yeah that's one Right of the big problems with Yeah L_P_C_ ten Yeah for instance yeah yeah I sure it stinks Yeah because this hard Exactly Yeah yeah And then you have to combine all this Right harmonic model and noise model So again you may end up some"
+    },
+    {
+      "id": "IN1014",
+      "group": "ami_conversation",
+      "audio_sha256": "6c11aeef31485cf940042cb479d4140be9f0250e6b4d4815ce6f070046284842",
+      "duration_s": 30.0,
+      "reference": "finally we decided Mm-hmm for for one approach And maybe take the opportunity to look just a moment uh at what point we are and w when we plan basically to get something uh done and working I can add to that list of project is something that Jean-Marc and me we have found in the literature There is F_X_ Yes that is doing something very similar to to what we do here basically A capture through the projector signal of the slides and they for the moment they just plan to use the slides"
+    },
+    {
+      "id": "IN1016",
+      "group": "ami_conversation",
+      "audio_sha256": "8adfb7af86c6e25b375cd39f618cf157d97c5a490d2049e3e57f1db3297725ab",
+      "duration_s": 30.0,
+      "reference": "use always the same words But on average you know linguistic research shows that on average the people use five hundred words That's what we have a So disposition Yeah okay And For we say English everything it's especially low Yeah uh yeah We say everything with that And probably we not a native English speaker we use even less So that's gives an idea of why basically in terms of recognition it doesn't really help because you always use anyway the same words Yeah Mm-hmm And a few occurrences of words that are there in terms of recognition make one two"
+    },
+    {
+      "id": "silence-6s",
+      "group": "silence",
+      "audio_sha256": "47b589098cc9e4b92774cd5b6a57ccca0713c02396bf755b2318f7e81cdc534e",
+      "duration_s": 6.0,
+      "reference": ""
+    }
+  ],
+  "results": [
+    {
+      "model": "tiny.en",
+      "repeat": 1,
+      "hardware_before": {
+        "platform": "Windows-11-10.0.26200-SP0",
+        "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+        "python": "3.12.10",
+        "cpu_count": 16,
+        "gpu": "name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]\nNVIDIA GeForce RTX 2060, 610.74, 6144 MiB, 2655 MiB, 73 %"
+      },
+      "model_snapshot": "0d3d19a32d3338f10357c0889762bd8d64bbdeba",
+      "load_s": 0.44852010009344667,
+      "requested_device": "cuda",
+      "actual_device": "cuda",
+      "device_info": "tiny.en | cuda (float16)",
+      "profiles": [
+        {
+          "mode": "window",
+          "effective_cadence_s": 3.01859410430839,
+          "warmup_s": 0.3284841999411583,
+          "summary": {
+            "clips": 43,
+            "audio_s": 538.96,
+            "calls": 151,
+            "update_median_ms": 111.95910000242293,
+            "update_p95_ms": 218.6265000491403,
+            "first_text_median_s": 3.1058928543126556,
+            "clips_without_live_text": 7,
+            "rtf": 0.048594934316648186,
+            "update_deadline_misses": 0,
+            "max_backlog_s": 0.9094356999266893,
+            "live": {
+              "words": 1587,
+              "errors": 838,
+              "substitutions": 280,
+              "deletions": 372,
+              "insertions": 186,
+              "wer": 0.5280403276622558
+            },
+            "drained": {
+              "words": 1587,
+              "errors": 749,
+              "substitutions": 299,
+              "deletions": 177,
+              "insertions": 273,
+              "wer": 0.47195967233774416
+            },
+            "checkpoint_wer": 0.575506646328176
+          },
+          "groups": {
+            "ami_conversation": {
+              "clips": 10,
+              "audio_s": 300.0,
+              "calls": 90,
+              "update_median_ms": 116.80855002487078,
+              "update_p95_ms": 213.73557001352304,
+              "first_text_median_s": 3.0985539543100047,
+              "clips_without_live_text": 0,
+              "rtf": 0.045990884666486334,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.9094356999266893,
+              "live": {
+                "words": 1007,
+                "errors": 532,
+                "substitutions": 174,
+                "deletions": 264,
+                "insertions": 94,
+                "wer": 0.5283018867924528
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 468,
+                "substitutions": 189,
+                "deletions": 171,
+                "insertions": 108,
+                "wer": 0.464746772591857
+              },
+              "checkpoint_wer": 0.575506646328176
+            },
+            "clean": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 107.42979997303337,
+              "update_p95_ms": 209.34920992003748,
+              "first_text_median_s": 3.105919204280467,
+              "clips_without_live_text": 3,
+              "rtf": 0.054886699000724966,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.22428900003433228,
+              "live": {
+                "words": 290,
+                "errors": 133,
+                "substitutions": 40,
+                "deletions": 51,
+                "insertions": 42,
+                "wer": 0.4586206896551724
+              },
+              "drained": {
+                "words": 290,
+                "errors": 120,
+                "substitutions": 37,
+                "deletions": 2,
+                "insertions": 81,
+                "wer": 0.41379310344827586
+              }
+            },
+            "noise10db": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 111.49764998117462,
+              "update_p95_ms": 216.89923503436148,
+              "first_text_median_s": 3.106379204290674,
+              "clips_without_live_text": 3,
+              "rtf": 0.05090325119973776,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.6987000000663102,
+              "live": {
+                "words": 290,
+                "errors": 173,
+                "substitutions": 66,
+                "deletions": 57,
+                "insertions": 50,
+                "wer": 0.596551724137931
+              },
+              "drained": {
+                "words": 290,
+                "errors": 161,
+                "substitutions": 73,
+                "deletions": 4,
+                "insertions": 84,
+                "wer": 0.5551724137931034
+              }
+            },
+            "silence": {
+              "clips": 1,
+              "audio_s": 6.0,
+              "calls": 1,
+              "update_median_ms": 27.598300017416477,
+              "update_p95_ms": 27.598300017416477,
+              "first_text_median_s": null,
+              "clips_without_live_text": 1,
+              "rtf": 0.01184116666748499,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.027598300017416477,
+              "live": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              },
+              "drained": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "model": "parakeet-v3",
+      "repeat": 1,
+      "hardware_before": {
+        "platform": "Windows-11-10.0.26200-SP0",
+        "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+        "python": "3.12.10",
+        "cpu_count": 16,
+        "gpu": "name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]\nNVIDIA GeForce RTX 2060, 610.74, 6144 MiB, 2699 MiB, 14 %"
+      },
+      "artifacts": {
+        "repo": "nvidia/parakeet-tdt-0.6b-v3",
+        "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+        "files": [
+          {
+            "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+            "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+            "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+            "size_bytes": 713975456
+          }
+        ]
+      },
+      "runtime_manifest": {
+        "version": "0.1.0-py312",
+        "component_api": 1,
+        "platform": "win_amd64",
+        "install_bytes": 454179072,
+        "archives": [
+          {
+            "name": "python-3.12.10-embed-amd64.zip",
+            "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+            "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+            "size_bytes": 11133606,
+            "extract": "zip"
+          },
+          {
+            "name": "nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+            "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+            "sha256": "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
+            "size_bytes": 106044768,
+            "extract": "zip"
+          }
+        ]
+      },
+      "load_s": 0.16791319998446852,
+      "requested_device": "cuda",
+      "actual_device": "cuda",
+      "device_info": "Parakeet TDT 0.6B v3 | cuda",
+      "profiles": [
+        {
+          "mode": "window",
+          "effective_cadence_s": 3.01859410430839,
+          "warmup_s": 0.35328379995189607,
+          "summary": {
+            "clips": 43,
+            "audio_s": 538.96,
+            "calls": 151,
+            "update_median_ms": 51.75650003366172,
+            "update_p95_ms": 62.46265000663698,
+            "first_text_median_s": 3.056815604307444,
+            "clips_without_live_text": 8,
+            "rtf": 0.01759389323864169,
+            "update_deadline_misses": 0,
+            "max_backlog_s": 0.08102650009095669,
+            "live": {
+              "words": 1587,
+              "errors": 842,
+              "substitutions": 170,
+              "deletions": 561,
+              "insertions": 111,
+              "wer": 0.5305608065532451
+            },
+            "drained": {
+              "words": 1587,
+              "errors": 705,
+              "substitutions": 175,
+              "deletions": 368,
+              "insertions": 162,
+              "wer": 0.444234404536862
+            },
+            "checkpoint_wer": 0.5972978862497276
+          },
+          "groups": {
+            "ami_conversation": {
+              "clips": 10,
+              "audio_s": 300.0,
+              "calls": 90,
+              "update_median_ms": 52.669550001155585,
+              "update_p95_ms": 64.79453498614019,
+              "first_text_median_s": 3.055264204310474,
+              "clips_without_live_text": 0,
+              "rtf": 0.017488435335302106,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.08102650009095669,
+              "live": {
+                "words": 1007,
+                "errors": 556,
+                "substitutions": 113,
+                "deletions": 386,
+                "insertions": 57,
+                "wer": 0.5521350546176763
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 496,
+                "substitutions": 122,
+                "deletions": 309,
+                "insertions": 65,
+                "wer": 0.4925521350546177
+              },
+              "checkpoint_wer": 0.5972978862497276
+            },
+            "clean": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 51.04320001555607,
+              "update_p95_ms": 61.37405995395966,
+              "first_text_median_s": 3.0578868043150167,
+              "clips_without_live_text": 3,
+              "rtf": 0.018287102504253416,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.06274680001661181,
+              "live": {
+                "words": 290,
+                "errors": 134,
+                "substitutions": 23,
+                "deletions": 90,
+                "insertions": 21,
+                "wer": 0.46206896551724136
+              },
+              "drained": {
+                "words": 290,
+                "errors": 97,
+                "substitutions": 20,
+                "deletions": 34,
+                "insertions": 43,
+                "wer": 0.33448275862068966
+              }
+            },
+            "noise10db": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 49.463550036307424,
+              "update_p95_ms": 62.002460018265985,
+              "first_text_median_s": 3.057228404307493,
+              "clips_without_live_text": 4,
+              "rtf": 0.01787656593068687,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.06350449996534735,
+              "live": {
+                "words": 290,
+                "errors": 152,
+                "substitutions": 34,
+                "deletions": 85,
+                "insertions": 33,
+                "wer": 0.5241379310344828
+              },
+              "drained": {
+                "words": 290,
+                "errors": 112,
+                "substitutions": 33,
+                "deletions": 25,
+                "insertions": 54,
+                "wer": 0.38620689655172413
+              }
+            },
+            "silence": {
+              "clips": 1,
+              "audio_s": 6.0,
+              "calls": 1,
+              "update_median_ms": 3.9618000155314803,
+              "update_p95_ms": 3.9618000155314803,
+              "first_text_median_s": null,
+              "clips_without_live_text": 1,
+              "rtf": 0.003921666667641451,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.00396180001553148,
+              "live": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              },
+              "drained": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "model": "nemotron-3.5",
+      "repeat": 1,
+      "hardware_before": {
+        "platform": "Windows-11-10.0.26200-SP0",
+        "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+        "python": "3.12.10",
+        "cpu_count": 16,
+        "gpu": "name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]\nNVIDIA GeForce RTX 2060, 610.74, 6144 MiB, 1603 MiB, 48 %"
+      },
+      "artifacts": {
+        "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+        "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
+        "files": [
+          {
+            "name": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+            "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/1c8deaecc64b91f034d73e08dd8b64625eb3395d/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+            "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+            "size_bytes": 741548352
+          }
+        ]
+      },
+      "runtime_manifest": {
+        "version": "0.1.0-py312",
+        "component_api": 1,
+        "platform": "win_amd64",
+        "install_bytes": 454179072,
+        "archives": [
+          {
+            "name": "python-3.12.10-embed-amd64.zip",
+            "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+            "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+            "size_bytes": 11133606,
+            "extract": "zip"
+          },
+          {
+            "name": "nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+            "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
+            "sha256": "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
+            "size_bytes": 106044768,
+            "extract": "zip"
+          }
+        ]
+      },
+      "load_s": 0.15677879995200783,
+      "requested_device": "cuda",
+      "actual_device": "cuda",
+      "device_info": "Nemotron 3.5 ASR 0.6B | cuda",
+      "profiles": [
+        {
+          "mode": "window",
+          "effective_cadence_s": 3.01859410430839,
+          "warmup_s": 0.3604880999773741,
+          "summary": {
+            "clips": 43,
+            "audio_s": 538.96,
+            "calls": 151,
+            "update_median_ms": 59.57830010447651,
+            "update_p95_ms": 75.93539997469634,
+            "first_text_median_s": 3.065442554339056,
+            "clips_without_live_text": 7,
+            "rtf": 0.020828893422927756,
+            "update_deadline_misses": 0,
+            "max_backlog_s": 0.09451000008266419,
+            "live": {
+              "words": 1587,
+              "errors": 782,
+              "substitutions": 240,
+              "deletions": 447,
+              "insertions": 95,
+              "wer": 0.4927536231884058
+            },
+            "drained": {
+              "words": 1587,
+              "errors": 638,
+              "substitutions": 254,
+              "deletions": 238,
+              "insertions": 146,
+              "wer": 0.4020163831127914
+            },
+            "checkpoint_wer": 0.5903246894748311
+          },
+          "groups": {
+            "ami_conversation": {
+              "clips": 10,
+              "audio_s": 300.0,
+              "calls": 90,
+              "update_median_ms": 62.68570001702756,
+              "update_p95_ms": 75.87312997202389,
+              "first_text_median_s": 3.0672895043745982,
+              "clips_without_live_text": 0,
+              "rtf": 0.020812070000295838,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.09451000008266419,
+              "live": {
+                "words": 1007,
+                "errors": 533,
+                "substitutions": 170,
+                "deletions": 306,
+                "insertions": 57,
+                "wer": 0.5292949354518371
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 459,
+                "substitutions": 190,
+                "deletions": 207,
+                "insertions": 62,
+                "wer": 0.4558093346573982
+              },
+              "checkpoint_wer": 0.5903246894748311
+            },
+            "clean": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 60.376099951099604,
+              "update_p95_ms": 76.30791495903394,
+              "first_text_median_s": 3.064694804233254,
+              "clips_without_live_text": 3,
+              "rtf": 0.02171488323645982,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.08121940004639328,
+              "live": {
+                "words": 290,
+                "errors": 105,
+                "substitutions": 27,
+                "deletions": 56,
+                "insertions": 22,
+                "wer": 0.3620689655172414
+              },
+              "drained": {
+                "words": 290,
+                "errors": 69,
+                "substitutions": 20,
+                "deletions": 1,
+                "insertions": 48,
+                "wer": 0.23793103448275862
+              }
+            },
+            "noise10db": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 30,
+              "update_median_ms": 55.94679992645979,
+              "update_p95_ms": 72.8290100581944,
+              "first_text_median_s": 3.0660796043004255,
+              "clips_without_live_text": 3,
+              "rtf": 0.020801693851383758,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.07736610004212707,
+              "live": {
+                "words": 290,
+                "errors": 144,
+                "substitutions": 43,
+                "deletions": 85,
+                "insertions": 16,
+                "wer": 0.496551724137931
+              },
+              "drained": {
+                "words": 290,
+                "errors": 110,
+                "substitutions": 44,
+                "deletions": 30,
+                "insertions": 36,
+                "wer": 0.3793103448275862
+              }
+            },
+            "silence": {
+              "clips": 1,
+              "audio_s": 6.0,
+              "calls": 1,
+              "update_median_ms": 4.782699979841709,
+              "update_p95_ms": 4.782699979841709,
+              "first_text_median_s": null,
+              "clips_without_live_text": 1,
+              "rtf": 0.004998083323395501,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.004782699979841709,
+              "live": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              },
+              "drained": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              }
+            }
+          }
+        },
+        {
+          "mode": "native",
+          "effective_cadence_s": 0.7662585034013606,
+          "warmup_s": 0.7797660999931395,
+          "summary": {
+            "clips": 43,
+            "audio_s": 538.96,
+            "calls": 681,
+            "update_median_ms": 62.34720000065863,
+            "update_p95_ms": 75.2277000574395,
+            "first_text_median_s": 1.5969058568080647,
+            "clips_without_live_text": 1,
+            "rtf": 0.08449535642876739,
+            "update_deadline_misses": 0,
+            "max_backlog_s": 0.12179169990122318,
+            "live": {
+              "words": 1587,
+              "errors": 477,
+              "substitutions": 141,
+              "deletions": 324,
+              "insertions": 12,
+              "wer": 0.3005671077504726
+            },
+            "drained": {
+              "words": 1587,
+              "errors": 416,
+              "substitutions": 135,
+              "deletions": 264,
+              "insertions": 17,
+              "wer": 0.26212980466288593
+            },
+            "checkpoint_wer": 0.41904554369143604
+          },
+          "groups": {
+            "ami_conversation": {
+              "clips": 10,
+              "audio_s": 300.0,
+              "calls": 390,
+              "update_median_ms": 62.2801500139758,
+              "update_p95_ms": 75.2766200050246,
+              "first_text_median_s": 1.5968843567607685,
+              "clips_without_live_text": 0,
+              "rtf": 0.08312344200210646,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.12179169990122318,
+              "live": {
+                "words": 1007,
+                "errors": 341,
+                "substitutions": 75,
+                "deletions": 259,
+                "insertions": 7,
+                "wer": 0.3386295928500497
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 333,
+                "substitutions": 76,
+                "deletions": 246,
+                "insertions": 11,
+                "wer": 0.33068520357497516
+              },
+              "checkpoint_wer": 0.41904554369143604
+            },
+            "clean": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 142,
+              "update_median_ms": 63.01455001812428,
+              "update_p95_ms": 76.57563500106333,
+              "first_text_median_s": 1.5987787068079917,
+              "clips_without_live_text": 0,
+              "rtf": 0.0873898068355949,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.09922900004312396,
+              "live": {
+                "words": 290,
+                "errors": 52,
+                "substitutions": 26,
+                "deletions": 25,
+                "insertions": 1,
+                "wer": 0.1793103448275862
+              },
+              "drained": {
+                "words": 290,
+                "errors": 28,
+                "substitutions": 21,
+                "deletions": 5,
+                "insertions": 2,
+                "wer": 0.09655172413793103
+              }
+            },
+            "noise10db": {
+              "clips": 16,
+              "audio_s": 116.48,
+              "calls": 142,
+              "update_median_ms": 62.6365999924019,
+              "update_p95_ms": 72.63090502237901,
+              "first_text_median_s": 1.5965782567582785,
+              "clips_without_live_text": 0,
+              "rtf": 0.08525245535505806,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.0973126000026241,
+              "live": {
+                "words": 290,
+                "errors": 84,
+                "substitutions": 40,
+                "deletions": 40,
+                "insertions": 4,
+                "wer": 0.2896551724137931
+              },
+              "drained": {
+                "words": 290,
+                "errors": 55,
+                "substitutions": 38,
+                "deletions": 13,
+                "insertions": 4,
+                "wer": 0.1896551724137931
+              }
+            },
+            "silence": {
+              "clips": 1,
+              "audio_s": 6.0,
+              "calls": 7,
+              "update_median_ms": 58.230599970556796,
+              "update_p95_ms": 61.71444996725767,
+              "first_text_median_s": null,
+              "clips_without_live_text": 1,
+              "rtf": 0.08220233337488025,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.0623877999605611,
+              "live": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              },
+              "drained": {
+                "words": 0,
+                "errors": 0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "wer": null
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "source_sha256": {
+    "config.py": "5e341387df8514e22bb13d6c92c11a375791661570ead4037405e0e0bf4fc23d",
+    "services/streaming_transcriber.py": "377a7e7d06066ed6d760bd37b7f99be3010125e9a3a0d0eb6e69aa667ed05a37",
+    "transcriber/optional_backend.py": "d328b0c2863ba26c9af4d211f60a73fe390adf976e88c4338817d28e9167d151",
+    "services/local_asr/worker.py": "8b159c2523a51f2fbd888b7347df4032ca646328c626d06b19ae111634ccf9b2",
+    "services/local_asr/nvidia.py": "93d684a8df5fd4b9b98967bdc8946293d2a3f58ccaaff38402cb3399c62ada02",
+    "services/local_asr/moonshine.py": "6ed8ed2763611b2f71357deb4f465243a1c0341462460c94bf14b4a9956a049f",
+    "benchmarks/live_preview.py": "ef116d2a13f4f23a48e216ffd9339988035da0317627086553cc71a39b45d39f"
+  },
+  "decoding": "Window: production beam_size=1, vad_filter=False, default language; native: auto language, no overlap. Whisper tiny.en is English-only.",
+  "packages": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.0",
+    "numpy": "2.5.0"
+  },
+  "note": "Per-clip text, per-call timings, and native events were removed from this copy; the full results.json is produced by benchmarks/live_preview.py under .tmp/live-preview/."
+}

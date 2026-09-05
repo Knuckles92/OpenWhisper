@@ -129,6 +129,16 @@ class SettingsKey:
     UPDATE_SKIPPED_VERSION: Final[str] = "update_skipped_version"
 
 
+#: Keys the single live-preview toggle replaced. Dropped whenever that toggle
+#: is written, so an old settings file cannot resurrect the split switches.
+LEGACY_STREAMING_KEYS: Final[tuple[str, ...]] = (
+    SettingsKey.STREAMING_OVERLAY_ENABLED,
+    SettingsKey.STREAMING_PASTE_ENABLED,
+    "streaming_tiny_model_enabled",
+    "live_typing_enabled",
+)
+
+
 class RecordingRetentionMode:
     """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
     KEEP_ALL: Final[str] = "keep_all"

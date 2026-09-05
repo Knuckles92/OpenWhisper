@@ -627,14 +627,26 @@ QComboBox#modelManagerStatusFilter:focus {
     border-color: #0a84ff;
 }
 
+/* The search field shares its row with three eliding combos. These minimums
+   are content widths (padding and border are added on top), and their sum
+   must fit the catalog column at the window's minimum size under a large
+   font scale: the combos elide long items rather than squeeze the search. */
+QLineEdit#modelManagerSearch {
+    min-width: 90px;
+}
+
 QComboBox#modelManagerSort {
-    min-width: 160px;
+    min-width: 115px;
     padding-right: 28px;
 }
 
-QComboBox#modelManagerBackendFilter,
+QComboBox#modelManagerBackendFilter {
+    min-width: 100px;
+    padding-right: 28px;
+}
+
 QComboBox#modelManagerStatusFilter {
-    min-width: 140px;
+    min-width: 105px;
     padding-right: 28px;
 }
 
@@ -1685,14 +1697,16 @@ QLabel#engineResolvedLabel {
     background-color: transparent;
 }
 
-QCheckBox#engineCleanupCheck {
+QCheckBox#engineCleanupCheck,
+QCheckBox#engineLivePreviewCheck {
     color: #f5f5f7;
     font-size: 11px;
     spacing: 6px;
     background-color: transparent;
 }
 
-QCheckBox#engineCleanupCheck::indicator {
+QCheckBox#engineCleanupCheck::indicator,
+QCheckBox#engineLivePreviewCheck::indicator {
     width: 15px;
     height: 15px;
     border-radius: 4px;
@@ -1700,13 +1714,15 @@ QCheckBox#engineCleanupCheck::indicator {
     background-color: #1c1c1e;
 }
 
-QCheckBox#engineCleanupCheck::indicator:checked {
+QCheckBox#engineCleanupCheck::indicator:checked,
+QCheckBox#engineLivePreviewCheck::indicator:checked {
     background-color: #0a84ff;
     border-color: #0a84ff;
     image: url(ui_qt/assets/check.svg);
 }
 
-QCheckBox#engineCleanupCheck::indicator:hover {
+QCheckBox#engineCleanupCheck::indicator:hover,
+QCheckBox#engineLivePreviewCheck::indicator:hover {
     border-color: #0a84ff;
 }
 

@@ -11,6 +11,7 @@ from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import (
+    LEGACY_STREAMING_KEYS,
     SettingsKey,
     resolve_api_transcription_model,
     settings_manager,
@@ -77,10 +78,15 @@ class TranscriptionTabBase(QWidget):
     manage_models_requested = pyqtSignal()  # "Manage models…" clicked
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
+    live_preview_changed = pyqtSignal()  # Live preview checkbox persisted a change
 
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
     INITIAL_STATUS = ""
     TRANSCRIPT_PLACEHOLDER = "Transcription will appear here..."
+
+    #: Show the Live preview checkbox in the engine footer. The preview only
+    #: runs while dictating, so tabs without a microphone flow turn it off.
+    LIVE_PREVIEW_CONTROL = True
 
     #: Render the transcript as Markdown. Off for dictation, whose cleanup
     #: returns prose; on where the transcript carries structure of its own.
@@ -106,6 +112,7 @@ class TranscriptionTabBase(QWidget):
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
+        self.load_live_preview_setting()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -197,6 +204,17 @@ class TranscriptionTabBase(QWidget):
             "(punctuation, fillers, light ASR fixes)"
         )
 
+        self.live_preview_check = QCheckBox("Live preview")
+        self.live_preview_check.setObjectName("engineLivePreviewCheck")
+        self.live_preview_check.setToolTip(
+            "Show text as you speak on the near-cursor overlay. Parakeet and "
+            "Nemotron Streaming preview with the loaded engine; Local Whisper "
+            "loads a small tiny.en preview model. Same setting as "
+            "Settings → Recording → Live preview."
+        )
+        if not self.LIVE_PREVIEW_CONTROL:
+            self.live_preview_check.hide()
+
         self.manage_models_button = QPushButton("Manage models…")
         self.manage_models_button.setObjectName("engineManageButton")
         self.manage_models_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -209,6 +227,8 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.resolved_label, stretch=1)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.cleanup_check)
+        footer_row.addSpacing(6)
+        footer_row.addWidget(self.live_preview_check)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.manage_models_button)
         engine_layout.addLayout(footer_row)
@@ -297,6 +317,7 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
         self.manage_models_button.clicked.connect(self.manage_models_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
+        self.live_preview_check.toggled.connect(self._on_live_preview_toggled)
         self.fixed_btn.toggled.connect(self._on_version_toggled)
         self.raw_btn.toggled.connect(self._on_version_toggled)
 
@@ -313,6 +334,34 @@ class TranscriptionTabBase(QWidget):
         self.cleanup_check.blockSignals(True)
         self.cleanup_check.setChecked(bool(enabled))
         self.cleanup_check.blockSignals(False)
+
+    def _on_live_preview_toggled(self, checked: bool):
+        """Persist the preview toggle the same way the Settings dialog does.
+
+        Writing the one key and dropping the legacy split switches in a single
+        atomic update keeps the two entry points indistinguishable on disk. The
+        signal tells the window to re-sync its other tabs and reconfigure the
+        streaming runtime, which caches this value.
+        """
+        try:
+            settings_manager.update_settings(
+                {SettingsKey.STREAMING_ENABLED: bool(checked)},
+                remove=LEGACY_STREAMING_KEYS,
+            )
+        except Exception as exc:
+            logger.error("Couldn't save live preview setting: %s", exc)
+            self.load_live_preview_setting()
+            return
+        self.live_preview_changed.emit()
+
+    def load_live_preview_setting(self):
+        enabled = settings_manager.get(
+            SettingsKey.STREAMING_ENABLED,
+            config.STREAMING_ENABLED,
+        )
+        self.live_preview_check.blockSignals(True)
+        self.live_preview_check.setChecked(bool(enabled))
+        self.live_preview_check.blockSignals(False)
 
     def _on_version_toggled(self, checked: bool):
         if not checked:

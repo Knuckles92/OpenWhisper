@@ -395,8 +395,9 @@ class ModelManagerDialog(QDialog):
 
         layout.addWidget(
             self._footnote(
-                "Whisper dictation can use a tiny.en live preview. Nemotron and "
-                "Moonshine provide native live previews in Meeting Mode."
+                "Parakeet and Nemotron dictation preview with the loaded engine; "
+                "Whisper uses a tiny.en preview. Nemotron and Moonshine provide "
+                "native live previews in Meeting Mode."
             )
         )
 

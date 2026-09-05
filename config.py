@@ -277,6 +277,13 @@ class AppConfig:
     STREAMING_CHUNK_DURATION_SEC: float = 3.0
     STREAMING_OVERLAP_SEC: float = 0.75
     STREAMING_QUEUE_SIZE: int = 10
+    # Optional engines whose loaded dictation worker also decodes the preview
+    # windows, so no second model is resident. Measured in
+    # benchmarks/LIVE_PREVIEW.md (September 2026, RTX 2060): Parakeet and
+    # Nemotron returned a 3 s window in 52 / 60 ms median with lower drained
+    # WER than tiny.en's 112 ms; Moonshine needed 547 ms per window on CPU and
+    # Qwen was not measured, so they keep no dictation preview.
+    STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False

@@ -83,6 +83,19 @@ The table reports corpus-weighted word error rate (WER); lower is better. Scorin
 
 Parakeet had the fewest errors on the clean sample; Qwen 1.7B had the fewest under this synthetic noise condition. That supports trying Parakeet first for GPU dictation and keeping Qwen as an alternative for difficult audio. The sample is too small and narrow to establish a general quality ranking. It does not cover multiple accents, conversational overlap, microphone differences, or realistic meeting noise. [Exact counts and corpus identity](benchmarks/local-asr-corpus-2026-09-04.json) are recorded separately. Corpus timing was not controlled for other host workload, so the short-clip table above is the intended speed comparison.
 
+### Live preview check
+
+The dictation preview decodes 3-second windows with 0.75 seconds of overlap while you speak. [The live preview benchmark](../benchmarks/LIVE_PREVIEW.md) replayed 43 clips (the 16 clean and 16 noisy LibriSpeech utterances above, ten 30-second AMI meeting excerpts, and silence) through the production preview worker with each engine's production decoder on the same RTX 2060, faster than real time, one pass each on September 4, 2026. Live WER scores the text visible when the audio ends, so unshown trailing words count as errors; drained WER adds the final flush. Lower is better.
+
+| Model / path | Update p50 / p95 | First text | Live WER | Drained WER | RTF |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Whisper tiny.en / window (GPU) | 112 / 219 ms | 3.11 s | 52.8% | 47.2% | 0.049 |
+| Parakeet v3 / window (GPU) | 52 / 62 ms | 3.06 s | 53.1% | 44.4% | 0.018 |
+| Nemotron 3.5 / window (GPU) | 60 / 76 ms | 3.07 s | 49.3% | 40.2% | 0.021 |
+| Nemotron 3.5 / native stream (GPU) | 62 / 75 ms | 1.60 s | 30.1% | 26.2% | 0.084 |
+
+Parakeet and Nemotron decode a preview window in about half tiny.en's time with fewer errors after the flush, so the dictation preview now shares the loaded Parakeet or Nemotron engine instead of loading a second model; Whisper dictation keeps tiny.en. Nemotron's native streaming path was clearly the most accurate and showed its first words twice as early, but the dictation preview does not use `stream_audio` yet. Moonshine Small needed 547 ms per window on CPU in a partial run, and Moonshine Medium and both Qwen sizes were not measured because the run stopped on a worker teardown error. Window-mode WER is high for every engine because the unchanged append-only assembly repeats words at each seam; this is a comparison between preview paths, not a transcription quality ranking. [The trimmed measured results](benchmarks/live-preview-windows-2026-09-04.json) record the corpus identity, model and runtime manifests, actual devices, package versions, and per-profile summaries; per-clip text and timings stay in the local `.tmp/live-preview/results.json` the benchmark writes.
+
 ### Reproduce a comparison
 
 Install the models and runtime components to compare, then run from the repository:
@@ -117,7 +130,7 @@ Models are stored under `%LOCALAPPDATA%\OpenWhisper\speech-models`; optional run
 
 Uploads are decoded in bounded windows with quiet cut points, so long files do not load all decoded audio into RAM. Native models return timestamps; Qwen returns text with coarse window timestamps and detects its generation limit rather than silently accepting truncated output. Qwen alignment and its vLLM streaming path are not included.
 
-Nemotron and Moonshine meeting previews are temporary dashboard state. They update separately from saved segments, are cleared as durable chunks arrive, and never enter exports or trigger intelligence on their own. Capture feeds a bounded queue without blocking the audio callback. Pending durable transcription takes priority over previews. Stop flushes remaining preview audio; the normal final pass remains authoritative. Parakeet uses the existing chunk workflow. Whisper's existing dictation preview remains available when Whisper is selected.
+Nemotron and Moonshine meeting previews are temporary dashboard state. They update separately from saved segments, are cleared as durable chunks arrive, and never enter exports or trigger intelligence on their own. Capture feeds a bounded queue without blocking the audio callback. Pending durable transcription takes priority over previews. Stop flushes remaining preview audio; the normal final pass remains authoritative. Parakeet uses the existing chunk workflow. The dictation preview decodes 3-second windows on the loaded Parakeet or Nemotron worker (see the live preview check above), so no second model is resident; Whisper dictation keeps its tiny.en preview.
 
 The engine lease releases on-demand weights before meeting ASR starts, and restores them after meeting ASR releases its model, including post-meeting reprocessing. Model identity is preserved for recovery and refinalization. Tests cover switching, stale worker responses, cancellation, download integrity, runtime rollback, and preview reset behavior. Real checks additionally covered all six new models, CPU/GPU loading, silence, two-minute repeated speech, native stream finalization, and cancel/reload; observed cancellation was 13–166 ms on this machine.
 

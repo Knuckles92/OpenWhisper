@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cloud transcription choices are grouped under **API**, with a separate API model selector in both transcription tabs and Model Manager. Existing API selections retain their model.
 - Added **GPT-Transcribe** as the default for new API selections, alongside GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper, with JSON response handling for single files and chunked uploads.
 - Parakeet TDT v3 is the default backend for new installations on Windows x64, where its runtime ships; macOS and Linux keep Local Whisper. Saved Backend selections are unchanged.
+- The real-time transcription preview runs on the loaded Parakeet or Nemotron Streaming engine when one of them is the dictation backend, so no separate preview model is loaded and preview windows return in about half the time of tiny.en. Local Whisper keeps its tiny.en preview; Qwen and Moonshine have no dictation preview.
 
 ### Added
+- A **Live preview** checkbox beside **AI cleanup** in the Quick Record engine card. It is the same setting as Settings → Recording → Live preview, so either control updates the other and the preview engine reconfigures at once; it locks while a recording is in progress.
+- Live preview benchmark (`benchmarks/LIVE_PREVIEW.md`) replaying a clean, noisy, meeting, and silence corpus through the production preview worker for tiny.en and the optional engines, with window and native streaming paths and a Markdown report.
+- Downloads has a **Backend** filter beside the search box (Whisper, Parakeet, Qwen3-ASR, Nemotron Streaming, Moonshine) and a **By backend** sort that keeps each family's models together.
 - Four optional local speech backends on Windows x64: Parakeet TDT v3, Qwen3-ASR (0.6B/1.7B), Nemotron 3.5 Streaming, and Moonshine Streaming (Small/Medium). Model Manager and Downloads include independent selections, verified runtime/model installation, CPU/NVIDIA device controls, cancellation, and offline inference.
 - Nemotron and Moonshine live Meeting Mode previews, plus Parakeet meeting transcription, with engine release/restoration and compatible recovery/refinalization.
 - Reproducible local transcription benchmarks and measured comparisons against Whisper Base CPU and Turbo GPU.

@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PREVIEW_UNAVAILABLE_STATUS = (
+    "Live preview needs Local Whisper, Parakeet, or Nemotron Streaming"
+)
+
 
 class StreamingRuntime:
     """Owns streaming transcription setup and lifecycle."""
@@ -111,69 +115,82 @@ class StreamingRuntime:
 
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
-            from services.hf_access import is_model_cached
-
             settings = settings_manager.load_all_settings()
             self.controller._streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
             )
+            if not self.controller._streaming_enabled:
+                logger.info("Streaming transcription disabled")
+                return
 
-            if (
-                self.controller._streaming_enabled
-                and isinstance(self.controller.current_backend, LocalWhisperBackend)
-            ):
-                if not is_model_cached("tiny.en"):
-                    logger.info(
-                        "tiny.en is not in the local cache; waiting for download consent"
-                    )
-                    self.controller._streaming_enabled = False
-                    self.controller.request_model_download("tiny.en")
-                    return
-
-                chunk_duration = settings.get(
-                    SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
-                )
-
-                logger.info("Creating dedicated tiny.en backend for streaming preview...")
-                self.controller._streaming_backend = LocalWhisperBackend(
-                    model_name="tiny.en"
-                )
-                streaming_backend = self.controller._streaming_backend
-                if getattr(streaming_backend, "model", None) is None:
-                    logger.warning(
-                        "Streaming preview inactive: tiny.en did not load"
-                    )
+            backend = self.controller.current_backend
+            if isinstance(backend, LocalWhisperBackend):
+                streaming_backend = self._load_dedicated_preview_backend()
+                if streaming_backend is None:
                     self.controller._streaming_enabled = False
                     return
-
-                self.controller.streaming_transcriber = StreamingTranscriber(
-                    backend=streaming_backend,
-                    chunk_duration_sec=chunk_duration,
-                    overlap_sec=config.STREAMING_OVERLAP_SEC,
-                )
-                self._warmup_streaming_backend(streaming_backend)
-                logger.info(
-                    f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
-                )
+            elif self._shares_preview_decoder(backend):
+                if not backend.is_available():
+                    # The engine is still loading or waiting on a download; the
+                    # reload worker runs setup again once it has finished.
+                    logger.info("Streaming preview waits for %s to load", backend.name)
+                    self.controller._streaming_enabled = False
+                    self.controller._pending_streaming_setup = True
+                    return
+                streaming_backend = backend
+                logger.info("Streaming preview shares the loaded %s engine", backend.name)
             else:
-                if self.controller._streaming_enabled:
-                    logger.info(
-                        "Streaming requested but not available "
-                        "(requires Local Whisper backend)"
-                    )
-                    if not initial_setup:
-                        self.controller.ui_controller.set_status(
-                            "Streaming requires Local Whisper backend"
-                        )
-                else:
-                    logger.info("Streaming transcription disabled")
-
+                logger.info("Streaming requested but not available for this backend")
+                if not initial_setup:
+                    self.controller.ui_controller.set_status(PREVIEW_UNAVAILABLE_STATUS)
                 self.controller._streaming_enabled = False
+                return
+
+            chunk_duration = settings.get(
+                SettingsKey.STREAMING_CHUNK_DURATION, config.STREAMING_CHUNK_DURATION_SEC
+            )
+            self.controller.streaming_transcriber = StreamingTranscriber(
+                backend=streaming_backend,
+                chunk_duration_sec=chunk_duration,
+                overlap_sec=config.STREAMING_OVERLAP_SEC,
+            )
+            logger.info(
+                f"Streaming transcription enabled (chunk_duration={chunk_duration}s)"
+            )
         except Exception as exc:
             logger.error(f"Failed to setup streaming: {exc}")
             self.controller._streaming_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
+
+    @staticmethod
+    def _shares_preview_decoder(backend) -> bool:
+        from transcriber.optional_backend import LocalSpeechBackend
+
+        return (
+            isinstance(backend, LocalSpeechBackend)
+            and backend.backend_id in config.STREAMING_PREVIEW_BACKENDS
+        )
+
+    def _load_dedicated_preview_backend(self):
+        """Load tiny.en for a Whisper dictation preview, or None if it cannot run yet."""
+        from services.hf_access import is_model_cached
+
+        if not is_model_cached("tiny.en"):
+            logger.info(
+                "tiny.en is not in the local cache; waiting for download consent"
+            )
+            self.controller.request_model_download("tiny.en")
+            return None
+
+        logger.info("Creating dedicated tiny.en backend for streaming preview...")
+        self.controller._streaming_backend = LocalWhisperBackend(model_name="tiny.en")
+        streaming_backend = self.controller._streaming_backend
+        if getattr(streaming_backend, "model", None) is None:
+            logger.warning("Streaming preview inactive: tiny.en did not load")
+            return None
+        self._warmup_streaming_backend(streaming_backend)
+        return streaming_backend
 
     def _warmup_streaming_backend(self, backend) -> None:
         try:

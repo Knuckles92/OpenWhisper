@@ -96,7 +96,7 @@ def replay(backend, audio, reference, *, mode, cadence, overlap, timed_words=Non
             else:
                 frames = (preview._prepare_audio_for_whisper(audio[start:end])
                           if end > start else np.empty(0, np.float32))
-                events = backend.stream_audio(session, frames, 'en', finish=final)
+                events = backend.stream_audio(session, frames, 'auto', finish=final)
                 text = ledger.apply(events)
             elapsed = time.perf_counter()-began
             clock = max(clock, ready)+elapsed
@@ -216,6 +216,9 @@ def run(args):
                   corpus=[dict(id=c.get('id', c['audio_path']), group=c.get('group', 'all'),
                                audio_sha256=sha, duration_s=len(a)/config.SAMPLE_RATE,
                                reference=c['reference']) for c, a, sha in clips], results=[])
+    tracked_sources = ['config.py', 'services/streaming_transcriber.py', 'transcriber/optional_backend.py', 'services/local_asr/worker.py', 'services/local_asr/nvidia.py', 'services/local_asr/moonshine.py', 'benchmarks/live_preview.py']
+    report['source_sha256'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in tracked_sources}
+    report['decoding'] = 'Window: production beam_size=1, vad_filter=False, default language; native: auto language, no overlap. Whisper tiny.en is English-only.'
     report['packages'] = {p: version(p) for p in ('faster-whisper', 'ctranslate2', 'numpy')}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     failed = False
@@ -259,7 +262,9 @@ def run(args):
                         replay(backend, clips[0][1], clips[0][0]['reference'], mode=mode, cadence=cadence, overlap=args.overlap)
                         profile = dict(mode=mode, effective_cadence_s=effective, warmup_s=time.perf_counter()-began, clips=[])
                         row['profiles'].append(profile)
-                        for item, audio, _sha in clips:
+                        for clip_index, (item, audio, _sha) in enumerate(clips):
+                            if clip_index % 10 == 0:
+                                print(f'  {key} {mode}: clip {clip_index+1}/{len(clips)}', flush=True)
                             result = replay(backend, audio, item['reference'], mode=mode, cadence=cadence,
                                             overlap=args.overlap, timed_words=item.get('words'))
                             result.update(id=item.get('id', item['audio_path']), group=item.get('group', 'all'))
@@ -305,3 +310,4 @@ def parse_args(argv=None):
 
 if __name__ == '__main__':
     raise SystemExit(run(parse_args()))
+

@@ -43,6 +43,7 @@ from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
 from services.settings import (
+    LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
     MeetingAgentCore,
     MeetingLanguage,
@@ -633,8 +634,9 @@ class SettingsDialog(QDialog):
 
         self.streaming_enabled_tile = SettingTile(
             "Real-time transcription preview",
-            "Shows text as you speak on the near-cursor overlay using a "
-            "dedicated tiny.en preview model. Requires Local Whisper. The "
+            "Shows text as you speak on the near-cursor overlay. Parakeet and "
+            "Nemotron Streaming preview with the engine already loaded for "
+            "dictation; Local Whisper loads a small tiny.en preview model. The "
             "final transcript still uses your selected model and the General "
             "paste and clipboard settings.",
             _design_icon("bolt-green.svg"),
@@ -1931,12 +1933,7 @@ class SettingsDialog(QDialog):
         self._update_streaming_font_ui()
         if not self._persist_many(
             {SettingsKey.STREAMING_ENABLED: bool(checked)},
-            drops=(
-                SettingsKey.STREAMING_OVERLAY_ENABLED,
-                SettingsKey.STREAMING_PASTE_ENABLED,
-                "streaming_tiny_model_enabled",
-                "live_typing_enabled",
-            ),
+            drops=LEGACY_STREAMING_KEYS,
         ):
             return
         if self.on_streaming_settings_changed:

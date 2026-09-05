@@ -159,6 +159,10 @@ class QuickRecordTab(TranscriptionTabBase):
             self.cancel_button.set_active(True)
             self.set_backend_enabled(False)
             self.local_engine.set_busy(True)
+            # The streaming runtime refuses to reconfigure mid-recording, so
+            # the toggle would persist without taking effect until the next
+            # recording. Lock it with the backend choice instead.
+            self.live_preview_check.setEnabled(False)
             self.set_status("Recording in progress...")
         else:
             self.record_button.set_active(True)
@@ -167,6 +171,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.cancel_button.set_active(False)
             self.set_backend_enabled(True)
             self.local_engine.set_busy(False)
+            self.live_preview_check.setEnabled(True)
             self.set_status("Ready to record")
 
     def append_transcription(self, text: str):

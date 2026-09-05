@@ -54,12 +54,7 @@ the Windows setup exe, either Linux package, or the macOS DMG.
 
 ### Local Windows build
 
-```powershell
-.\venv\Scripts\activate
-pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
-winget install -e --id JRSoftware.InnoSetup
-.\scripts\build_installer.ps1 -Clean
-```
+Commands: [Building native installers](packaging.md#building-native-installers).
 
 The script freezes the app, verifies Windows DLLs/assets, optionally signs the
 app/helper/setup, and creates the setup exe plus native-update archive.
@@ -72,20 +67,8 @@ archive is packed.
 ### Local Linux build
 
 Build on x86-64 Ubuntu 22.04 (or the release workflow), not a newer workstation,
-so PyInstaller cannot accidentally raise the official glibc floor.
-
-```bash
-sudo apt install -y \
-  python3 python3-venv python3-dev build-essential binutils dpkg-dev file patchelf \
-  desktop-file-utils libarchive-tools lintian xvfb xauth zstd \
-  libdrm2 libegl1 libgl1 libportaudio2 \
-  libwayland-client0 libwayland-cursor0 libwayland-egl1 \
-  libxcb-cursor0 libxkbcommon-x11-0 \
-  libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
-./scripts/build_installer.sh --clean
-```
+so PyInstaller cannot accidentally raise the official glibc floor. Commands:
+[Building native installers](packaging.md#building-native-installers).
 
 The build must finish with all of these gates passing:
 
@@ -109,13 +92,8 @@ The results are `installer/Output/OpenWhisper-<version>-linux-amd64.deb` and
 ### Local macOS build
 
 Build on an **Apple Silicon** Mac running macOS 14 or newer. The script refuses
-Intel hosts and non-Darwin environments.
-
-```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
-./scripts/build_installer_macos.sh --clean
-```
+Intel hosts and non-Darwin environments. Commands: [Building native
+installers](packaging.md#building-native-installers).
 
 The build must finish with all of these gates passing:
 

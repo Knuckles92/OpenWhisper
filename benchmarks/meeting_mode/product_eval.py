@@ -934,6 +934,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the product-package comparison and return a process exit code."""
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Topics and rationales come back from the LLM with arbitrary Unicode
+    # (arrows, dashes). A cp1252 Windows console must not abort the run on
+    # the progress print after the JSON has already been written.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     provider = config.MEETING_LLM_PROVIDER
     model = "deepseek/deepseek-v4-flash-0731"
     api_key = find_provider_api_key(provider)

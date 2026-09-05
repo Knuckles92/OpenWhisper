@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
 #: Shown when the full pass found nothing but the streaming preview did. Names
-#: the source, because the text on screen is tiny.en's and is not saved.
+#: the source, because the text on screen is the preview's and is not saved.
 EMPTY_PREVIEW_FALLBACK_MESSAGE = (
     "No speech detected — showing the live preview (not saved)"
 )
@@ -871,12 +871,13 @@ class TranscriptionRuntime:
             ).strip()
 
         if is_empty and preview:
-            # Whisper's VAD dropped everything, but the streaming model heard
-            # speech (it decodes with VAD off). Show that rather than leave the
-            # user with nothing — but it is tiny.en at beam 1, with a repeated
-            # word at each chunk seam, so it is never written to history and
-            # never reaches the clipboard. Recovering the words is worth a
-            # rough transcript; pasting one into whatever has focus is not.
+            # The full pass dropped everything (Whisper's VAD, or an optional
+            # engine's quiet-window gate), but the preview heard speech in its
+            # short windows. Show that rather than leave the user with nothing
+            # — but it is a beam-1 preview with a repeated word at each chunk
+            # seam, so it is never written to history and never reaches the
+            # clipboard. Recovering the words is worth a rough transcript;
+            # pasting one into whatever has focus is not.
             display_text = preview
         else:
             display_text = transcript if not is_empty else EMPTY_ASR_MESSAGE

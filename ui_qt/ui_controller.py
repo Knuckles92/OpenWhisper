@@ -188,6 +188,7 @@ class UIController(QObject):
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
+        self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_settings)
@@ -293,6 +294,18 @@ class UIController(QObject):
         logger.info("Local engine settings changed via main GUI")
         if self.on_whisper_settings_changed:
             self.on_whisper_settings_changed()
+
+    def _on_live_preview_changed(self):
+        """A tab footer toggled Live preview; reuse the Settings dialog hook."""
+        logger.info("Live preview toggled via main GUI")
+        if self.on_streaming_settings_changed:
+            self.on_streaming_settings_changed()
+
+    def _on_settings_streaming_changed(self):
+        """Settings dialog toggled Live preview: mirror it in the tabs first."""
+        self.refresh_live_preview_controls()
+        if self.on_streaming_settings_changed:
+            self.on_streaming_settings_changed()
 
     def _on_tray_show(self):
         self.main_window.restore_from_tray()
@@ -636,7 +649,7 @@ class UIController(QObject):
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
         dialog.get_meeting_active = self.get_meeting_active
         dialog.on_audio_device_changed = self.on_audio_device_changed
-        dialog.on_streaming_settings_changed = self.on_streaming_settings_changed
+        dialog.on_streaming_settings_changed = self._on_settings_streaming_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
         dialog.on_ui_font_scale_changed = self._apply_ui_font_scale
         dialog.on_hf_policy_changed = self.on_hf_policy_changed
@@ -672,6 +685,9 @@ class UIController(QObject):
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
         self.main_window.upload_file_tab.load_cleanup_setting()
+
+    def refresh_live_preview_controls(self):
+        self.main_window.refresh_live_preview_controls()
 
     def _apply_ui_font_scale(self, percent: int) -> None:
         apply_ui_font_scale(percent)

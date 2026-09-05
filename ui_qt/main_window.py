@@ -266,6 +266,7 @@ class MainWindow(QMainWindow):
     record_canceled = pyqtSignal()
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
+    live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
     model_manager_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
@@ -424,6 +425,7 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
+            tab.live_preview_changed.connect(self._on_live_preview_changed)
             tab.manage_models_requested.connect(
                 lambda: self.model_manager_requested.emit("downloads")
             )
@@ -832,6 +834,20 @@ class MainWindow(QMainWindow):
         for tab in self.transcription_tabs:
             tab.local_engine.load_from_settings()
         self.whisper_engine_changed.emit()
+
+    def _on_live_preview_changed(self):
+        """Re-sync every tab's Live preview checkbox, then notify listeners.
+
+        Same shape as ``_on_engine_settings_changed``: the emitting tab already
+        wrote the setting, so the others reload from it with signals blocked
+        and the controller reconfigures the streaming runtime once.
+        """
+        self.refresh_live_preview_controls()
+        self.live_preview_changed.emit()
+
+    def refresh_live_preview_controls(self):
+        for tab in self.transcription_tabs:
+            tab.load_live_preview_setting()
 
     def _on_upload_file_transcribe(
         self, audio_path: str, duration_seconds: float = 0.0

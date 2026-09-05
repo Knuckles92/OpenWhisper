@@ -1,4 +1,9 @@
-"""Approximate faster-whisper previews during recording."""
+"""Approximate previews during recording, decoded window by window.
+
+The backend only has to expose ``model.transcribe(audio, ...)`` returning
+``(segments, info)``: faster-whisper's model and the optional engines'
+``SpeechDecoder`` both do, so the preview can share the dictation engine.
+"""
 import queue
 import threading
 import logging
@@ -194,11 +199,16 @@ class StreamingTranscriber:
             total_duration = len(audio_array) / self.sample_rate
             new_duration = len(new_audio) / self.sample_rate
 
+            model = getattr(self.backend, "model", None)
+            if model is None:
+                logger.debug("Preview window skipped: the engine is not loaded")
+                return
+
             prepared = self._prepare_audio_for_whisper(audio_array)
             if prepared is None or len(prepared) == 0:
                 return
 
-            segments, _info = self.backend.model.transcribe(
+            segments, _info = model.transcribe(
                 prepared,
                 beam_size=1,
                 vad_filter=False,

@@ -985,6 +985,76 @@ class TestApplicationController:
         assert not controller._streaming_enabled
         assert controller.ui_controller.consent_requests[-1][0] == "tiny.en"
 
+    def _select_optional_engine(self, controller, key, *, loaded):
+        speech = controller.transcription_backends[key]
+        controller.current_backend = speech
+        controller._current_model_name = key
+        speech.is_available = lambda: bool(loaded)
+        speech.reload_model = lambda: loaded.append(True)
+        return speech
+
+    def test_streaming_preview_shares_the_loaded_parakeet_engine(self):
+        controller = self._create_controller()
+        speech = self._select_optional_engine(controller, "parakeet", loaded=[True])
+        released = []
+        speech.cleanup = lambda: released.append(True)
+
+        controller.reconfigure_streaming()
+
+        assert controller._streaming_enabled
+        assert controller.streaming_transcriber.backend is speech
+        assert controller.streaming_transcriber.chunk_duration_sec == 4.0
+        # No second model was loaded, so the preview owns nothing to release.
+        assert controller._streaming_backend is None
+        controller.reconfigure_streaming()
+        controller.streaming_runtime.cleanup()
+        assert released == []
+
+    def test_streaming_preview_waits_for_the_optional_engine_to_load(self):
+        controller = self._create_controller()
+        loaded = []
+        speech = self._select_optional_engine(controller, "parakeet", loaded=loaded)
+
+        controller.reconfigure_streaming()
+
+        assert controller.streaming_transcriber is None
+        assert not controller._streaming_enabled
+        assert controller._pending_streaming_setup
+
+        controller._reload_worker()
+
+        assert loaded
+        assert not controller._pending_streaming_setup
+        assert controller._streaming_enabled
+        assert controller.streaming_transcriber.backend is speech
+
+    def test_startup_sets_up_the_preview_after_the_optional_engine_loads(self):
+        controller = self._create_controller()
+        loaded = []
+        speech = self._select_optional_engine(controller, "nemotron", loaded=loaded)
+
+        controller.notify_main_ui_ready()
+        assert controller.streaming_transcriber is None
+        worker, args = next(
+            (fn, args) for fn, args in controller.executor.submissions
+            if fn == controller._reload_worker
+        )
+        worker(*args)
+
+        assert controller.streaming_transcriber.backend is speech
+        assert controller._streaming_enabled
+
+    def test_streaming_preview_is_unavailable_for_other_optional_engines(self):
+        controller = self._create_controller()
+        self._select_optional_engine(controller, "moonshine", loaded=[True])
+
+        controller.reconfigure_streaming()
+
+        assert controller.streaming_transcriber is None
+        assert not controller._streaming_enabled
+        assert not controller._pending_streaming_setup
+        assert "Live preview" in controller.ui_controller.statuses[-1]
+
     def test_stop_recording_chooses_normal_or_split_transcription_path(self):
         """The whole teardown is one worker, so drive it and watch the effect.
 
