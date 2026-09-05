@@ -79,3 +79,4 @@ webui/mocks/
 CLAUDE.md
 AGENTS.md
 docs/screenshots/full_suite/*
+specs/local-asr-backends-plan.md
