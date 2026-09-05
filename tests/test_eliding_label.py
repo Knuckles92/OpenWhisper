@@ -92,4 +92,6 @@ def test_size_hint_is_the_same_whether_or_not_currently_elided(app):
     plain = QLabel(text)
     plain.setStyleSheet(fresh.styleSheet())
     plain.ensurePolished()
-    assert elided.sizeHint().width() == plain.sizeHint().width()
+    # ElidingLabel rounds fractional advances up to prevent clipping; QLabel
+    # can round down by one pixel with macOS font metrics.
+    assert 0 <= elided.sizeHint().width() - plain.sizeHint().width() <= 1
