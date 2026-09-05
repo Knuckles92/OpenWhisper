@@ -158,7 +158,7 @@ class ApplicationController(QObject):
 
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
-        self._current_model_name = "local_whisper"
+        self._current_model_name = config.DEFAULT_BACKEND
 
         self._streaming_enabled = False
 

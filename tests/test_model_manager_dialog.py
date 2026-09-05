@@ -865,3 +865,16 @@ class TestOptionalSpeechSummary(_DialogTestCase):
         assert dialog.rail.value(MEETING_VOICE) == "Moonshine Streaming Small"
         dialog.engine_combo.setCurrentIndex(dialog.engine_combo.findData("moonshine"))
         assert "Moonshine" in dialog.rail.value(ONDEMAND_VOICE)
+
+
+def test_display_name_falls_back_to_the_default_backend():
+    from config import config
+
+    default_display = next(
+        display for display, value in config.MODEL_VALUE_MAP.items()
+        if value == config.DEFAULT_BACKEND
+    )
+    assert dialog_module._display_name_for_backend("parakeet") == "Parakeet"
+    assert dialog_module._display_name_for_backend("api") == "API"
+    assert dialog_module._display_name_for_backend("not-a-backend") == default_display
+    assert dialog_module._display_name_for_backend("") == default_display

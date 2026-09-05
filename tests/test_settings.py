@@ -790,3 +790,25 @@ def test_api_model_resolution_defaults_and_preserves_explicit_choice(tmp_path):
     })
     assert manager.load_model_selection() == "api"
     assert manager.get(SettingsKey.API_TRANSCRIPTION_MODEL) == "gpt-4o-mini-transcribe"
+
+
+def test_model_selection_falls_back_to_platform_default(tmp_path):
+    manager = SettingsManager(str(tmp_path / "settings.json"))
+    assert manager.load_model_selection() == config.DEFAULT_BACKEND
+    manager.save_all_settings({SettingsKey.SELECTED_MODEL: "not-a-backend"})
+    assert manager.load_model_selection() == config.DEFAULT_BACKEND
+    manager.save_model_selection("local_whisper")
+    assert manager.load_model_selection() == "local_whisper"
+
+
+def test_default_backend_is_parakeet_only_where_its_runtime_ships():
+    from config import optional_speech_backends_supported
+
+    assert optional_speech_backends_supported("win32", "AMD64")
+    assert optional_speech_backends_supported("win32", "x86_64")
+    assert not optional_speech_backends_supported("win32", "ARM64")
+    assert not optional_speech_backends_supported("linux", "x86_64")
+    assert not optional_speech_backends_supported("darwin", "arm64")
+    expected = "parakeet" if optional_speech_backends_supported() else "local_whisper"
+    assert config.DEFAULT_BACKEND == expected
+    assert config.DEFAULT_BACKEND in config.MODEL_VALUE_MAP.values()

@@ -2,7 +2,7 @@
 
 **Release status:** this guide documents the unreleased Windows backend expansion. The published 2.5.2 installers do not contain these additions. See the [complete model reference](models.md) for exact catalog and settings IDs.
 
-OpenWhisper adds four optional local backends on **Windows x64**. Select them in the Backend field on Quick Record or Upload File, or in Model Manager → On-demand voice. Existing Whisper and API settings are preserved.
+OpenWhisper adds four optional local backends on **Windows x64**. Parakeet is the default backend for new installations there; a saved selection is never changed. Select any of them in the Backend field on Quick Record or Upload File, or in Model Manager → On-demand voice. Existing Whisper and API settings are preserved.
 
 | Backend | Models | CPU | NVIDIA GPU | Meeting Mode |
 | --- | --- | --- | --- | --- |
@@ -11,7 +11,7 @@ OpenWhisper adds four optional local backends on **Windows x64**. Select them in
 | Nemotron Streaming | 3.5 ASR 0.6B | Yes | Yes | Native live preview and timestamped chunks |
 | Moonshine | Streaming Small, Medium (English) | Yes | No | Native live preview and timestamped chunks |
 
-These are additional voice recognizers. Text cleanup, speaker identification, and meeting intelligence keep their own selections. The optional runtimes are currently packaged for Windows x64; Whisper remains the local option on the other supported platforms.
+These are additional voice recognizers. Text cleanup, speaker identification, and meeting intelligence keep their own selections. The optional runtimes are currently packaged for Windows x64; Whisper remains the local option, and the default, on the other supported platforms.
 
 ## Install and select
 

@@ -29,8 +29,8 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 ## Features
 
-- **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use)
-- **Additional local engines (Windows x64)** – Parakeet, Qwen3-ASR, Nemotron Streaming, and Moonshine, with optional verified runtime/model downloads. [Setup, capabilities, and measured CPU/GPU comparisons](docs/local-asr.md).
+- **Local Whisper** – Runs offline with `faster-whisper`, using optimized Whisper models (~150MB download on first use); the default backend on macOS and Linux
+- **Additional local engines (Windows x64)** – Parakeet (the default backend on Windows x64), Qwen3-ASR, Nemotron Streaming, and Moonshine, with verified runtime/model downloads. [Setup, capabilities, and measured CPU/GPU comparisons](docs/local-asr.md).
 - **Model Manager** – Manage voice and text models in one place: browse, download, and select local speech models, or use a guided provider → model picker for OpenAI/OpenRouter cleanup models
 - **API Options** – Choose **API** as the backend, then select GPT-Transcribe (default), GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper in **Model**. **Local Whisper** keeps its own model, device, and quantization controls.
 - **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach custom spelling and style rules via text or voice dictation
@@ -64,6 +64,8 @@ The four additional Windows backend families below are **unreleased** and are no
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 CPU / NVIDIA GPU | Dictation, uploads, meetings with native preview |
 | Moonshine | Streaming Small, Streaming Medium; English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network | Dictation and uploads |
+
+New installations start on **Parakeet** on Windows x64 and on **Local Whisper** elsewhere. A saved Backend choice is always kept. On a fresh Windows install the app asks to download the Parakeet weights and then points to Downloads for its runtime.
 
 See the [complete model reference](docs/models.md) for exact IDs and the [local backend guide](docs/local-asr.md) for downloads, licenses, runtime requirements, and measured speed/quality. Voice recognition is separate from text cleanup and meeting intelligence.
 

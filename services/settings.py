@@ -468,7 +468,7 @@ class SettingsManager:
         except Exception as e:
             logger.warning(f"Failed to load model selection: {e}")
 
-        return config.MODEL_VALUE_MAP[config.MODEL_CHOICES[0]]
+        return config.DEFAULT_BACKEND
 
     def save_model_selection(self, model_value: str) -> None:
         """Validate and save a backend selection."""

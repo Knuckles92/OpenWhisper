@@ -1,5 +1,6 @@
 """OpenWhisper configuration constants."""
 import os
+import platform
 import sys
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -20,6 +21,19 @@ ENV_FILE_NAME = ".env"
 def is_frozen() -> bool:
     """True when running from a PyInstaller bundle rather than source."""
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+
+
+def optional_speech_backends_supported(
+    platform_name: str = None, machine: str = None
+) -> bool:
+    """True where the optional local speech runtimes are packaged (Windows x64).
+
+    Mirrors ``services.components.current_platform_tag`` without importing it:
+    that module imports this one, so the check is repeated here.
+    """
+    host = platform_name or sys.platform
+    arch = (machine if machine is not None else platform.machine()).strip().lower()
+    return host.startswith("win") and arch in {"amd64", "x86_64", "x64"}
 
 
 def bundle_root() -> str:
@@ -160,6 +174,13 @@ class AppConfig:
     )
 
     MODEL_VALUE_MAP: Dict[str, str] = None
+
+    # Backend ID used for a fresh install or an invalid saved selection.
+    # Parakeet is faster and more accurate than Whisper, so it is the default
+    # wherever its runtime ships (Windows x64); the other platforms have no
+    # optional runtimes, so Local Whisper stays their default. Set in
+    # __post_init__.
+    DEFAULT_BACKEND: str = None
 
     API_MODEL_CHOICES: tuple[str, ...] = (
         "gpt-transcribe",
@@ -391,6 +412,11 @@ class AppConfig:
                 'Parakeet': 'parakeet', 'Qwen3-ASR': 'qwen_asr',
                 'Nemotron Streaming': 'nemotron', 'Moonshine': 'moonshine',
             }
+
+        if self.DEFAULT_BACKEND is None:
+            self.DEFAULT_BACKEND = (
+                'parakeet' if optional_speech_backends_supported() else 'local_whisper'
+            )
 
         if self.WHISPER_MODEL_CHOICES is None:
             self.WHISPER_MODEL_CHOICES = [

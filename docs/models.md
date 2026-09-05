@@ -4,7 +4,7 @@ The Windows backend expansion is **unreleased**; published 2.5.2 installers do n
 
 ## Optional local models (Windows x64)
 
-Model keys are persisted identifiers; the app displays the friendly names. Each family remembers its own on-demand model and device preference.
+Model keys are persisted identifiers; the app displays the friendly names. Each family remembers its own on-demand model and device preference. Parakeet is the default backend for new installations on Windows x64; Local Whisper remains the default on the other platforms.
 
 | Backend | Model | Catalog key | Parameters | Languages | Devices |
 | --- | --- | --- | --- | --- | --- |
@@ -61,7 +61,7 @@ New API selections default to `gpt-transcribe`. API dictation/uploads use the ex
 
 | Setting | Meaning |
 | --- | --- |
-| `selected_model` | Backend ID: `local_whisper`, `api`, `parakeet`, `qwen_asr`, `nemotron`, or `moonshine` |
+| `selected_model` | Backend ID: `local_whisper`, `api`, `parakeet`, `qwen_asr`, `nemotron`, or `moonshine`. Unset or invalid values resolve to `config.DEFAULT_BACKEND`: `parakeet` on Windows x64, `local_whisper` elsewhere |
 | `whisper_model`, `whisper_device`, `whisper_compute_type` | Existing on-demand Whisper controls |
 | `local_asr_models` | Map from optional backend ID to its selected catalog key |
 | `local_asr_devices` | Map from optional backend ID to `auto`, `cpu`, or `cuda`; Moonshine resolves to CPU |

@@ -889,7 +889,7 @@ class DownloadsDialog(QDialog):
         if active_model not in config.WHISPER_MODEL_CHOICES:
             active_model = config.DEFAULT_WHISPER_MODEL
         from services.local_asr.catalog import BACKENDS, selected_model
-        selected_backend = settings.get(SettingsKey.SELECTED_MODEL, "local_whisper")
+        selected_backend = settings.get(SettingsKey.SELECTED_MODEL, config.DEFAULT_BACKEND)
         if selected_backend in BACKENDS:
             active_model = selected_model(selected_backend, settings)
         meeting_model = resolve_meeting_whisper_model(settings)

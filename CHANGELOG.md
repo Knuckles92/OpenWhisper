@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Cloud transcription choices are grouped under **API**, with a separate API model selector in both transcription tabs and Model Manager. Existing API selections retain their model.
 - Added **GPT-Transcribe** as the default for new API selections, alongside GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper, with JSON response handling for single files and chunked uploads.
+- Parakeet TDT v3 is the default backend for new installations on Windows x64, where its runtime ships; macOS and Linux keep Local Whisper. Saved Backend selections are unchanged.
 
 ### Added
 - Four optional local speech backends on Windows x64: Parakeet TDT v3, Qwen3-ASR (0.6B/1.7B), Nemotron 3.5 Streaming, and Moonshine Streaming (Small/Medium). Model Manager and Downloads include independent selections, verified runtime/model installation, CPU/NVIDIA device controls, cancellation, and offline inference.

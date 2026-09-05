@@ -104,10 +104,8 @@ def _design_icon(filename: str) -> QIcon:
 
 
 def _display_name_for_backend(model_value: str) -> str:
-    for display, value in config.MODEL_VALUE_MAP.items():
-        if value == model_value:
-            return display
-    return config.MODEL_CHOICES[0]
+    names = {value: display for display, value in config.MODEL_VALUE_MAP.items()}
+    return names.get(model_value) or names[config.DEFAULT_BACKEND]
 
 
 class ModelManagerDialog(QDialog):
@@ -1121,7 +1119,7 @@ class ModelManagerDialog(QDialog):
         try:
             model_value = settings_manager.load_model_selection()
         except Exception:
-            model_value = "local_whisper"
+            model_value = config.DEFAULT_BACKEND
         display = _display_name_for_backend(model_value)
         index = self.engine_combo.findText(display)
         blocker = self.engine_combo.blockSignals(True)
