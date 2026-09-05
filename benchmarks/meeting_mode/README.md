@@ -91,6 +91,34 @@ gate fails for offline as the product final (micro above 30%, worst meeting
 are still captured so a later cut/decode can be scored without changing the
 live path.
 
+## Parakeet TDT v3 on the same ten meetings
+
+The September 2026 run decoded the same ten meetings with `--model
+parakeet-v3 --language en` (the NeMo-Speech.cpp CUDA runtime on an RTX 2060)
+using the identical chunking and offline-pass profile. Parakeet accepts no
+prompt and no beam size, so its draft is a context-free decode.
+
+| Path | Whisper `auto` | Parakeet v3 | Delta |
+|---|---:|---:|---:|
+| Live draft tcWER | 28.83% | 29.07% | +0.24 |
+| Offline pass tcWER | 33.66% | 28.45% | -5.21 |
+| Live draft, fillers removed | 24.98% | 27.16% | +2.18 |
+| Offline pass, fillers removed | 29.46% | 26.38% | -3.08 |
+| Live RTF | 0.073 | 0.010 | 7x faster |
+| Combined RTF | 0.114 | 0.022 | 5x faster |
+
+The live drafts tie on the strict metric only because Parakeet transcribes
+most `um` / `uh` fillers that the AMI reference keeps, while Whisper
+suppresses most of them; with fillers removed from both sides Whisper's
+draft still leads by about two points. The offline pass reverses the order:
+Parakeet's clean re-decode improves on its own draft on nine of ten meetings,
+so the transcript a user keeps after End is better with Parakeet by five
+points strict or three points on lexical content, at one fifth of the
+compute. Parakeet passes every gate check except the worst meeting
+(IN1012, 35.69% offline against the 35% ceiling); Whisper's offline product
+fails both the micro and the worst-meeting checks. Exact counts are in
+[the recorded evidence](../../docs/benchmarks/meeting-mode-parakeet-vs-whisper-2026-09-04.json).
+
 ASR word error is not the product question. To compare the package a user
 keeps after End (topic, summary, cards, live notes, questions, readable
 transcript), the product eval first *simulates the live meeting*: rolling

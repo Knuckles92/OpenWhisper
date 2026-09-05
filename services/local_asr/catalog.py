@@ -33,8 +33,15 @@ BACKENDS = {
     "nemotron": "Nemotron Streaming",
     "moonshine": "Moonshine",
 }
+#: Backend id of the built-in faster-whisper family, which is not in MODELS.
+WHISPER_BACKEND = "local_whisper"
 DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
 RUNTIME_IDS = ("asr-nvidia-cpu", "asr-nvidia-cuda", "asr-qwen", "asr-moonshine")
+
+
+def backend_of(model_name: str) -> str:
+    """Return the backend id that owns a catalog model name (Whisper names included)."""
+    return MODELS[model_name].backend if model_name in MODELS else WHISPER_BACKEND
 
 
 def artifacts(key: str) -> dict:

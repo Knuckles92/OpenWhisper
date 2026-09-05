@@ -18,7 +18,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 </p>
 
 <p align="center">
-  <img width="960" alt="Downloads: Whisper catalog and per-model technical profile" src="docs/screenshots/06-downloads-model-profile.png" />
+  <img width="960" alt="Downloads: speech model catalog and per-model technical profile" src="docs/screenshots/06-downloads-model-profile.png" />
 </p>
 
 <p align="center">

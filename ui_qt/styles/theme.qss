@@ -608,6 +608,7 @@ QPushButton#modelManagerCloseButton:hover {
 
 QLineEdit#modelManagerSearch,
 QComboBox#modelManagerSort,
+QComboBox#modelManagerBackendFilter,
 QComboBox#modelManagerStatusFilter {
     color: #eef2f6;
     background-color: #161e26;
@@ -621,6 +622,7 @@ QComboBox#modelManagerStatusFilter {
 
 QLineEdit#modelManagerSearch:focus,
 QComboBox#modelManagerSort:focus,
+QComboBox#modelManagerBackendFilter:focus,
 QComboBox#modelManagerStatusFilter:focus {
     border-color: #0a84ff;
 }
@@ -630,6 +632,7 @@ QComboBox#modelManagerSort {
     padding-right: 28px;
 }
 
+QComboBox#modelManagerBackendFilter,
 QComboBox#modelManagerStatusFilter {
     min-width: 140px;
     padding-right: 28px;

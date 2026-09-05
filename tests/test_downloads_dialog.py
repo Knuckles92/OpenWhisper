@@ -12,7 +12,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QMessageBox,
+    QScrollArea,
+    QWidget,
+)
 
 from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
@@ -399,6 +406,65 @@ class TestFilter(_DialogTestCase):
         assert dialog.rows["tiny"].isVisibleTo(dialog)
 
 
+    def test_backend_filter_shows_one_family(self):
+        dialog, _values = self._make_dialog()
+        dialog.backend_filter_combo.setCurrentIndex(
+            dialog.backend_filter_combo.findData("parakeet")
+        )
+        assert dialog.rows["parakeet-v3"].isVisibleTo(dialog)
+        assert not dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+
+    def test_backend_filter_whisper_covers_distilled_checkpoints(self):
+        dialog, _values = self._make_dialog()
+        dialog.backend_filter_combo.setCurrentIndex(
+            dialog.backend_filter_combo.findData("local_whisper")
+        )
+        whisper_rows = [
+            name for name, row in dialog.rows.items() if row.isVisibleTo(dialog)
+        ]
+        assert "base" in whisper_rows
+        assert any(name.startswith("distil-") for name in whisper_rows)
+        assert not any(name.startswith(("parakeet", "qwen", "nemotron", "moonshine")) for name in whisper_rows)
+
+    def test_backend_filter_lists_every_backend_once(self):
+        from services.local_asr.catalog import BACKENDS
+        dialog, _values = self._make_dialog()
+        combo = dialog.backend_filter_combo
+        ids = [combo.itemData(i) for i in range(combo.count())]
+        assert ids == ["all", "local_whisper", *BACKENDS]
+        assert combo.currentData() == "all"
+
+    def test_backend_filter_combines_with_status_and_search(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.backend_filter_combo.setCurrentIndex(
+            dialog.backend_filter_combo.findData("moonshine")
+        )
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("not_downloaded")
+        )
+        assert dialog.rows["moonshine-small"].isVisibleTo(dialog)
+        assert dialog.rows["moonshine-medium"].isVisibleTo(dialog)
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+        dialog.filter_edit.setText("medium")
+        assert dialog.rows["moonshine-medium"].isVisibleTo(dialog)
+        assert not dialog.rows["moonshine-small"].isVisibleTo(dialog)
+        assert not dialog.rows["medium"].isVisibleTo(dialog)
+        dialog.status_filter_combo.setCurrentIndex(
+            dialog.status_filter_combo.findData("downloaded")
+        )
+        assert dialog.empty_label.isVisibleTo(dialog)
+
+    def test_backend_filter_all_restores_every_row(self):
+        dialog, _values = self._make_dialog()
+        combo = dialog.backend_filter_combo
+        combo.setCurrentIndex(combo.findData("nemotron"))
+        combo.setCurrentIndex(combo.findData("all"))
+        assert all(row.isVisibleTo(dialog) for row in dialog.rows.values())
+
+
 class TestSorting(_DialogTestCase):
     """Built-in sort choices make common catalog scans one step."""
 
@@ -433,6 +499,17 @@ class TestSorting(_DialogTestCase):
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("name"))
         order = self._row_order(dialog)
         assert order == sorted(order, key=str.casefold)
+
+    def test_backend_sort_keeps_each_family_contiguous(self):
+        """Whisper first, then the optional backends in filter-combo order."""
+        dialog, _values = self._make_dialog(active_model="medium")
+        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("backend"))
+        backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
+        first_seen = list(dict.fromkeys(backends))
+        assert first_seen == ["local_whisper", "parakeet", "qwen_asr", "nemotron", "moonshine"]
+        assert backends == sorted(backends, key=first_seen.index)
+        # Inside a family the recommended order still applies.
+        assert self._row_order(dialog)[0] == "tiny"
 
 
 class TestActions(_DialogTestCase):
@@ -494,6 +571,26 @@ class TestInspector(_DialogTestCase):
         assert dialog.fact_labels["Repository"].text() == BASE_REPO
         assert dialog.fact_labels["Local format"].text()
         assert dialog.inspector_tradeoffs.text().startswith("•")
+
+    def test_tag_pill_shows_its_full_text_under_the_theme(self):
+        """The themed pill pads the label; that padding must not clip the text."""
+        previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(ThemeManager().stylesheet)
+        try:
+            dialog, _values = self._make_dialog()
+            dialog.show()
+            dialog.select_model("parakeet-v3")
+            self.app.processEvents()
+
+            tags = dialog.inspector_tags
+            assert tags.text()
+            assert QLabel.text(tags) == tags.text()
+            assert (
+                tags.contentsRect().width()
+                >= tags.fontMetrics().horizontalAdvance(tags.text())
+            )
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
 
     def test_row_click_signal_selects_that_model(self):
         dialog, _values = self._make_dialog()

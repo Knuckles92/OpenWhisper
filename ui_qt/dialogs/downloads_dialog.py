@@ -307,6 +307,20 @@ class DownloadsDialog(QDialog):
         self.filter_edit.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.filter_edit, stretch=1)
 
+        # One entry per speech backend, so "all the Parakeet models" is one
+        # click: models are downloaded and run per backend, and a row's name
+        # alone (base, qwen-0.6b) does not always say which one owns it.
+        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+        self.backend_filter_combo = QComboBox()
+        self.backend_filter_combo.setObjectName("modelManagerBackendFilter")
+        self.backend_filter_combo.addItem("All backends", "all")
+        self.backend_filter_combo.addItem("Whisper", WHISPER_BACKEND)
+        for backend_id, backend_label in BACKENDS.items():
+            self.backend_filter_combo.addItem(backend_label, backend_id)
+        self.backend_filter_combo.setToolTip("Show one speech backend's models")
+        self.backend_filter_combo.currentIndexChanged.connect(self._apply_filter)
+        toolbar.addWidget(self.backend_filter_combo)
+
         self.status_filter_combo = QComboBox()
         self.status_filter_combo.setObjectName("modelManagerStatusFilter")
         self.status_filter_combo.addItem("All", "all")
@@ -322,6 +336,7 @@ class DownloadsDialog(QDialog):
         self.sort_combo.addItem("Downloaded first", "downloaded")
         self.sort_combo.addItem("Smallest first", "size")
         self.sort_combo.addItem("Name A-Z", "name")
+        self.sort_combo.addItem("Grouped by backend", "backend")
         self.sort_combo.setToolTip("Sort model list")
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.sort_combo)
@@ -1061,11 +1076,14 @@ class DownloadsDialog(QDialog):
     def _apply_filter(self, _value=None) -> None:
         needle = self.filter_edit.text().strip().lower()
         status = self.status_filter_combo.currentData()
+        backend = self.backend_filter_combo.currentData()
         any_visible = False
         rows = sorted(self.rows.values(), key=self._sort_key)
         for index, row in enumerate(rows):
             self.list_layout.insertWidget(index, row)
             visible = row.matches_filter(needle) if needle else True
+            if backend != "all":
+                visible = visible and row.backend == backend
             if status == "downloaded":
                 visible = visible and row.is_cached
             elif status == "not_downloaded":
@@ -1086,7 +1104,12 @@ class DownloadsDialog(QDialog):
             return (name,)
         # Recommended: downloaded first, then smallest — keep the order stable
         # so a state change does not make a row jump under the pointer.
-        return (not row.is_cached, row.sort_size_bytes, name)
+        recommended = (not row.is_cached, row.sort_size_bytes, name)
+        if mode == "backend":
+            # Backends in the order the filter combo lists them (Whisper
+            # first, then the optional families), recommended order inside.
+            return (self.backend_filter_combo.findData(row.backend), *recommended)
+        return recommended
 
     @staticmethod
     def _usage_for(

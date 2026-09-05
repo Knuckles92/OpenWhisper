@@ -27,6 +27,7 @@ from services.hf_access import (
     format_size_bytes,
     resolve_model_repo,
 )
+from services.local_asr.catalog import backend_of
 from ui_qt.utils.fuzzy_match import fuzzy_match
 from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -203,6 +204,7 @@ class ModelRowWidget(QFrame):
         super().__init__(parent)
         self.model_name = model_name
         self.repo_id = resolve_model_repo(model_name)
+        self.backend = backend_of(model_name)
         self.is_cached = False
         self.is_active = False
         self.sort_size_bytes = 0

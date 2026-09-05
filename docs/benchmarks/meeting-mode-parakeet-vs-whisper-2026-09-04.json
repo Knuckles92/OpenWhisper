@@ -1,0 +1,330 @@
+{
+  "date": "2026-09-04",
+  "hardware": "NVIDIA GeForce RTX 2060 6 GB, Windows 11",
+  "corpus": "AMI manual annotations 1.6.2 / headset mix, ten curated natural meetings, 8.16 audio hours",
+  "profile": "production chunking t5/m20, draft prompt 50 words (Whisper only; Parakeet ignores prompts and beam size), rolling revisions off, offline clean pass on",
+  "metric": "tcWER-300s, strict (case/punctuation ignored, fillers kept). The fillers_removed block drops these non-lexical tokens from reference and hypothesis: ahem, eh, er, erm, hm, hmm, huh, mhm, mm, mmhmm, uh, uhhuh, um",
+  "notes": [
+    "Whisper baseline is the August 2026 auto/auto run reused from results/; Parakeet was decoded today on the same machine.",
+    "Parakeet offline pass beats its own live draft; Whisper offline is worse than its draft. The product End flow (meeting_end_redecode) keeps the offline transcript.",
+    "IN1012 is the worst Parakeet meeting (35.69% offline) and the only gate check Parakeet fails (worst meeting must be <= 35%)."
+  ],
+  "runs": {
+    "whisper_turbo_auto": {
+      "model": "auto",
+      "language": "auto",
+      "results_dir": "auto-auto-draft-only-t5-m20-p50-offline",
+      "audio_hours": 8.157419340277778,
+      "rtf": {
+        "live": 0.07317166256074897,
+        "offline": 0.04131167062268409,
+        "combined": 0.11448333318343307
+      },
+      "strict": {
+        "draft": {
+          "wer": 0.28829028399273404,
+          "substitution_rate": 0.05546940764698064,
+          "deletion_rate": 0.21447875592574542,
+          "insertion_rate": 0.018342120420007976,
+          "reference_words": 90284,
+          "hypothesis_words": 72576
+        },
+        "offline": {
+          "wer": 0.33661556865003767,
+          "substitution_rate": 0.055546940764698065,
+          "deletion_rate": 0.25131806300119625,
+          "insertion_rate": 0.02975056488414337,
+          "reference_words": 90284,
+          "hypothesis_words": 70280
+        }
+      },
+      "fillers_removed": {
+        "draft": {
+          "wer": 0.24982234223990904,
+          "substitution_rate": 0.05567794201250711,
+          "deletion_rate": 0.17229249573621375,
+          "insertion_rate": 0.021851904491188175,
+          "reference_words": 84432,
+          "hypothesis_words": 71730
+        },
+        "offline": {
+          "wer": 0.2946394731855221,
+          "substitution_rate": 0.05658991851430737,
+          "deletion_rate": 0.20383267007769565,
+          "insertion_rate": 0.03421688459351904,
+          "reference_words": 84432,
+          "hypothesis_words": 70111
+        }
+      },
+      "quality_gate": {
+        "passed": false,
+        "product": "offline",
+        "checks": {
+          "meeting_count": true,
+          "audio_hours": true,
+          "micro_tcwer": false,
+          "worst_meeting_tcwer": false,
+          "runtime_factor": true
+        },
+        "thresholds": {
+          "minimum_meetings": 10,
+          "minimum_audio_hours": 8.0,
+          "maximum_micro_tcwer": 0.3,
+          "maximum_meeting_tcwer": 0.35,
+          "maximum_runtime_factor": 0.5
+        },
+        "worst_meeting_tcwer": 0.3989283974671213
+      },
+      "per_meeting": [
+        {
+          "meeting_id": "IN1001",
+          "duration_s": 3463.749375,
+          "chunks": 403,
+          "rtf": 0.07851141640408062,
+          "offline_rtf": 0.04114315796881191,
+          "draft_wer": 0.2931234815675504,
+          "offline_wer": 0.3488961656279708
+        },
+        {
+          "meeting_id": "IN1002",
+          "duration_s": 2472.517375,
+          "chunks": 249,
+          "rtf": 0.06913925759571542,
+          "offline_rtf": 0.03957119921148996,
+          "draft_wer": 0.3038753600418958,
+          "offline_wer": 0.32600157109190886
+        },
+        {
+          "meeting_id": "IN1005",
+          "duration_s": 2798.832,
+          "chunks": 345,
+          "rtf": 0.08090097183396354,
+          "offline_rtf": 0.04248500917525956,
+          "draft_wer": 0.21968935076544865,
+          "offline_wer": 0.28852385741423625
+        },
+        {
+          "meeting_id": "IN1007",
+          "duration_s": 2411.333375,
+          "chunks": 220,
+          "rtf": 0.062204868374951955,
+          "offline_rtf": 0.03884615489967692,
+          "draft_wer": 0.3281782756941062,
+          "offline_wer": 0.3989283974671213
+        },
+        {
+          "meeting_id": "IN1008",
+          "duration_s": 3415.7066875,
+          "chunks": 416,
+          "rtf": 0.07600542003506174,
+          "offline_rtf": 0.04002453802614447,
+          "draft_wer": 0.25578168362627196,
+          "offline_wer": 0.3178769657724329
+        },
+        {
+          "meeting_id": "IN1009",
+          "duration_s": 1256.3466875,
+          "chunks": 159,
+          "rtf": 0.09000223069398403,
+          "offline_rtf": 0.04528937439491254,
+          "draft_wer": 0.2527548209366391,
+          "offline_wer": 0.31473829201101927
+        },
+        {
+          "meeting_id": "IN1012",
+          "duration_s": 3108.933375,
+          "chunks": 327,
+          "rtf": 0.06934748953891413,
+          "offline_rtf": 0.03939457020367789,
+          "draft_wer": 0.3358302122347066,
+          "offline_wer": 0.3859598578699702
+        },
+        {
+          "meeting_id": "IN1013",
+          "duration_s": 3142.128,
+          "chunks": 287,
+          "rtf": 0.06599031102488269,
+          "offline_rtf": 0.04023430194441518,
+          "draft_wer": 0.31471119133574005,
+          "offline_wer": 0.3316787003610108
+        },
+        {
+          "meeting_id": "IN1014",
+          "duration_s": 3692.869375,
+          "chunks": 405,
+          "rtf": 0.07429292125990607,
+          "offline_rtf": 0.04252464692174653,
+          "draft_wer": 0.2655853570134107,
+          "offline_wer": 0.32448350851757884
+        },
+        {
+          "meeting_id": "IN1016",
+          "duration_s": 3604.293375,
+          "chunks": 367,
+          "rtf": 0.07199945806298562,
+          "offline_rtf": 0.04458924273887519,
+          "draft_wer": 0.2856664153472397,
+          "offline_wer": 0.31850548714082266
+        }
+      ]
+    },
+    "parakeet_v3_en": {
+      "model": "parakeet-v3",
+      "language": "en",
+      "results_dir": "parakeet-v3-en-draft-only-t5-m20-p50-offline",
+      "audio_hours": 8.157419340277778,
+      "rtf": {
+        "live": 0.010293809632081683,
+        "offline": 0.011589590132709403,
+        "combined": 0.021883399764791086
+      },
+      "strict": {
+        "draft": {
+          "wer": 0.2907381152806699,
+          "substitution_rate": 0.061705285543396396,
+          "deletion_rate": 0.2086305436179168,
+          "insertion_rate": 0.020402286119356697,
+          "reference_words": 90284,
+          "hypothesis_words": 73290
+        },
+        "offline": {
+          "wer": 0.2844579327455585,
+          "substitution_rate": 0.0571197554383944,
+          "deletion_rate": 0.20696911966682913,
+          "insertion_rate": 0.020369057640334944,
+          "reference_words": 90284,
+          "hypothesis_words": 73437
+        }
+      },
+      "fillers_removed": {
+        "draft": {
+          "wer": 0.2715558082243699,
+          "substitution_rate": 0.05836649611521698,
+          "deletion_rate": 0.19083996588971006,
+          "insertion_rate": 0.022349346219442866,
+          "reference_words": 84432,
+          "hypothesis_words": 70206
+        },
+        "offline": {
+          "wer": 0.26384546143642224,
+          "substitution_rate": 0.05480149706272503,
+          "deletion_rate": 0.18733418609058178,
+          "insertion_rate": 0.021709778283115405,
+          "reference_words": 84432,
+          "hypothesis_words": 70448
+        }
+      },
+      "quality_gate": {
+        "passed": false,
+        "product": "offline",
+        "checks": {
+          "meeting_count": true,
+          "audio_hours": true,
+          "micro_tcwer": true,
+          "worst_meeting_tcwer": false,
+          "runtime_factor": true
+        },
+        "thresholds": {
+          "minimum_meetings": 10,
+          "minimum_audio_hours": 8.0,
+          "maximum_micro_tcwer": 0.3,
+          "maximum_meeting_tcwer": 0.35,
+          "maximum_runtime_factor": 0.5
+        },
+        "worst_meeting_tcwer": 0.35686161528858157
+      },
+      "per_meeting": [
+        {
+          "meeting_id": "IN1001",
+          "duration_s": 3463.749375,
+          "chunks": 403,
+          "rtf": 0.008828236684997505,
+          "offline_rtf": 0.011471424516697151,
+          "draft_wer": 0.3030527094116404,
+          "offline_wer": 0.28847575789584873
+        },
+        {
+          "meeting_id": "IN1002",
+          "duration_s": 2472.517375,
+          "chunks": 249,
+          "rtf": 0.008880195270649718,
+          "offline_rtf": 0.010718949790974628,
+          "draft_wer": 0.29379418695993714,
+          "offline_wer": 0.2928777166797591
+        },
+        {
+          "meeting_id": "IN1005",
+          "duration_s": 2798.832,
+          "chunks": 345,
+          "rtf": 0.010548226510229299,
+          "offline_rtf": 0.0117404309011661,
+          "draft_wer": 0.2361157671248184,
+          "offline_wer": 0.22550005587216448
+        },
+        {
+          "meeting_id": "IN1007",
+          "duration_s": 2411.333375,
+          "chunks": 220,
+          "rtf": 0.009370993797144565,
+          "offline_rtf": 0.011147134352611736,
+          "draft_wer": 0.34571358986848516,
+          "offline_wer": 0.3447394057476863
+        },
+        {
+          "meeting_id": "IN1008",
+          "duration_s": 3415.7066875,
+          "chunks": 416,
+          "rtf": 0.010334442424247284,
+          "offline_rtf": 0.0117576501948999,
+          "draft_wer": 0.21750693802035154,
+          "offline_wer": 0.20212765957446807
+        },
+        {
+          "meeting_id": "IN1009",
+          "duration_s": 1256.3466875,
+          "chunks": 159,
+          "rtf": 0.008742231272045294,
+          "offline_rtf": 0.008267531090958855,
+          "draft_wer": 0.2603305785123967,
+          "offline_wer": 0.24173553719008264
+        },
+        {
+          "meeting_id": "IN1012",
+          "duration_s": 3108.933375,
+          "chunks": 327,
+          "rtf": 0.01657842548652751,
+          "offline_rtf": 0.010763246703529983,
+          "draft_wer": 0.37309132814750795,
+          "offline_wer": 0.35686161528858157
+        },
+        {
+          "meeting_id": "IN1013",
+          "duration_s": 3142.128,
+          "chunks": 287,
+          "rtf": 0.00911014433532886,
+          "offline_rtf": 0.011300881218100859,
+          "draft_wer": 0.33564981949458483,
+          "offline_wer": 0.3358303249097473
+        },
+        {
+          "meeting_id": "IN1014",
+          "duration_s": 3692.869375,
+          "chunks": 405,
+          "rtf": 0.009504493453677201,
+          "offline_rtf": 0.0132641267604967,
+          "draft_wer": 0.2460130482058717,
+          "offline_wer": 0.2439289597680319
+        },
+        {
+          "meeting_id": "IN1016",
+          "duration_s": 3604.293375,
+          "chunks": 367,
+          "rtf": 0.010013826330130189,
+          "offline_rtf": 0.012726755018958013,
+          "draft_wer": 0.27041970344307614,
+          "offline_wer": 0.27527854569824917
+        }
+      ]
+    }
+  }
+}
