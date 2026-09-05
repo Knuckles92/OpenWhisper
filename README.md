@@ -6,7 +6,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 
 <p align="center">
-  <img width="720" alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
+  <img width="680" alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
 </p>
 
 <p align="center">

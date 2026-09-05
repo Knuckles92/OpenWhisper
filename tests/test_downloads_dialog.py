@@ -82,6 +82,7 @@ class _DialogTestCase:
     ):
         values = {
             SettingsKey.WHISPER_MODEL: active_model,
+            SettingsKey.SELECTED_MODEL: "local_whisper",
             SettingsKey.MEETING_WHISPER_MODEL: meeting_model,
         }
         patchers = [
