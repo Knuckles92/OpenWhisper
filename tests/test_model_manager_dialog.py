@@ -717,6 +717,22 @@ class TestOnDemandEngine(_DialogTestCase):
 class TestCleanupSettingsOwnership(_DialogTestCase):
     """Cleanup Settings must not overwrite Model Manager selections."""
 
+    @pytest.mark.parametrize("reasoning", ["off", "low", "medium", "high"])
+    def test_thinking_level_loads_saves_and_refreshes(self, reasoning):
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.TRANSCRIPT_CLEANUP_REASONING: reasoning,
+        })
+        assert dialog.cleanup_reasoning_combo.currentData() == reasoning
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == reasoning
+
+        combo = dialog.cleanup_reasoning_combo
+        combo.setCurrentIndex((combo.currentIndex() + 1) % combo.count())
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == combo.currentData()
+
+        values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] = reasoning
+        dialog.refresh()
+        assert combo.currentData() == reasoning
+
     def test_saving_cleanup_settings_preserves_text_model_keys(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
@@ -724,6 +740,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 {
                     SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter",
                     SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "provider/model-test",
+                    SettingsKey.TRANSCRIPT_CLEANUP_REASONING: "high",
                     SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: (
                         TranscriptCleanupModelSort.NEWEST
                     ),
@@ -737,14 +754,12 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                 ),
             ):
                 dialog = settings_dialog_module.SettingsDialog()
-                next_index = (dialog.cleanup_reasoning_combo.currentIndex() + 1) % (
-                    dialog.cleanup_reasoning_combo.count()
-                )
-                dialog.cleanup_reasoning_combo.setCurrentIndex(next_index)
+                dialog.transcript_cleanup_check.toggle()
 
             saved = isolated.load_all_settings()
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "provider/model-test"
+            assert saved[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "high"
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT] == TranscriptCleanupModelSort.NEWEST
 
     def test_cleanup_tab_links_to_model_manager(self):

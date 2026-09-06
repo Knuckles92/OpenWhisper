@@ -259,7 +259,7 @@ Access settings via **File > Settings** or the system tray menu:
 
 - **General:** Auto-paste, copy to clipboard, minimize to tray on close, UI font size, and automatic update checks and notifications.
 - **Recording:** Microphone input, saved-recording retention, and the live preview overlay (dictation preview and its font size).
-- **Cleanup:** Enable AI transcript cleanup, thinking level, and custom prompt. Provider and model live in **Model Manager**.
+- **Cleanup:** Enable AI transcript cleanup and set its custom prompt. Provider, model, and thinking level live in **Model Manager → On-demand → Text cleanup**.
 - **Learned rules:** Personal spelling and formatting rules, taught by text or voice. Applied whenever AI cleanup runs.
 - **Intelligence:** What the meeting agent may search, and which models it uses.
 - **After the meeting:** End-of-meeting steps (re-transcription, AI cleanup, final report with Ribbon, Brief, and Signal views).

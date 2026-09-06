@@ -52,7 +52,6 @@ from services.settings import (
     RecordingRetentionMode,
     RecordingTriggerMode,
     SettingsKey,
-    TranscriptCleanupReasoning,
     UiFontScale,
     resolve_developer_mode,
     resolve_max_saved_recordings,
@@ -698,7 +697,8 @@ class SettingsDialog(QDialog):
 
         self.cleanup_model_tile = InfoTile(
             "Text model",
-            "Provider and model selection live in Model Manager → On-demand.",
+            "Provider, model, and thinking level live in "
+            "Model Manager → On-demand → Text cleanup.",
             _design_icon("box-blue.svg"),
         )
         self.open_model_manager_btn = QPushButton("Open Model Manager…")
@@ -707,7 +707,7 @@ class SettingsDialog(QDialog):
         self.open_model_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_model_manager_btn.setToolTip(
             "Open Model Manager → On-demand to choose the cleanup provider "
-            "and chat model"
+            "and chat model, and set its thinking level"
         )
         self.open_model_manager_btn.clicked.connect(
             lambda: self.model_manager_requested.emit("text")
@@ -718,29 +718,6 @@ class SettingsDialog(QDialog):
         self.cleanup_model_summary.setWordWrap(True)
         self.cleanup_model_tile.add_body(self.cleanup_model_summary)
 
-        self.cleanup_reasoning_label = QLabel("Thinking level:")
-        self.cleanup_reasoning_combo = ElidingComboBox()
-        self.cleanup_reasoning_combo.addItem("Off", TranscriptCleanupReasoning.OFF)
-        self.cleanup_reasoning_combo.addItem("Low", TranscriptCleanupReasoning.LOW)
-        self.cleanup_reasoning_combo.addItem(
-            "Medium", TranscriptCleanupReasoning.MEDIUM
-        )
-        self.cleanup_reasoning_combo.addItem("High", TranscriptCleanupReasoning.HIGH)
-        self.cleanup_reasoning_combo.setMinimumHeight(40)
-        self.cleanup_reasoning_combo.setMinimumWidth(160)
-        self.cleanup_reasoning_combo.currentIndexChanged.connect(
-            self._on_cleanup_reasoning_changed
-        )
-        self.cleanup_model_tile.add_body_layout(
-            self._spin_form(
-                self.cleanup_reasoning_label, self.cleanup_reasoning_combo
-            )
-        )
-        self.cleanup_reasoning_info = self._caption(
-            "Extra thinking effort for reasoning models such as o4-mini. "
-            "Leave Off for regular chat models."
-        )
-        self.cleanup_model_tile.add_body(self.cleanup_reasoning_info)
         self._tile_group(layout, "Model", [self.cleanup_model_tile])
 
         self.cleanup_prompt_edit = QTextEdit()
@@ -1971,12 +1948,6 @@ class SettingsDialog(QDialog):
         if self.on_cleanup_changed:
             self.on_cleanup_changed()
 
-    def _on_cleanup_reasoning_changed(self, _index: int = 0) -> None:
-        self._persist(
-            SettingsKey.TRANSCRIPT_CLEANUP_REASONING,
-            self.cleanup_reasoning_combo.currentData(),
-        )
-
     def _persist_cleanup_prompt(self) -> None:
         prompt_text = self.cleanup_prompt_edit.toPlainText().strip()
         stored = prompt_text or config.TRANSCRIPT_CLEANUP_PROMPT
@@ -2090,9 +2061,6 @@ class SettingsDialog(QDialog):
     def _update_cleanup_prompt_ui(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
-            self.cleanup_reasoning_label,
-            self.cleanup_reasoning_combo,
-            self.cleanup_reasoning_info,
             self.cleanup_prompt_tile,
             self.cleanup_rules_composer_tile,
             self.cleanup_rules_library_tile,
@@ -2170,7 +2138,9 @@ class SettingsDialog(QDialog):
 
         provider = resolve_transcript_cleanup_provider()
         model = resolve_transcript_cleanup_model()
-        reasoning = self.cleanup_reasoning_combo.currentData()
+        reasoning = resolve_transcript_cleanup_reasoning(
+            settings_manager.load_all_settings()
+        )
 
         def worker():
             try:
@@ -2603,10 +2573,6 @@ class SettingsDialog(QDialog):
             )
 
             self._refresh_cleanup_model_summary()
-            reasoning_index = self.cleanup_reasoning_combo.findData(
-                resolve_transcript_cleanup_reasoning(settings)
-            )
-            self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(
                 self._tray_available
@@ -2694,7 +2660,6 @@ class SettingsDialog(QDialog):
             self.cleanup_model_summary.setText(
                 f"OpenRouter · {config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL}"
             )
-            self.cleanup_reasoning_combo.setCurrentIndex(0)
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)

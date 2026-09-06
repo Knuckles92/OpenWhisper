@@ -52,6 +52,7 @@ from services.settings import (
     SettingsKey,
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
+    TranscriptCleanupReasoning,
     default_transcript_cleanup_model,
     resolve_api_transcription_model,
     resolve_meeting_agent_core,
@@ -63,6 +64,7 @@ from services.settings import (
     resolve_meeting_whisper_model,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
+    resolve_transcript_cleanup_reasoning,
     settings_manager,
 )
 from services.text_llm import (
@@ -415,6 +417,24 @@ class ModelManagerDialog(QDialog):
         )
         self.text_model_picker.sort_changed.connect(self._on_text_sort_changed)
         layout.addWidget(self.text_model_picker)
+
+        self.cleanup_reasoning_combo = ElidingComboBox()
+        self.cleanup_reasoning_combo.setMinimumHeight(40)
+        for label, value in (
+            ("Off", TranscriptCleanupReasoning.OFF),
+            ("Low", TranscriptCleanupReasoning.LOW),
+            ("Medium", TranscriptCleanupReasoning.MEDIUM),
+            ("High", TranscriptCleanupReasoning.HIGH),
+        ):
+            self.cleanup_reasoning_combo.addItem(label, value)
+        self.cleanup_reasoning_combo.currentIndexChanged.connect(
+            self._on_cleanup_reasoning_changed
+        )
+        layout.addWidget(self._field("Thinking level", self.cleanup_reasoning_combo))
+        layout.addWidget(self._caption(
+            "Extra thinking effort for reasoning models such as o4-mini. "
+            "Leave Off for regular chat models."
+        ))
 
         layout.addWidget(
             self._footnote(
@@ -1063,6 +1083,16 @@ class ModelManagerDialog(QDialog):
 
     # ---- state loading ----
 
+    def _on_cleanup_reasoning_changed(self, _index: int = 0) -> None:
+        try:
+            settings_manager.save_setting(
+                SettingsKey.TRANSCRIPT_CLEANUP_REASONING,
+                self.cleanup_reasoning_combo.currentData(),
+            )
+        except Exception as exc:
+            logger.error("Couldn't save cleanup thinking level: %s", exc)
+            self.message_label.setText(f"Couldn't save thinking level: {exc}")
+
     def _load_text_settings(self) -> None:
         settings = self._settings_snapshot()
         provider = resolve_transcript_cleanup_provider(settings)
@@ -1077,6 +1107,13 @@ class ModelManagerDialog(QDialog):
         )
         if sort not in TranscriptCleanupModelSort.ALL:
             sort = config.TRANSCRIPT_CLEANUP_MODEL_SORT
+
+        reasoning_index = self.cleanup_reasoning_combo.findData(
+            resolve_transcript_cleanup_reasoning(settings)
+        )
+        blocker = self.cleanup_reasoning_combo.blockSignals(True)
+        self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
+        self.cleanup_reasoning_combo.blockSignals(blocker)
 
         self._active_text_provider = provider
         self._active_text_model = model

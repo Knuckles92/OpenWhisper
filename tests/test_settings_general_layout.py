@@ -145,10 +145,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertIs(
                 dialog.cleanup_prompt_tile.control, dialog.cleanup_prompt_edit
             )
-            self.assertIs(
-                dialog.cleanup_reasoning_combo.parentWidget(),
-                dialog.cleanup_model_tile.body,
-            )
+            self.assertFalse(hasattr(dialog, "cleanup_reasoning_combo"))
             self.assertLessEqual(dialog.cleanup_prompt_edit.maximumHeight(), 120)
             rules = dialog._pages[CLEANUP_RULES]
             self.assertEqual(len(rules.findChildren(InfoTile)), 3)
@@ -249,7 +246,6 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.cleanup_rules_library_tile,
             ):
                 self.assertFalse(tile.isEnabled())
-            self.assertFalse(dialog.cleanup_reasoning_combo.isEnabled())
             self.assertFalse(dialog.cleanup_rule_add_btn.isEnabled())
             # The model summary stays live so Model Manager is still reachable.
             self.assertTrue(dialog.cleanup_model_tile.isEnabled())

@@ -16,7 +16,7 @@ def _run_package_self_test() -> None:
     """Import release-critical modules and initialize Qt without starting UI."""
     import importlib
 
-    modules = [
+    modules = [ 
         "av",
         "ctranslate2",
         "faster_whisper",
