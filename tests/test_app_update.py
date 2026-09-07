@@ -710,3 +710,28 @@ class TestPruneStaleDownloads:
         ), patch.object(app_update.os, "unlink", side_effect=refuse_locked):
             assert prune_stale_downloads() == ["collectable.exe"]
         assert (tmp_path / "locked.exe").exists()
+
+
+def test_mac_update_check_selects_verified_dmg(monkeypatch):
+    name = 'OpenWhisper-2.6.0-macos-arm64.dmg'
+    payload = dict(tag_name='v2.6.0', assets=[dict(
+        name=name, size=123, digest='sha256:' + 'ab' * 32,
+        browser_download_url=f'https://github.com/Knuckles92/OpenWhisper/releases/download/v2.6.0/{name}',
+    )])
+    release = parse_release_payload(payload)
+    assert release.macos_asset.name == name
+    monkeypatch.setattr(app_update, 'detect_channel', lambda: InstallChannel.INSTALLER)
+    monkeypatch.setattr(app_update, 'fetch_latest_release', lambda: release)
+    monkeypatch.setattr(app_update.sys, 'platform', 'darwin')
+    monkeypatch.setattr('platform.machine', lambda: 'arm64')
+    result = check_for_update(persist=False)
+    assert result.can_apply and result.apply_mode == ApplyMode.MACOS_DMG
+    with patch.object(app_update, 'download_release_asset', return_value='/tmp/update.dmg') as download:
+        assert app_update.apply_update(result) == '/tmp/update.dmg'
+    download.assert_called_once_with(release.macos_asset, progress=None, cancel=None)
+    assert resolve_release_apply_mode(InstallChannel.GIT, release) == ApplyMode.NOTIFY_ONLY
+    monkeypatch.setattr('platform.machine', lambda: 'x86_64')
+    assert resolve_release_apply_mode(InstallChannel.INSTALLER, release) == ApplyMode.NOTIFY_ONLY
+    monkeypatch.setattr('platform.machine', lambda: 'arm64')
+    payload['assets'][0]['digest'] = None
+    assert not can_apply(InstallChannel.INSTALLER, parse_release_payload(payload))

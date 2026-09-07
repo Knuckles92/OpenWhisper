@@ -68,10 +68,38 @@ def runtime_id(backend: str, device: str) -> str:
     return "asr-nvidia-cuda" if device == "cuda" else "asr-nvidia-cpu"
 
 
+def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
+    from services.components import is_installed
+
+    device = requested
+    if device == "auto":
+        try:
+            import ctranslate2
+            device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
+        except Exception:
+            device = "cpu"
+    component = runtime_id(backend, device)
+    # Explicit CUDA must never silently fall back to CPU.
+    if requested == "auto" and not is_installed(component) and backend in ("parakeet", "nemotron"):
+        component, device = runtime_id(backend, "cpu"), "cpu"
+    return component, device
+
+
+def missing_runtime(model_name: str, settings: dict) -> str | None:
+    from services.components import component_is_published, is_installed
+
+    model = MODELS.get(model_name)
+    if model is None:
+        return None
+    component, _device = resolve_runtime(model.backend, selected_device(model.backend, settings))
+    return component if component_is_published(component) and not is_installed(component) else None
+
+
 def runtime_catalog() -> dict:
     entries = {}
     for key, filename in (("asr-qwen", "qwen_runtime.json"), ("asr-moonshine", "moonshine_runtime.json"), ("asr-nvidia-cpu", "nvidia_cpu_runtime.json"), ("asr-nvidia-cuda", "nvidia_cuda_runtime.json")):
         with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
             entries[key] = {"platforms": {"win_amd64": json.load(stream)}}
+    with Path(__file__).with_name("nvidia_macos_runtime.json").open(encoding="utf-8") as stream:
+        entries["asr-nvidia-cpu"]["platforms"]["darwin_arm64"] = json.load(stream)
     return entries
-

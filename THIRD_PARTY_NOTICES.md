@@ -19,6 +19,8 @@ files, or both). Copyright and license terms belong to their respective
 authors. This notice does not replace those terms.
 ## Optional speech runtimes and model weights
 
+The native NVIDIA Speech CPU runtime is also available for Apple Silicon macOS in the unreleased source integration; its upstream license files are retained in `nemo-speech/share/licenses`.
+
 The additional Windows x64 backends are downloaded on demand; their model weights and SDKs are not part of the base application bundle. OpenWhisper's MIT license does not relicense these artifacts. Consult the linked upstream license and any notices retained in each downloaded archive before redistribution.
 
 | Artifact | Upstream project / model card | License |

@@ -31,13 +31,10 @@ logger = logging.getLogger(__name__)
 # defined there.
 if USE_PYNPUT_BACKEND:
     from PyQt6.QtCore import QObject, QEvent
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PyQt6.QtWidgets import QApplication
 
     from services.hotkey_manager import (
-        accessibility_permission_diagnostics,
-        accessibility_permission_instructions,
         is_accessibility_trusted,
-        request_accessibility_trust,
     )
 
     _MAC_NATIVE_SHIFT = 1 << 17
@@ -257,76 +254,28 @@ class HotkeyRuntime:
             self.controller.stop_recording()
 
     def _check_autopaste_permission(self) -> None:
-        """Warn once if auto-paste is on but macOS Accessibility is missing.
-
-        Hotkey detection no longer needs any permission (Carbon RegisterEventHotKey),
-        so the only feature still gated on Accessibility is auto-paste, which posts
-        a synthetic Cmd+V. We prompt only when the user actually has auto-paste
-        enabled; otherwise the permission is never needed. setup_hotkeys runs once
-        per launch and the dialog re-checks trust, so it shows at most once and
-        never again after the grant. Deferred to the event loop so it appears over
-        the main window, not the loading screen.
-        """
+        """Offer optional setup once, remembering dismissal across launches."""
         if sys.platform != "darwin" or not USE_PYNPUT_BACKEND:
             return
         if not settings_manager.get(SettingsKey.AUTO_PASTE, True):
             return
+        if settings_manager.get(SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN, False):
+            return
         if is_accessibility_trusted():
             return
-
-        logger.warning(
-            "Auto-paste is enabled but macOS Accessibility permission is missing; "
-            "transcriptions will be copied to the clipboard instead of pasted."
-        )
         QTimer.singleShot(0, self._warn_autopaste_not_trusted)
 
     def _warn_autopaste_not_trusted(self) -> None:
-        # Re-check in case it was granted between setup and this deferred call.
-        if is_accessibility_trusted():
+        # Preferences or trust may change before this deferred call runs.
+        if (
+            is_accessibility_trusted()
+            or not settings_manager.get(SettingsKey.AUTO_PASTE, True)
+            or settings_manager.get(SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN, False)
+        ):
             return
+        from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup
 
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
-
-        main_window = self.controller.ui_controller.main_window
-
-        box = QMessageBox(main_window)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("Enable auto-paste")
-        box.setText(
-            "OpenWhisper can paste transcriptions straight into the app you're "
-            "using, but that needs macOS Accessibility permission."
-        )
-        permission_instructions = accessibility_permission_instructions()
-        box.setInformativeText(
-            "Your hotkeys already work everywhere without it. Until Accessibility "
-            "is granted, transcriptions are copied to the clipboard and you can "
-            "paste them with Cmd+V.\n\n"
-            "To enable automatic pasting, open System Settings › Privacy & "
-            "Security › Accessibility.\n\n"
-            f"{permission_instructions}\n\n"
-            "Then quit and relaunch OpenWhisper."
-        )
-        permission_diagnostics = accessibility_permission_diagnostics()
-        if permission_diagnostics:
-            box.setDetailedText(permission_diagnostics)
-        open_button = box.addButton(
-            "Open Accessibility Settings", QMessageBox.ButtonRole.AcceptRole
-        )
-        box.addButton("Use clipboard for now", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(open_button)
-        box.exec()
-
-        if box.clickedButton() is open_button:
-            # Registers the current macOS launch identity and fires the native
-            # prompt; opening the pane directly guarantees the user lands there.
-            request_accessibility_trust()
-            QDesktopServices.openUrl(
-                QUrl(
-                    "x-apple.systempreferences:com.apple.preference.security"
-                    "?Privacy_Accessibility"
-                )
-            )
+        show_accessibility_setup(self.controller.ui_controller.main_window)
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
         logger.info(f"Updating hotkeys: {hotkeys}")

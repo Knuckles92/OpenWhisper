@@ -120,7 +120,9 @@ class BatchDownloadDialog(QDialog):
         note = WrappedLabel(
             "Models download one at a time, in the order listed. You can "
             "stop after the current model from the Downloads window while "
-            "the queue runs."
+            "the queue runs. Models such as Parakeet also need a separate "
+            "runtime to work; you will be prompted to install any missing "
+            "required runtime."
         )
         note.setObjectName("downloadsSourceNote")
         layout.addWidget(note)

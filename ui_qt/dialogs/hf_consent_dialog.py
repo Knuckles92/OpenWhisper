@@ -45,7 +45,7 @@ class HuggingFaceConsentDialog(QDialog):
         self.env_blocked = env_blocked
         self.result_action = self.RESULT_CANCEL
 
-        self.setWindowTitle("Download Whisper Model")
+        self.setWindowTitle("Download Speech Model")
         self.setMinimumWidth(460)
         self.setModal(True)
 
@@ -67,7 +67,7 @@ class HuggingFaceConsentDialog(QDialog):
 
         storage_note = QLabel(
             "Model files are stored locally on this computer. Once downloaded, "
-            "this model works fully offline."
+            "and with its required runtime installed, this model works fully offline."
         )
         storage_note.setObjectName("infoLabel")
         storage_note.setWordWrap(True)
@@ -115,9 +115,14 @@ class HuggingFaceConsentDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _body_text(self) -> str:
+        from services.component_catalog import get_component_details
+        from services.local_asr.catalog import MODELS, missing_runtime
+        from services.settings import settings_manager
+
         repo = resolve_model_repo(self.model_name)
+        label = MODELS[self.model_name].label if self.model_name in MODELS else self.model_name
         lines = [
-            f'The Whisper model "{self.model_name}" is not on this computer.',
+            f'The speech model "{label}" is not on this computer.',
             f"It can be downloaded from Hugging Face (huggingface.co), "
             f"repository {repo}.",
         ]
@@ -125,6 +130,15 @@ class HuggingFaceConsentDialog(QDialog):
         size = format_download_size(self.model_name)
         if size:
             lines.append(f"Approximate download size: {size}.")
+
+        runtime = missing_runtime(self.model_name, settings_manager.load_all_settings())
+        if runtime:
+            name = get_component_details(runtime).display_name
+            lines.append(
+                f"{name} is also required to use this model. The model download alone "
+                "will not enable transcription. After you approve the model download, "
+                "you will also be prompted to install the required runtime."
+            )
 
         if self.env_blocked:
             lines.append(

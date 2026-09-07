@@ -2,6 +2,8 @@
 
 The Windows x64 backend expansion is available in **2.6.0 and later**. Optional runtimes and weights are installed separately through Downloads. [Setup and measurements](local-asr.md) · [Documentation index](README.md)
 
+**Unreleased:** the source checkout also provides Parakeet on Apple Silicon Mac CPU using the NVIDIA Speech CPU component. Existing GGUF model downloads are compatible. See [Mac setup](local-asr.md#apple-silicon-mac-support-unreleased).
+
 ## Optional local models (Windows x64)
 
 Model keys are persisted identifiers; the app displays the friendly names. Each family remembers its own on-demand model and device preference. Parakeet is the default backend for new installations on Windows x64; Local Whisper remains the default on the other platforms.

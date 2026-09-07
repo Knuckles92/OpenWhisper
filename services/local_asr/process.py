@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import queue
 import subprocess
+import sys
 import threading
 import time
 
@@ -22,8 +23,11 @@ class SpeechProcess:
         self._errors = deque(maxlen=25)
         environment = os.environ.copy()
         environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", PYTHONUTF8="1")
+        command = [python, "-u", str(Path(__file__).with_name("worker.py"))]
+        if sys.platform == "darwin" and getattr(sys, "frozen", False):
+            command = [python, "--local-asr-worker"]
         self.process = subprocess.Popen(
-            [python, "-u", str(Path(__file__).with_name("worker.py"))],
+            command,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             env=environment,

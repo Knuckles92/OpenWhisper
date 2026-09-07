@@ -13,7 +13,13 @@ OpenWhisper adds four optional local backends on **Windows x64**. Parakeet is th
 
 These are additional voice recognizers. Text cleanup, speaker identification, and meeting intelligence keep their own selections. The optional runtimes are currently packaged for Windows x64; Whisper remains the local option, and the default, on the other supported platforms.
 
+## Apple Silicon Mac support (Unreleased)
+
+The source checkout now offers **NVIDIA Speech CPU** in Downloads on Apple Silicon macOS. Install this component, then select Parakeet and `auto` or `cpu`; existing Parakeet GGUF weights are reused. The pinned NeMo-Speech.cpp 0.1.0 archive is 3.3 MB to download and 9.5 MB extracted. It runs in a separate process using the application Python runtime; no Python installation or optional SDK is required. CUDA and Metal are not enabled by this integration on Mac. Local Whisper remains the default. Intel Mac runtime packaging is not included.
+
 ## Install and select
+
+In the unreleased source setup flow, model-download consent names any missing required runtime. Approving the model download also prompts to install the runtime; selecting a cached model with a missing runtime prompts too. **Install required runtime** starts the separate component download and shows its progress in Downloads. **Later** keeps the model files, but transcription remains unavailable until the runtime is installed. Completed or already-running runtime installations are reused.
 
 1. Open **Model Manager → Downloads** (or **Get models and runtimes** beneath an optional backend).
 2. Install the matching component and download a model from the speech catalog. Parakeet and Nemotron share the NVIDIA Speech runtime. CPU and GPU builds are separate components; install both to switch between them.

@@ -134,6 +134,7 @@ class ReleaseInfo:
     notes: str
     setup_asset: Optional[ReleaseAsset] = None
     native_asset: Optional[ReleaseAsset] = None
+    macos_asset: Optional[ReleaseAsset] = None
 
     @property
     def asset(self) -> Optional[ReleaseAsset]:
@@ -342,6 +343,12 @@ def resolve_release_apply_mode(
     if channel != InstallChannel.INSTALLER:
         return ApplyMode.NOTIFY_ONLY
     platform_id = platform_name if platform_name is not None else sys.platform
+    if platform_id == "darwin":
+        import platform
+
+        if platform.machine().lower() in {"arm64", "aarch64"} and _asset_ready(release.macos_asset if release else None):
+            return ApplyMode.MACOS_DMG
+        return ApplyMode.NOTIFY_ONLY
     if platform_id.startswith("linux"):
         # The system package manager owns /usr/lib/openwhisper. The
         # application may notify users of a release, but it must never
@@ -378,7 +385,7 @@ def can_apply(
         helper_present=helper_present,
         platform_name=platform_name,
     )
-    return mode in (ApplyMode.NATIVE, ApplyMode.SETUP)
+    return mode in (ApplyMode.NATIVE, ApplyMode.SETUP, ApplyMode.MACOS_DMG)
 
 
 def source_update_hint(channel: str) -> Optional[str]:
@@ -435,6 +442,7 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
     stable = not bool(payload.get("draft")) and not bool(payload.get("prerelease"))
     setup_asset = None
     native_asset = None
+    macos_asset = None
     if stable:
         setup_asset = _parse_named_asset(
             assets,
@@ -446,6 +454,11 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
             expected_name=archive_asset_name(version),
             tag_name=tag_name,
         )
+        macos_asset = _parse_named_asset(
+            assets,
+            expected_name=f"OpenWhisper-{version}-macos-arm64.dmg",
+            tag_name=tag_name,
+        )
     return ReleaseInfo(
         version=version,
         tag_name=tag_name,
@@ -453,6 +466,7 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
         notes=notes.strip(),
         setup_asset=setup_asset,
         native_asset=native_asset,
+        macos_asset=macos_asset,
     )
 
 
@@ -617,7 +631,7 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
 
     Returns:
         Structured comparison. ``can_apply`` is True only for a frozen
-        Windows install whose release asset has a SHA-256 digest.
+        Windows or Apple Silicon Mac install with a verified release asset.
 
     Raises:
         AppUpdateError: The GitHub request failed.
@@ -633,7 +647,7 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
         current_version=__version__,
         channel=channel,
         release=release,
-        can_apply=apply_mode in (ApplyMode.NATIVE, ApplyMode.SETUP),
+        can_apply=apply_mode in (ApplyMode.NATIVE, ApplyMode.SETUP, ApplyMode.MACOS_DMG),
         apply_mode=apply_mode,
         git_hint=source_update_hint(channel),
         git_summary=local_git_summary() if channel == InstallChannel.GIT else None,
@@ -807,15 +821,19 @@ def apply_update(
     *,
     force_setup: bool = False,
 ) -> str:
-    """Download and prepare a verified Windows setup or native payload.
+    """Download a verified platform installer or prepare a native payload.
 
     Returns:
-        A setup exe path or ``native:<transaction_id>``.
+        An installer path (exe/DMG) or ``native:<transaction_id>``.
     """
     release = result.release
     if release is None:
         raise AppUpdateError("No installer is available.")
     mode = ApplyMode.SETUP if force_setup else result.apply_mode
+    if mode == ApplyMode.MACOS_DMG:
+        if resolve_release_apply_mode(detect_channel(), release) != ApplyMode.MACOS_DMG:
+            raise AppUpdateError("This copy of OpenWhisper cannot install the Mac update.")
+        return download_release_asset(release.macos_asset, progress=progress, cancel=cancel)
     if mode == ApplyMode.NATIVE and release.native_asset is not None:
         try:
             archive_path = download_release_asset(
@@ -929,12 +947,17 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
+    from services.http_tls import verified_context
+
     if not _redirect_url_allowed(url, url):
         raise urllib.error.URLError("The update URL is not trusted.")
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     for key, value in (extra_headers or {}).items():
         request.add_header(key, value)
-    opener = urllib.request.build_opener(_SafeRedirectHandler(url))
+    opener = urllib.request.build_opener(
+        _SafeRedirectHandler(url),
+        urllib.request.HTTPSHandler(context=verified_context()),
+    )
     response = opener.open(request, timeout=_NETWORK_TIMEOUT_S)
     final_url = response.geturl()
     if not _redirect_url_allowed(url, final_url):

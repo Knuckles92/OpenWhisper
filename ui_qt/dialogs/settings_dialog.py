@@ -575,6 +575,19 @@ class SettingsDialog(QDialog):
         self._tile_group(
             layout, "Output", [self.auto_paste_tile, self.copy_clipboard_tile]
         )
+        if sys.platform == "darwin":
+            permission_row = QHBoxLayout()
+            self.accessibility_status = QLabel()
+            self.accessibility_status.setWordWrap(True)
+            permission_row.addWidget(self.accessibility_status, 1)
+            self.accessibility_setup_button = QPushButton("Set up auto-paste…")
+            self.accessibility_setup_button.clicked.connect(self._open_accessibility_setup)
+            permission_row.addWidget(self.accessibility_setup_button)
+            layout.addLayout(permission_row)
+            self._accessibility_timer = QTimer(self)
+            self._accessibility_timer.setInterval(1000)
+            self._accessibility_timer.timeout.connect(self._refresh_accessibility_status)
+            self._refresh_accessibility_status()
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
             layout, "Appearance", [self.ui_theme_tile, self.ui_font_scale_tile]
@@ -602,6 +615,34 @@ class SettingsDialog(QDialog):
                 SettingsKey.UPDATE_NOTIFY_ENABLED, bool(checked)
             )
         )
+
+    def _refresh_accessibility_status(self):
+        from services.hotkey_manager import is_accessibility_trusted
+
+        trusted = is_accessibility_trusted()
+        self.accessibility_status.setText(
+            "Accessibility access enabled."
+            if trusted else "Auto-paste needs Accessibility access. Use ⌘V to paste for now."
+        )
+        self.accessibility_setup_button.setText(
+            "Manage Accessibility…" if trusted else "Set up auto-paste…"
+        )
+
+    def _open_accessibility_setup(self):
+        from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup
+
+        show_accessibility_setup(self)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, "_accessibility_timer"):
+            self._refresh_accessibility_status()
+            self._accessibility_timer.start()
+
+    def hideEvent(self, event):
+        if hasattr(self, "_accessibility_timer"):
+            self._accessibility_timer.stop()
+        super().hideEvent(event)
 
     def _build_recording_page(self, layout: QVBoxLayout) -> None:
         self.audio_device_combo = ElidingComboBox()

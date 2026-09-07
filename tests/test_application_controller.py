@@ -502,6 +502,9 @@ class DummyUIController:
         self.consent_requests.append((model_name, policy, env_blocked))
         return self.consent_result
 
+    def show_required_runtime_dialog(self, model_name, component_id):
+        return False
+
     def on_meeting_state_changed(self, payload):
         self.meeting_states.append(payload)
 
@@ -2761,3 +2764,59 @@ class TestApplicationController:
         controller.is_transcribing = lambda: True
         controller.on_model_changed("Moonshine")
         assert controller._current_model_name == "local_whisper"
+
+    @pytest.mark.parametrize('accepted', [False, True])
+    def test_required_runtime_prompt_install_or_later(self, accepted):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        ui = controller.ui_controller
+        ui.show_required_runtime_dialog = Mock(return_value=accepted)
+        ui.open_downloads_dialog = Mock()
+        controller.request_component_install = Mock()
+        with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
+            controller._prompt_for_model_runtime('parakeet-v3')
+            controller._prompt_for_model_runtime('parakeet-v3')
+        ui.show_required_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cpu')
+        assert controller.request_component_install.call_count == int(accepted)
+        assert ui.open_downloads_dialog.call_count == int(accepted)
+
+    @pytest.mark.parametrize('installing,offline', [(True, False), (False, True)])
+    def test_required_runtime_prompt_skips_inflight_or_offline(self, installing, offline):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        controller.ui_controller.show_required_runtime_dialog = Mock()
+        with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=installing), \
+                patch.object(self.app_controller_module, 'is_hf_hub_offline_env_set', return_value=offline):
+            controller._prompt_for_model_runtime('parakeet-v3')
+        controller.ui_controller.show_required_runtime_dialog.assert_not_called()
+
+    def test_download_prompts_for_runtime_even_when_model_not_selected(self):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        controller.ui_controller.show_required_runtime_dialog = Mock(return_value=False)
+        with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
+            controller._start_hf_model_task('parakeet-v3')
+        controller.ui_controller.show_required_runtime_dialog.assert_called_once()
+        assert controller._current_model_name == 'local_whisper'
+
+    def test_cached_model_prompts_for_runtime_after_reload_finishes(self):
+        from unittest.mock import Mock
+        controller = self._create_controller()
+        backend = controller.transcription_backends['parakeet']
+        backend.reload_model = Mock()
+        controller.current_backend = backend
+        controller._current_model_name = 'parakeet'
+        controller._reload_in_flight = True
+        ui = controller.ui_controller
+        ui.show_required_runtime_dialog = Mock(side_effect=lambda *args: not controller._reload_in_flight)
+        ui.open_downloads_dialog = Mock()
+        controller.request_component_install = Mock()
+        with patch('services.local_asr.cache.is_cached', return_value=True), \
+                patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
+                patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
+            controller._reload_worker()
+        ui.show_required_runtime_dialog.assert_called_once()
+        controller.request_component_install.assert_called_once_with('asr-nvidia-cpu')

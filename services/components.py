@@ -404,6 +404,8 @@ def current_platform_tag(
     """Return the normalized component platform tag for this host."""
     host = platform or sys.platform
     arch = (machine if machine is not None else platform_module.machine()).strip().lower()
+    if host == "darwin" and arch in {"arm64", "aarch64"}:
+        return "darwin_arm64"
     if host.startswith("win"):
         if arch in {"amd64", "x86_64", "x64"}:
             return PLATFORM_WIN_AMD64
@@ -458,8 +460,8 @@ def available_component_ids(
 
     GPU Acceleration remains Windows-only (native CUDA DLLs). The meeting
     agent is offered on Windows x64 and Linux x86_64/aarch64. Linux GPU users
-    still use ``requirements-gpu.txt``. macOS has no downloadable component
-    payloads.
+    still use ``requirements-gpu.txt``. Apple Silicon Macs offer the native
+    NVIDIA Speech CPU runtime.
 
     Returns:
         Installable component identifiers, in display order.
@@ -476,6 +478,8 @@ def available_component_ids(
         )
     elif tag in {PLATFORM_LINUX_X86_64, PLATFORM_LINUX_AARCH64}:
         candidates = (ComponentId.MEETING_AGENT,)
+    elif tag == "darwin_arm64":
+        candidates = (ComponentId.ASR_NVIDIA_CPU,)
     else:
         return ()
     return tuple(
@@ -830,7 +834,9 @@ def installed_size_bytes(component_id: str) -> int:
     for root, _dirs, files in os.walk(component_dir(component_id)):
         for name in files:
             try:
-                total += os.path.getsize(os.path.join(root, name))
+                # Native Mac libraries have multiple symlink aliases; count
+                # each link itself, rather than counting its target repeatedly.
+                total += os.lstat(os.path.join(root, name)).st_size
             except OSError:
                 continue
     return total
@@ -923,7 +929,9 @@ def _open(url: str, extra_headers: Optional[Dict[str, str]] = None):
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     for key, value in (extra_headers or {}).items():
         request.add_header(key, value)
-    return urllib.request.urlopen(request, timeout=_NETWORK_TIMEOUT_S)
+    from services.http_tls import verified_context
+
+    return urllib.request.urlopen(request, timeout=_NETWORK_TIMEOUT_S, context=verified_context())
 
 
 def _rmtree(path: str) -> None:
@@ -1252,8 +1260,36 @@ def _safe_extract_node_tar(
                     pass
 
 
+def _safe_extract_nemo_tar(
+    archive_path: str,
+    target_dir: str,
+    progress: ProgressCallback,
+    cancel: threading.Event,
+) -> None:
+    # The upstream dylibs use relative symlinks. The data filter rejects links
+    # outside staging, special files and unsafe permissions before extraction.
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        for index, member in enumerate(members):
+            if cancel.is_set():
+                raise ComponentCanceled()
+            parts = member.name.split("/")
+            if parts[0] != "nemo-speech" or ".." in parts:
+                raise ComponentError(f"Archive contains an unsafe path: {member.name}")
+            try:
+                archive.extract(member, target_dir, filter="data")
+            except tarfile.FilterError as exc:
+                raise ComponentError(f"Unsafe speech runtime archive: {exc}") from exc
+            progress(InstallPhase.EXTRACTING, index + 1, len(members))
+
+
 def _validate_component_payload(component_id: str, target_dir: str) -> None:
     if component_id in RUNTIME_IDS:
+        if current_platform_tag() == "darwin_arm64":
+            library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.dylib")
+            if component_id != ComponentId.ASR_NVIDIA_CPU or not os.path.isfile(library):
+                raise ComponentError("The speech runtime is missing required files.")
+            return
         required = ["python.exe", "python312.dll", "python312.zip"]
         if component_id.startswith("asr-nvidia"):
             required.append("bin/nemo_speech_asr_c.dll")
@@ -1438,6 +1474,8 @@ def install_component(
                     cancel,
                     member_name=str(archive.get("member") or ""),
                 )
+            elif extract == "nemo-tar":
+                _safe_extract_nemo_tar(archive_path, staging, progress, cancel)
             else:
                 _safe_extract(archive_path, staging, progress, cancel)
 

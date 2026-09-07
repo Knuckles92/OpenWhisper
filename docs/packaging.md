@@ -42,6 +42,8 @@ venv/bin/pip install -r requirements.txt -r requirements-build.txt -c requiremen
 ./scripts/build_installer_macos.sh --clean
 ```
 
+**Unreleased:** the Mac app handles `--local-asr-worker` before UI startup, allowing the downloaded native speech library to use a separate process without a second Python distribution. The NVIDIA Speech CPU component pins and verifies the upstream Mac archive and retains its license files. The updater recognizes the release arm64 DMG and verifies its digest before opening it; replacing the app in Applications remains a Finder step.
+
 This freezes `OpenWhisper.app`, verifies Info.plist identity and privacy keys, runs `--version` / `--self-test`, checks the ad-hoc code signature and arm64 Mach-O slices, and writes `OpenWhisper-<version>-macos-arm64.dmg` under `installer/Output/`. The build host must be Darwin arm64; Intel Macs are rejected. The DMG is intentionally unnotarized until a Developer ID pipeline is added.
 
 The **Build native installers** GitHub Actions workflow builds Windows, Linux, and macOS in parallel and produces one combined release-candidate artifact; an optional workflow-dispatch input uploads all five native files plus `SHA256SUMS.txt` to an existing draft release. Native release builds use the reviewed exact versions in [`requirements-release-constraints.txt`](../requirements-release-constraints.txt), while ordinary source installs retain the compatible ranges in `requirements.txt`. See [`OpenWhisper.spec`](../OpenWhisper.spec) for the shared frozen-bundle definition and the [release checklist](release-checklist.md) before publishing.

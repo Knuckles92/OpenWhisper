@@ -88,6 +88,7 @@ class TransactionState:
 class ApplyMode:
     """How this process may apply a GitHub release."""
 
+    MACOS_DMG: Final[str] = "macos_dmg"
     NATIVE: Final[str] = "native"
     SETUP: Final[str] = "setup"
     NOTIFY_ONLY: Final[str] = "notify_only"
