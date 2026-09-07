@@ -222,7 +222,11 @@ Grant these to the app identity that is actually running OpenWhisper:
 
 To check the system-audio path independently of the app, run `.venv/bin/python scripts/probe_macos_loopback.py` with something playing.
 
-For packaged builds, this should appear as the OpenWhisper app. For development launches, use `scripts/openwhisper` or `ow`; on macOS the launcher runs through the framework `Python.app` so Accessibility has an app bundle it can select. If the list does not populate automatically, use the `+` button in Accessibility and add the app bundle shown in OpenWhisper's startup prompt, then fully quit and relaunch.
+Auto-paste setup is offered once; choosing **Continue with clipboard** (or closing setup) prevents repeated launch prompts. You can return to **Settings → General → Set up auto-paste** anytime. Setup opens the Accessibility pane directly, shows the exact app to allow, and checks permission automatically when you return. **Show App in Finder** reveals the bundle you can add with `+` or drag into the list.
+
+For packaged builds, allow the installed OpenWhisper app in `/Applications`. For development launches, use `scripts/openwhisper` or `ow`; on macOS the launcher runs through the framework `Python.app` so Accessibility has an app bundle it can select. If the list does not populate automatically, use `+` to add the bundle shown in setup.
+
+If OpenWhisper is already enabled but setup still reports no access, remove its outdated Accessibility entry with `−`, add the exact app shown in setup, and enable it again. Quit and reopen OpenWhisper if access is still not detected. This can happen after replacing an ad-hoc signed preview build; avoid running a second copy from the mounted DMG. Releases signed with a consistent Developer ID preserve their signing identity across updates (see [Apple’s code signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)).
 
 Do not add `venv/bin/python` if macOS greys it out — that path is usually a virtualenv symlink. If auto-paste silently does nothing, Accessibility is still missing for the current launch identity. If hotkey capture in Settings fails, add Input Monitoring as well.
 

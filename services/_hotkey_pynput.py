@@ -255,8 +255,8 @@ def request_accessibility_trust() -> bool:
 
     Calling the options API is what makes the current launch identity eligible
     for the Accessibility list; passing the prompt option also surfaces the
-    native permission dialog. Returns the current trust state (granting takes
-    effect on the next launch). No-op on non-macOS platforms.
+    native permission dialog. Returns the current trust state; the prompt is
+    asynchronous, so callers should check again afterward. No-op elsewhere.
     """
     if sys.platform != "darwin":
         return True
@@ -308,13 +308,24 @@ def _find_python_framework_app_bundle() -> Optional[Path]:
     return None
 
 
+def accessibility_app_bundle() -> Optional[Path]:
+    """The actual running bundle, including the development launcher's identity."""
+    if sys.platform != "darwin":
+        return None
+    return (
+        _find_containing_app_bundle(os.environ.get("OPENWHISPER_MACOS_LAUNCH_APP", ""))
+        or _find_containing_app_bundle(sys.executable)
+        or _find_containing_app_bundle(getattr(sys, "_base_executable", ""))
+    )
+
+
 def accessibility_permission_instructions() -> str:
     """Return user-facing macOS Accessibility instructions for this launch."""
     if sys.platform != "darwin":
         return ""
 
     launch_app = os.environ.get("OPENWHISPER_MACOS_LAUNCH_APP", "")
-    launch_app_bundle = Path(launch_app) if launch_app else None
+    launch_app_bundle = _find_containing_app_bundle(launch_app)
     if (
         launch_app_bundle is not None
         and launch_app_bundle.name.endswith(".app")

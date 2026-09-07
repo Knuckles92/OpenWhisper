@@ -44,6 +44,7 @@ class SettingsKey:
     COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
     COMPACT_MODE: Final[str] = "compact_mode"
     AUTO_PASTE: Final[str] = "auto_paste"
+    MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
     COPY_CLIPBOARD: Final[str] = "copy_clipboard"
     TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
     TRANSCRIPT_CLEANUP_PROMPT: Final[str] = "transcript_cleanup_prompt"
