@@ -1,17 +1,14 @@
-"""Shared OpenAI-compatible text-LLM endpoint profiles.
+"""Shared text-provider profiles for cleanup, catalogs and meeting intelligence.
 
-Every chat-completions caller (transcript cleanup, meeting intelligence,
-catalog listing) resolves a ``TextLLMProfile`` here. Built-in OpenAI and
-OpenRouter profiles are immutable; users may add named custom endpoints.
-API keys are resolved through :mod:`services.credentials` (OS credential
-store, then environment / ``.env``) and never enter the settings file.
+Credentials resolve through the OS store, then environment / .env; endpoint
+snapshots persist only non-secret connection and model metadata.
 """
 from __future__ import annotations
 
 import logging
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
@@ -25,12 +22,15 @@ logger = logging.getLogger(__name__)
 PROFILE_KIND_OPENAI = "openai"
 PROFILE_KIND_OPENROUTER = "openrouter"
 PROFILE_KIND_CUSTOM = "custom"
-BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER)
+NEW_PROFILE_IDS = ("ollama", "groq", "opencode_go", "opencode_zen")
+BUILTIN_KINDS = (PROFILE_KIND_OPENAI, PROFILE_KIND_OPENROUTER, *NEW_PROFILE_IDS)
 PROFILE_KINDS = (*BUILTIN_KINDS, PROFILE_KIND_CUSTOM)
 
 OPENAI_PROFILE_ID = "openai"
 OPENROUTER_PROFILE_ID = "openrouter"
-BUILTIN_PROFILE_IDS = (OPENAI_PROFILE_ID, OPENROUTER_PROFILE_ID)
+BUILTIN_PROFILE_IDS = (OPENAI_PROFILE_ID, OPENROUTER_PROFILE_ID, *NEW_PROFILE_IDS)
+OLLAMA_BASE_URL_KEY = "ollama_base_url"
+OLLAMA_DEFAULT_URL = "http://localhost:11434/v1"
 
 # OpenAI's client requires a non-empty api_key even when the server ignores it.
 AUTH_FREE_API_KEY = "dummy"
@@ -60,6 +60,7 @@ class TextLLMProfile:
     base_url: Optional[str]
     api_key_env: str
     builtin: bool = False
+    model_metadata: Optional[Dict[str, Any]] = None
 
     @property
     def requires_api_key(self) -> bool:
@@ -83,6 +84,7 @@ class TextLLMSnapshot:
     kind: str
     base_url: Optional[str]
     api_key_env: str
+    model_metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -91,6 +93,7 @@ class TextLLMSnapshot:
             "kind": self.kind,
             "base_url": self.base_url,
             "api_key_env": self.api_key_env,
+            **({"model_metadata": self.model_metadata} if self.model_metadata else {}),
         }
 
     def to_profile(self) -> TextLLMProfile:
@@ -100,6 +103,7 @@ class TextLLMSnapshot:
             kind=self.kind if self.kind in PROFILE_KINDS else PROFILE_KIND_CUSTOM,
             base_url=self.base_url,
             api_key_env=self.api_key_env or "",
+            model_metadata=self.model_metadata,
             builtin=(
                 self.profile_id in BUILTIN_PROFILE_IDS
                 and self.kind == self.profile_id
@@ -108,7 +112,7 @@ class TextLLMSnapshot:
 
 
 def builtin_profiles() -> Tuple[TextLLMProfile, ...]:
-    """Return the immutable OpenAI and OpenRouter profiles."""
+    """Return built-in connection defaults; configured URLs resolve in get_profile."""
     return (
         TextLLMProfile(
             id=OPENAI_PROFILE_ID,
@@ -126,6 +130,10 @@ def builtin_profiles() -> Tuple[TextLLMProfile, ...]:
             api_key_env="OPENROUTER_API_KEY",
             builtin=True,
         ),
+        TextLLMProfile("ollama", "Ollama", "ollama", OLLAMA_DEFAULT_URL, "", True),
+        TextLLMProfile("groq", "Groq", "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", True),
+        TextLLMProfile("opencode_go", "OpenCode Go", "opencode_go", "https://opencode.ai/zen/go/v1", "OPENCODE_GO_API_KEY", True),
+        TextLLMProfile("opencode_zen", "OpenCode Zen", "opencode_zen", "https://opencode.ai/zen/v1", "OPENCODE_ZEN_API_KEY", True),
     )
 
 
@@ -179,13 +187,19 @@ def new_custom_profile_id() -> str:
     return f"{_CUSTOM_ID_PREFIX}{secrets.token_hex(4)}"
 
 
-def snapshot_from_profile(profile: TextLLMProfile) -> TextLLMSnapshot:
+def snapshot_from_profile(profile: TextLLMProfile, model: str = "") -> TextLLMSnapshot:
+    metadata = profile.model_metadata
+    if model:
+        from services.text_model_catalog import model_spec
+
+        metadata = {"model": model, **model_spec(profile, model).to_dict()}
     return TextLLMSnapshot(
         profile_id=profile.id,
         name=profile.name,
         kind=profile.kind,
         base_url=profile.base_url,
         api_key_env=profile.api_key_env,
+        model_metadata=metadata,
     )
 
 
@@ -225,7 +239,15 @@ def snapshot_from_mapping(raw: Any) -> Optional[TextLLMSnapshot]:
             api_key_env = validate_api_key_env(api_key_env)
         except ValueError:
             api_key_env = ""
+    metadata = raw.get("model_metadata")
+    if metadata is not None:
+        from services.text_model_catalog import spec_from_mapping
+
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("model"), str):
+            raise ValueError("Invalid saved text model metadata")
+        metadata = {"model": metadata["model"], **spec_from_mapping(metadata).to_dict()}
     return TextLLMSnapshot(
+        model_metadata=metadata,
         profile_id=profile_id.strip(),
         name=name.strip(),
         kind=kind,
@@ -300,7 +322,27 @@ def list_profiles(
     settings: Optional[Dict[str, Any]] = None,
 ) -> List[TextLLMProfile]:
     """Return built-in profiles followed by the user's custom endpoints."""
-    return [*builtin_profiles(), *list_custom_profiles(settings)]
+    settings = _load_settings(settings)
+    return [*(_configured_builtin(p, settings) for p in builtin_profiles()), *list_custom_profiles(settings)]
+
+
+def _configured_builtin(profile: TextLLMProfile, settings: Dict[str, Any]) -> TextLLMProfile:
+    if profile.id == "ollama":
+        url = normalize_base_url(settings.get(OLLAMA_BASE_URL_KEY) or OLLAMA_DEFAULT_URL)
+        profile = replace(profile, base_url=url)
+    return profile
+
+
+def save_ollama_url(url: str) -> None:
+    from services.settings import settings_manager
+
+    normalized = normalize_base_url(url)
+    parts = urlsplit(normalized)
+    if parts.username or parts.password or parts.query:
+        raise ValueError("Use a server URL without credentials or query parameters.")
+    if not parts.path:
+        normalized += "/v1"
+    settings_manager.save_setting(OLLAMA_BASE_URL_KEY, normalized)
 
 
 def get_profile(
@@ -313,7 +355,7 @@ def get_profile(
     profile_id = profile_id.strip()
     builtin = builtin_profile(profile_id)
     if builtin is not None:
-        return builtin
+        return _configured_builtin(builtin, _load_settings(settings))
     for profile in list_custom_profiles(settings):
         if profile.id == profile_id:
             return profile
@@ -447,6 +489,8 @@ def credential_label(profile: TextLLMProfile) -> str:
         return "OpenAI API key"
     if profile.id == OPENROUTER_PROFILE_ID:
         return "OpenRouter API key"
+    if profile.id in NEW_PROFILE_IDS:
+        return f"{profile.name} API key" if profile.api_key_env else ""
     return profile.api_key_env
 
 
@@ -470,9 +514,14 @@ def connection_fingerprint(profile: TextLLMProfile) -> Tuple[Any, ...]:
     )
 
 
-def provider_headers(profile: TextLLMProfile) -> Optional[Dict[str, str]]:
+def provider_headers(profile: TextLLMProfile, session_id: str = "") -> Optional[Dict[str, str]]:
     if profile.kind == PROFILE_KIND_OPENROUTER:
         return dict(_OPENROUTER_HEADERS)
+    if profile.kind in ("opencode_go", "opencode_zen"):
+        headers = {"User-Agent": "OpenWhisper"}
+        if profile.kind == "opencode_go" and session_id:
+            headers["x-opencode-session"] = session_id
+        return headers
     return None
 
 
@@ -481,6 +530,7 @@ def create_openai_client(
     *,
     timeout: float = 15.0,
     api_key: Optional[str] = None,
+    session_id: str = "",
 ) -> OpenAI:
     """Build a client, resolving credentials when no explicit key is supplied."""
     key = api_key or resolve_api_key(profile)
@@ -491,7 +541,7 @@ def create_openai_client(
     return OpenAI(
         api_key=key,
         base_url=profile.base_url,
-        default_headers=provider_headers(profile),
+        default_headers=provider_headers(profile, session_id),
         timeout=timeout,
     )
 
@@ -532,6 +582,8 @@ def verify_api_key(
     except Exception as exc:
         logger.debug("Key verification failed: %s", type(exc).__name__)
         return False, f"Verification failed ({type(exc).__name__})."
+    if profile.kind in ("opencode_go", "opencode_zen"):
+        return True, "Catalog reachable. OpenCode's public catalog cannot verify a key; a model request is required."
     return True, f"{host} accepted the key."
 
 
@@ -567,11 +619,40 @@ def list_chat_models(
         and sort
         and sort != "alphabetical"
     )
-    if server_sort:
-        return [model.id for model in client.models.list(extra_query={"sort": sort})]
-    model_ids = [model.id for model in client.models.list()]
+    try:
+        if server_sort:
+            return [model.id for model in client.models.list(extra_query={"sort": sort})]
+        model_ids = [model.id for model in client.models.list()]
+        if profile.kind == "ollama":
+            from concurrent.futures import ThreadPoolExecutor
+            from services.text_model_catalog import remember_ollama_spec
+            import re
+
+            show_url = profile.base_url.rstrip("/")
+            if show_url.endswith("/v1"):
+                show_url = show_url[:-3]
+            def inspect_model(model):
+                data = client.with_options(timeout=5.0, max_retries=0).post(
+                    show_url + "/api/show", cast_to=dict[str, Any], body={"model": model},
+                )
+                capabilities = data.get("capabilities", [])
+                if "completion" not in capabilities:
+                    return None
+                context = re.search(r"(?m)^num_ctx\s+(\d+)", data.get("parameters", ""))
+                budget = max(1024, min(int(context.group(1)), 2000000)) if context else 4096
+                remember_ollama_spec(profile.base_url, model, capabilities, budget)
+                return model
+
+            # /api/show only inspects installed metadata; it never pulls or loads a model.
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                model_ids = [model for model in executor.map(inspect_model, model_ids) if model]
+
+    finally:
+        client.close()
     if profile.kind == PROFILE_KIND_OPENAI:
         model_ids = filter_openai_chat_models(model_ids)
+    if profile.kind == "groq":
+        model_ids = [m for m in model_ids if not any(x in m.lower() for x in ("whisper", "tts", "orpheus", "guard", "compound"))]
     return sorted(model_ids)
 
 
@@ -581,7 +662,7 @@ def chat_request_options(profile: TextLLMProfile, reasoning: str = "off") -> dic
     Custom endpoints never receive reasoning parameters; they get
     ``temperature=0`` so local servers that reject unknown fields still work.
     """
-    if reasoning == "off" or profile.kind == PROFILE_KIND_CUSTOM:
+    if reasoning == "off" or profile.kind == PROFILE_KIND_CUSTOM or profile.kind in NEW_PROFILE_IDS:
         return {"temperature": 0}
     if profile.kind == PROFILE_KIND_OPENROUTER:
         return {"extra_body": {"reasoning": {"effort": reasoning}}}

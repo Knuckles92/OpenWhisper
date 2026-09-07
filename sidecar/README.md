@@ -2,7 +2,7 @@
 
 TypeScript glue between OpenWhisper's Meeting Mode and the
 [Pi coding agent SDK](https://pi.dev) (`@earendil-works/pi-coding-agent`).
-It runs OpenRouter models through Pi's agentic loop while holding
+It runs the selected text provider through Pi's agentic loop while holding
 **meeting-state-only authority**: the session gets five custom tools
 (`patch_state`, `ask_question`, `resolve_question`, `search_past_meetings`,
 `search_context_files`) and no shell, filesystem, or network tools. Every tool
@@ -15,7 +15,8 @@ Requires Node.js 20+.
 
 ```bash
 cd sidecar
-npm install
+npm ci
+npm test           # protocol registration and meeting tools
 npm run typecheck   # tsc --noEmit
 npm run build       # node build.mjs -> dist/bundle.cjs
 ```
@@ -62,7 +63,7 @@ Diagnostics go out as `log` notifications (or stderr).
 - **First line out** (before anything else):
   `{"jsonrpc":"2.0","method":"hello","params":{"token":"...","protocol":1,"pi_version":"..."}}`
 - **Python → sidecar requests:** `initialize {meeting_id, provider, model,
-  system_prompt, base_url, api_key_env, kind}` · `checkpoint {request_id, state, new_segments,
+  system_prompt, base_url, api_key_env, kind, model_metadata, headers}` · `checkpoint {request_id, state, new_segments,
   is_consolidation, is_polish}` → `{"applied":N,"rejected":N,"usage":{}}` ·
   `cancel {request_id}` · `ping {}` · `status {}` · `shutdown {}`
 - **Sidecar → Python requests (tool bridge, awaited):** `tool.patch_state
@@ -90,8 +91,16 @@ then exits cleanly; the sidecar also exits when its stdin closes.
 - `src/tools.ts` — the five meeting tools; op vocabulary documented in the
   tool descriptions; applied/rejected tallies for checkpoint write responses.
 - `src/pi-adapter.ts` — the **only** file that imports Pi packages. Session
-  creation, OpenRouter provider registration (`models.json` in a temp agent
+  creation, provider registration (`models.json` in a temp agent
   dir), tool registration, run/abort/dispose. Uncertain SDK touchpoints are
   marked `TODO(pi-api)` so API drift stays a one-file fix.
 - `src/main.ts` — env, `hello` handshake, request handlers, checkpoint
   serialization, prompt composition.
+
+## Text-provider metadata
+
+The hello handshake includes text_protocols (chat, responses, anthropic, google). New providers require this capability advertisement, so an old installed bundle fails with an update instruction. Existing providers remain compatible with older handshakes.
+
+Initialization receives non-secret protocol, context/output budgets, tool/reasoning capabilities, Pi compatibility options and provider headers. The API key remains in the child environment. Chat maps to openai-completions, Responses to openai-responses, Messages to anthropic-messages, and Gemini to google-generative-ai. Anthropic's base URL omits the final /v1 because its SDK appends it; the other APIs keep the versioned endpoint.
+
+See [text-provider setup](../docs/text-providers.md). Build and publish a new immutable component artifact and update its pins as described in [packaging](../docs/packaging.md) before shipping these features in an installer. A source build is used when no installed component takes precedence.

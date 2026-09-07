@@ -61,6 +61,30 @@ def pytest_unconfigure(config):
     os._exit(_session_status[-1] if _session_status else 0)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _session_settings_store(tmp_path_factory):
+    from config import config
+    from services.settings import settings_manager
+
+    # Keep a disposable fallback through shutdown: Qt callbacks can outlive
+    # per-test patches and must never regain access to the user's settings.
+    settings_path = str(tmp_path_factory.mktemp("settings-session") / "settings.json")
+    config.SETTINGS_FILE = settings_path
+    settings_manager.settings_file = settings_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_settings_store(_session_settings_store, tmp_path):
+    from config import config
+    from services.settings import settings_manager
+
+    with pytest.MonkeyPatch.context() as patcher:
+        settings_path = str(tmp_path / "settings.json")
+        patcher.setattr(config, "SETTINGS_FILE", settings_path)
+        patcher.setattr(settings_manager, "settings_file", settings_path)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _isolated_credential_store():
     """Point every test at an in-memory credential store.

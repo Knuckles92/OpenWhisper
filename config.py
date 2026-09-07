@@ -230,6 +230,10 @@ class AppConfig:
     # Settings → General → Font size. 100 is the shipped default.
     UI_FONT_SCALE: int = 100
 
+    # Colour theme for a fresh install: "dark", "light", or "system".
+    # Settings → General → Appearance. Dark is the look the app shipped with.
+    UI_THEME: str = "dark"
+
     # Timing settings
     HOTKEY_DEBOUNCE_MS: int = 300
     AUTO_PASTE_CLIPBOARD_RESTORE_DELAY_MS: int = 250

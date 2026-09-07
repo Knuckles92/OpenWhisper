@@ -61,7 +61,7 @@ class TestProfileCrud:
 
     def test_builtins_always_present(self):
         profiles = list_profiles({})
-        assert [p.id for p in profiles] == ["openai", "openrouter"]
+        assert [p.id for p in profiles] == ["openai", "openrouter", "ollama", "groq", "opencode_go", "opencode_zen"]
         assert all(p.builtin for p in profiles)
 
     def test_upsert_and_remove_custom_profile(self):

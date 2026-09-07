@@ -31,9 +31,9 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Auto-paste** – Dictated transcription automatically pastes to your active window (Upload File results stay in the app, with Copy buttons)
 - **Audio Upload** – Import existing audio files for transcription
 - **Meeting Mode (Windows, macOS 13+)** – Record microphone and system audio into a searchable meeting transcript; share a live dashboard, review evidence-linked insights, play the recording, and export. After local transcription finishes, **Continue in the background** starts another meeting while cleanup and reports finish. Linux system-audio capture is a [preview](docs/linux-system-audio.md).
-- **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, or custom OpenAI-compatible endpoints) and teach spelling and style rules by text or voice
+- **AI Transcript Cleanup & Learned Rules** – Post-process transcripts with LLMs (OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, or custom OpenAI-compatible endpoints) and teach spelling and style rules by text or voice
 - **Local and cloud engines** – Transcribe locally with **Whisper**, **Parakeet**, **Qwen3-ASR**, **Nemotron Streaming**, or **Moonshine**, or in the cloud with **GPT-Transcribe**, **GPT-4o Transcribe**, **GPT-4o Mini Transcribe**, or **Whisper**. [Setup and comparisons](docs/local-asr.md).
-- **Model Manager** – Browse, download, and select local speech models, or pick OpenAI/OpenRouter cleanup models with a guided provider → model picker
+- **Model Manager** – Browse, download, and select local speech models, or independently select [cleanup and meeting text models](docs/text-providers.md) with a guided provider → model picker
 - **Live preview** – While-you-speak preview where the engine supports it (Parakeet, Nemotron Streaming, and Whisper dictation; Nemotron and Moonshine in Meeting Mode on Windows x64). Nemotron dictation follows the engine's native stream, so words appear sooner and are revised in place.
 - **Transcription History** – Search, retranscribe, and export Markdown, plain text, or JSON
 - **Real-time Visualization** – Animated waveform overlay shows recording status
@@ -207,7 +207,7 @@ Native installer builds and component-pin updates: [Packaging](docs/packaging.md
 
 **Downloads** (from Model Manager) installs Whisper GPU acceleration, the Meeting Intelligence Agent, and the Windows speech runtimes (four engines, six models). Speech model weights are separate downloads. Every archive is SHA-256 verified before extraction.
 
-For cloud transcription, transcript cleanup, or meeting intelligence, add API keys under **Settings → API keys**. They are saved in the OS credential store, never in the settings file or the log. A **Test** button checks a key before you rely on it. Environment variables or a `.env` file are used when no key is saved (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`). Custom OpenAI-compatible text endpoints are added in **Model Manager**.
+For cloud transcription, transcript cleanup, or meeting intelligence, add API keys under **Settings → API keys**. They are saved in the OS credential store, never in the settings file or the log. A **Test** button checks connectivity and authentication where supported; OpenCode's public catalog cannot verify a key. Environment variables or a `.env` file are used when no key is saved (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, `OPENCODE_ZEN_API_KEY`). Custom OpenAI-compatible text endpoints are added in **Model Manager**. Ollama needs a user-managed server and no key. See [text-provider setup and compatibility](docs/text-providers.md).
 
 ## Required macOS permissions
 

@@ -11,17 +11,19 @@ import { build } from "esbuild";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = await mkdtemp(path.join(tmpdir(), "ow-tools-"));
-const outfile = path.join(outdir, "tools.test.mjs");
+const testNames = ["tools.test", "text-provider.test"];
+const outfiles = testNames.map((name) => path.join(outdir, name + ".mjs"));
 let status = 1;
 try {
   await build({
-    entryPoints: [path.join(root, "src", "tools.test.ts")],
-    outfile,
+    entryPoints: testNames.map((name) => path.join(root, "src", name + ".ts")),
+    outdir,
+    outExtension: { ".js": ".mjs" },
     bundle: true,
     platform: "node",
     format: "esm",
   });
-  const result = spawnSync(process.execPath, ["--test", outfile], {
+  const result = spawnSync(process.execPath, ["--test", ...outfiles], {
     stdio: "inherit",
     cwd: root,
   });

@@ -17,7 +17,7 @@ from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs.settings_dialog import API_KEYS, SettingsDialog
 
 SECRET = "sk-proj-test-secret-value-7890wxyz"
-KEY_NAMES = ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "LMSTUDIO_API_KEY")
+KEY_NAMES = ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY", "LMSTUDIO_API_KEY")
 
 
 def _unavailable_backend():
@@ -84,8 +84,8 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         combo = self.dialog.api_key_combo
         names = [combo.itemData(i) for i in range(combo.count())]
         self.assertEqual(names, list(KEY_NAMES))
-        self.assertEqual(combo.itemText(2), "LM Studio · LMSTUDIO_API_KEY")
-        self.assertEqual(self.dialog.rail.value(API_KEYS), "0 of 3 set")
+        self.assertEqual(combo.itemText(combo.findData("LMSTUDIO_API_KEY")), "LM Studio · LMSTUDIO_API_KEY")
+        self.assertEqual(self.dialog.rail.value(API_KEYS), "0 of 6 set")
         self.assertIn("No key set", self.dialog.api_key_status.text())
 
     def test_field_hides_input_until_show_is_toggled(self):
@@ -117,7 +117,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         self.assertNotIn(SECRET, status)
         self.assertEqual(self.dialog.api_key_status.property("tone"), "success")
         self.assertEqual(self.dialog.message_label.text(), "OpenAI API key saved.")
-        self.assertEqual(self.dialog.rail.value(API_KEYS), "1 of 2 set")
+        self.assertEqual(self.dialog.rail.value(API_KEYS), "1 of 5 set")
         self.assertTrue(self.dialog.api_key_remove_button.isEnabled())
         self.assertEqual(self.changes, [True])
         self.assertNotIn(SECRET, self._settings_file_text())

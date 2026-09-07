@@ -347,6 +347,7 @@ class PiSidecarAgent:
         self._hello_event = threading.Event()
         self._hello_ok = False
         self._hello_seen = False
+        self._text_protocols = []
         self._pi_version: Optional[str] = None
 
         self._reader_thread: Optional[threading.Thread] = None
@@ -409,6 +410,9 @@ class PiSidecarAgent:
                 f"No {cfg.provider} API key found; Pi sidecar agent offline"
             )
 
+        # Resolve and validate protocol metadata before spawning a process.
+        self._endpoint_fields()
+        self._validate_new_provider_tools(api_key)
         self._ensure_tool_executor()
         self._spawn_and_handshake(api_key)
         self._send_initialize()
@@ -744,26 +748,47 @@ class PiSidecarAgent:
     def _endpoint_fields(self) -> Dict[str, Any]:
         """Non-secret connection fields passed to sidecar ``initialize``."""
         assert self._cfg is not None
-        try:
-            from services.text_llm import (
-                SIDECAR_API_KEY_ENV,
-                profile_from_agent_config,
-            )
+        from services.text_llm import (
+            SIDECAR_API_KEY_ENV, profile_from_agent_config, provider_headers,
+        )
+        from services.text_model_catalog import model_spec
 
-            profile = profile_from_agent_config(
-                self._cfg.provider, self._cfg.endpoint,
+        profile = profile_from_agent_config(self._cfg.provider, self._cfg.endpoint)
+        spec = model_spec(profile, self._cfg.model)
+        if not spec.tools:
+            raise RuntimeError("This model cannot use meeting tools with the Pi engine.")
+        return {
+            "base_url": profile.base_url or "",
+            "api_key_env": SIDECAR_API_KEY_ENV,
+            "kind": profile.kind,
+            "model_metadata": spec.to_dict(),
+            "headers": provider_headers(profile, self._cfg.meeting_id) or {},
+        }
+
+    def _validate_new_provider_tools(self, api_key: str) -> None:
+        from services.text_llm import NEW_PROFILE_IDS, create_openai_client, profile_from_agent_config
+        from services.text_generation import generate
+
+        cfg = self._cfg
+        if cfg is None or cfg.provider not in NEW_PROFILE_IDS:
+            return
+        profile = profile_from_agent_config(cfg.provider, cfg.endpoint)
+        client = create_openai_client(profile, api_key=api_key, timeout=10.0,
+                                      session_id=cfg.meeting_id)
+        try:
+            result = generate(
+                client.with_options(max_retries=0), profile, model=cfg.model,
+                messages=[{"role": "user", "content": "Call the noop tool with no arguments."}],
+                tools=[{"type": "function", "function": {
+                    "name": "noop", "description": "Verify tool support.",
+                    "parameters": {"type": "object", "properties": {}},
+                }}],
+                max_tokens=512,
             )
-            return {
-                "base_url": profile.base_url or "",
-                "api_key_env": SIDECAR_API_KEY_ENV,
-                "kind": profile.kind,
-            }
-        except Exception:
-            return {
-                "base_url": "",
-                "api_key_env": "OPENROUTER_API_KEY",
-                "kind": self._cfg.provider,
-            }
+            if not any(call.function.name == "noop" for call in result.tool_calls):
+                raise RuntimeError("Model did not call the test tool. Choose a tool-capable model for Pi.")
+        finally:
+            client.close()
 
     def _build_env(self, api_key: str) -> Dict[str, str]:
         """Environment for the sidecar child process."""
@@ -798,6 +823,7 @@ class PiSidecarAgent:
         self._hello_event.clear()
         self._hello_ok = False
         self._hello_seen = False
+        self._text_protocols = []
         self._pi_version = None
 
         cmd = self._resolve_node_cmd()
@@ -878,9 +904,18 @@ class PiSidecarAgent:
                 code = None
         return "unknown" if code is None else code
 
+    def _check_sidecar_text_support(self) -> None:
+        from services.text_llm import NEW_PROFILE_IDS
+        if self._cfg and self._cfg.provider in NEW_PROFILE_IDS:
+            protocol = self._endpoint_fields()["model_metadata"]["protocol"]
+            if protocol not in self._text_protocols:
+                raise RuntimeError("Update the Pi sidecar component to use this text provider, "
+                                   "or select the standard meeting engine for your next meeting.")
+
     def _send_initialize(self) -> None:
         """Send the ``initialize`` RPC after a successful hello."""
         assert self._cfg is not None
+        self._check_sidecar_text_support()
         try:
             result = self._rpc(
                 "initialize",
@@ -1263,6 +1298,7 @@ class PiSidecarAgent:
             ok = token_ok and protocol == _PROTOCOL_VERSION
             self._hello_seen = True
             self._hello_ok = bool(ok)
+            self._text_protocols = params.get("text_protocols", []) if ok else []
             version = params.get("pi_version")
             if isinstance(version, str):
                 self._pi_version = version

@@ -10,6 +10,7 @@ single repair retry.
 from __future__ import annotations
 
 import json
+import time
 import logging
 import threading
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,8 @@ from meeting.interfaces import (
 )
 from meeting.state.patches import filter_notes_ops, live_note_ids
 from meeting.state.schema import CARD_KEYS
+
+from services.text_generation import generate
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +348,7 @@ class DirectOpenRouterAgent:
         self._json_mode = False
         self._use_json_response_format = True
         self._profile_kind: str = ""
+        self._profile = None
         self._polish_mode = False
         self._notes_mode = False
         self._notes_item_ids: Optional[frozenset] = None
@@ -365,6 +369,7 @@ class DirectOpenRouterAgent:
         self._fatal = False
         self._shut_down = False
         profile = self._resolve_profile(cfg)
+        self._profile = profile
         self._profile_kind = profile.kind if profile is not None else cfg.provider
         self._api_key = cfg.api_key or (
             self._resolve_profile_key(profile, cfg.provider)
@@ -379,6 +384,9 @@ class DirectOpenRouterAgent:
             or cfg.provider == "openrouter"
             else None
         )
+        if profile is not None:
+            from services.text_llm import provider_headers
+            self._headers = provider_headers(profile, cfg.meeting_id)
         self._use_json_response_format = True
         self._model = self._resolve_model(cfg)
 
@@ -392,6 +400,9 @@ class DirectOpenRouterAgent:
             )
             return
 
+        if profile is not None:
+            from services.text_model_catalog import model_spec
+            model_spec(profile, self._model)
         client = self._ensure_client()
         if client is not None:
             self._probe_tool_support(client)
@@ -445,7 +456,7 @@ class DirectOpenRouterAgent:
             from services.text_llm import profile_from_agent_config
 
             return profile_from_agent_config(cfg.provider, cfg.endpoint)
-        except Exception:
+        except ImportError:
             return None
 
     @staticmethod
@@ -490,7 +501,9 @@ class DirectOpenRouterAgent:
                 return fallback
         except Exception:
             pass
-        return _DEFAULT_MODELS.get(cfg.provider, _DEFAULT_MODELS["openai"])
+        if cfg.provider not in _DEFAULT_MODELS:
+            raise ValueError("Choose a meeting text model first.")
+        return _DEFAULT_MODELS[cfg.provider]
 
     def _ensure_client(self) -> Optional[Any]:
         with self._client_lock:
@@ -504,6 +517,7 @@ class DirectOpenRouterAgent:
                     base_url=self._base_url,
                     default_headers=self._headers,
                     timeout=_CHECKPOINT_TIMEOUT_S,
+                    max_retries=0,
                 )
             except Exception:
                 logger.exception("Failed to build agent LLM client")
@@ -511,21 +525,28 @@ class DirectOpenRouterAgent:
             return self._client
 
     def _probe_tool_support(self, client: Any) -> None:
+        new_provider = self._profile is not None and self._profile.kind in (
+            "ollama", "groq", "opencode_go", "opencode_zen",
+        )
         try:
-            client.with_options(timeout=_PROBE_TIMEOUT_S).chat.completions.create(
+            result = generate(
+                client.with_options(timeout=_PROBE_TIMEOUT_S), self._profile,
                 model=self._model,
                 messages=[{"role": "user", "content": "Call the noop tool."}],
                 tools=[_NOOP_TOOL],
                 tool_choice="auto",
-                max_tokens=16,
+                max_tokens=512 if new_provider else 16,
             )
-            self._json_mode = False
+            self._json_mode = new_provider and not any(
+                call.function.name == "noop" for call in result.tool_calls
+            )
         except Exception as exc:
             logger.warning(
                 "Tool-call capability probe failed (%s); using JSON-mode "
                 "fallback", exc,
             )
             self._json_mode = True
+            self._note_error(exc)
 
     def _note_error(self, exc: Exception) -> None:
         status = getattr(exc, "status_code", None)
@@ -603,6 +624,7 @@ class DirectOpenRouterAgent:
             for seg in (payload.new_segments or [])
             if isinstance(seg, dict) and seg.get("id")
         ]
+        self._pass_deadline = time.monotonic() + timeout_s
         try:
             if self._json_mode:
                 return self._run_json_mode(
@@ -721,9 +743,11 @@ class DirectOpenRouterAgent:
                     ok=False, op_results=op_results, error="canceled", usage=usage,
                 )
             try:
-                response = client.with_options(
-                    timeout=timeout_s
-                ).chat.completions.create(
+                remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
+                if remaining <= 0:
+                    return AgentResult(ok=False, op_results=op_results, error="meeting text deadline exceeded", usage=usage)
+                response = generate(client.with_options(timeout=remaining), self._profile,
+                    cancel_event=self._cancel_event,
                     model=self._model,
                     messages=messages,
                     tools=_TOOLS,
@@ -738,33 +762,17 @@ class DirectOpenRouterAgent:
                 )
             self._merge_usage(usage, getattr(response, "usage", None))
 
-            choices = getattr(response, "choices", None) or []
-            if not choices:
-                return AgentResult(
-                    ok=False, op_results=op_results,
-                    error="empty response from model", usage=usage,
-                )
-            message = choices[0].message
-            tool_calls = getattr(message, "tool_calls", None) or []
+            tool_calls = response.tool_calls
             if not tool_calls:
+                if not response.text:
+                    return AgentResult(ok=False, op_results=op_results,
+                                       error="empty response from model", usage=usage)
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": message.content or "",
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.function.name,
-                            "arguments": call.function.arguments,
-                        },
-                    }
-                    for call in tool_calls
-                ],
-            })
+            messages.append(response.assistant_message)
             for call in tool_calls:
+                if self._cancel_event.is_set():
+                    return AgentResult(ok=False, op_results=op_results, error="canceled", usage=usage)
                 try:
                     args = json.loads(call.function.arguments or "{}")
                     if not isinstance(args, dict):
@@ -830,9 +838,11 @@ class DirectOpenRouterAgent:
                 }
                 if self._use_json_response_format:
                     kwargs["response_format"] = {"type": "json_object"}
-                response = client.with_options(
-                    timeout=timeout_s
-                ).chat.completions.create(**kwargs)
+                remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
+                if remaining <= 0:
+                    return AgentResult(ok=False, error="meeting text deadline exceeded", usage=usage)
+                response = generate(client.with_options(timeout=remaining), self._profile,
+                                    cancel_event=self._cancel_event, **kwargs)
             except Exception as exc:
                 retry_without_format = (
                     self._use_json_response_format
@@ -850,8 +860,7 @@ class DirectOpenRouterAgent:
                 return AgentResult(ok=False, error=error, usage=usage)
             self._merge_usage(usage, getattr(response, "usage", None))
 
-            choices = getattr(response, "choices", None) or []
-            content = (choices[0].message.content or "") if choices else ""
+            content = response.text
             try:
                 data = json.loads(content)
                 if not isinstance(data, dict):
@@ -862,7 +871,7 @@ class DirectOpenRouterAgent:
             except ValueError as exc:  # includes json.JSONDecodeError
                 if attempt < 2:
                     # One repair retry with the parse error in context.
-                    messages.append({"role": "assistant", "content": content})
+                    messages.append(response.assistant_message)
                     messages.append({
                         "role": "user",
                         "content": (

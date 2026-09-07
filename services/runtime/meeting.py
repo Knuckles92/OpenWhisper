@@ -1119,6 +1119,11 @@ class MeetingRuntime:
                 agent_core_kind = resolve_meeting_agent_core(settings)
                 payload_dir = meeting_agent_payload_dir()
                 meeting = repo.get_meeting(meeting_id) or {}
+                from services.text_llm import snapshot_from_meeting
+
+                endpoint = snapshot_from_meeting(meeting, settings).to_dict()
+                provider = meeting.get("agent_provider") or provider
+                model = meeting.get("agent_model") or model
                 store = None
                 if (
                     engine is not None
@@ -1146,7 +1151,7 @@ class MeetingRuntime:
                     from_step=step_key,
                     provider=provider,
                     model=model,
-                    endpoint=resolve_meeting_llm_endpoint(settings),
+                    endpoint=endpoint,
                     agent_core_kind=agent_core_kind,
                     sidecar_payload_dir=payload_dir,
                     store=store,

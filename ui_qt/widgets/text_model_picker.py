@@ -30,6 +30,7 @@ from services.settings import (
 )
 from services.text_llm import (
     PROFILE_KIND_OPENROUTER,
+    NEW_PROFILE_IDS,
     TextLLMProfile,
     builtin_profiles,
     credential_label,
@@ -303,6 +304,14 @@ class TextModelPicker(QWidget):
                 "One catalog with models from OpenAI, Anthropic, Google, and more.",
                 credential_label(profile),
             )
+        descriptions = {
+            "ollama": "Connect to your Ollama server. Install and manage models in Ollama.",
+            "groq": "Cloud text models served by Groq.",
+            "opencode_go": "OpenCode Go subscription endpoint.",
+            "opencode_zen": "OpenCode Zen usage-billed endpoint.",
+        }
+        if profile.id in descriptions:
+            return ("API", descriptions[profile.id], credential_label(profile))
         return (
             "API",
             "Any server that speaks the OpenAI Chat Completions API.",
@@ -331,9 +340,9 @@ class TextModelPicker(QWidget):
         show_sort = bool(profile and profile.kind == PROFILE_KIND_OPENROUTER)
         self.sort_label.setVisible(show_sort)
         self.sort_combo.setVisible(show_sort)
-        can_edit = bool(profile and not profile.builtin)
+        can_edit = bool(profile and (not profile.builtin or profile.id == "ollama"))
         self.edit_endpoint_button.setEnabled(can_edit)
-        self.delete_endpoint_button.setEnabled(can_edit)
+        self.delete_endpoint_button.setEnabled(bool(profile and not profile.builtin))
 
         self._model_edited = False
         self.model_combo.blockSignals(True)
@@ -351,7 +360,7 @@ class TextModelPicker(QWidget):
                 When omitted, it is looked up from that metadata.
         """
         profile = self.current_profile()
-        if profile is not None and not profile.builtin:
+        if profile is not None and (not profile.builtin or profile.id in NEW_PROFILE_IDS):
             available, text = credential_status(profile)
         else:
             if credential is None:
@@ -362,6 +371,9 @@ class TextModelPicker(QWidget):
                 if available
                 else f"Requires {credential} — add it in Settings → API keys"
             )
+        self.provider_requirement.setToolTip(text)
+        if profile is not None and profile.id in NEW_PROFILE_IDS and not available:
+            text = "Key needed in Settings → API keys"
         self.provider_requirement.setText(text)
         credential_icon = _design_icon(
             "check-green.svg" if available else "info-warning.svg"
@@ -404,6 +416,12 @@ class TextModelPicker(QWidget):
         model = self.model_combo.currentText().strip()
         if not model:
             self._restore_staged_model()
+            return
+        from services.text_model_catalog import model_spec
+        try:
+            model_spec(self.current_profile(), model)
+        except ValueError as exc:
+            self.status_label.setText(str(exc))
             return
         self._staged_models[self.provider] = model
         self._update_active_badge()
@@ -454,8 +472,17 @@ class TextModelPicker(QWidget):
         """
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
+        from services.text_model_catalog import model_spec
         for model in models:
             self.model_combo.addItem(self._model_icon, model)
+            try:
+                model_spec(self.current_profile(), model)
+            except ValueError as exc:
+                index = self.model_combo.count() - 1
+                item = self.model_combo.model().item(index)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setToolTip(str(exc))
         self.model_combo.setCurrentText(self._staged_model())
         self.model_combo.blockSignals(False)
         self._model_edited = False
@@ -513,7 +540,7 @@ class TextModelPicker(QWidget):
 
     def _emit_edit(self) -> None:
         profile = self.current_profile()
-        if profile is not None and not profile.builtin:
+        if profile is not None and (not profile.builtin or profile.id == "ollama"):
             self.edit_endpoint_requested.emit(profile.id)
 
     def _emit_delete(self) -> None:

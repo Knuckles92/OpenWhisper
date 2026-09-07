@@ -319,6 +319,11 @@ class TabbedContentWidget(QWidget):
     def set_recording_state(self, is_recording: bool, source_tab: int):
         self._recording_active = is_recording
         self._recording_source_tab = source_tab
+        if is_recording and 0 <= source_tab < self.tab_bar.count():
+            # Disabling the selected tab lets Qt choose a neighbor, which can
+            # briefly visit (and queue a save for) Meeting Mode during dictation.
+            self.tab_bar.setTabEnabled(source_tab, True)
+            self.set_current_index(source_tab)
         for i in range(self.tab_bar.count()):
             self.tab_bar.setTabEnabled(i, not is_recording or i == source_tab)
 

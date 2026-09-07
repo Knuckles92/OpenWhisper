@@ -22,6 +22,7 @@ from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
+    QInputDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -123,7 +124,7 @@ class ModelManagerDialog(QDialog):
     #: Opening the Downloads window is UIController's job — it owns dialog
     #: lifetimes and already routes download progress signals.
     downloads_requested = pyqtSignal()
-    _text_models_loaded = pyqtSignal(str, str, list, str)
+    _text_models_loaded = pyqtSignal(str, str, list, str, object)
     _cache_scan_finished = pyqtSignal(int, object)
 
     def __init__(
@@ -145,6 +146,7 @@ class ModelManagerDialog(QDialog):
         self._cache_scan_generation = 0
         self._cache_inventory_loading = False
         self._text_models_cache: Dict[tuple, list] = {}
+        self._catalog_tokens = {}
         self._text_models_loading = set()
         self._active_text_provider = TranscriptCleanupProvider.OPENAI
         self._active_text_model = default_transcript_cleanup_model(
@@ -432,15 +434,12 @@ class ModelManagerDialog(QDialog):
         )
         layout.addWidget(self._field("Thinking level", self.cleanup_reasoning_combo))
         layout.addWidget(self._caption(
-            "Extra thinking effort for reasoning models such as o4-mini. "
-            "Leave Off for regular chat models."
+            "Used only by models with configurable reasoning."
         ))
 
         layout.addWidget(
             self._footnote(
-                "Called only when AI cleanup is enabled. API keys are entered "
-                "in Settings → API keys; a blank key variable means no auth. "
-                "Cleanup behavior, prompts, and learned rules remain in "
+                "Used when AI cleanup is enabled. Prompts and learned rules: "
                 "Settings → Cleanup."
             )
         )
@@ -544,10 +543,8 @@ class ModelManagerDialog(QDialog):
         )
         layout.addWidget(
             self._footnote(
-                "Agent core decides how the chat model is called, not which "
-                "model. The Pi sidecar is installed from Downloads. Cloud "
-                "consent, knowledge folder, and report views stay in "
-                "Settings → Meeting."
+                "Install Pi from Downloads. Cloud consent, knowledge folder "
+                "and report options: Settings → Meeting."
             )
         )
 
@@ -787,8 +784,14 @@ class ModelManagerDialog(QDialog):
 
     def _refresh_picker_profiles(self) -> None:
         profiles = list_profiles(self._settings_snapshot())
-        self.text_model_picker.set_profiles(profiles)
-        self.meeting_model_picker.set_profiles(profiles)
+        settings = self._settings_snapshot()
+        for picker, key in ((self.text_model_picker, "cleanup_model_memory"),
+                            (self.meeting_model_picker, "meeting_model_memory")):
+            memory = settings.get(key, {})
+            if isinstance(memory, dict):
+                picker._staged_models.update({p: m for p, m in memory.items()
+                                               if isinstance(m, str)})
+            picker.set_profiles(profiles)
 
     def _add_text_endpoint(self) -> None:
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
@@ -828,6 +831,26 @@ class ModelManagerDialog(QDialog):
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
         profile = get_profile(profile_id, self._settings_snapshot())
+        if profile is not None and profile.id == "ollama":
+            url, accepted = QInputDialog.getText(
+                self, "Ollama server", "API base URL (shared by cleanup and meetings):",
+                text=profile.base_url or "",
+            )
+            if not accepted:
+                return
+            from services.text_llm import save_ollama_url
+            try:
+                save_ollama_url(url)
+            except ValueError as exc:
+                self.message_label.setText(str(exc))
+                return
+            self._invalidate_text_catalog("ollama")
+            self._refresh_picker_profiles()
+            for picker in (self.text_model_picker, self.meeting_model_picker):
+                if picker.provider == "ollama":
+                    self._fetch_catalog_models("ollama", picker=picker, force=True)
+            self.message_label.setText("Ollama server updated. Active meetings keep their original server.")
+            return
         if profile is None or profile.builtin:
             return
         dialog = TextEndpointDialog(profile, parent=self)
@@ -848,6 +871,7 @@ class ModelManagerDialog(QDialog):
             logger.error("Couldn't edit text endpoint: %s", exc)
             self.message_label.setText(f"Couldn't save endpoint: {exc}")
             return
+        self._invalidate_text_catalog(updated.id)
         self._refresh_picker_profiles()
         self.text_model_picker.set_provider(updated.id)
         self.meeting_model_picker.set_provider(
@@ -894,6 +918,7 @@ class ModelManagerDialog(QDialog):
     # ---- catalog loading ----
 
     def _on_text_provider_changed(self, provider: str) -> None:
+        self._update_cleanup_reasoning_controls(provider, self.text_model_picker.model_combo.currentText())
         if self.rail.current_key() == ONDEMAND_TEXT:
             self._fetch_catalog_models(
                 provider, picker=self.text_model_picker
@@ -928,6 +953,15 @@ class ModelManagerDialog(QDialog):
             provider, picker=self.text_model_picker, force=force
         )
 
+    def _invalidate_text_catalog(self, provider: str) -> None:
+        for key in list(self._text_models_cache):
+            if key[0] == provider:
+                self._text_models_cache.pop(key, None)
+        for key in list(self._catalog_tokens):
+            if key[0] == provider:
+                self._catalog_tokens.pop(key, None)
+                self._text_models_loading.discard(key)
+
     def _fetch_catalog_models(
         self,
         provider: str,
@@ -955,6 +989,8 @@ class ModelManagerDialog(QDialog):
             return
 
         self._text_models_loading.add(key)
+        token = object()
+        self._catalog_tokens[key] = token
         if provider == picker.provider:
             picker.set_loading(True)
 
@@ -968,7 +1004,7 @@ class ModelManagerDialog(QDialog):
                 models = []
                 error = str(exc)
             try:
-                self._text_models_loaded.emit(provider, sort, models, error)
+                self._text_models_loaded.emit(provider, sort, models, error, token)
             except RuntimeError:
                 pass  # Dialog was destroyed before the catalog finished.
 
@@ -997,16 +1033,21 @@ class ModelManagerDialog(QDialog):
         if sort != picker.current_sort():
             return
         if error:
+            cached = self._text_models_cache.get((provider, sort))
+            if cached is not None:
+                picker.set_models(cached)
             picker.status_label.setText(f"Couldn't load models: {error}")
             return
         picker.set_models(models)
         picker.status_label.setText(f"{len(models)} models available")
 
     def _on_text_models_loaded(
-        self, provider: str, sort: str, models: list, error: str
+        self, provider: str, sort: str, models: list, error: str, token=None
     ) -> None:
         """Apply a provider catalog result on the Qt thread."""
         key = (provider, sort)
+        if token is not None and token is not self._catalog_tokens.get(key):
+            return
         self._text_models_loading.discard(key)
         if not error:
             self._text_models_cache[key] = models
@@ -1017,11 +1058,39 @@ class ModelManagerDialog(QDialog):
             self.meeting_model_picker, provider, sort, models, error
         )
 
+    def _update_cleanup_reasoning_controls(self, provider: str, model: str) -> None:
+        from services.text_model_catalog import model_spec
+        if not hasattr(self, "cleanup_reasoning_combo"):
+            return
+        profile = get_profile(provider, self._settings_snapshot())
+        supported = profile is not None and profile.kind in ("openai", "openrouter")
+        if profile is not None and model:
+            try:
+                supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
+            except ValueError:
+                pass
+        self.cleanup_reasoning_combo.setEnabled(supported)
+        self.cleanup_reasoning_combo.setToolTip(
+            "Thinking effort for this model." if supported
+            else "This model uses its provider's default reasoning behavior."
+        )
+
+    def _validate_text_model(self, provider: str, model: str) -> bool:
+        from services.text_model_catalog import model_spec
+        if not model:
+            return False
+        try:
+            model_spec(get_profile(provider, self._settings_snapshot()), model)
+            return True
+        except ValueError as exc:
+            self.message_label.setText(str(exc))
+            return False
+
     def _activate_text_model(self, provider: str) -> None:
         if provider != self.text_model_picker.provider:
             return
         model = self.text_model_picker.model_combo.currentText().strip()
-        if not model:
+        if not self._validate_text_model(provider, model):
             return
         if (
             provider == self._active_text_provider
@@ -1032,6 +1101,7 @@ class ModelManagerDialog(QDialog):
             settings_manager.update_settings({
                 SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
                 SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
+                "cleanup_model_memory": {**self._settings_snapshot().get("cleanup_model_memory", {}), provider: model},
             })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
@@ -1041,6 +1111,7 @@ class ModelManagerDialog(QDialog):
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_active_selection(provider, model)
+        self._update_cleanup_reasoning_controls(provider, model)
         display_provider = profile_display_name(
             provider, self._settings_snapshot()
         )
@@ -1053,7 +1124,7 @@ class ModelManagerDialog(QDialog):
         if provider != self.meeting_model_picker.provider:
             return
         model = self.meeting_model_picker.model_combo.currentText().strip()
-        if not model:
+        if not self._validate_text_model(provider, model):
             return
         if (
             provider == self._active_meeting_provider
@@ -1064,6 +1135,7 @@ class ModelManagerDialog(QDialog):
             settings_manager.update_settings({
                 SettingsKey.MEETING_LLM_PROVIDER: provider,
                 SettingsKey.MEETING_LLM_MODEL: model,
+                "meeting_model_memory": {**self._settings_snapshot().get("meeting_model_memory", {}), provider: model},
             })
         except Exception as exc:
             logger.error("Couldn't activate meeting LLM model: %s", exc)
@@ -1121,6 +1193,7 @@ class ModelManagerDialog(QDialog):
         self._refresh_picker_profiles()
         self.text_model_picker.set_provider(provider, model)
         self.text_model_picker.set_active_selection(provider, model)
+        self._update_cleanup_reasoning_controls(provider, model)
 
     def _load_meeting_settings(self) -> None:
         settings = self._settings_snapshot()

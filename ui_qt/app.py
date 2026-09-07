@@ -7,9 +7,15 @@ import sys
 from typing import Optional
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStyleFactory
 
-from services.settings import resolve_ui_font_scale
+from services.settings import UiTheme, resolve_ui_font_scale, resolve_ui_theme
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.utils.font_scale import FontScaleFilter, apply_ui_font_scale
+from ui_qt.utils.font_scale import (
+    WidgetStyleFilter,
+    apply_ui_font_scale,
+    apply_ui_theme,
+    current_ui_theme_preference,
+    resolve_theme_preference,
+)
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.utils.tooltip_filter import RoundedTooltipFilter, SnappyTooltipStyle
 
@@ -84,13 +90,24 @@ class QtApplication:
         # used by the taskbar and alt-tab switcher.
         self.app.setWindowIcon(app_icon())
 
-        self.theme_manager = ThemeManager()
+        # Built on the resolved palette so the loading screen, which paints
+        # before any stylesheet is applied, already reads the right colours.
+        preference = resolve_ui_theme()
+        self.theme_manager = ThemeManager(
+            resolve_theme_preference(preference, self.app)
+        )
         self._tooltip_filter = RoundedTooltipFilter(self.app)
         self.app.installEventFilter(self._tooltip_filter)
         self._setup_tooltip_style()
-        self._font_scale_filter = FontScaleFilter(self.app)
-        self.app.installEventFilter(self._font_scale_filter)
+        self._style_filter = WidgetStyleFilter(self.app)
+        self.app.installEventFilter(self._style_filter)
+        self.set_theme(preference)
         self.apply_font_scale(resolve_ui_font_scale())
+        self.app.styleHints().colorSchemeChanged.connect(self._on_system_scheme_changed)
+
+    def _on_system_scheme_changed(self, _scheme) -> None:
+        if current_ui_theme_preference() == UiTheme.SYSTEM:
+            self.set_theme(UiTheme.SYSTEM)
 
     def _setup_tooltip_style(self):
         """Wrap the platform style so native tooltips show without the long delay."""
@@ -106,12 +123,11 @@ class QtApplication:
             percent, app=self.app, theme_manager=self.theme_manager
         )
 
-    def _apply_theme(self):
-        self.apply_font_scale(resolve_ui_font_scale())
-
-    def set_theme(self, theme_name: str):
-        self.theme_manager.set_theme(theme_name)
-        self._apply_theme()
+    def set_theme(self, preference: str) -> bool:
+        """Apply a ``UiTheme`` preference. Returns True if the palette changed."""
+        return apply_ui_theme(
+            preference, app=self.app, theme_manager=self.theme_manager
+        )
 
     def run(self, main_window: Optional[QMainWindow] = None):
         """Start the application event loop."""

@@ -11,6 +11,7 @@
  * https://pi.dev/docs/latest/custom-provider as of 2026-08. Points where the
  * documentation was not explicit are marked TODO(pi-api).
  */
+import { protocolConfig, type TextModelMetadata } from "./text-provider";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -71,6 +72,8 @@ export interface CreateSessionOptions {
   apiKey?: string;
   baseUrl?: string;
   kind?: string;
+  modelMetadata?: TextModelMetadata;
+  headers?: Record<string, string>;
   /** The ONLY tools the session gets; built-ins are disabled structurally. */
   tools: MeetingToolDef[];
   log: (level: "debug" | "info" | "warning" | "error", msg: string) => void;
@@ -215,31 +218,37 @@ async function writeAgentDir(
   modelId: string,
   baseUrl?: string,
   kind?: string,
+  metadata?: TextModelMetadata,
+  headers?: Record<string, string>,
 ): Promise<string> {
   const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openwhisper-pi-"));
   const resolvedKind = kind || provider;
   const deepseek = /deepseek/i.test(modelId);
   const reasoning = resolvedKind === "openrouter" || resolvedKind === "openai";
+  const protocol = protocolConfig(providerBaseUrl(provider, baseUrl), metadata, headers);
   const modelsJson = {
     providers: {
       [provider]: {
-        baseUrl: providerBaseUrl(provider, baseUrl),
+        baseUrl: protocol.baseUrl,
+        headers: protocol.headers,
+        authHeader: resolvedKind === "opencode_go" || resolvedKind === "opencode_zen",
         apiKey: `$${GENERIC_KEY_ENV}`,
-        api: "openai-completions",
-        compat: modelCompat(resolvedKind, modelId),
+        api: protocol.api,
+        compat: { ...modelCompat(resolvedKind, modelId), ...protocol.compat },
         models: [
           {
             id: modelId,
             name: modelId,
             // Built-in cloud models think; custom endpoints default off.
-            reasoning,
+            reasoning: protocol.reasoning ?? reasoning,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             // Conservative defaults; OpenRouter enforces real limits server-side.
-            contextWindow: 131072,
-            maxTokens: 16384,
+            contextWindow: protocol.contextWindow,
+            maxTokens: protocol.maxTokens,
             // DeepSeek V4 cannot turn thinking off; do not send effort:"none".
             ...(deepseek ? { thinkingLevelMap: { off: null } } : {}),
+            ...(protocol.thinkingLevelMap ? { thinkingLevelMap: protocol.thinkingLevelMap } : {}),
           },
         ],
       },
@@ -296,10 +305,12 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
     opts.modelId,
     opts.baseUrl,
     opts.kind,
+    opts.modelMetadata,
+    opts.headers,
   );
-  const reasoning =
-    (opts.kind || opts.provider) === "openrouter" ||
-    (opts.kind || opts.provider) === "openai";
+  const reasoning = opts.modelMetadata?.reasoning ??
+    ((opts.kind || opts.provider) === "openrouter" ||
+    (opts.kind || opts.provider) === "openai");
 
   // Point ModelRuntime at our private agentDir so models.json (OpenRouter
   // custom provider) is picked up. getModel moved off the pi-ai root export

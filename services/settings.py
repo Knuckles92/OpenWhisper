@@ -68,6 +68,8 @@ class SettingsKey:
     STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
     # Application chrome type size as a percent of the designed theme (90–130).
     UI_FONT_SCALE: Final[str] = "ui_font_scale"
+    # Colour theme: "dark", "light", or "system" (follow the OS setting).
+    UI_THEME: Final[str] = "ui_theme"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
@@ -172,6 +174,20 @@ class UiFontScale:
     }
 
 
+class UiTheme:
+    """Values for ``SettingsKey.UI_THEME``. Labels are what Settings shows."""
+    DARK: Final[str] = "dark"
+    LIGHT: Final[str] = "light"
+    SYSTEM: Final[str] = "system"
+
+    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM)
+    LABELS: Final[Dict[str, str]] = {
+        DARK: "Dark",
+        LIGHT: "Light",
+        SYSTEM: "Match system",
+    }
+
+
 class TranscriptCleanupProvider:
     """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
 
@@ -182,7 +198,12 @@ class TranscriptCleanupProvider:
     OPENAI: Final[str] = "openai"
     OPENROUTER: Final[str] = "openrouter"
 
-    ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER)
+    OLLAMA: Final[str] = "ollama"
+    GROQ: Final[str] = "groq"
+    OPENCODE_GO: Final[str] = "opencode_go"
+    OPENCODE_ZEN: Final[str] = "opencode_zen"
+
+    ALL: Final[Tuple[str, ...]] = (OPENAI, OPENROUTER, OLLAMA, GROQ, OPENCODE_GO, OPENCODE_ZEN)
 
 
 class TranscriptCleanupModelSort:
@@ -616,6 +637,19 @@ def resolve_ui_font_scale(
     return config.UI_FONT_SCALE
 
 
+def resolve_ui_theme(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a valid ``UiTheme`` value, defaulting to the shipped dark theme."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    theme = settings.get(SettingsKey.UI_THEME, config.UI_THEME)
+    if theme in UiTheme.ALL:
+        return theme
+    return config.UI_THEME
+
+
 def resolve_streaming_overlay_font_size(
     settings: Optional[Dict[str, Any]] = None,
 ) -> int:
@@ -870,7 +904,7 @@ def resolve_meeting_llm_endpoint(
     profile = resolve_meeting_llm_profile(settings)
     if profile is None:
         profile = builtin_profiles()[1]
-    return snapshot_from_profile(profile).to_dict()
+    return snapshot_from_profile(profile, resolve_meeting_llm_model(settings)).to_dict()
 
 
 def resolve_meeting_llm_model(

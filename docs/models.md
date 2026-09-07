@@ -76,3 +76,7 @@ Optional meeting models use their family's device preference from On-demand voic
 ## Maintaining this reference
 
 Canonical identities and capabilities are in `config.py` and `services/local_asr/catalog.py`; profiles are in `services/model_catalog.py`; exact download artifacts and revisions are in `services/local_asr/models.json`. Follow [Contributing](../CONTRIBUTING.md#local-speech-backends-and-models) when updating any of them.
+
+## Cleanup and meeting text models
+
+Ollama, Groq, OpenCode Go and OpenCode Zen join OpenAI, OpenRouter and custom text endpoints. Model Manager remembers separate on-demand cleanup and meeting selections. See [text-provider setup, protocols and prerequisites](text-providers.md).

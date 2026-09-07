@@ -59,7 +59,7 @@ function main(): void {
 
   // The handshake must be the first line on stdout, before the read loop can
   // possibly emit anything.
-  rpc.notify("hello", { token, protocol: PROTOCOL_VERSION, pi_version: piVersion() });
+  rpc.notify("hello", { token, protocol: PROTOCOL_VERSION, pi_version: piVersion(), text_protocols: ["chat", "responses", "anthropic", "google"] });
 
   let session: PiSession | null = null;
   let systemPrompt = "";
@@ -111,6 +111,8 @@ function main(): void {
       apiKey,
       baseUrl,
       kind,
+      modelMetadata: params?.model_metadata,
+      headers: params?.headers,
       tools: createMeetingTools(rpc, counters, toolPolicy),
       log: (level, msg) => rpc.log(level, msg),
       onEvent: emitProgress,

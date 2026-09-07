@@ -365,7 +365,7 @@ class TestTextModelPicker(_DialogTestCase):
             picker.provider_combo.itemText(i)
             for i in range(picker.provider_combo.count())
         ]
-        assert labels == ["OpenAI", "OpenRouter"]
+        assert labels == ["OpenAI", "OpenRouter", "Ollama", "Groq", "OpenCode Go", "OpenCode Zen"]
         assert picker.provider == TranscriptCleanupProvider.OPENAI
         assert picker.model_combo.currentText() == "gpt-test"
         assert picker.model_combo.badge_text() == "Active"
@@ -893,3 +893,56 @@ def test_display_name_falls_back_to_the_default_backend():
     assert dialog_module._display_name_for_backend("api") == "API"
     assert dialog_module._display_name_for_backend("not-a-backend") == default_display
     assert dialog_module._display_name_for_backend("") == default_display
+
+class TestNewTextProviders(_DialogTestCase):
+    def test_independent_model_memory_survives_dialog_recreation(self):
+        dialog, values = self._make_dialog()
+        dialog.text_model_picker.set_provider("ollama", "llama3.2")
+        dialog._activate_text_model("ollama")
+        dialog.meeting_model_picker.set_provider("groq", "llama-3.3-70b-versatile")
+        dialog._activate_meeting_llm_model("groq")
+        assert values["cleanup_model_memory"] == {"ollama": "llama3.2"}
+        assert values["meeting_model_memory"] == {"groq": "llama-3.3-70b-versatile"}
+        reopened, _ = self._make_dialog(extra_settings=values)
+        assert reopened.text_model_picker._staged_models["ollama"] == "llama3.2"
+        assert reopened.meeting_model_picker._staged_models["groq"] == "llama-3.3-70b-versatile"
+
+    def test_unknown_go_model_cannot_be_assigned(self):
+        dialog, values = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("opencode_go")
+        picker.set_models(["glm-5.2", "future-model"])
+        assert not picker.model_combo.model().item(1).isEnabled()
+        picker.model_combo.setCurrentText("future-model")
+        dialog._activate_text_model("opencode_go")
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openai"
+        assert "no supported API route" in dialog.message_label.text()
+
+    def test_stale_ollama_catalog_result_is_discarded(self):
+        dialog, _ = self._make_dialog()
+        key = ("ollama", "alphabetical")
+        old_token = object()
+        dialog._catalog_tokens[key] = old_token
+        dialog._text_models_loading.add(key)
+        dialog._invalidate_text_catalog("ollama")
+        dialog._on_text_models_loaded("ollama", "alphabetical", ["old-model"], "", old_token)
+        assert key not in dialog._text_models_cache
+
+    def test_failed_refresh_keeps_last_catalog_after_provider_switch(self):
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("groq")
+        dialog._on_text_models_loaded("groq", "alphabetical", ["llama-3.3-70b-versatile"], "")
+        picker.set_provider("ollama")
+        picker.set_provider("groq")
+        dialog._on_text_models_loaded("groq", "alphabetical", [], "offline")
+        assert picker.model_combo.count() == 1
+        assert "offline" in picker.status_label.text()
+
+    def test_ollama_exposes_edit_but_not_delete(self):
+        dialog, _ = self._make_dialog()
+        picker = dialog.text_model_picker
+        picker.set_provider("ollama")
+        assert picker.edit_endpoint_button.isEnabled()
+        assert not picker.delete_endpoint_button.isEnabled()
+        assert picker.provider_requirement.text() == "No API key required"

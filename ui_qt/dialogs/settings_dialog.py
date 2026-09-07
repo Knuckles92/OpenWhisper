@@ -53,6 +53,7 @@ from services.settings import (
     RecordingTriggerMode,
     SettingsKey,
     UiFontScale,
+    UiTheme,
     resolve_developer_mode,
     resolve_max_saved_recordings,
     resolve_meeting_agent_core,
@@ -75,6 +76,7 @@ from services.settings import (
     resolve_meeting_whisper_model,
     resolve_streaming_overlay_font_size,
     resolve_ui_font_scale,
+    resolve_ui_theme,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_prompt,
     resolve_transcript_cleanup_provider,
@@ -173,6 +175,7 @@ class SettingsDialog(QDialog):
     on_streaming_settings_changed: Optional[Callable] = None
     on_streaming_font_changed: Optional[Callable] = None
     on_ui_font_scale_changed: Optional[Callable[[int], None]] = None
+    on_ui_theme_changed: Optional[Callable[[str], None]] = None
     on_hf_policy_changed: Optional[Callable] = None
     on_api_keys_changed: Optional[Callable[[], None]] = None
     on_developer_mode_changed: Optional[Callable] = None
@@ -355,7 +358,7 @@ class SettingsDialog(QDialog):
         self._add_page(
             API_KEYS,
             "API keys",
-            "Credentials for OpenAI, OpenRouter, and custom endpoints. Saved "
+            "Credentials for cloud providers and custom endpoints. Saved "
             "keys live in your operating system's credential manager, never "
             "in the settings file.",
             self._build_api_keys_page,
@@ -527,6 +530,25 @@ class SettingsDialog(QDialog):
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
 
+        self.ui_theme_combo = ElidingComboBox()
+        self.ui_theme_combo.setObjectName("settingsUiThemeCombo")
+        self.ui_theme_combo.setMinimumHeight(40)
+        self.ui_theme_combo.setMinimumWidth(140)
+        for theme in UiTheme.ALL:
+            self.ui_theme_combo.addItem(UiTheme.LABELS[theme], theme)
+        self.ui_theme_combo.setCurrentIndex(
+            max(0, self.ui_theme_combo.findData(config.UI_THEME))
+        )
+        self.ui_theme_combo.currentIndexChanged.connect(self._on_ui_theme_changed)
+        self.ui_theme_tile = FieldTile(
+            "Theme",
+            "Dark or light colours for OpenWhisper windows. Match system "
+            "follows your operating system's setting.",
+            self.ui_theme_combo,
+            _design_icon("box-blue.svg"),
+            compact=True,
+        )
+
         self.ui_font_scale_combo = ElidingComboBox()
         self.ui_font_scale_combo.setObjectName("settingsUiFontScaleCombo")
         self.ui_font_scale_combo.setMinimumHeight(40)
@@ -554,7 +576,9 @@ class SettingsDialog(QDialog):
             layout, "Output", [self.auto_paste_tile, self.copy_clipboard_tile]
         )
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
-        self._tile_group(layout, "Appearance", [self.ui_font_scale_tile])
+        self._tile_group(
+            layout, "Appearance", [self.ui_theme_tile, self.ui_font_scale_tile]
+        )
         self._tile_group(
             layout, "Updates", [self.update_check_tile, self.update_notify_tile]
         )
@@ -1122,8 +1146,7 @@ class SettingsDialog(QDialog):
         )
         self.api_key_credential_tile = FieldTile(
             "Credential",
-            "One entry per endpoint that needs a key. Pick the one to view, "
-            "save, or test.",
+            "Choose the provider whose key you want to save or test.",
             self.api_key_combo,
             _design_icon("key-blue.svg"),
         )
@@ -1218,24 +1241,10 @@ class SettingsDialog(QDialog):
                 "variable in your environment or a .env file instead; "
                 "OpenWhisper never falls back to an unprotected file."
             )
-        if sys.platform == "win32":
-            where = (
-                "Control Panel → Credential Manager → Windows Credentials, "
-                "under “OpenWhisper”"
-            )
-        elif sys.platform == "darwin":
-            where = "Keychain Access, under “OpenWhisper”"
-        else:
-            where = (
-                "your keyring app (Seahorse or KWalletManager), under "
-                "“OpenWhisper”"
-            )
         return (
-            f"Saved keys are encrypted by {status.backend_name} for your user "
-            "account only and are never written to the settings file or the "
-            f"log. You can inspect or remove them in {where}. A saved key "
-            "takes precedence over the same variable in your environment or "
-            ".env file."
+            f"Encrypted by {status.backend_name} for your account. "
+            "Saved keys override environment variables and .env, and never "
+            "enter settings or logs."
         )
 
     @staticmethod
@@ -1925,6 +1934,15 @@ class SettingsDialog(QDialog):
         if self.on_ui_font_scale_changed:
             self.on_ui_font_scale_changed(int(percent))
 
+    def _on_ui_theme_changed(self, _index: int = 0) -> None:
+        theme = self.ui_theme_combo.currentData()
+        if theme not in UiTheme.ALL:
+            return
+        if not self._persist(SettingsKey.UI_THEME, theme):
+            return
+        if self.on_ui_theme_changed:
+            self.on_ui_theme_changed(theme)
+
     def _on_streaming_font_changed(self, _value: int = 0) -> None:
         if not self._persist(
             SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
@@ -2591,6 +2609,8 @@ class SettingsDialog(QDialog):
                 resolve_ui_font_scale(settings)
             )
             self.ui_font_scale_combo.setCurrentIndex(max(0, scale_index))
+            theme_index = self.ui_theme_combo.findData(resolve_ui_theme(settings))
+            self.ui_theme_combo.setCurrentIndex(max(0, theme_index))
 
             retention_mode = settings.get(
                 SettingsKey.RECORDING_RETENTION_MODE,
@@ -2669,6 +2689,9 @@ class SettingsDialog(QDialog):
             )
             self.ui_font_scale_combo.setCurrentIndex(
                 max(0, self.ui_font_scale_combo.findData(UiFontScale.DEFAULT))
+            )
+            self.ui_theme_combo.setCurrentIndex(
+                max(0, self.ui_theme_combo.findData(config.UI_THEME))
             )
             retention_index = self.recording_retention_combo.findData(
                 RecordingRetentionMode.CUSTOM

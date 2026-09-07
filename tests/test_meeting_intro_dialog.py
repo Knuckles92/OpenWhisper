@@ -126,16 +126,14 @@ class TestMeetingIntroAppearsOnFirstVisit(unittest.TestCase):
         ]
         for item in self._patches:
             item.start()
+            self.addCleanup(item.stop)
         window = MainWindow()
         window._force_quit = True
-        self.addCleanup(window.close)
+        # Close and drain deferred Qt work while settings are still mocked.
+        self.addCleanup(self.app.processEvents)
         self.addCleanup(window.deleteLater)
+        self.addCleanup(window.close)
         return window
-
-    def tearDown(self):
-        for item in getattr(self, "_patches", []):
-            item.stop()
-        self.app.processEvents()
 
     def test_first_visit_shows_intro_after_tab_opens(self):
         window = self._make_window(intro_seen=False)

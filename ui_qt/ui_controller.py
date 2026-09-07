@@ -34,7 +34,7 @@ from ui_qt.overlays import WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
 from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
-from ui_qt.utils.font_scale import apply_ui_font_scale
+from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
 from services.settings import SettingsKey, settings_manager
@@ -652,6 +652,7 @@ class UIController(QObject):
         dialog.on_streaming_settings_changed = self._on_settings_streaming_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
         dialog.on_ui_font_scale_changed = self._apply_ui_font_scale
+        dialog.on_ui_theme_changed = self._apply_ui_theme
         dialog.on_hf_policy_changed = self.on_hf_policy_changed
         dialog.on_api_keys_changed = self._on_api_keys_changed
         dialog.on_developer_mode_changed = (
@@ -691,6 +692,14 @@ class UIController(QObject):
 
     def _apply_ui_font_scale(self, percent: int) -> None:
         apply_ui_font_scale(percent)
+        self._redraw_rendered_text()
+
+    def _apply_ui_theme(self, preference: str) -> None:
+        if apply_ui_theme(preference):
+            self._redraw_rendered_text()
+
+    def _redraw_rendered_text(self) -> None:
+        """Re-render Markdown documents, whose colours are baked in at render time."""
         self.main_window.quick_record_tab.redraw_transcript()
         self.main_window.upload_file_tab.redraw_transcript()
         viewer = getattr(self.main_window.upload_file_tab, "_viewer", None)

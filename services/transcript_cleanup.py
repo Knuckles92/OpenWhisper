@@ -1,11 +1,13 @@
 """Post-ASR cleanup via OpenAI-compatible chat models."""
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from openai import OpenAI
 
 from config import config
+from services.text_generation import generate
 from services.text_llm import (
     AUTH_FREE_API_KEY,
     connection_fingerprint,
@@ -187,9 +189,12 @@ class TranscriptCleanup:
             return
 
         try:
+            old_client = self.client
+            if old_client is not None:
+                old_client.close()
             self.client = create_openai_client(
                 profile,
-                timeout=config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
+                timeout=120.0 if profile.kind == "ollama" else config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
                 api_key=key,
             )
             self._connection = connection_fingerprint(profile)
@@ -219,14 +224,13 @@ class TranscriptCleanup:
             self.provider = normalized
             self.api_key = find_api_key(normalized)
             self._initialize_client()
-        if model and model.strip():
-            self.model = model.strip()
+        self.model = model.strip() if isinstance(model, str) else ""
         if reasoning in TranscriptCleanupReasoning.ALL:
             self.reasoning = reasoning
 
     def is_available(self) -> bool:
         """Whether cleanup can be attempted."""
-        return self.client is not None and self.api_key is not None
+        return self.client is not None and self.api_key is not None and bool(self.model)
 
     def _request_options(self) -> dict:
         """Build per-request kwargs for the current reasoning level.
@@ -280,7 +284,10 @@ class TranscriptCleanup:
             request_kwargs["timeout"] = timeout_s
 
         try:
-            response = self.client.chat.completions.create(
+            response = generate(
+                self.client, get_profile(self.provider),
+                session_id=str(uuid.uuid4()),
+                reasoning_level=self.reasoning,
                 model=self.model,
                 messages=[
                     {"role": "system", "content": prompt},
@@ -288,7 +295,7 @@ class TranscriptCleanup:
                 ],
                 **request_kwargs,
             )
-            cleaned = (response.choices[0].message.content or "").strip()
+            cleaned = response.text.strip()
             if not cleaned:
                 self.last_error = "empty response"
                 logger.warning("Transcript cleanup returned empty; using raw text")

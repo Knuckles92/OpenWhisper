@@ -54,6 +54,39 @@ class TestMainWindowCompactMode:
         self.get_setting.stop()
         self.load_settings.stop()
 
+    @pytest.mark.parametrize("last_tab", [0, 1, 2])
+    def test_launch_restores_last_tab_and_reshow_keeps_current_tab(self, last_tab):
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        with patch.object(
+            settings_manager,
+            "load_all_settings",
+            return_value={SettingsKey.LAST_TAB_INDEX: last_tab},
+        ), patch(
+            "ui_qt.widgets.tabbed_content.meeting_mode_supported",
+            return_value=True,
+        ), patch(
+            "ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro"
+        ):
+            window = MainWindow()
+            try:
+                window.show()
+                self.app.processEvents()
+                assert window.tabbed_content.current_index() == last_tab
+                assert window.tabbed_content.stack.currentIndex() == last_tab
+
+                window.tabbed_content.set_current_index(TabbedContentWidget.TAB_MEETING_MODE)
+                window.hide()
+                window.show()
+                self.app.processEvents()
+                assert window.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE
+                assert window.tabbed_content.stack.currentWidget() is window.meeting_mode_tab
+            finally:
+                window._force_quit = True
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_compact_mode_uses_fixed_controller_and_restores_geometry(self):
         """Compact mode swaps the workspace without losing full geometry."""
         self.window.setGeometry(40, 50, 620, 600)
