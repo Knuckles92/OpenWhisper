@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QMessageBox,
@@ -159,12 +160,7 @@ class SettingsDialog(QDialog):
     re-raises it instead of stacking copies.
     """
 
-    #: 810 clears General after the font-size tile (the tallest destination
-    #: under themed fonts), plus chrome. Cleanup is next at 587 with the
-    #: prompt editor capped; Learned rules is 433 once the empty state and
-    #: the rule list are exclusive.
     DEFAULT_SIZE = QSize(980, 810)
-    MINIMUM_SIZE = QSize(840, 750)
 
     model_manager_requested = pyqtSignal(str)
     _cleanup_rule_polished = pyqtSignal(str, str, str)
@@ -220,7 +216,6 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
 
         self._setup_ui()
-        self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
 
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
@@ -232,6 +227,8 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self) -> None:
         root = QHBoxLayout(self)
+        # Recompute the window floor when wrapping or font scaling changes.
+        root.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_rail_pane())
@@ -545,7 +542,6 @@ class SettingsDialog(QDialog):
             "Dark, light, or match your operating system.",
             self.ui_theme_combo,
             _design_icon("box-blue.svg"),
-            compact=True,
         )
 
         self.ui_font_scale_combo = ElidingComboBox()
@@ -568,7 +564,6 @@ class SettingsDialog(QDialog):
             "has its own under Recording.",
             self.ui_font_scale_combo,
             _design_icon("typography-blue.svg"),
-            compact=True,
         )
 
         self._tile_group(

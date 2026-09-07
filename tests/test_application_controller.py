@@ -2542,7 +2542,7 @@ class TestApplicationController:
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
         assert controller.ui_controller.engine_controls_refreshes == 1
-        assert "Manage models" in controller.ui_controller.statuses[-1]
+        assert "Downloads" in controller.ui_controller.statuses[-1]
 
     def test_gpu_fallback_out_of_memory_does_not_advertise_the_component(self):
         controller = self._create_controller()
@@ -2558,7 +2558,7 @@ class TestApplicationController:
         assert self.settings.all_settings["whisper_device"] == "cpu"
         status = controller.ui_controller.statuses[-1]
         assert "out of memory" in status
-        assert "Manage models" not in status
+        assert "Downloads" not in status
 
     def test_reload_worker_leaves_the_fallback_warning_visible(self):
         controller = self._create_controller()
@@ -2588,7 +2588,7 @@ class TestApplicationController:
         assert "Whisper engine ready" in statuses
         # Emitted after the ready status, so the actionable warning is what
         # remains on screen.
-        assert "Manage models" in statuses[-1]
+        assert "Downloads" in statuses[-1]
         assert self.settings.all_settings["whisper_device"] == "cpu"
 
     def test_startup_fallback_is_reported_once_the_ui_is_ready(self):
@@ -2608,7 +2608,7 @@ class TestApplicationController:
             controller.notify_main_ui_ready()
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
-        assert "Manage models" in controller.ui_controller.statuses[-1]
+        assert "Downloads" in controller.ui_controller.statuses[-1]
 
     def test_notify_main_ui_ready_loads_deferred_local_backend(self):
         controller = self._create_controller()

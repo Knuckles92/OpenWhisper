@@ -1230,7 +1230,6 @@ class TestEngineCard:
         QApplication.processEvents()
 
         assert tab.cleanup_check.isVisible()
-        assert tab.manage_models_button.isVisible()
 
     def test_card_does_not_raise_the_content_width_floor(self):
         """Four fields in one row have to fit the column's floor, not widen it.

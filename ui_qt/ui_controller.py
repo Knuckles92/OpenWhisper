@@ -190,6 +190,7 @@ class UIController(QObject):
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
+        self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
         self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
         self.main_window.hotkeys_requested.connect(self.open_hotkey_settings)
         self.main_window.about_requested.connect(self.show_about_dialog)
@@ -636,6 +637,15 @@ class UIController(QObject):
         else:
             dialog.select_destination(GENERAL)
         self._raise_dialog(dialog)
+
+    def open_engine_help_destination(self, destination: str) -> None:
+        if destination == "api_keys":
+            dialog = self._prepare_settings_dialog()
+            dialog.refresh()
+            dialog.focus_api_keys("OPENAI_API_KEY")
+            self._raise_dialog(dialog)
+        elif destination in ("ondemand", "downloads"):
+            self.open_model_manager_dialog(destination)
 
     def open_hotkey_settings(self) -> None:
         """Show the singleton Settings window on its Hotkeys destination."""

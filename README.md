@@ -41,6 +41,7 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 - **Audio Device Selection** – Choose your preferred microphone input
 - **System Tray** – Minimize to tray when the desktop session provides one
 - **Window Memory** – Remembers window position and size between sessions
+- **Dark and light themes** – Pick one in **Settings → General → Appearance**, or match the operating system and follow it as it changes
 
 ## Transcription backends and models
 
@@ -263,7 +264,7 @@ On macOS, supported modifiers are `⌘` (Command), `⌃` (Control), `⌥` (Optio
 
 Access settings via **File > Settings** or the system tray menu:
 
-- **General:** Auto-paste, copy to clipboard, minimize to tray on close, UI font size, and automatic update checks and notifications.
+- **General:** Auto-paste, copy to clipboard, minimize to tray on close, theme (dark, light, or match the operating system), UI font size, and automatic update checks and notifications.
 - **Recording:** Microphone input, saved-recording retention, and the live preview overlay (dictation preview and its font size).
 - **Cleanup:** Enable AI transcript cleanup and set its custom prompt. Provider, model, and thinking level live in **Model Manager → On-demand → Text cleanup**.
 - **Learned rules:** Personal spelling and formatting rules, taught by text or voice. Applied whenever AI cleanup runs.

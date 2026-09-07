@@ -1729,18 +1729,6 @@ QCheckBox#engineLivePreviewCheck::indicator:hover {
     border-color: @accent;
 }
 
-QPushButton#engineManageButton {
-    color: @accent;
-    background-color: transparent;
-    border: none;
-    font-size: 11px;
-    padding: 0 2px;
-}
-
-QPushButton#engineManageButton:hover {
-    text-decoration: underline;
-}
-
 /* Content Tab Bar */
 QTabBar#contentTabBar::tab {
     background-color: transparent;

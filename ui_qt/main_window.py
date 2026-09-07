@@ -269,6 +269,7 @@ class MainWindow(QMainWindow):
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
     model_manager_requested = pyqtSignal(str)
+    engine_help_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
     check_for_updates_requested = pyqtSignal()
@@ -426,9 +427,7 @@ class MainWindow(QMainWindow):
             tab.model_changed.connect(self._on_model_changed)
             tab.engine_settings_changed.connect(self._on_engine_settings_changed)
             tab.live_preview_changed.connect(self._on_live_preview_changed)
-            tab.manage_models_requested.connect(
-                lambda: self.model_manager_requested.emit("downloads")
-            )
+            tab.help_requested.connect(self.engine_help_requested)
             tab.engine_downloads_requested.connect(
                 lambda: self.model_manager_requested.emit("engine_downloads")
             )

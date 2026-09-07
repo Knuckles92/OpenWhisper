@@ -46,15 +46,11 @@ class TestFooterPlacement:
             assert tab.live_preview_check.isVisible()
             assert tab.live_preview_check.text() == "Live preview"
             assert tab.engine_card.isAncestorOf(tab.live_preview_check)
-            # Reads left to right: cleanup, live preview, Manage models.
             cleanup_x = tab.cleanup_check.mapTo(tab, tab.cleanup_check.rect().topLeft()).x()
             preview_x = tab.live_preview_check.mapTo(
                 tab, tab.live_preview_check.rect().topLeft()
             ).x()
-            manage_x = tab.manage_models_button.mapTo(
-                tab, tab.manage_models_button.rect().topLeft()
-            ).x()
-            assert cleanup_x < preview_x < manage_x
+            assert cleanup_x < preview_x
         finally:
             tab.close()
 
@@ -63,7 +59,6 @@ class TestFooterPlacement:
         try:
             assert not tab.live_preview_check.isVisible()
             assert tab.cleanup_check.isVisible()
-            assert tab.manage_models_button.isVisible()
         finally:
             tab.close()
 

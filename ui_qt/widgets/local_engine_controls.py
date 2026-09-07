@@ -25,6 +25,7 @@ class LocalEngineControls(QWidget):
 
     #: Emitted after a *user-initiated* change has been persisted to settings.
     engine_settings_changed = pyqtSignal()
+    help_requested = pyqtSignal(str)
 
     COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
 
@@ -50,10 +51,18 @@ class LocalEngineControls(QWidget):
 
         # Matches the Backend field's share, so Model reads as its peer and the
         # two runtime knobs stay visibly secondary.
-        layout.addWidget(engine_field("Model", self.model_combo), stretch=2)
-        layout.addWidget(engine_field("Device", self.device_combo), stretch=1)
-        layout.addWidget(engine_field("Quant", self.compute_combo), stretch=1)
-        self.language_field = engine_field("Language", self.language_combo)
+        layout.addWidget(engine_field("Model", self.model_combo,
+            'Choose the speech model used for transcription. Available models depend on the selected backend.',
+            [('Open Model Manager → On-demand voice', 'ondemand'), ('Open Downloads', 'downloads')], self.help_requested.emit), stretch=2)
+        layout.addWidget(engine_field("Device", self.device_combo,
+            'Choose where transcription runs. Auto selects an available device; CPU uses your processor and CUDA uses a supported NVIDIA GPU.',
+            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit), stretch=1)
+        layout.addWidget(engine_field("Quant", self.compute_combo,
+            'Whisper precision affects memory use and speed. Auto chooses for your device; int8 can reduce memory use.',
+            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit), stretch=1)
+        self.language_field = engine_field("Language", self.language_combo,
+            'Choose English or automatic language detection. Moonshine supports English only.',
+            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit)
         layout.addWidget(self.language_field, stretch=1)
         self.language_field.hide()
 

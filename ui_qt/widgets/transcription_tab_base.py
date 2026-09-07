@@ -75,7 +75,7 @@ class TranscriptionTabBase(QWidget):
 
     model_changed = pyqtSignal(str)  # Model display name
     engine_settings_changed = pyqtSignal()  # Local engine chip changed
-    manage_models_requested = pyqtSignal()  # "Manage models…" clicked
+    help_requested = pyqtSignal(str)
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     live_preview_changed = pyqtSignal()  # Live preview checkbox persisted a change
@@ -177,14 +177,22 @@ class TranscriptionTabBase(QWidget):
         self.api_model_combo.setToolTip(
             "OpenAI transcription model. Requires an API key in Settings → API keys."
         )
-        self.api_model_field = engine_field("Model", self.api_model_combo)
+        self.api_model_field = engine_field(
+            "Model", self.api_model_combo,
+            "Choose the OpenAI model used for transcription. Audio is sent to OpenAI and an API key is required.",
+            [("Open Settings → API keys", "api_keys")], self.help_requested.emit,
+        )
         self.api_model_field.hide()
         self.refresh_api_model()
 
         self._field_row = QHBoxLayout()
         self._field_row.setContentsMargins(0, 0, 0, 0)
         self._field_row.setSpacing(10)
-        self._field_row.addWidget(engine_field("Backend", self.model_combo), stretch=2)
+        self._field_row.addWidget(engine_field(
+            "Backend", self.model_combo,
+            "Choose the transcription engine. Local backends run on this computer; OpenAI uses a cloud service.",
+            [("Open Model Manager → On-demand voice", "ondemand")], self.help_requested.emit,
+        ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
         self._field_row.addWidget(self.api_model_field, stretch=2)
         self._field_filler_index = self._field_row.count()
@@ -215,11 +223,6 @@ class TranscriptionTabBase(QWidget):
         if not self.LIVE_PREVIEW_CONTROL:
             self.live_preview_check.hide()
 
-        self.manage_models_button = QPushButton("Manage models…")
-        self.manage_models_button.setObjectName("engineManageButton")
-        self.manage_models_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.manage_models_button.setFlat(True)
-
         footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.setSpacing(6)
@@ -229,8 +232,6 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.cleanup_check)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.live_preview_check)
-        footer_row.addSpacing(6)
-        footer_row.addWidget(self.manage_models_button)
         engine_layout.addLayout(footer_row)
 
         content_layout.addWidget(self.engine_card)
@@ -315,7 +316,7 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
         self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
         self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
-        self.manage_models_button.clicked.connect(self.manage_models_requested)
+        self.local_engine.help_requested.connect(self.help_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
         self.live_preview_check.toggled.connect(self._on_live_preview_toggled)
         self.fixed_btn.toggled.connect(self._on_version_toggled)

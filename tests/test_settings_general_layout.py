@@ -29,6 +29,7 @@ from ui_qt.dialogs.settings_dialog import (
     RECORDING,
     SettingsDialog,
 )
+from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets.setting_tile import FieldTile, InfoTile, SettingTile, TileBase
 from ui_qt.widgets.nav_rail import NavRail
@@ -306,7 +307,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual((dialog.width(), dialog.height()), (980, 810))
             self.assertEqual(
-                (dialog.minimumWidth(), dialog.minimumHeight()), (840, 750)
+                dialog.minimumSize(), dialog.minimumSizeHint()
             )
             for key in dialog.rail.keys():
                 dialog.rail.select(key)
@@ -320,3 +321,38 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         finally:
             dialog.close()
             self.app.setStyleSheet(previous_stylesheet)
+
+    def test_tile_descriptions_fit_after_font_and_width_changes(self):
+        previous_stylesheet = self.app.styleSheet()
+        previous_font = self.app.font()
+        previous_scale = current_ui_font_scale_percent()
+        manager = ThemeManager()
+        with patch.object(SettingsDialog, "_load_settings", lambda self: None):
+            dialog = SettingsDialog()
+        try:
+            dialog.show()
+            for scale in (100, 115, 130, 100):
+                apply_ui_font_scale(scale, app=self.app, theme_manager=manager)
+                for width in (980, 900, 1100):
+                    dialog.resize(width, 810)
+                    for key in dialog.rail.keys():
+                        dialog.rail.select(key)
+                        for _ in range(8):
+                            self.app.processEvents()
+                        for tile in dialog._pages[key].findChildren(TileBase):
+                            label = tile.description_label
+                            if not label.isVisible():
+                                continue
+                            with self.subTest(scale=scale, width=width, page=key,
+                                              tile=tile.title_label.text()):
+                                self.assertGreaterEqual(
+                                    label.height(), label.heightForWidth(label.width())
+                                )
+                                self.assertTrue(tile.rect().contains(
+                                    label.mapTo(tile, label.rect().bottomRight())
+                                ))
+        finally:
+            dialog.close()
+            apply_ui_font_scale(previous_scale, app=self.app)
+            self.app.setStyleSheet(previous_stylesheet)
+            self.app.setFont(previous_font)

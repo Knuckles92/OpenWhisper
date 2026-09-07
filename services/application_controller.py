@@ -1237,7 +1237,7 @@ class ApplicationController(QObject):
         ):
             return (
                 "GPU found, but CUDA is not installed — using CPU. Install "
-                "GPU Acceleration under Manage models to enable it."
+                "GPU Acceleration from Downloads to enable it."
             )
         if cause == GpuFallbackCause.MISSING_LIBRARIES:
             return (

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ollama, Groq, OpenCode Go and OpenCode Zen for dictation/upload cleanup, learned-rule polishing and Meeting Mode text features, with independent remembered model choices and secure cloud credentials.
 - Shared Chat Completions, Responses, Anthropic Messages and Google GenerateContent adapters preserving tool calls and signed reasoning. Pi receives model protocols, capabilities and session headers; an updated sidecar bundle is required for the new providers.
 - Asynchronous model discovery, editable shared Ollama URL, unsupported-route validation, catalog retention after refresh failure and protection against stale catalog replies.
+- Light theme. **Settings → General → Appearance → Theme** offers Dark, Light, and Match system; Match system follows the operating system as it changes. Every window, dialog, the loading screen, the waveform overlay, and rendered Markdown follow the choice without a restart. New installs stay dark.
 
 ### Fixed
 - Packaged HTTPS update checks and component downloads load the bundled CA certificates in addition to system trust, avoiding build-machine certificate paths on Mac.

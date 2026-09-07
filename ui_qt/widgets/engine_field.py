@@ -168,7 +168,7 @@ def engine_combo(items: Iterable[str], primary: bool = False) -> QComboBox:
     return combo
 
 
-def engine_field(caption: str, field: QWidget) -> QWidget:
+def engine_field(caption: str, field: QWidget, help_text="", links=(), on_help=None) -> QWidget:
     """Stack a dim caption above ``field`` as one column of the row."""
     wrapper = QWidget()
     wrapper.setObjectName("engineFieldGroup")
@@ -176,8 +176,14 @@ def engine_field(caption: str, field: QWidget) -> QWidget:
     column.setContentsMargins(0, 0, 0, 0)
     column.setSpacing(4)
 
-    label = QLabel(caption)
-    label.setObjectName("engineFieldLabel")
+    if help_text:
+        from ui_qt.widgets.field_help import FieldHelp
+        label = FieldHelp(caption, help_text, links, wrapper)
+        if on_help is not None:
+            label.destination_requested.connect(on_help)
+    else:
+        label = QLabel(caption)
+        label.setObjectName("engineFieldLabel")
     column.addWidget(label)
     column.addWidget(field)
     return wrapper
