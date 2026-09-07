@@ -9,6 +9,8 @@ from PyQt6.QtGui import (
     QLinearGradient, QRadialGradient
 )
 
+from ui_qt.utils.palette import current_palette
+
 logger = logging.getLogger(__name__)
 
 _GLOW_RADIANS_PER_SEC = 4.5
@@ -40,10 +42,16 @@ class LoadingScreen(QWidget):
         self.status_text = "Initializing..."
         self.progress_text = "Please wait..."
 
-        self.bg_color = QColor("#1c1c1e")
-        self.accent_color = QColor("#0a84ff")
-        self.text_color = QColor("#f5f5f7")
-        self.subtext_color = QColor("#8e8e93")
+        # Read once: the splash is built after QtApplication picks the theme
+        # and is gone before anyone could change it.
+        palette = current_palette()
+        self._is_dark = palette.is_dark
+        self.bg_color = palette.color("splash-bg")
+        self.border_color = palette.color("splash-border")
+        self.accent_color = palette.color("accent")
+        self.accent_glow = palette.color("accent-cyan")
+        self.text_color = palette.color("text")
+        self.subtext_color = palette.color("text-secondary")
 
         # Wall-clock phase so any paint (including startup processEvents)
         # shows the correct glow even if timer ticks were delayed.
@@ -59,6 +67,16 @@ class LoadingScreen(QWidget):
         elapsed = time.monotonic() - self._glow_started_at
         return elapsed * _GLOW_RADIANS_PER_SEC
 
+    def _accent(self, alpha: int) -> QColor:
+        color = QColor(self.accent_color)
+        color.setAlpha(alpha)
+        return color
+
+    def _glow(self, alpha: int) -> QColor:
+        color = QColor(self.accent_glow)
+        color.setAlpha(alpha)
+        return color
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -68,14 +86,16 @@ class LoadingScreen(QWidget):
 
         gradient = QLinearGradient(0, 0, 0, h)
         gradient.setColorAt(0, self.bg_color)
-        gradient.setColorAt(1, self.bg_color.darker(120))
+        gradient.setColorAt(
+            1, self.bg_color.darker(120) if self._is_dark else self.bg_color.darker(104)
+        )
 
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect), 16, 16)
 
         painter.fillPath(path, gradient)
 
-        painter.setPen(QPen(QColor("#1e293b"), 1))
+        painter.setPen(QPen(self.border_color, 1))
         painter.drawPath(path)
 
         center_x, center_y = w / 2, h / 2 - 20
@@ -84,9 +104,9 @@ class LoadingScreen(QWidget):
 
         outer_radius = 58 + pulse * 14
         outer = QRadialGradient(center_x, center_y, outer_radius)
-        outer.setColorAt(0, QColor(10, 132, 255, int(55 + pulse * 45)))
-        outer.setColorAt(0.45, QColor(10, 132, 255, int(18 + pulse * 22)))
-        outer.setColorAt(1, QColor(10, 132, 255, 0))
+        outer.setColorAt(0, self._accent(int(55 + pulse * 45)))
+        outer.setColorAt(0.45, self._accent(int(18 + pulse * 22)))
+        outer.setColorAt(1, self._accent(0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(outer))
         painter.drawEllipse(QRectF(
@@ -96,9 +116,9 @@ class LoadingScreen(QWidget):
 
         inner_radius = 28 + pulse * 6
         inner = QRadialGradient(center_x, center_y, inner_radius)
-        inner.setColorAt(0, QColor(100, 210, 255, int(70 + pulse * 70)))
-        inner.setColorAt(0.55, QColor(10, 132, 255, int(35 + pulse * 40)))
-        inner.setColorAt(1, QColor(10, 132, 255, 0))
+        inner.setColorAt(0, self._glow(int(70 + pulse * 70)))
+        inner.setColorAt(0.55, self._accent(int(35 + pulse * 40)))
+        inner.setColorAt(1, self._accent(0))
         painter.setBrush(QBrush(inner))
         painter.drawEllipse(QRectF(
             center_x - inner_radius, center_y - inner_radius,
@@ -124,15 +144,16 @@ class LoadingScreen(QWidget):
         mic_w, mic_h = 16, 24
         mic_rect = QRectF(center_x - mic_w / 2, center_y - mic_h / 2, mic_w, mic_h)
         mic_alpha = int(200 + pulse * 55)
-        mic_pen = QPen(QColor(255, 255, 255, mic_alpha), 2)
-        painter.setPen(mic_pen)
+        mic_color = QColor(self.text_color)
+        mic_color.setAlpha(mic_alpha)
+        painter.setPen(QPen(mic_color, 2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(mic_rect, 8, 8)
         painter.drawLine(int(center_x), int(center_y + 12), int(center_x), int(center_y + 18))
         painter.drawLine(int(center_x - 8), int(center_y + 18), int(center_x + 8), int(center_y + 18))
 
         if pulse > 0.35:
-            fill = QColor(10, 132, 255, int((pulse - 0.35) / 0.65 * 55))
+            fill = self._accent(int((pulse - 0.35) / 0.65 * 55))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill)
             painter.drawRoundedRect(mic_rect.adjusted(2, 2, -2, -2), 6, 6)

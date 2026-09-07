@@ -10,7 +10,7 @@ import logging
 from typing import Callable, Final, Optional
 
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QLinearGradient, QPainter
+from PyQt6.QtGui import QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -36,6 +36,7 @@ from services.settings import (
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
 )
+from ui_qt.utils.palette import token_color
 from ui_qt.utils.release_notes import render_release_notes_html
 from ui_qt.widgets import (
     AnimatedProgressBar,
@@ -52,7 +53,7 @@ _NOTES_MAX_HEIGHT: Final[int] = 280
 _BUTTON_HEIGHT: Final[int] = 40
 _NOTES_FADE_HEIGHT: Final[int] = 22
 # Matches QFrame#updateNotesCard in theme.qss so the fade lands on the card.
-_NOTES_CARD_COLOR: Final[str] = "#232326"
+_NOTES_CARD_TOKEN: Final[str] = "surface-sunken"
 
 _PHASE_TEXT: Final[dict] = {
     DownloadPhase.DOWNLOADING: "Downloading the update…",
@@ -89,9 +90,8 @@ class _NotesView(QTextBrowser):
 
     @staticmethod
     def _paint_fade(painter: QPainter, rect: QRectF, at_top: bool) -> None:
-        opaque = QColor(_NOTES_CARD_COLOR)
-        clear = QColor(opaque)
-        clear.setAlpha(0)
+        opaque = token_color(_NOTES_CARD_TOKEN)
+        clear = token_color(_NOTES_CARD_TOKEN, 0)
         height = min(_NOTES_FADE_HEIGHT, rect.height() / 2.0)
         top = rect.top() if at_top else rect.bottom() - height
         band = QRectF(rect.left(), top, rect.width(), height)

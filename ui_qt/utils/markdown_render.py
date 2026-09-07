@@ -25,11 +25,15 @@ from PyQt6.QtGui import (
     QTextTable,
 )
 
-_HEADING: Final[str] = "#ffffff"
-_QUOTE_TEXT: Final[str] = "#c7c7cc"
-_CODE_TEXT: Final[str] = "#e5e5ea"
-_LINK: Final[str] = "#4da3ff"
-_BORDER: Final[str] = "#3a3a3c"
+from ui_qt.utils.palette import token_color
+
+# Palette tokens, read when a document is styled so a re-render after a theme
+# change picks up the new colours.
+_HEADING: Final[str] = "text-heading"
+_QUOTE_TEXT: Final[str] = "text-soft"
+_CODE_TEXT: Final[str] = "text"
+_LINK: Final[str] = "accent-soft"
+_BORDER: Final[str] = "border"
 _MONO_FAMILIES: Final[List[str]] = [
     "Cascadia Mono", "Consolas", "SF Mono", "Menlo", "monospace",
 ]
@@ -39,13 +43,20 @@ _PROPORTIONAL_LINE_HEIGHT: Final[int] = (
 )
 
 
+def _color(value: str) -> QColor:
+    """A palette token name, or a literal colour for a one-off style."""
+    if value.startswith(("#", "rgb")):
+        return QColor(value)
+    return token_color(value)
+
+
 @dataclass(frozen=True)
 class MarkdownStyle:
     """Typography for one rendering context.
 
-    Colours that depend on the surface behind the text travel with the style:
-    an inline-code chip must be darker than the transcript pane but lighter
-    than the reading window, which are different greys.
+    Colours that depend on the surface behind the text travel with the style
+    as palette tokens: an inline-code chip must contrast with the transcript
+    pane and with the reading window, which are different greys.
     """
 
     body_pt: float
@@ -75,24 +86,24 @@ class MarkdownStyle:
         )
 
 
-#: The transcript pane inside a tab (surface #2c2c2e).
+#: The transcript pane inside a tab (on @surface).
 PREVIEW_STYLE: Final[MarkdownStyle] = MarkdownStyle(
     body_pt=13,
     line_height=135,
     paragraph_gap=8,
     indent_px=22,
-    code_background="#1c1c1e",
-    quote_background="#252527",
+    code_background="bg",
+    quote_background="surface-sunken",
 )
 
-#: The transcript reading window (surface #1c1c1e).
+#: The transcript reading window (on @bg).
 READER_STYLE: Final[MarkdownStyle] = MarkdownStyle(
     body_pt=15,
     line_height=155,
     paragraph_gap=12,
     indent_px=26,
-    code_background="#2c2c2e",
-    quote_background="#232326",
+    code_background="surface",
+    quote_background="surface-sunken",
 )
 
 
@@ -152,13 +163,13 @@ def _style_block(
         # Each fenced line is its own block; only the run's last line gets the
         # gap, so the lines read as one slab.
         merged.setLineHeight(125, _PROPORTIONAL_LINE_HEIGHT)
-        merged.setBackground(QColor(style.code_background))
+        merged.setBackground(_color(style.code_background))
         merged.setTopMargin(0)
         next_block = block.next()
         ends_run = not (next_block.isValid() and _is_code_block(next_block.blockFormat()))
         merged.setBottomMargin(gap if ends_run else 0)
     elif is_quote:
-        merged.setBackground(QColor(style.quote_background))
+        merged.setBackground(_color(style.quote_background))
         merged.setLeftMargin(style.indent_px)
         merged.setTopMargin(0)
         merged.setBottomMargin(gap)
@@ -181,7 +192,7 @@ def _style_block(
         char_format = QTextCharFormat()
         char_format.setFontPointSize(style.heading_pt(level))
         char_format.setFontWeight(QFont.Weight.DemiBold)
-        char_format.setForeground(QColor(_HEADING))
+        char_format.setForeground(token_color(_HEADING))
         _merge_over_block(cursor, block, char_format)
         return
 
@@ -191,7 +202,7 @@ def _style_block(
 
     if is_quote:
         char_format = QTextCharFormat()
-        char_format.setForeground(QColor(_QUOTE_TEXT))
+        char_format.setForeground(token_color(_QUOTE_TEXT))
         _merge_over_block(cursor, block, char_format)
 
     fragment = block.begin()
@@ -205,7 +216,7 @@ def _style_block(
             )
         elif piece_format.isAnchor():
             link_format = QTextCharFormat()
-            link_format.setForeground(QColor(_LINK))
+            link_format.setForeground(token_color(_LINK))
             link_format.setFontUnderline(False)
             _merge_over_range(cursor, piece.position(), piece.length(), link_format)
         fragment += 1
@@ -216,9 +227,9 @@ def _code_format(style: MarkdownStyle, *, background: str | None) -> QTextCharFo
     char_format.setFontFamilies(_MONO_FAMILIES)
     char_format.setFontFixedPitch(True)
     char_format.setFontPointSize(style.code_pt)
-    char_format.setForeground(QColor(_CODE_TEXT))
+    char_format.setForeground(token_color(_CODE_TEXT))
     if background:
-        char_format.setBackground(QColor(background))
+        char_format.setBackground(_color(background))
     return char_format
 
 
@@ -241,7 +252,7 @@ def _merge_over_range(
 def _style_table(table: QTextTable, style: MarkdownStyle) -> None:
     table_format = table.format()
     table_format.setBorder(1)
-    table_format.setBorderBrush(QColor(_BORDER))
+    table_format.setBorderBrush(token_color(_BORDER))
     table_format.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
     table_format.setBorderCollapse(True)
     table_format.setCellPadding(max(4, style.paragraph_gap * 0.75))
@@ -250,7 +261,7 @@ def _style_table(table: QTextTable, style: MarkdownStyle) -> None:
     table_format.setBottomMargin(style.paragraph_gap)
     table.setFormat(table_format)
 
-    header_background = QColor(style.code_background)
+    header_background = _color(style.code_background)
     for column in range(table.columns()):
         cell = table.cellAt(0, column)
         if not cell.isValid():

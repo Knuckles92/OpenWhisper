@@ -72,9 +72,9 @@ class SearchableComboBox(NoWheelComboBox):
         )
         self._badge.setStyleSheet("""
             QLabel#searchableComboBadge {
-                color: #42df91;
-                background-color: #0f2a21;
-                border: 1px solid #217353;
+                color: @success-text-strong;
+                background-color: rgba(@success-rgb, 0.16);
+                border: 1px solid rgba(@success-rgb, 0.45);
                 border-radius: 8px;
                 padding: 0px 7px;
                 font-size: 10px;

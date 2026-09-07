@@ -468,8 +468,6 @@ class AppConfig:
                     'damping': 0.98,
                     'wind_strength': 5,
                     'audio_response': 1.5,
-                    'bg_color': '#0a0a0a',
-                    'text_color': '#ffffff',
                     'glow_effect': True,
                     'turbulence_strength': 10,
                     'color_shift_speed': 50

@@ -89,7 +89,7 @@ class TabbedContentWidget(QWidget):
         self.tab_bar.setStyleSheet("""
             QTabBar::tab {
                 background-color: transparent;
-                color: #8e8e93;
+                color: @text-secondary;
                 border: none;
                 padding: 12px 14px;
                 font-size: 14px;
@@ -97,24 +97,24 @@ class TabbedContentWidget(QWidget):
                 min-width: 120px;
             }
             QTabBar::tab:selected {
-                color: #0a84ff;
-                border-bottom: 2px solid #0a84ff;
+                color: @accent;
+                border-bottom: 2px solid @accent;
             }
             QTabBar::tab:hover:!selected {
-                color: #f5f5f7;
+                color: @text;
             }
             QTabBar::tab:disabled {
-                color: #48484a;
+                color: @text-faint;
             }
             QTabBar[unsupportedMeeting="true"]::tab:last {
-                color: #48484a;
+                color: @text-faint;
             }
             QTabBar[unsupportedMeeting="true"]::tab:last:hover {
-                color: #636366;
+                color: @text-muted;
             }
             QTabBar[unsupportedMeeting="true"]::tab:last:selected {
-                color: #636366;
-                border-bottom: 2px solid #545456;
+                color: @text-muted;
+                border-bottom: 2px solid @border-hover;
             }
         """)
 

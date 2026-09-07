@@ -14,9 +14,10 @@ from PyQt6.QtCore import QRectF, QTimer, Qt
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-_TRACK: Final[QColor] = QColor(255, 255, 255, 22)
-_FILL_START: Final[QColor] = QColor("#0a84ff")
-_FILL_END: Final[QColor] = QColor("#64d2ff")
+from ui_qt.utils.palette import token_color
+
+#: The sheen is a white highlight travelling over the blue fill, so it stays
+#: white in both themes; the track and the fill follow the palette.
 _SHEEN: Final[QColor] = QColor(255, 255, 255, 70)
 
 _TICK_MS: Final[int] = 16
@@ -112,7 +113,7 @@ class AnimatedProgressBar(QWidget):
 
         track = QPainterPath()
         track.addRoundedRect(rect, radius, radius)
-        painter.fillPath(track, _TRACK)
+        painter.fillPath(track, token_color("overlay-rgb", 22))
         painter.setClipPath(track)
 
         if self._indeterminate:
@@ -126,10 +127,10 @@ class AnimatedProgressBar(QWidget):
         left = -span + (rect.width() + span) * eased
 
         gradient = QLinearGradient(left, 0.0, left + span, 0.0)
-        gradient.setColorAt(0.0, QColor(10, 132, 255, 0))
-        gradient.setColorAt(0.45, _FILL_START)
-        gradient.setColorAt(0.75, _FILL_END)
-        gradient.setColorAt(1.0, QColor(100, 210, 250, 0))
+        gradient.setColorAt(0.0, token_color("accent", 0))
+        gradient.setColorAt(0.45, token_color("accent"))
+        gradient.setColorAt(0.75, token_color("accent-cyan"))
+        gradient.setColorAt(1.0, token_color("accent-cyan", 0))
         painter.fillRect(QRectF(left, rect.top(), span, rect.height()), gradient)
 
     def _paint_fill(self, painter: QPainter, rect: QRectF, radius: float) -> None:
@@ -139,8 +140,8 @@ class AnimatedProgressBar(QWidget):
         filled = QRectF(rect.left(), rect.top(), width, rect.height())
 
         gradient = QLinearGradient(rect.left(), 0.0, rect.right(), 0.0)
-        gradient.setColorAt(0.0, _FILL_START)
-        gradient.setColorAt(1.0, _FILL_END)
+        gradient.setColorAt(0.0, token_color("accent"))
+        gradient.setColorAt(1.0, token_color("accent-cyan"))
 
         path = QPainterPath()
         path.addRoundedRect(filled, radius, radius)

@@ -1269,19 +1269,19 @@ class MeetingModeTab(QWidget):
             row.setAccessibleDescription(detail_text)
             if step_status == "completed":
                 icon_text = "✓"
-                icon_color = "#30d158"
+                icon_color = "@success-text"
             elif step_status == "running":
                 icon_text = "●"
-                icon_color = "#0a84ff"
+                icon_color = "@accent"
             elif step_status == "failed":
                 icon_text = "✗"
-                icon_color = "#ff453a"
+                icon_color = "@danger-text"
             elif step_status == "skipped":
                 icon_text = "–"
-                icon_color = "#636366"
+                icon_color = "@text-muted"
             else:
                 icon_text = "○"
-                icon_color = "#636366"
+                icon_color = "@text-muted"
 
             icon_label = QLabel(icon_text)
             icon_label.setObjectName("meetingFinalizationStepIcon")

@@ -4,6 +4,7 @@ from html import escape
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel
 
+from ui_qt.utils.palette import current_palette
 from ui_qt.widgets.eliding_label import ElidingLabel
 
 
@@ -53,6 +54,7 @@ class DownloadsLabel(ElidingLabel):
         )
         QLabel.setText(
             self,
-            f'{escape(prefix)} <a href="downloads" style="color: #0a84ff; '
+            f'{escape(prefix)} <a href="downloads" '
+            f'style="color: {current_palette().css("accent")}; '
             'text-decoration: underline;">Downloads</a>.',
         )

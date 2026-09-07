@@ -17,6 +17,7 @@ from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
 )
+from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
 
 logger = logging.getLogger(__name__)
@@ -165,8 +166,8 @@ class WaveformOverlay(QWidget):
             logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             try:
                 painter = QPainter(self)
-                painter.fillRect(self.rect(), QColor(28, 28, 30, 238))
-                painter.setPen(QPen(QColor(245, 245, 247)))
+                painter.fillRect(self.rect(), token_color("overlay-bg"))
+                painter.setPen(QPen(token_color("overlay-text")))
                 painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
@@ -216,7 +217,7 @@ class WaveformOverlay(QWidget):
         """
         top = self._base_height - 8
         text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
-        painter.setPen(QPen(QColor(245, 245, 247)))
+        painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(self._streaming_preview_font())
         painter.drawText(
             text_rect,
@@ -317,8 +318,8 @@ class WaveformOverlay(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, 12, 12)
 
-        painter.fillPath(path, QColor(28, 28, 30, 238))
-        painter.setPen(QPen(QColor(84, 84, 86, 170), 1))
+        painter.fillPath(path, token_color("overlay-bg"))
+        painter.setPen(QPen(token_color("overlay-border"), 1))
         painter.drawPath(path)
 
     def _draw_particle_swarm(self, painter: QPainter):
@@ -351,13 +352,13 @@ class WaveformOverlay(QWidget):
         if self.animation_time > 0.4:
             progress = min(1.0, (self.animation_time - 0.4) / 0.3)
             alpha = int(200 * progress)
-            painter.setPen(_round_pen(QColor(48, 209, 88, alpha), 3))
+            painter.setPen(_round_pen(token_color("success", alpha), 3))
             painter.drawLine(int(w // 2 - 15), int(h // 2), int(w // 2 - 5), int(h // 2 + 10))
             painter.drawLine(int(w // 2 - 5), int(h // 2 + 10), int(w // 2 + 15), int(h // 2 - 10))
 
         self._draw_particle_swarm(painter)
 
-        painter.setPen(QPen(QColor(245, 245, 247)))
+        painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Enabled")
 
@@ -369,13 +370,13 @@ class WaveformOverlay(QWidget):
             progress = min(1.0, (self.animation_time - 0.1) / 0.2)
             alpha = int(200 * progress)
             x_size = 15
-            painter.setPen(_round_pen(QColor(255, 69, 58, alpha), 3))
+            painter.setPen(_round_pen(token_color("danger", alpha), 3))
             painter.drawLine(w // 2 - x_size, h // 2 - x_size, w // 2 + x_size, h // 2 + x_size)
             painter.drawLine(w // 2 + x_size, h // 2 - x_size, w // 2 - x_size, h // 2 + x_size)
 
         self._draw_particle_swarm(painter)
 
-        painter.setPen(QPen(QColor(245, 245, 247)))
+        painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Disabled")
 
@@ -387,7 +388,7 @@ class WaveformOverlay(QWidget):
             progress = min(1.0, (self.animation_time - 0.3) / 0.3)
             alpha = int(220 * progress)
 
-            icon_color = QColor(100, 210, 255, alpha)
+            icon_color = token_color("accent-cyan", alpha)
             painter.setPen(_round_pen(icon_color, 2))
 
             cx, cy = w // 2, h // 2 - 5
@@ -401,14 +402,14 @@ class WaveformOverlay(QWidget):
 
         self._draw_particle_swarm(painter)
 
-        painter.setPen(QPen(QColor(245, 245, 247)))
+        painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, "Copied!")
 
     def _draw_cleaning_state(self, painter: QPainter):
         rect = self.rect()
         w, h = rect.width(), rect.height()
-        purple = QColor(191, 90, 242)
+        purple = token_color("purple")
 
         # Sparkle layout: (x_frac, y_frac, base_size, twinkle_phase). Phases are
         # staggered so the sparkles shimmer in sequence rather than in unison.
@@ -467,7 +468,7 @@ class WaveformOverlay(QWidget):
 
         blade_angle = 12 + 8 * math.sin(progress * math.pi * 2)
 
-        amber = QColor(255, 159, 10)
+        amber = token_color("warning")
         painter.setPen(_round_pen(amber, 3))
 
         painter.drawLine(
@@ -495,7 +496,7 @@ class WaveformOverlay(QWidget):
         center_x, center_y = w // 2, h // 2 - 10
         radius = 18
 
-        cyan = QColor(100, 210, 255)
+        cyan = token_color("accent-cyan")
         painter.setPen(_round_pen(cyan, 2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
 

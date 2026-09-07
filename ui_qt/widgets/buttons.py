@@ -18,18 +18,17 @@ from PyQt6.QtCore import (
     QRectF,
     QTimer,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QFont, QPainter, QPen
+
+from ui_qt.utils.palette import token_color
 
 
 class HotkeyHoverHint(QWidget):
     """Floating pill-shaped shortcut hint shown above a button on hover."""
 
-    _BACKGROUND = QColor(58, 58, 60, 248)
-    _BORDER = QColor(255, 255, 255, 38)
-
     _TEXT_STYLE = """
         QLabel {
-            color: #f5f5f7;
+            color: @overlay-text;
             font-size: 11px;
             font-weight: 600;
             letter-spacing: 0.5px;
@@ -82,8 +81,8 @@ class HotkeyHoverHint(QWidget):
         # across two device pixels.
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = rect.height() / 2.0
-        painter.setPen(QPen(self._BORDER, 1.0))
-        painter.setBrush(self._BACKGROUND)
+        painter.setPen(QPen(token_color("overlay-border"), 1.0))
+        painter.setBrush(token_color("overlay-bg"))
         painter.drawRoundedRect(rect, radius, radius)
 
     def showEvent(self, event):

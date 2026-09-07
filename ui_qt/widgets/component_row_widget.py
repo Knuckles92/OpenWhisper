@@ -29,68 +29,68 @@ from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
 logger = logging.getLogger(__name__)
 
 # Child labels must set an explicit transparent background — the global
-# ``QWidget { background-color: #1c1c1e }`` rule otherwise paints dark
-# rectangles on top of the lighter row fill.
+# ``QWidget { background-color: @bg }`` rule otherwise paints window-coloured
+# rectangles on top of the row fill.
 _ROW_STYLE = """
     QFrame#componentRow {
-        background-color: #141b22;
-        border: 1px solid #303b45;
+        background-color: @slate-surface;
+        border: 1px solid @slate-border;
         border-radius: 12px;
     }
     QFrame#componentRow:hover {
-        background-color: #182028;
-        border: 1px solid #3d4a57;
+        background-color: @slate-surface-hover;
+        border: 1px solid @slate-border-strong;
     }
     QFrame#componentRow:focus {
-        border: 1px solid #2a5382;
+        border: 1px solid @accent-tint-border;
         outline: none;
     }
     QFrame#componentRow[selected="true"] {
-        background-color: #17263a;
-        border: 1px solid #3a6aa3;
+        background-color: @accent-tint-strong;
+        border: 1px solid @accent-tint-border-strong;
     }
     QLabel#componentRowName {
-        color: #e8edf2;
+        color: @slate-text;
         background-color: transparent;
         border: none;
         font-weight: 600;
     }
     QLabel#componentRowSummary {
-        color: #98a3b0;
+        color: @slate-text-3;
         background-color: transparent;
         border: none;
     }
     QLabel#componentRowSize {
-        color: #c7d0d9;
+        color: @slate-text-2;
         background-color: transparent;
         border: none;
     }
     QLabel#componentRowBadge {
-        background-color: rgba(141, 154, 167, 0.12);
-        color: #aeb8c3;
-        border: 1px solid rgba(141, 154, 167, 0.28);
+        background-color: rgba(@slate-text-3-rgb, 0.12);
+        color: @slate-text-2;
+        border: 1px solid rgba(@slate-text-3-rgb, 0.28);
         border-radius: 6px;
         padding: 2px 8px;
         font-size: 10px;
         font-weight: 600;
     }
     QLabel#componentRowBadge[tone="downloading"] {
-        background-color: rgba(10, 132, 255, 0.14);
-        color: #6fb1ff;
-        border: 1px solid rgba(10, 132, 255, 0.28);
+        background-color: rgba(@accent-rgb, 0.14);
+        color: @accent-soft;
+        border: 1px solid rgba(@accent-rgb, 0.28);
     }
     QLabel#componentRowBadge[tone="installed"] {
-        background-color: rgba(48, 209, 88, 0.12);
-        color: #32d74b;
-        border: 1px solid rgba(48, 209, 88, 0.28);
+        background-color: rgba(@success-rgb, 0.12);
+        color: @success-text-strong;
+        border: 1px solid rgba(@success-rgb, 0.28);
     }
     QLabel#componentRowBadge[tone="warning"] {
-        background-color: rgba(255, 159, 10, 0.14);
-        color: #ff9f0a;
-        border: 1px solid rgba(255, 159, 10, 0.32);
+        background-color: rgba(@warning-rgb, 0.14);
+        color: @warning-text;
+        border: 1px solid rgba(@warning-rgb, 0.32);
     }
     QProgressBar#componentProgress {
-        background-color: #243039;
+        background-color: @slate-raised;
         border: none;
         border-radius: 3px;
         max-height: 6px;
@@ -99,7 +99,7 @@ _ROW_STYLE = """
         color: transparent;
     }
     QProgressBar#componentProgress::chunk {
-        background-color: #0a84ff;
+        background-color: @accent;
         border-radius: 3px;
     }
     QPushButton#componentInstallButton,
@@ -112,27 +112,27 @@ _ROW_STYLE = """
         max-height: 28px;
     }
     QPushButton#componentInstallButton {
-        background-color: rgba(10, 132, 255, 0.18);
-        color: #6fb1ff;
-        border: 1px solid rgba(10, 132, 255, 0.32);
+        background-color: rgba(@accent-rgb, 0.18);
+        color: @accent-soft;
+        border: 1px solid rgba(@accent-rgb, 0.32);
     }
     QPushButton#componentInstallButton:hover {
-        background-color: rgba(10, 132, 255, 0.28);
-        border: 1px solid rgba(10, 132, 255, 0.5);
+        background-color: rgba(@accent-rgb, 0.28);
+        border: 1px solid rgba(@accent-rgb, 0.5);
     }
     QPushButton#componentInstallButton:disabled {
-        background-color: #1b252e;
-        color: #5d6873;
-        border: 1px solid #263038;
+        background-color: @slate-raised;
+        color: @slate-text-disabled;
+        border: 1px solid @slate-border-subtle;
     }
     QPushButton#componentRemoveButton {
         background-color: transparent;
-        color: #ff6961;
-        border: 1px solid #3b4752;
+        color: @danger-text-soft;
+        border: 1px solid @slate-border-strong;
     }
     QPushButton#componentRemoveButton:hover {
-        background-color: rgba(255, 69, 58, 0.14);
-        border: 1px solid rgba(255, 69, 58, 0.45);
+        background-color: rgba(@danger-rgb, 0.14);
+        border: 1px solid rgba(@danger-rgb, 0.45);
     }
 """
 

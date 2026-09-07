@@ -16,6 +16,8 @@ from typing import Final, Sequence
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel
 
+from ui_qt.utils.palette import resolve_tokens
+
 #: (text, emphasized) runs. Emphasized runs render bright and bold once locked.
 Segments = Sequence[tuple[str, bool]]
 
@@ -25,8 +27,8 @@ _DURATION_MS: Final[int] = 720
 #: Characters still scrambling ahead of the locked run.
 _HEAD: Final[int] = 4
 
-_EMPHASIS_STYLE: Final[str] = "color:#f5f5f7; font-weight:600"
-_SCRAMBLE_STYLE: Final[str] = "color:#0a84ff"
+_EMPHASIS_STYLE: Final[str] = "color:@text; font-weight:600"
+_SCRAMBLE_STYLE: Final[str] = "color:@accent"
 
 
 class DecodeLabel(QLabel):
@@ -109,6 +111,10 @@ class DecodeLabel(QLabel):
         QLabel.setText(self, self._render(locked, scramble_head=_HEAD))
 
     def _render(self, locked: int, scramble_head: int = 0) -> str:
+        # Only the style attributes are resolved: the text itself may contain
+        # an "@" that is not a token.
+        emphasis_style = resolve_tokens(_EMPHASIS_STYLE)
+        scramble_style = resolve_tokens(_SCRAMBLE_STYLE)
         parts: list[str] = []
         start = 0
         for text, emphasized in self._segments:
@@ -117,7 +123,7 @@ class DecodeLabel(QLabel):
             if locked_run:
                 escaped = html.escape(locked_run)
                 if emphasized:
-                    parts.append(f"<span style='{_EMPHASIS_STYLE}'>{escaped}</span>")
+                    parts.append(f"<span style='{emphasis_style}'>{escaped}</span>")
                 else:
                     parts.append(escaped)
             head_from = max(start, locked)
@@ -127,7 +133,7 @@ class DecodeLabel(QLabel):
                     parts.append(" ")
                 else:
                     glyph = html.escape(random.choice(_GLYPHS))
-                    parts.append(f"<span style='{_SCRAMBLE_STYLE}'>{glyph}</span>")
+                    parts.append(f"<span style='{scramble_style}'>{glyph}</span>")
             start = end
         # Rich text collapses runs of spaces, which would close up the
         # separators, so pin them.

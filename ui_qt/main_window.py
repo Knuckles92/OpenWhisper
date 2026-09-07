@@ -33,7 +33,7 @@ class CustomTitleBar(QFrame):
     _MENU_BAR_STYLE = """
         QMenuBar {
             background-color: transparent;
-            color: #8e8e93;
+            color: @text-secondary;
             font-size: 12px;
             border: none;
             spacing: 0px;
@@ -43,15 +43,15 @@ class CustomTitleBar(QFrame):
             padding: 4px 10px;
         }
         QMenuBar::item:selected {
-            background-color: #3a3a3c;
-            color: #ffffff;
+            background-color: @surface-hover;
+            color: @text-heading;
         }
         QMenuBar::item:pressed {
-            background-color: #48484a;
+            background-color: @surface-active;
         }
         QMenu::separator {
             height: 1px;
-            background-color: #3a3a3c;
+            background-color: @surface-hover;
             margin: 4px 8px;
         }
     """
@@ -59,7 +59,7 @@ class CustomTitleBar(QFrame):
     _TITLE_LABEL_STYLE = """
         QLabel {
             background-color: transparent;
-            color: #f5f5f7;
+            color: @text;
             font-size: 13px;
             font-weight: 600;
             font-family: 'Segoe UI', sans-serif;
@@ -70,13 +70,13 @@ class CustomTitleBar(QFrame):
         QPushButton {
             background-color: transparent;
             border: none;
-            color: #8e8e93;
+            color: @text-secondary;
             font-size: 14px;
             font-family: 'Segoe UI', sans-serif;
         }
         QPushButton:hover {
-            background-color: #3a3a3c;
-            color: #ffffff;
+            background-color: @surface-hover;
+            color: @text-heading;
         }
     """
 
@@ -84,20 +84,20 @@ class CustomTitleBar(QFrame):
         QPushButton {
             background-color: transparent;
             border: none;
-            color: #8e8e93;
+            color: @text-secondary;
             font-size: 14px;
             font-family: 'Segoe UI', sans-serif;
         }
         QPushButton:hover {
-            background-color: #ff453a;
-            color: #ffffff;
+            background-color: @danger;
+            color: @on-accent;
         }
     """
 
     _TITLE_BAR_STYLE = """
         #customTitleBar {
-            background-color: #2c2c2e;
-            border-bottom: 1px solid #3a3a3c;
+            background-color: @surface;
+            border-bottom: 1px solid @border;
         }
     """
 
@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
 
         central_widget.setStyleSheet("""
             QWidget#centralWidget {
-                border: 1px solid #3a3a3c;
+                border: 1px solid @border;
             }
         """)
         central_widget.setObjectName("centralWidget")
@@ -485,92 +485,92 @@ class MainWindow(QMainWindow):
 
     _FOOTER_BAR_STYLE = """
         QWidget#footerBar {
-            background-color: #1c1c1e;
-            border-top: 1px solid #2c2c2e;
+            background-color: @bg;
+            border-top: 1px solid @border-subtle;
         }
     """
 
     _MODELS_BUTTON_STYLE = """
         QPushButton#modelsButton {
-            background-color: #2c2c2e;
-            color: #30d158;
-            border: 1px solid #3a3a3c;
+            background-color: @surface;
+            color: @success-text;
+            border: 1px solid @border;
             border-radius: 8px;
             padding: 6px 18px;
             font-weight: 600;
             font-size: 13px;
         }
         QPushButton#modelsButton:hover {
-            background-color: #30d158;
-            color: #ffffff;
-            border: 1px solid #30d158;
+            background-color: @success;
+            color: @on-accent;
+            border: 1px solid @success;
         }
         QPushButton#modelsButton:pressed {
-            background-color: #248a3d;
-            color: #ffffff;
+            background-color: @success-pressed;
+            color: @on-accent;
         }
     """
 
     _TRAY_BUTTON_STYLE = """
         QPushButton#trayButton {
-            background-color: #2c2c2e;
-            color: #e5e5e7;
-            border: 1px solid #3a3a3c;
+            background-color: @surface;
+            color: @text-body;
+            border: 1px solid @border;
             border-radius: 8px;
             padding: 6px 18px;
             font-weight: 600;
             font-size: 13px;
         }
         QPushButton#trayButton:hover {
-            background-color: #0a84ff;
-            color: #ffffff;
-            border: 1px solid #0a84ff;
+            background-color: @accent;
+            color: @on-accent;
+            border: 1px solid @accent;
         }
         QPushButton#trayButton:pressed {
-            background-color: #0060df;
-            color: #ffffff;
+            background-color: @accent-pressed;
+            color: @on-accent;
         }
     """
 
     _SETTINGS_BUTTON_STYLE = """
         QPushButton#settingsButton {
-            background-color: #2c2c2e;
-            color: #64d2ff;
-            border: 1px solid #3a3a3c;
+            background-color: @surface;
+            color: @accent-cyan;
+            border: 1px solid @border;
             border-radius: 8px;
             padding: 6px 18px;
             font-weight: 600;
             font-size: 13px;
         }
         QPushButton#settingsButton:hover {
-            background-color: #0a84ff;
-            color: #ffffff;
-            border: 1px solid #0a84ff;
+            background-color: @accent;
+            color: @on-accent;
+            border: 1px solid @accent;
         }
         QPushButton#settingsButton:pressed {
-            background-color: #0060df;
-            color: #ffffff;
+            background-color: @accent-pressed;
+            color: @on-accent;
         }
     """
 
     _QUIT_BUTTON_STYLE = """
         QPushButton#quitButton {
-            background-color: #2c2c2e;
-            color: #ff453a;
-            border: 1px solid #3a3a3c;
+            background-color: @surface;
+            color: @danger-text;
+            border: 1px solid @border;
             border-radius: 8px;
             padding: 6px 18px;
             font-weight: 600;
             font-size: 13px;
         }
         QPushButton#quitButton:hover {
-            background-color: #ff453a;
-            color: #ffffff;
-            border: 1px solid #ff453a;
+            background-color: @danger;
+            color: @on-accent;
+            border: 1px solid @danger;
         }
         QPushButton#quitButton:pressed {
-            background-color: #d70015;
-            color: #ffffff;
+            background-color: @danger-pressed;
+            color: @on-accent;
         }
     """
 

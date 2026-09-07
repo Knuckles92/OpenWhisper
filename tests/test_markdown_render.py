@@ -13,6 +13,16 @@ from ui_qt.utils.markdown_render import (
     MarkdownStyle,
     render_markdown,
 )
+from ui_qt.utils.palette import (
+    DARK_PALETTE,
+    LIGHT_PALETTE,
+    set_current_palette,
+    token_color,
+)
+
+
+def _hex(token):
+    return token_color(token).name()
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -84,17 +94,30 @@ class TestRenderMarkdown:
         document = _render(SAMPLE)
         intro = _block_named(document, "Intro with bold, code, and a link.")
         by_text = {f.text(): f.charFormat() for f in _fragments(intro)}
-        assert by_text["code"].background().color().name() == PREVIEW_STYLE.code_background
+        assert by_text["code"].background().color().name() == _hex(PREVIEW_STYLE.code_background)
         assert by_text["code"].fontFixedPitch()
         assert by_text["bold"].fontWeight() > by_text[", "].fontWeight()
         assert by_text["link"].isAnchor()
-        assert by_text["link"].foreground().color().name() == "#4da3ff"
+        assert by_text["link"].foreground().color().name() == _hex("accent-soft")
+
+    def test_colours_follow_the_active_palette(self):
+        set_current_palette(LIGHT_PALETTE)
+        try:
+            document = _render(SAMPLE)
+            title = _block_named(document, "Title")
+            heading = next(_fragments(title)).charFormat().foreground().color().name()
+            quote = _block_named(document, "quoted").blockFormat().background().color().name()
+            assert heading == LIGHT_PALETTE.color("text-heading").name()
+            assert quote == LIGHT_PALETTE.color(PREVIEW_STYLE.quote_background).name()
+            assert heading != DARK_PALETTE.color("text-heading").name()
+        finally:
+            set_current_palette(DARK_PALETTE)
 
     def test_fenced_code_is_one_slab_with_the_gap_after_its_last_line(self):
         document = _render(SAMPLE)
         first = _block_named(document, "line one").blockFormat()
         last = _block_named(document, "line two").blockFormat()
-        assert first.background().color().name() == PREVIEW_STYLE.code_background
+        assert first.background().color().name() == _hex(PREVIEW_STYLE.code_background)
         assert first.bottomMargin() == 0
         assert last.bottomMargin() == PREVIEW_STYLE.paragraph_gap
 
@@ -104,7 +127,7 @@ class TestRenderMarkdown:
         document = _render(SAMPLE)
         quote = _block_named(document, "quoted").blockFormat()
         assert quote.hasProperty(QTextFormat.Property.BlockQuoteLevel)
-        assert quote.background().color().name() == PREVIEW_STYLE.quote_background
+        assert quote.background().color().name() == _hex(PREVIEW_STYLE.quote_background)
         assert quote.leftMargin() == PREVIEW_STYLE.indent_px
 
     def test_paragraph_spacing_comes_from_the_style_not_the_importer(self):
@@ -125,7 +148,7 @@ class TestRenderMarkdown:
 
         table = QTextCursor(header).currentTable()
         assert table is not None
-        assert table.cellAt(0, 0).format().background().color().name() == (
+        assert table.cellAt(0, 0).format().background().color().name() == _hex(
             PREVIEW_STYLE.code_background
         )
         assert table.cellAt(1, 0).format().background().style().value == 0

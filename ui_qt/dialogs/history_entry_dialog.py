@@ -35,50 +35,50 @@ logger = logging.getLogger(__name__)
 
 _DIALOG_STYLE = """
     QFrame#historyEntrySection {
-        background-color: rgba(44, 44, 46, 0.55);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background-color: rgba(@surface-rgb, 0.55);
+        border: 1px solid rgba(@overlay-rgb, 0.06);
         border-radius: 10px;
     }
     QLabel#historyEntryTitle {
-        color: #f5f5f7;
+        color: @text;
         background-color: transparent;
         font-size: 18px;
         font-weight: 700;
     }
     QLabel#historyEntryChip {
-        color: #6fb1ff;
-        background-color: rgba(10, 132, 255, 0.12);
-        border: 1px solid rgba(10, 132, 255, 0.25);
+        color: @accent-soft;
+        background-color: rgba(@accent-rgb, 0.12);
+        border: 1px solid rgba(@accent-rgb, 0.25);
         border-radius: 6px;
         padding: 3px 8px;
         font-size: 10px;
         font-weight: 600;
     }
     QLabel#historyEntryCleanupChip {
-        color: #30d158;
-        background-color: rgba(48, 209, 88, 0.12);
-        border: 1px solid rgba(48, 209, 88, 0.28);
+        color: @success-text;
+        background-color: rgba(@success-rgb, 0.12);
+        border: 1px solid rgba(@success-rgb, 0.28);
         border-radius: 6px;
         padding: 3px 8px;
         font-size: 10px;
         font-weight: 600;
     }
     QLabel#historyEntrySectionTitle {
-        color: #f5f5f7;
+        color: @text;
         background-color: transparent;
         border: none;
         font-size: 12px;
         font-weight: 700;
     }
     QLabel#historyEntryFactLabel {
-        color: #8e8e93;
+        color: @text-secondary;
         background-color: transparent;
         border: none;
         font-size: 10px;
         font-weight: 600;
     }
     QLabel#historyEntryFactValue {
-        color: #d1d1d6;
+        color: @text-body;
         background-color: transparent;
         border: none;
         font-size: 11px;

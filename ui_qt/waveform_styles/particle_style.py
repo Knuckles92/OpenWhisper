@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush
 from PyQt6.QtCore import QRect, QRectF, Qt
 from .base_style import BaseWaveformStyle, round_pen
+from ui_qt.utils.palette import token_color
 
 
 class Particle:
@@ -57,8 +58,6 @@ class ParticleStyle(BaseWaveformStyle):
         self.wind_strength = config.get('wind_strength', 5)
         self.audio_response = config.get('audio_response', 1.5)
 
-        self.bg_color = config.get('bg_color', '#0a0a0a')
-        self.text_color = config.get('text_color', '#ffffff')
         self.glow_effect = config.get('glow_effect', True)
 
         self.turbulence_strength = config.get('turbulence_strength', 10)
@@ -70,15 +69,6 @@ class ParticleStyle(BaseWaveformStyle):
         self._cancel_initialized = False
         self._last_cancel_progress = 1.0
         self._last_cancel_update: Optional[float] = None
-
-    def _hex_to_qcolor(self, hex_color: str) -> QColor:
-        if not hex_color.startswith('#'):
-            return QColor(hex_color)
-        hex_color = hex_color.lstrip('#')
-        r = int(hex_color[0:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-        return QColor(r, g, b)
 
     def draw_recording_state(self, painter: QPainter, rect: QRect, message: str = "Recording..."):
         dt = 1/30
@@ -171,11 +161,11 @@ class ParticleStyle(BaseWaveformStyle):
         size = int(26 * (1.0 - 0.6 * progress))
         alpha = max(0, int(255 * (1.0 - progress)))
 
-        painter.setPen(round_pen(QColor(255, 69, 58, alpha), 3))
+        painter.setPen(round_pen(token_color("danger", alpha), 3))
         painter.drawLine(center_x - size, center_y - size, center_x + size, center_y + size)
         painter.drawLine(center_x + size, center_y - size, center_x - size, center_y + size)
 
-        painter.setPen(QColor(255, 255, 255, alpha))
+        painter.setPen(token_color("overlay-text", alpha))
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
         text_rect = QRect(0, rect.height() - 25, rect.width(), 20)
@@ -334,7 +324,7 @@ class ParticleStyle(BaseWaveformStyle):
                 continue
 
     def _draw_text(self, painter: QPainter, rect: QRect, message: str):
-        painter.setPen(self._hex_to_qcolor(self.text_color))
+        painter.setPen(token_color("overlay-text"))
         font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         painter.setFont(font)
         text_rect = QRect(0, rect.height() - 25, rect.width(), 20)

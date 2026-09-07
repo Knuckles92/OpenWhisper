@@ -145,35 +145,35 @@ class DropZoneWidget(QFrame):
             border: none;
         }
         QFrame#dropZone QLabel#dropZoneIcon {
-            background-color: rgba(10, 132, 255, 0.14);
+            background-color: rgba(@accent-rgb, 0.14);
             border-radius: 16px;
         }
     """
     _IDLE_STYLE = """
         QFrame#dropZone {
-            background-color: rgba(255, 255, 255, 0.025);
-            border: 2px dashed #48484a;
+            background-color: rgba(@overlay-rgb, 0.025);
+            border: 2px dashed @border-strong;
             border-radius: 16px;
         }
         QFrame#dropZone:hover {
-            border-color: #0a84ff;
-            background-color: rgba(10, 132, 255, 0.06);
+            border-color: @accent;
+            background-color: rgba(@accent-rgb, 0.06);
         }
     """ + _CHILD_STYLE
     _HOVER_STYLE = """
         QFrame#dropZone {
-            background-color: rgba(10, 132, 255, 0.12);
-            border: 2px solid #0a84ff;
+            background-color: rgba(@accent-rgb, 0.12);
+            border: 2px solid @accent;
             border-radius: 16px;
         }
         QFrame#dropZone QLabel#dropZoneIcon {
-            background-color: rgba(10, 132, 255, 0.28);
+            background-color: rgba(@accent-rgb, 0.28);
         }
     """ + _CHILD_STYLE
     _REJECT_STYLE = """
         QFrame#dropZone {
-            background-color: rgba(255, 69, 58, 0.10);
-            border: 2px dashed #ff453a;
+            background-color: rgba(@danger-rgb, 0.10);
+            border: 2px dashed @danger;
             border-radius: 16px;
         }
     """ + _CHILD_STYLE
@@ -202,13 +202,13 @@ class DropZoneWidget(QFrame):
 
         title = QLabel("Drop audio files here")
         title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        title.setStyleSheet("color: #f5f5f7;")
+        title.setStyleSheet("color: @text;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("or click to browse  ·  several files become a queue")
         subtitle.setFont(QFont("Segoe UI", 11))
-        subtitle.setStyleSheet("color: #8e8e93;")
+        subtitle.setStyleSheet("color: @text-secondary;")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -216,7 +216,7 @@ class DropZoneWidget(QFrame):
 
         formats = QLabel("WAV  ·  MP3  ·  M4A  ·  OGG  ·  FLAC  ·  WMA")
         formats.setFont(QFont("Segoe UI", 10))
-        formats.setStyleSheet("color: #636366;")
+        formats.setStyleSheet("color: @text-muted;")
         formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(formats)
 
@@ -225,7 +225,7 @@ class DropZoneWidget(QFrame):
         self.notice = QLabel()
         self.notice.setObjectName("dropZoneNotice")
         self.notice.setFont(QFont("Segoe UI", 11))
-        self.notice.setStyleSheet("color: #ff453a;")
+        self.notice.setStyleSheet("color: @danger-text;")
         self.notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.notice.setWordWrap(True)
         self.notice.hide()

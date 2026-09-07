@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 
 _MENU_STYLESHEET = """
     QMenu {
-        background-color: rgba(44, 44, 46, 0.95);
-        color: #f5f5f7;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: rgba(@surface-rgb, 0.95);
+        color: @text;
+        border: 1px solid rgba(@overlay-rgb, 0.1);
         border-radius: 10px;
         padding: 6px;
     }
@@ -44,16 +44,16 @@ _MENU_STYLESHEET = """
         font-size: 13px;
     }
     QMenu::item:selected {
-        background-color: #0a84ff;
-        color: #ffffff;
+        background-color: @accent;
+        color: @on-accent;
     }
     QMenu::separator {
-        background-color: rgba(255, 255, 255, 0.08);
+        background-color: rgba(@overlay-rgb, 0.08);
         height: 1px;
         margin: 4px 8px;
     }
     QMenu::item:disabled {
-        color: #8e8e93;
+        color: @text-secondary;
     }
 """
 
@@ -257,68 +257,68 @@ class HistoryItemWidget(QFrame):
     def _apply_style(self):
         self.setStyleSheet("""
             QFrame#historyItem {
-                background-color: rgba(44, 44, 46, 0.5);
+                background-color: rgba(@surface-rgb, 0.5);
                 border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(@overlay-rgb, 0.05);
             }
             QFrame#historyItem:hover {
-                background-color: rgba(58, 58, 60, 0.6);
-                border: 1px solid rgba(10, 132, 255, 0.35);
+                background-color: rgba(@surface-hover-rgb, 0.6);
+                border: 1px solid rgba(@accent-rgb, 0.35);
             }
             QLabel#historyTimestamp {
-                color: #98989d;
+                color: @text-secondary-strong;
                 background-color: transparent;
             }
             QLabel#historyAudioChip {
-                background-color: rgba(255, 255, 255, 0.06);
-                color: #aeaeb2;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-tertiary;
+                border: 1px solid rgba(@overlay-rgb, 0.08);
                 border-radius: 6px;
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 500;
             }
             QLabel#historyModelBadge {
-                background-color: rgba(10, 132, 255, 0.14);
-                color: #6fb1ff;
-                border: 1px solid rgba(10, 132, 255, 0.25);
+                background-color: rgba(@accent-rgb, 0.14);
+                color: @accent-soft;
+                border: 1px solid rgba(@accent-rgb, 0.25);
                 border-radius: 6px;
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
             }
             QLabel#historyCleanupChip {
-                background-color: rgba(191, 90, 242, 0.12);
-                color: #d29bf5;
-                border: 1px solid rgba(191, 90, 242, 0.25);
+                background-color: rgba(@purple-rgb, 0.12);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.25);
                 border-radius: 6px;
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
             }
             QLabel#historyTitle {
-                color: #f5f5f7;
+                color: @text;
                 background-color: transparent;
             }
             QLabel#historyPreview {
-                color: #e5e5e7;
+                color: @text-body;
                 background-color: transparent;
             }
             QPushButton#retranscribeBtn {
-                background-color: rgba(48, 209, 88, 0.12);
-                color: #32d74b;
-                border: 1px solid rgba(48, 209, 88, 0.28);
+                background-color: rgba(@success-rgb, 0.12);
+                color: @success-text-strong;
+                border: 1px solid rgba(@success-rgb, 0.28);
                 border-radius: 7px;
                 padding: 4px 12px;
                 font-size: 11px;
                 font-weight: 600;
             }
             QPushButton#retranscribeBtn:hover {
-                background-color: rgba(48, 209, 88, 0.22);
-                border: 1px solid rgba(48, 209, 88, 0.45);
+                background-color: rgba(@success-rgb, 0.22);
+                border: 1px solid rgba(@success-rgb, 0.45);
             }
             QPushButton#retranscribeBtn:pressed {
-                background-color: rgba(48, 209, 88, 0.32);
+                background-color: rgba(@success-rgb, 0.32);
             }
         """)
 
@@ -538,18 +538,18 @@ class HistorySidebar(QWidget):
     def _apply_style(self):
         self.setStyleSheet("""
             QWidget#historySidebar {
-                background-color: #1c1c1e;
+                background-color: @bg;
             }
             QWidget#sidebarContent {
-                background-color: #1c1c1e;
-                border-left: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: @bg;
+                border-left: 1px solid rgba(@overlay-rgb, 0.08);
             }
             QLabel#sidebarHeader {
-                color: #ffffff;
+                color: @text-heading;
                 font-weight: 700;
             }
             QLabel#sectionHeader {
-                color: #98989d;
+                color: @text-secondary-strong;
                 padding-top: 4px;
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
@@ -558,30 +558,30 @@ class HistorySidebar(QWidget):
             }
             QPushButton#sidebarMenuBtn {
                 background-color: transparent;
-                color: #8e8e93;
+                color: @text-secondary;
                 border: none;
                 border-radius: 14px;
                 padding: 0px;
                 font-size: 15px;
             }
             QPushButton#sidebarMenuBtn:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
+                background-color: rgba(@overlay-rgb, 0.1);
+                color: @text-heading;
             }
             QLineEdit#historySearchInput {
-                background-color: rgba(44, 44, 46, 0.8);
-                color: #f5f5f7;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: rgba(@surface-rgb, 0.8);
+                color: @text;
+                border: 1px solid rgba(@overlay-rgb, 0.08);
                 border-radius: 8px;
                 padding: 4px 10px;
                 font-size: 12px;
             }
             QLineEdit#historySearchInput:focus {
-                border: 1px solid #0a84ff;
-                background-color: rgba(44, 44, 46, 1.0);
+                border: 1px solid @accent;
+                background-color: rgba(@surface-rgb, 1.0);
             }
             QLineEdit#historySearchInput::placeholder {
-                color: #636366;
+                color: @text-muted;
             }
             QScrollArea#historyScrollArea {
                 background-color: transparent;
@@ -596,12 +596,12 @@ class HistorySidebar(QWidget):
                 margin: 0px;
             }
             QScrollArea#historyScrollArea QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.15);
+                background: rgba(@overlay-rgb, 0.15);
                 border-radius: 4px;
                 min-height: 30px;
             }
             QScrollArea#historyScrollArea QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: rgba(@overlay-rgb, 0.3);
             }
             QScrollArea#historyScrollArea QScrollBar::add-line:vertical,
             QScrollArea#historyScrollArea QScrollBar::sub-line:vertical {
@@ -690,7 +690,7 @@ class HistorySidebar(QWidget):
 
     def _make_empty_label(self, message: str) -> QLabel:
         label = QLabel(message)
-        label.setStyleSheet("color: #636366; font-size: 12px; padding: 8px 0px;")
+        label.setStyleSheet("color: @text-muted; font-size: 12px; padding: 8px 0px;")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return label
 
@@ -987,9 +987,9 @@ class HistoryEdgeTab(QPushButton):
     def _apply_style(self):
         self.setStyleSheet("""
             QPushButton#historyEdgeTab {
-                background-color: #2c2c2e;
-                color: #8e8e93;
-                border: 1px solid #3a3a3c;
+                background-color: @surface;
+                color: @text-secondary;
+                border: 1px solid @border;
                 border-right: none;
                 border-top-left-radius: 8px;
                 border-bottom-left-radius: 8px;
@@ -1000,10 +1000,10 @@ class HistoryEdgeTab(QPushButton):
                 padding: 0px;
             }
             QPushButton#historyEdgeTab:hover {
-                background-color: #3a3a3c;
-                color: #f5f5f7;
+                background-color: @surface-hover;
+                color: @text;
             }
             QPushButton#historyEdgeTab:pressed {
-                background-color: #1c1c1e;
+                background-color: @bg;
             }
         """)

@@ -35,58 +35,58 @@ from ui_qt.widgets.eliding_label import ElidingLabel
 logger = logging.getLogger(__name__)
 
 # Cohesive row stylesheet. Child labels must set an explicit transparent
-# background — the global ``QWidget { background-color: #1c1c1e }`` rule
-# otherwise paints dark rectangles on top of the lighter row fill.
+# background — the global ``QWidget { background-color: @bg }`` rule
+# otherwise paints window-coloured rectangles on top of the row fill.
 _ROW_STYLE = """
     QFrame#modelRow {
-        background-color: #141b22;
-        border: 1px solid #303b45;
+        background-color: @slate-surface;
+        border: 1px solid @slate-border;
         border-radius: 12px;
     }
     QFrame#modelRow:hover {
-        background-color: #182028;
-        border: 1px solid #3d4a57;
+        background-color: @slate-surface-hover;
+        border: 1px solid @slate-border-strong;
     }
     QFrame#modelRow:focus {
-        border: 1px solid #2a5382;
+        border: 1px solid @accent-tint-border;
         outline: none;
     }
     QFrame#modelRow[active="true"] {
-        background-color: #12222f;
-        border: 1px solid #245079;
+        background-color: @accent-tint;
+        border: 1px solid @accent-tint-border;
     }
     QFrame#modelRow[active="true"]:hover {
-        background-color: #15283a;
-        border: 1px solid #2f6396;
+        background-color: @accent-tint-strong;
+        border: 1px solid @accent-tint-border-strong;
     }
     QFrame#modelRow[selected="true"],
     QFrame#modelRow[selected="true"]:hover {
-        background-color: #17263a;
-        border: 1px solid #3a6aa3;
+        background-color: @accent-tint-strong;
+        border: 1px solid @accent-tint-border-strong;
     }
     QLabel#modelRowName {
-        color: #e8edf2;
+        color: @slate-text;
         background-color: transparent;
         border: none;
         font-weight: 600;
     }
     QLabel#modelRowSummary {
-        color: #98a3b0;
+        color: @slate-text-3;
         background-color: transparent;
         border: none;
     }
     QLabel#modelRowSize {
-        color: #c7d0d9;
+        color: @slate-text-2;
         background-color: transparent;
         border: none;
     }
     QLabel#modelRowSize[muted="true"] {
-        color: #6f7b87;
+        color: @slate-text-4;
     }
     QLabel#modelRowBadge {
-        background-color: rgba(141, 154, 167, 0.12);
-        color: #aeb8c3;
-        border: 1px solid rgba(141, 154, 167, 0.28);
+        background-color: rgba(@slate-text-3-rgb, 0.12);
+        color: @slate-text-2;
+        border: 1px solid rgba(@slate-text-3-rgb, 0.28);
         border-radius: 6px;
         padding: 2px 8px;
         font-size: 10px;
@@ -94,28 +94,28 @@ _ROW_STYLE = """
     }
     QLabel#modelRowBadge[tone="active"],
     QLabel#modelRowBadge[tone="downloading"] {
-        background-color: rgba(10, 132, 255, 0.14);
-        color: #6fb1ff;
-        border: 1px solid rgba(10, 132, 255, 0.28);
+        background-color: rgba(@accent-rgb, 0.14);
+        color: @accent-soft;
+        border: 1px solid rgba(@accent-rgb, 0.28);
     }
     QLabel#modelRowBadge[tone="downloaded"] {
-        background-color: rgba(48, 209, 88, 0.12);
-        color: #32d74b;
-        border: 1px solid rgba(48, 209, 88, 0.28);
+        background-color: rgba(@success-rgb, 0.12);
+        color: @success-text-strong;
+        border: 1px solid rgba(@success-rgb, 0.28);
     }
     QLabel#modelRowBadge[tone="queued"] {
-        background-color: rgba(10, 132, 255, 0.08);
-        color: #8e99a6;
-        border: 1px solid rgba(10, 132, 255, 0.18);
+        background-color: rgba(@accent-rgb, 0.08);
+        color: @slate-text-3;
+        border: 1px solid rgba(@accent-rgb, 0.18);
     }
     QCheckBox#modelSelectCheckbox {
         background-color: transparent;
         border: none;
     }
     QLabel#modelRowUsage {
-        background-color: rgba(10, 132, 255, 0.10);
-        color: #8eb8ff;
-        border: 1px solid rgba(10, 132, 255, 0.22);
+        background-color: rgba(@accent-rgb, 0.10);
+        color: @accent-soft;
+        border: 1px solid rgba(@accent-rgb, 0.22);
         border-radius: 6px;
         padding: 2px 8px;
         font-size: 10px;
@@ -132,50 +132,50 @@ _ROW_STYLE = """
         max-height: 28px;
     }
     QPushButton#modelDownloadButton {
-        background-color: rgba(10, 132, 255, 0.18);
-        color: #6fb1ff;
-        border: 1px solid rgba(10, 132, 255, 0.32);
+        background-color: rgba(@accent-rgb, 0.18);
+        color: @accent-soft;
+        border: 1px solid rgba(@accent-rgb, 0.32);
     }
     QPushButton#modelDownloadButton:hover {
-        background-color: rgba(10, 132, 255, 0.28);
-        border: 1px solid rgba(10, 132, 255, 0.5);
+        background-color: rgba(@accent-rgb, 0.28);
+        border: 1px solid rgba(@accent-rgb, 0.5);
     }
     QPushButton#modelDownloadButton:disabled {
-        background-color: #1b252e;
-        color: #5d6873;
-        border: 1px solid #263038;
+        background-color: @slate-raised;
+        color: @slate-text-disabled;
+        border: 1px solid @slate-border-subtle;
     }
     QPushButton#modelSetActiveButton {
-        background-color: #1b252e;
-        color: #e8edf2;
-        border: 1px solid #35404a;
+        background-color: @slate-raised;
+        color: @slate-text;
+        border: 1px solid @slate-border-strong;
     }
     QPushButton#modelSetActiveButton:hover {
-        background-color: #22303b;
-        border: 1px solid #4b5966;
+        background-color: @slate-raised;
+        border: 1px solid @slate-border-hover;
     }
     QPushButton#modelDeleteButton {
         background-color: transparent;
-        color: #ff6961;
-        border: 1px solid #3b4752;
+        color: @danger-text-soft;
+        border: 1px solid @slate-border-strong;
     }
     QPushButton#modelDeleteButton:hover {
-        background-color: rgba(255, 69, 58, 0.14);
-        border: 1px solid rgba(255, 69, 58, 0.45);
+        background-color: rgba(@danger-rgb, 0.14);
+        border: 1px solid rgba(@danger-rgb, 0.45);
     }
     QPushButton#modelDeleteButton:disabled {
-        color: #5d6873;
-        border: 1px solid #263038;
+        color: @slate-text-disabled;
+        border: 1px solid @slate-border-subtle;
     }
     QProgressBar#modelRowProgress {
-        background-color: #243039;
+        background-color: @slate-raised;
         border: none;
         border-radius: 3px;
         min-height: 6px;
         max-height: 6px;
     }
     QProgressBar#modelRowProgress::chunk {
-        background-color: #0a84ff;
+        background-color: @accent;
         border-radius: 3px;
     }
 """

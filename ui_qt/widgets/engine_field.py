@@ -9,9 +9,10 @@ from math import sin, tau
 from typing import Iterable
 
 from PyQt6.QtCore import QElapsedTimer, QRectF, Qt, QTimer
-from PyQt6.QtGui import QColor, QConicalGradient, QPainter, QPen
+from PyQt6.QtGui import QConicalGradient, QPainter, QPen
 from PyQt6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
 
+from ui_qt.utils.palette import token_color
 from ui_qt.widgets.no_wheel import ElidingComboBox
 
 #: A non-editable QComboBox reports its widest item as a minimum width, which
@@ -34,10 +35,10 @@ class EngineStatus(Enum):
     UNKNOWN = "unknown"
 
 
-_DOT_COLORS = {
-    EngineStatus.READY: "#30d158",
-    EngineStatus.ATTENTION: "#ff9f0a",
-    EngineStatus.UNKNOWN: "#636366",
+_DOT_TOKENS = {
+    EngineStatus.READY: "success",
+    EngineStatus.ATTENTION: "warning",
+    EngineStatus.UNKNOWN: "text-muted",
 }
 
 
@@ -91,24 +92,24 @@ class StatusDot(QLabel):
         painter.setPen(Qt.PenStyle.NoPen)
         center = QRectF(self.rect()).center()
         if not self._busy:
-            painter.setBrush(QColor(_DOT_COLORS[self._status]))
+            painter.setBrush(token_color(_DOT_TOKENS[self._status]))
             painter.drawEllipse(center, DOT_DIAMETER / 2, DOT_DIAMETER / 2)
             return
 
         phase = self._clock.elapsed() / 1200.0
         ring = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(10, 132, 255, 40), 2))
+        painter.setPen(QPen(token_color("accent", 40), 2))
         painter.drawEllipse(ring)
         tail = QConicalGradient(center, -phase * 360)
-        tail.setColorAt(0, QColor("#64d2ff"))
-        tail.setColorAt(0.18, QColor("#0a84ff"))
-        tail.setColorAt(0.75, QColor(10, 132, 255, 0))
-        tail.setColorAt(1, QColor(10, 132, 255, 0))
+        tail.setColorAt(0, token_color("accent-cyan"))
+        tail.setColorAt(0.18, token_color("accent"))
+        tail.setColorAt(0.75, token_color("accent", 0))
+        tail.setColorAt(1, token_color("accent", 0))
         painter.setPen(QPen(tail, 2))
         painter.drawEllipse(ring)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(100, 210, 255, int(130 + 70 * sin(phase * tau))))
+        painter.setBrush(token_color("accent-cyan", int(130 + 70 * sin(phase * tau))))
         painter.drawEllipse(center, 1.6, 1.6)
 
 

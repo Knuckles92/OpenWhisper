@@ -56,13 +56,13 @@ class TranscriptionStatsWidget(QWidget):
         label = QLabel(label_text)
         label.setObjectName("statsLabel")
         label.setFont(QFont("Segoe UI", 10))
-        label.setStyleSheet("color: #8e8e93;")
+        label.setStyleSheet("color: @text-secondary;")
         layout.addWidget(label)
 
         value = QLabel(value_text)
         value.setObjectName("statsValue")
         value.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        value.setStyleSheet("color: #f5f5f7;")
+        value.setStyleSheet("color: @text;")
         layout.addWidget(value)
 
         widget.value_label = value
@@ -72,7 +72,7 @@ class TranscriptionStatsWidget(QWidget):
     def _create_separator(self) -> QWidget:
         separator = QWidget()
         separator.setFixedWidth(1)
-        separator.setStyleSheet("background-color: #3a3a3c;")
+        separator.setStyleSheet("background-color: @border;")
         return separator
 
     def set_stats(

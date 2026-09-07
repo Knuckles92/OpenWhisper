@@ -14,25 +14,28 @@ import html
 import re
 from typing import Final, List
 
-_TEXT: Final[str] = "#d1d1d6"
-_HEADING: Final[str] = "#ffffff"
-_ACCENT: Final[str] = "#0a84ff"
+from ui_qt.utils.palette import resolve_tokens
+
 _MONO: Final[str] = "'Cascadia Mono','Consolas','SF Mono',monospace"
 
-_P_STYLE: Final[str] = f"margin:0px 0px 10px 0px;color:{_TEXT};line-height:140%;"
+# Colours are palette tokens, substituted for the active theme when the notes
+# are rendered rather than when the module is imported. Only these style
+# strings are resolved: release bodies carry "@user" mentions.
+_P_STYLE: Final[str] = "margin:0px 0px 10px 0px;color:@text-body;line-height:140%;"
 _H_STYLE: Final[str] = (
-    f"margin:2px 0px 6px 0px;color:{_HEADING};font-size:13px;font-weight:600;"
+    "margin:2px 0px 6px 0px;color:@text-heading;font-size:13px;font-weight:600;"
 )
 _UL_STYLE: Final[str] = "margin:0px 0px 10px 0px;-qt-list-indent:1;"
-_LI_STYLE: Final[str] = f"margin:0px 0px 5px 0px;color:{_TEXT};line-height:140%;"
+_LI_STYLE: Final[str] = "margin:0px 0px 5px 0px;color:@text-body;line-height:140%;"
 _PRE_STYLE: Final[str] = (
-    "margin:0px 0px 10px 0px;background-color:#1b1b1e;color:#c7c7cc;"
+    "margin:0px 0px 10px 0px;background-color:@bg;color:@text-soft;"
     f"font-family:{_MONO};font-size:12px;white-space:pre-wrap;"
 )
 _CODE_STYLE: Final[str] = (
-    f"background-color:#3a3a3c;color:#f2f2f7;font-family:{_MONO};font-size:12px;"
+    f"background-color:@border;color:@text;font-family:{_MONO};font-size:12px;"
 )
-_LINK_STYLE: Final[str] = f"color:{_ACCENT};text-decoration:none;"
+_LINK_STYLE: Final[str] = "color:@accent;text-decoration:none;"
+_r = resolve_tokens
 
 _INPUT_LIMIT: Final[int] = 6000
 
@@ -142,12 +145,12 @@ def _blocks_to_html(lines: List[str]) -> str:
             body = [row for row in buffer if row.strip()]
             if body and not all(_is_checksum_line(row.strip()) for row in body):
                 code = html.escape("\n".join(buffer).strip("\n"))
-                parts.append(f'<pre style="{_PRE_STYLE}">{code}</pre>')
+                parts.append(f'<pre style="{_r(_PRE_STYLE)}">{code}</pre>')
             continue
 
         heading = _HEADING_RE.match(stripped)
         if heading:
-            parts.append(f'<p style="{_H_STYLE}">{_inline(heading.group(2))}</p>')
+            parts.append(f'<p style="{_r(_H_STYLE)}">{_inline(heading.group(2))}</p>')
             index += 1
             continue
 
@@ -161,7 +164,7 @@ def _blocks_to_html(lines: List[str]) -> str:
                 continue
             items, index = _collect_list(lines, index, pattern)
             rendered = "".join(
-                f'<li style="{_LI_STYLE}">{_inline(item)}</li>' for item in items
+                f'<li style="{_r(_LI_STYLE)}">{_inline(item)}</li>' for item in items
             )
             parts.append(f'<{tag} style="{_UL_STYLE}">{rendered}</{tag}>')
             break
@@ -174,7 +177,7 @@ def _blocks_to_html(lines: List[str]) -> str:
                     break
                 buffer.append(nxt)
                 index += 1
-            parts.append(f'<p style="{_P_STYLE}">{_inline(" ".join(buffer))}</p>')
+            parts.append(f'<p style="{_r(_P_STYLE)}">{_inline(" ".join(buffer))}</p>')
 
     return "".join(parts)
 
@@ -204,14 +207,14 @@ def _inline(text: str) -> str:
 
     def stash(match: "re.Match[str]") -> str:
         spans.append(
-            f'<code style="{_CODE_STYLE}">'
+            f'<code style="{_r(_CODE_STYLE)}">'
             f"&nbsp;{html.escape(match.group(1))}&nbsp;</code>"
         )
         return f"\x00{len(spans) - 1}\x00"
 
     text = re.sub(r"`([^`]+)`", stash, text)
     text = html.escape(text)
-    text = _LINK_RE.sub(rf'<a href="\2" style="{_LINK_STYLE}">\1</a>', text)
+    text = _LINK_RE.sub(rf'<a href="\2" style="{_r(_LINK_STYLE)}">\1</a>', text)
     text = re.sub(r"\*\*(\S(?:[^*]*\S)?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<![\w*])\*(\S(?:[^*]*\S)?)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<![\w_])_(\S(?:[^_]*\S)?)_(?![\w_])", r"<i>\1</i>", text)

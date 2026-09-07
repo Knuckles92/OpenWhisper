@@ -12,9 +12,9 @@ class CollapsibleSectionToggle(QToolButton):
     toggled_expanded = pyqtSignal(bool)
 
     TOGGLE_STYLE = (
-        "QToolButton { color: #8e8e93; border: none; font-size: 11px; "
+        "QToolButton { color: @text-secondary; border: none; font-size: 11px; "
         "font-weight: 600; }"
-        "QToolButton:hover { color: #f5f5f7; }"
+        "QToolButton:hover { color: @text; }"
     )
 
     def __init__(

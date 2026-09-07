@@ -5,6 +5,8 @@ from PyQt6.QtCore import QRect, Qt
 import time
 import math
 
+from ui_qt.utils.palette import token_color
+
 
 def round_pen(color: QColor, width: float) -> QPen:
     """Pen with round caps/joins so drawn glyph strokes look polished."""
@@ -91,7 +93,7 @@ class BaseWaveformStyle(ABC):
         center_y = rect.height() // 2
         size = int(40 * scale)
 
-        color = QColor(255, 69, 58, opacity)
+        color = token_color("danger", opacity)
         painter.setPen(round_pen(color, 4))
 
         painter.drawLine(
@@ -103,7 +105,7 @@ class BaseWaveformStyle(ABC):
             center_x - size, center_y + size
         )
 
-        text_color = QColor(255, 255, 255, opacity)
+        text_color = token_color("overlay-text", opacity)
         painter.setPen(text_color)
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
@@ -115,13 +117,13 @@ class BaseWaveformStyle(ABC):
         center_x = rect.width() // 2
         center_y = rect.height() // 2
 
-        color = QColor(48, 209, 88)
+        color = token_color("success")
         painter.setPen(round_pen(color, 4))
 
         painter.drawLine(center_x - 15, center_y, center_x - 5, center_y + 10)
         painter.drawLine(center_x - 5, center_y + 10, center_x + 15, center_y - 10)
 
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(token_color("overlay-text"))
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
 
@@ -133,7 +135,7 @@ class BaseWaveformStyle(ABC):
         center_y = rect.height() // 2
         size = 20
 
-        color = QColor(255, 69, 58)
+        color = token_color("danger")
         painter.setPen(round_pen(color, 4))
 
         painter.drawLine(
@@ -145,7 +147,7 @@ class BaseWaveformStyle(ABC):
             center_x - size, center_y + size
         )
 
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(token_color("overlay-text"))
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
 

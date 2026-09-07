@@ -40,9 +40,9 @@ logger = logging.getLogger(__name__)
 _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
 _MENU_STYLESHEET = """
     QMenu {
-        background-color: rgba(44, 44, 46, 0.95);
-        color: #f5f5f7;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: rgba(@surface-rgb, 0.95);
+        color: @text;
+        border: 1px solid rgba(@overlay-rgb, 0.1);
         border-radius: 10px;
         padding: 6px;
     }
@@ -52,16 +52,16 @@ _MENU_STYLESHEET = """
         font-size: 13px;
     }
     QMenu::item:selected {
-        background-color: #0a84ff;
-        color: #ffffff;
+        background-color: @accent;
+        color: @on-accent;
     }
     QMenu::separator {
-        background-color: rgba(255, 255, 255, 0.08);
+        background-color: rgba(@overlay-rgb, 0.08);
         height: 1px;
         margin: 4px 8px;
     }
     QMenu::item:disabled {
-        color: #8e8e93;
+        color: @text-secondary;
     }
 """
 
@@ -669,16 +669,16 @@ class PastMeetingsPanel(QWidget):
     def _apply_style(self) -> None:
         self.setStyleSheet("""
             QWidget#pastMeetingsContent {
-                background-color: #1c1c1e;
-                border-left: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: @bg;
+                border-left: 1px solid rgba(@overlay-rgb, 0.08);
             }
             QLabel#pastMeetingsHeader {
-                color: #ffffff;
+                color: @text-heading;
                 font-weight: 700;
                 background-color: transparent;
             }
             QLabel#sectionHeader {
-                color: #98989d;
+                color: @text-secondary-strong;
                 padding-top: 4px;
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
@@ -688,33 +688,33 @@ class PastMeetingsPanel(QWidget):
             }
             QPushButton#pastMeetingsMenuBtn {
                 background-color: transparent;
-                color: #8e8e93;
+                color: @text-secondary;
                 border: none;
                 border-radius: 14px;
                 padding: 0px;
                 font-size: 15px;
             }
             QPushButton#pastMeetingsMenuBtn:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
+                background-color: rgba(@overlay-rgb, 0.1);
+                color: @text-heading;
             }
             QLineEdit#historySearchInput {
-                background-color: rgba(44, 44, 46, 0.8);
-                color: #f5f5f7;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: rgba(@surface-rgb, 0.8);
+                color: @text;
+                border: 1px solid rgba(@overlay-rgb, 0.08);
                 border-radius: 8px;
                 padding: 4px 10px;
                 font-size: 12px;
             }
             QLineEdit#historySearchInput:focus {
-                border: 1px solid #0a84ff;
-                background-color: rgba(44, 44, 46, 1.0);
+                border: 1px solid @accent;
+                background-color: rgba(@surface-rgb, 1.0);
             }
             QLineEdit#historySearchInput::placeholder {
-                color: #636366;
+                color: @text-muted;
             }
             QLabel#pastMeetingsEmpty {
-                color: #636366;
+                color: @text-muted;
                 font-size: 12px;
                 padding: 8px 0px;
                 background-color: transparent;
@@ -732,12 +732,12 @@ class PastMeetingsPanel(QWidget):
                 margin: 0px;
             }
             QScrollArea#pastMeetingsScrollArea QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.15);
+                background: rgba(@overlay-rgb, 0.15);
                 border-radius: 4px;
                 min-height: 30px;
             }
             QScrollArea#pastMeetingsScrollArea QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: rgba(@overlay-rgb, 0.3);
             }
             QScrollArea#pastMeetingsScrollArea QScrollBar::add-line:vertical,
             QScrollArea#pastMeetingsScrollArea QScrollBar::sub-line:vertical {
@@ -748,58 +748,58 @@ class PastMeetingsPanel(QWidget):
                 background: transparent;
             }
             QFrame#pastMeetingItem {
-                background-color: rgba(44, 44, 46, 0.5);
+                background-color: rgba(@surface-rgb, 0.5);
                 border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(@overlay-rgb, 0.05);
             }
             QFrame#pastMeetingItem:hover {
-                background-color: rgba(58, 58, 60, 0.6);
-                border: 1px solid rgba(10, 132, 255, 0.35);
+                background-color: rgba(@surface-hover-rgb, 0.6);
+                border: 1px solid rgba(@accent-rgb, 0.35);
             }
             QFrame#pastMeetingItem[selected="true"] {
-                background-color: rgba(10, 132, 255, 0.16);
-                border: 1px solid rgba(10, 132, 255, 0.55);
+                background-color: rgba(@accent-rgb, 0.16);
+                border: 1px solid rgba(@accent-rgb, 0.55);
             }
             QLabel#pastMeetingTitle {
-                color: #f5f5f7;
+                color: @text;
                 background-color: transparent;
             }
             QLabel#pastMeetingMeta {
-                color: #98989d;
+                color: @text-secondary-strong;
                 font-size: 10px;
                 background-color: transparent;
             }
             QLabel#pastMeetingPreview {
-                color: #e5e5e7;
+                color: @text-body;
                 background-color: transparent;
             }
             QLabel#pastMeetingContentWarning {
-                color: #ff9f0a;
+                color: @warning-text;
                 font-size: 11px;
                 background-color: transparent;
             }
             QLabel#pastMeetingInsightsPill {
-                color: #98989d;
-                background-color: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: @text-secondary-strong;
+                background-color: rgba(@overlay-rgb, 0.08);
+                border: 1px solid rgba(@overlay-rgb, 0.12);
                 border-radius: 6px;
                 padding: 0px 8px;
                 font-size: 10px;
                 font-weight: 600;
             }
             QLabel#pastMeetingInsightsPill[pillTone="warning"] {
-                color: #ff9f0a;
-                background-color: rgba(255, 159, 10, 0.15);
-                border: 1px solid rgba(255, 159, 10, 0.35);
+                color: @warning-text;
+                background-color: rgba(@warning-rgb, 0.15);
+                border: 1px solid rgba(@warning-rgb, 0.35);
             }
             QLabel#pastMeetingInsightsPill[pillTone="success"] {
-                color: #30d158;
-                background-color: rgba(48, 209, 88, 0.15);
-                border: 1px solid rgba(48, 209, 88, 0.35);
+                color: @success-text;
+                background-color: rgba(@success-rgb, 0.15);
+                border: 1px solid rgba(@success-rgb, 0.35);
             }
             QLabel#pastMeetingInsightsPill[pillTone="neutral"] {
-                color: #98989d;
-                background-color: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: @text-secondary-strong;
+                background-color: rgba(@overlay-rgb, 0.08);
+                border: 1px solid rgba(@overlay-rgb, 0.12);
             }
         """)

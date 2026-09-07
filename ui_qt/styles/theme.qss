@@ -2703,7 +2703,7 @@ QLabel#updateBodyLabel[tone="error"] {
 }
 
 QFrame#updateNotesCard {
-    background-color: @surface;
+    background-color: @surface-sunken;
     border: 1px solid @border;
     border-radius: 12px;
 }
@@ -2751,7 +2751,7 @@ QLabel#updateHintLabel {
 }
 
 QFrame#updateProgressPanel {
-    background-color: @surface;
+    background-color: @surface-sunken;
     border: 1px solid @border;
     border-radius: 12px;
 }
