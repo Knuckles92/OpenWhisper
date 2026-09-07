@@ -303,12 +303,7 @@ class MeetingLanguage:
         ("ro", "Romanian"),
         ("hu", "Hungarian"),
     )
-    ALL: Final[Tuple[str, ...]] = (
-        "auto", "en", "es", "fr", "de", "it", "pt", "nl", "pl",
-        "ru", "uk", "tr", "ar", "he", "hi", "zh", "ja", "ko",
-        "vi", "th", "id", "sv", "da", "no", "fi", "cs", "el",
-        "ro", "hu",
-    )
+    ALL: Final[Tuple[str, ...]] = tuple(code for code, _label in CHOICES)
 
 
 class MeetingServerBind:

@@ -562,7 +562,6 @@ def test_hydrate_skips_pending_without_steps(runtime):
 
 
 def test_defer_persists_flag_and_hides_card(runtime):
-    import json
 
     rt, controller = runtime
     states = []

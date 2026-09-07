@@ -340,7 +340,6 @@ class ApplicationController(QObject):
             self.engine_busy_changed.emit(False)
             return
 
-        backend = self.current_backend
         if self.recorder.is_recording or self.is_transcribing():
             logger.info("Ignoring whisper reload: recording/transcribing in progress")
             self.status_update.emit("Finish recording before changing the engine")
@@ -1843,8 +1842,6 @@ class ApplicationController(QObject):
         for executor in (self.executor, self.component_executor):
             try:
                 executor.shutdown(wait=True, cancel_futures=True)
-            except TypeError:
-                executor.shutdown(wait=False)
             except Exception as exc:
                 logger.debug(f"Error during executor shutdown: {exc}")
 

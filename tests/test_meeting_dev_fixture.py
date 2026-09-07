@@ -1,6 +1,5 @@
 """Tests for the developer-mode canned meeting fixture."""
 
-import pytest
 
 
 from meeting.dev_fixture import DEMO_TITLE, seed_demo_meeting

@@ -16,6 +16,13 @@ import threading
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from meeting.finalization import (
+    STEP_DETAILS,
+    STEP_NAMES,
+    STEP_ORDER,
+    failed_steps_message,
+    make_step as _make_step,
+)
 from meeting.interfaces import (
     CHANNEL_MIC,
     AgentConfig,
@@ -26,35 +33,17 @@ from meeting.interfaces import (
 from meeting.reinsight import (
     DEFAULT_TIMEOUT_S,
     _OfflineToolHost,
-    _load_state,
 )
 from meeting.respeaker import rerun_speakers
-from meeting.state.repair import repair_meeting_state
+from meeting.stored import (
+    meeting_endpoint as _meeting_endpoint,
+    open_store as _open_store,
+)
 from meeting.state.schema import CARD_KEYS, FinalizationState, MeetingState
-from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
 from meeting.time_utils import elapsed_seconds
 
 logger = logging.getLogger(__name__)
-
-
-def _meeting_endpoint(meeting: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Return the stored non-secret endpoint snapshot, if any."""
-    try:
-        from services.text_llm import snapshot_from_meeting
-
-        return snapshot_from_meeting(meeting).to_dict()
-    except Exception:
-        raw = (meeting or {}).get("agent_endpoint_json")
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                return None
-            return parsed if isinstance(parsed, dict) else None
-        return None
 
 
 #: Same block size the live scheduler uses for transcript cleanup.
@@ -62,30 +51,6 @@ _POLISH_MAX_SEGMENTS = 400
 #: Per-block wall for a headless polish pass.
 POLISH_TIMEOUT_S = 60.0
 
-STEP_ORDER = (
-    "redecode",
-    "speaker_id",
-    "polish",
-    "consolidation",
-    "finalize",
-)
-STEP_NAMES = {
-    "redecode": "Audio Re-transcription",
-    "speaker_id": "Speaker Identification",
-    "polish": "Transcript Cleanup",
-    "consolidation": "Summary & Action Items",
-    "finalize": "State Finalization",
-}
-STEP_DETAILS = {
-    "redecode": "High-accuracy full session Whisper decode",
-    "speaker_id": "OpenAI labels on the system-audio recording",
-    "polish": "AI grammar, punctuation, and speaker formatting",
-    "consolidation": (
-        "Synthesizing executive summary, key points, decisions, "
-        "and action items"
-    ),
-    "finalize": "Saving final transcript and consolidating meeting state",
-}
 OPTIONAL_RERUN_STEPS = frozenset({
     "redecode", "speaker_id", "polish", "consolidation",
 })
@@ -109,23 +74,6 @@ __all__ = [
     "OPTIONAL_RERUN_STEPS",
     "STEP_ORDER",
 ]
-
-
-def _open_store(repository: Any, meeting_id: str,
-                meeting: Dict[str, Any]) -> MeetingStateStore:
-    return MeetingStateStore(
-        _load_state(meeting, meeting_id),
-        repository=repository,
-        segment_handler=make_segment_handler(repository, meeting_id),
-        segment_exists=lambda segment_id: repository.segment_exists(
-            meeting_id, segment_id
-        ),
-        segment_pinned=lambda segment_id: bool(
-            (repository.get_segment(meeting_id, segment_id) or {}).get(
-                "speaker_pinned"
-            )
-        ),
-    )
 
 
 def _reload_store(store: MeetingStateStore, repository: Any,
@@ -274,15 +222,6 @@ def _copy_steps(steps: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [dict(step) for step in steps]
 
 
-def _make_step(step_id: str, status: str = "pending") -> Dict[str, Any]:
-    return {
-        "id": step_id,
-        "name": STEP_NAMES[step_id],
-        "status": status,
-        "detail": STEP_DETAILS[step_id],
-    }
-
-
 def _ensure_step(steps: List[Dict[str, Any]], step_id: str) -> List[Dict[str, Any]]:
     if any(step.get("id") == step_id for step in steps):
         return steps
@@ -358,13 +297,9 @@ def _overall_from_steps(
     *,
     cloud_enabled: bool,
 ) -> Tuple[str, str]:
-    failed = [step for step in steps if step.get("status") == "failed"]
-    if failed:
-        names = [str(step.get("name") or step.get("id")) for step in failed]
-        return (
-            "failed",
-            f"{', '.join(names)} failed. The recording and transcript were kept.",
-        )
+    failure = failed_steps_message(steps)
+    if failure:
+        return "failed", failure
     if not cloud_enabled and not any(
         step.get("id") in {"polish", "consolidation"} for step in steps
     ):
@@ -525,13 +460,9 @@ def rerun_redecode(
     leased = False
     try:
         if transcribe_fn is not None:
-            try:
-                decoded = list(
-                    transcribe_fn(spool_dir, chunks, progress_cb=progress_cb)
-                    or []
-                )
-            except TypeError:
-                decoded = list(transcribe_fn(spool_dir, chunks) or [])
+            decoded = list(
+                transcribe_fn(spool_dir, chunks, progress_cb=progress_cb) or []
+            )
         else:
             from meeting.asr.offline import transcribe_meeting_sessions
             from transcriber.local_backend import LocalWhisperBackend

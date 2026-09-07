@@ -15,7 +15,6 @@ No Qt imports; this package stays standalone-extractable.
 """
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import uuid
@@ -25,30 +24,10 @@ from meeting.agent.base import create_agent_core
 from meeting.agent.prompts import build_system_prompt
 from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
 from meeting.state.repair import repair_meeting_state
-from meeting.state.schema import MeetingState
-from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
+from meeting.stored import meeting_endpoint as _meeting_endpoint, open_store
 
 logger = logging.getLogger(__name__)
-
-
-def _meeting_endpoint(meeting: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Return the stored non-secret endpoint snapshot, if any."""
-    try:
-        from services.text_llm import snapshot_from_meeting
-
-        return snapshot_from_meeting(meeting).to_dict()
-    except Exception:
-        raw = (meeting or {}).get("agent_endpoint_json")
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                return None
-            return parsed if isinstance(parsed, dict) else None
-        return None
 
 
 #: Hard wall for one re-run consolidation pass. The sidecar also stalls
@@ -144,41 +123,6 @@ class _OfflineToolHost:
         return results
 
 
-def _load_state(meeting: Dict[str, Any], meeting_id: str) -> MeetingState:
-    """Rebuild the meeting's state document from its stored snapshot.
-
-    Args:
-        meeting: The repository meeting row.
-        meeting_id: Id of the meeting being re-analyzed.
-
-    Returns:
-        The deserialized ``MeetingState``, or a fresh one when the meeting has
-        no snapshot yet (the transcript-only case) or the snapshot is corrupt.
-    """
-    raw = meeting.get("state_json")
-    if raw:
-        try:
-            return MeetingState.from_dict(json.loads(raw))
-        except Exception:
-            logger.exception(
-                "Corrupt state_json for meeting %s; starting from a fresh state",
-                meeting_id,
-            )
-    try:
-        from services.settings import resolve_meeting_report_views
-        report_views = list(resolve_meeting_report_views())
-    except Exception:
-        report_views = ["ribbon", "brief", "signal"]
-    return MeetingState(
-        meeting_id=meeting_id,
-        title=meeting.get("title", ""),
-        # Carried over so the store's write-through cannot flip the recorded
-        # cloud flag on a meeting that simply never got a snapshot.
-        cloud_enabled=bool(meeting.get("cloud_enabled")),
-        report_views=report_views,
-    )
-
-
 def _consolidate(core: Any, payload: CheckpointPayload,
                  timeout_s: float) -> AgentResult:
     """Run one bounded ``consolidate`` call on a worker thread.
@@ -254,19 +198,7 @@ def rerun_insights(repository: Any, meeting_id: str, *, provider: str,
         raise ValueError("meeting has no transcript")
 
     if store is None:
-        store = MeetingStateStore(
-            _load_state(meeting, meeting_id),
-            repository=repository,
-            segment_handler=make_segment_handler(repository, meeting_id),
-            segment_exists=lambda segment_id: repository.segment_exists(
-                meeting_id, segment_id
-            ),
-            segment_pinned=lambda segment_id: bool(
-                (repository.get_segment(meeting_id, segment_id) or {}).get(
-                    "speaker_pinned"
-                )
-            ),
-        )
+        store = open_store(repository, meeting_id, meeting)
     tools = _OfflineToolHost(store, repository)
 
     try:

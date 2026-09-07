@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QFrame, QTextEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QFrame, QTextEdit,
     QButtonGroup, QPushButton, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer

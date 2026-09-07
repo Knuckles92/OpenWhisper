@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Light theme. **Settings → General → Appearance → Theme** offers Dark, Light, and Match system; Match system follows the operating system as it changes. Every window, dialog, the loading screen, the waveform overlay, and rendered Markdown follow the choice without a restart. New installs stay dark.
 
 ### Fixed
+- Meeting transcript cleanup reports an incomplete pass when a later block fails or times out, while retaining completed edits. Internal decoder errors no longer trigger compatibility retries that repeat work.
+- Dashboard full-meeting export stays disabled after a transcript loading failure, preserves loaded speech, and offers a retry.
+- History and meeting export sections finish their visibility and sizing transitions when another control interrupts an animation.
 - Packaged HTTPS update checks and component downloads load the bundled CA certificates in addition to system trust, avoiding build-machine certificate paths on Mac.
 - UI tests use temporary settings and close meeting windows before removing mocks, preventing test runs from replacing the app's remembered tab with Meeting Mode. Starting dictation from another tab no longer briefly selects Meeting Mode.
 - Saved-meeting finalization retries retain the recorded provider, model and endpoint instead of adopting current defaults. New snapshots retain protocol and model capabilities.

@@ -564,8 +564,6 @@ def run_cloud_speaker_pass(
                 known_speaker_names=window_names or None,
                 known_speaker_references=window_clips or None,
             )
-        except TypeError:
-            raw_turns = decoder(mp3)
         except Exception as exc:
             logger.exception("Cloud diarize request failed for window %s", index)
             return {

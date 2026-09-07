@@ -19,7 +19,7 @@ from scripts.benchmark_local_asr import word_error_rate
 
 
 def run(args):
-    import app_qt
+    import app_qt  # noqa: F401 -- registers production native library paths
     from faster_whisper.audio import decode_audio
     from services.local_asr.catalog import MODELS
     from services.local_asr import cache

@@ -13,6 +13,32 @@ Code is the primary source of truth. Add prose only when it records information 
 
 Before submitting a change, remove temporary notes and commented-out experiments, then verify that every remaining comment explains why rather than what.
 
+## Validation
+
+Activate the repository virtual environment before Python commands. Run tests
+through pytest so the shared fixtures isolate settings, manage Qt, and handle
+native-runtime teardown:
+
+```powershell
+. .\venv\Scripts\Activate.ps1
+python -m pytest tests/
+python -m pytest tests/test_recorder.py tests/test_settings.py
+```
+
+CI checks Python correctness and unused code with Ruff 0.16.4:
+
+```powershell
+python -m pip install ruff==0.16.4
+python -m ruff check --select F .
+```
+
+Keep imports that perform required runtime initialization or verify optional
+libraries, with a specific `noqa: F401` explanation. Avoid broad automatic fixes
+for typing or import order as part of behavior changes.
+
+Dashboard changes also require `npm test` in `webui` before the locked build
+below. It covers transcript loading, action acknowledgements, and speech previews.
+
 ## Local speech backends and models
 
 Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The optional runtimes target Windows x64, with NVIDIA Speech CPU also packaged for Apple Silicon macOS in the unreleased source integration. Do not describe other upstream platform support as support provided by this integration.

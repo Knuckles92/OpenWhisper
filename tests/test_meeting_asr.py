@@ -795,3 +795,25 @@ def test_revise_keeps_segments_referenced_by_dashboard_evidence(tmp_path, repo):
 
     assert removed == []
     assert repo.get_segment(meeting_id, "sg_referenced") is not None
+
+
+def test_offline_decoder_internal_typeerror_is_not_retried(tmp_path, monkeypatch):
+    from meeting.asr.offline import transcribe_meeting_sessions
+
+    monkeypatch.setattr(
+        "meeting.asr.offline.load_channel_session",
+        lambda *args: (np.ones(16000, dtype=np.int16), 16000, 0.0),
+    )
+    calls = []
+
+    def decoder(*args, **kwargs):
+        calls.append(kwargs)
+        raise TypeError("decoder internal failure")
+
+    with pytest.raises(TypeError, match="decoder internal failure"):
+        transcribe_meeting_sessions(
+            object(), str(tmp_path), "m_test", channels=("mic",),
+            transcribe_fn=decoder,
+        )
+    assert len(calls) == 1
+    assert "progress_cb" in calls[0]

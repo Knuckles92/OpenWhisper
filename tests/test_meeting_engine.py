@@ -7,7 +7,6 @@ Every subsystem the engine imports lazily (capture, ASR, diarizer, web server,
 agent core, scheduler) is replaced with an in-process fake, so nothing here
 touches an audio device, a Whisper model, a socket, or the network.
 """
-import importlib.util
 import os
 import sys
 import threading
@@ -88,7 +87,7 @@ class FakeAsr:
         self.drains += 1
         return True
 
-    def transcribe_offline_session(self, spool_dir, chunks=None):
+    def transcribe_offline_session(self, spool_dir, chunks=None, progress_cb=None):
         self.offline_passes += 1
         return list(self.offline_segments)
 
@@ -204,7 +203,7 @@ class FakeScheduler:
     def notify_segments(self, count):
         pass
 
-    def run_final_polish(self, timeout_s=60.0):
+    def run_final_polish(self, timeout_s=60.0, progress_cb=None):
         from meeting.agent.scheduler import ConsolidationOutcome
 
         self.polishes += 1
@@ -213,7 +212,7 @@ class FakeScheduler:
             message="Transcript cleanup is ready.",
         )
 
-    def run_consolidation(self, timeout_s=120.0):
+    def run_consolidation(self, timeout_s=120.0, progress_cb=None):
         from meeting.agent.scheduler import ConsolidationOutcome
 
         self.consolidations += 1
@@ -698,7 +697,7 @@ class TestEndLifecycle:
         consolidation_entered = threading.Event()
         consolidation_release = threading.Event()
 
-        def slow_consolidation(timeout_s=120.0):
+        def slow_consolidation(timeout_s=120.0, progress_cb=None):
             scheduler.consolidations += 1
             consolidation_entered.set()
             consolidation_release.wait(timeout=5.0)
@@ -781,7 +780,7 @@ class TestEndLifecycle:
         engine.start()
         scheduler = fakes.schedulers[0]
 
-        def boom(timeout_s=120.0):
+        def boom(timeout_s=120.0, progress_cb=None):
             scheduler.consolidations += 1
             return ConsolidationOutcome(
                 status="failed", message="Final cloud insights failed: boom",
@@ -823,7 +822,7 @@ class TestEndLifecycle:
         entered = threading.Event()
         release = threading.Event()
 
-        def slow_offline(spool_dir, chunks=None):
+        def slow_offline(spool_dir, chunks=None, progress_cb=None):
             asr.offline_passes += 1
             entered.set()
             release.wait(timeout=5.0)

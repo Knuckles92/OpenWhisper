@@ -174,7 +174,7 @@ def load_clips(manifest_path, limit):
 def run(args):
     os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['TRANSFORMERS_OFFLINE'] = '1'
-    import app_qt  # Registers production native DLL search paths before loading.
+    import app_qt  # noqa: F401 -- registers production native library paths
     from faster_whisper.utils import download_model
     from services.local_asr import cache
     from services.local_asr.catalog import MODELS, artifacts

@@ -1,9 +1,7 @@
 """
 Tests for PiSidecarAgent: stdio hello handshake, auth failure, restart budget.
 """
-import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
@@ -17,7 +15,7 @@ import pytest
 
 from meeting.agent import pi_sidecar as pi_mod
 from meeting.agent.pi_sidecar import PiSidecarAgent
-from meeting.interfaces import AgentConfig, AgentResult, CheckpointPayload, OpResult
+from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 
 
 #: Minimal NDJSON sidecar stub (Python). Speaks hello from env token, answers

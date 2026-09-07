@@ -898,7 +898,6 @@ class CheckpointScheduler:
             blocks = [segments]
 
         last_error = ""
-        applied_any = False
         total_blocks = len(blocks)
         for idx, block in enumerate(blocks, 1):
             if progress_cb is not None:
@@ -953,10 +952,9 @@ class CheckpointScheduler:
             if not result.ok:
                 last_error = result.error or "transcript cleanup failed"
                 break
-            applied_any = True
             self._last_polish_mono = time.monotonic()
 
-        if last_error and not applied_any:
+        if last_error:
             return ConsolidationOutcome(status="failed", message=last_error)
         return ConsolidationOutcome(
             status="completed",

@@ -123,7 +123,7 @@ class LocalWhisperBackend(TranscriptionBackend):
                 )
                 return fallback
 
-        logger.warning(f"No preferred compute types available, using float32")
+        logger.warning("No preferred compute types available, using float32")
         return "float32"
 
     def _detect_hardware(self) -> Tuple[str, str, str]:

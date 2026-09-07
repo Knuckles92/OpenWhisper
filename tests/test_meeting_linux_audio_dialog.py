@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import os
-import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from PyQt6.QtWidgets import QApplication
@@ -72,7 +70,6 @@ class TestMeetingLinuxAudioDialog(unittest.TestCase):
         self.assertEqual(url, expected)
 
     def test_retry_ready_finishes(self):
-        from PyQt6.QtCore import QTimer
 
         dialog = MeetingLinuxAudioDialog(
             _capability(),

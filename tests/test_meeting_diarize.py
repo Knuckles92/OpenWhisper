@@ -5,8 +5,6 @@ degradation, and Kaldi-compatible filterbank features.
 import logging
 import os
 import time
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest

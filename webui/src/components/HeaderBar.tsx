@@ -26,6 +26,8 @@ interface HeaderBarProps {
   showHistory: boolean;
   onToggleActivity: () => void;
   showActivity: boolean;
+  transcriptLoadError: string | null;
+  onRetryTranscript: () => void;
   transcriptComplete?: boolean;
   reportView?: ReportViewId;
   onReportViewChange?: (view: ReportViewId) => void;
@@ -47,6 +49,8 @@ export default function HeaderBar({
   showHistory,
   onToggleActivity,
   showActivity,
+  transcriptLoadError,
+  onRetryTranscript,
   transcriptComplete = false,
   reportView,
   onReportViewChange,
@@ -326,6 +330,15 @@ export default function HeaderBar({
           {lastError}
           <button type="button" className="ghost" style={{ marginLeft: 8 }} onClick={onClearError}>
             Dismiss
+          </button>
+        </div>
+      )}
+
+      {transcriptLoadError && (
+        <div className="banner warning" role="alert">
+          {transcriptLoadError}
+          <button type="button" className="ghost" style={{ marginLeft: 8 }} onClick={onRetryTranscript}>
+            Retry transcript
           </button>
         </div>
       )}

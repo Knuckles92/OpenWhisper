@@ -21,7 +21,7 @@ import sys
 import logging
 import tempfile
 import shutil
-from typing import Tuple, Optional
+from typing import Tuple
 
 from services.audio_processor import audio_processor
 from config import config

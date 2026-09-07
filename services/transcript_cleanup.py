@@ -13,44 +13,17 @@ from services.text_llm import (
     connection_fingerprint,
     create_openai_client,
     chat_request_options,
-    default_model_for_profile,
     filter_openai_chat_models,
     get_profile,
     list_chat_models,
     lookup_env_value,
     resolve_api_key,
 )
-try:
-    from services.settings import (
-        TranscriptCleanupModelSort,
-        TranscriptCleanupProvider,
-        TranscriptCleanupReasoning,
-        default_transcript_cleanup_model,
-    )
-except ImportError:  # pragma: no cover - supports lightweight test stubs
-    class TranscriptCleanupProvider:
-        OPENAI = "openai"
-        OPENROUTER = "openrouter"
-        ALL = (OPENAI, OPENROUTER)
-
-    class TranscriptCleanupModelSort:
-        ALPHABETICAL = "alphabetical"
-        ALL = (ALPHABETICAL,)
-
-    class TranscriptCleanupReasoning:
-        OFF = "off"
-        LOW = "low"
-        MEDIUM = "medium"
-        HIGH = "high"
-        ALL = (OFF, LOW, MEDIUM, HIGH)
-
-    def default_transcript_cleanup_model(provider):
-        profile = get_profile(provider)
-        if profile is not None:
-            return default_model_for_profile(profile)
-        if provider == TranscriptCleanupProvider.OPENROUTER:
-            return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
-        return config.TRANSCRIPT_CLEANUP_MODEL
+from services.settings import (
+    TranscriptCleanupProvider,
+    TranscriptCleanupReasoning,
+    default_transcript_cleanup_model,
+)
 
 logger = logging.getLogger(__name__)
 

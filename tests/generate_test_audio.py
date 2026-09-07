@@ -4,9 +4,7 @@
 import os
 import sys
 import tempfile
-import subprocess
 import logging
-from pathlib import Path
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,7 +31,6 @@ class TestAudioGenerator:
         """
         try:
             from gtts import gTTS
-            import pydub
             from pydub import AudioSegment
         except ImportError:
             logger.error("Missing dependencies. Install with: pip install gtts pydub")
@@ -208,7 +205,6 @@ class TestAudioGenerator:
             return None
 
         try:
-            import pydub
             from pydub import AudioSegment
 
             audio = AudioSegment.from_file(source_file)

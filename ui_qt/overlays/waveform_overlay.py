@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QBrush, QPen,
-    QLinearGradient, QFont, QFontMetrics, QCursor
+    QFont, QFontMetrics, QCursor
 )
 from config import config
 from services.settings import resolve_streaming_overlay_font_size

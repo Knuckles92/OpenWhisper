@@ -331,7 +331,7 @@ class AudioRecorder:
                 )
                 return True
 
-            except Exception as e:
+            except Exception:
                 if temp_fd >= 0:
                     os.close(temp_fd)
                     temp_fd = -1

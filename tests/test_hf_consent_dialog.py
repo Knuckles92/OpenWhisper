@@ -120,7 +120,7 @@ class TestSettingsDialogNavigation(_QtTestCase):
 
 
 def test_optional_model_consent_explains_required_runtime():
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'):
         dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
         body = dialog._body_text()
@@ -132,7 +132,7 @@ def test_optional_model_consent_explains_required_runtime():
 
 def test_runtime_prompt_has_explicit_install_and_later_actions():
     from ui_qt.dialogs.required_runtime_dialog import RequiredRuntimeDialog
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')
     assert 'needs both its model files and NVIDIA Speech CPU to work' in dialog.body.text()
     buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}

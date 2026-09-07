@@ -6,7 +6,6 @@ import sys
 
 import pytest
 
-from config import config
 from services.audio_processor import audio_processor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

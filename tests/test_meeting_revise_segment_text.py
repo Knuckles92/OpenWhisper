@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
 
 from meeting.interfaces import TranscriptSegment
 from meeting.persist.repository import SqlMeetingRepository

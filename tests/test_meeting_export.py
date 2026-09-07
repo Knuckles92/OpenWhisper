@@ -3,7 +3,6 @@ Tests for meeting exporters: markdown/json/txt shape and token stripping.
 """
 import json
 
-import pytest
 
 from meeting.export.json_export import FORMAT_VERSION, export_json
 from meeting.export.markdown import export_markdown

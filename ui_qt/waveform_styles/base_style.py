@@ -3,7 +3,6 @@ from typing import List, Dict, Any
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QRect, Qt
 import time
-import math
 
 from ui_qt.utils.palette import token_color
 

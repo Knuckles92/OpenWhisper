@@ -62,7 +62,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
 
-from services.settings import settings_manager
 
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
@@ -120,7 +119,6 @@ def calculate_word_accuracy(expected: str, transcribed: str) -> float:
         return 100.0 if not transcribed_words else 0.0
 
     matches = 0
-    transcribed_set = set(transcribed_words)
     expected_counts = {}
     transcribed_counts = {}
 
@@ -148,8 +146,8 @@ class AudioGenerator:
     def _check_tts_available(self) -> bool:
         if self._tts_available is None:
             try:
-                from gtts import gTTS
-                from pydub import AudioSegment
+                from gtts import gTTS  # noqa: F401 -- verify the optional TTS import works
+                from pydub import AudioSegment  # noqa: F401 -- verify the decoder import works
                 self._tts_available = True
             except ImportError:
                 self._tts_available = False
@@ -457,13 +455,13 @@ class ModelBenchmark:
                     print(f"⚠️  {backend_key} backend not available - skipping")
                     continue
 
-                print(f"\n  Model Configuration:")
+                print("\n  Model Configuration:")
                 print(f"    Model Name:    {backend.model_name}")
                 print(f"    Device:        {backend._device}")
                 print(f"    Compute Type:  {backend._compute_type}")
 
                 if not config_printed:
-                    print(f"\n  Hardware Configuration:")
+                    print("\n  Hardware Configuration:")
                     self._print_local_whisper_config(backend)
                     config_printed = True
                 else:

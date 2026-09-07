@@ -22,42 +22,16 @@ from services.batch_upload import (
     format_batch_transcript,
     join_raw_parts,
 )
-try:
-    from services.settings import (
-        SettingsKey,
-        compose_transcript_cleanup_prompt,
-        resolve_transcript_cleanup_model,
-        resolve_transcript_cleanup_prompt,
-        resolve_transcript_cleanup_provider,
-        resolve_transcript_cleanup_reasoning,
-        resolve_transcript_cleanup_rules,
-        settings_manager,
-    )
-except ImportError:  # pragma: no cover - supports lightweight test stubs
-    from services.settings import settings_manager
-
-    class SettingsKey:
-        AUTO_PASTE = "auto_paste"
-        COPY_CLIPBOARD = "copy_clipboard"
-        TRANSCRIPT_CLEANUP_ENABLED = "transcript_cleanup_enabled"
-
-    def resolve_transcript_cleanup_prompt(settings=None):
-        return config.TRANSCRIPT_CLEANUP_PROMPT
-
-    def resolve_transcript_cleanup_provider(settings=None):
-        return config.TRANSCRIPT_CLEANUP_PROVIDER
-
-    def resolve_transcript_cleanup_model(settings=None):
-        return config.TRANSCRIPT_CLEANUP_MODEL
-
-    def resolve_transcript_cleanup_reasoning(settings=None):
-        return config.TRANSCRIPT_CLEANUP_REASONING
-
-    def resolve_transcript_cleanup_rules(settings=None):
-        return []
-
-    def compose_transcript_cleanup_prompt(base_prompt, rules):
-        return base_prompt
+from services.settings import (
+    SettingsKey,
+    compose_transcript_cleanup_prompt,
+    resolve_transcript_cleanup_model,
+    resolve_transcript_cleanup_prompt,
+    resolve_transcript_cleanup_provider,
+    resolve_transcript_cleanup_reasoning,
+    resolve_transcript_cleanup_rules,
+    settings_manager,
+)
 
 from ui_qt.overlay_state import OverlayState
 
@@ -816,23 +790,11 @@ class TranscriptionRuntime:
         if not chunk_files:
             raise Exception("Failed to split audio file")
 
-        if hasattr(self.controller.current_backend, "transcribe_chunks"):
-            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
-            self.controller.status_update.emit(
-                f"Transcribing {len(chunk_files)} chunks..."
-            )
-            return self.controller.current_backend.transcribe_chunks(chunk_files)
-
-        transcripts = []
-        for index, chunk_file in enumerate(chunk_files):
-            self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
-            self.controller.status_update.emit(
-                f"Transcribing chunk {index + 1}/{len(chunk_files)}..."
-            )
-            transcripts.append(
-                self.controller.current_backend.transcribe(chunk_file)
-            )
-        return audio_processor.combine_transcriptions(transcripts)
+        self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
+        self.controller.status_update.emit(
+            f"Transcribing {len(chunk_files)} chunks..."
+        )
+        return self.controller.current_backend.transcribe_chunks(chunk_files)
 
     def transcribe_large_audio_file(self, audio_path: str) -> None:
         if self.controller._pending_file_size is None:
@@ -899,19 +861,12 @@ class TranscriptionRuntime:
         )
 
         if transcription_time is not None:
-            try:
-                self.controller.ui_controller.set_transcription_stats(
-                    transcription_time,
-                    self.controller._pending_audio_duration or 0.0,
-                    self.controller._pending_file_size or 0,
-                    cleanup_time=cleanup_time,
-                )
-            except TypeError:
-                self.controller.ui_controller.set_transcription_stats(
-                    transcription_time,
-                    self.controller._pending_audio_duration or 0.0,
-                    self.controller._pending_file_size or 0,
-                )
+            self.controller.ui_controller.set_transcription_stats(
+                transcription_time,
+                self.controller._pending_audio_duration or 0.0,
+                self.controller._pending_file_size or 0,
+                cleanup_time=cleanup_time,
+            )
 
         source_name = getattr(self.controller, "_pending_source_name", None)
 

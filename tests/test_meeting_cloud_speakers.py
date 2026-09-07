@@ -314,6 +314,31 @@ class TestCloudPass:
         assert pinned["speaker_participant_id"] is None
 
 
+def test_cloud_decoder_internal_typeerror_is_not_retried(repo, monkeypatch):
+    from meeting.stored import open_store
+
+    meeting_id = _seed_meeting(repo)
+    store = open_store(repo, meeting_id, repo.get_meeting(meeting_id))
+    monkeypatch.setattr(
+        "meeting.asr.offline.load_channel_session",
+        lambda *args: (np.zeros(16000 * 4, dtype=np.int16), 16000, 0.0),
+    )
+    monkeypatch.setattr("meeting.diarize.cloud_pass.encode_mp3", lambda *args: b"audio")
+    calls = []
+
+    def decoder(*args, **kwargs):
+        calls.append(kwargs)
+        raise TypeError("decoder internal failure")
+
+    result = run_cloud_speaker_pass(
+        repo, meeting_id, store, "/tmp/spool",
+        api_key="sk-test", transcribe_fn=decoder,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "decoder internal failure"
+    assert len(calls) == 1
+
+
 class TestRespeaker:
     def test_rerun_speakers_uses_headless_store(self, repo, monkeypatch):
         from meeting.respeaker import rerun_speakers

@@ -1187,23 +1187,6 @@ def consume_apply_error(appdata: Optional[str] = None) -> Optional[str]:
     return text[:_ERROR_LIMIT]
 
 
-def _copy_preserve(src_root: str, dest_root: str, relative: str) -> None:
-    source = os.path.join(src_root, relative)
-    if not os.path.lexists(source):
-        return
-    reject_reparse(source, source)
-    destination = os.path.join(dest_root, relative)
-    parent = os.path.dirname(destination)
-    os.makedirs(parent, exist_ok=True)
-    if os.path.isdir(source):
-        if os.path.exists(destination):
-            return
-        shutil.copytree(source, destination, symlinks=False, dirs_exist_ok=False)
-        return
-    if os.path.isfile(source):
-        shutil.copy2(source, destination)
-
-
 def preserve_compat_files(
     app_dir: str,
     candidate_dir: str,

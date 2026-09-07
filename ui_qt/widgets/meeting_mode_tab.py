@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolButton,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -34,6 +33,7 @@ from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
+from ui_qt.widgets.help_glyph import HelpGlyphButton, HelpSymbol
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -318,12 +318,8 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox.toggled.connect(self.cloud_toggled)
         cloud_row.addWidget(self.cloud_checkbox)
 
-        self.cloud_help_icon = QToolButton()
-        self.cloud_help_icon.setText("?")
+        self.cloud_help_icon = HelpGlyphButton(HelpSymbol.QUESTION)
         self.cloud_help_icon.setObjectName("meetingCloudHelpIcon")
-        self.cloud_help_icon.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.cloud_help_icon.setFixedSize(18, 18)
-        self.cloud_help_icon.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cloud_help_icon.setToolTip(cloud_intelligence_tooltip())
         self.cloud_help_icon.setAccessibleName("About cloud intelligence")
         self.cloud_help_icon.setAccessibleDescription(

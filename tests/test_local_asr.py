@@ -304,7 +304,7 @@ def test_controls_preserve_whisper_and_other_speech_families(tmp_path, monkeypat
     from PyQt6.QtWidgets import QApplication
     from services.settings import SettingsManager
     from ui_qt.widgets import local_engine_controls as controls
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     manager = SettingsManager(str(tmp_path/"settings.json"))
     manager.update_settings({"whisper_model":"turbo","whisper_device":"cuda","whisper_compute_type":"float16"})
     monkeypatch.setattr(controls, "settings_manager", manager)

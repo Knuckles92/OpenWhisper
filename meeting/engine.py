@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
+from meeting.finalization import make_step, failed_steps_message
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
@@ -654,6 +655,65 @@ class MeetingEngine:
         thread.start()
         return thread
 
+    def _drain_end_capture(self, drain_timeout_s: float) -> bool:
+        self._stop_capture()
+        self._flush_spools()
+        drained = True
+        if self._asr is not None:
+            try:
+                drained = bool(self._asr.drain(drain_timeout_s))
+            except Exception:
+                logger.exception("ASR drain failed at meeting end")
+                drained = False
+            # Flush deferred rolling revises before consolidation sees the
+            # transcript, while the Whisper model is still loaded — but
+            # bound the wait so a long polish queue cannot delay insights.
+            run_pending = getattr(self._asr, "run_pending_revises", None)
+            if drained and callable(run_pending):
+                revise_deadline = time.monotonic() + END_REVISE_TIMEOUT_S
+                try:
+                    for outcome in run_pending(
+                        force=True, deadline_mono=revise_deadline,
+                    ):
+                        self._publish_revise_result(outcome)
+                except Exception:
+                    logger.exception("End-of-meeting ASR revise flush failed")
+        return drained
+
+    def _finalization_summary_stats(self) -> Dict[str, Any]:
+        summary_stats: Dict[str, Any] = {
+            "segments": 0,
+            "words": 0,
+            "key_points": 0,
+            "action_items": 0,
+            "decisions": 0,
+            "risks": 0,
+            "questions": 0,
+            "duration_s": 0.0,
+        }
+        try:
+            summary_stats["duration_s"] = float(self.clock.elapsed_s())
+        except Exception:
+            pass
+        if self.store is not None:
+            try:
+                cards = self.store.with_state(lambda s: dict(s.cards))
+                questions = self.store.with_state(lambda s: list(s.questions))
+                summary_stats["key_points"] = len(cards.get("key_points", []))
+                summary_stats["action_items"] = len(cards.get("action_items", []))
+                summary_stats["decisions"] = len(cards.get("decisions", []))
+                summary_stats["risks"] = len(cards.get("risks", []))
+                summary_stats["questions"] = len(questions)
+            except Exception:
+                pass
+        try:
+            transcript = self.get_transcript()
+            summary_stats["segments"] = len(transcript)
+            summary_stats["words"] = sum(len(str(seg.get("text") or "").split()) for seg in transcript)
+        except Exception:
+            pass
+        return summary_stats
+
     def _end_worker(self, drain_timeout_s: float) -> None:
         terminal_persisted = False
         try:
@@ -676,45 +736,7 @@ class MeetingEngine:
                         prepare()
                     except Exception:
                         logger.exception("Scheduler prepare_for_end failed")
-            self._stop_capture()
-            self._flush_spools()
-            drained = True
-            if self._asr is not None:
-                try:
-                    drained = bool(self._asr.drain(drain_timeout_s))
-                except Exception:
-                    logger.exception("ASR drain failed at meeting end")
-                    drained = False
-                # Flush deferred rolling revises before consolidation sees the
-                # transcript, while the Whisper model is still loaded — but
-                # bound the wait so a long polish queue cannot delay insights.
-                run_pending = getattr(self._asr, "run_pending_revises", None)
-                if drained and callable(run_pending):
-                    revise_deadline = time.monotonic() + END_REVISE_TIMEOUT_S
-                    try:
-                        for outcome in run_pending(
-                            force=True, deadline_mono=revise_deadline,
-                        ):
-                            self._publish_revise_result(outcome)
-                    except TypeError:
-                        # Older ASR engines without deadline_mono.
-                        try:
-                            for outcome in run_pending(force=True):
-                                self._publish_revise_result(outcome)
-                                if time.monotonic() >= revise_deadline:
-                                    logger.warning(
-                                        "End-of-meeting ASR revise flush timed "
-                                        "out after %.0fs; continuing to "
-                                        "consolidation",
-                                        END_REVISE_TIMEOUT_S,
-                                    )
-                                    break
-                        except Exception:
-                            logger.exception(
-                                "End-of-meeting ASR revise flush failed"
-                            )
-                    except Exception:
-                        logger.exception("End-of-meeting ASR revise flush failed")
+            drained = self._drain_end_capture(drain_timeout_s)
             try:
                 unfinished = self.repository.count_unfinished_chunks(
                     self.meeting_id
@@ -776,42 +798,13 @@ class MeetingEngine:
                 and (want_polish or want_report)
             )
 
-            steps: List[Dict[str, Any]] = []
-            if will_offline:
-                steps.append({
-                    "id": "redecode",
-                    "name": "Audio Re-transcription",
-                    "status": "pending",
-                    "detail": "High-accuracy full session Whisper decode",
-                })
-            if will_speaker_id:
-                steps.append({
-                    "id": "speaker_id",
-                    "name": "Speaker Identification",
-                    "status": "pending",
-                    "detail": "OpenAI labels on the system-audio recording",
-                })
-            if run_cloud:
-                if want_polish:
-                    steps.append({
-                        "id": "polish",
-                        "name": "Transcript Cleanup",
-                        "status": "pending",
-                        "detail": "AI grammar, punctuation, and speaker formatting",
-                    })
-                if want_report:
-                    steps.append({
-                        "id": "consolidation",
-                        "name": "Summary & Action Items",
-                        "status": "pending",
-                        "detail": "Synthesizing executive summary, key points, decisions, and action items",
-                    })
-            steps.append({
-                "id": "finalize",
-                "name": "State Finalization",
-                "status": "pending",
-                "detail": "Saving final transcript and consolidating meeting state",
-            })
+            steps = [make_step(step_id) for step_id, enabled in (
+                ("redecode", will_offline),
+                ("speaker_id", will_speaker_id),
+                ("polish", run_cloud and want_polish),
+                ("consolidation", run_cloud and want_report),
+                ("finalize", True),
+            ) if enabled]
             total_steps = len(steps)
 
             def _update_step(step_id: str, step_status: str, detail_msg: str = "", *, message: str = "", emit: bool = True) -> None:
@@ -990,15 +983,10 @@ class MeetingEngine:
                         polish_detail = "Transcript cleanup finished"
                         if callable(polish):
                             try:
-                                try:
-                                    polish_outcome = polish(
-                                        timeout_s=POLISH_TIMEOUT_S,
-                                        progress_cb=_polish_progress,
-                                    )
-                                except TypeError:
-                                    polish_outcome = polish(
-                                        timeout_s=POLISH_TIMEOUT_S,
-                                    )
+                                polish_outcome = polish(
+                                    timeout_s=POLISH_TIMEOUT_S,
+                                    progress_cb=_polish_progress,
+                                )
                                 polish_status = getattr(
                                     polish_outcome, "status", "completed",
                                 )
@@ -1036,12 +1024,9 @@ class MeetingEngine:
                         # live_notes is preserved into consolidation so the
                         # final report pass can synthesize the meeting notes
                         # and reconcile them against the final transcript.
-                        try:
-                            outcome = scheduler.run_consolidation(
-                                progress_cb=_consolidation_progress,
-                            )
-                        except TypeError:
-                            outcome = scheduler.run_consolidation()
+                        outcome = scheduler.run_consolidation(
+                            progress_cb=_consolidation_progress,
+                        )
                         status = getattr(outcome, "status", "failed")
                         message = getattr(outcome, "message", "") or ""
                         _update_step(
@@ -1072,37 +1057,7 @@ class MeetingEngine:
                         "Saving final transcript and meeting state...",
                         message="Finalizing meeting state…",
                     )
-                    summary_stats: Dict[str, Any] = {
-                        "segments": 0,
-                        "words": 0,
-                        "key_points": 0,
-                        "action_items": 0,
-                        "decisions": 0,
-                        "risks": 0,
-                        "questions": 0,
-                        "duration_s": 0.0,
-                    }
-                    try:
-                        summary_stats["duration_s"] = float(self.clock.elapsed_s())
-                    except Exception:
-                        pass
-                    if self.store is not None:
-                        try:
-                            cards = self.store.with_state(lambda s: dict(s.cards))
-                            questions = self.store.with_state(lambda s: list(s.questions))
-                            summary_stats["key_points"] = len(cards.get("key_points", []))
-                            summary_stats["action_items"] = len(cards.get("action_items", []))
-                            summary_stats["decisions"] = len(cards.get("decisions", []))
-                            summary_stats["risks"] = len(cards.get("risks", []))
-                            summary_stats["questions"] = len(questions)
-                        except Exception:
-                            pass
-                    try:
-                        transcript = self.get_transcript()
-                        summary_stats["segments"] = len(transcript)
-                        summary_stats["words"] = sum(len(str(seg.get("text") or "").split()) for seg in transcript)
-                    except Exception:
-                        pass
+                    summary_stats = self._finalization_summary_stats()
 
                     _update_step(
                         "finalize",
@@ -1112,15 +1067,7 @@ class MeetingEngine:
 
                     if any(s.get("status") == "failed" for s in steps):
                         status = "failed"
-                        failed_names = [
-                            str(s.get("name") or s.get("id"))
-                            for s in steps
-                            if s.get("status") == "failed"
-                        ]
-                        final_msg = (
-                            f"{', '.join(failed_names)} failed. "
-                            "The recording and transcript were kept."
-                        )
+                        final_msg = failed_steps_message(steps)
                     elif status == "completed":
                         if not want_report:
                             final_msg = message
@@ -1319,10 +1266,7 @@ class MeetingEngine:
             logger.exception("Could not load audio chunks for offline ASR")
             chunks = []
         try:
-            try:
-                decoded = list(transcribe(spool_dir, chunks, progress_cb=progress_cb) or [])
-            except TypeError:
-                decoded = list(transcribe(spool_dir, chunks) or [])
+            decoded = list(transcribe(spool_dir, chunks, progress_cb=progress_cb) or [])
         except Exception:
             logger.exception("Offline session transcription failed")
             return False
@@ -2180,19 +2124,6 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Could not stop stale %s source", channel)
 
-    def _retire_capture_channel(self, channel: str) -> None:
-        """Stop a channel source and flush/remove its spool (end of life)."""
-        self._stop_capture_source(channel)
-        with self._capture_lock:
-            spool = self._spools.pop(channel, None)
-        if spool is not None:
-            try:
-                chunk = spool.flush()
-                if chunk is not None:
-                    self._on_chunk(chunk)
-            except Exception:
-                logger.exception("Could not flush stale %s spool", channel)
-
     def _update_capture_status(self, message: str = "") -> None:
         if self.store is None:
             return
@@ -3019,16 +2950,3 @@ class MeetingEngine:
         if not self.agent_writes_allowed():
             return OpResult(ok=False, op=op, reason="agent_writes_revoked")
         return self.store.apply("agent", "agent", [op])[0]
-
-    def _persist_snapshot(self) -> None:
-        """Write the current full state snapshot to the meeting row."""
-        if self.store is None or not self.meeting_id:
-            return
-        try:
-            self.repository.update_meeting(
-                self.meeting_id,
-                state_json=json.dumps(self.store.snapshot(), ensure_ascii=False),
-                state_seq=self.store.seq,
-            )
-        except Exception:
-            logger.exception("Failed to persist state snapshot")

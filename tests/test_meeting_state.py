@@ -3,7 +3,6 @@ Tests for the Meeting Mode state layer: patch ops, protection rules, and the
 single-writer store (seq numbering, audit events, undo).
 """
 
-import pytest
 
 from meeting.state.schema import MeetingState
 from meeting.state.store import MeetingStateStore

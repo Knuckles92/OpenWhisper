@@ -6,14 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from config import config
-try:
-    from services.settings import SettingsKey, settings_manager
-except ImportError:  # pragma: no cover - supports lightweight test stubs
-    from services.settings import settings_manager
-
-    class SettingsKey:
-        STREAMING_ENABLED = "streaming_enabled"
-        STREAMING_CHUNK_DURATION = "streaming_chunk_duration"
+from services.settings import SettingsKey, settings_manager
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback

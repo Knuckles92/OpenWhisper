@@ -3,7 +3,6 @@ Tests for CheckpointScheduler: adaptive intervals, coalescing, Jaccard early fir
 """
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -470,6 +469,32 @@ class TestFinalPolish:
         assert agent.calls[0].is_polish is True
         assert agent.calls[0].is_consolidation is False
         assert [seg["id"] for seg in agent.calls[0].new_segments] == ["sg_1", "sg_2"]
+
+    @pytest.mark.parametrize("timeout", [False, True])
+    def test_later_block_failure_keeps_prior_work_but_reports_failure(self, timeout):
+        engine = FakeEngine([
+            {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": "draft"}
+            for i in range(401)
+        ])
+
+        class LaterFailureAgent(FakeAgent):
+            def checkpoint(self, payload):
+                self.calls.append(payload)
+                if len(self.calls) == 1:
+                    engine._segments[0]["text"] = "Cleaned."
+                    return AgentResult(ok=True)
+                if timeout:
+                    self._release.wait(timeout=2)
+                return AgentResult(ok=False, error="second block failed")
+
+        agent = LaterFailureAgent()
+        agent._release.clear()
+        outcome = CheckpointScheduler(engine, agent).run_final_polish(timeout_s=0.02)
+
+        assert outcome.status == "failed"
+        assert ("timed out" if timeout else "second block failed") in outcome.message
+        assert len(agent.calls) == 2
+        assert engine._segments[0]["text"] == "Cleaned."
 
     def test_final_polish_then_consolidation_see_same_segments(self):
         engine = FakeEngine([

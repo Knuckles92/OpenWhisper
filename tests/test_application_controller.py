@@ -692,64 +692,25 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
 
-    # SettingsKey / HuggingFaceAccessPolicy are constants holders with no
-    # behavior, so the real ones are safe (and more faithful) to expose on the
-    # stub than hand-rolled copies.
-    from services.settings import (
-        HuggingFaceAccessPolicy as _RealHFPolicy,
-        RecordingTriggerMode as _RealRecordingTriggerMode,
-        SettingsKey as _RealSettingsKey,
-        TranscriptCleanupProvider as _RealCleanupProvider,
-        TranscriptCleanupReasoning as _RealCleanupReasoning,
-        default_transcript_cleanup_model as _default_cleanup_model,
-        resolve_recording_trigger_mode as _resolve_recording_trigger_mode,
-        resolve_transcript_cleanup_model as _resolve_cleanup_model,
-        resolve_transcript_cleanup_prompt as _resolve_cleanup_prompt,
-        resolve_transcript_cleanup_provider as _resolve_cleanup_provider,
-        resolve_transcript_cleanup_reasoning as _resolve_cleanup_reasoning,
-        resolve_update_check_enabled as _resolve_update_check_enabled,
-        resolve_update_notify_enabled as _resolve_update_notify_enabled,
-        resolve_update_skipped_version as _resolve_update_skipped_version,
-    )
+    from services import settings as real_settings
+    import inspect
 
     settings_module = types.ModuleType("services.settings")
+    settings_module.__dict__.update(vars(real_settings))
     settings_module.settings_manager = settings_manager
-    settings_module.SettingsKey = _RealSettingsKey
-    settings_module.HuggingFaceAccessPolicy = _RealHFPolicy
-    settings_module.RecordingTriggerMode = _RealRecordingTriggerMode
-    settings_module.TranscriptCleanupProvider = _RealCleanupProvider
-    settings_module.TranscriptCleanupReasoning = _RealCleanupReasoning
-    settings_module.default_transcript_cleanup_model = _default_cleanup_model
+    _RealHFPolicy = real_settings.HuggingFaceAccessPolicy
 
     def _with_fake_settings(resolver):
         return lambda settings=None: resolver(
             settings if settings is not None else settings_manager.load_all_settings()
         )
 
-    settings_module.resolve_recording_trigger_mode = _with_fake_settings(
-        _resolve_recording_trigger_mode
-    )
-    settings_module.resolve_transcript_cleanup_prompt = _with_fake_settings(
-        _resolve_cleanup_prompt
-    )
-    settings_module.resolve_transcript_cleanup_provider = _with_fake_settings(
-        _resolve_cleanup_provider
-    )
-    settings_module.resolve_transcript_cleanup_model = _with_fake_settings(
-        _resolve_cleanup_model
-    )
-    settings_module.resolve_transcript_cleanup_reasoning = _with_fake_settings(
-        _resolve_cleanup_reasoning
-    )
-    settings_module.resolve_update_check_enabled = _with_fake_settings(
-        _resolve_update_check_enabled
-    )
-    settings_module.resolve_update_notify_enabled = _with_fake_settings(
-        _resolve_update_notify_enabled
-    )
-    settings_module.resolve_update_skipped_version = _with_fake_settings(
-        _resolve_update_skipped_version
-    )
+    # Keep the real settings contract, but resolve omitted snapshots through
+    # this controller's fake store rather than the process-wide singleton.
+    for name, resolver in vars(real_settings).items():
+        if name.startswith("resolve_") and callable(resolver):
+            if tuple(inspect.signature(resolver).parameters) == ("settings",):
+                setattr(settings_module, name, _with_fake_settings(resolver))
 
     from services.hf_access import (
         AccessDecision as _RealAccessDecision,
@@ -2677,7 +2638,6 @@ class TestApplicationController:
         assert "API key" in controller.ui_controller.statuses[-1]
 
     def test_optional_engine_switch_releases_whisper_before_loading(self):
-        from unittest.mock import Mock
         controller = self._create_controller()
         whisper = controller.transcription_backends["local_whisper"]
         speech = controller.transcription_backends["parakeet"]

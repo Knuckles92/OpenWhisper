@@ -345,28 +345,16 @@ def transcribe_meeting_sessions(
         if frames is None or frames.size == 0:
             logger.info("No session audio for offline ASR on channel %s", channel)
             continue
-        try:
-            decoded = decoder(
-                model,
-                frames,
-                rate,
-                meeting_id=meeting_id,
-                channel=channel,
-                origin_s=origin,
-                language=language,
-                progress_cb=progress_cb,
-            )
-        except TypeError:
-            # Fallback if custom transcribe_fn in tests doesn't accept progress_cb
-            decoded = decoder(
-                model,
-                frames,
-                rate,
-                meeting_id=meeting_id,
-                channel=channel,
-                origin_s=origin,
-                language=language,
-            )
+        decoded = decoder(
+            model,
+            frames,
+            rate,
+            meeting_id=meeting_id,
+            channel=channel,
+            origin_s=origin,
+            language=language,
+            progress_cb=progress_cb,
+        )
         merged.extend(decoded)
         logger.info(
             "Offline ASR %s: %d segments from %.1fs of audio",

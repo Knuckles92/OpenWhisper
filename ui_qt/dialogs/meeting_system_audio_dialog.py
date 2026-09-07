@@ -12,7 +12,7 @@ the System Settings deep link as well.
 from __future__ import annotations
 
 import logging
-from typing import Final, Optional
+from typing import Final
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices

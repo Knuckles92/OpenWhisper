@@ -2,9 +2,6 @@
 import json
 from datetime import datetime
 
-import pytest
-
-
 from meeting.interfaces import AgentResult, TranscriptSegment
 from meeting.refinalize import rerun_finalization, rerun_polish, rerun_redecode
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
@@ -151,6 +148,22 @@ def rich_decode(spool_dir, chunks, progress_cb=None):
 
 
 class TestRedeocdeGuard:
+    def test_internal_decoder_typeerror_is_not_retried(self, repo):
+        meeting_id = make_meeting(repo)
+        add_transcript(repo, meeting_id)
+        before = repo.get_segments(meeting_id)
+        calls = []
+
+        def decoder(spool_dir, chunks, progress_cb=None):
+            calls.append(progress_cb)
+            raise TypeError("decoder internal failure")
+
+        result = rerun_redecode(repo, meeting_id, transcribe_fn=decoder)
+
+        assert result == {"ok": False, "error": "decoder internal failure"}
+        assert len(calls) == 1
+        assert repo.get_segments(meeting_id) == before
+
     def test_sparse_redecode_keeps_draft(self, repo, monkeypatch):
         make_meeting(
             repo,

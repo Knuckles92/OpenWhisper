@@ -20,7 +20,6 @@ import logging
 import warnings
 import subprocess
 import platform
-from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 
@@ -59,7 +58,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
 
-from services.settings import settings_manager
 from transcriber.local_backend import LocalWhisperBackend
 from transcriber.openai_backend import OpenAIBackend
 from config import config
@@ -231,8 +229,8 @@ class AudioGenerator:
     def _check_tts_available(self) -> bool:
         if self._tts_available is None:
             try:
-                from gtts import gTTS
-                from pydub import AudioSegment
+                from gtts import gTTS  # noqa: F401 -- verify the optional TTS import works
+                from pydub import AudioSegment  # noqa: F401 -- verify the decoder import works
                 self._tts_available = True
             except ImportError:
                 self._tts_available = False
@@ -259,8 +257,8 @@ class AudioGenerator:
 
         if self._check_tts_available():
             try:
-                from gtts import gTTS
-                from pydub import AudioSegment
+                from gtts import gTTS  # noqa: F401 -- verify the optional TTS import works
+                from pydub import AudioSegment  # noqa: F401 -- verify the decoder import works
 
                 tts = gTTS(text=text, lang='en', slow=False)
                 temp_mp3 = os.path.join(self.temp_dir, f"temp_{filename}.mp3")
@@ -480,7 +478,7 @@ class AccuracyBenchmark:
                 self.generated_files.append(filename)
                 print(f"   ✅ Generated: {filename}")
             else:
-                print(f"   ❌ Failed to generate audio")
+                print("   ❌ Failed to generate audio")
 
         if not audio_files:
             print("\n❌ Failed to generate any audio files. Exiting.")

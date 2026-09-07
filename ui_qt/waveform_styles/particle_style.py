@@ -2,8 +2,8 @@
 import math
 import random
 import time
-from typing import Dict, Any, List, Optional, Tuple
-from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush
+from typing import Dict, Any, List, Optional
+from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QRect, QRectF, Qt
 from .base_style import BaseWaveformStyle, round_pen
 from ui_qt.utils.palette import current_palette, token_color

@@ -9,7 +9,6 @@ Styling deliberately mirrors :mod:`ui_qt.widgets.model_row_widget` so the
 Components group and the model list read as one list.
 """
 import logging
-from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont

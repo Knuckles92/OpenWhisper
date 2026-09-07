@@ -3,7 +3,7 @@ import tempfile
 import os
 import wave
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from services.recorder import AudioRecorder
 from config import config
@@ -165,7 +165,3 @@ class TestAudioRecorder:
             with wave.open(self.test_audio_file, "rb") as wf:
                 assert wf.readframes(len(audio)) == audio.tobytes()
             recorder.cleanup()
-
-
-if __name__ == '__main__':
-    unittest.main()

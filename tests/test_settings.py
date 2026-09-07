@@ -754,9 +754,6 @@ def test_config_version_tracks_version_module():
     assert config.VERSION == __version__
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 @pytest.mark.parametrize("legacy, expected", [
     ("api_whisper", "whisper-1"),

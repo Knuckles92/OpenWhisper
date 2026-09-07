@@ -1460,7 +1460,6 @@ class MainWindow(QMainWindow):
         return (horizontal, vertical)
 
     def _update_cursor_for_edge(self, edge: tuple):
-        from PyQt6.QtGui import QCursor
 
         h, v = edge
 

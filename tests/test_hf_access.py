@@ -1,6 +1,5 @@
 """Unit tests for the Hugging Face cache/access coordinator."""
 import pytest
-import os
 import tempfile
 import threading
 import time

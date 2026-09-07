@@ -13,9 +13,8 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 from meeting.diarize.cloud_pass import DEFAULT_MODEL, run_cloud_speaker_pass
-from meeting.reinsight import _load_state
-from meeting.state.segment_ops import make_segment_handler
 from meeting.state.store import MeetingStateStore
+from meeting.stored import open_store as _open_store
 
 logger = logging.getLogger(__name__)
 
@@ -23,23 +22,6 @@ ProgressCb = Callable[[str, int, int], None]
 TranscribeFn = Callable[..., Any]
 
 __all__ = ["rerun_speakers"]
-
-
-def _open_store(repository: Any, meeting_id: str,
-                meeting: Dict[str, Any]) -> MeetingStateStore:
-    return MeetingStateStore(
-        _load_state(meeting, meeting_id),
-        repository=repository,
-        segment_handler=make_segment_handler(repository, meeting_id),
-        segment_exists=lambda segment_id: repository.segment_exists(
-            meeting_id, segment_id
-        ),
-        segment_pinned=lambda segment_id: bool(
-            (repository.get_segment(meeting_id, segment_id) or {}).get(
-                "speaker_pinned"
-            )
-        ),
-    )
 
 
 def rerun_speakers(

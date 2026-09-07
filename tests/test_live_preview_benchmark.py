@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from benchmarks import live_preview as bench
-from config import config
 
 
 def test_callback_quantization_and_short_clip():

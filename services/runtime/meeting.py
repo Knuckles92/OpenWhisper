@@ -22,87 +22,25 @@ from services.components import (
     meeting_agent_payload_dir,
     speaker_model_path,
 )
-try:
-    from services.settings import (
-        MeetingAgentCore,
-        SettingsKey,
-        resolve_meeting_agent_core,
-        resolve_meeting_audio_upload_consent,
-        resolve_meeting_end_polish,
-        resolve_meeting_end_redecode,
-        resolve_meeting_end_report,
-        resolve_meeting_report_views,
-        resolve_meeting_llm_endpoint,
-        resolve_meeting_llm_model,
-        resolve_meeting_llm_provider,
-        resolve_meeting_language,
-        resolve_meeting_server_bind,
-        resolve_meeting_server_port,
-        resolve_meeting_speaker_id_backend,
-        resolve_meeting_whisper_model,
-        settings_manager,
-    )
-except ImportError:  # pragma: no cover - supports lightweight test stubs
-    from services import settings as _settings
-    from services.settings import SettingsKey, settings_manager
-
-    class _FallbackMeetingAgentCore:
-        PI = "pi"
-        DIRECT = "direct"
-
-    MeetingAgentCore = getattr(
-        _settings, "MeetingAgentCore", _FallbackMeetingAgentCore
-    )
-    resolve_meeting_agent_core = getattr(
-        _settings, "resolve_meeting_agent_core", lambda settings=None: "direct"
-    )
-    resolve_meeting_audio_upload_consent = getattr(
-        _settings,
-        "resolve_meeting_audio_upload_consent",
-        lambda settings=None: False,
-    )
-    resolve_meeting_end_polish = getattr(
-        _settings, "resolve_meeting_end_polish", lambda settings=None: False
-    )
-    resolve_meeting_end_redecode = getattr(
-        _settings, "resolve_meeting_end_redecode", lambda settings=None: False
-    )
-    resolve_meeting_end_report = getattr(
-        _settings, "resolve_meeting_end_report", lambda settings=None: False
-    )
-    resolve_meeting_report_views = getattr(
-        _settings,
-        "resolve_meeting_report_views",
-        lambda settings=None: ("ribbon", "brief", "signal"),
-    )
-    resolve_meeting_llm_endpoint = getattr(
-        _settings, "resolve_meeting_llm_endpoint", lambda settings=None: None
-    )
-    resolve_meeting_llm_model = getattr(
-        _settings, "resolve_meeting_llm_model", lambda settings=None: ""
-    )
-    resolve_meeting_llm_provider = getattr(
-        _settings,
-        "resolve_meeting_llm_provider",
-        lambda settings=None: "openrouter",
-    )
-    resolve_meeting_language = getattr(
-        _settings, "resolve_meeting_language", lambda settings=None: "auto"
-    )
-    resolve_meeting_server_bind = getattr(
-        _settings, "resolve_meeting_server_bind", lambda settings=None: "localhost"
-    )
-    resolve_meeting_server_port = getattr(
-        _settings, "resolve_meeting_server_port", lambda settings=None: 0
-    )
-    resolve_meeting_speaker_id_backend = getattr(
-        _settings,
-        "resolve_meeting_speaker_id_backend",
-        lambda settings=None: "local",
-    )
-    resolve_meeting_whisper_model = getattr(
-        _settings, "resolve_meeting_whisper_model", lambda settings=None: "auto"
-    )
+from services.settings import (
+    MeetingAgentCore,
+    SettingsKey,
+    resolve_meeting_agent_core,
+    resolve_meeting_audio_upload_consent,
+    resolve_meeting_end_polish,
+    resolve_meeting_end_redecode,
+    resolve_meeting_end_report,
+    resolve_meeting_report_views,
+    resolve_meeting_llm_endpoint,
+    resolve_meeting_llm_model,
+    resolve_meeting_llm_provider,
+    resolve_meeting_language,
+    resolve_meeting_server_bind,
+    resolve_meeting_server_port,
+    resolve_meeting_speaker_id_backend,
+    resolve_meeting_whisper_model,
+    settings_manager,
+)
 
 if TYPE_CHECKING:
     from meeting.engine import MeetingEngine

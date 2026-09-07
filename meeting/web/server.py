@@ -13,7 +13,7 @@ import logging
 import socket
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 try:
     import uvicorn

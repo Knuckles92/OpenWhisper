@@ -13,7 +13,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, TextIO, Tuple
+from typing import Dict, List, Sequence, TextIO, Tuple
 
 REQUIRED_LIBRARIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
     ("libEGL.so.1", {

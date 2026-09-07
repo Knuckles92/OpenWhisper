@@ -1,5 +1,4 @@
 """Tests for the downloadable component system."""
-import hashlib
 import io
 import json
 import os
@@ -11,7 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-from _version import __version__
 from services import components
 from services.components import (
     ComponentCanceled,

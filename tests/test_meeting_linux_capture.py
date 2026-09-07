@@ -359,7 +359,6 @@ class TestLinuxProbe(unittest.TestCase):
     def test_monitor_open_timeout_classified(self):
         class BlockingMic(_FakeMic):
             def recorder(self, samplerate=48000, channels=None):
-                mic = self
 
                 class _Recorder:
                     def __enter__(self_inner):

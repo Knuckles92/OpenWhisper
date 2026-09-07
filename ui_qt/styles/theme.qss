@@ -2108,26 +2108,6 @@ QCheckBox#meetingCloudCheckbox:hover {
     color: @text;
 }
 
-QToolButton#meetingCloudHelpIcon {
-    color: @text-secondary;
-    background-color: @surface;
-    border: 1px solid @border;
-    border-radius: 8px;
-    font-size: 11px;
-    font-weight: 600;
-    min-width: 16px;
-    max-width: 16px;
-    min-height: 16px;
-    max-height: 16px;
-    padding: 0px;
-}
-
-QToolButton#meetingCloudHelpIcon:hover {
-    color: @text;
-    background-color: @surface-hover;
-    border-color: @text-muted;
-}
-
 QWidget#meetingModeTab QPushButton:focus,
 QWidget#meetingModeTab QToolButton:focus,
 QWidget#meetingModeTab QCheckBox:focus {

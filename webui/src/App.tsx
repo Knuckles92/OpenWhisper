@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
+import { hydrateTranscript, sendDashboardAction, type TranscriptLoadState } from './dashboardActions';
 import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
 import HistoryPane from './components/HistoryPane';
@@ -49,7 +50,9 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   );
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
-  const [transcriptComplete, setTranscriptComplete] = useState(false);
+  const [transcriptLoad, setTranscriptLoad] = useState<TranscriptLoadState>({ status: 'loading' });
+  const [transcriptAttempt, setTranscriptAttempt] = useState(0);
+  const transcriptComplete = transcriptLoad.status === 'complete';
   const [reportView, setReportView] = useState<ReportViewId>(() =>
     resolveReportView(['ribbon', 'brief', 'signal']),
   );
@@ -89,26 +92,16 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
 
   useEffect(() => {
     let cancelled = false;
-    const hydrate = async () => {
-      setTranscriptComplete(false);
-      try {
-        let cursor: string | undefined;
-        do {
-          const page = await api.transcriptPage(token, cursor);
-          if (cancelled) return;
-          dispatch({ type: 'hydrate_segments', segments: page.items });
-          cursor = page.next_cursor ?? undefined;
-        } while (cursor);
-      } catch {
-        /* live WebSocket remains usable when background history hydration fails */
-      }
-      if (!cancelled) setTranscriptComplete(true);
-    };
-    hydrate();
+    void hydrateTranscript(
+      (cursor) => api.transcriptPage(token, cursor),
+      (segments) => dispatch({ type: 'hydrate_segments', segments }),
+      setTranscriptLoad,
+      () => cancelled,
+    );
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, transcriptAttempt]);
 
   const reportViews = useMemo(
     () => (ui.state ? enabledReportViews(ui.state) : ['ribbon' as const]),
@@ -126,63 +119,23 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     writeStoredReportView(view);
   }, []);
 
-  const sendOp = useCallback(async (op: Op): Promise<boolean> => {
-    const socket = socketRef.current;
-    if (!socket) {
-      dispatch({ type: 'client_error', message: 'You are offline. Your change was not sent.' });
-      return false;
-    }
-    try {
-      const results = await socket.sendAction(op);
-      const acknowledged = results.length > 0;
-      if (!acknowledged) {
-        dispatch({ type: 'client_error', message: 'The server did not acknowledge the change.' });
-      }
-      const rejected = results.find((result) => !result.ok);
-      if (rejected) {
-        dispatch({
-          type: 'client_error',
-          message: (rejected.reason || 'Action was rejected').replace(/_/g, ' '),
-        });
-      }
-      return acknowledged && !rejected;
-    } catch (err) {
-      dispatch({
-        type: 'client_error',
-        message: err instanceof Error ? err.message : 'Your change could not be sent.',
-      });
-      return false;
-    }
+  const onActionError = useCallback((message: string) => {
+    dispatch({ type: 'client_error', message });
   }, []);
 
-  const sendUndo = useCallback(async (seq: number): Promise<boolean> => {
+  const sendOp = useCallback((op: Op): Promise<boolean> => {
     const socket = socketRef.current;
-    if (!socket) {
-      dispatch({ type: 'client_error', message: 'You are offline. Undo was not sent.' });
-      return false;
-    }
-    try {
-      const results = await socket.sendUndo(seq);
-      const acknowledged = results.length > 0;
-      if (!acknowledged) {
-        dispatch({ type: 'client_error', message: 'The server did not acknowledge undo.' });
-      }
-      const rejected = results.find((result) => !result.ok);
-      if (rejected) {
-        dispatch({
-          type: 'client_error',
-          message: (rejected.reason || 'Undo was rejected').replace(/_/g, ' '),
-        });
-      }
-      return acknowledged && !rejected;
-    } catch (err) {
-      dispatch({
-        type: 'client_error',
-        message: err instanceof Error ? err.message : 'Undo could not be sent.',
-      });
-      return false;
-    }
-  }, []);
+    return sendDashboardAction(
+      socket ? () => socket.sendAction(op) : null, 'change', onActionError,
+    );
+  }, [onActionError]);
+
+  const sendUndo = useCallback((seq: number): Promise<boolean> => {
+    const socket = socketRef.current;
+    return sendDashboardAction(
+      socket ? () => socket.sendUndo(seq) : null, 'undo', onActionError,
+    );
+  }, [onActionError]);
 
   const participants = useMemo(
     () => (ui.state ? Object.values(ui.state.participants) : []),
@@ -265,6 +218,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           setShowHistory(false);
         }}
         showActivity={showActivity}
+        transcriptLoadError={transcriptLoad.error ?? null}
+        onRetryTranscript={() => setTranscriptAttempt((attempt) => attempt + 1)}
         transcriptComplete={transcriptComplete}
         reportView={reportView}
         onReportViewChange={selectReportView}
