@@ -92,8 +92,8 @@ PREVIEW_STYLE: Final[MarkdownStyle] = MarkdownStyle(
     line_height=135,
     paragraph_gap=8,
     indent_px=22,
-    code_background="bg",
-    quote_background="surface-sunken",
+    code_background="code-on-surface",
+    quote_background="quote-on-surface",
 )
 
 #: The transcript reading window (on @bg).
@@ -102,8 +102,8 @@ READER_STYLE: Final[MarkdownStyle] = MarkdownStyle(
     line_height=155,
     paragraph_gap=12,
     indent_px=26,
-    code_background="surface",
-    quote_background="surface-sunken",
+    code_background="code-on-bg",
+    quote_background="quote-on-bg",
 )
 
 

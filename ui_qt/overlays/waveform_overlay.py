@@ -17,7 +17,7 @@ from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
 )
-from ui_qt.utils.palette import token_color
+from ui_qt.utils.palette import current_palette, token_color
 from ui_qt.waveform_styles import BaseWaveformStyle, ParticleStyle
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,9 @@ class STTParticle:
 
     def get_color(self) -> QColor:
         alpha = int(255 * self.life)
-        return QColor.fromHsv(int(self.hue) % 360, 200, 230, alpha)
+        if current_palette().is_dark:
+            return QColor.fromHsv(int(self.hue) % 360, 200, 230, alpha)
+        return QColor.fromHsv(int(self.hue) % 360, 235, 205, alpha)
 
 
 class WaveformOverlay(QWidget):

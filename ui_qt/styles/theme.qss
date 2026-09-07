@@ -110,21 +110,21 @@ QPushButton#successButton[inactive="true"],
 QPushButton#successButton[inactive="true"]:hover,
 QPushButton#successButton[inactive="true"]:pressed {
     background-color: rgba(@success-rgb, 0.28);
-    color: rgba(@on-accent-rgb, 0.55);
+    color: rgba(@on-tint-rgb, 0.55);
 }
 
 QPushButton#dangerButton[inactive="true"],
 QPushButton#dangerButton[inactive="true"]:hover,
 QPushButton#dangerButton[inactive="true"]:pressed {
     background-color: rgba(@danger-rgb, 0.28);
-    color: rgba(@on-accent-rgb, 0.55);
+    color: rgba(@on-tint-rgb, 0.55);
 }
 
 QPushButton#warningButton[inactive="true"],
 QPushButton#warningButton[inactive="true"]:hover,
 QPushButton#warningButton[inactive="true"]:pressed {
     background-color: rgba(@warning-rgb, 0.28);
-    color: rgba(@on-accent-rgb, 0.55);
+    color: rgba(@on-tint-rgb, 0.55);
 }
 
 /* ComboBox (Model selector) */

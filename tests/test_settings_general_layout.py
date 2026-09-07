@@ -72,6 +72,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertIs(
                 dialog.ui_font_scale_tile.control, dialog.ui_font_scale_combo
             )
+            self.assertIs(dialog.ui_theme_tile.control, dialog.ui_theme_combo)
             group_titles = [
                 label.text()
                 for label in general.findChildren(QLabel)

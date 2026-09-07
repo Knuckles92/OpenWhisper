@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush
 from PyQt6.QtCore import QRect, QRectF, Qt
 from .base_style import BaseWaveformStyle, round_pen
-from ui_qt.utils.palette import token_color
+from ui_qt.utils.palette import current_palette, token_color
 
 
 class Particle:
@@ -34,10 +34,14 @@ class Particle:
 
     def get_qcolor(self, base_hue: float = None) -> QColor:
         hue = base_hue if base_hue is not None else self.color_hue
-        saturation = 200
-        value = int(self.life * 230 + 25)
-
-        return QColor.fromHsv(int(hue) % 360, saturation, value)
+        if current_palette().is_dark:
+            # Dying particles darken into the dark pill.
+            return QColor.fromHsv(int(hue) % 360, 200, int(self.life * 230 + 25))
+        # On a light pill they would darken into soot, so they fade out
+        # instead, and run more saturated to hold against white.
+        return QColor.fromHsv(
+            int(hue) % 360, 235, 205, max(0, min(255, int(self.life * 255)))
+        )
 
 
 class ParticleStyle(BaseWaveformStyle):

@@ -36,6 +36,11 @@ _DARK_TOKENS: Final[Dict[str, str]] = {
     "surface-active": "#48484a",
     "surface-disabled": "#232325",
     "surface-sunken": "#232326",
+    # Markdown chips and quote tints, one pair per surface they sit on.
+    "code-on-surface": "#1c1c1e",
+    "quote-on-surface": "#252527",
+    "code-on-bg": "#2c2c2e",
+    "quote-on-bg": "#232326",
     "border": "#3a3a3c",
     "border-subtle": "#2c2c2e",
     "border-strong": "#48484a",
@@ -73,6 +78,9 @@ _DARK_TOKENS: Final[Dict[str, str]] = {
     "accent-muted": "#24425f",
     "on-accent": "#ffffff",
     "on-accent-rgb": "255, 255, 255",
+    # Label on a translucent status tint (an inactive Stop/Cancel button):
+    # white holds on dark, but on a pale pink pill it vanishes.
+    "on-tint-rgb": "255, 255, 255",
     # Status colours. The ``-text`` variants are for type on the surface;
     # the base value is for fills and borders.
     "success": "#30d158",
@@ -141,6 +149,10 @@ _LIGHT_TOKENS: Final[Dict[str, str]] = {
     "surface-active": "#dcdce1",
     "surface-disabled": "#f0f0f3",
     "surface-sunken": "#f7f7f9",
+    "code-on-surface": "#e9e9ee",
+    "quote-on-surface": "#f3f3f7",
+    "code-on-bg": "#ffffff",
+    "quote-on-bg": "#e7e7ec",
     "border": "#d9d9de",
     "border-subtle": "#e5e5ea",
     "border-strong": "#c7c7cc",
@@ -174,6 +186,7 @@ _LIGHT_TOKENS: Final[Dict[str, str]] = {
     "accent-muted": "#a9c9ee",
     "on-accent": "#ffffff",
     "on-accent-rgb": "255, 255, 255",
+    "on-tint-rgb": "29, 29, 31",
     "success": "#34c759",
     "success-hover": "#2db24f",
     "success-pressed": "#248a3d",

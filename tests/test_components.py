@@ -1184,5 +1184,10 @@ def test_installed_size_does_not_count_dylib_aliases_twice(component_root):
     library = directory / 'libreal.dylib'
     library.write_bytes(b'x' * 1000)
     alias = directory / 'libalias.dylib'
-    alias.symlink_to('libreal.dylib')
+    try:
+        alias.symlink_to('libreal.dylib')
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Creating symlinks requires Windows Developer Mode or elevation")
+        raise
     assert components.installed_size_bytes(ComponentId.ASR_NVIDIA_CPU) == 1000 + alias.lstat().st_size

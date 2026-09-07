@@ -821,7 +821,7 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
 
 class TestApplicationController:
     @pytest.fixture(autouse=True)
-    def _setup(self):
+    def _setup(self, monkeypatch):
         self.settings = FakeSettingsManager()
         self.history_manager = FakeHistoryManager()
         self.audio_processor = FakeAudioProcessor()
@@ -831,6 +831,16 @@ class TestApplicationController:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_recorded_audio_file = config.RECORDED_AUDIO_FILE
         config.RECORDED_AUDIO_FILE = str(Path(self.temp_dir.name) / "recorded_audio.wav")
+
+        # patch.dict restores sys.modules, but not child attributes on packages.
+        # Load the adapter and its cache before the snapshot so later tests
+        # cannot retain an orphan cache module that their mocks never reach.
+        importlib.import_module("transcriber.optional_backend")
+        speech_cache = importlib.import_module("services.local_asr.cache")
+        monkeypatch.setattr(
+            speech_cache, "model_dir",
+            lambda key: Path(self.temp_dir.name) / "speech-models" / key,
+        )
 
         module_stubs = _install_module_stubs(
             self.settings,
@@ -2802,7 +2812,8 @@ class TestApplicationController:
         controller.ui_controller.show_required_runtime_dialog.assert_called_once()
         assert controller._current_model_name == 'local_whisper'
 
-    def test_cached_model_prompts_for_runtime_after_reload_finishes(self):
+    @pytest.mark.parametrize('cached', [False, True])
+    def test_model_runtime_prompt_waits_for_reload_and_cached_weights(self, cached):
         from unittest.mock import Mock
         controller = self._create_controller()
         backend = controller.transcription_backends['parakeet']
@@ -2814,9 +2825,15 @@ class TestApplicationController:
         ui.show_required_runtime_dialog = Mock(side_effect=lambda *args: not controller._reload_in_flight)
         ui.open_downloads_dialog = Mock()
         controller.request_component_install = Mock()
-        with patch('services.local_asr.cache.is_cached', return_value=True), \
+        with patch('services.local_asr.cache.is_cached', return_value=cached) as is_cached, \
                 patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
             controller._reload_worker()
-        ui.show_required_runtime_dialog.assert_called_once()
-        controller.request_component_install.assert_called_once_with('asr-nvidia-cpu')
+        is_cached.assert_called_with('parakeet-v3')
+        assert not controller._reload_in_flight
+        if cached:
+            ui.show_required_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cpu')
+            controller.request_component_install.assert_called_once_with('asr-nvidia-cpu')
+        else:
+            ui.show_required_runtime_dialog.assert_not_called()
+            controller.request_component_install.assert_not_called()

@@ -62,6 +62,24 @@ def pytest_unconfigure(config):
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _session_qt_application():
+    from PyQt6.QtWidgets import QApplication
+    from ui_qt.utils.font_scale import WidgetStyleFilter
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if sys.platform == "win32":
+        # Qt's offscreen plugin does not discover the Windows system fonts.
+        os.environ.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ["WINDIR"], "Fonts"))
+    app = QApplication.instance() or QApplication([])
+    # Standalone widgets need the same token resolution as QtApplication;
+    # unresolved local QSS changes both their appearance and size hints.
+    style_filter = WidgetStyleFilter(app)
+    app.installEventFilter(style_filter)
+    yield app
+    app.removeEventFilter(style_filter)
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _session_settings_store(tmp_path_factory):
     from config import config
     from services.settings import settings_manager

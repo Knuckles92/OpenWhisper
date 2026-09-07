@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unittest.mock import patch  # noqa: E402
@@ -58,14 +59,15 @@ try:
 
     tabbed = window.findChild(TabbedContentWidget)
     for idx, name in enumerate(["dictation", "upload", "meeting"]):
-        tabbed.setCurrentIndex(idx)
+        tabbed.set_current_index(idx)
         shoot(window, f"01_main_{idx}_{name}")
+    tabbed.set_current_index(0)
 except Exception as exc:  # noqa: BLE001
     print("tabs:", exc)
 
 # Fill the dictation transcript so the pane has content.
 try:
-    window.set_transcription("Hello there. This is a **sample** transcript with `code` and a [link](https://x.y).")
+    window.set_transcript("Hello there. This is a sample transcript, fixed up.", raw="hello there this is a sample transcript fixed up")
     shoot(window, "01_main_with_text")
 except Exception as exc:  # noqa: BLE001
     print("transcript:", exc)
@@ -108,7 +110,6 @@ try:
 
     dd = DownloadsDialog()
     shoot(dd, "04_downloads")
-    dd.close()
 except Exception as exc:  # noqa: BLE001
     print("downloads:", exc)
 

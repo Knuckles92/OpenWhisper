@@ -542,8 +542,7 @@ class SettingsDialog(QDialog):
         self.ui_theme_combo.currentIndexChanged.connect(self._on_ui_theme_changed)
         self.ui_theme_tile = FieldTile(
             "Theme",
-            "Dark or light colours for OpenWhisper windows. Match system "
-            "follows your operating system's setting.",
+            "Dark, light, or match your operating system.",
             self.ui_theme_combo,
             _design_icon("box-blue.svg"),
             compact=True,
@@ -565,8 +564,8 @@ class SettingsDialog(QDialog):
         )
         self.ui_font_scale_tile = FieldTile(
             "Font size",
-            "Scales text in OpenWhisper windows and dialogs. The live "
-            "transcription overlay has its own size under Recording.",
+            "Text size in windows and dialogs. The live preview overlay "
+            "has its own under Recording.",
             self.ui_font_scale_combo,
             _design_icon("typography-blue.svg"),
             compact=True,

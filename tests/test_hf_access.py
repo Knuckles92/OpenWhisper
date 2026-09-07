@@ -168,6 +168,13 @@ class TestFormatSizeBytes:
 class TestScanCachedModels:
     """Cache enumeration via huggingface_hub.scan_cache_dir."""
 
+    @pytest.fixture(autouse=True)
+    def _isolated_optional_cache(self):
+        # These tests supply a Hub snapshot; installed optional models must
+        # not add machine-dependent entries to the combined inventory.
+        with patch("services.local_asr.cache.inventory", return_value={}):
+            yield
+
     def test_maps_repos_by_repo_id(self):
         cache_info = types.SimpleNamespace(
             repos=[
