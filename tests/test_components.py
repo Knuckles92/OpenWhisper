@@ -216,6 +216,12 @@ def test_available_component_ids_by_platform():
     with patch.object(components.sys, "platform", "darwin"), patch.object(
         components.platform_module, "machine", return_value="arm64"
     ):
+        assert components.available_component_ids() == (ComponentId.ASR_NVIDIA_CPU,)
+        assert len(ComponentCoordinator().list_components()) == 1
+
+    with patch.object(components.sys, "platform", "darwin"), patch.object(
+        components.platform_module, "machine", return_value="x86_64"
+    ):
         assert components.available_component_ids() == ()
         assert ComponentCoordinator().list_components() == ()
 
@@ -1147,3 +1153,36 @@ def test_validate_node_version_requires_exact_match(tmp_path, monkeypatch):
         components._validate_component_payload(
             ComponentId.MEETING_AGENT, str(tmp_path)
         )
+
+
+@pytest.mark.parametrize('target', ['libreal.dylib', '/tmp/escape', '../../../escape'])
+def test_mac_archive_preserves_only_safe_library_links(tmp_path, target):
+    archive_path = tmp_path / 'native.tar.gz'
+    with tarfile.open(archive_path, 'w:gz') as archive:
+        binary = tarfile.TarInfo('nemo-speech/lib/libreal.dylib')
+        binary.size = 4
+        archive.addfile(binary, io.BytesIO(b'test'))
+        link = tarfile.TarInfo('nemo-speech/lib/libalias.dylib')
+        link.type = tarfile.SYMTYPE
+        link.linkname = target
+        archive.addfile(link)
+    destination = tmp_path / 'out'
+    destination.mkdir()
+    def extract():
+        components._safe_extract_nemo_tar(str(archive_path), str(destination), lambda *args: None, threading.Event())
+    if target == 'libreal.dylib':
+        extract()
+        assert (destination / 'nemo-speech/lib/libalias.dylib').read_bytes() == b'test'
+    else:
+        with pytest.raises(ComponentError):
+            extract()
+
+
+def test_installed_size_does_not_count_dylib_aliases_twice(component_root):
+    directory = component_root / ComponentId.ASR_NVIDIA_CPU
+    directory.mkdir()
+    library = directory / 'libreal.dylib'
+    library.write_bytes(b'x' * 1000)
+    alias = directory / 'libalias.dylib'
+    alias.symlink_to('libreal.dylib')
+    assert components.installed_size_bytes(ComponentId.ASR_NVIDIA_CPU) == 1000 + alias.lstat().st_size

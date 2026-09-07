@@ -392,7 +392,7 @@ for _key, _model in SPEECH_MODELS.items():
         download_size_mb=round(sum(f["size_bytes"] for f in _spec["files"])/1_000_000),
         runtime_format="GGUF Q8" if _model.backend in ("parakeet", "nemotron") else ("ORT quantized" if _model.backend == "moonshine" else "Safetensors"),
         license=_model.license, best_for=_model.purpose,
-        limitations=("Requires its optional Windows x64 runtime from Downloads.",
+        limitations=(("Requires its optional runtime from Downloads (Windows x64 or Apple Silicon Mac CPU)." if _model.backend in ("parakeet", "nemotron") else "Requires its optional Windows x64 runtime from Downloads."),
                      "Qwen CPU needs substantially more memory than the native engines; 1.7B is best suited to a GPU." if _model.backend == "qwen_asr" else
                      "English only; CPU execution." if _model.backend == "moonshine" else
                      "CPU and NVIDIA GPU use separately installed runtimes."),

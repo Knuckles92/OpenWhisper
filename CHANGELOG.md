@@ -8,11 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional speech-model setup explicitly identifies the required runtime and prompts to install it when downloading a model or selecting an already-downloaded model. Existing runtimes and active installs are reused.
+- Apple Silicon Mac NVIDIA Speech CPU component and isolated native worker, allowing Parakeet to reuse downloaded GGUF weights. Unsupported runtimes report their platform limitation instead of pointing to an absent Downloads installer.
+- Mac updates download and SHA-256 verify the release DMG, then open it with instructions to replace the app in Applications.
 - Ollama, Groq, OpenCode Go and OpenCode Zen for dictation/upload cleanup, learned-rule polishing and Meeting Mode text features, with independent remembered model choices and secure cloud credentials.
 - Shared Chat Completions, Responses, Anthropic Messages and Google GenerateContent adapters preserving tool calls and signed reasoning. Pi receives model protocols, capabilities and session headers; an updated sidecar bundle is required for the new providers.
 - Asynchronous model discovery, editable shared Ollama URL, unsupported-route validation, catalog retention after refresh failure and protection against stale catalog replies.
 
 ### Fixed
+- Packaged HTTPS update checks and component downloads load the bundled CA certificates in addition to system trust, avoiding build-machine certificate paths on Mac.
 - UI tests use temporary settings and close meeting windows before removing mocks, preventing test runs from replacing the app's remembered tab with Meeting Mode. Starting dictation from another tab no longer briefly selects Meeting Mode.
 - Saved-meeting finalization retries retain the recorded provider, model and endpoint instead of adopting current defaults. New snapshots retain protocol and model capabilities.
 - Text generation rejects refused, empty or truncated cleanup output and preserves raw text; meeting requests share the existing overall deadlines across tool rounds.

@@ -349,6 +349,8 @@ class AppUpdateDialog(QDialog):
             asset = release.native_asset
         elif self._result.apply_mode == ApplyMode.SETUP:
             asset = release.setup_asset
+        elif self._result.apply_mode == ApplyMode.MACOS_DMG:
+            asset = release.macos_asset
         else:
             # Source checkouts and packaged non-Windows builds are notify-only;
             # showing the Windows setup size there implies the wrong download.
@@ -361,6 +363,8 @@ class AppUpdateDialog(QDialog):
         if self._result.status != UpdateStatus.UPDATE_AVAILABLE:
             return ""
         parts = []
+        if self._result.apply_mode == ApplyMode.MACOS_DMG:
+            parts.append("The verified disk image will open and OpenWhisper will quit. Drag OpenWhisper to Applications and replace the previous copy, then reopen it.")
         if self._result.git_summary:
             parts.append(f"Local git: {self._result.git_summary}")
         if self._result.git_hint:
@@ -373,6 +377,8 @@ class AppUpdateDialog(QDialog):
         if self._result.status != UpdateStatus.UPDATE_AVAILABLE:
             return ""
         if self._result.can_apply:
+            if self._result.apply_mode == ApplyMode.MACOS_DMG:
+                return "Download Mac update"
             return "Download and install"
         return "Open release notes"
 

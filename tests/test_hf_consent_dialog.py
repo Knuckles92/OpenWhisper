@@ -117,3 +117,28 @@ class TestSettingsDialogNavigation(_QtTestCase):
                 assert policies == set(HuggingFaceAccessPolicy.ALL)
 
 
+
+
+def test_optional_model_consent_explains_required_runtime():
+    app = QApplication.instance() or QApplication([])
+    with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'):
+        dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
+        body = dialog._body_text()
+    assert 'Parakeet TDT 0.6B v3' in body
+    assert 'NVIDIA Speech CPU is also required' in body
+    assert 'download alone will not enable transcription' in body
+    dialog.close()
+
+
+def test_runtime_prompt_has_explicit_install_and_later_actions():
+    from ui_qt.dialogs.required_runtime_dialog import RequiredRuntimeDialog
+    app = QApplication.instance() or QApplication([])
+    dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')
+    assert 'needs both its model files and NVIDIA Speech CPU to work' in dialog.body.text()
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    buttons['Install required runtime'].click()
+    assert dialog.result() == dialog.DialogCode.Accepted
+    dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    buttons['Later'].click()
+    assert dialog.result() == dialog.DialogCode.Rejected

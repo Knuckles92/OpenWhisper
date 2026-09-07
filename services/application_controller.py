@@ -90,6 +90,7 @@ class ApplicationController(QObject):
     # True for the selected-model flow (download + load) and False for
     # Model Manager fetch-only downloads.
     hf_consent_requested = pyqtSignal(str, bool, bool)
+    runtime_consent_requested = pyqtSignal(str)
     model_download_started = pyqtSignal(str)
     model_download_progress = pyqtSignal(str, int, int)
     model_download_finished = pyqtSignal(str, bool)
@@ -155,6 +156,7 @@ class ApplicationController(QObject):
         # Set from the Qt thread, read in the batch download worker; a plain
         # bool flag is enough because stopping is only checked between models.
         self._batch_stop_requested = False
+        self._runtime_prompted = set()
 
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
@@ -395,6 +397,8 @@ class ApplicationController(QObject):
                 finally:
                     self._reload_in_flight = False
                     self.engine_busy_changed.emit(False)
+                    if selected is self.current_backend and not selected.is_available() and not selected.is_model_missing:
+                        self.runtime_consent_requested.emit(selected.model_name)
                     # The preview shares this worker, so it can only be set up
                     # once the load has settled.
                     self._flush_pending_streaming_setup()
@@ -841,6 +845,9 @@ class ApplicationController(QObject):
         ``ensure_local_model_available``.
 
         """
+        from services.local_asr.catalog import missing_runtime
+
+        self._runtime_prompted.discard(missing_runtime(model_name, settings_manager.load_all_settings()))
         if not hf_access_coordinator.begin_request(model_name):
             return
 
@@ -856,6 +863,7 @@ class ApplicationController(QObject):
             # The manager's row was stale — files are already present.
             hf_access_coordinator.end_request(model_name)
             self.model_cache_changed.emit()
+            self.runtime_consent_requested.emit(model_name)
         elif decision == AccessDecision.DOWNLOAD_ALLOWED:
             self._start_hf_model_task(model_name, load_into_engine=False)
         elif decision == AccessDecision.BLOCKED_BY_ENV:
@@ -1264,6 +1272,8 @@ class ApplicationController(QObject):
     def _on_model_download_finished(self, model_name: str, success: bool) -> None:
         """Load a downloaded optional model, or activate the tiny.en preview."""
         from transcriber.optional_backend import LocalSpeechBackend
+        if success:
+            self._prompt_for_model_runtime(model_name)
         if success and isinstance(self.current_backend, LocalSpeechBackend):
             if self.current_backend.model_name == model_name:
                 self.reload_whisper_model()
@@ -1281,10 +1291,26 @@ class ApplicationController(QObject):
         from services.local_asr.catalog import MODELS
         if model_name in MODELS:
             load_into_engine = False
+            self.runtime_consent_requested.emit(model_name)
         if load_into_engine:
             self.engine_busy_changed.emit(True)
         self.model_download_started.emit(model_name)
         self.executor.submit(self._hf_model_worker, model_name, load_into_engine)
+
+    def _prompt_for_model_runtime(self, model_name: str) -> None:
+        """Ask once per runtime per session, on the Qt thread."""
+        from services.local_asr.catalog import missing_runtime
+
+        if (is_hf_hub_offline_env_set() or self._reload_in_flight
+                or self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing()):
+            return
+        component = missing_runtime(model_name, settings_manager.load_all_settings())
+        if not component or component in self._runtime_prompted or component_coordinator.is_installing(component):
+            return
+        self._runtime_prompted.add(component)
+        if self.ui_controller.show_required_runtime_dialog(model_name, component):
+            self.ui_controller.open_downloads_dialog(component_id=component)
+            self.request_component_install(component)
 
     def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
         from services.local_asr.catalog import MODELS
@@ -1598,6 +1624,7 @@ class ApplicationController(QObject):
             self.status_update.emit("Finish recording or transcription before changing engines")
             return
         if not self._refuse_dictation_during_meeting():
+            self._runtime_prompted.clear()
             self.transcription_runtime.on_model_changed(model_name)
 
     def update_status_with_auto_hide(self, status: str) -> None:
@@ -1655,6 +1682,7 @@ class ApplicationController(QObject):
         self.batch_item_finished.connect(self.ui_controller.set_batch_item_finished)
         self.large_file_detected.connect(self.ui_controller.show_large_file_state)
         self.hf_consent_requested.connect(self._on_hf_consent_requested)
+        self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
         self.status_update.connect(self.ui_controller.set_status)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)

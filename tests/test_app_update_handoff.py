@@ -180,3 +180,23 @@ class TestHandoffWatchdog(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_mac_handoff_opens_disk_image_then_exits():
+    from types import SimpleNamespace
+    from services.app_update import ApplyMode
+    dialog = MagicMock()
+    controller = _FakeController(dialog)
+    controller._last_update_result = SimpleNamespace(apply_mode=ApplyMode.MACOS_DMG)
+    controller.exit_for_update = MagicMock()
+    with patch('ui_qt.ui_controller.QDesktopServices.openUrl', return_value=True) as open_url, \
+            patch('ui_qt.ui_controller._start_detached') as windows_launcher:
+        UIController.on_update_download_finished(controller, '/tmp/update.dmg', '')
+    assert open_url.call_args.args[0].toLocalFile() == '/tmp/update.dmg'
+    windows_launcher.assert_not_called()
+    controller.exit_for_update.assert_called_once()
+    controller.exit_for_update.reset_mock()
+    with patch('ui_qt.ui_controller.QDesktopServices.openUrl', return_value=False):
+        UIController.on_update_download_finished(controller, '/tmp/update.dmg', '')
+    controller.exit_for_update.assert_not_called()
+    dialog.set_error.assert_called_once()

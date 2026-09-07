@@ -63,6 +63,10 @@ def _run_package_self_test() -> None:
     from config import bundle_root
 
     root = Path(bundle_root())
+    from services.http_tls import verified_context
+
+    if not verified_context().get_ca_certs():
+        raise RuntimeError("The application has no trusted HTTPS certificates.")
     for relative in (
         "ui_qt/styles/theme.qss",
         "ui_qt/assets/openwhisper.ico",
@@ -82,7 +86,12 @@ def _run_package_self_test() -> None:
 
 
 def _handle_early_cli() -> None:
-    """Handle metadata-only CLI flags before native-library bootstrap."""
+    """Handle worker and metadata modes before native-library bootstrap."""
+    if sys.argv[1:] == ["--local-asr-worker"]:
+        from services.local_asr.worker import main
+
+        main()
+        raise SystemExit(0)
     if sys.argv[1:] == ["--version"]:
         from _version import __version__
 

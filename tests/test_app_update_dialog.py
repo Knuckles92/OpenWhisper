@@ -300,3 +300,12 @@ class TestAppUpdateDialog(_QtTestCase):
         dialog.set_error("disk full", offer_setup=True)
         assert not dialog.setup_btn.isHidden()
         assert dialog.later_btn.text() == "Later"
+
+
+def test_mac_update_explains_manual_replacement():
+    dialog = AppUpdateDialog(_result(
+        channel=InstallChannel.INSTALLER, can_apply=True, apply_mode=ApplyMode.MACOS_DMG,
+    ))
+    assert dialog.primary_btn.text() == 'Download Mac update'
+    assert 'Drag OpenWhisper to Applications' in dialog.hint_label.text()
+    dialog.close()

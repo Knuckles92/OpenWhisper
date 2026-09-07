@@ -733,6 +733,12 @@ class UIController(QObject):
         dialog.exec()
         return dialog.result_action
 
+    def show_required_runtime_dialog(self, model_name: str, component_id: str) -> bool:
+        from ui_qt.dialogs.required_runtime_dialog import RequiredRuntimeDialog
+
+        dialog = RequiredRuntimeDialog(model_name, component_id, parent=self.main_window)
+        return dialog.exec() == dialog.DialogCode.Accepted
+
     def open_model_manager_dialog(self, tab: str = "ondemand"):
         """Show the non-modal Model Manager (single instance, re-raised).
 
@@ -1556,6 +1562,15 @@ class UIController(QObject):
                 abandon(path)
             if self._update_dialog is not None:
                 self._update_dialog.set_error("The update was not installed. Your work is still open.")
+            return
+
+        result = self._last_update_result
+        if result is not None and result.apply_mode == ApplyMode.MACOS_DMG:
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+                if self._update_dialog is not None:
+                    self._update_dialog.set_error("The Mac update disk image could not be opened.")
+                return
+            self.exit_for_update()
             return
 
         transaction_id = decode_native_result(path)

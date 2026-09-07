@@ -15,7 +15,7 @@ Before submitting a change, remove temporary notes and commented-out experiments
 
 ## Local speech backends and models
 
-Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The new optional runtimes currently target Windows x64; do not describe upstream platform support as support provided by this integration.
+Local agents should read `AGENTS.md` when present (kept untracked by repository preference). Use [the model reference](docs/models.md) for exact supported IDs, and [the local speech guide](docs/local-asr.md) for user-visible behavior. The optional runtimes target Windows x64, with NVIDIA Speech CPU also packaged for Apple Silicon macOS in the unreleased source integration. Do not describe other upstream platform support as support provided by this integration.
 
 A backend or model change must keep these surfaces consistent:
 

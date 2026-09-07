@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from transcriber.base import TranscriptionBackend
-from services.local_asr.catalog import BACKENDS, MODELS, selected_model, selected_device, runtime_id
+from services.local_asr.catalog import BACKENDS, MODELS, selected_model, selected_device, resolve_runtime
 from services.local_asr import cache
 
 
@@ -67,22 +68,17 @@ class LocalSpeechBackend(TranscriptionBackend):
         self.model_name = model_name or self._model_override or selected_model(self.backend_id, settings)
         if self.model_name not in MODELS or MODELS[self.model_name].backend != self.backend_id:
             raise ValueError("Model does not belong to this backend")
-        device = self._device_override or selected_device(self.backend_id, settings)
-        if device == "auto":
-            try:
-                import ctranslate2
-                device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
-            except Exception:
-                device = "cpu"
         from services.components import component_dir, is_installed
-        component = runtime_id(self.backend_id, device)
-        # Auto can use an installed CPU runtime; explicit CUDA never silently falls back.
         requested = self._device_override or selected_device(self.backend_id, settings)
-        if requested == "auto" and not is_installed(component) and self.backend_id in ("parakeet", "nemotron"):
-            component, device = runtime_id(self.backend_id, "cpu"), "cpu"
+        component, device = resolve_runtime(self.backend_id, requested)
         self.runtime_component = component
         if not is_installed(component):
-            self.last_error = f"Install {self.name}'s {'GPU' if device == 'cuda' else 'CPU'} runtime in Downloads."
+            from services.components import catalog_entry_for_platform
+            if catalog_entry_for_platform(component) is None:
+                self.runtime_component = None
+                self.last_error = f"{self.name}'s {device.upper()} runtime is not available on this platform."
+            else:
+                self.last_error = f"Install {self.name}'s {'GPU' if device == 'cuda' else 'CPU'} runtime in Downloads."
             return
         if self.is_model_missing:
             self.last_error = f"Download {MODELS[self.model_name].label} in Downloads."
@@ -91,7 +87,8 @@ class LocalSpeechBackend(TranscriptionBackend):
         with self._state_lock:
             if generation != self._generation:
                 return
-            process = SpeechProcess(str(Path(component_dir(component)) / "python.exe"))
+            python = sys.executable if sys.platform == "darwin" else str(Path(component_dir(component)) / "python.exe")
+            process = SpeechProcess(python)
             self._process = process
         try:
             result = process.request("load", backend=self.backend_id, model=self.model_name,
@@ -207,4 +204,3 @@ class SpeechDecoder:
                 self.backend.is_transcribing = False
         segments = [SimpleNamespace(**s, avg_logprob=0., no_speech_prob=0., words=None) for s in result["segments"]]
         return iter(segments), SimpleNamespace(language=language or "en")
-

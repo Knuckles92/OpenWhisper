@@ -4,6 +4,7 @@ from __future__ import annotations
 import array
 import ctypes as c
 import os
+import sys
 from pathlib import Path
 
 
@@ -34,9 +35,16 @@ class Options(c.Structure):
 
 class NvidiaRecognizer:
     def __init__(self, runtime: str, model_path: str, device: str):
-        bin_dir = str(Path(runtime) / "bin")
-        self._dll_dir = os.add_dll_directory(bin_dir)
-        self.lib = c.CDLL(str(Path(bin_dir) / "nemo_speech_asr_c.dll"))
+        self._dll_dir = None
+        if sys.platform == "darwin":
+            if device != "cpu":
+                raise RuntimeError("The Mac speech runtime supports CPU only.")
+            library = Path(runtime) / "nemo-speech" / "lib" / "libnemo_speech_asr_c.dylib"
+        else:
+            bin_dir = Path(runtime) / "bin"
+            self._dll_dir = os.add_dll_directory(str(bin_dir))
+            library = bin_dir / "nemo_speech_asr_c.dll"
+        self.lib = c.CDLL(str(library))
         self._bind()
         backend = BackendConfig(c.sizeof(BackendConfig), 0 if device == "cuda" else -1)
         model = ModelConfig(c.sizeof(ModelConfig), model_path.encode("utf-8"), None)
@@ -160,4 +168,3 @@ def segments_from_words(data, duration):
     if current:
         segments.append(dict(text=" ".join(w["text"] for w in current), start=current[0]["start"], end=current[-1]["end"]))
     return segments
-

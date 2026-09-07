@@ -44,6 +44,8 @@ A cross-platform desktop app (Windows, macOS, Linux) for recording audio and tra
 
 ## Transcription backends and models
 
+**Unreleased source changes:** Apple Silicon Macs can install the NVIDIA Speech CPU runtime from Downloads and use Parakeet with existing GGUF weights. The Mac updater downloads and verifies the DMG, then opens it for replacement in Applications. These changes are not in the 2.6.0 release.
+
 Version 2.6.0 includes Parakeet, Qwen3-ASR, Nemotron Streaming, and Moonshine on Windows x64, alongside Local Whisper and the OpenAI API. Optional runtimes and model weights are installed separately through Downloads.
 
 | Backend | Model choices | Device support | Workflows |

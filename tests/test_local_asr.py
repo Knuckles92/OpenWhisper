@@ -115,6 +115,7 @@ def test_missing_runtime_does_not_import_optional_packages(monkeypatch):
 
 
 def test_auto_can_use_cpu_runtime_but_explicit_cuda_cannot(monkeypatch):
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
     monkeypatch.setattr("ctranslate2.get_cuda_device_count", lambda: 1)
     monkeypatch.setattr("services.components.is_installed", lambda key: key.endswith("cpu"))
@@ -126,6 +127,27 @@ def test_auto_can_use_cpu_runtime_but_explicit_cuda_cannot(monkeypatch):
     explicit.reload_model()
     assert explicit.runtime_component == "asr-nvidia-cuda"
     assert "GPU" in explicit.last_error
+
+
+def test_unsupported_runtime_does_not_point_to_downloads(monkeypatch):
+    monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "darwin_arm64")
+    monkeypatch.setattr("services.components.is_installed", lambda _: False)
+    backend = LocalSpeechBackend("qwen_asr", device="cpu")
+    backend.reload_model()
+    assert backend.runtime_component is None
+    assert "not available on this platform" in backend.last_error
+    assert "Downloads" not in backend.last_error
+
+
+def test_mac_parakeet_offers_native_runtime(monkeypatch):
+    monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: "darwin_arm64")
+    monkeypatch.setattr("services.components.is_installed", lambda _: False)
+    backend = LocalSpeechBackend("parakeet", device="cpu")
+    backend.reload_model()
+    assert backend.runtime_component == "asr-nvidia-cpu"
+    assert "CPU runtime in Downloads" in backend.last_error
 
 
 def test_cancel_discards_worker_and_speech_decoder(monkeypatch):
@@ -399,3 +421,33 @@ def test_cancel_during_runtime_check_does_not_start_worker(monkeypatch):
     backend.reload_model()
     worker.assert_not_called()
     assert not backend.is_available()
+
+
+def test_packaged_worker_entry_does_not_start_ui():
+    completed = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parents[1] / 'app_qt.py'), '--local-asr-worker'],
+        input='{"id": 1, "op": "cancel_stream", "session": "test"}\n{"id": 2, "op": "shutdown"}\n',
+        text=True, capture_output=True, timeout=10,
+    )
+    assert completed.returncode == 0
+    response = json.loads(completed.stdout)
+    assert response['id'] == 1 and 'error' in response
+    assert 'Starting OpenWhisper' not in completed.stderr
+
+
+def test_frozen_mac_worker_relaunches_app_without_python_flags(monkeypatch):
+    import io
+    from services.local_asr.process import SpeechProcess
+    child = Mock(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO())
+    child.poll.return_value = 0
+    popen = Mock(return_value=child)
+    monkeypatch.setattr('services.local_asr.process.subprocess.Popen', popen)
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    worker = SpeechProcess('/Applications/OpenWhisper.app/Contents/MacOS/OpenWhisper')
+    try:
+        assert popen.call_args.args[0] == [
+            '/Applications/OpenWhisper.app/Contents/MacOS/OpenWhisper', '--local-asr-worker',
+        ]
+    finally:
+        worker.close()
