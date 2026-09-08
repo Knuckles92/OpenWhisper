@@ -39,6 +39,27 @@ def test_model_help_links_emit_destinations_and_close():
         tab.close()
 
 
+def test_help_card_is_a_window_anchored_to_the_caption():
+    tab = QuickRecordTab()
+    tab.resize(700, 500)
+    tab.show()
+    QApplication.processEvents()
+    help_button = tab.local_engine.model_combo.parentWidget().findChild(FieldHelp)
+    try:
+        help_button.show_help()
+        QApplication.processEvents()
+        card = help_button.card
+        assert card.isWindow()
+        assert card.isVisible()
+        anchor = help_button.mapToGlobal(QPoint(0, help_button.height() + 4))
+        assert abs(card.pos().x() - anchor.x()) < 24
+        assert abs(card.pos().y() - anchor.y()) < 24
+        assert 80 <= card.height() <= 280
+        assert card.width() >= 160
+    finally:
+        tab.close()
+
+
 def test_popup_stays_reachable_and_escape_dismisses():
     button = FieldHelp("Model", "Choose a model.", [("Open Downloads", "downloads")])
     button.show()

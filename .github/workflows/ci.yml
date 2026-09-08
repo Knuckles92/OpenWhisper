@@ -42,7 +42,7 @@ jobs:
       - name: Run test suite with a hard hang guard
         env:
           QT_QPA_PLATFORM: offscreen
-        run: timeout 20m xvfb-run -a python -m pytest
+        run: timeout 20m xvfb-run -a python -m pytest -v --durations=20 -o faulthandler_timeout=120
 
   windows-updater:
     name: Windows updater regression tests

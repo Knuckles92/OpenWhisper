@@ -76,14 +76,8 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
 
         self.assertEqual(tab.accessibleName(), "Meeting Mode")
         self.assertTrue(tab.accessibleDescription())
-        self.assertIsInstance(tab.cloud_help_icon, QToolButton)
-        self.assertEqual(
-            tab.cloud_help_icon.accessibleName(),
-            "About cloud intelligence",
-        )
-        self.assertTrue(tab.cloud_help_icon.accessibleDescription())
         self.assertNotEqual(
-            tab.cloud_help_icon.focusPolicy(),
+            tab.cloud_checkbox.focusPolicy(),
             Qt.FocusPolicy.NoFocus,
         )
         self.assertTrue(tab.cloud_checkbox.accessibleDescription())
@@ -463,15 +457,15 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.start_button.click()
         self.assertEqual(received, [True])
 
-    def test_cloud_help_icon_presents_tooltip(self):
-        """The '?' symbol next to cloud checkbox explains ON vs OFF differences."""
-        self.assertIsNotNone(self.tab.cloud_help_icon)
-        self.assertEqual(self.tab.cloud_help_icon.text(), "?")
-        tooltip = self.tab.cloud_help_icon.toolTip()
-        self.assertIn("Cloud Intelligence", tooltip)
-        self.assertIn("When ON (Checked):", tooltip)
-        self.assertIn("When OFF (Unchecked):", tooltip)
-        self.assertIn("never", tooltip)
+    def test_cloud_checkbox_presents_compact_tooltip(self):
+        """Hover help belongs to the checkbox, without a separate icon."""
+        self.assertIsNone(self.tab.findChild(QToolButton, "meetingCloudHelpIcon"))
+        tooltip = self.tab.cloud_checkbox.toolTip()
+        self.assertIn("On:", tooltip)
+        self.assertIn("Off:", tooltip)
+        self.assertIn("Audio stays local", tooltip)
+        self.assertGreater(len(tooltip.splitlines()), 1)
+        self.assertLessEqual(max(map(len, tooltip.splitlines())), 52)
 
     def test_running_finalization_hides_start_and_shows_indeterminate_bar(self):
         """Running finalization keeps a result card with indeterminate progress."""

@@ -179,7 +179,7 @@ class TranscriptionTabBase(QWidget):
         )
         self.api_model_field = engine_field(
             "Model", self.api_model_combo,
-            "Choose the OpenAI model used for transcription. Audio is sent to OpenAI and an API key is required.",
+            "Choose the OpenAI speech model that turns your audio into text. Models differ in speed and accuracy. Audio is uploaded to OpenAI; an API key and internet connection are required.",
             [("Open Settings → API keys", "api_keys")], self.help_requested.emit,
         )
         self.api_model_field.hide()
@@ -190,7 +190,7 @@ class TranscriptionTabBase(QWidget):
         self._field_row.setSpacing(10)
         self._field_row.addWidget(engine_field(
             "Backend", self.model_combo,
-            "Choose the transcription engine. Local backends run on this computer; OpenAI uses a cloud service.",
+            "Choose which speech recognition engine turns your audio into text. Local engines process audio on this computer after download. OpenAI sends audio to the cloud and requires an API key. This choice determines the available models.",
             [("Open Model Manager → On-demand voice", "ondemand")], self.help_requested.emit,
         ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
@@ -208,17 +208,17 @@ class TranscriptionTabBase(QWidget):
         self.cleanup_check = QCheckBox("AI cleanup")
         self.cleanup_check.setObjectName("engineCleanupCheck")
         self.cleanup_check.setToolTip(
-            "Clean up the transcript with an AI model after transcription "
-            "(punctuation, fillers, light ASR fixes)"
+            "Use your AI model to fix punctuation, remove\n"
+            "filler words, and apply your cleanup rules.\n"
+            "May change wording and adds processing time."
         )
 
         self.live_preview_check = QCheckBox("Live preview")
         self.live_preview_check.setObjectName("engineLivePreviewCheck")
         self.live_preview_check.setToolTip(
-            "Show text as you speak on the near-cursor overlay. Parakeet and "
-            "Nemotron Streaming preview with the loaded engine; Local Whisper "
-            "loads a small tiny.en preview model. Same setting as "
-            "Settings → Recording → Live preview."
+            "Show draft text near your cursor as you speak.\n"
+            "The final transcript may change after you stop.\n"
+            "Uses extra processing; requires a supported backend."
         )
         if not self.LIVE_PREVIEW_CONTROL:
             self.live_preview_check.hide()

@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -33,7 +32,6 @@ from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
-from ui_qt.widgets.help_glyph import HelpGlyphButton, HelpSymbol
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -79,17 +77,12 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
 
 
 def cloud_intelligence_tooltip() -> str:
-    """Return a formatted tooltip explaining Cloud Intelligence ON vs OFF."""
+    """Explain the cloud toggle in a compact, wrapped hover hint."""
     return (
-        "<b>Cloud Intelligence</b><br><br>"
-        "<b>When ON (Checked):</b><br>"
-        "• <b>Live Insights:</b> Real-time topics, key points, decisions, and action items on the dashboard.<br>"
-        "• <b>Post-Meeting:</b> AI cleans up transcript grammar and generates executive summary reports.<br>"
-        "• <b>Privacy:</b> Sends transcript text to the configured AI model. Audio is <b>never</b> uploaded.<br><br>"
-        "<b>When OFF (Unchecked):</b><br>"
-        "• <b>100% Local:</b> Recording, Whisper transcription, and speaker turns run entirely on-device.<br>"
-        "• <b>Transcript-Only:</b> Complete meeting audio and transcript are saved without AI summaries.<br>"
-        "• <b>Privacy:</b> Zero transcript text or data leaves your computer."
+        "On: Send transcript text to your configured AI\n"
+        "model for live insights and post-meeting reports.\n"
+        "Off: Save the recording and transcript without\n"
+        "these AI extras. Audio stays local either way."
     )
 
 
@@ -315,19 +308,9 @@ class MeetingModeTab(QWidget):
             "When checked, transcript text is sent to the configured AI model "
             "for live insights and post-meeting reports. Audio stays local."
         )
+        self.cloud_checkbox.setToolTip(cloud_intelligence_tooltip())
         self.cloud_checkbox.toggled.connect(self.cloud_toggled)
         cloud_row.addWidget(self.cloud_checkbox)
-
-        self.cloud_help_icon = HelpGlyphButton(HelpSymbol.QUESTION)
-        self.cloud_help_icon.setObjectName("meetingCloudHelpIcon")
-        self.cloud_help_icon.setToolTip(cloud_intelligence_tooltip())
-        self.cloud_help_icon.setAccessibleName("About cloud intelligence")
-        self.cloud_help_icon.setAccessibleDescription(
-            "Explain what meeting data stays local and what is sent to the "
-            "configured AI model."
-        )
-        self.cloud_help_icon.clicked.connect(self._show_cloud_help)
-        cloud_row.addWidget(self.cloud_help_icon)
 
         content_layout.addLayout(cloud_row)
 
@@ -670,17 +653,6 @@ class MeetingModeTab(QWidget):
     def _on_start_clicked(self):
         """Emit the start request with the current cloud choice."""
         self.start_requested.emit(self.cloud_checkbox.isChecked())
-
-    def _show_cloud_help(self) -> None:
-        """Show the cloud privacy explanation for mouse and keyboard users."""
-        anchor = self.cloud_help_icon.mapToGlobal(
-            self.cloud_help_icon.rect().bottomLeft()
-        )
-        QToolTip.showText(
-            anchor,
-            cloud_intelligence_tooltip(),
-            self.cloud_help_icon,
-        )
 
     def _on_start_new_clicked(self):
         """Start a new meeting after saving the incomplete card for later."""

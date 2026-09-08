@@ -92,6 +92,35 @@ def _session_settings_store(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_qt_widgets(
+    _session_qt_application, _isolated_settings_store, _isolated_credential_store
+):
+    """Destroy each test's widgets before the next test can restyle them.
+
+    close() only hides most Qt windows, and processEvents() does not flush
+    DeferredDelete events without a running event loop. Signal connections
+    can also keep Python wrappers alive. Leaving those widgets in allWidgets()
+    made later font/theme tests repolish thousands of abandoned controls until
+    CI's 20-minute guard killed the suite.
+
+    Preserve widgets owned by broader-scoped fixtures. Settings and credentials
+    remain isolated while destruction callbacks run.
+    """
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    app = _session_qt_application
+    existing = set(app.allWidgets())
+    yield
+    created = set(app.allWidgets()) - existing
+    for widget in created:
+        # Let Qt destroy children in ownership order; deleting controls before
+        # their container can invalidate internal popup/layout pointers.
+        if widget.parentWidget() not in created:
+            widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_settings_store(_session_settings_store, tmp_path):
     from config import config
     from services.settings import settings_manager
