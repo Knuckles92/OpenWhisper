@@ -808,6 +808,11 @@ class MeetingEngine:
             total_steps = len(steps)
 
             def _update_step(step_id: str, step_status: str, detail_msg: str = "", *, message: str = "", emit: bool = True) -> None:
+                logger.log(
+                    logging.WARNING if step_status == "failed" else logging.INFO,
+                    "Meeting finalization meeting_id=%s stage=%s status=%s detail=%s",
+                    self.meeting_id, step_id, step_status, detail_msg,
+                )
                 curr_idx = 1
                 for idx, s in enumerate(steps, 1):
                     if s["id"] == step_id:
@@ -2198,6 +2203,7 @@ class MeetingEngine:
                 # A durable record must prefer the stable draft until a
                 # no-reference quality gate is proven trustworthy.
                 enable_revisions=False,
+                term_rules=self._active_term_rules,
             )
         except Exception as exc:
             logger.exception("Meeting ASR engine unavailable")
@@ -2786,6 +2792,15 @@ class MeetingEngine:
 
     # Client actions (web server entry points)
 
+    def request_note_adjustment(self, text: str):
+        """Submit a dashboard request without racing the agent's scheduled work."""
+        scheduler = self._scheduler
+        if (self.store is None or scheduler is None
+                or not self.is_active()
+                or not self.store.with_state(lambda s: s.cloud_enabled)):
+            raise RuntimeError("Enable cloud insights in an active meeting first.")
+        return scheduler.request_note_adjustment(text)
+
     def apply_client_action(self, actor_type: str, actor_id,
                             op: Dict[str, Any]) -> List[OpResult]:
         """Apply one human dashboard op through the single-writer store.
@@ -2802,6 +2817,7 @@ class MeetingEngine:
             return [OpResult(ok=False, op=dict(op), reason="inactive")]
         results = self.store.apply(actor_type, actor_id, [op])
         self._apply_diarizer_pins(results)
+        self._notify_human_guidance(results)
         return results
 
     def undo(self, seq: int, actor_id) -> List[OpResult]:
@@ -2810,7 +2826,41 @@ class MeetingEngine:
             return []
         results = self.store.undo(seq, actor_id)
         self._apply_diarizer_pins(results)
+        self._notify_human_guidance(results)
         return results
+
+    def _notify_human_guidance(self, results: List[OpResult]) -> None:
+        """Ask the agent to re-read the dashboard after a user note changes.
+
+        Corrections and insights live on the ``user_notes`` card; adding,
+        editing, removing, or undoing one changes what the agent should
+        believe, so the next checkpoint must not wait for new speech.
+        """
+        if not any(result.ok and
+                   ((result.effect or {}).get("item") or {}).get("card") == "user_notes"
+                   for result in results):
+            return
+        notify = getattr(self._scheduler, "notify_guidance", None)
+        if callable(notify):
+            notify()
+
+    def _active_term_rules(self) -> Dict[str, str]:
+        """Live human term corrections for the ASR engine's decoder prompt.
+
+        Reads only the ``user_notes`` card under the store lock; the ASR
+        worker calls this once per chunk, so it must stay cheap.
+        """
+        store = self.store
+        if store is None:
+            return {}
+        from meeting.corrections import term_rules_from_items
+        try:
+            return store.with_state(lambda state: term_rules_from_items(
+                item.to_dict() for item in state.cards.get("user_notes", [])
+            ))
+        except Exception:
+            logger.exception("Could not read meeting term corrections")
+            return {}
 
     def _apply_diarizer_pins(self, results: List[OpResult]) -> None:
         """Teach the diarizer only after a speaker edit commits."""

@@ -331,6 +331,11 @@ def _persist_finalization(
         summary_stats=dict(summary_stats or {}),
         card_deferred=bool(getattr(current, "card_deferred", False)),
     )
+    logger.log(
+        logging.WARNING if status == "failed" else logging.INFO,
+        "Meeting re-finalization meeting_id=%s stage=%s status=%s detail=%s",
+        store.with_state(lambda state: state.meeting_id), stage, status, step_details or message,
+    )
     store.update_runtime_fields(finalization=payload)
     data = payload.to_dict()
     if progress_cb is not None:

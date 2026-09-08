@@ -12,6 +12,8 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, or_, text as sql_text
+from sqlalchemy.orm import object_session
+from meeting.corrections import correct_text, term_rules
 
 from meeting.asr.revise import MIN_MATCH_IOU, interval_iou
 from meeting.interfaces import OpResult, TranscriptSegment
@@ -63,10 +65,22 @@ def _chunk_to_dict(row: MeetingAudioChunk) -> Dict[str, Any]:
 
 
 def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
+    session = object_session(row)
+    rules = {}
+    if session is not None:
+        # Cache only within this short-lived transaction. Keep raw ASR intact.
+        cache = session.info.setdefault("meeting_term_rules", {})
+        if row.meeting_id not in cache:
+            meeting = session.get(MeetingSession, row.meeting_id)
+            cache[row.meeting_id] = term_rules(
+                json.loads(meeting.state_json or "{}") if meeting else {}
+            )
+        rules = cache[row.meeting_id]
     return {
         "id": row.id, "meeting_id": row.meeting_id, "chunk_id": row.chunk_id,
         "channel": row.channel, "start_s": row.start_s, "end_s": row.end_s,
-        "text": row.text,
+        "text": correct_text(row.text, rules),
+        "original_text": row.text,
         "speaker_participant_id": row.speaker_participant_id,
         "speaker_source": row.speaker_source,
         "speaker_pinned": row.speaker_pinned,

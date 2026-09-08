@@ -1,3 +1,4 @@
+import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { MeetingInfo, MeetingStateDoc, Op } from '../types';
@@ -316,6 +317,7 @@ export default function HeaderBar({
             (finalizationStatus === 'failed'
               ? 'Final cloud insights failed.'
               : 'Final cloud insights could not run.')}
+          {isHost && <FinalizationDiagnostics finalization={finalization} meetingId={state.meeting_id} />}
         </div>
       )}
 

@@ -627,7 +627,9 @@ class PiSidecarAgent:
                 for seg in (payload.new_segments or [])
                 if isinstance(seg, dict) and seg.get("id")
             ]
+        from meeting.corrections import guidance_prompt
         params: Dict[str, Any] = {
+            "human_guidance": guidance_prompt(payload.state_snapshot),
             "request_id": payload.request_id,
             "state": payload.state_snapshot,
             "new_segments": payload.new_segments,

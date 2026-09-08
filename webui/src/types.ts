@@ -142,6 +142,7 @@ export interface MeetingStateDoc {
 }
 
 export interface Segment {
+  original_text?: string;
   id: string;
   meeting_id: string;
   chunk_id: number | null;

@@ -1,3 +1,4 @@
+import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { ExportFormat, MeetingRow, MeetingStateDoc, SearchRow } from '../types';
@@ -502,6 +503,13 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     </button>
                   </div>
                 </div>
+
+                {detail && ['failed', 'unavailable'].includes(detail.finalization?.status ?? '') && (
+                  <div className="banner warning no-print" role="status">
+                    {detail.finalization?.message || 'Meeting finalization could not finish.'}
+                    <FinalizationDiagnostics finalization={detail.finalization} meetingId={selected.id} />
+                  </div>
+                )}
 
                 {selected.content_summary?.is_empty && (
                   <div className="banner warning no-print" role="status">

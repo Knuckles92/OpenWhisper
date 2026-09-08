@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
+import SelectionInsight from './components/SelectionInsight';
+import { correctedSegments, correctionText } from './corrections';
 import { hydrateTranscript, sendDashboardAction, type TranscriptLoadState } from './dashboardActions';
 import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
@@ -137,6 +139,12 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     );
   }, [onActionError]);
 
+  // Term corrections come from the user_notes card alone; keying on it keeps
+  // unrelated state ticks from re-mapping every transcript row.
+  const userNotes = ui.state?.cards.user_notes;
+  const correct = useMemo(() => correctionText(userNotes), [userNotes]);
+  const segments = useMemo(() => correctedSegments(ui.segments, correct), [ui.segments, correct]);
+
   const participants = useMemo(
     () => (ui.state ? Object.values(ui.state.participants) : []),
     [ui.state],
@@ -197,6 +205,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
 
   return (
     <div className="app-shell">
+      {!showHistory && <SelectionInsight key={ui.state.meeting_id} onSend={sendOp} live={ui.state.status === 'active'} online={ui.state.cloud_enabled && ui.state.intelligence_online} />}
       <HeaderBar
         token={token}
         isHost={isHost}
@@ -234,12 +243,12 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           />
         </div>
       ) : (
-        <EvidenceProvider segments={ui.segments} participants={participants}>
+        <EvidenceProvider segments={segments} participants={participants}>
           <div className="app-main workspace" ref={workspaceRef} data-workspace-scroll>
             <aside className="workspace-conversation">
               <TranscriptPane
-                segments={ui.segments}
-                previews={ui.meetingEnded ? [] : Object.values(ui.speechPreviews)}
+                segments={segments}
+                previews={ui.meetingEnded ? [] : Object.values(ui.speechPreviews).map((preview) => ({ ...preview, text: correct(preview.text) }))}
                 participants={participants}
                 highlightSegmentId={highlightSegmentId}
                 onHighlightClear={() => setHighlightSegmentId(null)}
@@ -285,7 +294,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
               {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
                 <ReportTabs
                   state={ui.state}
-                  segments={ui.segments}
+                  segments={segments}
                   meeting={ui.meeting}
                   onEvidenceClick={handleEvidenceClick}
                   onSeek={seekTo}
@@ -323,6 +332,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   />
 
                   <NotesPane
+                    onRequestAdjustment={(text) => api.requestNoteAdjustment(token, text)}
                     notes={ui.state.cards.live_notes ?? []}
                     status={ui.state.status}
                     cloudEnabled={ui.state.cloud_enabled}

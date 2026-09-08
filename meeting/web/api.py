@@ -563,6 +563,29 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             },
         )
 
+    @app.post("/api/meeting/notes/request")
+    async def api_note_request(request: Request, token: str = "") -> Dict[str, Any]:
+        await _require(token)
+        body = await _json_body(request)
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+            raise HTTPException(status_code=400, detail="Enter a note request of 1 to 4000 characters.")
+        try:
+            future = await asyncio.to_thread(engine.request_note_adjustment, text)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # The existing scheduler owns execution. Awaiting its Future does not
+        # occupy a server worker for the duration of the model call.
+        result = await asyncio.shield(asyncio.wrap_future(future))
+        return {
+            "ok": result.ok,
+            "applied": sum(1 for op in result.op_results if op.ok),
+            "rejected": sum(1 for op in result.op_results if not op.ok),
+            "error": result.error,
+        }
+
     @app.post("/api/meeting/end")
     async def api_meeting_end(token: str = "") -> Dict[str, Any]:
         await _require(token, host_only=True)

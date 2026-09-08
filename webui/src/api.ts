@@ -164,6 +164,16 @@ export const api = {
     );
   },
 
+  requestNoteAdjustment(token: string, text: string): Promise<{
+    ok: boolean; applied: number; rejected: number; error?: string | null;
+  }> {
+    return request(`/api/meeting/notes/request?${qs({ token })}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+  },
+
   endMeeting(token: string): Promise<unknown> {
     return request<unknown>(`/api/meeting/end?${qs({ token })}`, { method: 'POST' });
   },

@@ -78,11 +78,13 @@ class FakeAsrEngine:
 
     instances = []
 
-    def __init__(self, model_name, meeting_id, repository, language=None):
+    def __init__(self, model_name, meeting_id, repository, language=None,
+                 term_rules=None):
         self.model_name = model_name
         self.meeting_id = meeting_id
         self.repository = repository
         self.language = language
+        self.term_rules = term_rules
         self.is_available = True
         self.started = False
         self.enqueued = []

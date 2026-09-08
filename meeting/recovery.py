@@ -576,6 +576,7 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
     try:
         if total:
             from meeting.asr.engine import MeetingAsrEngine
+            from meeting.corrections import repository_term_rules
 
             leased = acquire_model_lease(model_lease)
             language = (asr_language or "auto").strip().lower()
@@ -584,6 +585,9 @@ def finalize_meeting(repository: Any, meeting: Dict[str, Any],
                 meeting_id,
                 repository,
                 language=None if language == "auto" else language,
+                # Corrections offered during the meeting keep priming the
+                # decoder when leftover chunks are transcribed afterwards.
+                term_rules=repository_term_rules(repository, meeting_id),
             )
             if not getattr(engine, "is_available", False):
                 logger.error("ASR model %r unavailable; cannot finalize %s",

@@ -178,17 +178,27 @@ def stitch_window_audio(
     return np.concatenate(pieces).astype(np.float32, copy=False), actual_start
 
 
-def build_initial_prompt(prior_segments: Sequence[Dict[str, Any]]) -> str:
-    """Trailing finalized text used as Whisper ``initial_prompt``."""
+def build_initial_prompt(prior_segments: Sequence[Dict[str, Any]],
+                         vocabulary: Sequence[str] = ()) -> str:
+    """Trailing finalized text used as Whisper ``initial_prompt``.
+
+    ``vocabulary`` holds human-corrected spellings (see
+    :mod:`meeting.corrections`); they lead the prompt so the decoder is primed
+    with the right terms before it sees the trailing transcript context.
+    """
     parts: List[str] = []
     for seg in prior_segments:
         text = (seg.get("text") or "").strip()
         if text:
             parts.append(text)
     joined = " ".join(parts).strip()
-    if len(joined) <= INITIAL_PROMPT_CHARS:
+    if len(joined) > INITIAL_PROMPT_CHARS:
+        joined = joined[-INITIAL_PROMPT_CHARS:].lstrip()
+    terms = [term.strip() for term in vocabulary if term and term.strip()]
+    if not terms:
         return joined
-    return joined[-INITIAL_PROMPT_CHARS:].lstrip()
+    hint = ", ".join(terms) + "."
+    return f"{hint} {joined}".strip()
 
 
 def revise_segment_id(

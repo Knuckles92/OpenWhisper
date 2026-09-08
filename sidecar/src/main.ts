@@ -325,6 +325,9 @@ function notesPageProjection(state: any): any {
     topic: state?.topic ?? {},
     rolling_summary: state?.rolling_summary ?? "",
     live_notes: blocks,
+    user_notes: Array.isArray(cards.user_notes)
+      ? cards.user_notes.filter((item: any) => item?.status !== "removed")
+      : [],
   };
 }
 
@@ -355,6 +358,7 @@ function buildCheckpointPrompt(systemPrompt: string, params: any): string {
   const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
 
   const parts: string[] = [];
+  if (typeof params?.human_guidance === "string") parts.push(params.human_guidance, "");
   if (effectiveSystem) {
     parts.push(effectiveSystem, "");
   }
@@ -449,6 +453,7 @@ function buildNotesPrompt(systemPrompt: string, params: any): string {
   const segments = Array.isArray(params?.new_segments) ? params.new_segments : [];
 
   const parts: string[] = [];
+  if (typeof params?.human_guidance === "string") parts.push(params.human_guidance, "");
   if (systemPrompt) {
     parts.push(systemPrompt, "");
   }
@@ -480,6 +485,19 @@ function buildNotesPrompt(systemPrompt: string, params: any): string {
     "human_edited means start a fresh block beside it. When you are done, reply",
     "with one short plain-text sentence summarizing what changed.",
   );
+  if (params?.state?.note_adjustment_request) {
+    parts.push(
+      "",
+      "## NOTE ADJUSTMENT REQUEST",
+      String(params.state.note_adjustment_request),
+      "Apply this request to the existing AI notes now. No new speech is required.",
+      "For this pass, the request takes precedence over the default newest-block",
+      "and prose-style instructions above. You may revise older AI blocks.",
+      "Use the supplied meeting transcript as evidence; preserve factual meaning.",
+      "Only change live_notes; preserve human-touched blocks.",
+      "Do not claim a change unless your tools applied it.",
+    );
+  }
   return parts.join("\n");
 }
 

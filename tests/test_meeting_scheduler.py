@@ -471,7 +471,7 @@ class TestFinalPolish:
         assert [seg["id"] for seg in agent.calls[0].new_segments] == ["sg_1", "sg_2"]
 
     @pytest.mark.parametrize("timeout", [False, True])
-    def test_later_block_failure_keeps_prior_work_but_reports_failure(self, timeout):
+    def test_later_block_failure_keeps_prior_work_but_reports_failure(self, timeout, caplog):
         engine = FakeEngine([
             {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": "draft"}
             for i in range(401)
@@ -494,6 +494,10 @@ class TestFinalPolish:
         assert outcome.status == "failed"
         assert ("timed out" if timeout else "second block failed") in outcome.message
         assert len(agent.calls) == 2
+        assert agent.calls[1].request_id in outcome.message
+        assert "block 2/2" in outcome.message
+        assert agent.calls[1].request_id in caplog.text
+        assert "block=2/2" in caplog.text
         assert engine._segments[0]["text"] == "Cleaned."
 
     def test_final_polish_then_consolidation_see_same_segments(self):

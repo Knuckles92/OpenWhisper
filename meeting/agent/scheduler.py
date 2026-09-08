@@ -15,6 +15,8 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -82,6 +84,12 @@ _NOTES_MIN_INTERVAL_S = 45.0
 #: lives in the existing note blocks shipped in the state snapshot.
 _NOTES_MAX_SEGMENTS = 300
 
+#: Trailing transcript window re-sent when a human correction or insight asks
+#: the agent to reconsider its state without waiting for new speech. The full
+#: dashboard state travels alongside, so a bounded recent window is enough
+#: context and keeps a long meeting's guidance pass inside the model budget.
+_GUIDANCE_MAX_SEGMENTS = 300
+
 _WORD_RE = re.compile(r"[a-z']+")
 
 #: Tiny inline stopword list; only words of length >= 4 are considered, so
@@ -135,6 +143,7 @@ class CheckpointScheduler:
 
         self._lock = threading.Lock()
         self._wake = threading.Event()
+        self._guidance_pending = False
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -155,6 +164,7 @@ class CheckpointScheduler:
         self._notes_checkpoint_mark = 0
         self._notes_sent_starts: Dict[str, float] = {}
         self._notes_max_sent_start_s = -1.0
+        self._note_requests = deque()
 
     def start(self) -> None:
         """Start the worker thread. Idempotent."""
@@ -175,6 +185,7 @@ class CheckpointScheduler:
     def stop(self) -> None:
         """Stop periodic firing. Does not cancel an in-flight checkpoint."""
         self._stop_event.set()
+        self._cancel_note_requests()
         self._wake.set()
         thread = self._thread
         if (thread is not None and thread.is_alive()
@@ -191,6 +202,7 @@ class CheckpointScheduler:
         """
         self._consolidating = True
         self._stop_event.set()
+        self._cancel_note_requests()
         self._wake.set()
 
     def notify_segments(self, count: int) -> None:
@@ -203,6 +215,62 @@ class CheckpointScheduler:
             return
         with self._lock:
             self._pending_segments += int(count)
+        self._wake.set()
+
+    def request_note_adjustment(self, text: str) -> Future:
+        """Queue an explicit request on the same worker as periodic passes."""
+        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+            raise ValueError("Enter a note request of 1 to 4000 characters.")
+        with self._lock:
+            if (self._consolidating or self._stop_event.is_set()
+                    or self._thread is None or not self._thread.is_alive()
+                    or not getattr(self._agent, "supports_notes_pass", False)):
+                raise RuntimeError("The note agent is not available.")
+            if len(self._note_requests) >= 4:
+                raise RuntimeError("The note agent already has several requests queued.")
+            future = Future()
+            self._note_requests.append((text.strip(), future))
+        self._wake.set()
+        return future
+
+    def _cancel_note_requests(self) -> None:
+        with self._lock:
+            queued = list(self._note_requests)
+            self._note_requests.clear()
+        for _, future in queued:
+            if not future.done():
+                future.set_result(AgentResult(ok=False, error="Meeting agent stopped."))
+
+    def _fire_note_request(self) -> None:
+        with self._lock:
+            if not self._note_requests:
+                return
+            text, future = self._note_requests.popleft()
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            if self._stop_event.is_set() or self._consolidating:
+                raise RuntimeError("Meeting agent stopped.")
+            if not self._agent.is_healthy():
+                raise RuntimeError("The note agent is offline.")
+            # Requests may target any existing block, including older notes.
+            # Do not advance automatic transcript watermarks for this pass.
+            segments = self._engine.get_transcript()
+            payload = self._build_payload(segments, False, is_notes=True)
+            if payload is None:
+                raise RuntimeError("No active meeting notes.")
+            payload.state_snapshot["note_adjustment_request"] = text
+            result = self._agent.checkpoint(payload)
+        except Exception as exc:
+            logger.exception("Note adjustment request failed")
+            result = AgentResult(ok=False, error=str(exc))
+        future.set_result(result)
+
+    def notify_guidance(self) -> None:
+        """Review human context promptly, including during a quiet meeting."""
+        with self._lock:
+            self._guidance_pending = True
+            self._pending_segments += 1
         self._wake.set()
 
     def _interval_for(self, pending: int) -> float:
@@ -221,12 +289,18 @@ class CheckpointScheduler:
                 break
             if self._consolidating:
                 continue
+            self._fire_note_request()
+            if self._stop_event.is_set() or self._consolidating:
+                continue
             with self._lock:
                 pending = self._pending_segments
             if pending <= 0:
                 continue
             elapsed = time.monotonic() - self._last_fire_mono
             if time.monotonic() < self._retry_not_before:
+                continue
+            if self._guidance_pending:
+                self._fire()
                 continue
             if not self._sent_starts:
                 if elapsed >= self._initial_interval_s:
@@ -332,23 +406,31 @@ class CheckpointScheduler:
         with self._lock:
             claimed = self._pending_segments
             self._pending_segments = 0
+            guidance = self._guidance_pending
+            self._guidance_pending = False
         # Mark the fire time at the start of the run so work that becomes due
         # while the checkpoint executes fires immediately after completion.
         self._last_fire_mono = time.monotonic()
 
         try:
             fetched = self._engine.get_transcript(
-                after_start_s=self._fetch_cursor_s()
+                after_start_s=-1.0 if guidance else self._fetch_cursor_s()
             )
         except Exception as exc:
             logger.exception("Checkpoint transcript fetch failed")
+            if guidance:
+                self.notify_guidance()
             self._record_failure(claimed, str(exc))
             return
         segments = [
             seg for seg in fetched
-            if str(seg.get("id") or "") not in self._sent_starts
+            if guidance or str(seg.get("id") or "") not in self._sent_starts
         ]
-        if not segments:
+        if guidance:
+            # Segments are read with term corrections applied, so a guidance
+            # pass shows the agent the corrected recent transcript.
+            segments = segments[-_GUIDANCE_MAX_SEGMENTS:]
+        if not segments and not guidance:
             return
 
         # Seed structural live state before the network request. A slow or
@@ -357,6 +439,8 @@ class CheckpointScheduler:
         self._maybe_backfill_live_insights()
         payload = self._build_payload(segments, is_consolidation=False)
         if payload is None:
+            if guidance:
+                self.notify_guidance()
             with self._lock:
                 self._pending_segments += claimed
             return
@@ -385,6 +469,8 @@ class CheckpointScheduler:
             self._maybe_fire_notes()
             self._maybe_fire_polish()
         else:
+            if guidance:
+                self.notify_guidance()
             self._record_failure(
                 claimed,
                 result.error or "checkpoint failed",
@@ -930,11 +1016,18 @@ class CheckpointScheduler:
             worker = threading.Thread(
                 target=_worker, name="meeting-final-polish", daemon=True,
             )
+            started = time.monotonic()
+            logger.info(
+                "Final polish started meeting_id=%s request_id=%s block=%s/%s segments=%s timeout_s=%s",
+                payload.state_snapshot.get("meeting_id", "unknown"), payload.request_id,
+                idx, total_blocks, len(block), timeout_s,
+            )
             worker.start()
             worker.join(timeout=timeout_s)
             if worker.is_alive():
                 logger.warning(
-                    "Final polish timed out after %.0fs; canceling", timeout_s,
+                    "Final polish timed out request_id=%s block=%s/%s elapsed_s=%.2f timeout_s=%s; canceling",
+                    payload.request_id, idx, total_blocks, time.monotonic() - started, timeout_s,
                 )
                 try:
                     self._agent.cancel()
@@ -942,7 +1035,8 @@ class CheckpointScheduler:
                     logger.exception("Agent cancel raised")
                 worker.join(timeout=5.0)
                 last_error = (
-                    f"Transcript cleanup timed out after {int(timeout_s)}s."
+                    f"Transcript cleanup timed out after {timeout_s:g}s "
+                    f"on block {idx}/{total_blocks}. Request ID: {payload.request_id}."
                 )
                 break
             result = result_box.get("result")
@@ -951,7 +1045,16 @@ class CheckpointScheduler:
                 break
             if not result.ok:
                 last_error = result.error or "transcript cleanup failed"
+                logger.warning(
+                    "Final polish failed request_id=%s block=%s/%s elapsed_s=%.2f error=%s",
+                    payload.request_id, idx, total_blocks, time.monotonic() - started, last_error,
+                )
+                last_error = f"{last_error} (block {idx}/{total_blocks}; request ID: {payload.request_id})"
                 break
+            logger.info(
+                "Final polish completed request_id=%s block=%s/%s elapsed_s=%.2f",
+                payload.request_id, idx, total_blocks, time.monotonic() - started,
+            )
             self._last_polish_mono = time.monotonic()
 
         if last_error:

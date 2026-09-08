@@ -62,11 +62,12 @@ class FakeAsr:
     instances = []
 
     def __init__(self, model, meeting_id, repository, language=None,
-                 enable_revisions=True):
+                 enable_revisions=True, term_rules=None):
         self.model = model
         self.meeting_id = meeting_id
         self.language = language
         self.enable_revisions = enable_revisions
+        self.term_rules = term_rules
         self.is_available = True
         self.on_segments = None
         self.chunks = []
@@ -186,6 +187,7 @@ class FakeScheduler:
         self.consolidations = 0
         self.polishes = 0
         self.seeded = None
+        self.guidance_notices = 0
         FakeScheduler.instances.append(self)
 
     def _mark_sent(self, segments):
@@ -202,6 +204,9 @@ class FakeScheduler:
 
     def notify_segments(self, count):
         pass
+
+    def notify_guidance(self):
+        self.guidance_notices += 1
 
     def run_final_polish(self, timeout_s=60.0, progress_cb=None):
         from meeting.agent.scheduler import ConsolidationOutcome
@@ -984,15 +989,8 @@ class TestEndLifecycle:
         release = threading.Event()
 
         class BlockingAsr(FakeAsr):
-            def __init__(self, model, meeting_id, repository, language=None,
-                         enable_revisions=True):
-                super().__init__(
-                    model,
-                    meeting_id,
-                    repository,
-                    language=language,
-                    enable_revisions=enable_revisions,
-                )
+            def __init__(self, model, meeting_id, repository, **kwargs):
+                super().__init__(model, meeting_id, repository, **kwargs)
                 entered.set()
                 release.wait(timeout=10.0)
 

@@ -29,6 +29,7 @@ from meeting.asr.revise import (
     select_chunks_for_window,
     stitch_window_audio,
 )
+from meeting.corrections import correct_text, vocabulary_hint, vocabulary_terms
 from meeting.interfaces import SpooledChunk, TranscriptSegment
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ class MeetingAsrEngine:
         repository: Any,
         language: Optional[str] = None,
         enable_revisions: bool = False,
+        term_rules: Optional[Callable[[], Dict[str, str]]] = None,
     ) -> None:
         """Load a dedicated Whisper model for one meeting.
 
@@ -97,9 +99,14 @@ class MeetingAsrEngine:
                 may run. Disabled by default because real-meeting dogfood found
                 meeting-dependent regressions; the benchmark can opt in for
                 continued research.
+            term_rules: Optional callable returning the meeting's live human
+                term corrections (misheard term -> replacement). They correct
+                the decoder's context prompt and prime it with the right
+                spellings so one misheard name stops repeating.
         """
         self.meeting_id = meeting_id
         self._repository = repository
+        self._term_rules = term_rules
         self.language = language.strip().lower() if language else None
         self.revisions_enabled = bool(enable_revisions)
         self._backend = None
@@ -536,8 +543,26 @@ class MeetingAsrEngine:
                 except Exception:
                     logger.exception("Could not hydrate meeting ASR draft context")
             self._draft_context[key] = words[-DRAFT_PROMPT_WORDS:]
-        prompt = " ".join(self._draft_context[key][-DRAFT_PROMPT_WORDS:]).strip()
+        rules = self._current_term_rules()
+        context = " ".join(self._draft_context[key][-DRAFT_PROMPT_WORDS:]).strip()
+        # Apply corrections at prompt time, not when words are remembered, so
+        # a correction offered mid-meeting also fixes context already cached.
+        prompt = " ".join(
+            part for part in (vocabulary_hint(rules), correct_text(context, rules))
+            if part
+        ).strip()
         return prompt or None
+
+    def _current_term_rules(self) -> Dict[str, str]:
+        """Live human term corrections, or ``{}`` when unavailable."""
+        if self._term_rules is None:
+            return {}
+        try:
+            rules = self._term_rules()
+        except Exception:
+            logger.exception("Could not read meeting term corrections")
+            return {}
+        return rules if isinstance(rules, dict) else {}
 
     def _remember_draft_segments(
         self,
@@ -735,7 +760,12 @@ class MeetingAsrEngine:
             if seg.get("channel") == channel
             and float(seg.get("end_s") or 0.0) <= decode_start + 1e-6
         ]
-        initial_prompt = build_initial_prompt(prior_text[-12:])
+        # Prior rows already carry term corrections (applied on read); the
+        # vocabulary hint additionally primes the decoder with the spellings.
+        initial_prompt = build_initial_prompt(
+            prior_text[-12:],
+            vocabulary=vocabulary_terms(self._current_term_rules()),
+        )
 
         beam_size = 1 if self.is_backlogged() else 5
         try:

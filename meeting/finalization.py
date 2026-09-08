@@ -44,7 +44,13 @@ def failed_steps_message(steps: Sequence[dict[str, Any]]) -> str:
     ]
     if not names:
         return ""
+    details = " ".join(
+        f"{step.get('name') or step.get('id')}: {step['detail']}"
+        for step in steps
+        if step.get("status") == "failed" and step.get("detail")
+    )
     return (
         f"{', '.join(names)} failed. "
         "The recording and transcript were kept."
+        + (f" {details}" if details else "")
     )

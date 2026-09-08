@@ -4,8 +4,18 @@ import { ops, type CardItem, type Op } from '../types';
 import { sortedNoteItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
 
+interface NoteRequestResult {
+  ok: boolean;
+  applied: number;
+  rejected: number;
+  error?: string | null;
+}
+
+type RequestAdjustment = (text: string) => Promise<NoteRequestResult>;
+
 interface NotesPaneProps {
   notes: CardItem[];
+  onRequestAdjustment?: RequestAdjustment;
   status: string;
   cloudEnabled: boolean;
   intelligenceOnline: boolean;
@@ -240,6 +250,62 @@ function NoteComposer({ onSendOp }: { onSendOp: (op: Op) => Promise<boolean> }) 
   );
 }
 
+function NoteAgentRequest({ onRequest, disabled }: {
+  onRequest: RequestAdjustment;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const submit = async () => {
+    const text = draft.trim();
+    if (!text || pending || disabled) return;
+    setPending(true);
+    setFeedback('Waiting for the note agent. Your changes will appear above.');
+    try {
+      const result = await onRequest(text);
+      if (!result.ok) {
+        setFeedback(`${result.applied ? `${result.applied} changes applied before the request stopped. ` : ''}${result.error || 'The request failed.'} You can retry.`);
+      } else if (!result.applied) {
+        setFeedback('No changes were applied. Try a more specific request; edited, confirmed, and pinned notes are protected.');
+      } else {
+        setFeedback(`${result.applied} ${result.applied === 1 ? 'change' : 'changes'} applied.${result.rejected ? ' Some changes were rejected; review the notes.' : ''}`);
+        setDraft('');
+      }
+    } catch (error) {
+      setFeedback(`${error instanceof Error ? error.message : 'Could not reach the note agent.'} Review the notes before retrying.`);
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="note-composer no-print" role="group" aria-label="Ask the note agent">
+      <strong>Ask the note agent</strong>
+      <p>Ask for a change to the AI notes, such as “shorten the last section” or “group the notes by topic”.</p>
+      <textarea
+        aria-label="Request a note adjustment"
+        placeholder="What should the note agent change?"
+        value={draft}
+        maxLength={4000}
+        disabled={pending || disabled}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            void submit();
+          }
+        }}
+      />
+      <button type="button" className="primary" disabled={pending || disabled || !draft.trim()} onClick={() => void submit()}>
+        {pending ? 'Updating notes…' : 'Update notes'}
+      </button>
+      <p role="status" aria-live="polite">
+        {feedback || (disabled ? 'Available while cloud insights are online in an active meeting.' : 'Changes appear in the shared meeting notes. Your own notes stay protected.')}
+      </p>
+    </div>
+  );
+}
+
 function ghostText(status: string, cloudEnabled: boolean, intelligenceOnline: boolean): string {
   if (status === 'ending' || status === 'ended') return 'The note taker\u2019s page is complete.';
   if (!cloudEnabled) return 'Enable cloud insights and the AI note taker will keep minutes.';
@@ -250,6 +316,7 @@ function ghostText(status: string, cloudEnabled: boolean, intelligenceOnline: bo
 /** The AI note taker's page: live, chronological meeting minutes. */
 export default function NotesPane({
   notes,
+  onRequestAdjustment,
   status,
   cloudEnabled,
   intelligenceOnline,
@@ -318,6 +385,12 @@ export default function NotesPane({
             ))
           )}
         </div>
+        {!readOnly && onRequestAdjustment && (
+          <NoteAgentRequest
+            onRequest={onRequestAdjustment}
+            disabled={!cloudEnabled || !intelligenceOnline || !['active', 'paused'].includes(status)}
+          />
+        )}
         {!readOnly && onSendOp && <NoteComposer onSendOp={onSendOp} />}
       </div>
     </section>

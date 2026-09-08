@@ -260,6 +260,11 @@ a {
   gap: 14px;
 }
 
+.workspace-rail > .panel {
+  /* Keep content in its panel; the rail owns scrolling when captures grow. */
+  flex: 0 0 auto;
+}
+
 @media (max-width: 1200px) {
   .app-main.workspace {
     grid-template-columns: 1fr;

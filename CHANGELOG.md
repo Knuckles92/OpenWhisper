@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Meeting dashboard **Offer insight to agent**: select any text on the dashboard to correct a misheard term or brief the AI about what is being discussed. Term corrections apply across the transcript, exports, and speech previews, prime the local speech recognizer with the right spelling for the rest of the meeting, and stay reversible from the Notes card. Every insight prompts the meeting agent to reconsider its topic, summary, and notes without waiting for new speech.
 - Optional speech-model setup explicitly identifies the required runtime and prompts to install it when downloading a model or selecting an already-downloaded model. Existing runtimes and active installs are reused.
 - Apple Silicon Mac NVIDIA Speech CPU component and isolated native worker, allowing Parakeet to reuse downloaded GGUF weights. Unsupported runtimes report their platform limitation instead of pointing to an absent Downloads installer.
 - Mac updates download and SHA-256 verify the release DMG, then open it with instructions to replace the app in Applications.
