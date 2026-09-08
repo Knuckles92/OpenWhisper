@@ -1,5 +1,5 @@
 .selection-insight-trigger, .selection-insight-message { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: calc(100vw - 32px); box-shadow: 0 5px 24px #0004; }
-.selection-insight-message { padding: 12px 16px; border-radius: 10px; background: var(--bg-panel, #242830); color: var(--text, white); }
+.selection-insight-message { padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); }
 .selection-insight-dialog { max-width: min(560px, calc(100vw - 32px)); }
 .selection-insight-dialog .confirm-card { display: grid; gap: 12px; max-height: 80vh; overflow: auto; }
 .selection-insight-dialog blockquote { margin: 0; padding: 10px; border-left: 3px solid currentColor; max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

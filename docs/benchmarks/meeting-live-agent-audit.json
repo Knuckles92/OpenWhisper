@@ -1,0 +1,40 @@
+{
+  "provider": "openrouter",
+  "model": "google/gemini-3.8-flash",
+  "backend": "installed Pi sidecar with updated Python host",
+  "input": "synthetic text; active meeting state; no real recordings",
+  "all_passed": true,
+  "results": [
+    {
+      "name": "automatic_name_correction_and_live_notes",
+      "passed": true,
+      "elapsed_s": 21.12
+    },
+    {
+      "name": "human_guidance_updates_existing_notes",
+      "passed": true,
+      "elapsed_s": 16.84
+    },
+    {
+      "name": "explicit_note_request_without_speech",
+      "passed": true,
+      "elapsed_s": 8.12
+    },
+    {
+      "name": "valid_entropic_is_preserved",
+      "passed": true,
+      "elapsed_s": 13.64
+    },
+    {
+      "name": "ambiguous_name_is_not_guessed",
+      "passed": true,
+      "elapsed_s": 78.03
+    },
+    {
+      "name": "later_context_repairs_earlier_line",
+      "passed": true,
+      "elapsed_s": 22.02
+    }
+  ],
+  "timing_note": "Scenario times may include both dashboard and notes passes. Explicit note request measures its queued Future through completion."
+}

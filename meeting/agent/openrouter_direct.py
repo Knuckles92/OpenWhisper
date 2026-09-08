@@ -621,7 +621,8 @@ class DirectOpenRouterAgent:
         )
         self._citable_ids = [
             str(seg.get("id"))
-            for seg in (payload.new_segments or [])
+            for seg in ((payload.new_segments or [])
+                            + (payload.state_snapshot.get("recent_transcript_context") or []))
             if isinstance(seg, dict) and seg.get("id")
         ]
         self._pass_deadline = time.monotonic() + timeout_s
@@ -826,10 +827,11 @@ class DirectOpenRouterAgent:
             },
         ]
         usage: Dict[str, Any] = {}
+        all_results: List[OpResult] = []
 
         for attempt in range(3):
             if self._cancel_event.is_set():
-                return AgentResult(ok=False, error="canceled", usage=usage)
+                return AgentResult(ok=False, op_results=all_results, error="canceled", usage=usage)
             try:
                 kwargs: Dict[str, Any] = {
                     "model": self._model,
@@ -840,7 +842,7 @@ class DirectOpenRouterAgent:
                     kwargs["response_format"] = {"type": "json_object"}
                 remaining = min(timeout_s, getattr(self, "_pass_deadline", time.monotonic() + timeout_s) - time.monotonic())
                 if remaining <= 0:
-                    return AgentResult(ok=False, error="meeting text deadline exceeded", usage=usage)
+                    return AgentResult(ok=False, op_results=all_results, error="meeting text deadline exceeded", usage=usage)
                 response = generate(client.with_options(timeout=remaining), self._profile,
                                     cancel_event=self._cancel_event, **kwargs)
             except Exception as exc:
@@ -882,7 +884,7 @@ class DirectOpenRouterAgent:
                     })
                     continue
                 return AgentResult(
-                    ok=False, error=f"invalid JSON from model: {exc}",
+                    ok=False, op_results=all_results, error=f"invalid JSON from model: {exc}",
                     usage=usage,
                 )
 
@@ -896,6 +898,29 @@ class DirectOpenRouterAgent:
                 ops = filter_notes_ops(ops, self._notes_item_ids)
             ops = self._repair_ops(ops)
             op_results = self._tools.apply_agent_ops(ops) if ops else []
-            return AgentResult(ok=True, op_results=op_results, usage=usage)
+            all_results.extend(op_results)
+            rejected = [r for r in op_results if not r.ok]
+            repairable = [r for r in rejected if r.reason not in {
+                "human_edited", "human_named", "agent_writes_revoked",
+            }]
+            if repairable and attempt < 2:
+                messages.append(response.assistant_message)
+                messages.append({"role": "user", "content": (
+                    "Operation results: " + json.dumps(_op_results_payload(op_results))
+                    + "\nCorrect the rejected operations using these reasons and current "
+                    "revisions. Do not repeat successful operations or retry protected "
+                    "human items. Emit only the remaining warranted changes as "
+                    'a JSON object of the form {"ops": [...]}.'
+                )})
+                continue
+            failed = bool(repairable) or (
+                bool(rejected) and not any(r.ok for r in all_results)
+            )
+            return AgentResult(
+                ok=not failed, op_results=all_results, usage=usage,
+                error=("Unapplied operations: " + ", ".join(
+                    sorted({str(r.reason) for r in rejected})
+                )) if failed else None,
+            )
 
         return AgentResult(ok=False, error="json_mode_exhausted", usage=usage)

@@ -69,7 +69,8 @@ _REFETCH_WINDOW_S = 180.0
 _POLISH_EVERY_N_CHECKPOINTS = 6
 #: Also fire polish when at least this many seconds have elapsed since the
 #: last polish (even if checkpoint count is low).
-_POLISH_MIN_INTERVAL_S = 300.0
+_POLISH_MIN_INTERVAL_S = 45.0
+_POLISH_INITIAL_DELAY_S = 15.0
 #: How much recent transcript to prefer in a polish payload (full digest still
 #: included via get_transcript; this caps enormous meetings for the prompt).
 _POLISH_MAX_SEGMENTS = 400
@@ -77,8 +78,7 @@ _POLISH_MAX_SEGMENTS = 400
 #: checkpoints (when the agent core supports it). Notes are the note taker's
 #: only job, so its cadence is denser than polish.
 _NOTES_EVERY_N_CHECKPOINTS = 2
-#: Minimum spacing between note-taker passes: the notes page should feel
-#: live without doubling agent traffic on busy meetings.
+#: Time-based catch-up and failure retry interval for the note taker.
 _NOTES_MIN_INTERVAL_S = 45.0
 #: How much recent transcript a notes payload may carry; earlier narrative
 #: lives in the existing note blocks shipped in the state snapshot.
@@ -144,6 +144,9 @@ class CheckpointScheduler:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._guidance_pending = False
+        self._notes_guidance_pending = False
+        self._guidance_generation = 0
+        self._notes_retry_not_before = 0.0
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -160,6 +163,8 @@ class CheckpointScheduler:
         self._consolidating = False
         self._successful_checkpoints = 0
         self._last_polish_mono = 0.0
+        self._polish_checkpoint_mark = 0
+        self._polish_retry_pending = False
         self._last_notes_mono = 0.0
         self._notes_checkpoint_mark = 0
         self._notes_sent_starts: Dict[str, float] = {}
@@ -270,6 +275,12 @@ class CheckpointScheduler:
         """Review human context promptly, including during a quiet meeting."""
         with self._lock:
             self._guidance_pending = True
+            self._notes_guidance_pending = True
+            self._guidance_generation += 1
+            # Fresh human input gets one immediate attempt even when an
+            # earlier automatic pass entered provider backoff.
+            self._retry_not_before = 0.0
+            self._notes_retry_not_before = 0.0
             self._pending_segments += 1
         self._wake.set()
 
@@ -293,8 +304,13 @@ class CheckpointScheduler:
             if self._stop_event.is_set() or self._consolidating:
                 continue
             with self._lock:
+                if self._note_requests:
+                    self._wake.set()
+                    continue
                 pending = self._pending_segments
             if pending <= 0:
+                self._maybe_fire_notes()
+                self._maybe_fire_polish()
                 continue
             elapsed = time.monotonic() - self._last_fire_mono
             if time.monotonic() < self._retry_not_before:
@@ -363,9 +379,22 @@ class CheckpointScheduler:
         store = getattr(self._engine, "store", None)
         if store is None:
             return None
+        snapshot = store.snapshot()
+        if not (is_consolidation or is_polish or is_notes):
+            # Carry exact earlier lines as context without advancing their
+            # delivery cursor again. Later speech can disambiguate an ASR name.
+            supplied_ids = {seg.get("id") for seg in segments}
+            try:
+                recent = self._engine.get_transcript(after_start_s=self._fetch_cursor_s())
+            except Exception:
+                logger.exception("Recent transcript context fetch failed")
+                recent = []
+            snapshot["recent_transcript_context"] = [
+                seg for seg in recent if seg.get("id") not in supplied_ids
+            ][-24:]
         return CheckpointPayload(
             request_id=uuid.uuid4().hex,
-            state_snapshot=store.snapshot(),
+            state_snapshot=snapshot,
             new_segments=segments,
             is_consolidation=is_consolidation,
             is_polish=is_polish,
@@ -466,6 +495,11 @@ class CheckpointScheduler:
                 payload.request_id, applied, len(result.op_results),
             )
             self._successful_checkpoints += 1
+            if any(r.ok and r.op.get("op") == "revise_segment_text"
+                   for r in result.op_results):
+                with self._lock:
+                    self._notes_guidance_pending = True
+                    self._guidance_generation += 1
             self._maybe_fire_notes()
             self._maybe_fire_polish()
         else:
@@ -519,20 +553,20 @@ class CheckpointScheduler:
             logger.exception("Live insight backfill failed")
 
     def _maybe_fire_polish(self) -> None:
-        """Run a slower transcript-text polish pass when due."""
+        """Review transcript text on count/time cadence, including during silence."""
         if self._consolidating or self._stop_event.is_set():
             return
-        due_by_count = (
-            self._successful_checkpoints > 0
-            and self._successful_checkpoints % _POLISH_EVERY_N_CHECKPOINTS == 0
-        )
+        if self._interactive_pending():
+            return
+        since_mark = self._successful_checkpoints - self._polish_checkpoint_mark
+        if since_mark <= 0 and not self._polish_retry_pending:
+            return
+        now = time.monotonic()
+        due_by_count = since_mark >= _POLISH_EVERY_N_CHECKPOINTS
         due_by_time = (
-            self._last_polish_mono > 0.0
-            and (time.monotonic() - self._last_polish_mono) >= _POLISH_MIN_INTERVAL_S
-            and self._successful_checkpoints >= 1
-        ) or (
-            self._last_polish_mono <= 0.0
-            and self._successful_checkpoints >= _POLISH_EVERY_N_CHECKPOINTS
+            now - self._last_polish_mono >= _POLISH_MIN_INTERVAL_S
+            if self._last_polish_mono else
+            now - self._last_fire_mono >= _POLISH_INITIAL_DELAY_S
         )
         if not (due_by_count or due_by_time):
             return
@@ -560,7 +594,13 @@ class CheckpointScheduler:
             logger.exception("Agent polish raised")
             result = AgentResult(ok=False, error=str(exc))
         self._last_polish_mono = time.monotonic()
+        # Count attempted work too; retries wait for the next cadence.
+        self._polish_checkpoint_mark = self._successful_checkpoints
+        self._polish_retry_pending = not result.ok
         if result.ok:
+            if any(r.ok and r.op.get("op") == "revise_segment_text"
+                   for r in result.op_results):
+                self.notify_guidance()
             applied = sum(1 for r in result.op_results if r.ok)
             logger.info(
                 "Polish %s done: %d/%d ops applied",
@@ -571,6 +611,11 @@ class CheckpointScheduler:
                 "Polish %s failed: %s",
                 payload.request_id, result.error or "unknown",
             )
+
+    def _interactive_pending(self) -> bool:
+        """Yield background work to human input waiting on the shared worker."""
+        with self._lock:
+            return bool(self._note_requests or self._guidance_pending)
 
     def _maybe_fire_notes(self) -> None:
         """Run the dedicated note-taker pass when due.
@@ -586,21 +631,27 @@ class CheckpointScheduler:
             return
         if not getattr(self._agent, "supports_notes_pass", False):
             return
+        if self._interactive_pending():
+            return
+        if time.monotonic() < self._notes_retry_not_before:
+            return
+        with self._lock:
+            guidance = self._notes_guidance_pending
+            generation = self._guidance_generation
         since_mark = self._successful_checkpoints - self._notes_checkpoint_mark
         due_by_count = since_mark >= _NOTES_EVERY_N_CHECKPOINTS
         due_by_time = (
             self._last_notes_mono > 0.0
             and (time.monotonic() - self._last_notes_mono)
             >= _NOTES_MIN_INTERVAL_S
-            and since_mark >= 1
-        )
-        if not (due_by_count or due_by_time):
+        ) or (self._last_notes_mono == 0.0 and self._successful_checkpoints >= 1)
+        if not (guidance or due_by_count or due_by_time):
             return
         if not self._agent.is_healthy():
             return
         # Same late-arrival window logic as card checkpoints: re-read a
         # window behind the newest consumed segment, drop already-sent ids.
-        if self._notes_max_sent_start_s >= 0.0:
+        if not guidance and self._notes_max_sent_start_s >= 0.0:
             cursor = max(
                 -1.0, self._notes_max_sent_start_s - _REFETCH_WINDOW_S
             )
@@ -613,16 +664,23 @@ class CheckpointScheduler:
             return
         segments = [
             seg for seg in fetched
-            if str(seg.get("id") or "") not in self._notes_sent_starts
+            if guidance or str(seg.get("id") or "") not in self._notes_sent_starts
         ]
-        if not segments:
+        if not segments and not guidance:
             return
-        segments = segments[-_NOTES_MAX_SEGMENTS:]
+        segments = segments[:_NOTES_MAX_SEGMENTS] if not guidance else segments[-_NOTES_MAX_SEGMENTS:]
         payload = self._build_payload(
             segments, is_consolidation=False, is_notes=True,
         )
         if payload is None:
             return
+        if guidance:
+            # Clear before the network call so guidance arriving during it
+            # remains queued for the next pass.
+            with self._lock:
+                if generation == self._guidance_generation:
+                    self._notes_guidance_pending = False
+            payload.state_snapshot["notes_review_requested"] = True
         logger.info(
             "Firing note-taker pass %s over %d segments",
             payload.request_id, len(segments),
@@ -643,6 +701,10 @@ class CheckpointScheduler:
                 "Note-taker pass %s done: %d/%d ops applied",
                 payload.request_id, applied, len(result.op_results),
             )
+            if guidance:
+                # A bounded review can skip older, still-unprocessed speech.
+                # Never advance the automatic notes cursor past that backlog.
+                return
             for seg in segments:
                 seg_id = seg.get("id")
                 if seg_id:
@@ -665,6 +727,10 @@ class CheckpointScheduler:
                 if start_s > prune_cursor
             }
         else:
+            self._notes_retry_not_before = time.monotonic() + _NOTES_MIN_INTERVAL_S
+            if guidance:
+                with self._lock:
+                    self._notes_guidance_pending = True
             logger.warning(
                 "Note-taker pass %s failed: %s",
                 payload.request_id, result.error or "unknown",

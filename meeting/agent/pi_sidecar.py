@@ -26,7 +26,9 @@ from meeting.agent.base import (
     CONSOLIDATION_TIMEOUT_CAP_S,
     find_provider_api_key,
 )
-from meeting.agent.prompts import build_note_taker_system_prompt
+from meeting.agent.prompts import (
+    build_checkpoint_user_prompt, build_note_taker_system_prompt, build_notes_user_prompt,
+)
 from meeting.interfaces import (
     AgentConfig,
     AgentResult,
@@ -44,10 +46,10 @@ _PROTOCOL_VERSION = 1
 
 _HELLO_TIMEOUT_S = 10.0
 #: Hard wall for a live cards/notes/polish pass, even while progress ticks.
-_CHECKPOINT_TIMEOUT_S = 300.0
+_CHECKPOINT_TIMEOUT_S = 60.0
 #: Silence limit for one live request. Thinking/tool ticks reset this clock
 #: for that request only, so a queued neighbor cannot keep it alive.
-_CHECKPOINT_STALL_S = 180.0
+_CHECKPOINT_STALL_S = 45.0
 _CONSOLIDATION_TIMEOUT_S = CONSOLIDATION_TIMEOUT_CAP_S
 _CONSOLIDATION_STALL_S = CONSOLIDATION_STALL_S
 _CANCEL_TIMEOUT_S = 5.0
@@ -343,11 +345,13 @@ class PiSidecarAgent:
         #: Request ids currently in flight. A consolidation pass can overlap a
         #: rolling checkpoint, so a single slot would cancel the wrong run.
         self._active_request_ids: Set[str] = set()
+        self._checkpoint_op_results: Dict[str, List[OpResult]] = {}
 
         self._hello_event = threading.Event()
         self._hello_ok = False
         self._hello_seen = False
         self._text_protocols = []
+        self._host_prompt_supported = False
         self._pi_version: Optional[str] = None
 
         self._reader_thread: Optional[threading.Thread] = None
@@ -615,6 +619,7 @@ class PiSidecarAgent:
 
         with self._lock:
             self._active_request_ids.add(payload.request_id)
+            self._checkpoint_op_results[payload.request_id] = []
             self._pass_kind = _pass_kind_for(payload)
             self._pass_kinds[payload.request_id] = self._pass_kind
             is_notes = bool(getattr(payload, "is_notes", False))
@@ -624,12 +629,20 @@ class PiSidecarAgent:
             )
             self._citable_ids = [
                 str(seg.get("id"))
-                for seg in (payload.new_segments or [])
+                for seg in ((payload.new_segments or [])
+                            + (payload.state_snapshot.get("recent_transcript_context") or []))
                 if isinstance(seg, dict) and seg.get("id")
             ]
         from meeting.corrections import guidance_prompt
         params: Dict[str, Any] = {
             "human_guidance": guidance_prompt(payload.state_snapshot),
+            "user_prompt": (
+                build_notes_user_prompt(payload.state_snapshot, payload.new_segments)
+                if is_notes else build_checkpoint_user_prompt(
+                    payload.state_snapshot, payload.new_segments,
+                    payload.is_consolidation, bool(getattr(payload, "is_polish", False)),
+                )
+            ),
             "request_id": payload.request_id,
             "state": payload.state_snapshot,
             "new_segments": payload.new_segments,
@@ -637,11 +650,40 @@ class PiSidecarAgent:
             "is_polish": bool(getattr(payload, "is_polish", False)),
             "is_notes": is_notes,
         }
+        legacy_context = payload.state_snapshot.get("recent_transcript_context") or []
+        if legacy_context:
+            from meeting.agent.prompts import format_segment_line
+            participants = payload.state_snapshot.get("participants") or {}
+            params["human_guidance"] += "\n## RECENT TRANSCRIPT CONTEXT (already seen; may correct)\n" + "\n".join(
+                format_segment_line(seg, participants) for seg in legacy_context
+            )
+        if payload.state_snapshot.get("notes_review_requested"):
+            # Old notes bundles honor the explicit-request path. This is a
+            # transport-only copy, never a fabricated persisted user request.
+            params["state"] = dict(payload.state_snapshot)
+            params["state"].setdefault("note_adjustment_request",
+                "Review existing AI notes against current human guidance and "
+                "corrected transcript now, including older blocks. No new speech "
+                "is required. Fix stale names and claims; preserve human-touched "
+                "blocks and evidence. Do not add duplicate notes.")
         if is_notes:
             # The note-taker persona replaces the copilot charter for this
             # pass. Bundles that predate is_notes ignore the extra fields;
             # the tool-bridge filter below still keeps them notes-only.
             params["system_prompt"] = build_note_taker_system_prompt()
+            if not self._host_prompt_supported:
+                # Installed bundles before host_prompt omit user notes,
+                # guidance, and explicit requests from their notes projection.
+                # They DO accept a per-notes-pass charter; carry the complete
+                # current prompt there without mutating persistent state.
+                params["system_prompt"] += "\n\n" + params["user_prompt"] + (
+                    "\nFor this pass, a NOTE ADJUSTMENT REQUEST or REVIEW EXISTING "
+                    "NOTES NOW above takes precedence over default append-only "
+                    "or prose instructions elsewhere in the template."
+                )
+        if not self._host_prompt_supported:
+            params["state"] = dict(params["state"])
+            params["state"]["human_guidance"] = params["human_guidance"]
         pass_kind = self._pass_kind
         logger.info(
             "Dispatching %s checkpoint request_id=%s (%d segments, "
@@ -686,6 +728,7 @@ class PiSidecarAgent:
             return AgentResult(ok=False, error=str(exc))
         finally:
             with self._lock:
+                actual_results = self._checkpoint_op_results.pop(payload.request_id, [])
                 self._active_request_ids.discard(payload.request_id)
                 self._pass_kinds.pop(payload.request_id, None)
                 # An overlapping pass keeps naming itself; only the last one
@@ -700,9 +743,12 @@ class PiSidecarAgent:
             return AgentResult(ok=False, error="invalid checkpoint response")
 
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        op_results = _op_results_from_counts(
-            _coerce_count(result.get("applied")),
-            _coerce_count(result.get("rejected")),
+        # Keep actual patch operations: the scheduler needs to know when
+        # transcript text changed so dashboard and notes do not remain stale.
+        # Tallies still account for question tools and bundle-policy rejections.
+        op_results = actual_results + _op_results_from_counts(
+            _coerce_count(result.get("applied")) - sum(r.ok for r in actual_results),
+            _coerce_count(result.get("rejected")) - sum(not r.ok for r in actual_results),
         )
         if result.get("canceled"):
             return AgentResult(
@@ -1301,6 +1347,7 @@ class PiSidecarAgent:
             self._hello_seen = True
             self._hello_ok = bool(ok)
             self._text_protocols = params.get("text_protocols", []) if ok else []
+            self._host_prompt_supported = ok and params.get("host_prompt") == 1
             version = params.get("pi_version")
             if isinstance(version, str):
                 self._pi_version = version
@@ -1420,6 +1467,13 @@ class PiSidecarAgent:
                     ops = filter_notes_ops(ops, notes_item_ids)
                 ops = self._repair_evidence(ops, tools, citable_ids)
                 results = tools.apply_agent_ops(ops)
+                with self._lock:
+                    request_id = params.get("request_id")
+                    if not request_id and len(self._active_request_ids) == 1:
+                        request_id = next(iter(self._active_request_ids))
+                    recorded = self._checkpoint_op_results.get(request_id)
+                    if recorded is not None:
+                        recorded.extend(results)
                 payload: Dict[str, Any] = {
                     "results": [_serialize_op_result(r) for r in results],
                 }

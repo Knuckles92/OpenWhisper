@@ -325,9 +325,9 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
           </div>
         )}
 
-        <div className="history-detail-grid" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20 }}>
+        <div className="history-detail-grid">
           <div className="history-sidebar-column no-print">
-            <div className="history-search" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <div className="history-search">
               <input
                 type="search"
                 placeholder="Search transcripts…"

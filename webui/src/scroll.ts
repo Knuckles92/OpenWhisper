@@ -50,6 +50,11 @@ export function isStuckToEnd(scroller: HTMLElement, thresholdPx = 80): boolean {
 /** The dashboard page scroller, or the nearest overflow parent as a fallback. */
 export function workspaceScroller(from: HTMLElement | null): HTMLElement | null {
   const marked = from?.closest('[data-workspace-scroll]');
-  if (marked instanceof HTMLElement) return marked;
+  if (marked instanceof HTMLElement) {
+    const { overflowY } = getComputedStyle(marked);
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return marked;
+    // On phones the shell scrolls so the wrapped header leaves room for content.
+    return nearestOverflowParent(marked);
+  }
   return nearestOverflowParent(from);
 }

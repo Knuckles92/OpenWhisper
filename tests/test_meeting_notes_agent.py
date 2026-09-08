@@ -344,13 +344,14 @@ class TestSchedulerNotesPass:
         sched._maybe_fire_notes()
         assert len(agent.calls) == 1
 
-    def test_notes_pass_waits_for_checkpoint_progress(self):
+    def test_notes_seed_after_first_checkpoint(self):
         agent = FakeAgent()
         agent.supports_notes_pass = True
         sched = CheckpointScheduler(FakeEngine([_seg("sg_1", 10.0)]), agent)
-        sched._successful_checkpoints = 1  # below the every-N threshold
+        sched._successful_checkpoints = 1
         sched._maybe_fire_notes()
-        assert agent.calls == []
+        assert len(agent.calls) == 1
+        assert agent.calls[0].is_notes
 
     def test_failed_notes_pass_leaves_segments_for_retry(self):
         agent = FakeAgent(fail_times=1)
@@ -367,6 +368,7 @@ class TestSchedulerNotesPass:
 
         # After another successful checkpoint the window is retried and wins.
         sched._successful_checkpoints = 4
+        sched._notes_retry_not_before = 0.0
         sched._maybe_fire_notes()
         assert len(agent.calls) == 2
         assert sched._notes_max_sent_start_s == 10.0

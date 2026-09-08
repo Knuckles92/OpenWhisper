@@ -1143,7 +1143,7 @@ a {
 
 .segment {
   display: grid;
-  grid-template-columns: 48px 1fr;
+  grid-template-columns: 48px minmax(0, 1fr);
   gap: 12px;
   padding: 14px 8px;
   border-radius: var(--radius-sm);
@@ -1648,6 +1648,8 @@ a {
 }
 
 .history-item-title {
+  display: block;
+  max-width: 100%;
   font-weight: 600;
   font-size: 13px;
   overflow: hidden;
@@ -2106,7 +2108,7 @@ a {
 
 .rb-row {
   display: grid;
-  grid-template-columns: 62px 1px 1fr;
+  grid-template-columns: 62px 1px minmax(0, 1fr);
   gap: 0 22px;
   position: relative;
 }
@@ -2326,7 +2328,7 @@ a {
 
 .br-owed li {
   display: grid;
-  grid-template-columns: 108px 1fr;
+  grid-template-columns: 108px minmax(0, 1fr);
   gap: 18px;
   padding: 13px 0;
   border-top: 1px solid var(--hair);
@@ -2423,7 +2425,7 @@ a {
 
 .sg-cols {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   border-top: 2px solid var(--ink);
 }
@@ -2504,7 +2506,7 @@ a {
 
 .sg-picks {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -2548,6 +2550,168 @@ a {
   .brief-inner { padding: 0 22px; }
 }
 
+/* Constrain content at layout boundaries, including long names and URLs. */
+.panel,
+.panel-body,
+.report-stage,
+.history-sidebar-column,
+.history-content-column,
+.history-list > li,
+.segment > div,
+.sg-col,
+.header-bar > div {
+  min-width: 0;
+}
+
+input,
+textarea,
+select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.panel,
+.topic-hero,
+.report-stage,
+.header-bar,
+.confirm-card {
+  overflow-wrap: anywhere;
+}
+
+.panel-header,
+.header-title-edit,
+.note-block-top,
+.report-toolbar {
+  flex-wrap: wrap;
+}
+
+.header-title-edit input {
+  flex: 1 1 180px;
+}
+
+.status-dot,
+.chip button,
+.history-title-row > button,
+.history-search > button {
+  flex-shrink: 0;
+}
+
+.segment-speaker,
+.chip > span {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-add-row {
+  flex-wrap: wrap;
+}
+
+.card-add-row input {
+  flex-basis: 140px;
+}
+
+.history-detail-grid {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.history-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.history-search input {
+  flex: 1;
+}
+
+.history-item-meta {
+  flex-wrap: wrap;
+}
+
+.history-item-meta .insights-pill,
+.history-meta-row .insights-pill {
+  margin-top: 0;
+}
+
+.history-title-input {
+  min-width: 0;
+}
+
+.history-content-column {
+  container-type: inline-size;
+}
+
+/* Report columns respond to their pane, which is narrower beside history. */
+@container (max-width: 700px) {
+  .sg-cols,
+  .sg-picks { grid-template-columns: minmax(0, 1fr); }
+  .sg-col { padding-right: 0; }
+  .sg-col + .sg-col {
+    border-left: 0;
+    border-top: 1px solid var(--hair);
+    padding-left: 0;
+  }
+  .ribbon, .signal { padding: 28px 22px; }
+  .brief-inner { padding: 0 22px; }
+}
+
+@media screen and (max-width: 900px) {
+  .history-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .history-sidebar-column {
+    max-height: 280px;
+    overflow: auto;
+    padding: 4px;
+    overscroll-behavior: contain;
+  }
+  .history-search {
+    position: sticky;
+    top: -4px;
+    z-index: 1;
+    padding: 4px 0;
+    background: var(--paper);
+  }
+}
+
+@media screen and (max-width: 600px) {
+  /* Let the header scroll on phones so wrapped controls cannot hide the body. */
+  .app-shell { padding: 14px 10px; overflow: auto; }
+  .app-main,
+  .app-main.workspace {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  .app-main.workspace { grid-template-columns: minmax(0, 1fr); }
+  .header-bar { gap: 10px; }
+  .header-actions { gap: 6px; }
+  .panel-header { padding: 12px 12px 0; }
+  .history-header-box { padding: 12px; }
+  .history-title-row { flex-wrap: wrap; }
+  .history-title-input { flex-basis: 100%; }
+  .history-meta-row { gap: 8px; }
+  .history-action-group { gap: 6px; }
+  .history-action-group-label { flex-basis: 100%; }
+  .ribbon, .signal { padding: 22px 14px; }
+  .brief { padding: 28px 0; }
+  .brief-inner { padding: 0 14px; }
+  .rb-title, .br-title { font-size: 32px; }
+  .rb-row { grid-template-columns: 36px 1px minmax(0, 1fr); gap: 0 10px; }
+  .br-owed li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .report-view-menu,
+  .report-download-menu {
+    min-width: 0;
+    width: min(248px, calc(100vw - 72px));
+    max-height: min(360px, 60dvh);
+    overflow-y: auto;
+  }
+}
+
+@media screen and (max-height: 500px) {
+  .confirm-dialog { padding: 12px; }
+  .confirm-card { max-height: 100%; overflow: auto; }
+}
 @media print {
   html,
   body,

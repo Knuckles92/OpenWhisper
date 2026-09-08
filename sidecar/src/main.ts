@@ -59,7 +59,7 @@ function main(): void {
 
   // The handshake must be the first line on stdout, before the read loop can
   // possibly emit anything.
-  rpc.notify("hello", { token, protocol: PROTOCOL_VERSION, pi_version: piVersion(), text_protocols: ["chat", "responses", "anthropic", "google"] });
+  rpc.notify("hello", { token, protocol: PROTOCOL_VERSION, pi_version: piVersion(), host_prompt: 1, text_protocols: ["chat", "responses", "anthropic", "google"] });
 
   let session: PiSession | null = null;
   let systemPrompt = "";
@@ -341,6 +341,13 @@ function notesPageProjection(state: any): any {
  * replaces the copilot charter for that run.
  */
 function buildCheckpointPrompt(systemPrompt: string, params: any): string {
+  // The host owns prompt policy for both backends. Retain the legacy renderer
+  // for older hosts, while current hosts provide the same prompt as direct mode.
+  if (typeof params?.user_prompt === "string" && params.user_prompt.trim()) {
+    const charter = params?.is_notes && typeof params?.system_prompt === "string"
+      ? params.system_prompt : systemPrompt;
+    return `${charter}\n\n${params.user_prompt}`;
+  }
   const isConsolidation = Boolean(params?.is_consolidation);
   const isPolish = Boolean(params?.is_polish);
   const isNotes = Boolean(params?.is_notes);
