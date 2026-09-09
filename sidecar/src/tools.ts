@@ -12,7 +12,7 @@
  * Python validates every op again regardless.
  */
 import type { RpcEndpoint } from "./rpc";
-import type { MeetingToolDef } from "./pi-adapter";
+import type { MeetingToolDef } from "./session";
 
 const TOOL_RPC_TIMEOUT_MS = 30_000;
 
@@ -66,7 +66,7 @@ function summarize(results: Array<{ ok?: boolean; reason?: string | null }>): st
 }
 
 export function createMeetingTools(
-  rpc: RpcEndpoint,
+  rpc: Pick<RpcEndpoint, "request" | "log">,
   counters: OpCounters,
   policy: ToolPolicy,
 ): MeetingToolDef[] {
@@ -351,7 +351,7 @@ export function createMeetingTools(
 }
 
 async function bridgeSingle(
-  rpc: RpcEndpoint,
+  rpc: Pick<RpcEndpoint, "request" | "log">,
   counters: OpCounters,
   method: string,
   params: Record<string, unknown>,

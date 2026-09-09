@@ -148,6 +148,38 @@ _CATALOG: dict[str, ComponentDetails] = {
         source_note=_SOURCE_NOTE,
         source_urls=(PI_HOME_URL, NODEJS_URL),
     ),
+    "meeting-agent-opencode": ComponentDetails(
+        component_id="meeting-agent-opencode",
+        display_name="OpenCode v2 (beta)",
+        summary="An optional meeting intelligence engine using your selected text provider and model.",
+        description=(
+            "OpenCode maintains meeting cards, notes, questions, and final reports. "
+            "It uses the provider and credentials configured in OpenWhisper. "
+            "Only the meeting tools are exposed to the model."
+        ),
+        origin_name="OpenCode",
+        origin_url="https://opencode.ai/v2/docs/build/sdk/",
+        origin_label="OpenCode ↗",
+        source_name="OpenWhisper component release",
+        source_url="https://github.com/Knuckles92/OpenWhisper/releases",
+        source_label="GitHub ↗",
+        maintainer="OpenWhisper (integration); OpenCode (SDK); Bun (runtime)",
+        family="Meeting intelligence",
+        requires="Windows x64 and a configured text model with tool support.",
+        payload="Portable Bun runtime, OpenCode v2 SDK, and the meeting sidecar",
+        local_format="A self-contained component folder",
+        license="Bun and OpenCode MIT; dependency notices included in the download",
+        best_for="Trying OpenCode's agent loop for meeting intelligence.",
+        limitations=(
+            "OpenCode v2 is beta; the app uses a tested SDK and runtime version.",
+            "Windows x64 only in this release.",
+            "If the engine fails, recording continues and meeting intelligence is marked unavailable.",
+            "Finish active meeting and report jobs before updating or removing this component.",
+        ),
+        compact_tags="OpenCode v2 · Beta",
+        source_note=_SOURCE_NOTE,
+        source_urls=("https://opencode.ai/v2/docs/build/sdk/", "https://bun.sh"),
+    ),
     "speaker-id": ComponentDetails(
         component_id="speaker-id",
         display_name="Speaker Identification",

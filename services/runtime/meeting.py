@@ -854,7 +854,7 @@ class MeetingRuntime:
 
         settings = settings_manager.load_all_settings()
         agent_kind = resolve_meeting_agent_core(settings)
-        payload_dir = meeting_agent_payload_dir()
+        payload_dir = meeting_agent_payload_dir(agent_kind)
         if agent_kind == MeetingAgentCore.PI and payload_dir is None:
             logger.info(
                 "Meeting agent component not installed; using the direct "
@@ -1055,7 +1055,7 @@ class MeetingRuntime:
                 provider = resolve_meeting_llm_provider(settings)
                 model = resolve_meeting_llm_model(settings)
                 agent_core_kind = resolve_meeting_agent_core(settings)
-                payload_dir = meeting_agent_payload_dir()
+                payload_dir = meeting_agent_payload_dir(agent_core_kind)
                 meeting = repo.get_meeting(meeting_id) or {}
                 from services.text_llm import snapshot_from_meeting
 
@@ -1332,7 +1332,7 @@ class MeetingRuntime:
                     llm_model=resolve_meeting_llm_model(settings),
                     llm_endpoint=resolve_meeting_llm_endpoint(settings),
                     agent_core_kind=resolve_meeting_agent_core(settings),
-                    sidecar_payload_dir=meeting_agent_payload_dir(),
+                    sidecar_payload_dir=meeting_agent_payload_dir(resolve_meeting_agent_core(settings)),
                 )
                 server = MeetingWebServer(
                     archive,

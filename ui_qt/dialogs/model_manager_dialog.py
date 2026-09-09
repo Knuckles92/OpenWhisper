@@ -37,6 +37,7 @@ from services.components import (
     ComponentId,
     ComponentState,
     component_coordinator,
+    current_platform_tag,
     meeting_agent_payload_dir,
 )
 from services.hf_access import (
@@ -155,6 +156,7 @@ class ModelManagerDialog(QDialog):
         self._active_meeting_provider = TranscriptCleanupProvider.OPENROUTER
         self._active_meeting_llm_model = config.MEETING_LLM_MODEL
         self._pi_payload_available = meeting_agent_payload_dir() is not None
+        self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
 
         self.setWindowTitle("Model Manager")
         self.setWindowIcon(app_icon())
@@ -535,6 +537,14 @@ class ModelManagerDialog(QDialog):
         self.meeting_agent_core_combo.addItem(
             "Direct (no sidecar)", MeetingAgentCore.DIRECT
         )
+        self.meeting_agent_core_combo.addItem(
+            "OpenCode v2 (beta)" if self._opencode_payload_available
+            else ("OpenCode v2 (beta — Windows x64 only)" if current_platform_tag() != "win_amd64"
+                  else "OpenCode v2 (beta — install from Downloads)"), MeetingAgentCore.OPENCODE
+        )
+        item = model.item(2) if hasattr(model, "item") else None
+        if item is not None:
+            item.setEnabled(self._opencode_payload_available)
         self.meeting_agent_core_combo.currentIndexChanged.connect(
             self._on_meeting_agent_core_changed
         )
@@ -543,7 +553,7 @@ class ModelManagerDialog(QDialog):
         )
         layout.addWidget(
             self._footnote(
-                "Install Pi from Downloads. Cloud consent, knowledge folder "
+                "Install Pi or OpenCode from Downloads. Cloud consent, knowledge folder "
                 "and report options: Settings → Meeting."
             )
         )
@@ -1332,6 +1342,7 @@ class ModelManagerDialog(QDialog):
         stay as the value computed in ``__init__``.
         """
         self._pi_payload_available = meeting_agent_payload_dir() is not None
+        self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
         combo = getattr(self, "meeting_agent_core_combo", None)
         if combo is None:
             return
@@ -1343,6 +1354,15 @@ class ModelManagerDialog(QDialog):
         item = model.item(0) if hasattr(model, "item") else None
         if item is not None:
             item.setEnabled(self._pi_payload_available)
+        oc_index = combo.findData(MeetingAgentCore.OPENCODE)
+        combo.setItemText(
+            oc_index, "OpenCode v2 (beta)" if self._opencode_payload_available
+            else ("OpenCode v2 (beta — Windows x64 only)" if current_platform_tag() != "win_amd64"
+                  else "OpenCode v2 (beta — install from Downloads)"),
+        )
+        oc_item = model.item(oc_index) if hasattr(model, "item") else None
+        if oc_item is not None:
+            oc_item.setEnabled(self._opencode_payload_available)
         snapshot = settings if settings is not None else self._settings_snapshot()
         core = resolve_meeting_agent_core(snapshot)
         if core == MeetingAgentCore.PI and not self._pi_payload_available:

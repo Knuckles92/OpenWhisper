@@ -58,6 +58,7 @@ node_modules/
 # and shipped inside the meeting-agent component archive, never read from the
 # repo at runtime. (webui/dist IS committed — OpenWhisper.spec bundles it.)
 sidecar/dist/
+sidecar-opencode/dist/
 
 # Editor / tool state
 .claude/settings.local.json

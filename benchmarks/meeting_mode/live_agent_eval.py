@@ -12,8 +12,7 @@ import time
 from pathlib import Path
 
 from benchmarks.meeting_mode.product_eval import ProductEvalHost
-from meeting.agent.base import find_provider_api_key
-from meeting.agent.pi_sidecar import PiSidecarAgent
+from meeting.agent.base import create_agent_core, find_provider_api_key
 from meeting.agent.prompts import build_system_prompt
 from meeting.agent.scheduler import CheckpointScheduler
 from meeting.interfaces import AgentConfig
@@ -30,9 +29,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run synthetic live meeting agent checks using the configured provider. Makes billable model calls; never reads meeting recordings."
     )
-    parser.add_argument("--sidecar-dir", default=meeting_agent_payload_dir())
+    parser.add_argument("--harness", choices=("pi", "opencode", "direct"), default="pi")
+    parser.add_argument("--sidecar-dir")
     parser.add_argument("--output", default=".tmp/live_agent_eval.json")
     args = parser.parse_args()
+    args.sidecar_dir = args.sidecar_dir or meeting_agent_payload_dir(args.harness)
     provider = resolve_meeting_llm_provider()
     model = resolve_meeting_llm_model()
     results = []
@@ -44,7 +45,7 @@ def main():
         host = ProductEvalHost("synthetic_" + name, segments)
         host.store.update_runtime_fields(status="active")
         host.allow_agent_writes()
-        agent = PiSidecarAgent(str(Path(args.sidecar_dir).resolve()))
+        agent = create_agent_core(args.harness, str(Path(args.sidecar_dir).resolve()) if args.sidecar_dir else None)
         agent.initialize(
             AgentConfig(
                 host.meeting_id,
@@ -204,7 +205,7 @@ def main():
         agent.shutdown()
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(
-        json.dumps(dict(provider=provider, model=model, results=results), indent=2),
+        json.dumps(dict(harness=args.harness, provider=provider, model=model, results=results), indent=2),
         encoding="utf-8",
     )
     return 0 if all(r["passed"] for r in results) else 1

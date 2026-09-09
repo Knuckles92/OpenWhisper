@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from meeting.agent import pi_sidecar as pi_mod
+from meeting.agent import sidecar as pi_mod
 from meeting.agent.pi_sidecar import PiSidecarAgent
 from meeting.interfaces import AgentConfig, CheckpointPayload, OpResult
 
@@ -538,7 +538,7 @@ class TestCheckpointResults:
         pending = pi_mod._Pending()
         pending.event.wait = lambda timeout=None: False
         times = iter([100.0, 100.0, 101.0, 106.0])
-        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=lambda: next(times)):
+        with patch("meeting.agent.sidecar.time.monotonic", side_effect=lambda: next(times)):
             with pytest.raises(TimeoutError, match="stalled"):
                 agent._await_pending(pending, timeout_s=30.0, stall_s=5.0, method="checkpoint")
 
@@ -565,7 +565,7 @@ class TestCheckpointResults:
             now["t"] += 1.0
             return now["t"]
 
-        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=mono):
+        with patch("meeting.agent.sidecar.time.monotonic", side_effect=mono):
             agent._await_pending(pending, timeout_s=30.0, stall_s=5.0, method="checkpoint")
         assert pending.event.is_set()
         assert pending.last_progress_event == "thinking_delta"
@@ -577,7 +577,7 @@ class TestCheckpointResults:
         pending_b = pi_mod._Pending(request_id="req-b", last_progress_mono=100.0)
         agent._pending[1] = pending_a
         agent._pending[2] = pending_b
-        with patch("meeting.agent.pi_sidecar.time.monotonic", return_value=110.0):
+        with patch("meeting.agent.sidecar.time.monotonic", return_value=110.0):
             agent._note_progress(
                 "thinking", request_id="req-a", event="thinking_delta",
             )
@@ -586,7 +586,7 @@ class TestCheckpointResults:
         assert pending_b.last_progress_mono == 100.0
         pending_b.event.wait = lambda timeout=None: False
         times = iter([110.0, 110.0, 111.0, 116.0])
-        with patch("meeting.agent.pi_sidecar.time.monotonic", side_effect=lambda: next(times)):
+        with patch("meeting.agent.sidecar.time.monotonic", side_effect=lambda: next(times)):
             with pytest.raises(TimeoutError, match="stalled"):
                 agent._await_pending(
                     pending_b, timeout_s=30.0, stall_s=5.0, method="checkpoint",

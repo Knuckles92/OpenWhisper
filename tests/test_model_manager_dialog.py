@@ -680,6 +680,22 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog.refresh_component_state()
         assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
 
+    def test_saved_opencode_remains_selected_when_payload_is_unavailable(self):
+        with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None):
+            dialog, values = self._make_meeting_dialog(
+                extra={SettingsKey.MEETING_AGENT_CORE: MeetingAgentCore.OPENCODE}
+            )
+        combo = dialog.meeting_agent_core_combo
+        index = combo.findData(MeetingAgentCore.OPENCODE)
+        assert combo.currentData() == MeetingAgentCore.OPENCODE
+        assert not combo.model().item(index).isEnabled()
+        assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
+        with patch.object(dialog_module, "meeting_agent_payload_dir",
+                          side_effect=lambda kind="pi": "C:/opencode" if kind == "opencode" else None):
+            dialog.refresh_component_state()
+        assert combo.model().item(index).isEnabled()
+        assert combo.currentData() == MeetingAgentCore.OPENCODE
+
 
 class TestSharedRuntime(_DialogTestCase):
     """Device and quantization are shared, and say so on both surfaces."""

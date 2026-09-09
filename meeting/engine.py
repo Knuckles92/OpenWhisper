@@ -90,7 +90,7 @@ class MeetingEngineOptions:
     llm_provider: str = 'openrouter'
     llm_model: str = ''
     llm_endpoint: Optional[Dict[str, Any]] = None
-    agent_core_kind: str = 'pi'   # 'pi' | 'direct'
+    agent_core_kind: str = 'pi'   # 'pi' | 'direct' | 'opencode'
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
     speaker_id_backend: str = 'local'  # 'local' | 'openai'
@@ -2554,8 +2554,9 @@ class MeetingEngine:
             self._emit_status()
         except Exception as exc:
             logger.exception("Meeting intelligence failed to start")
-            if created_core is not None and self._agent_core is created_core:
-                self._agent_core = None
+            if created_core is not None:
+                if self._agent_core is created_core:
+                    self._agent_core = None
                 try:
                     created_core.shutdown()
                 except Exception:

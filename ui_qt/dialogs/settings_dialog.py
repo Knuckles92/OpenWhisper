@@ -2096,6 +2096,7 @@ class SettingsDialog(QDialog):
         provider_name = profile_display_name(provider, settings)
         core_label = (
             "Pi (sidecar)" if core == MeetingAgentCore.PI
+            else "OpenCode v2 (beta)" if core == MeetingAgentCore.OPENCODE
             else "Direct (no sidecar)"
         )
         speaker_label = (

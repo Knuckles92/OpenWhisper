@@ -1,0 +1,20 @@
+{
+  "name": "openwhisper-opencode-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "dependencies": {
+    "@opencode/sdk": "0.0.0-dev-19291",
+    "@opencode/plugin": "0.0.0-dev-19291"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.8.2"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src/adapter.test.ts",
+    "build": "python ../scripts/build_opencode_component.py"
+  }
+}

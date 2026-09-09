@@ -224,7 +224,7 @@ class TestSchedulerGuidancePass:
 
 
 class TestEngineHook:
-    def test_user_note_ops_wake_the_agent_and_other_cards_do_not(self, make_engine, fakes):
+    def test_user_note_ops_wake_the_agent_and_other_cards_do_not(self, make_engine, fakes):  # noqa: F811 (pytest fixtures)
         engine = make_engine(cloud_enabled=True)
         engine.start()
         scheduler = fakes.schedulers[-1]

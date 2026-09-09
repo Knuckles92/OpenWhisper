@@ -257,7 +257,9 @@ class MeetingAgentCore:
     PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
     DIRECT: Final[str] = "direct"  # Direct OpenRouter tool-calling loop
 
-    ALL: Final[Tuple[str, ...]] = (PI, DIRECT)
+    OPENCODE: Final[str] = "opencode"
+
+    ALL: Final[Tuple[str, ...]] = (PI, DIRECT, OPENCODE)
 
 
 class MeetingSpeakerIdBackend:
