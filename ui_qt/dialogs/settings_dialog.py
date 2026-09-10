@@ -62,6 +62,7 @@ from services.settings import (
     resolve_meeting_context_folder_path,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
+    resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
     resolve_meeting_language,
     resolve_meeting_llm_model,
@@ -1718,6 +1719,23 @@ class SettingsDialog(QDialog):
         return card
 
     def _build_advanced_page(self, layout: QVBoxLayout) -> None:
+        self.meeting_redecode_coverage_guard_tile = SettingTile(
+            "Keep the live transcript if re-transcription is much shorter",
+            "Reject a re-transcription with fewer than 80% of the live transcript's "
+            "words. Word count does not measure accuracy. Applies after End and "
+            "when retrying saved meetings. Off by default.",
+            _design_icon("microphone-blue.svg"),
+        )
+        self.meeting_redecode_coverage_guard_check = self.meeting_redecode_coverage_guard_tile.checkbox
+        self.meeting_redecode_coverage_guard_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.MEETING_REDECODE_COVERAGE_GUARD, bool(checked)
+            )
+        )
+        self._tile_group(
+            layout, "Meeting re-transcription", [self.meeting_redecode_coverage_guard_tile],
+        )
+
         self.developer_mode_tile = SettingTile(
             "Developer mode",
             "Unlocks a Load demo meeting control on the Meeting Mode tab. The "
@@ -2434,6 +2452,9 @@ class SettingsDialog(QDialog):
         )
         self.meeting_context_folder_path.setText(
             resolve_meeting_context_folder_path(settings)
+        )
+        self.meeting_redecode_coverage_guard_check.setChecked(
+            resolve_meeting_redecode_coverage_guard(settings)
         )
         self.meeting_end_redecode_check.setChecked(
             resolve_meeting_end_redecode(settings)

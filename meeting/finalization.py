@@ -2,6 +2,18 @@
 from collections.abc import Sequence
 from typing import Any
 
+# Shared per-block budget for transcript cleanup, including provider tool rounds.
+POLISH_TIMEOUT_S = 180.0
+
+
+def sparse_redecode_detail(new_words: int, old_words: int) -> str:
+    return (
+        f"Re-transcription produced {new_words} words versus {old_words} in the "
+        "live transcript (below the 80% coverage threshold). Kept the live "
+        "transcript to avoid losing speech."
+    )
+
+
 STEP_ORDER = (
     "redecode",
     "speaker_id",

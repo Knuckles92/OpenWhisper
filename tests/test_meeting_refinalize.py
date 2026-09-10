@@ -1,5 +1,6 @@
 """Tests for the headless post-meeting finalization retry pipeline."""
 import json
+import pytest
 from datetime import datetime
 
 from meeting.interfaces import AgentResult, TranscriptSegment
@@ -164,7 +165,8 @@ class TestRedeocdeGuard:
         assert len(calls) == 1
         assert repo.get_segments(meeting_id) == before
 
-    def test_sparse_redecode_keeps_draft(self, repo, monkeypatch):
+    @pytest.mark.parametrize("guard", [False, True])
+    def test_sparse_redecode_keeps_draft(self, repo, monkeypatch, guard):
         make_meeting(
             repo,
             state_json=seeded_state("m_retry", DEFAULT_STEPS),
@@ -187,16 +189,20 @@ class TestRedeocdeGuard:
             provider="openrouter",
             model="m",
             transcribe_fn=sparse,
+            **({"redecode_coverage_guard": True} if guard else {}),
         )
         ids = {row["id"] for row in repo.get_segments("m_retry")}
-        assert "sg_1" in ids
-        assert "sg_sparse" not in ids
+        assert ("sg_1" in ids) == guard
+        assert ("sg_sparse" in ids) == (not guard)
         redecode = next(
             step for step in result["finalization"]["steps"]
             if step["id"] == "redecode"
         )
-        assert redecode["status"] == "failed"
-        assert result["ok"] is False
+        assert redecode["status"] == ("failed" if guard else "completed")
+        if guard:
+            assert "80% coverage threshold" in redecode["detail"]
+            assert "Kept the live transcript" in redecode["detail"]
+            assert result["ok"] is False
 
     def test_successful_redecode_replaces_draft(self, repo, monkeypatch):
         make_meeting(

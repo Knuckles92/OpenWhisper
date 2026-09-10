@@ -1573,3 +1573,30 @@ def test_background_end_persists_report_while_next_meeting_runs(
         released.set()
         if worker is not None:
             worker.join(5)
+
+
+@pytest.mark.parametrize("guard", [False, True])
+def test_sparse_redecode_explains_preserved_transcript(make_engine, repo, fakes, guard):
+    engine = make_engine(cloud_enabled=True, end_redecode=True,
+                         **({"redecode_coverage_guard": True} if guard else {}))
+    engine.start()
+    meeting_id = engine.meeting_id
+    repo.add_segments([TranscriptSegment(
+        segment_id="sg_draft", meeting_id=meeting_id, chunk_id=None,
+        channel="mic", start_s=0.0, end_s=2.0, text="one two three four five",
+    )])
+    fakes.asr[0].offline_segments = [TranscriptSegment(
+        segment_id="sg_sparse", meeting_id=meeting_id, chunk_id=None,
+        channel="mic", start_s=0.0, end_s=2.0, text="one two",
+    )]
+    engine.end()
+    engine.wait_for_end()
+    fin = engine.store.with_state(lambda state: state.finalization.to_dict())
+    step = next(s for s in fin["steps"] if s["id"] == "redecode")
+    assert step["status"] == ("failed" if guard else "completed")
+    if guard:
+        assert "2 words versus 5" in step["detail"]
+        assert "80% coverage threshold" in step["detail"]
+    assert [r["id"] for r in repo.get_segments(meeting_id)] == [
+        "sg_draft" if guard else "sg_sparse"
+    ]

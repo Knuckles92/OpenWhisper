@@ -100,6 +100,7 @@ class SettingsKey:
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
+    MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
     MEETING_END_REPORT: Final[str] = "meeting_end_report"
     MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
@@ -1107,6 +1108,15 @@ def resolve_meeting_end_redecode(
     """Return whether End should re-decode session audio with longer pauses."""
     return _resolve_bool_setting(
         settings, SettingsKey.MEETING_END_REDECODE, config.MEETING_END_REDECODE,
+    )
+
+
+def resolve_meeting_redecode_coverage_guard(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Opt-in word-count safeguard for live and retried re-transcription."""
+    return _resolve_bool_setting(
+        settings, SettingsKey.MEETING_REDECODE_COVERAGE_GUARD, False,
     )
 
 

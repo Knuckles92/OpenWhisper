@@ -20,6 +20,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import AgentResult, CheckpointPayload
 
 logger = logging.getLogger(__name__)
@@ -979,7 +980,7 @@ class CheckpointScheduler:
 
     def run_final_polish(
         self,
-        timeout_s: float = 60.0,
+        timeout_s: float = POLISH_TIMEOUT_S,
         *,
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
     ) -> ConsolidationOutcome:
@@ -989,7 +990,7 @@ class CheckpointScheduler:
         :meth:`run_consolidation` can follow on the same end path.
 
         Args:
-            timeout_s: Maximum seconds to wait for the polish pass.
+            timeout_s: Maximum seconds to wait per cleanup block.
             progress_cb: Optional callback ``cb(detail_msg, current_block, total_blocks)``.
 
         Returns:

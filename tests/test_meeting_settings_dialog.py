@@ -93,3 +93,20 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
             assert saved[SettingsKey.MEETING_LLM_MODEL] == "gpt-4o-mini"
             assert saved[SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED]
             assert os.path.isabs(saved[SettingsKey.MEETING_CONTEXT_FOLDER_PATH])
+
+
+class TestCoverageGuardSettings(_DialogTestCase):
+    _open = TestKnowledgeFolderSettings._open
+    def test_guard_defaults_off_and_persists(self, tmp_path):
+        isolated = SettingsManager(str(tmp_path / "settings.json"))
+        settings_patch, history_patch = self._open(isolated)
+        with settings_patch, history_patch:
+            dialog = settings_dialog_module.SettingsDialog()
+            assert not dialog.meeting_redecode_coverage_guard_check.isChecked()
+            dialog.meeting_redecode_coverage_guard_check.setChecked(True)
+            dialog.close()
+            reopened = settings_dialog_module.SettingsDialog()
+            assert reopened.meeting_redecode_coverage_guard_check.isChecked()
+            reopened.meeting_redecode_coverage_guard_check.setChecked(False)
+            reopened.close()
+        assert isolated.load_all_settings()[SettingsKey.MEETING_REDECODE_COVERAGE_GUARD] is False

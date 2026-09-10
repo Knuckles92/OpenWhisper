@@ -1263,3 +1263,41 @@ def test_polish_only_write_filter():
         cwd=str(SIDECAR_ROOT),
     )
     assert result.returncode == 0, result.stdout + "\n" + result.stderr
+
+
+@pytest.mark.parametrize("case,expected_calls", [
+    ("recover", 2), ("repeat_error", 2), ("partial", 1),
+    ("other_error", 1), ("canceled", 1), ("unhealthy", 1), ("rolling", 1),
+    ("expired", 1),
+])
+def test_signature_recovery_is_bounded_and_preserves_edits(
+    tmp_path, monkeypatch, case, expected_calls,
+):
+    from meeting.interfaces import AgentResult
+
+    agent = PiSidecarAgent(str(tmp_path))
+    monkeypatch.setattr(agent, "is_healthy", lambda: case != "unhealthy")
+    clock = iter([100.0, 281.0 if case == "expired" else 135.0])
+    monkeypatch.setattr(pi_mod.time, "monotonic", lambda: next(clock))
+    calls = []
+    def run(payload, timeout_s, **kwargs):
+        calls.append((payload.request_id, timeout_s))
+        if case == "canceled":
+            agent.cancel()
+        return AgentResult(
+            ok=len(calls) == 2 and case != "repeat_error",
+            error="network unavailable" if case == "other_error" else "Corrupted thought signature.",
+            op_results=[OpResult(ok=True, op={})] if case == "partial" else [],
+        )
+    monkeypatch.setattr(agent, "_run_checkpoint", run)
+    result = agent.checkpoint(CheckpointPayload(
+        request_id="original", state_snapshot={}, new_segments=[],
+        is_polish=case != "rolling",
+    ))
+    assert len(calls) == expected_calls
+    if expected_calls == 2:
+        assert calls[1][0] != calls[0][0]
+        assert calls[1][1] == 145.0
+        assert result.ok == (case == "recover")
+    else:
+        assert not result.ok

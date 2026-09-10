@@ -29,6 +29,7 @@ from meeting.agent.prompts import (
     build_note_taker_system_prompt,
     build_notes_user_prompt,
 )
+from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
     AgentConfig,
     AgentResult,
@@ -416,6 +417,7 @@ class DirectOpenRouterAgent:
         """Run one rolling checkpoint. Blocking; called from a worker thread."""
         timeout = (
             _CONSOLIDATION_TIMEOUT_S if payload.is_consolidation
+            else POLISH_TIMEOUT_S if payload.is_polish
             else _CHECKPOINT_TIMEOUT_S
         )
         return self._run_pass(payload, timeout)

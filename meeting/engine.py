@@ -26,7 +26,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 from meeting.clock import MeetingClock
-from meeting.finalization import make_step, failed_steps_message
+from meeting.finalization import (
+    POLISH_TIMEOUT_S, make_step, failed_steps_message, sparse_redecode_detail,
+)
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
@@ -50,8 +52,6 @@ END_DRAIN_TIMEOUT_S = 300.0
 END_REVISE_TIMEOUT_S = 20.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
-#: Budget for the post-end transcript polish (LLM parse of the clean ASR).
-POLISH_TIMEOUT_S = 60.0
 #: Worst-case wait for the post-end consolidation pass (hard wall). The
 #: sidecar fails earlier if Pi emits no ``subscribe`` progress for
 #: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
@@ -99,6 +99,7 @@ class MeetingEngineOptions:
     server_port: int = 0
     spool_root: str = ''              # parent dir for meeting spool dirs
     end_redecode: bool = False
+    redecode_coverage_guard: bool = False
     end_polish: bool = True
     end_report: bool = True
     report_views: Tuple[str, ...] = ('ribbon', 'brief', 'signal')
@@ -892,6 +893,7 @@ class MeetingEngine:
                         message=f"Re-transcribing meeting (window {curr_win}/{total_win})…",
                     )
                 try:
+                    self._offline_failure_detail = ""
                     offline_ok = bool(self._run_offline_final_pass(progress_cb=_offline_progress))
                 except Exception:
                     logger.exception("Offline clean ASR pass failed")
@@ -899,7 +901,9 @@ class MeetingEngine:
                 _update_step(
                     "redecode",
                     "completed" if offline_ok else "failed",
-                    "High-accuracy re-decoding complete" if offline_ok else "Re-decoding failed; kept live transcript",
+                    "High-accuracy re-decoding complete" if offline_ok else (
+                        self._offline_failure_detail or "Re-decoding failed; kept live transcript"
+                    ),
                 )
 
             # The remaining passes use saved audio/text. Free Whisper before
@@ -1256,6 +1260,7 @@ class MeetingEngine:
         Returns:
             True when a non-empty offline transcript was committed.
         """
+        self._offline_failure_detail = ""
         asr = self._asr
         if asr is None or not self.meeting_id:
             return False
@@ -1285,7 +1290,8 @@ class MeetingEngine:
         old_words = sum(
             len(str(row.get("text") or "").split()) for row in existing
         )
-        if old_words and new_words < 0.8 * old_words:
+        if self.options.redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
+            self._offline_failure_detail = sparse_redecode_detail(new_words, old_words)
             logger.warning(
                 "Keeping live draft transcript: offline pass has %d words vs "
                 "draft %d (AMI IN1009 guard: do not replace a sparser decode)",

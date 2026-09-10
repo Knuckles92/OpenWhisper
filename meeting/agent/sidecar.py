@@ -17,7 +17,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional, Set
 
@@ -29,6 +29,7 @@ from meeting.agent.base import (
 from meeting.agent.prompts import (
     build_checkpoint_user_prompt, build_note_taker_system_prompt, build_notes_user_prompt,
 )
+from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
     AgentConfig,
     AgentResult,
@@ -367,6 +368,7 @@ class SidecarAgent:
         self._tool_executor: Optional[ThreadPoolExecutor] = None
 
         self._stop_health = threading.Event()
+        self._cancel_generation = 0
         self._shut_down = False
         self._fatal = False
         self._recovering = False
@@ -454,11 +456,34 @@ class SidecarAgent:
         """Run one rolling checkpoint. Blocking; called from a worker thread."""
         if payload.is_consolidation:
             return self.consolidate(payload)
-        return self._run_checkpoint(
-            payload,
-            _CHECKPOINT_TIMEOUT_S,
-            stall_s=_CHECKPOINT_STALL_S,
+        timeout_s = POLISH_TIMEOUT_S if payload.is_polish else _CHECKPOINT_TIMEOUT_S
+        started = time.monotonic()
+        cancel_generation = self._cancel_generation
+        result = self._run_checkpoint(
+            payload, timeout_s, stall_s=_CHECKPOINT_STALL_S,
         )
+        # The failed RPC already restarted the provider session. Retry only
+        # untouched cleanup, with fresh conversation history and request ID,
+        # within the original deadline. Never replay partially applied edits.
+        remaining = timeout_s - (time.monotonic() - started)
+        if (
+            payload.is_polish
+            and not result.ok
+            and "corrupted thought signature" in (result.error or "").lower()
+            and not any(op.ok for op in result.op_results)
+            and cancel_generation == self._cancel_generation
+            and self.is_healthy()
+            and remaining > 0
+        ):
+            logger.warning(
+                "Retrying transcript cleanup after provider signature rejection "
+                "request_id=%s remaining_s=%.1f", payload.request_id, remaining,
+            )
+            retry = replace(payload, request_id=secrets.token_hex(16))
+            return self._run_checkpoint(
+                retry, remaining, stall_s=_CHECKPOINT_STALL_S,
+            )
+        return result
 
     def consolidate(self, payload: CheckpointPayload) -> AgentResult:
         """Run the end-of-meeting full pass. Blocking."""
@@ -471,6 +496,7 @@ class SidecarAgent:
     def cancel(self) -> None:
         """Cancel every in-flight checkpoint by its ``request_id``."""
         with self._lock:
+            self._cancel_generation += 1
             request_ids = sorted(self._active_request_ids)
         for request_id in request_ids:
             self._cancel_request(request_id)

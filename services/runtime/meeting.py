@@ -29,6 +29,7 @@ from services.settings import (
     resolve_meeting_audio_upload_consent,
     resolve_meeting_end_polish,
     resolve_meeting_end_redecode,
+    resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
     resolve_meeting_report_views,
     resolve_meeting_llm_endpoint,
@@ -890,6 +891,7 @@ class MeetingRuntime:
             end_redecode=(
                 False if demo else resolve_meeting_end_redecode(settings)
             ),
+            redecode_coverage_guard=resolve_meeting_redecode_coverage_guard(settings),
             end_polish=resolve_meeting_end_polish(settings),
             end_report=resolve_meeting_end_report(settings),
             report_views=resolve_meeting_report_views(settings),
@@ -1087,6 +1089,7 @@ class MeetingRuntime:
                     repo,
                     meeting_id,
                     from_step=step_key,
+                    redecode_coverage_guard=resolve_meeting_redecode_coverage_guard(settings),
                     provider=provider,
                     model=model,
                     endpoint=endpoint,

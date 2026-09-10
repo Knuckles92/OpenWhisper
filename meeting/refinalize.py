@@ -17,6 +17,8 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.finalization import (
+    POLISH_TIMEOUT_S,
+    sparse_redecode_detail,
     STEP_DETAILS,
     STEP_NAMES,
     STEP_ORDER,
@@ -48,8 +50,6 @@ logger = logging.getLogger(__name__)
 
 #: Same block size the live scheduler uses for transcript cleanup.
 _POLISH_MAX_SEGMENTS = 400
-#: Per-block wall for a headless polish pass.
-POLISH_TIMEOUT_S = 60.0
 
 OPTIONAL_RERUN_STEPS = frozenset({
     "redecode", "speaker_id", "polish", "consolidation",
@@ -423,11 +423,12 @@ def rerun_redecode(
     transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
     model_lease: Optional[ModelLease] = None,
+    redecode_coverage_guard: bool = False,
 ) -> Dict[str, Any]:
     """Re-decode session audio and replace the stored draft transcript.
 
-    Keeps the live draft when the new pass is empty or has fewer than 80% of
-    the draft's words. Human-pinned speakers and evidenced cards survive
+    Keeps the live draft when the new pass is empty. The optional coverage
+    guard also rejects results with fewer than 80% of the draft's words. Human-pinned speakers and evidenced cards survive
     ``replace_final_transcript``.
 
     Args:
@@ -518,7 +519,7 @@ def rerun_redecode(
         existing = []
     new_words = _word_count(decoded)
     old_words = _word_count(existing)
-    if old_words and new_words < 0.8 * old_words:
+    if redecode_coverage_guard and old_words and new_words < 0.8 * old_words:
         logger.warning(
             "Keeping live draft transcript for %s: offline pass has %d words "
             "vs draft %d",
@@ -526,7 +527,7 @@ def rerun_redecode(
         )
         return {
             "ok": False,
-            "error": "Re-decoding failed; kept live transcript",
+            "error": sparse_redecode_detail(new_words, old_words),
         }
     _assign_mic_speakers(decoded, _me_participant_id(store))
     _try_diarize(decoded, store, repository, meeting_id, spool_dir, chunks)
@@ -706,6 +707,7 @@ def rerun_finalization(
     speaker_transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[ProgressCb] = None,
     model_lease: Optional[ModelLease] = None,
+    redecode_coverage_guard: bool = False,
 ) -> Dict[str, Any]:
     """Retry post-meeting steps from ``from_step`` through dependents.
 
@@ -790,6 +792,7 @@ def rerun_finalization(
                 transcribe_fn=transcribe_fn,
                 progress_cb=_offline_progress,
                 model_lease=model_lease,
+                redecode_coverage_guard=redecode_coverage_guard,
             )
             if result.get("ok"):
                 _set_step(

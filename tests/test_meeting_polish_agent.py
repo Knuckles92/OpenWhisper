@@ -102,3 +102,27 @@ def test_direct_read_tool_returns_text_without_ops():
     assert tools.ops == []
     assert tools.searches == ["budget"]
     assert tools.folder_searches == [("roadmap", "plan.md", 10)]
+
+
+def test_polish_uses_longer_budget_in_both_backends(monkeypatch, tmp_path):
+    from meeting.agent.pi_sidecar import PiSidecarAgent
+    from meeting.interfaces import AgentResult, CheckpointPayload
+
+    for agent, method in [
+        (PiSidecarAgent(str(tmp_path)), "_run_checkpoint"),
+        (DirectOpenRouterAgent(), "_run_pass"),
+    ]:
+        calls = []
+        def run(payload, timeout, **kwargs):
+            calls.append((timeout, kwargs))
+            return AgentResult(ok=True)
+        monkeypatch.setattr(agent, method, run)
+        for polish in (False, True):
+            agent.checkpoint(CheckpointPayload(
+                request_id="test", state_snapshot={}, new_segments=[],
+                is_polish=polish,
+            ))
+        assert calls[0][0] == 60.0
+        assert calls[1][0] == 180.0
+        if method == "_run_checkpoint":
+            assert calls[1][1]["stall_s"] == 45.0
