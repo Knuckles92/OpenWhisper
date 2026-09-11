@@ -34,7 +34,6 @@ from benchmarks.meeting_mode.ami import (  # noqa: E402
 )
 from benchmarks.meeting_mode.metrics import (  # noqa: E402
     aggregate_scores,
-    normalize_tokens,
     reference_overlap_stats,
     score_timed_transcript,
 )
@@ -50,7 +49,7 @@ from meeting.interfaces import SpooledChunk  # noqa: E402
 from meeting.persist.repository import SqlMeetingRepository  # noqa: E402
 from services.database import DatabaseManager  # noqa: E402
 
-BENCHMARK_VERSION = 4
+BENCHMARK_VERSION = 5
 
 # A deliberately demanding release gate: at least a full workday of natural
 # meetings, strict WER (including overlap and fillers) below 30%, no individual
@@ -155,6 +154,7 @@ def decode_meeting(
     engine.meeting_id = meeting_id
     engine._pending_revise.clear()
     engine._last_revised_frontier.clear()
+    engine._draft_context.clear()
 
     session_wav = work_dir / "loopback_session.wav"
     _write_chunk(session_wav, resample_to_16k(pcm, source_rate))
@@ -198,6 +198,8 @@ def decode_meeting(
         )
         prompt = " ".join(draft_context[-draft_prompt_words:]) \
             if draft_prompt_words > 0 else None
+        if draft_prompt_words == DRAFT_PROMPT_WORDS:
+            prompt = engine._draft_prompt(chunk)
         decoded = engine._transcribe_chunk(
             chunk,
             beam_size=5,
@@ -205,8 +207,9 @@ def decode_meeting(
         )
         draft_segments.extend(_segment_dict(segment) for segment in decoded)
         for segment in decoded:
-            draft_context.extend(normalize_tokens(segment.text))
+            draft_context.extend(segment.text.split())
         repo.commit_chunk_transcription(meeting_id, chunk_id, decoded)
+        engine._remember_draft_segments(chunk, decoded)
         if run_revisions:
             engine.schedule_revise("loopback", start_s + duration_s)
             engine.run_pending_revises()
@@ -234,6 +237,8 @@ def decode_meeting(
         offline_started = time.perf_counter()
         frames, rate = load_wav_int16(str(session_wav))
         model = getattr(getattr(engine, "_backend", None), "model", None)
+        if model is None:
+            raise RuntimeError("Required offline ASR model is unavailable")
         if model is not None:
             decoded = transcribe_session_audio(
                 model,
@@ -285,11 +290,10 @@ def _score_result(result: dict[str, Any], annotations_dir: Path) -> dict[str, An
     }
     result["draft_score"] = score_timed_transcript(reference, result["draft_segments"])
     result["final_score"] = score_timed_transcript(reference, result["final_segments"])
-    offline_segments = result.get("offline_segments") or []
-    if offline_segments:
-        result["offline_score"] = score_timed_transcript(reference, offline_segments)
-    elif "offline_score" not in result:
-        result["offline_score"] = None
+    result["offline_score"] = (
+        score_timed_transcript(reference, result.get("offline_segments") or [])
+        if result.get("run_offline", True) else None
+    )
     return result
 
 
@@ -303,6 +307,9 @@ def _summary(
     draft_prompt_words: int,
     run_offline: bool,
 ) -> dict[str, Any]:
+    if run_offline and any(item.get("offline_score") is None for item in results):
+        raise ValueError("Required offline score is missing")
+    score_key = "offline_score" if run_offline else "final_score"
     duration_s = sum(float(item["duration_s"]) for item in results)
     elapsed_s = sum(float(item["elapsed_s"]) for item in results)
     offline_elapsed_s = sum(float(item.get("offline_elapsed_s") or 0.0) for item in results)
@@ -319,7 +326,7 @@ def _summary(
     ]
     offline = aggregate_scores(offline_items) if offline_items else None
     product_scores = [
-        item.get("offline_score") or item["final_score"] for item in results
+        item[score_key] for item in results
     ]
     product = aggregate_scores(product_scores)
     worst_meeting_wer = max(
@@ -390,10 +397,10 @@ def _summary(
                     if item.get("offline_score") else None
                 ),
                 "deletion_rate": (
-                    (item.get("offline_score") or item["final_score"])["deletion_rate"]
+                    (item[score_key])["deletion_rate"]
                 ),
                 "insertion_rate": (
-                    (item.get("offline_score") or item["final_score"])["insertion_rate"]
+                    (item[score_key])["insertion_rate"]
                 ),
             }
             for item in results
@@ -588,27 +595,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if not engine.is_available:
         print(f"Meeting ASR model is unavailable: {args.model}", file=sys.stderr)
+        engine.stop()
+        db.close()
         return 1
 
+    from benchmarks.provenance import identity, model_identity, reusable
     results: list[dict[str, Any]] = []
     try:
+        model_stamp = model_identity(engine._backend)
         for index, spec in enumerate(meetings, start=1):
             result_path = run_dir / f"{spec.meeting_id}.json"
+            provenance = identity(
+                inputs=[audio_path(args.data_dir, spec.meeting_id),
+                        *sorted(annotations_dir.rglob(f"{spec.meeting_id}*.xml"))],
+                settings=dict(model=args.model, language=language, revisions=revisions_enabled,
+                              target_sec=args.target_sec, max_sec=args.max_sec,
+                              draft_prompt_words=args.draft_prompt_words, offline=args.offline_pass),
+                model=model_stamp)
             if result_path.exists() and not args.force:
-                print(f"[{index}/{len(meetings)}] Reusing {result_path}")
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-                # Audio decoding is expensive, but scoring is cheap and the
-                # metric implementation is versioned. Always rescore cached
-                # segment output so a normalization or diagnostic fix cannot
-                # leave a mixed-version summary behind.
-                result = _score_result(result, annotations_dir)
-                result["benchmark_version"] = BENCHMARK_VERSION
-                result_path.write_text(
-                    json.dumps(result, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                results.append(result)
-                continue
+                cached = json.loads(result_path.read_text(encoding="utf-8"))
+                if reusable(cached, provenance):
+                    print(f"[{index}/{len(meetings)}] Reusing verified {result_path}")
+                    results.append(cached)
+                    continue
+                print(f"  Cached provenance differs; decoding {spec.meeting_id} again")
             print(f"[{index}/{len(meetings)}] Decoding {spec.meeting_id}: {spec.description}")
             work_dir = run_dir / "work" / spec.meeting_id
             if work_dir.exists():
@@ -630,6 +640,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 result = _score_result(result, annotations_dir)
                 result["benchmark_version"] = BENCHMARK_VERSION
+                result["provenance"] = provenance
                 result_path.write_text(
                     json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
                 )

@@ -243,7 +243,7 @@ def _card_counts(package: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
-def _grounding(package: dict[str, Any], transcripts: list[str]) -> dict[str, Any]:
+def _lexical_overlap(package: dict[str, Any], transcripts: list[str]) -> dict[str, Any]:
     corpus = set()
     for text in transcripts:
         corpus.update(normalize_tokens(text))
@@ -271,9 +271,10 @@ def _grounding(package: dict[str, Any], transcripts: list[str]) -> dict[str, Any
     total = supported + weak
     return {
         "claims": total,
-        "supported": supported,
-        "weak": weak,
-        "supported_rate": supported / total if total else 1.0,
+        "high_overlap": supported,
+        "low_overlap": weak,
+        "high_overlap_rate": supported / total if total else None,
+        "interpretation": "Lexical overlap only; does not measure factual support or contradiction",
     }
 
 
@@ -409,7 +410,9 @@ def _judge(
     try:
         judgment = json.loads(content)
     except json.JSONDecodeError:
-        judgment = {"winner": "tie", "rationale": content, "parse_error": True}
+        judgment = {"winner": "unjudged", "rationale": content, "parse_error": True}
+    if not isinstance(judgment, dict) or judgment.get("winner") not in ("a", "b", "A", "B", "tie") or not all(isinstance(judgment.get(side), dict) and judgment[side] for side in ("a", "b")):
+        judgment = {"winner": "unjudged", "parse_error": True, "raw_judgment": judgment}
     judgment["elapsed_s"] = time.perf_counter() - started
     judgment["usage"] = _usage_dict(getattr(response, "usage", None))
     return judgment
@@ -483,7 +486,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--meetings", default=",".join(DEFAULT_MEETING_IDS))
     parser.add_argument("--model", default="")
     parser.add_argument("--timeout-s", type=float, default=600.0)
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Compatibility flag; requested arms are always recomputed")
     parser.add_argument("--skip-audio-plus-text", action="store_true")
     parser.add_argument("--skip-judge", action="store_true")
     return parser.parse_args(argv)
@@ -508,6 +511,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ids = [item.strip() for item in args.meetings.split(",") if item.strip()]
     args.results_dir.mkdir(parents=True, exist_ok=True)
+    from benchmarks.provenance import identity
+    provenance = identity(settings={**{key: str(value) for key, value in vars(args).items()},
+                                    "provider": provider, "model": model})
     results: list[dict[str, Any]] = []
 
     for index, meeting_id in enumerate(ids, start=1):
@@ -516,10 +522,6 @@ def main(argv: list[str] | None = None) -> int:
         meeting_dir = args.results_dir / meeting_id
         result_path = meeting_dir / "result.json"
         print(f"[{index}/{len(ids)}] {meeting_id}: {title}", flush=True)
-        if result_path.exists() and not args.force:
-            print(f"  reusing {result_path}", flush=True)
-            results.append(json.loads(result_path.read_text(encoding="utf-8")))
-            continue
 
         current_segments = (prior.get("current") or {}).get("segments") or []
         if not current_segments:
@@ -669,21 +671,26 @@ def main(argv: list[str] | None = None) -> int:
             counts = _card_counts(package) if package else {}
             return {
                 "ok": ok,
+                "enabled": name != "audio_plus_text" or not args.skip_audio_plus_text,
                 "elapsed_s": elapsed,
                 "cost": usage.get("cost"),
                 "usage": usage,
                 "counts": counts,
                 "card_total": sum(counts.values()) if counts else 0,
-                "grounding": _grounding(package, transcripts) if package else {},
+                "lexical_overlap": _lexical_overlap(package, transcripts) if package else {},
             }
 
+        from benchmarks.provenance import file_identity
         result = {
+            "provenance": {**provenance, "audio_sha256": file_identity(mp3_path),
+                           "transcript_sha256": file_identity(args.transcript_dir / meeting_id / "result.json")},
             "meeting_id": meeting_id,
             "title": title,
             "audio_s": audio_s,
             "model": model,
             "current": _arm(
-                "current", current_elapsed, current_clean, {}, True,
+                "current", current_elapsed, current_clean, {},
+                (current_pkg.get("consolidation") or {}).get("status") == "completed",
             ),
             "audio": _arm(
                 "audio",
@@ -739,17 +746,21 @@ def main(argv: list[str] | None = None) -> int:
                 "current": item["current"],
                 "audio": {
                     k: item["audio"][k]
-                    for k in ("ok", "elapsed_s", "cost", "card_total", "grounding")
+                    for k in ("ok", "elapsed_s", "cost", "card_total", "lexical_overlap")
                 },
                 "audio_plus_text": {
                     k: item["audio_plus_text"][k]
-                    for k in ("ok", "elapsed_s", "cost", "card_total", "grounding")
+                    for k in ("ok", "elapsed_s", "cost", "card_total", "lexical_overlap")
                 },
             }
             for item in results
         ],
     }, indent=2), flush=True)
-    return 0
+    return int(any(
+        not item["current"]["ok"] or not item["audio"]["ok"]
+        or (not args.skip_audio_plus_text and not item["audio_plus_text"]["ok"])
+        or any(j.get("parse_error") for j in item["judgments"].values())
+        for item in results))
 
 
 if __name__ == "__main__":

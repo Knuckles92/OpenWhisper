@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
-"""
-End-to-end test for large-file transcription using production dispatch.
+"""Opt-in large-file backend smoke check with ordered transcription accuracy.
 
-Generates a large audio file (>23MB) using TTS and runs it through the same
-dispatch path the running app uses (see services/runtime/transcription.py):
-
-  - If backend.requires_file_splitting is True (e.g. OpenAI API backends),
-    the file is split via audio_processor.split_audio_file() and passed to
-    backend.transcribe_chunks().
-  - If backend.requires_file_splitting is False (e.g. LocalWhisperBackend,
-    which uses faster-whisper and handles long audio natively), the original
-    file is passed straight to backend.transcribe().
-
-Validates accuracy by comparing the transcribed text with the original TTS
-source text.
+Pytest uses local audio/reference paths supplied through OPENWHISPER_LARGE_AUDIO
+and OPENWHISPER_LARGE_REFERENCE. The standalone helper can synthesize speech.
+This checks backend decode behavior; production runtime dispatch is covered by
+test_local_transcription_contracts.py.
 """
 
 import os
 import sys
 import logging
+import unittest
 import tempfile
 import shutil
 from typing import Tuple
@@ -166,31 +158,12 @@ def compare_texts(original: str, transcribed: str) -> Tuple[float, str]:
     Returns:
         Tuple of (similarity_score, analysis_message)
     """
-    orig_norm = normalize_text_for_comparison(original)
-    trans_norm = normalize_text_for_comparison(transcribed)
+    from benchmarks.meeting_mode.metrics import score_text
+    score = score_text(original, transcribed)
+    if score["wer"] is None:
+        return 0.0, "Reference must contain spoken words"
+    return max(0.0, 1.0 - score["wer"]), f"Ordered WER: {score['wer']:.1%}; edits: {score['errors']}"
 
-    orig_words = set(orig_norm.split())
-    trans_words = set(trans_norm.split())
-
-    common_words = orig_words & trans_words
-    total_unique_words = len(orig_words | trans_words)
-
-    if total_unique_words == 0:
-        return 0.0, "No words to compare"
-
-    similarity = len(common_words) / total_unique_words if total_unique_words > 0 else 0.0
-
-    orig_word_count = len(orig_norm.split())
-    trans_word_count = len(trans_norm.split())
-
-    message = (
-        f"Original: {orig_word_count} words | "
-        f"Transcribed: {trans_word_count} words | "
-        f"Common: {len(common_words)} words | "
-        f"Similarity: {similarity * 100:.1f}%"
-    )
-
-    return similarity, message
 
 def run_large_file_workflow(audio_file: str, original_text: str):
     """Test the production large-file transcription path and validate accuracy.
@@ -220,7 +193,7 @@ def run_large_file_workflow(audio_file: str, original_text: str):
     if not backend.is_available():
         logger.warning("⚠️  Local Whisper not available - skipping transcription test")
         backend.cleanup()
-        return True
+        raise unittest.SkipTest("Installed local Whisper model required")
 
     should_split = backend.requires_file_splitting
     logger.info(f"   Backend.requires_file_splitting = {should_split}")
@@ -259,6 +232,8 @@ def run_large_file_workflow(audio_file: str, original_text: str):
         similarity, analysis = compare_texts(original_text, transcribed_text)
         logger.info(f"   {analysis}")
 
+        if similarity < 0.5:
+            return False
         if similarity >= 0.5:
             logger.info("✅ Transcription accuracy is acceptable")
         elif similarity >= 0.3:
@@ -292,6 +267,17 @@ def run_large_file_workflow(audio_file: str, original_text: str):
 
     return True
 
+def test_large_installed_model_audio():
+    """Opt-in real decode; never synthesizes speech or downloads a model in pytest."""
+    import pytest
+    from pathlib import Path
+    audio = os.environ.get("OPENWHISPER_LARGE_AUDIO")
+    reference = os.environ.get("OPENWHISPER_LARGE_REFERENCE")
+    if not audio or not reference:
+        pytest.skip("Set OPENWHISPER_LARGE_AUDIO and OPENWHISPER_LARGE_REFERENCE for real-model validation")
+    assert run_large_file_workflow(audio, Path(reference).read_text(encoding="utf-8"))
+
+
 def main():
     logger.info("=" * 60)
     logger.info("Large File Transcription Test")
@@ -312,6 +298,9 @@ def main():
 
         return 0 if success else 1
 
+    except unittest.SkipTest as e:
+        logger.warning("Skipped: %s", e)
+        return 2
     except ImportError as e:
         logger.error(f"❌ {e}")
         logger.error("\nTo install required dependencies:")

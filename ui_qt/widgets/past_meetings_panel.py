@@ -33,8 +33,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
-
 logger = logging.getLogger(__name__)
 
 _NON_HISTORICAL_STATUSES = {"active", "paused", "ending"}
@@ -556,6 +554,10 @@ class PastMeetingsPanel(QWidget):
         if should_confirm is False:
             self.delete_meeting_requested.emit(meeting_id, False)
             return
+
+        # Loading the dialogs package while widgets is still importing would
+        # re-enter widgets through SettingsDialog before its exports are ready.
+        from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
 
         meeting = self._meeting_by_id(meeting_id)
         has_audio = self._meeting_has_audio(meeting)

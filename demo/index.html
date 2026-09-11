@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenWhisper — demo for friends</title>
+  <style>
+    :root {
+      --bg: #1c1c1e;
+      --surface: #2c2c2e;
+      --border: #3a3a3c;
+      --text: #f5f5f7;
+      --heading: #ffffff;
+      --muted: #8e8e93;
+      --accent: #0a84ff;
+      --success: #30d158;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 "Segoe UI", system-ui, sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header, main, footer { width: min(1040px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 48px 0 16px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--heading);
+      font-weight: 600;
+    }
+    .mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+    }
+    h1 {
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      margin: 20px 0 8px;
+      color: var(--heading);
+    }
+    .lede { color: var(--muted); max-width: 42em; }
+    video {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #000;
+      margin: 28px 0 8px;
+    }
+    .caption { color: var(--muted); font-size: 14px; margin-bottom: 40px; }
+    h2 {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--heading);
+      margin: 40px 0 12px;
+    }
+    ol.steps, ul {
+      padding-left: 1.2em;
+    }
+    ol.steps li { margin: 8px 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin: 16px 0 32px;
+    }
+    figure {
+      margin: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    figure img { display: block; width: 100%; height: auto; }
+    figcaption {
+      padding: 10px 12px 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 32px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 500; font-size: 13px; }
+    footer {
+      padding: 24px 0 48px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    code {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.92em;
+      background: var(--surface);
+      padding: 1px 6px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><img class="mark" src="pictures/logo.png" alt="" /> OpenWhisper</div>
+    <h1>A short tour you can send</h1>
+    <p class="lede">
+      Local dictation, file upload, and Meeting Mode — the current desktop design.
+      Play the video, grab a still, or walk through the steps below.
+    </p>
+  </header>
+  <main>
+    <video controls playsinline poster="pictures/cards/00-title.png">
+      <source src="video/openwhisper-demo.mp4" type="video/mp4" />
+    </video>
+    <p class="caption">45-second walkthrough · also at <code>video/openwhisper-demo.mp4</code></p>
+
+    <h2>How to try it</h2>
+    <ol class="steps">
+      <li>Download <strong>OpenWhisper-Setup</strong> from <a href="https://openwhisper.fiorilabs.tech/">openwhisper.fiorilabs.tech</a>.</li>
+      <li>Run the installer. If Windows warns you, click <strong>More info → Run anyway</strong>.</li>
+      <li>Press <code>*</code> on the numpad to dictate, or open <strong>Meeting Mode</strong> for a call.</li>
+    </ol>
+    <p>Full notes: <a href="HOW_TO.md">HOW_TO.md</a></p>
+
+    <h2>Pictures</h2>
+    <div class="grid">
+      <figure>
+        <img src="pictures/cards/01-dictate.png" alt="Quick Record" />
+        <figcaption>Dictate from any app</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/02-overlay.png" alt="Waveform overlay states" />
+        <figcaption>Recording overlay</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/03-meeting-start.png" alt="Meeting Mode start" />
+        <figcaption>Start a meeting</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/04-meeting-live.png" alt="Live meeting controls" />
+        <figcaption>Live meeting controls</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/05-meeting-ready.png" alt="Finished meeting recap" />
+        <figcaption>Recap when you hang up</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/06-past-meetings.png" alt="Past Meetings sidebar" />
+        <figcaption>Past Meetings</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/07-models.png" alt="Model Manager" />
+        <figcaption>Model Manager</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/cards/08-settings.png" alt="Settings" />
+        <figcaption>Settings</figcaption>
+      </figure>
+    </div>
+
+    <h2>Raw UI shots</h2>
+    <p class="lede">Straight window captures if someone wants the chrome, not the framed cards.</p>
+    <div class="grid">
+      <figure>
+        <img src="pictures/01-quick-record.png" alt="Quick Record idle" />
+        <figcaption>Quick Record</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/02-quick-record-transcript.png" alt="Transcript result" />
+        <figcaption>Transcript</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/04-meeting-start.png" alt="Meeting Mode idle" />
+        <figcaption>Meeting Mode</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/05-meeting-live.png" alt="Active meeting" />
+        <figcaption>In a meeting</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/07-meeting-finalizing.png" alt="Finalizing a meeting" />
+        <figcaption>Finalizing</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/09-past-meetings.png" alt="Past meetings list" />
+        <figcaption>Past Meetings open</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/14-settings-general.png" alt="General settings" />
+        <figcaption>Settings → General</figcaption>
+      </figure>
+      <figure>
+        <img src="pictures/17-model-manager.png" alt="Model Manager window" />
+        <figcaption>Model Manager</figcaption>
+      </figure>
+    </div>
+
+    <h2>Usual setup</h2>
+    <table>
+      <thead>
+        <tr><th>Want</th><th>Where</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Theme and type size</td><td>Settings → General</td></tr>
+        <tr><td>Microphone</td><td>Settings → Recording</td></tr>
+        <tr><td>Dictate hotkey</td><td>Settings → Hotkeys (default <code>*</code>)</td></tr>
+        <tr><td>Speech / cleanup models</td><td>Model Manager</td></tr>
+        <tr><td>API keys</td><td>Settings → API keys</td></tr>
+        <tr><td>After-meeting recap</td><td>Settings → After the meeting</td></tr>
+      </tbody>
+    </table>
+  </main>
+  <footer>
+    Sample meeting titles in the screenshots are fake. Site:
+    <a href="https://openwhisper.fiorilabs.tech/">openwhisper.fiorilabs.tech</a>
+  </footer>
+</body>
+</html>

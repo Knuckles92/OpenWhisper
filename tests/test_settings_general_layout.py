@@ -185,7 +185,14 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.api_key_entry_tile.description_label,
             )
             advanced = dialog._pages[ADVANCED]
-            self.assertEqual(len(advanced.findChildren(SettingTile)), 1)
+            self.assertEqual(
+                set(advanced.findChildren(SettingTile)),
+                {dialog.developer_mode_tile, dialog.meeting_redecode_coverage_guard_tile},
+            )
+            self.assertIs(
+                dialog.meeting_redecode_coverage_guard_check,
+                dialog.meeting_redecode_coverage_guard_tile.checkbox,
+            )
             self.assertEqual(len(advanced.findChildren(FieldTile)), 1)
             self.assertIs(
                 dialog.developer_mode_check, dialog.developer_mode_tile.checkbox

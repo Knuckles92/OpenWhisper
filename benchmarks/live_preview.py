@@ -194,7 +194,7 @@ def run(args):
                   normalization='meeting_mode.normalize_tokens: NFKC, lowercase; punctuation ignored, apostrophes retained, AMI acronym underscores removed; fillers/numbers retained',
                   timing='Measured serial service; predicted arrival=max(previous completion,audio end)+service. No sleeps, recorder queues/drops, GUI paint, or concurrent final ASR.',
                   live_accuracy='Full reference versus preview visible at audio EOF, before tail/finish; missing tails count as deletions.',
-                  drained_accuracy='Diagnostic after remaining window decode or native finish; not the product final transcription or current stop_streaming behavior.',
+                  drained_accuracy='After remaining window decode or native finish; successful preview drain, not the product final ASR. Excludes the five-second stop deadline.',
                   checkpoint_accuracy='Timed clips: repeated prefix WER at common recorder-quantized 3 s checkpoints; reference words ending by checkpoint and updates completed by checkpoint.',
                   corpus=[dict(id=c.get('id', c['audio_path']), group=c.get('group', 'all'),
                                audio_sha256=sha, duration_s=len(a)/config.SAMPLE_RATE,

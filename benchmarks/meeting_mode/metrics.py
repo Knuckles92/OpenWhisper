@@ -113,6 +113,16 @@ def edit_counts(reference: Sequence[str], hypothesis: Sequence[str]) -> EditCoun
     return EditCounts(substitutions, deletions, insertions)
 
 
+def score_text(reference: str, hypothesis: str) -> dict[str, Any]:
+    """Score ordered words and retain insertions even for silent references."""
+    ref, hyp = normalize_tokens(reference), normalize_tokens(hypothesis)
+    counts = edit_counts(ref, hyp)
+    return {
+        **asdict(counts), "words": len(ref), "hypothesis_words": len(hyp),
+        "errors": counts.errors, "wer": counts.errors / len(ref) if ref else None,
+    }
+
+
 def _segment_value(segment: Any, name: str, default: Any = None) -> Any:
     if isinstance(segment, dict):
         return segment.get(name, default)

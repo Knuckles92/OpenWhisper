@@ -3,6 +3,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import numpy as np
 
 from config import config
@@ -10,6 +11,7 @@ from services.streaming_transcriber import (
     NativePreviewLedger,
     NativeStreamingTranscriber,
     StreamingTranscriber,
+    append_preview_text,
 )
 from transcriber.optional_backend import LocalSpeechBackend, SpeechDecoder
 
@@ -227,3 +229,186 @@ def test_native_ledger_orders_moonshine_lines_by_start_without_duplicates():
               dict(id="b", text="three", start=1.0, final=False)]
     assert ledger.apply(events) == "one two three"
     assert ledger.apply(events) == "one two three"
+
+
+@pytest.mark.parametrize("before,chunk,maximum,expected", [
+    ("Meet the Alpha team.", "alpha TEAM, tomorrow morning.", 6, "Meet the Alpha team. tomorrow morning."),
+    ("one two three", "two three four", 6, "one two three four"),
+    ("very", "very good", 6, "very very good"),
+    ("yes yes", "yes yes", 6, "yes yes yes yes"),
+    ("one two", "one two three", 0, "one two one two three"),
+    ("we don't know", "don’t know yet", 6, "we don't know yet"),
+    ("one two three", "one two three four", 2, "one two three one two three four"),
+    ("one two", "", 6, "one two"),
+])
+def test_overlap_join_is_bounded_and_preserves_ambiguous_repetitions(before, chunk, maximum, expected):
+    assert append_preview_text(before, chunk, max_overlap_words=maximum) == expected
+
+
+def test_window_overlap_removes_redecoded_phrase_but_zero_overlap_preserves_it():
+    for overlap, expected in ((.75, "one two three four"), (0, "one two three two three four")):
+        texts = iter(["one two three", "two three four"])
+        model = SimpleNamespace(transcribe=lambda *a, **k: (
+            iter([SimpleNamespace(text=next(texts))]), None))
+        preview = _preview(SimpleNamespace(model=model))
+        preview.overlap_sec = overlap
+        preview._process_incremental_chunk([_tone(3)])
+        preview._process_incremental_chunk([_tone(3)])
+        assert preview.preview_text == expected
+
+
+def test_window_stop_flushes_recording_shorter_than_one_window():
+    preview = StreamingTranscriber(SimpleNamespace(model=_Decoder()))
+    updates = []
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    preview.feed_audio(_tone(.1))
+    assert preview.stop_streaming() == "hello there"
+    assert updates == [("hello there", True)]
+    assert preview._chunk_count == 1
+
+
+def test_window_stop_consumes_inflight_generator_and_partial_tail():
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def transcribe(audio, **options):
+        calls.append(len(audio))
+        def segments():
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(3)
+                yield SimpleNamespace(text="first window")
+            else:
+                yield SimpleNamespace(text="last word")
+        return segments(), None
+    preview = StreamingTranscriber(SimpleNamespace(model=SimpleNamespace(transcribe=transcribe)), overlap_sec=0)
+    preview.start_streaming(config.SAMPLE_RATE, lambda *_: None)
+    preview.feed_audio(_tone(3))
+    assert entered.wait(3)
+    preview.feed_audio(_tone(.1))
+    # Request stop while the lazy model result is in flight.
+    preview._stop_requested = True
+    release.set()
+    assert preview.stop_streaming() == "first window last word"
+    assert len(calls) == 2
+
+
+def test_preview_buffer_absorbs_a_decode_stall_without_dropping_recorder_blocks():
+    entered, release = threading.Event(), threading.Event()
+    def transcribe(audio, **options):
+        entered.set()
+        assert release.wait(3)
+        return iter([SimpleNamespace(text="speech")]), None
+    preview = StreamingTranscriber(SimpleNamespace(model=SimpleNamespace(transcribe=transcribe)))
+    preview.start_streaming(config.SAMPLE_RATE, lambda *_: None)
+    preview.feed_audio(_tone(3))
+    assert entered.wait(3)
+    for _ in range(40):
+        preview.feed_audio(np.zeros(config.CHUNK_SIZE, np.int16))
+    assert preview.audio_queue.qsize() == 40
+    assert preview.audio_queue.maxsize * config.CHUNK_SIZE >= 3 * config.SAMPLE_RATE
+    release.set()
+    preview.stop_streaming()
+
+
+def test_timed_out_worker_cannot_publish_late_or_join_the_next_recording(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    def transcribe(audio, **options):
+        entered.set()
+        assert release.wait(3)
+        return iter([SimpleNamespace(text="late old text")]), None
+    preview = StreamingTranscriber(SimpleNamespace(model=SimpleNamespace(transcribe=transcribe)))
+    updates = []
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    preview.feed_audio(_tone(3))
+    assert entered.wait(3)
+    worker = preview.worker_thread
+    join = worker.join
+    monkeypatch.setattr(worker, "join", lambda timeout=None: None)
+    assert preview.stop_streaming() == ""
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    assert preview.worker_thread is worker
+    assert not preview.is_streaming
+    release.set()
+    join(3)
+    assert not worker.is_alive()
+    assert updates == [] and preview.preview_text == ""
+    preview.backend = SimpleNamespace(model=_Decoder())
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    preview.feed_audio(_tone(.1))
+    assert preview.stop_streaming() == "hello there"
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("action", ["cancel", "timeout"])
+def test_abandoned_preview_suppresses_late_output_and_releases_native_session(monkeypatch, native, action):
+    entered, release = threading.Event(), threading.Event()
+    stream = _Stream()
+    def decode(audio, **options):
+        entered.set()
+        assert release.wait(3)
+        return iter([SimpleNamespace(text="old recording")]), None
+    def push(session, audio, language=None, *, finish=False):
+        entered.set()
+        assert release.wait(3)
+        return stream.stream_audio(session, audio, language, finish=finish)
+    backend = SimpleNamespace(stream_audio=push, cancel_stream=stream.cancel_stream,
+                              model=SimpleNamespace(transcribe=decode))
+    preview = NativeStreamingTranscriber(backend) if native else StreamingTranscriber(backend)
+    updates = []
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    worker = preview.worker_thread
+    join = worker.join
+    try:
+        preview.feed_audio(_tone(3))
+        assert entered.wait(3)
+        if action == "timeout":
+            monkeypatch.setattr(worker, "join", lambda timeout=None: None)
+            assert preview.stop_streaming() == ""
+        else:
+            preview.cancel_streaming()
+        # A second recording cannot share the old decoder while it is blocked.
+        preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+        assert preview.worker_thread is worker
+        assert not preview.is_streaming
+    finally:
+        release.set()
+        join(3)
+    assert not worker.is_alive()
+    assert updates == [] and preview.preview_text == ""
+    assert stream.canceled == ([preview.SESSION] if native else [])
+    stream.calls.clear()  # The fake counts pushes; a canceled engine starts a fresh session.
+    preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
+    preview.feed_audio(_tone(.1))
+    assert preview.stop_streaming() == ("word." if native else "old recording")
+
+
+def test_runtime_stop_mutes_updates_but_preserves_postroll_until_worker_drains():
+    from services.runtime.streaming import StreamingRuntime
+    events = []
+    controller = SimpleNamespace(
+        recorder=SimpleNamespace(set_streaming_callback=lambda callback: events.append(("callback", callback))),
+        streaming_transcriber=SimpleNamespace(stop_streaming=lambda: events.append(("stop", None)) or "last word"),
+        partial_transcription=Mock(), streaming_text_update=Mock(), _streaming_enabled=True)
+    runtime = StreamingRuntime(controller)
+    runtime.begin_stop_streaming_session()
+    runtime.on_partial_transcription("tail", True)
+    assert events == []  # post-roll still feeds the decoder
+    controller.partial_transcription.emit.assert_not_called()
+    controller.streaming_text_update.emit.assert_not_called()
+    assert runtime.stop_streaming_session() == "last word"
+    assert events == [("callback", None), ("stop", None)]
+
+
+def test_runtime_cancel_detaches_recorder_and_uses_nonblocking_preview_cancel():
+    from services.runtime.streaming import StreamingRuntime
+    events = []
+    controller = SimpleNamespace(
+        recorder=SimpleNamespace(set_streaming_callback=lambda callback: events.append(("callback", callback))),
+        streaming_transcriber=SimpleNamespace(
+            stop_streaming=Mock(side_effect=AssertionError("cancel must not drain")),
+            cancel_streaming=lambda: events.append(("cancel", None))),
+        streaming_overlay_hide=Mock(), _streaming_enabled=True)
+    runtime = StreamingRuntime(controller)
+    runtime.cancel_streaming_session()
+    assert events == [("callback", None), ("cancel", None)]
+    controller.streaming_overlay_hide.emit.assert_called_once_with()

@@ -10,6 +10,8 @@ own streaming decoder through ``backend.stream_audio``, for engines whose
 catalog entry advertises streaming (Nemotron today).
 """
 import queue
+import math
+import re
 import threading
 import logging
 import time
@@ -52,13 +54,33 @@ def fft_resample(samples: np.ndarray, num_samples: int) -> np.ndarray:
     return resampled.astype(np.float32)
 
 
-def append_preview_text(existing: str, chunk_text: str) -> str:
-    """Append non-empty chunk text to an accumulated preview."""
+_PREVIEW_WORD = re.compile(r"\w+(?:['’]\w+)*", re.UNICODE)
+
+
+def append_preview_text(existing: str, chunk_text: str, *, max_overlap_words: int = 0) -> str:
+    """Join window text, removing only a bounded matching phrase at the seam.
+
+    Single words and wholly repeated chunks are ambiguous without word times,
+    so retain them. Only callers that actually prepend audio overlap opt in.
+    """
     chunk_text = (chunk_text or "").strip()
     if not chunk_text:
         return existing or ""
     if not existing:
         return chunk_text
+    if max_overlap_words >= 2:
+        tail = list(_PREVIEW_WORD.finditer(existing[-512:]))
+        head = list(_PREVIEW_WORD.finditer(chunk_text[:512]))
+        normalize = lambda word: word.group().casefold().replace("’", "'")
+        tail_words = [normalize(word) for word in tail]
+        head_words = [normalize(word) for word in head]
+        # Leave at least one newly recognized word; an entire repeated phrase
+        # may be intentional speech rather than the overlap being decoded twice.
+        maximum = min(max_overlap_words, len(tail_words), len(head_words) - 1)
+        for count in range(maximum, 1, -1):
+            if tail_words[-count:] == head_words[:count]:
+                chunk_text = chunk_text[head[count].start():]
+                break
     return f"{existing} {chunk_text}".strip()
 
 
@@ -137,9 +159,12 @@ class StreamingTranscriber:
         self.worker_thread: Optional[threading.Thread] = None
         self.is_streaming = False
         self._stop_requested = False
+        self._discard_results = False
+        self._state_lock = threading.RLock()
 
         self.preview_text: str = ""
         self._overlap_tail: Optional[np.ndarray] = None
+        self._last_chunk_text = ""
 
         self.sample_rate = 0
         self.callback: Optional[Callable[[str, bool], None]] = None
@@ -155,15 +180,21 @@ class StreamingTranscriber:
 
     def start_streaming(self, sample_rate: int, callback: Callable[[str, bool], None]):
         """Start previewing audio and report ``(text, is_final)`` to callback."""
-        if self.is_streaming:
-            logger.warning("Streaming already active")
+        if self.is_streaming or (self.worker_thread and self.worker_thread.is_alive()):
+            logger.warning("Streaming worker is still active")
             return
 
+        # A decode can outlast ten recorder blocks (~0.23 s). Keep a bounded
+        # audio-time buffer so a brief CPU/GPU stall does not drop speech.
+        blocks = math.ceil(config.STREAMING_QUEUE_SEC * sample_rate / config.CHUNK_SIZE)
+        self.audio_queue = queue.Queue(maxsize=max(config.STREAMING_QUEUE_SIZE, blocks))
         self.sample_rate = sample_rate
         self.callback = callback
         self.is_streaming = True
         self._stop_requested = False
+        self._discard_results = False
         self.preview_text = ""
+        self._last_chunk_text = ""
         self._overlap_tail = None
         self._chunk_count = 0
         self._slow_chunks = 0
@@ -175,74 +206,66 @@ class StreamingTranscriber:
 
     def feed_audio(self, audio_chunk: np.ndarray):
         """Queue an audio chunk without blocking the recorder callback."""
-        if not self.is_streaming:
-            return
-
-        try:
-            self.audio_queue.put_nowait(audio_chunk.copy())
-        except queue.Full:
-            logger.debug("Audio queue full, dropping chunk (transcription can't keep up)")
+        with self._state_lock:
+            if not self.is_streaming or self._stop_requested:
+                return
+            try:
+                self.audio_queue.put_nowait(audio_chunk.copy())
+            except queue.Full:
+                logger.debug("Audio queue full, dropping preview chunk")
 
     def stop_streaming(self) -> str:
-        """Stop the worker and return accumulated preview text."""
-        if not self.is_streaming:
-            return ""
+        """Drain accepted audio off the UI thread, bounded to five seconds."""
+        with self._state_lock:
+            if not self.is_streaming:
+                return ""
+            self._stop_requested = True
+            self.is_streaming = False
+        worker = self.worker_thread
+        if worker and worker.is_alive() and worker is not threading.current_thread():
+            worker.join(timeout=5.0)
+        with self._state_lock:
+            if worker and worker.is_alive():
+                self._discard_results = True
+                logger.warning("Preview worker did not finish in time; ignoring late output")
+            else:
+                self.worker_thread = None
+                self._overlap_tail = None
+            return self.preview_text.strip()
 
-        logger.info("Stopping streaming transcription...")
-        self._stop_requested = True
-
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=5.0)
-            if self.worker_thread.is_alive():
-                logger.warning("Worker thread did not finish in time")
-
-        self.is_streaming = False
-        self.worker_thread = None
-
-        final_text = self.preview_text.strip()
-        self._overlap_tail = None
-
-        logger.info(
-            f"Streaming stopped. Incremental cycles: {self._chunk_count}, "
-            f"Final length: {len(final_text)} chars"
-        )
-
-        return final_text
+    def cancel_streaming(self) -> None:
+        """Discard preview work without waiting for an in-flight decode."""
+        with self._state_lock:
+            self._discard_results = True
+            self._stop_requested = True
+            self.is_streaming = False
 
     def _worker_loop(self):
-        logger.info("Streaming worker thread started")
-
         accumulated_audio: List[np.ndarray] = []
         accumulated_duration = 0.0
-
         try:
-            while not self._stop_requested or not self.audio_queue.empty():
+            while not self._discard_results:
+                if self._stop_requested and self.audio_queue.empty():
+                    break
                 try:
                     audio_chunk = self.audio_queue.get(timeout=0.1)
-
-                    accumulated_audio.append(audio_chunk)
-                    chunk_duration = len(audio_chunk) / self.sample_rate
-                    accumulated_duration += chunk_duration
-
-                    if accumulated_duration >= self.chunk_duration_sec:
-                        self._process_incremental_chunk(accumulated_audio)
-                        accumulated_audio.clear()
-                        accumulated_duration = 0.0
-
                 except queue.Empty:
-                    if self._stop_requested and accumulated_audio:
-                        self._process_incremental_chunk(accumulated_audio)
-                        accumulated_audio.clear()
-                        accumulated_duration = 0.0
                     continue
-
-        except Exception as e:
-            logger.error(f"Error in streaming worker loop: {e}", exc_info=True)
+                accumulated_audio.append(audio_chunk)
+                accumulated_duration += len(audio_chunk) / self.sample_rate
+                if accumulated_duration >= self.chunk_duration_sec:
+                    self._process_incremental_chunk(accumulated_audio)
+                    accumulated_audio.clear()
+                    accumulated_duration = 0.0
+            if accumulated_audio and not self._discard_results:
+                self._process_incremental_chunk(accumulated_audio)
+        except Exception:
+            logger.exception("Error in streaming worker loop")
         finally:
             logger.info("Streaming worker thread exiting")
 
     def _process_incremental_chunk(self, new_chunks: List[np.ndarray]):
-        if not new_chunks:
+        if not new_chunks or self._discard_results:
             return
 
         try:
@@ -274,12 +297,20 @@ class StreamingTranscriber:
 
             text_parts = []
             for segment in segments:
-                if self._stop_requested:
-                    break
+                if self._discard_results:
+                    return
                 text_parts.append(segment.text)
 
             chunk_text = " ".join(text_parts).strip()
-            self.preview_text = append_preview_text(self.preview_text, chunk_text)
+            overlap_words = min(12, math.ceil(self.overlap_sec * 8)) if (
+                self._overlap_tail is not None and self._last_chunk_text
+            ) else 0
+            with self._state_lock:
+                if self._discard_results:
+                    return
+                self.preview_text = append_preview_text(
+                    self.preview_text, chunk_text, max_overlap_words=overlap_words)
+                self._last_chunk_text = chunk_text
 
             overlap_samples = int(self.overlap_sec * self.sample_rate)
             if overlap_samples > 0 and len(new_audio) > 0:
@@ -302,9 +333,10 @@ class StreamingTranscriber:
                     logger.warning("Incremental transcription falling behind (3+ slow chunks)")
                     self._last_warning_time = time.time()
 
-            if self.callback and self.preview_text:
-                # is_final=True means replace the full preview in the UI
-                self.callback(self.preview_text, True)
+            with self._state_lock:
+                if not self._discard_results and self.callback and self.preview_text:
+                    # is_final=True means replace the full preview in the UI.
+                    self.callback(self.preview_text, True)
 
         except Exception as e:
             logger.error(f"Error in incremental transcription: {e}", exc_info=True)
@@ -355,6 +387,8 @@ class NativeStreamingTranscriber:
         self.worker_thread: Optional[threading.Thread] = None
         self.is_streaming = False
         self._stop_requested = False
+        self._discard_results = False
+        self._state_lock = threading.RLock()
 
         self.preview_text: str = ""
         self._ledger = NativePreviewLedger()
@@ -376,14 +410,17 @@ class NativeStreamingTranscriber:
 
     def start_streaming(self, sample_rate: int, callback: Callable[[str, bool], None]):
         """Start following the engine stream and report ``(text, True)`` on each change."""
-        if self.is_streaming:
-            logger.warning("Native streaming already active")
+        if self.is_streaming or (self.worker_thread and self.worker_thread.is_alive()):
+            logger.warning("Native streaming worker is still active")
             return
 
+        while not self.audio_queue.empty():
+            self.audio_queue.get_nowait()
         self.sample_rate = sample_rate
         self.callback = callback
         self.is_streaming = True
         self._stop_requested = False
+        self._discard_results = False
         self.preview_text = ""
         self._ledger = NativePreviewLedger()
         self._update_count = 0
@@ -401,36 +438,38 @@ class NativeStreamingTranscriber:
 
     def feed_audio(self, audio_chunk: np.ndarray):
         """Queue an audio chunk without blocking the recorder callback."""
-        if not self.is_streaming:
-            return
-
-        try:
-            self.audio_queue.put_nowait(audio_chunk.copy())
-        except queue.Full:
-            logger.debug("Audio queue full, dropping chunk (native preview can't keep up)")
+        with self._state_lock:
+            if not self.is_streaming or self._stop_requested:
+                return
+            try:
+                self.audio_queue.put_nowait(audio_chunk.copy())
+            except queue.Full:
+                logger.debug("Audio queue full, dropping native preview chunk")
 
     def stop_streaming(self) -> str:
-        """Finish the engine stream and return the assembled preview text."""
-        if not self.is_streaming:
-            return ""
+        """Finish accepted audio off the UI thread, bounded to five seconds."""
+        with self._state_lock:
+            if not self.is_streaming:
+                return ""
+            self._stop_requested = True
+            self.is_streaming = False
+        worker = self.worker_thread
+        if worker and worker.is_alive() and worker is not threading.current_thread():
+            worker.join(timeout=5.0)
+        with self._state_lock:
+            if worker and worker.is_alive():
+                self._discard_results = True
+                logger.warning("Native preview worker did not finish in time; ignoring late output")
+            else:
+                self.worker_thread = None
+            return self.preview_text.strip()
 
-        logger.info("Stopping native streaming preview...")
-        self._stop_requested = True
-
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=5.0)
-            if self.worker_thread.is_alive():
-                logger.warning("Native preview worker did not finish in time")
-
-        self.is_streaming = False
-        self.worker_thread = None
-
-        final_text = self.preview_text.strip()
-        logger.info(
-            f"Native streaming stopped. Updates: {self._update_count}, "
-            f"Final length: {len(final_text)} chars"
-        )
-        return final_text
+    def cancel_streaming(self) -> None:
+        """Let the worker close its stream without publishing canceled output."""
+        with self._state_lock:
+            self._discard_results = True
+            self._stop_requested = True
+            self.is_streaming = False
 
     def _worker_loop(self):
         logger.info("Native preview worker thread started")
@@ -440,7 +479,7 @@ class NativeStreamingTranscriber:
         threshold = int(self.update_interval_sec * self.sample_rate)
 
         try:
-            while True:
+            while not self._discard_results:
                 try:
                     audio_chunk = self.audio_queue.get(timeout=0.1)
                     pending.append(audio_chunk)
@@ -456,7 +495,11 @@ class NativeStreamingTranscriber:
             logger.error(f"Error in native preview worker loop: {e}", exc_info=True)
         finally:
             # Remaining audio plus the finish that emits the last utterance.
-            self._push(pending, finish=True)
+            if self._discard_results:
+                if self._session_open:
+                    self._cancel_session()
+            else:
+                self._push(pending, finish=True)
             logger.info("Native preview worker thread exiting")
 
     def _push(self, chunks: List[np.ndarray], *, finish: bool):
@@ -484,20 +527,17 @@ class NativeStreamingTranscriber:
             self._session_open = not finish
             self._update_count += 1
 
-            text = self._ledger.apply(events)
-            processing_time = time.time() - start_time
-            logger.debug(
-                f"Native preview update #{self._update_count}: "
-                f"{len(prepared) / config.WHISPER_TARGET_SAMPLE_RATE:.2f}s audio "
-                f"-> {processing_time:.3f}s, {len(events or ())} events"
-                f"{', finish' if finish else ''}"
-            )
-
-            if text != self.preview_text:
-                self.preview_text = text
-                if self.callback and text:
-                    # is_final=True means replace the full preview in the UI
-                    self.callback(text, True)
+            with self._state_lock:
+                if self._discard_results:
+                    return
+                text = self._ledger.apply(events)
+                if text != self.preview_text:
+                    self.preview_text = text
+                    if self.callback and text:
+                        self.callback(text, True)
+            logger.debug("Native preview update #%d took %.3fs%s",
+                         self._update_count, time.time() - start_time,
+                         " (finish)" if finish else "")
         except Exception as e:
             self._failed = True
             logger.error(

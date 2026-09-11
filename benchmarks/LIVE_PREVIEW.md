@@ -51,8 +51,9 @@ other pass. Each model is released before the next loads.
 
 **Window** calls the production `StreamingTranscriber._process_incremental_chunk`
 with each model's production decoder. Its defaults are 3 seconds of new audio,
-0.75 seconds of overlap, `beam_size=1`, `vad_filter=False`, and unmodified
-append-only text assembly. Whisper consumes the segment generator inside the
+0.75 seconds of overlap, `beam_size=1`, `vad_filter=False`, and bounded phrase
+deduplication at overlapping window seams. Whisper consumes the segment
+generator inside the
 timed region. Optional decoders ignore Whisper-specific options. Both paths use
 the decoder's default automatic language behavior; Tiny is English-only.
 
@@ -84,9 +85,10 @@ since Moonshine has no dictation preview in the app.
   clips with no text before EOF; their count is reported separately.
 - **Live WER**: full reference versus text available at audio EOF before
   stopping. Unshown trailing words count as deletions.
-- **Drained WER**: diagnostic after decoding remaining audio / native finish.
-  This is not the app's separate final transcription or a reproduction of
-  `stop_streaming`, which sets a stop flag that can discard pending segments.
+- **Drained WER**: after decoding remaining audio / native finish.
+  This is not the app's separate final transcription. Successful product stop
+  now drains accepted audio, but replay does not enforce its five-second deadline
+  or reproduce recorder-queue drops.
 - **Checkpoint WER**: AMI only, repeated reference-prefix scoring at common
   3.0186-second audio-clock checkpoints. Includes only words whose human end
   time has passed and hypotheses whose simulated completion has passed. It
@@ -100,8 +102,9 @@ WER uses the existing meeting benchmark's exact word-level Levenshtein metric:
 NFKC/lowercase, punctuation ignored, apostrophes retained, AMI acronym underscores
 removed. Fillers, spelling, and number-format differences count. Corpus and group
 WER are word-weighted; repeated passes are repeat measurements of the same clips.
-The unchanged overlapping append strategy can insert repeated words and make
-window WER worse than whole-file ASR. No cleanup or overlap deduplication is used.
+Window previews remove a bounded matching phrase at an actual audio-overlap seam.
+Single-word repetitions and wholly repeated chunks are retained. This is approximate:
+window WER can still be worse than whole-file ASR.
 
 Replay runs as fast as inference permits. Completion is modeled as
 `max(previous completion, audio availability) + measured service time`. It does
@@ -119,3 +122,5 @@ references, group metrics, and load/warmup times. Only installed pinned artifact
 are used. Run `python -m pytest tests/test_live_preview_benchmark.py` to check
 boundary quantization, overlap, delayed visibility, weighted WER, native revisions,
 final flush, and failed-inference handling without loading models.
+
+The September 11 preview optimization measurements and current defaults are documented in [preview-optimizations.md](../docs/preview-optimizations.md). Window and native stop now drain accepted audio on the recording worker; cancellation discards preview output without waiting on Qt.

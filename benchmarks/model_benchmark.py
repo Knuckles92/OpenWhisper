@@ -89,51 +89,13 @@ class TestResult:
 
 
 def calculate_word_accuracy(expected: str, transcribed: str) -> float:
-    """
-    Calculate word-level accuracy between expected and transcribed text.
+    """Return bounded 100 * (1 - ordered WER); raw WER may exceed 100%."""
+    from benchmarks.meeting_mode.metrics import score_text
+    score = score_text(expected, transcribed)
+    if score["wer"] is None:
+        return 100.0 if not score["errors"] else 0.0
+    return max(0.0, 100.0 * (1.0 - score["wer"]))
 
-    Uses a simple word matching approach:
-    - Normalizes both texts (lowercase, remove punctuation)
-    - Counts matching words
-    - Returns percentage of expected words that were correctly transcribed
-
-    Args:
-        expected: The reference text that was spoken
-        transcribed: The text output from transcription
-
-    Returns:
-        Accuracy percentage (0.0 to 100.0)
-    """
-    import re
-
-    def normalize_text(text: str) -> List[str]:
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', '', text)
-        words = [w.strip() for w in text.split() if w.strip()]
-        return words
-
-    expected_words = normalize_text(expected)
-    transcribed_words = normalize_text(transcribed)
-
-    if not expected_words:
-        return 100.0 if not transcribed_words else 0.0
-
-    matches = 0
-    expected_counts = {}
-    transcribed_counts = {}
-
-    for word in expected_words:
-        expected_counts[word] = expected_counts.get(word, 0) + 1
-
-    for word in transcribed_words:
-        transcribed_counts[word] = transcribed_counts.get(word, 0) + 1
-
-    for word, count in expected_counts.items():
-        transcribed_count = transcribed_counts.get(word, 0)
-        matches += min(count, transcribed_count)
-
-    accuracy = (matches / len(expected_words)) * 100.0
-    return min(accuracy, 100.0)  # Cap at 100%
 
 
 class AudioGenerator:
@@ -334,6 +296,8 @@ class ModelBenchmark:
         try:
             start_time = time.time()
             transcribed_text = backend.transcribe(audio_file)
+            if not transcribed_text.strip():
+                raise ValueError("Empty transcription for speech benchmark")
             end_time = time.time()
 
             transcription_time = end_time - start_time
@@ -646,7 +610,7 @@ class ModelBenchmark:
 def main(argv: Optional[List[str]] = None):
     import argparse
 
-    parser = argparse.ArgumentParser(description="Model Speed & Throughput Benchmark")
+    parser = argparse.ArgumentParser(description="Legacy single-decode smoke benchmark; use scripts/benchmark_local_asr.py for warmed repeated timings")
     parser.add_argument(
         "--durations",
         type=str,
@@ -702,18 +666,22 @@ def main(argv: Optional[List[str]] = None):
             return 2
 
         benchmark.run_benchmark(durations=durations)
+        return int(len(benchmark.results) != (len(benchmark.backends) + len(benchmark.local_models_to_test)) * len(durations)
+                   or not benchmark.results or any(not result.success for result in benchmark.results))
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Benchmark interrupted by user")
+        return 130
     except Exception as e:
         print(f"\n\n❌ Benchmark failed: {e}")
         import traceback
         traceback.print_exc()
+        return 1
     finally:
         if benchmark:
             benchmark.cleanup()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
 

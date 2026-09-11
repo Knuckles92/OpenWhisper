@@ -281,6 +281,7 @@ class AppConfig:
     STREAMING_CHUNK_DURATION_SEC: float = 3.0
     STREAMING_OVERLAP_SEC: float = 0.75
     STREAMING_QUEUE_SIZE: int = 10
+    STREAMING_QUEUE_SEC: float = 3.0
     # Optional engines whose loaded dictation worker also decodes the preview
     # windows, so no second model is resident. Measured in
     # benchmarks/LIVE_PREVIEW.md (September 2026, RTX 2060): Parakeet and

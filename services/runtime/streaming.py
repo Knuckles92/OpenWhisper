@@ -33,6 +33,7 @@ class StreamingRuntime:
 
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
+        self._stopping = False
 
     def setup_audio_level_callback(self) -> None:
         def audio_level_callback(level: float) -> None:
@@ -60,6 +61,8 @@ class StreamingRuntime:
         self._configure_streaming(initial_setup=False)
 
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
+        if self._stopping:
+            return
         self.controller.partial_transcription.emit(text, is_final)
         if self.controller._streaming_enabled and text:
             self.controller.streaming_text_update.emit(text, is_final)
@@ -69,6 +72,7 @@ class StreamingRuntime:
         if not self.controller.streaming_transcriber:
             return
 
+        self._stopping = False
         self.controller.recorder.set_streaming_callback(
             self.controller.streaming_transcriber.feed_audio
         )
@@ -84,13 +88,18 @@ class StreamingRuntime:
             self.controller.ui_controller.streaming_flow_active = True
             self.controller.streaming_overlay_show.emit()
 
+    def begin_stop_streaming_session(self) -> None:
+        """Hide further preview updates while post-roll still feeds the decoder."""
+        self._stopping = True
+
     def stop_streaming_session(self) -> str:
         """Stop streaming transcription and return the accumulated text."""
         if not self.controller.streaming_transcriber:
             return ""
 
-        streaming_text = self.controller.streaming_transcriber.stop_streaming()
+        self._stopping = True
         self.controller.recorder.set_streaming_callback(None)
+        streaming_text = self.controller.streaming_transcriber.stop_streaming()
         logger.info(
             f"Streaming transcription stopped, got {len(streaming_text)} chars"
         )
@@ -98,9 +107,14 @@ class StreamingRuntime:
 
     def cancel_streaming_session(self) -> None:
         """Cancel any active streaming session."""
+        self._stopping = True
+        self.controller.recorder.set_streaming_callback(None)
         if self.controller.streaming_transcriber:
-            self.controller.streaming_transcriber.stop_streaming()
-            self.controller.recorder.set_streaming_callback(None)
+            cancel = getattr(self.controller.streaming_transcriber, "cancel_streaming", None)
+            if callable(cancel):
+                cancel()
+            else:
+                self.controller.streaming_transcriber.stop_streaming()
             logger.info("Streaming transcription canceled")
 
         if self.controller._streaming_enabled:

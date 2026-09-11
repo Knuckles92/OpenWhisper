@@ -1,0 +1,22 @@
+ffconcat version 1.0
+file 'D:/coding/whisper_local/demo/pictures/cards/00-title.png'
+duration 3.6
+file 'D:/coding/whisper_local/demo/pictures/cards/01-dictate.png'
+duration 4.2
+file 'D:/coding/whisper_local/demo/pictures/cards/02-overlay.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/03-meeting-start.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/04-meeting-live.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/05-meeting-ready.png'
+duration 4.2
+file 'D:/coding/whisper_local/demo/pictures/cards/06-past-meetings.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/07-models.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/08-settings.png'
+duration 4.0
+file 'D:/coding/whisper_local/demo/pictures/cards/99-try-it.png'
+duration 5.2
+file 'D:/coding/whisper_local/demo/pictures/cards/99-try-it.png'

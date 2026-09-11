@@ -12,11 +12,16 @@ from benchmarks.live_preview import aggregate
 
 def summarize(inputs):
     reports = [json.loads(path.read_text(encoding='utf-8-sig')) for path in inputs]
+    if not reports:
+        raise ValueError('At least one report is required')
     base = reports[0]
     for report in reports[1:]:
-        for field in ('manifest_sha256', 'chunk_s', 'overlap_s', 'native_cadence_s', 'normalization', 'decoding', 'corpus', 'source_sha256'):
-            if report[field] != base[field]:
+        for field in ('manifest_sha256', 'chunk_s', 'overlap_s', 'native_cadence_s', 'normalization', 'decoding', 'corpus', 'source_sha256', 'packages'):
+            if report.get(field) != base.get(field):
                 raise ValueError(f'Cannot pool runs with different {field}')
+        for field in ('platform', 'processor', 'python', 'cpu_count'):
+            if report.get('hardware', {}).get(field) != base.get('hardware', {}).get(field):
+                raise ValueError(f'Cannot pool runs with different hardware {field}')
     summary = {key: value for key, value in base.items() if key not in ('results', 'git_status')}
     summary['raw_reports'] = [dict(file=p.name, sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in inputs]
     summary['results'], summary['failures'] = [], []
@@ -29,6 +34,13 @@ def summarize(inputs):
                 if 'summary' not in profile:
                     continue
                 key = (row['model'], row['actual_device'], profile['mode'])
+                if key in pools:
+                    first = pools[key]['rows'][0]
+                    for field in ('artifacts', 'model_snapshot', 'runtime_manifest', 'device_info'):
+                        if row.get(field) != first.get(field):
+                            raise ValueError(f'Cannot pool {key} with different {field}')
+                    if profile['effective_cadence_s'] != pools[key]['profiles'][0]['effective_cadence_s']:
+                        raise ValueError(f'Cannot pool {key} with different effective cadence')
                 pool = pools.setdefault(key, dict(clips=[], rows=[], profiles=[]))
                 pool['clips'].extend(profile['clips'])
                 pool['rows'].append(row)

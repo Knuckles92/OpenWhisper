@@ -557,7 +557,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--asr-model", default="")
     parser.add_argument("--gemini-model", default="")
     parser.add_argument("--timeout-s", type=float, default=600.0)
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Compatibility flag; requested arms are always recomputed")
     parser.add_argument("--skip-current", action="store_true")
     parser.add_argument("--skip-gemini", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -592,6 +592,12 @@ def main(argv: list[str] | None = None) -> int:
     args.results_dir.mkdir(parents=True, exist_ok=True)
     conn = _connect(args.db)
     backend = None
+    from benchmarks.provenance import identity
+    provenance = identity(settings={
+        **{key: str(value) for key, value in vars(args).items()},
+        "provider": provider, "polish_model": polish_model,
+        "gemini_model": gemini_model, "asr_model": asr_model, "language": language,
+    })
     results: list[dict[str, Any]] = []
     try:
         meetings = [_load_meeting(conn, meeting_id) for meeting_id in ids]
@@ -616,19 +622,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"({meeting['audio_s'] / 60.0:.1f} min)",
                 flush=True,
             )
-            if result_path.exists() and not args.force:
-                print(f"  reusing {result_path}", flush=True)
-                results.append(json.loads(result_path.read_text(encoding="utf-8")))
-                continue
 
             stored = [_segment_dict(seg) for seg in meeting["stored_segments"]]
-            previous = {}
-            if result_path.exists():
-                try:
-                    previous = json.loads(result_path.read_text(encoding="utf-8"))
-                except json.JSONDecodeError:
-                    previous = {}
-            current: dict[str, Any] = previous.get("current") or {
+            current: dict[str, Any] = {
                 "ok": False,
                 "elapsed_s": 0.0,
                 "word_count": 0,
@@ -714,7 +710,11 @@ def main(argv: list[str] | None = None) -> int:
             stored_text = _plain_text(stored)
             current_text = _plain_text(current.get("segments") or [])
             gemini_text = _plain_text(gemini.get("segments") or [])
+            from benchmarks.provenance import file_identity
+            current["enabled"] = not args.skip_current
+            gemini["enabled"] = not args.skip_gemini
             result = {
+                "provenance": {**provenance, "audio_sha256": file_identity(meeting["audio_path"])},
                 "meeting_id": meeting_id,
                 "title": title,
                 "audio_s": meeting["audio_s"],
@@ -786,7 +786,9 @@ def main(argv: list[str] | None = None) -> int:
         _summary_markdown(summary), encoding="utf-8"
     )
     print(json.dumps(summary, indent=2), flush=True)
-    return 0
+    return int(any(
+        (not args.skip_current and not item["current"].get("ok"))
+        or (not args.skip_gemini and not item["gemini"].get("ok")) for item in results))
 
 
 if __name__ == "__main__":

@@ -133,7 +133,9 @@ class CheckpointScheduler:
                  base_interval_s: float = 15.0,
                  min_interval_s: float = 5.0,
                  max_interval_s: float = 20.0,
-                 on_health: Optional[Callable[[bool], None]] = None) -> None:
+                 on_health: Optional[Callable[[bool], None]] = None,
+                 monotonic: Optional[Callable[[], float]] = None) -> None:
+        self._monotonic = monotonic or (lambda: time.monotonic())
         self._engine = engine
         self._agent = agent_core
         self._base_interval_s = base_interval_s
@@ -151,7 +153,7 @@ class CheckpointScheduler:
         self._thread: Optional[threading.Thread] = None
 
         self._pending_segments = 0
-        self._last_fire_mono = time.monotonic()
+        self._last_fire_mono = self._monotonic()
         self._started_mono = self._last_fire_mono
         self._last_shift_check_mono = 0.0
         #: start_s of every segment already handed to the agent, pruned to the
@@ -177,7 +179,7 @@ class CheckpointScheduler:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._last_fire_mono = time.monotonic()
+        self._last_fire_mono = self._monotonic()
         self._started_mono = self._last_fire_mono
         self._thread = threading.Thread(
             target=self._run_loop, name="meeting-checkpoint-scheduler",
@@ -300,50 +302,57 @@ class CheckpointScheduler:
             self._wake.clear()
             if self._stop_event.is_set():
                 break
-            if self._consolidating:
-                continue
-            self._fire_note_request()
-            if self._stop_event.is_set() or self._consolidating:
-                continue
-            # Keep pending segments and guidance intact during warm-up. The
-            # meeting clock excludes pauses and survives scheduler restarts.
-            clock = getattr(self._engine, "clock", None)
-            elapsed_meeting_s = (
-                clock.now_s() if clock is not None
-                else time.monotonic() - self._started_mono
-            )
-            if elapsed_meeting_s < _INITIAL_CONTEXT_S:
-                continue
-            with self._lock:
-                if self._note_requests:
-                    self._wake.set()
-                    continue
-                pending = self._pending_segments
-            if pending <= 0:
-                self._maybe_fire_notes()
-                self._maybe_fire_polish()
-                continue
-            elapsed = time.monotonic() - self._last_fire_mono
-            if time.monotonic() < self._retry_not_before:
-                continue
-            if self._guidance_pending:
-                self._fire()
-                continue
-            if not self._sent_starts:
-                self._fire()
-                continue
-            if elapsed < self._min_interval_s:
-                continue
-            due = elapsed >= self._interval_for(pending)
-            if not due:
-                due = self._detect_topic_shift()
-            if due:
-                self._fire()
+            self.run_due()
         logger.debug("Checkpoint scheduler loop exited")
+
+    def run_due(self) -> None:
+        """Run one scheduler tick; the worker and deterministic replay share it."""
+        if self._stop_event.is_set():
+            return
+        if self._consolidating:
+            return
+        self._fire_note_request()
+        if self._stop_event.is_set() or self._consolidating:
+            return
+        # Keep pending segments and guidance intact during warm-up. The
+        # meeting clock excludes pauses and survives scheduler restarts.
+        clock = getattr(self._engine, "clock", None)
+        elapsed_meeting_s = (
+            clock.now_s() if clock is not None
+            else self._monotonic() - self._started_mono
+        )
+        if elapsed_meeting_s < _INITIAL_CONTEXT_S:
+            return
+        with self._lock:
+            if self._note_requests:
+                self._wake.set()
+                return
+            pending = self._pending_segments
+        if pending <= 0:
+            self._maybe_fire_notes()
+            self._maybe_fire_polish()
+            return
+        elapsed = self._monotonic() - self._last_fire_mono
+        if self._monotonic() < self._retry_not_before:
+            return
+        if self._guidance_pending:
+            self._fire()
+            return
+        if not self._sent_starts:
+            self._fire()
+            return
+        if elapsed < self._min_interval_s:
+            return
+        due = elapsed >= self._interval_for(pending)
+        if not due:
+            due = self._detect_topic_shift()
+        if due:
+            self._fire()
+
 
     def _detect_topic_shift(self) -> bool:
         """Compare the last two 60s transcript windows for a topic shift."""
-        now_mono = time.monotonic()
+        now_mono = self._monotonic()
         if now_mono - self._last_shift_check_mono < _SHIFT_CHECK_SPACING_S:
             return False
         self._last_shift_check_mono = now_mono
@@ -449,7 +458,7 @@ class CheckpointScheduler:
             self._guidance_pending = False
         # Mark the fire time at the start of the run so work that becomes due
         # while the checkpoint executes fires immediately after completion.
-        self._last_fire_mono = time.monotonic()
+        self._last_fire_mono = self._monotonic()
 
         try:
             fetched = self._engine.get_transcript(
@@ -571,7 +580,7 @@ class CheckpointScheduler:
         since_mark = self._successful_checkpoints - self._polish_checkpoint_mark
         if since_mark <= 0 and not self._polish_retry_pending:
             return
-        now = time.monotonic()
+        now = self._monotonic()
         due_by_count = since_mark >= _POLISH_EVERY_N_CHECKPOINTS
         due_by_time = (
             now - self._last_polish_mono >= _POLISH_MIN_INTERVAL_S
@@ -603,7 +612,7 @@ class CheckpointScheduler:
         except Exception as exc:
             logger.exception("Agent polish raised")
             result = AgentResult(ok=False, error=str(exc))
-        self._last_polish_mono = time.monotonic()
+        self._last_polish_mono = self._monotonic()
         # Count attempted work too; retries wait for the next cadence.
         self._polish_checkpoint_mark = self._successful_checkpoints
         self._polish_retry_pending = not result.ok
@@ -643,7 +652,7 @@ class CheckpointScheduler:
             return
         if self._interactive_pending():
             return
-        if time.monotonic() < self._notes_retry_not_before:
+        if self._monotonic() < self._notes_retry_not_before:
             return
         with self._lock:
             guidance = self._notes_guidance_pending
@@ -652,7 +661,7 @@ class CheckpointScheduler:
         due_by_count = since_mark >= _NOTES_EVERY_N_CHECKPOINTS
         due_by_time = (
             self._last_notes_mono > 0.0
-            and (time.monotonic() - self._last_notes_mono)
+            and (self._monotonic() - self._last_notes_mono)
             >= _NOTES_MIN_INTERVAL_S
         ) or (self._last_notes_mono == 0.0 and self._successful_checkpoints >= 1)
         if not (guidance or due_by_count or due_by_time):
@@ -703,7 +712,7 @@ class CheckpointScheduler:
         # Advance the cadence bookkeeping whether or not the pass succeeded
         # so a failing core cannot hot-loop notes calls; only a success
         # marks the batch consumed, leaving failures to be re-covered.
-        self._last_notes_mono = time.monotonic()
+        self._last_notes_mono = self._monotonic()
         self._notes_checkpoint_mark = self._successful_checkpoints
         if result.ok:
             applied = sum(1 for r in result.op_results if r.ok)
@@ -737,7 +746,7 @@ class CheckpointScheduler:
                 if start_s > prune_cursor
             }
         else:
-            self._notes_retry_not_before = time.monotonic() + _NOTES_MIN_INTERVAL_S
+            self._notes_retry_not_before = self._monotonic() + _NOTES_MIN_INTERVAL_S
             if guidance:
                 with self._lock:
                     self._notes_guidance_pending = True
@@ -763,7 +772,7 @@ class CheckpointScheduler:
         delay = _RETRY_BACKOFF_S[min(
             self._consecutive_failures - 1, len(_RETRY_BACKOFF_S) - 1
         )]
-        self._retry_not_before = time.monotonic() + delay
+        self._retry_not_before = self._monotonic() + delay
         logger.warning(
             "Checkpoint failed (%d consecutive, claimed=%d request_id=%s); "
             "retrying in %.0fs: %s",
@@ -1092,7 +1101,7 @@ class CheckpointScheduler:
             worker = threading.Thread(
                 target=_worker, name="meeting-final-polish", daemon=True,
             )
-            started = time.monotonic()
+            started = self._monotonic()
             logger.info(
                 "Final polish started meeting_id=%s request_id=%s block=%s/%s segments=%s timeout_s=%s",
                 payload.state_snapshot.get("meeting_id", "unknown"), payload.request_id,
@@ -1103,7 +1112,7 @@ class CheckpointScheduler:
             if worker.is_alive():
                 logger.warning(
                     "Final polish timed out request_id=%s block=%s/%s elapsed_s=%.2f timeout_s=%s; canceling",
-                    payload.request_id, idx, total_blocks, time.monotonic() - started, timeout_s,
+                    payload.request_id, idx, total_blocks, self._monotonic() - started, timeout_s,
                 )
                 try:
                     self._agent.cancel()
@@ -1123,15 +1132,15 @@ class CheckpointScheduler:
                 last_error = result.error or "transcript cleanup failed"
                 logger.warning(
                     "Final polish failed request_id=%s block=%s/%s elapsed_s=%.2f error=%s",
-                    payload.request_id, idx, total_blocks, time.monotonic() - started, last_error,
+                    payload.request_id, idx, total_blocks, self._monotonic() - started, last_error,
                 )
                 last_error = f"{last_error} (block {idx}/{total_blocks}; request ID: {payload.request_id})"
                 break
             logger.info(
                 "Final polish completed request_id=%s block=%s/%s elapsed_s=%.2f",
-                payload.request_id, idx, total_blocks, time.monotonic() - started,
+                payload.request_id, idx, total_blocks, self._monotonic() - started,
             )
-            self._last_polish_mono = time.monotonic()
+            self._last_polish_mono = self._monotonic()
 
         if last_error:
             return ConsolidationOutcome(status="failed", message=last_error)

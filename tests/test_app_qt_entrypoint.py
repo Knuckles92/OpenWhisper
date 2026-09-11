@@ -5,9 +5,26 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from ui_qt.startup_profiler import StartupProfiler
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("module", ["ui_qt.main_window", "ui_qt.widgets"])
+def test_ui_import_in_fresh_process(module):
+    # Collection imports SettingsDialog first, which can hide circular imports.
+    # Exercise the main-window/widget-first order on every supported platform.
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_app_qt_import_does_not_eagerly_import_application_controller():

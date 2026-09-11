@@ -1036,7 +1036,10 @@ class TestApplicationController:
         controller.start_recording()
         assert preview.started
         assert controller.recorder.streaming_callback == preview.feed_audio
+        controller.transcription_runtime._run_transcription_job = lambda _: None
         controller.stop_recording()
+        finish, args = controller.executor.submissions[0]
+        finish(*args)
         assert controller._pending_streaming_text == "native partial text"
         assert controller.recorder.streaming_callback is None
 
@@ -1319,9 +1322,12 @@ class TestApplicationController:
         )
         controller.recorder.is_recording = True
 
+        from unittest.mock import Mock
+        controller.transcription_runtime._run_transcription_job = Mock()
         controller.stop_recording()
-
-        # FakeStreamingTranscriber.stop_streaming returns "partial text".
+        assert controller._pending_streaming_text == ""
+        finish, args = controller.executor.submissions[0]
+        finish(*args)
         assert controller._pending_streaming_text == "partial text"
 
     def test_stop_recording_without_streaming_keeps_no_preview(self):
@@ -1495,6 +1501,9 @@ class TestApplicationController:
         controller.recorder.wait_for_stop_completion = (
             lambda *_a, **_k: touched.append("waited") or True
         )
+        controller.streaming_transcriber = FakeStreamingTranscriber(
+            backend=controller.transcription_backends["local_whisper"], chunk_duration_sec=3.0)
+        controller.streaming_transcriber.stop_streaming = lambda: touched.append("preview") or "tail"
         original_save = controller.recorder.save_recording
         controller.recorder.save_recording = (
             lambda *a, **k: touched.append("saved") or original_save(*a, **k)
@@ -1508,7 +1517,7 @@ class TestApplicationController:
         finish, args = controller.executor.submissions[0]
         finish(*args)
 
-        assert touched == ["waited", "saved"]
+        assert touched == ["waited", "preview", "saved"]
 
     def test_stopped_recording_claims_job_before_post_roll_finishes(self):
         controller = self._create_controller()

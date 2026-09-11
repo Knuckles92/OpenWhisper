@@ -131,11 +131,8 @@ class TranscriptionRuntime:
             # processing/transcribing states are the only post-stop UI.
             self.controller.streaming_overlay_hide.emit()
 
-        # Kept, not dropped: when the full pass comes back empty this is the
-        # only record of what was said. See on_transcription_complete.
-        self.controller._pending_streaming_text = (
-            self.controller.streaming_runtime.stop_streaming_session()
-        )
+        self.controller._pending_streaming_text = ""
+        self.controller.streaming_runtime.begin_stop_streaming_session()
 
         if not self.controller.recorder.stop_recording():
             self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -172,10 +169,14 @@ class TranscriptionRuntime:
         the failure paths.
         """
         try:
-            if not self.controller.recorder.wait_for_stop_completion():
-                logger.warning(
-                    "Proceeding without confirmed post-roll completion; "
-                    "tail of recording may be short"
+            try:
+                if not self.controller.recorder.wait_for_stop_completion():
+                    logger.warning("Proceeding without confirmed post-roll completion")
+            finally:
+                # Preview draining may decode the tail or wait for an in-flight
+                # window. Keep it off Qt and retain it for empty-result recovery.
+                self.controller._pending_streaming_text = (
+                    self.controller.streaming_runtime.stop_streaming_session()
                 )
 
             if not self.controller.recorder.has_recording_data():

@@ -1,6 +1,6 @@
 """Compare legacy vs clean end-of-meeting *packages*, not just ASR WER.
 
-Legacy (old End): live draft transcript + sidecar consolidation.
+Legacy (old End): live draft transcript + consolidation.
 Clean (new End): offline session re-decode + transcript polish + consolidation.
 
 Both packages are the dashboard a participant would actually keep: topic,
@@ -9,8 +9,9 @@ notes, and the transcript itself. An LLM judge scores them against the AMI
 manual reference.
 
 Before either End runs, :func:`simulate_live_meeting` replays the meeting the
-way the product experiences it: rolling copilot checkpoints and the dedicated
-note-taker pass accumulate cards and live notes over time windows. The legacy
+through the production scheduler: rolling copilot checkpoints, notes, and
+polish accumulate shared state. The direct agent transport runs on a virtual
+clock; provider latency, capture concurrency, and UI rendering are excluded. The legacy
 and clean End paths then start from that same live meeting state, so the eval
 scores the full product behavior (accumulate live, then reconcile at End) —
 not just a consolidation built from an empty dashboard.
@@ -32,7 +33,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import config  # noqa: E402
 from meeting.agent.base import create_agent_core, find_provider_api_key  # noqa: E402
 from meeting.agent.prompts import build_system_prompt, render_state_compact  # noqa: E402
 from meeting.agent.scheduler import ConsolidationOutcome  # noqa: E402
@@ -392,157 +392,88 @@ def build_live_windows(
 
 
 def simulate_live_meeting(
-    meeting_id: str,
-    segments: Sequence[Dict[str, Any]],
-    *,
-    provider: str,
-    model: str,
-    api_key: str,
-    window_s: float = 120.0,
-    notes_every_n_checkpoints: int = 2,
+    meeting_id: str, segments: Sequence[Dict[str, Any]], *,
+    provider: str, model: str, api_key: str, window_s: float = 1.0,
     checkpoint_timeout_s: float = 180.0,
 ) -> Dict[str, Any]:
-    """Replay a meeting live: rolling checkpoints + note-taker passes.
+    """Replay segment arrivals through the production scheduler on a virtual clock.
 
-    Follows the product cadence at benchmark scale — a copilot checkpoint per
-    time window, then a dedicated note-taker pass (``is_notes`` persona) after
-    every ``notes_every_n_checkpoints`` successful checkpoints, with the notes
-    pass carrying every segment not yet covered by a successful notes pass.
-
-    Returns:
-        ``{"state": final live state snapshot, "stats": pass counters}``.
+    window_s is the tick resolution. Provider latency and capture concurrency
+    are excluded; source segments become visible only after their end time.
     """
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from meeting.agent.scheduler import CheckpointScheduler
     from meeting.agent import openrouter_direct as direct_mod
 
-    direct_mod._CHECKPOINT_TIMEOUT_S = max(
-        float(direct_mod._CHECKPOINT_TIMEOUT_S), checkpoint_timeout_s,
-    )
-    host = ProductEvalHost(meeting_id, segments)
+    if window_s <= 0:
+        raise ValueError("Replay tick must be positive")
+    host = ProductEvalHost(meeting_id, [])
     host.store.replace_document(MeetingState.from_dict({
-        "meeting_id": meeting_id,
-        "status": "active",
-        "cloud_enabled": True,
-        "intelligence_online": True,
+        "meeting_id": meeting_id, "status": "active",
+        "cloud_enabled": True, "intelligence_online": True,
     }))
+    now = [0.0]
+    host.clock = SimpleNamespace(now_s=lambda: now[0])
     agent = create_agent_core("direct")
-    agent.initialize(
-        AgentConfig(
-            meeting_id=meeting_id,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            system_prompt=build_system_prompt(),
-        ),
-        host,
-    )
-    if not agent.is_healthy():
-        raise RuntimeError("Meeting intelligence agent is offline (missing API key?)")
+    stats = dict(windows=0, checkpoints_ok=0, checkpoints_failed=0,
+                 notes_passes_ok=0, notes_passes_failed=0,
+                 polish_passes_ok=0, polish_passes_failed=0,
+                 ops_applied=0, notes_ops_applied=0)
 
-    stats = {
-        "windows": 0,
-        "checkpoints_ok": 0,
-        "checkpoints_failed": 0,
-        "notes_passes_ok": 0,
-        "notes_passes_failed": 0,
-        "ops_applied": 0,
-        "notes_ops_applied": 0,
-    }
-    successful_checkpoints = 0
-    notes_checkpoint_mark = 0
-    pending: List[Dict[str, Any]] = []
-    notes_pending: List[Dict[str, Any]] = []
+    class CountingAgent:
+        def __getattr__(self, name):
+            return getattr(agent, name)
 
-    def _notes_due() -> bool:
-        return (
-            successful_checkpoints - notes_checkpoint_mark
-            >= notes_every_n_checkpoints
-        )
-
-    def _run_notes_pass() -> None:
-        nonlocal notes_pending, notes_checkpoint_mark
-        if not notes_pending:
-            return
-        payload = CheckpointPayload(
-            request_id=uuid.uuid4().hex,
-            state_snapshot=host.store.snapshot(),
-            new_segments=list(notes_pending),
-            is_notes=True,
-        )
-        try:
-            result = agent.checkpoint(payload)
-        except Exception as exc:
-            logger.exception("Notes pass raised")
-            result = AgentResult(ok=False, error=str(exc))
-        # Cadence bookkeeping advances on both outcomes (product behavior);
-        # only success marks the batch consumed.
-        notes_checkpoint_mark = successful_checkpoints
-        if result.ok:
-            stats["notes_passes_ok"] += 1
-            stats["notes_ops_applied"] += sum(
-                1 for r in result.op_results if r.ok
-            )
-            notes_pending = []
-        else:
-            stats["notes_passes_failed"] += 1
-            logger.warning(
-                "Notes pass failed: %s", result.error or "unknown",
-            )
-
-    host.allow_agent_writes()
-    try:
-        for window in build_live_windows(segments, window_s):
-            stats["windows"] += 1
-            pending.extend(window)
-            notes_pending.extend(window)
-            payload = CheckpointPayload(
-                request_id=uuid.uuid4().hex,
-                state_snapshot=host.store.snapshot(),
-                new_segments=list(pending),
-            )
+        def checkpoint(self, payload):
             try:
                 result = agent.checkpoint(payload)
             except Exception as exc:
-                logger.exception("Live checkpoint raised")
                 result = AgentResult(ok=False, error=str(exc))
-            if result.ok:
-                stats["checkpoints_ok"] += 1
-                stats["ops_applied"] += sum(1 for r in result.op_results if r.ok)
-                pending = []
-                successful_checkpoints += 1
-                if _notes_due():
-                    _run_notes_pass()
-            else:
-                # Product behavior: a failed checkpoint's segments stay
-                # pending and rejoin the next fire.
-                stats["checkpoints_failed"] += 1
-                logger.warning(
-                    "Live checkpoint failed (retrying with next window): %s",
-                    result.error or "unknown",
-                )
-        if pending or notes_pending:
-            logger.warning(
-                "Live phase ended with undelivered segments "
-                "(cards=%d, notes=%d)", len(pending), len(notes_pending),
-            )
+            prefix = "notes_passes" if payload.is_notes else (
+                "polish_passes" if payload.is_polish else "checkpoints")
+            stats[prefix + ("_ok" if result.ok else "_failed")] += 1
+            stats["notes_ops_applied" if payload.is_notes else "ops_applied"] += sum(
+                1 for item in result.op_results if item.ok)
+            return result
+
+    ordered = sorted(deepcopy(list(segments)), key=lambda seg: float(seg.get("end_s") or 0))
+    duration = max((float(seg.get("end_s") or 0) for seg in ordered), default=0.0)
+    scheduler = CheckpointScheduler(host, CountingAgent(), monotonic=lambda: now[0])
+    host.allow_agent_writes()
+    try:
+        agent.initialize(AgentConfig(
+            meeting_id=meeting_id, provider=provider, model=model, api_key=api_key,
+            system_prompt=build_system_prompt()), host)
+        if not agent.is_healthy():
+            raise RuntimeError("Meeting intelligence agent is offline")
+        with patch.object(direct_mod, "_CHECKPOINT_TIMEOUT_S",
+                          max(float(direct_mod._CHECKPOINT_TIMEOUT_S), checkpoint_timeout_s)):
+            cursor = 0
+            while True:
+                count = 0
+                while cursor < len(ordered) and float(ordered[cursor].get("end_s") or 0) <= now[0]:
+                    segment = ordered[cursor]
+                    host._segments[str(segment["id"])] = segment
+                    cursor += 1
+                    count += 1
+                scheduler.notify_segments(count)
+                scheduler.run_due()
+                stats["windows"] += 1
+                if now[0] >= duration:
+                    break
+                now[0] = min(duration, now[0] + window_s)
     finally:
+        scheduler.prepare_for_end()
         host.revoke_agent_writes()
-        try:
-            agent.shutdown()
-        except Exception:
-            logger.debug("Agent shutdown failed", exc_info=True)
+        agent.shutdown()
     snapshot = host.store.snapshot()
-    cards = snapshot.get("cards") or {}
-    stats["live_notes_blocks"] = len(
-        [i for i in (cards.get("live_notes") or [])
-         if isinstance(i, dict) and i.get("status") != "removed"],
-    )
-    logger.info(
-        "Live phase done: %s topic=%r notes_blocks=%d",
-        meeting_id,
-        ((snapshot.get("topic") or {}).get("current") or "")[:60],
-        stats["live_notes_blocks"],
-    )
-    return {"state": snapshot, "stats": stats}
+    stats["live_notes_blocks"] = len([
+        item for item in (snapshot.get("cards") or {}).get("live_notes", [])
+        if isinstance(item, dict) and item.get("status") != "removed"])
+    return {"state": snapshot, "segments": host.get_transcript(), "stats": stats,
+            "replay": {"scheduler": "production", "tick_s": window_s,
+                       "excludes": ["provider latency", "capture concurrency"]}}
 
 
 def build_redecode_id_map(
@@ -768,18 +699,15 @@ def _run_polish(
     else:
         blocks = [segments]
     last_error = ""
-    applied = False
     all_results: List[Any] = []
     for block in blocks:
         result = agent.checkpoint(
             _payload(host, block, is_consolidation=False, is_polish=True)
         )
         all_results.extend(result.op_results)
-        if result.ok:
-            applied = True
-        else:
+        if not result.ok:
             last_error = result.error or "polish failed"
-    if last_error and not applied:
+    if last_error:
         return (
             ConsolidationOutcome(status="failed", message=last_error),
             _op_stats(all_results),
@@ -868,23 +796,28 @@ def judge_packages(
     try:
         judgment = json.loads(content)
     except json.JSONDecodeError:
-        return {"winner": "tie", "rationale": content, "parse_error": True}
+        return {"winner": "unjudged", "rationale": content, "parse_error": True}
     return _normalize_judgment(judgment)
 
 
 def _normalize_judgment(judgment: Dict[str, Any]) -> Dict[str, Any]:
-    """Coerce common judge-schema deviations onto the expected shape."""
-    for side in ("legacy", "clean"):
-        scores = judgment.get(side)
-        if isinstance(scores, dict):
-            if "overall_record" not in scores and "overall_record_quality" in scores:
-                scores["overall_record"] = scores["overall_record_quality"]
-    if not any(
-        isinstance(judgment.get(side), dict)
-        for side in ("legacy", "clean")
-    ):
-        judgment.setdefault("parse_error", True)
-    return judgment
+    """Require both scored arms; malformed judgments are never ties."""
+    fields = ("transcript_usefulness", "topic_accuracy", "key_points_fidelity",
+              "decisions_actions_precision", "notes_and_timeline_quality", "overall_record")
+    if isinstance(judgment, dict):
+        for side in ("legacy", "clean"):
+            scores = judgment.get(side)
+            if isinstance(scores, dict) and "overall_record_quality" in scores:
+                scores.setdefault("overall_record", scores["overall_record_quality"])
+        valid = judgment.get("winner") in ("legacy", "clean", "tie") and all(
+            isinstance(judgment.get(side), dict) and all(
+                type(judgment[side].get(field)) in (int, float)
+                and 1 <= judgment[side][field] <= 5 for field in fields
+            ) for side in ("legacy", "clean")
+        )
+        if valid:
+            return judgment
+    return {"winner": "unjudged", "parse_error": True, "raw_judgment": judgment}
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -913,10 +846,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--live-window-s",
         type=float,
-        default=120.0,
+        default=1.0,
         help=(
-            "Meeting-seconds per simulated live checkpoint "
-            "(0 = one checkpoint over the whole meeting)"
+            "Virtual scheduler tick in seconds; default 1 matches production. "
+            "Larger values are a coarse-cadence ablation."
         ),
     )
     parser.add_argument(
@@ -940,8 +873,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
-    provider = config.MEETING_LLM_PROVIDER
-    model = "deepseek/deepseek-v4-flash-0731"
+    from services.settings import settings_manager, resolve_meeting_llm_model, resolve_meeting_llm_provider
+    settings = settings_manager.load_all_settings()
+    provider = resolve_meeting_llm_provider(settings)
+    model = resolve_meeting_llm_model(settings)
     api_key = find_provider_api_key(provider)
     if not api_key:
         print(f"No {provider} API key; cannot run the product judge.", file=sys.stderr)
@@ -957,7 +892,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "provider": provider,
         "model": model,
         "meetings": [],
-        "wins": {"legacy": 0, "clean": 0, "tie": 0},
+        "wins": {"legacy": 0, "clean": 0, "tie": 0, "unjudged": 0},
+        "failed": False,
     }
     for spec in meetings:
         result_path = args.results_dir / f"{spec.meeting_id}.json"
@@ -966,7 +902,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         raw = _load_result(result_path)
         draft = raw.get("draft_segments") or []
-        offline = raw.get("offline_segments") or draft
+        if not raw.get("run_offline", True) or "offline_segments" not in raw:
+            raise ValueError("Product comparison requires an enabled offline ASR arm")
+        offline = raw["offline_segments"]
         live = None
         if not args.no_live:
             print(
@@ -981,6 +919,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 checkpoint_timeout_s=args.polish_timeout,
             )
         initial_state = live["state"] if live else None
+        draft = live["segments"] if live else draft
         print(f"{spec.meeting_id}: legacy consolidation on {len(draft)} draft segments")
         legacy = run_product_pipeline(
             spec.meeting_id, draft, polish=False,
@@ -1014,10 +953,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=model,
             api_key=api_key,
         )
-        winner = str(judgment.get("winner") or "tie")
+        winner = str(judgment.get("winner") or "unjudged")
         if winner not in summary["wins"]:
-            winner = "tie"
+            winner = "unjudged"
         summary["wins"][winner] += 1
+        summary["failed"] |= winner == "unjudged" or any(
+            package.get("consolidation", {}).get("status") != "completed"
+            or (package.get("polish") is not None and package["polish"].get("status") != "completed")
+            for package in (legacy, clean))
+        summary["failed"] |= bool(live and any(
+            value for key, value in live["stats"].items() if key.endswith("_failed")))
         meeting_row = {
             "meeting_id": spec.meeting_id,
             "description": spec.description,
@@ -1044,7 +989,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     print(json.dumps(summary["wins"], indent=2))
-    return 0
+    return int(summary["failed"])
 
 
 if __name__ == "__main__":

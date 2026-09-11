@@ -1,0 +1,895 @@
+{
+  "schema": 1,
+  "date": "2026-09-11",
+  "hardware": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "python": "3.12.10",
+    "cpu_count": 16,
+    "gpu": "name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]\nNVIDIA GeForce RTX 2060, 610.74, 6144 MiB, 2676 MiB, 32 %"
+  },
+  "corpus": {
+    "selection": "30-second center of each of 10 installed AMI meetings; midpoint word selection",
+    "speech_seconds": 300,
+    "silence_seconds": 6,
+    "reference_words": 1007,
+    "clips": [
+      {
+        "id": "IN1001",
+        "group": "ami_conversation",
+        "audio_sha256": "47c81f4338723e170104996752b311ba0cae9289ffcdcbe396606d64bcf9a39a"
+      },
+      {
+        "id": "IN1002",
+        "group": "ami_conversation",
+        "audio_sha256": "a9d3ffb8352d1e9dcf7146cdf7dc06dfbacb3642ba0ce09a54ba2b127adc84ae"
+      },
+      {
+        "id": "IN1005",
+        "group": "ami_conversation",
+        "audio_sha256": "218de8f7245d35f10e9c5c0cc982fd8a5735251eb1559a9053c54af0dd5c4054"
+      },
+      {
+        "id": "IN1007",
+        "group": "ami_conversation",
+        "audio_sha256": "b66786a9b4d6b68822ffd1533300526862c9db62bf68c0e5a0d8453e045dacca"
+      },
+      {
+        "id": "IN1008",
+        "group": "ami_conversation",
+        "audio_sha256": "322d48896b07a50184f9994717bcab6cd175bd8894d0d37252db75c268fd9101"
+      },
+      {
+        "id": "IN1009",
+        "group": "ami_conversation",
+        "audio_sha256": "825130693a9d6d4d42ba904735d27c80705aca85d56fc5e62c6fca4bd3cdb0e1"
+      },
+      {
+        "id": "IN1012",
+        "group": "ami_conversation",
+        "audio_sha256": "1520f47111d65767ed886f81804c301d9fe387921d7acdba498653347d59d852"
+      },
+      {
+        "id": "IN1013",
+        "group": "ami_conversation",
+        "audio_sha256": "1f15764a3d97e8b86b14b83d76731792c05492429232de481dba3f6949f525c4"
+      },
+      {
+        "id": "IN1014",
+        "group": "ami_conversation",
+        "audio_sha256": "6c11aeef31485cf940042cb479d4140be9f0250e6b4d4815ce6f070046284842"
+      },
+      {
+        "id": "IN1016",
+        "group": "ami_conversation",
+        "audio_sha256": "8adfb7af86c6e25b375cd39f618cf157d97c5a490d2049e3e57f1db3297725ab"
+      },
+      {
+        "id": "silence",
+        "group": "silence",
+        "audio_sha256": "47b589098cc9e4b92774cd5b6a57ccca0713c02396bf755b2318f7e81cdc534e"
+      }
+    ]
+  },
+  "method": {
+    "window_seconds": 3,
+    "overlap_seconds": 0.75,
+    "repeats": 2,
+    "variant_order": [
+      [
+        "before",
+        "after"
+      ],
+      [
+        "after",
+        "before"
+      ]
+    ],
+    "preview": "Warmed sequential replay, simulated visibility; source and model identities below. No recorder queue or Qt timings.",
+    "final_asr": "Whole-file production transcribe; first clip warmup then one pass per model. Timing is descriptive, not a repeat performance estimate."
+  },
+  "preview": {
+    "provenance": {
+      "schema": 1,
+      "source": {
+        "benchmarks/__init__.py": "19f8eb30ff86f274cb96deb5c853f0ebe6d15a066cf168be2d221d4425f1305c",
+        "benchmarks/accuracy_benchmark.py": "e2295719aad5e0fda4c1d24ea8394e310790433f48439e4ee2e1fc8f4e3e39a1",
+        "benchmarks/live_preview.py": "dc868cca92d750532b60f6b72ad5bcf696fca061e3709f1fad92640c157fbb9b",
+        "benchmarks/meeting_mode/__init__.py": "dce10d7e96f96cca078df2ecf206533e11484f11455c166dc9918f30e146735d",
+        "benchmarks/meeting_mode/ami.py": "9e04717fc46703e5a281cc782f63393efddff6d29bb9c8026425b8f03d637b7b",
+        "benchmarks/meeting_mode/gemini_audio_eval.py": "1c4cc9fb4b58d41ef18dfb0180874f3e1e0713932369213d4099e8d16bcbb516",
+        "benchmarks/meeting_mode/gemini_audio_insights_eval.py": "60d84895ba07ef86076af2416d1fd3028e4b0c2c5e82f3a19135c9275dce0ddd",
+        "benchmarks/meeting_mode/live_agent_eval.py": "ecfa107dab2ac5e0541bc34fd328cbf00a333e811d42034925d28ae7080ea9b1",
+        "benchmarks/meeting_mode/metrics.py": "9f16c348fc5ee3c1cc26b9e6307297532232aec70e0e605d8ef5bb057fab02a2",
+        "benchmarks/meeting_mode/product_eval.py": "bb168fbca2c51a5ffd9de415a09d33b481c463db62468e2508925f80276b760d",
+        "benchmarks/meeting_mode/run.py": "1927b29532c3991ece0a28321f3b16718deeacba5ad14f9bf703fb608cd72813",
+        "benchmarks/model_benchmark.py": "bea7d5ae312d9d9a902987c55409bc4aba909156e97d9f31bded2179def44124",
+        "benchmarks/provenance.py": "7832b259a4615dccc5b32dbce6859d65204c915240ad5b42599abdaad44b6f3b",
+        "meeting/__init__.py": "68b1487aba26ff84ffb8db05f40ab62f17f42e5034099a303dca1046bd156008",
+        "meeting/agent/__init__.py": "357310a6f20fdf1a4077591dac8fa67b89e2fe1984bd66dbb127b5ffcc4c5bde",
+        "meeting/agent/base.py": "27e97dffbc20cb695eef9a084da3a3c810db9f60a9a7aad86925d26079862c57",
+        "meeting/agent/evidence.py": "ad9a234d8fe2d6819fd238e3927e537ab5e750415fead75a1ae282b7a6726e60",
+        "meeting/agent/opencode_sidecar.py": "51ae5ae6f0de896979ad17e11a293a7c22ff6769d9c8b7959f2e516ce697b257",
+        "meeting/agent/openrouter_direct.py": "1374f065e10f26637114e4134a4aa52f24856be9121b29fac3c317780f16cdc5",
+        "meeting/agent/pi_sidecar.py": "5817ee4e2e488ac58760a0e05b782187bb435cd3f6c4cf27e3316e3d7ce16098",
+        "meeting/agent/prompts.py": "ff9cb85fdd31b059f7c01255dd1d1a19c8a44b63f8b776e7d857b2a04dec3e95",
+        "meeting/agent/question_engine.py": "27cf9ae55d77a63bb168907571b6841225efa612b4b9fc4d1f28b2ba025ad2a7",
+        "meeting/agent/scheduler.py": "c58331a5cfec7afd7bfbf6b01b29dafc163b5af22e1cb5727b08e6a52efa5cbe",
+        "meeting/agent/sidecar.py": "151beb33ea41fd664e9e40abcdce78c1e8590f1c19c308f90eb1e4d0b764f37e",
+        "meeting/asr/__init__.py": "33b29012a16d07bae4cf1aeba8075325c4f130a3d32510cb1d48739a70f3a11a",
+        "meeting/asr/audio.py": "9512087733f299cb709d6b06cb9353a6c42b3553920e2f24e59e08a792bc1e40",
+        "meeting/asr/engine.py": "56cbfd548d6d9bf49eb0b9b5f0c93be91440907331841e5c66671b1fbbc615c6",
+        "meeting/asr/offline.py": "82d3ec0b45ed0bbeba0b0ab22474a433478d5f8f788b8831a76b3a2184f88c11",
+        "meeting/asr/preview.py": "e7b52e6e8d8a1d4be2d86b1a4aaf210a8eb38a94034cf538475b8968bf3ff19e",
+        "meeting/asr/revise.py": "c0517b76b3fc70fb1a3069fd898d62bcfd19d0a440be645a6394c4e8e66ed35a",
+        "meeting/audio_playback.py": "72175b33b5e52667253c29d2d4140d789b9fdeb6474ce95280d87ee70528a4b0",
+        "meeting/capture/__init__.py": "a2e4a730e807a9e6e7c65c7aaa233ff4e0a29f298be77fbbe80a5d7ea93ae67f",
+        "meeting/capture/devices.py": "f2e658b48570ccdf6cd7202bbfd00a626f94f1f33b61a344846cd656fab611fc",
+        "meeting/capture/linux_audio.py": "7abb5d37f8612b85577a2a3b23ea98b4d8809f72ea71335015a39f4bc66d90b4",
+        "meeting/capture/sck_stream.py": "00d1db2ccc9d03a9602da068b96cfe49a05750370f107a6f8500be7d2ddb4ed8",
+        "meeting/capture/sd_stream.py": "f569cfea633464098be28f69d500a5341d3bb53de8ff2d75fdab76db56a13d43",
+        "meeting/capture/soundcard_stream.py": "37ba5709727c7181704ea4f115aa64a6d23296514567b07d00194553b81ce02e",
+        "meeting/capture/spool.py": "94a156b80649ebc2bcfc7eb97810e68bc42cb37795b61dbf6c4096790dfb123b",
+        "meeting/clock.py": "9f4598db4da1e1fb3ee972b8f85dcf631e1a2a9d96e8f2cbdaa6b6251a5ddd12",
+        "meeting/content.py": "722e147ccad8c22f23ff4cb119c2896423ab4ca2bd4a1244f7c145e3d38dcc09",
+        "meeting/context_folder.py": "b13326bc5b36e7864b792f82bd353c9b6a38a41357e5db7591e921df323e2bb5",
+        "meeting/corrections.py": "b8a95acb537d7e5f3c07f83d7e9310f04efca2c84c67ed5e843252062e2762b9",
+        "meeting/dev_fixture.py": "31ef6621b303ec4c4d8dbbd8b4443f4de3fea537db078fb0b42980b315ee6104",
+        "meeting/diarize/__init__.py": "5a8b105a69b4a469e69e5d43431b71429db4a59bd8c82cd351b294466f0bc479",
+        "meeting/diarize/cloud_audio.py": "e96cee560cf07c6e690b1b3cf7d311881fda72d4c27bab8ae02e9ca661f463f5",
+        "meeting/diarize/cloud_pass.py": "bf129916c6abcefb027dd3dca252e9f14d8a69aa427e89ad68cae8a9494a9ba1",
+        "meeting/diarize/clustering.py": "e5f38bcf1fb22842b5a441c5adc6e900c416d796c56abad5be5f0ccef412b05d",
+        "meeting/diarize/embedder.py": "cabdbf9375090bc6c95e35c8c484d8d4694e84eab113cf64fef08ab75e05cd2d",
+        "meeting/diarize/fbank.py": "23d7ec0232e6a2b40692c0156017bbb8d7cc8284f2d2048956c9e0f169c3599e",
+        "meeting/engine.py": "029af2545d5c48a201e2cd28fde73f3e61fbb202e13ba9c2a717876a5d141b69",
+        "meeting/export/__init__.py": "97a6a0cd765852dd2372fcd69df70524dd655b57ee1a1b3f8f99a8814da53743",
+        "meeting/export/bulk.py": "485920c4bd1de79900b2eeed2c0c84cfd9bb4d6f1e7beb2bf9a93c560c070506",
+        "meeting/export/json_export.py": "fbbb8a215ea6cb69aff327642d3f9bf2fdabc21c582480f624aa65c41830b1a0",
+        "meeting/export/markdown.py": "f17167e0c12f54e75fc12ec9c5dc90149713fbb7231d4040afdb842c46e86dac",
+        "meeting/export/transcript_txt.py": "043791758a4e843c4169bab9d1a67bc6339323171d562cbf85bd2cd22851860d",
+        "meeting/finalization.py": "3c592ec4976c9af641788723cd6b4d3c2c1bb46670b2c018706e6878c3dec2f3",
+        "meeting/interfaces.py": "e0d619cc0025309f91eb34422e03ebcbfeb5f165c737211488f8f2110d8519da",
+        "meeting/persist/__init__.py": "650740a19de3ff93ad1066e1894aa8e8b67f991e65ed948f4c2395295966e410",
+        "meeting/persist/data_lifecycle.py": "1706c62b7eb1d0f01e6ad8b2c792e2a28831bb63e4bd3804e2031d26e59a4a78",
+        "meeting/persist/repository.py": "1a3e2059f45e0ad2d196e8796c80ed05a43b99c2e6107e0e4920b2da02861683",
+        "meeting/platform.py": "2ae8ebf15cd88e4da4ec98e41dba723c019facb756ce1e230740f7a7f0de7c15",
+        "meeting/recall.py": "6d6ceeac7928398a7599a5f62563d59d1e23ee220fa35f5fb8662c5afe662231",
+        "meeting/recovery.py": "9a071a7d8b4eabc8085ca62b13a9c4f9031d290ace5fdeca22bf00ad7dd6b331",
+        "meeting/refinalize.py": "fda09fd44e4604dd405121c69b1a9dd91299e0fda6db87d572e185c7a1e19e9e",
+        "meeting/reinsight.py": "1a91aed062643c84eb21a2a0bb93dba8cae8196d1567e4d444e172a38e6f6ad5",
+        "meeting/respeaker.py": "e63bdeb13d6121bbf097ac9b36da34533e1c0a81f6b4e337727f59de188e5cf0",
+        "meeting/state/__init__.py": "a31f33dadf3eb332febc42b47cdf3a31671d19d6bf7390c38238b350c45e8a1c",
+        "meeting/state/patches.py": "351481fcee5a3e84e3b571b8fd8f3a232d6369d79ea3b09436948712f98cfdf0",
+        "meeting/state/repair.py": "03a34cda8ab0795a3aab38c5d0425044f02b7c5c5b85bc365db34f0bc794fe01",
+        "meeting/state/schema.py": "9e7b2a0ecdf3fe9664f92cc2bf0bb30f1687ddc6e1fdc4a44b9a3cf06d74690c",
+        "meeting/state/segment_ops.py": "f091dfbc1bb4a309fd6dc6a12f4af65e8a19615ad982468491cc8203eb4316ac",
+        "meeting/state/store.py": "18a88e0772e07b53d60d9b0c9bb0306a78f5111f6d620fcf9ff719050649d316",
+        "meeting/stored.py": "03a0d7522f0523d62e32b70913e332beed64d4c0bcfc594ee8941fc3c131b969",
+        "meeting/time_utils.py": "014a156419d5cee54d0f3c3d6f4b72688aa7412c87d33e679b33c8228cb26d22",
+        "meeting/web/__init__.py": "fdfdc30befdb6c6680c9c7ddc960cf6cc1e35f3d92622d8a782b1b6ff7de95a9",
+        "meeting/web/api.py": "fad24bd5be3ad20dc382a716187fa3d6c0e299d76ae0e2e52c65fa07b250f39a",
+        "meeting/web/archive.py": "81562bfebcee753904a91a6e946bb82810dc02ecac0f60d2e631e4d0bf770c39",
+        "meeting/web/auth.py": "adf37d3330b9b399112362aa83cb5e418a08beab41c8738fbea767fea75d1096",
+        "meeting/web/server.py": "61d983f9fa50b94f3179b49bedb9405fced0a43895d8ab466bdbd38dfe5507ae",
+        "meeting/web/ws.py": "bfc24d6aa97b27f2535bee832e2c2b1a79c9806de15cd9b6b115647e66dd7dd4",
+        "transcriber/__init__.py": "f5c5c31f21d89cee15bb3c702c47e13c72cb0ce0fe686b1530172e1e6a386bc2",
+        "transcriber/base.py": "0b35857728b87439ab14ffd7e7bf5edb145978bdad15a1a4a9931409818a4110",
+        "transcriber/local_backend.py": "145221661262f23e498b4af1d6ff182cd8112a4af8fadbf40436f4cb6aac52f4",
+        "transcriber/openai_backend.py": "6791670ff2a66df62f5812a0351cc6d774b450b9a46c48b49a055cf09163a6ca",
+        "transcriber/optional_backend.py": "0d1cb3c22aec36dd9bf753eb537ae2e32966c0d18d8e8a9ad9a09b6fc05b4b12",
+        "services/__init__.py": "73e15c91d6720d53cd67066723c9d1de15478a25a2d877b194d1ecaa8356a723",
+        "services/_hotkey_carbon.py": "b6e50dff0488f9b34a3f300fa3045a6c6782a99a1394a257eeb92fec355aa821",
+        "services/_hotkey_common.py": "63dfe83b82d75647c40f3dfdb533a8185c27c5fb2faee77e114ed3cff0362d57",
+        "services/_hotkey_keyboard.py": "5a03e0d09d5203a1eb715f5d0cd9503f15e15a42f24bdc2e1dcad23770629d50",
+        "services/_hotkey_pynput.py": "381e438c3dcb0c7e3a25558341f83234decd1d8cb8c94be3bbba0bac5e95b0df",
+        "services/app_update.py": "39a4bf5ef2618a4542488593f599d82370bf5ac9f66d137eb7b4d5b51db96d01",
+        "services/app_update_apply.py": "487b91e7030df6bd7555dd6d8a9682f645a0e6030a59951a33efde2ac6451053",
+        "services/application_controller.py": "b275cb62ddf39fc998f93527ec69bff26f9b8c0c2b2feaef829372550640fe67",
+        "services/audio_processor.py": "f23f93f68c3705d6426327623afbd301239f3603bca6ec18be65676a7d5af891",
+        "services/batch_upload.py": "901cc69f810c623323a03bb17462c236fc9e7b6cefab5bff0b785774bbefca8c",
+        "services/component_catalog.py": "960076cb1dfe27ffe0400b9c0aed05dee858de8bc3791286d304fce6444bac14",
+        "services/component_leases.py": "d0b5548369bc604d9b17567d1e888769fbf19fb704b2c107c1979e0ba7ebcd4a",
+        "services/component_runtime.py": "988e683064e485fdf756d855cba1eb45b890e115d9fda7102b3a830627afa4e6",
+        "services/components.py": "d75d1e52705a8c1d2b6dd70243796d90db174196ae2d2e7fcabf1d25b83f1807",
+        "services/credentials.py": "d6bd64b2bbe9ca7ea91e90ba1dd92d08523af930cc6581bbe0b85aff129c4893",
+        "services/database.py": "b743eacc41b463bc3fdc50780c46b2e154e554eb30681dc3b3557fde717c75d0",
+        "services/format_utils.py": "060ba2b95ecb7b544f3ef2dba3bcc629272c9e5c6bbdc4b94cddcfd43d0cd8dd",
+        "services/hf_access.py": "c132b696cd435ea38125cf213d7a18dd63e0fcdc41e36387c819ec71f9c2f75f",
+        "services/history_export.py": "c3df2e7e7a7d8da353032bb0a46640847776e2d53f631ba990e5f243069ce81e",
+        "services/history_manager.py": "7462cd0ee5fccbc3de598869521ed015a1bbe61d2ced9f0c9697e7ac8ac55c48",
+        "services/hotkey_manager.py": "9510c3df1848a752dcc5e7180f9594ffaf017b4944e18546983a4a52fda23b7c",
+        "services/http_tls.py": "a0304a297652fc28e4333ae377efcc1eeb1f93db53bb2b044e37084f2b0339b5",
+        "services/linux_deps.py": "b8e310d414cecf05296f03b8bdff47a6305c6751af26cb1fa3e6145d145acddd",
+        "services/local_asr/__init__.py": "df205a5124bf1b5ca3e4ec1143bb0ab9ed3006b8fe839d2b4843914768d1928c",
+        "services/local_asr/audio.py": "e452fad775ca14c0322160d9d6f3771f547e1e877bbdb9bc5bf324f2454a7f49",
+        "services/local_asr/cache.py": "3b64b09162e359abceb20f1595f9452013f2487b3116a8a509431e198326bb2d",
+        "services/local_asr/catalog.py": "963291a411832510ff8f968f9a8df93f0c11fcbc29546ce982acc5be408ec2a2",
+        "services/local_asr/moonshine.py": "6ed8ed2763611b2f71357deb4f465243a1c0341462460c94bf14b4a9956a049f",
+        "services/local_asr/nvidia.py": "5c7d986335e93e3982dfe4107a9b9d09608af0ff070ca8d440d3c94bb67d442e",
+        "services/local_asr/process.py": "667d834f750711a0f8f5d368ede54ecb4ac4bcd2ecbf4c1f8517abc4d1a69ec5",
+        "services/local_asr/worker.py": "8b159c2523a51f2fbd888b7347df4032ca646328c626d06b19ae111634ccf9b2",
+        "services/model_catalog.py": "537a0e304e1374270d09d176b647c433e6ff3c6bf2aea6bceed7b77ee879a1d2",
+        "services/models.py": "d1d183d93a8ca6a94efebe98dbc825b2d80db4f4093a7080fa6897744edf19dc",
+        "services/opencode_catalog.py": "baf182b5a81e7abad23ae1407d6ae652fee5c6a5df397d693f9ac861c6ad2c61",
+        "services/opencode_component.py": "35de2e3f56e0f52998288a651fd575b836ae636527f247b8e46a57a8b0e4feae",
+        "services/recorder.py": "f60023fcf58268fa80474dc03eeb333f0bb3b7e3df793f9154321edc007d6003",
+        "services/runtime/__init__.py": "c9093da245782cd05398802ef7b9e9fcdabe0fa317a606371a7044864cf10eb9",
+        "services/runtime/hotkeys.py": "707a5586df2ace2b8f14318ac5035f48f6018b0289b6ed89b8329e19cab9afb7",
+        "services/runtime/meeting.py": "348711d1a11e237a962a6a37e1f8449665a805d1d0cad9d50e2833ffefae8fc5",
+        "services/runtime/streaming.py": "d83efa3598349df2c57aebfe23e3cce6292b952cb8e89596f423eb2f5517eaa1",
+        "services/runtime/transcription.py": "16d178e4081289ee7e7d5817e54250ef36d27786f0c8611523dae53ca8090d1f",
+        "services/settings.py": "3d059db07fd8de1d06169b580b59389757ce16c5d3f8bb6c9c8ad646bf016f25",
+        "services/setup_update.py": "0fa22ffaace41f1cfd7ee1cc9bd46b7784e9dedae936e565a1c4a849f6c4674f",
+        "services/streaming_transcriber.py": "1c66687b8bf6313a236f107aed61cd3ce251c82c653e8b2e2acad75c8b4bf921",
+        "services/text_generation.py": "df94dfcdf6fa0a6a928f7bbd9a9ac9405c6382c3161b5de3e21702699b922288",
+        "services/text_llm.py": "88bb522be6133322bdf62e7512d8141dce3b088e6856581fd16a9d2b88e96ac9",
+        "services/text_model_catalog.py": "de4c0524ce2fc74f195946fa0ab72197336dd5da362db7fe1c0f5c09653b9e2e",
+        "services/transcript_cleanup.py": "b6d4738be2ac6bfd8071643644f6816307886bec57d3a2c329a624f57c3b02c2",
+        "services/update_contract.py": "23da94f13fec5a454eef3443daa7651cfcb95ce1b765e272d2545114dac3a03b",
+        "services/update_data.py": "cdbe235abf0fc9b5ffd7c688b5f22101430b9713e41e29deccdc7ff721830deb",
+        "config.py": "f088adca5e0d5bcde36df4d2214eb4ebe242db03ec6efe9031cfe660747b1d19"
+      },
+      "cpu_count": 16,
+      "gpu": "NVIDIA GeForce RTX 2060, 610.74, 6144 MiB",
+      "inputs": {
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\manifest.json": "cf62d3c37c781f26e897eebced122b3e318fa4d3a254c1562099d04a4ec0f287",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\before_streaming_transcriber.py": "129d38aea939b860de39ad10671c23bae71f78f6cd1300547bb1d12afa9e2a96",
+        "D:\\coding\\whisper_local\\services\\streaming_transcriber.py": "1c66687b8bf6313a236f107aed61cd3ce251c82c653e8b2e2acad75c8b4bf921"
+      },
+      "settings": {},
+      "model": null,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+      "python": "3.12.10",
+      "packages": {
+        "faster-whisper": "1.2.1",
+        "ctranslate2": "4.8.0",
+        "numpy": "2.5.0",
+        "openai": "2.44.0"
+      }
+    },
+    "results": [
+      {
+        "model": "tiny.en",
+        "model_identity": {
+          "model": "tiny.en",
+          "actual_device": "cuda",
+          "compute_type": "float16",
+          "snapshot": "C:\\Users\\Big D\\.cache\\huggingface\\hub\\models--Systran--faster-whisper-tiny.en\\snapshots\\0d3d19a32d3338f10357c0889762bd8d64bbdeba",
+          "files": {
+            "config.json": "14b1b421a90349bc551b881461426b561a874049cb9e4c4864f2ca384f6a7cc5",
+            "model.bin": "1a5afae06a4db91c975c9a9d78be5cc110ee4ea022ad57d55492e4550e936b2a",
+            "tokenizer.json": "929c5252409436dce1b38a75d1abbcb5e132d170d8e324e4e04ed915fa2d22df",
+            "vocabulary.txt": "ff77588746d3a2595d32ab5b69ffd7b95ce2441ac57533cb66fc3eb575a115cf"
+          }
+        },
+        "runs": [
+          {
+            "variant": "before",
+            "repeat": 1,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 59.83139999443665,
+              "update_p95_ms": 87.1058000047924,
+              "first_text_median_s": 3.063190404303127,
+              "clips_without_live_text": 1,
+              "rtf": 0.022554314379436512,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.33413579998887144,
+              "live": {
+                "words": 1007,
+                "errors": 534,
+                "substitutions": 180,
+                "deletions": 259,
+                "insertions": 95,
+                "wer": 0.5302879841112215
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 470,
+                "substitutions": 195,
+                "deletions": 166,
+                "insertions": 109,
+                "wer": 0.4667328699106256
+              }
+            }
+          },
+          {
+            "variant": "after",
+            "repeat": 1,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 60.783699998864904,
+              "update_p95_ms": 94.76325000287034,
+              "first_text_median_s": 3.0641450542963455,
+              "clips_without_live_text": 1,
+              "rtf": 0.02468341405258447,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.6707566000113729,
+              "live": {
+                "words": 1007,
+                "errors": 504,
+                "substitutions": 165,
+                "deletions": 278,
+                "insertions": 61,
+                "wer": 0.5004965243296922
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 438,
+                "substitutions": 178,
+                "deletions": 187,
+                "insertions": 73,
+                "wer": 0.43495531281032773
+              }
+            }
+          },
+          {
+            "variant": "after",
+            "repeat": 2,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 59.94380000629462,
+              "update_p95_ms": 88.9436999859754,
+              "first_text_median_s": 3.063843954302824,
+              "clips_without_live_text": 1,
+              "rtf": 0.022369407843440783,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.34708259999752045,
+              "live": {
+                "words": 1007,
+                "errors": 502,
+                "substitutions": 166,
+                "deletions": 274,
+                "insertions": 62,
+                "wer": 0.4985104270109235
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 437,
+                "substitutions": 179,
+                "deletions": 184,
+                "insertions": 74,
+                "wer": 0.4339622641509434
+              }
+            }
+          },
+          {
+            "variant": "before",
+            "repeat": 2,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 66.73880000016652,
+              "update_p95_ms": 105.83965001569595,
+              "first_text_median_s": 3.064980504313239,
+              "clips_without_live_text": 1,
+              "rtf": 0.024857926470919185,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.44554720001178794,
+              "live": {
+                "words": 1007,
+                "errors": 537,
+                "substitutions": 178,
+                "deletions": 260,
+                "insertions": 99,
+                "wer": 0.5332671300893744
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 474,
+                "substitutions": 193,
+                "deletions": 168,
+                "insertions": 113,
+                "wer": 0.47070506454816285
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "parakeet-v3",
+        "model_identity": {
+          "model": "parakeet-v3",
+          "actual_device": "cuda",
+          "compute_type": null,
+          "artifacts": {
+            "repo": "nvidia/parakeet-tdt-0.6b-v3",
+            "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+            "files": [
+              {
+                "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+                "size_bytes": 713975456
+              }
+            ]
+          },
+          "installed": {
+            "repo": "nvidia/parakeet-tdt-0.6b-v3",
+            "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+            "files": [
+              {
+                "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+                "size_bytes": 713975456
+              }
+            ]
+          },
+          "runtime_files": {
+            "manifest.json": "f75475385f4879f7ec03a80c7628b52a30f18286c2ef64fce33081778a08652a"
+          }
+        },
+        "runs": [
+          {
+            "variant": "before",
+            "repeat": 1,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 56.38279998674989,
+              "update_p95_ms": 69.63610000093468,
+              "first_text_median_s": 3.0600180043176395,
+              "clips_without_live_text": 1,
+              "rtf": 0.018565356862477143,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.07370840001385659,
+              "live": {
+                "words": 1007,
+                "errors": 556,
+                "substitutions": 113,
+                "deletions": 386,
+                "insertions": 57,
+                "wer": 0.5521350546176763
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 496,
+                "substitutions": 122,
+                "deletions": 309,
+                "insertions": 65,
+                "wer": 0.4925521350546177
+              }
+            }
+          },
+          {
+            "variant": "after",
+            "repeat": 1,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 62.42860000929795,
+              "update_p95_ms": 74.69600001059007,
+              "first_text_median_s": 3.0602024043102163,
+              "clips_without_live_text": 1,
+              "rtf": 0.020107706209315214,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.08186279999790713,
+              "live": {
+                "words": 1007,
+                "errors": 526,
+                "substitutions": 99,
+                "deletions": 398,
+                "insertions": 29,
+                "wer": 0.522343594836147
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 464,
+                "substitutions": 102,
+                "deletions": 327,
+                "insertions": 35,
+                "wer": 0.46077457795431975
+              }
+            }
+          },
+          {
+            "variant": "after",
+            "repeat": 2,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 57.92439999640919,
+              "update_p95_ms": 71.88750000204891,
+              "first_text_median_s": 3.059108754320873,
+              "clips_without_live_text": 1,
+              "rtf": 0.01888312712434247,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.08710279999650083,
+              "live": {
+                "words": 1007,
+                "errors": 526,
+                "substitutions": 99,
+                "deletions": 398,
+                "insertions": 29,
+                "wer": 0.522343594836147
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 464,
+                "substitutions": 102,
+                "deletions": 327,
+                "insertions": 35,
+                "wer": 0.46077457795431975
+              }
+            }
+          },
+          {
+            "variant": "before",
+            "repeat": 2,
+            "summary": {
+              "clips": 11,
+              "audio_s": 306.0,
+              "calls": 91,
+              "update_median_ms": 58.153599995421246,
+              "update_p95_ms": 68.130800005747,
+              "first_text_median_s": 3.0592979543063437,
+              "clips_without_live_text": 1,
+              "rtf": 0.018662199999846432,
+              "update_deadline_misses": 0,
+              "max_backlog_s": 0.07752869999967515,
+              "live": {
+                "words": 1007,
+                "errors": 556,
+                "substitutions": 113,
+                "deletions": 386,
+                "insertions": 57,
+                "wer": 0.5521350546176763
+              },
+              "drained": {
+                "words": 1007,
+                "errors": 496,
+                "substitutions": 122,
+                "deletions": 309,
+                "insertions": 65,
+                "wer": 0.4925521350546177
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "final_asr": {
+    "provenance": {
+      "schema": 1,
+      "source": {
+        "benchmarks/__init__.py": "19f8eb30ff86f274cb96deb5c853f0ebe6d15a066cf168be2d221d4425f1305c",
+        "benchmarks/accuracy_benchmark.py": "e2295719aad5e0fda4c1d24ea8394e310790433f48439e4ee2e1fc8f4e3e39a1",
+        "benchmarks/live_preview.py": "dc868cca92d750532b60f6b72ad5bcf696fca061e3709f1fad92640c157fbb9b",
+        "benchmarks/meeting_mode/__init__.py": "dce10d7e96f96cca078df2ecf206533e11484f11455c166dc9918f30e146735d",
+        "benchmarks/meeting_mode/ami.py": "9e04717fc46703e5a281cc782f63393efddff6d29bb9c8026425b8f03d637b7b",
+        "benchmarks/meeting_mode/gemini_audio_eval.py": "1c4cc9fb4b58d41ef18dfb0180874f3e1e0713932369213d4099e8d16bcbb516",
+        "benchmarks/meeting_mode/gemini_audio_insights_eval.py": "60d84895ba07ef86076af2416d1fd3028e4b0c2c5e82f3a19135c9275dce0ddd",
+        "benchmarks/meeting_mode/live_agent_eval.py": "ecfa107dab2ac5e0541bc34fd328cbf00a333e811d42034925d28ae7080ea9b1",
+        "benchmarks/meeting_mode/metrics.py": "9f16c348fc5ee3c1cc26b9e6307297532232aec70e0e605d8ef5bb057fab02a2",
+        "benchmarks/meeting_mode/product_eval.py": "bb168fbca2c51a5ffd9de415a09d33b481c463db62468e2508925f80276b760d",
+        "benchmarks/meeting_mode/run.py": "1927b29532c3991ece0a28321f3b16718deeacba5ad14f9bf703fb608cd72813",
+        "benchmarks/model_benchmark.py": "bea7d5ae312d9d9a902987c55409bc4aba909156e97d9f31bded2179def44124",
+        "benchmarks/provenance.py": "7832b259a4615dccc5b32dbce6859d65204c915240ad5b42599abdaad44b6f3b",
+        "meeting/__init__.py": "68b1487aba26ff84ffb8db05f40ab62f17f42e5034099a303dca1046bd156008",
+        "meeting/agent/__init__.py": "357310a6f20fdf1a4077591dac8fa67b89e2fe1984bd66dbb127b5ffcc4c5bde",
+        "meeting/agent/base.py": "27e97dffbc20cb695eef9a084da3a3c810db9f60a9a7aad86925d26079862c57",
+        "meeting/agent/evidence.py": "ad9a234d8fe2d6819fd238e3927e537ab5e750415fead75a1ae282b7a6726e60",
+        "meeting/agent/opencode_sidecar.py": "51ae5ae6f0de896979ad17e11a293a7c22ff6769d9c8b7959f2e516ce697b257",
+        "meeting/agent/openrouter_direct.py": "1374f065e10f26637114e4134a4aa52f24856be9121b29fac3c317780f16cdc5",
+        "meeting/agent/pi_sidecar.py": "5817ee4e2e488ac58760a0e05b782187bb435cd3f6c4cf27e3316e3d7ce16098",
+        "meeting/agent/prompts.py": "ff9cb85fdd31b059f7c01255dd1d1a19c8a44b63f8b776e7d857b2a04dec3e95",
+        "meeting/agent/question_engine.py": "27cf9ae55d77a63bb168907571b6841225efa612b4b9fc4d1f28b2ba025ad2a7",
+        "meeting/agent/scheduler.py": "c58331a5cfec7afd7bfbf6b01b29dafc163b5af22e1cb5727b08e6a52efa5cbe",
+        "meeting/agent/sidecar.py": "151beb33ea41fd664e9e40abcdce78c1e8590f1c19c308f90eb1e4d0b764f37e",
+        "meeting/asr/__init__.py": "33b29012a16d07bae4cf1aeba8075325c4f130a3d32510cb1d48739a70f3a11a",
+        "meeting/asr/audio.py": "9512087733f299cb709d6b06cb9353a6c42b3553920e2f24e59e08a792bc1e40",
+        "meeting/asr/engine.py": "56cbfd548d6d9bf49eb0b9b5f0c93be91440907331841e5c66671b1fbbc615c6",
+        "meeting/asr/offline.py": "82d3ec0b45ed0bbeba0b0ab22474a433478d5f8f788b8831a76b3a2184f88c11",
+        "meeting/asr/preview.py": "e7b52e6e8d8a1d4be2d86b1a4aaf210a8eb38a94034cf538475b8968bf3ff19e",
+        "meeting/asr/revise.py": "c0517b76b3fc70fb1a3069fd898d62bcfd19d0a440be645a6394c4e8e66ed35a",
+        "meeting/audio_playback.py": "72175b33b5e52667253c29d2d4140d789b9fdeb6474ce95280d87ee70528a4b0",
+        "meeting/capture/__init__.py": "a2e4a730e807a9e6e7c65c7aaa233ff4e0a29f298be77fbbe80a5d7ea93ae67f",
+        "meeting/capture/devices.py": "f2e658b48570ccdf6cd7202bbfd00a626f94f1f33b61a344846cd656fab611fc",
+        "meeting/capture/linux_audio.py": "7abb5d37f8612b85577a2a3b23ea98b4d8809f72ea71335015a39f4bc66d90b4",
+        "meeting/capture/sck_stream.py": "00d1db2ccc9d03a9602da068b96cfe49a05750370f107a6f8500be7d2ddb4ed8",
+        "meeting/capture/sd_stream.py": "f569cfea633464098be28f69d500a5341d3bb53de8ff2d75fdab76db56a13d43",
+        "meeting/capture/soundcard_stream.py": "37ba5709727c7181704ea4f115aa64a6d23296514567b07d00194553b81ce02e",
+        "meeting/capture/spool.py": "94a156b80649ebc2bcfc7eb97810e68bc42cb37795b61dbf6c4096790dfb123b",
+        "meeting/clock.py": "9f4598db4da1e1fb3ee972b8f85dcf631e1a2a9d96e8f2cbdaa6b6251a5ddd12",
+        "meeting/content.py": "722e147ccad8c22f23ff4cb119c2896423ab4ca2bd4a1244f7c145e3d38dcc09",
+        "meeting/context_folder.py": "b13326bc5b36e7864b792f82bd353c9b6a38a41357e5db7591e921df323e2bb5",
+        "meeting/corrections.py": "b8a95acb537d7e5f3c07f83d7e9310f04efca2c84c67ed5e843252062e2762b9",
+        "meeting/dev_fixture.py": "31ef6621b303ec4c4d8dbbd8b4443f4de3fea537db078fb0b42980b315ee6104",
+        "meeting/diarize/__init__.py": "5a8b105a69b4a469e69e5d43431b71429db4a59bd8c82cd351b294466f0bc479",
+        "meeting/diarize/cloud_audio.py": "e96cee560cf07c6e690b1b3cf7d311881fda72d4c27bab8ae02e9ca661f463f5",
+        "meeting/diarize/cloud_pass.py": "bf129916c6abcefb027dd3dca252e9f14d8a69aa427e89ad68cae8a9494a9ba1",
+        "meeting/diarize/clustering.py": "e5f38bcf1fb22842b5a441c5adc6e900c416d796c56abad5be5f0ccef412b05d",
+        "meeting/diarize/embedder.py": "cabdbf9375090bc6c95e35c8c484d8d4694e84eab113cf64fef08ab75e05cd2d",
+        "meeting/diarize/fbank.py": "23d7ec0232e6a2b40692c0156017bbb8d7cc8284f2d2048956c9e0f169c3599e",
+        "meeting/engine.py": "029af2545d5c48a201e2cd28fde73f3e61fbb202e13ba9c2a717876a5d141b69",
+        "meeting/export/__init__.py": "97a6a0cd765852dd2372fcd69df70524dd655b57ee1a1b3f8f99a8814da53743",
+        "meeting/export/bulk.py": "485920c4bd1de79900b2eeed2c0c84cfd9bb4d6f1e7beb2bf9a93c560c070506",
+        "meeting/export/json_export.py": "fbbb8a215ea6cb69aff327642d3f9bf2fdabc21c582480f624aa65c41830b1a0",
+        "meeting/export/markdown.py": "f17167e0c12f54e75fc12ec9c5dc90149713fbb7231d4040afdb842c46e86dac",
+        "meeting/export/transcript_txt.py": "043791758a4e843c4169bab9d1a67bc6339323171d562cbf85bd2cd22851860d",
+        "meeting/finalization.py": "3c592ec4976c9af641788723cd6b4d3c2c1bb46670b2c018706e6878c3dec2f3",
+        "meeting/interfaces.py": "e0d619cc0025309f91eb34422e03ebcbfeb5f165c737211488f8f2110d8519da",
+        "meeting/persist/__init__.py": "650740a19de3ff93ad1066e1894aa8e8b67f991e65ed948f4c2395295966e410",
+        "meeting/persist/data_lifecycle.py": "1706c62b7eb1d0f01e6ad8b2c792e2a28831bb63e4bd3804e2031d26e59a4a78",
+        "meeting/persist/repository.py": "1a3e2059f45e0ad2d196e8796c80ed05a43b99c2e6107e0e4920b2da02861683",
+        "meeting/platform.py": "2ae8ebf15cd88e4da4ec98e41dba723c019facb756ce1e230740f7a7f0de7c15",
+        "meeting/recall.py": "6d6ceeac7928398a7599a5f62563d59d1e23ee220fa35f5fb8662c5afe662231",
+        "meeting/recovery.py": "9a071a7d8b4eabc8085ca62b13a9c4f9031d290ace5fdeca22bf00ad7dd6b331",
+        "meeting/refinalize.py": "fda09fd44e4604dd405121c69b1a9dd91299e0fda6db87d572e185c7a1e19e9e",
+        "meeting/reinsight.py": "1a91aed062643c84eb21a2a0bb93dba8cae8196d1567e4d444e172a38e6f6ad5",
+        "meeting/respeaker.py": "e63bdeb13d6121bbf097ac9b36da34533e1c0a81f6b4e337727f59de188e5cf0",
+        "meeting/state/__init__.py": "a31f33dadf3eb332febc42b47cdf3a31671d19d6bf7390c38238b350c45e8a1c",
+        "meeting/state/patches.py": "351481fcee5a3e84e3b571b8fd8f3a232d6369d79ea3b09436948712f98cfdf0",
+        "meeting/state/repair.py": "03a34cda8ab0795a3aab38c5d0425044f02b7c5c5b85bc365db34f0bc794fe01",
+        "meeting/state/schema.py": "9e7b2a0ecdf3fe9664f92cc2bf0bb30f1687ddc6e1fdc4a44b9a3cf06d74690c",
+        "meeting/state/segment_ops.py": "f091dfbc1bb4a309fd6dc6a12f4af65e8a19615ad982468491cc8203eb4316ac",
+        "meeting/state/store.py": "18a88e0772e07b53d60d9b0c9bb0306a78f5111f6d620fcf9ff719050649d316",
+        "meeting/stored.py": "03a0d7522f0523d62e32b70913e332beed64d4c0bcfc594ee8941fc3c131b969",
+        "meeting/time_utils.py": "014a156419d5cee54d0f3c3d6f4b72688aa7412c87d33e679b33c8228cb26d22",
+        "meeting/web/__init__.py": "fdfdc30befdb6c6680c9c7ddc960cf6cc1e35f3d92622d8a782b1b6ff7de95a9",
+        "meeting/web/api.py": "fad24bd5be3ad20dc382a716187fa3d6c0e299d76ae0e2e52c65fa07b250f39a",
+        "meeting/web/archive.py": "81562bfebcee753904a91a6e946bb82810dc02ecac0f60d2e631e4d0bf770c39",
+        "meeting/web/auth.py": "adf37d3330b9b399112362aa83cb5e418a08beab41c8738fbea767fea75d1096",
+        "meeting/web/server.py": "61d983f9fa50b94f3179b49bedb9405fced0a43895d8ab466bdbd38dfe5507ae",
+        "meeting/web/ws.py": "bfc24d6aa97b27f2535bee832e2c2b1a79c9806de15cd9b6b115647e66dd7dd4",
+        "transcriber/__init__.py": "f5c5c31f21d89cee15bb3c702c47e13c72cb0ce0fe686b1530172e1e6a386bc2",
+        "transcriber/base.py": "0b35857728b87439ab14ffd7e7bf5edb145978bdad15a1a4a9931409818a4110",
+        "transcriber/local_backend.py": "145221661262f23e498b4af1d6ff182cd8112a4af8fadbf40436f4cb6aac52f4",
+        "transcriber/openai_backend.py": "6791670ff2a66df62f5812a0351cc6d774b450b9a46c48b49a055cf09163a6ca",
+        "transcriber/optional_backend.py": "0d1cb3c22aec36dd9bf753eb537ae2e32966c0d18d8e8a9ad9a09b6fc05b4b12",
+        "services/__init__.py": "73e15c91d6720d53cd67066723c9d1de15478a25a2d877b194d1ecaa8356a723",
+        "services/_hotkey_carbon.py": "b6e50dff0488f9b34a3f300fa3045a6c6782a99a1394a257eeb92fec355aa821",
+        "services/_hotkey_common.py": "63dfe83b82d75647c40f3dfdb533a8185c27c5fb2faee77e114ed3cff0362d57",
+        "services/_hotkey_keyboard.py": "5a03e0d09d5203a1eb715f5d0cd9503f15e15a42f24bdc2e1dcad23770629d50",
+        "services/_hotkey_pynput.py": "381e438c3dcb0c7e3a25558341f83234decd1d8cb8c94be3bbba0bac5e95b0df",
+        "services/app_update.py": "39a4bf5ef2618a4542488593f599d82370bf5ac9f66d137eb7b4d5b51db96d01",
+        "services/app_update_apply.py": "487b91e7030df6bd7555dd6d8a9682f645a0e6030a59951a33efde2ac6451053",
+        "services/application_controller.py": "b275cb62ddf39fc998f93527ec69bff26f9b8c0c2b2feaef829372550640fe67",
+        "services/audio_processor.py": "f23f93f68c3705d6426327623afbd301239f3603bca6ec18be65676a7d5af891",
+        "services/batch_upload.py": "901cc69f810c623323a03bb17462c236fc9e7b6cefab5bff0b785774bbefca8c",
+        "services/component_catalog.py": "960076cb1dfe27ffe0400b9c0aed05dee858de8bc3791286d304fce6444bac14",
+        "services/component_leases.py": "d0b5548369bc604d9b17567d1e888769fbf19fb704b2c107c1979e0ba7ebcd4a",
+        "services/component_runtime.py": "988e683064e485fdf756d855cba1eb45b890e115d9fda7102b3a830627afa4e6",
+        "services/components.py": "d75d1e52705a8c1d2b6dd70243796d90db174196ae2d2e7fcabf1d25b83f1807",
+        "services/credentials.py": "d6bd64b2bbe9ca7ea91e90ba1dd92d08523af930cc6581bbe0b85aff129c4893",
+        "services/database.py": "b743eacc41b463bc3fdc50780c46b2e154e554eb30681dc3b3557fde717c75d0",
+        "services/format_utils.py": "060ba2b95ecb7b544f3ef2dba3bcc629272c9e5c6bbdc4b94cddcfd43d0cd8dd",
+        "services/hf_access.py": "c132b696cd435ea38125cf213d7a18dd63e0fcdc41e36387c819ec71f9c2f75f",
+        "services/history_export.py": "c3df2e7e7a7d8da353032bb0a46640847776e2d53f631ba990e5f243069ce81e",
+        "services/history_manager.py": "7462cd0ee5fccbc3de598869521ed015a1bbe61d2ced9f0c9697e7ac8ac55c48",
+        "services/hotkey_manager.py": "9510c3df1848a752dcc5e7180f9594ffaf017b4944e18546983a4a52fda23b7c",
+        "services/http_tls.py": "a0304a297652fc28e4333ae377efcc1eeb1f93db53bb2b044e37084f2b0339b5",
+        "services/linux_deps.py": "b8e310d414cecf05296f03b8bdff47a6305c6751af26cb1fa3e6145d145acddd",
+        "services/local_asr/__init__.py": "df205a5124bf1b5ca3e4ec1143bb0ab9ed3006b8fe839d2b4843914768d1928c",
+        "services/local_asr/audio.py": "e452fad775ca14c0322160d9d6f3771f547e1e877bbdb9bc5bf324f2454a7f49",
+        "services/local_asr/cache.py": "3b64b09162e359abceb20f1595f9452013f2487b3116a8a509431e198326bb2d",
+        "services/local_asr/catalog.py": "963291a411832510ff8f968f9a8df93f0c11fcbc29546ce982acc5be408ec2a2",
+        "services/local_asr/moonshine.py": "6ed8ed2763611b2f71357deb4f465243a1c0341462460c94bf14b4a9956a049f",
+        "services/local_asr/nvidia.py": "5c7d986335e93e3982dfe4107a9b9d09608af0ff070ca8d440d3c94bb67d442e",
+        "services/local_asr/process.py": "667d834f750711a0f8f5d368ede54ecb4ac4bcd2ecbf4c1f8517abc4d1a69ec5",
+        "services/local_asr/worker.py": "8b159c2523a51f2fbd888b7347df4032ca646328c626d06b19ae111634ccf9b2",
+        "services/model_catalog.py": "537a0e304e1374270d09d176b647c433e6ff3c6bf2aea6bceed7b77ee879a1d2",
+        "services/models.py": "d1d183d93a8ca6a94efebe98dbc825b2d80db4f4093a7080fa6897744edf19dc",
+        "services/opencode_catalog.py": "baf182b5a81e7abad23ae1407d6ae652fee5c6a5df397d693f9ac861c6ad2c61",
+        "services/opencode_component.py": "35de2e3f56e0f52998288a651fd575b836ae636527f247b8e46a57a8b0e4feae",
+        "services/recorder.py": "f60023fcf58268fa80474dc03eeb333f0bb3b7e3df793f9154321edc007d6003",
+        "services/runtime/__init__.py": "c9093da245782cd05398802ef7b9e9fcdabe0fa317a606371a7044864cf10eb9",
+        "services/runtime/hotkeys.py": "707a5586df2ace2b8f14318ac5035f48f6018b0289b6ed89b8329e19cab9afb7",
+        "services/runtime/meeting.py": "348711d1a11e237a962a6a37e1f8449665a805d1d0cad9d50e2833ffefae8fc5",
+        "services/runtime/streaming.py": "d83efa3598349df2c57aebfe23e3cce6292b952cb8e89596f423eb2f5517eaa1",
+        "services/runtime/transcription.py": "16d178e4081289ee7e7d5817e54250ef36d27786f0c8611523dae53ca8090d1f",
+        "services/settings.py": "3d059db07fd8de1d06169b580b59389757ce16c5d3f8bb6c9c8ad646bf016f25",
+        "services/setup_update.py": "0fa22ffaace41f1cfd7ee1cc9bd46b7784e9dedae936e565a1c4a849f6c4674f",
+        "services/streaming_transcriber.py": "1c66687b8bf6313a236f107aed61cd3ce251c82c653e8b2e2acad75c8b4bf921",
+        "services/text_generation.py": "df94dfcdf6fa0a6a928f7bbd9a9ac9405c6382c3161b5de3e21702699b922288",
+        "services/text_llm.py": "88bb522be6133322bdf62e7512d8141dce3b088e6856581fd16a9d2b88e96ac9",
+        "services/text_model_catalog.py": "de4c0524ce2fc74f195946fa0ab72197336dd5da362db7fe1c0f5c09653b9e2e",
+        "services/transcript_cleanup.py": "b6d4738be2ac6bfd8071643644f6816307886bec57d3a2c329a624f57c3b02c2",
+        "services/update_contract.py": "23da94f13fec5a454eef3443daa7651cfcb95ce1b765e272d2545114dac3a03b",
+        "services/update_data.py": "cdbe235abf0fc9b5ffd7c688b5f22101430b9713e41e29deccdc7ff721830deb",
+        "config.py": "f088adca5e0d5bcde36df4d2214eb4ebe242db03ec6efe9031cfe660747b1d19"
+      },
+      "cpu_count": 16,
+      "gpu": "NVIDIA GeForce RTX 2060, 610.74, 6144 MiB",
+      "inputs": {
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\manifest.json": "cf62d3c37c781f26e897eebced122b3e318fa4d3a254c1562099d04a4ec0f287",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1001.wav": "47c81f4338723e170104996752b311ba0cae9289ffcdcbe396606d64bcf9a39a",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1002.wav": "a9d3ffb8352d1e9dcf7146cdf7dc06dfbacb3642ba0ce09a54ba2b127adc84ae",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1005.wav": "218de8f7245d35f10e9c5c0cc982fd8a5735251eb1559a9053c54af0dd5c4054",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1007.wav": "b66786a9b4d6b68822ffd1533300526862c9db62bf68c0e5a0d8453e045dacca",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1008.wav": "322d48896b07a50184f9994717bcab6cd175bd8894d0d37252db75c268fd9101",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1009.wav": "825130693a9d6d4d42ba904735d27c80705aca85d56fc5e62c6fca4bd3cdb0e1",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1012.wav": "1520f47111d65767ed886f81804c301d9fe387921d7acdba498653347d59d852",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1013.wav": "1f15764a3d97e8b86b14b83d76731792c05492429232de481dba3f6949f525c4",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1014.wav": "6c11aeef31485cf940042cb479d4140be9f0250e6b4d4815ce6f070046284842",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\IN1016.wav": "8adfb7af86c6e25b375cd39f618cf157d97c5a490d2049e3e57f1db3297725ab",
+        "D:\\coding\\whisper_local\\.tmp\\preview-optimization\\corpus\\silence.wav": "47b589098cc9e4b92774cd5b6a57ccca0713c02396bf755b2318f7e81cdc534e"
+      },
+      "settings": {},
+      "model": null,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+      "python": "3.12.10",
+      "packages": {
+        "faster-whisper": "1.2.1",
+        "ctranslate2": "4.8.0",
+        "numpy": "2.5.0",
+        "openai": "2.44.0"
+      }
+    },
+    "results": [
+      {
+        "model": "turbo",
+        "requested_device": "cuda",
+        "groups": {
+          "ami_conversation": {
+            "words": 1007,
+            "errors": 390,
+            "substitutions": 198,
+            "deletions": 176,
+            "insertions": 16,
+            "decode_s": 17.608839799970156,
+            "audio_s": 300.0,
+            "normalized_wer": 0.3872889771598808,
+            "real_time_factor": 0.05869613266656719
+          },
+          "silence": {
+            "words": 0,
+            "errors": 0,
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "decode_s": 0.46713309999904595,
+            "audio_s": 6.0,
+            "normalized_wer": null,
+            "real_time_factor": 0.07785551666650765
+          }
+        },
+        "load_s": 2.619770099991001,
+        "actual_device": "cuda",
+        "model_identity": {
+          "model": "turbo",
+          "actual_device": "cuda",
+          "compute_type": "float16",
+          "snapshot": "C:\\Users\\Big D\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "files": {
+            "config.json": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+            "model.bin": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+            "preprocessor_config.json": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+            "tokenizer.json": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+            "vocabulary.json": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1"
+          }
+        },
+        "aggregate": {
+          "words": 1007,
+          "errors": 390,
+          "substitutions": 198,
+          "deletions": 176,
+          "insertions": 16,
+          "decode_s": 18.0759728999692,
+          "audio_s": 306.0,
+          "normalized_wer": 0.3872889771598808,
+          "real_time_factor": 0.059071806862644446
+        }
+      },
+      {
+        "model": "parakeet-v3",
+        "requested_device": "cuda",
+        "groups": {
+          "ami_conversation": {
+            "words": 1007,
+            "errors": 244,
+            "substitutions": 69,
+            "deletions": 158,
+            "insertions": 17,
+            "decode_s": 3.262205900042318,
+            "audio_s": 300.0,
+            "normalized_wer": 0.2423038728897716,
+            "real_time_factor": 0.010874019666807726
+          },
+          "silence": {
+            "words": 0,
+            "errors": 0,
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "decode_s": 0.006505499972263351,
+            "audio_s": 6.0,
+            "normalized_wer": null,
+            "real_time_factor": 0.001084249995377225
+          }
+        },
+        "load_s": 0.18242300002020784,
+        "actual_device": "cuda",
+        "model_identity": {
+          "model": "parakeet-v3",
+          "actual_device": "cuda",
+          "compute_type": null,
+          "artifacts": {
+            "repo": "nvidia/parakeet-tdt-0.6b-v3",
+            "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+            "files": [
+              {
+                "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+                "size_bytes": 713975456
+              }
+            ]
+          },
+          "installed": {
+            "repo": "nvidia/parakeet-tdt-0.6b-v3",
+            "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+            "files": [
+              {
+                "name": "parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
+                "sha256": "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+                "size_bytes": 713975456
+              }
+            ]
+          },
+          "runtime_files": {
+            "manifest.json": "f75475385f4879f7ec03a80c7628b52a30f18286c2ef64fce33081778a08652a"
+          }
+        },
+        "aggregate": {
+          "words": 1007,
+          "errors": 244,
+          "substitutions": 69,
+          "deletions": 158,
+          "insertions": 17,
+          "decode_s": 3.268711400014581,
+          "audio_s": 306.0,
+          "normalized_wer": 0.2423038728897716,
+          "real_time_factor": 0.010682063398740461
+        }
+      }
+    ]
+  },
+  "threaded_smoke": [
+    {
+      "model": "tiny.en",
+      "mode": "window",
+      "audio_s": 2.7,
+      "stop_s": 0.05639630000223406,
+      "text": "on the DVD so that there are some other stuff.",
+      "updates": 1,
+      "worker_finished": true,
+      "native_session_closed": true
+    },
+    {
+      "model": "parakeet-v3",
+      "mode": "window",
+      "audio_s": 2.7,
+      "stop_s": 0.04560670000500977,
+      "text": "On the D V D I saw that there are some other stuff.",
+      "updates": 1,
+      "worker_finished": true,
+      "native_session_closed": true
+    },
+    {
+      "model": "nemotron-3.5",
+      "mode": "native",
+      "audio_s": 2.7,
+      "stop_s": 0.37995100000989623,
+      "text": "On DVDA so that there are some other stuff",
+      "updates": 3,
+      "worker_finished": true,
+      "native_session_closed": true
+    }
+  ]
+}

@@ -144,7 +144,12 @@ def main():
             "explicit_note_request_without_speech",
             response.ok
             and any(x.ok for x in response.op_results)
-            and ("- " in notes or "•" in notes),
+            and ("- " in notes or "•" in notes)
+            and "500" in notes and "5000" not in notes
+            and "Maia" in notes and "Maya" not in notes
+            and "Friday" in notes
+            and "vendor" in notes.lower()
+            and any(term in notes.lower() for term in ("pending", "not chosen", "undecided", "not selected", "no vendor", "unselected")),
             host,
             time.monotonic() - start,
         )

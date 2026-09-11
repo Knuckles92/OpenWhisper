@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import re
 import statistics
 import sys
 import threading
@@ -22,16 +21,12 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+from benchmarks.meeting_mode.metrics import score_text
+from benchmarks.provenance import identity, model_identity
+
+
 def word_error_rate(reference, hypothesis):
-    ref = re.findall(r"\w+", reference.lower())
-    hyp = re.findall(r"\w+", hypothesis.lower())
-    row = list(range(len(hyp) + 1))
-    for i, expected in enumerate(ref, 1):
-        next_row = [i]
-        for j, actual in enumerate(hyp, 1):
-            next_row.append(min(next_row[-1] + 1, row[j] + 1, row[j-1] + (expected != actual)))
-        row = next_row
-    return row[-1] / max(1, len(ref))
+    return score_text(reference, hypothesis)["wer"]
 
 
 def run(args):
@@ -47,15 +42,21 @@ def run(args):
     os.environ["HF_HUB_OFFLINE"] = "1"
     audio = decode_audio(str(args.audio), sampling_rate=16000)
     duration = len(audio) / 16000
+    if duration <= 0 or args.repeats < 1:
+        raise ValueError("Audio duration and repeat count must be positive")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     reference = args.reference.read_text(encoding="utf-8-sig") if args.reference else None
     report = dict(platform=platform.platform(), python=platform.python_version(),
-                  duration_s=duration, repeats=args.repeats, results=[])
+                  duration_s=duration, repeats=args.repeats, results=[],
+                  provenance=identity(inputs=[args.audio, *([args.reference] if args.reference else [])]))
     matrix = [("base", "cpu"), ("turbo", "cuda")]
     matrix += [(key, device) for key in MODELS for device in
                (("cpu",) if MODELS[key].backend == "moonshine" else ("cpu", "cuda"))]
     if args.models:
         matrix = [(key, dev) for key, dev in matrix if key in args.models.split(",")]
 
+    if not matrix or (args.models and set(args.models.split(",")) - {key for key, _ in matrix}):
+        raise ValueError("No matching models or unknown model selection")
     with ExitStack() as context:
         if args.test_root:
             root = args.test_root.resolve()
@@ -95,6 +96,7 @@ def run(args):
                 row["actual_device"] = backend.device
                 if backend.device != device:
                     raise RuntimeError(f"Requested {device}, but loaded {backend.device}: {backend.device_info}")
+                row["model_identity"] = model_identity(backend)
                 timings = []
                 texts = []
                 for _ in range(args.repeats + 1):
@@ -107,7 +109,8 @@ def run(args):
                            real_time_factor=statistics.median(timings[1:])/duration,
                            transcript=texts[-1])
                 if reference is not None:
-                    row["normalized_wer"] = word_error_rate(reference, texts[-1])
+                    row["score"] = score_text(reference, texts[-1])
+                    row["normalized_wer"] = row["score"]["wer"]
             except Exception as exc:
                 row["error"] = str(exc)
             finally:
@@ -119,6 +122,8 @@ def run(args):
             report["results"].append(row)
             args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(json.dumps(row), flush=True)
+
+    return int(any("error" in row for row in report["results"]))
 
 
 if __name__ == "__main__":
@@ -132,5 +137,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be at least 1")
-    run(args)
+    raise SystemExit(run(args))
 

@@ -1,5 +1,7 @@
 # Live preview benchmark: run record and outcome
 
+This is the historical September 4 run. Native Nemotron preview is now implemented; see [September 11 optimizations](../docs/preview-optimizations.md) for current assembly, stop behavior, and new measurements.
+
 ## What was requested
 Benchmark live preview backends for both speed and accuracy, with a focus on:
 

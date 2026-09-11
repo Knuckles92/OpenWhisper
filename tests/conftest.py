@@ -89,6 +89,7 @@ def _session_settings_store(tmp_path_factory):
     settings_path = str(tmp_path_factory.mktemp("settings-session") / "settings.json")
     config.SETTINGS_FILE = settings_path
     settings_manager.settings_file = settings_path
+    config.RECORDED_AUDIO_FILE = str(tmp_path_factory.mktemp("recording-session") / "recorded_audio.wav")
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +130,7 @@ def _isolated_settings_store(_session_settings_store, tmp_path):
         settings_path = str(tmp_path / "settings.json")
         patcher.setattr(config, "SETTINGS_FILE", settings_path)
         patcher.setattr(settings_manager, "settings_file", settings_path)
+        patcher.setattr(config, "RECORDED_AUDIO_FILE", str(tmp_path / "recorded_audio.wav"))
         yield
 
 
