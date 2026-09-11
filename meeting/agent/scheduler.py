@@ -2,7 +2,7 @@
 
 Fires agent checkpoints only when new transcript exists, on an adaptive
 interval (15s base, shrunk to 5s under segment pressure, stretched to 20s
-when quiet), with a fast first pass and an early trigger on topic shift
+when quiet), after two minutes of meeting context, with an early trigger on topic shift
 (content-word Jaccard between the last two 60-second transcript windows).
 Checkpoints run
 sequentially on one worker thread, so work that becomes due while a
@@ -44,6 +44,8 @@ class ConsolidationOutcome:
 
 #: How often the worker loop re-evaluates its firing conditions.
 _TICK_S = 1.0
+#: Let the opening discussion establish context before automatic generation.
+_INITIAL_CONTEXT_S = 120.0
 #: Minimum spacing between topic-shift computations.
 _SHIFT_CHECK_SPACING_S = 10.0
 #: Jaccard similarity below which the topic is considered to have shifted.
@@ -137,9 +139,6 @@ class CheckpointScheduler:
         self._base_interval_s = base_interval_s
         self._min_interval_s = min_interval_s
         self._max_interval_s = max_interval_s
-        # Seed the dashboard shortly after the first transcript arrives. Keep
-        # custom sub-second intervals useful in tests and embeddings.
-        self._initial_interval_s = min(3.0, min_interval_s)
         self._on_health = on_health
 
         self._lock = threading.Lock()
@@ -153,6 +152,7 @@ class CheckpointScheduler:
 
         self._pending_segments = 0
         self._last_fire_mono = time.monotonic()
+        self._started_mono = self._last_fire_mono
         self._last_shift_check_mono = 0.0
         #: start_s of every segment already handed to the agent, pruned to the
         #: re-fetch window so it stays bounded over a long meeting.
@@ -178,6 +178,7 @@ class CheckpointScheduler:
             return
         self._stop_event.clear()
         self._last_fire_mono = time.monotonic()
+        self._started_mono = self._last_fire_mono
         self._thread = threading.Thread(
             target=self._run_loop, name="meeting-checkpoint-scheduler",
             daemon=True,
@@ -304,6 +305,15 @@ class CheckpointScheduler:
             self._fire_note_request()
             if self._stop_event.is_set() or self._consolidating:
                 continue
+            # Keep pending segments and guidance intact during warm-up. The
+            # meeting clock excludes pauses and survives scheduler restarts.
+            clock = getattr(self._engine, "clock", None)
+            elapsed_meeting_s = (
+                clock.now_s() if clock is not None
+                else time.monotonic() - self._started_mono
+            )
+            if elapsed_meeting_s < _INITIAL_CONTEXT_S:
+                continue
             with self._lock:
                 if self._note_requests:
                     self._wake.set()
@@ -320,8 +330,7 @@ class CheckpointScheduler:
                 self._fire()
                 continue
             if not self._sent_starts:
-                if elapsed >= self._initial_interval_s:
-                    self._fire()
+                self._fire()
                 continue
             if elapsed < self._min_interval_s:
                 continue

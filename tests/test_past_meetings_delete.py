@@ -5,9 +5,10 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QCheckBox, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from services.settings import SettingsKey
+from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 
 
@@ -23,6 +24,16 @@ def _meeting(meeting_id, *, has_audio=True, status="ended"):
             "has_transcript": True,
         },
     }
+
+
+def _accept_with_recordings(dialog):
+    dialog.delete_recordings.setChecked(True)
+    return QDialog.DialogCode.Accepted
+
+
+def _accept_without_future_confirmation(dialog):
+    dialog.dont_ask_again.setChecked(True)
+    return QDialog.DialogCode.Accepted
 
 
 class TestPastMeetingsDelete:
@@ -53,9 +64,9 @@ class TestPastMeetingsDelete:
                 return_value=True,
             ),
             patch.object(
-                QMessageBox,
+                MeetingDeleteDialog,
                 "exec",
-                return_value=QMessageBox.StandardButton.No,
+                return_value=QDialog.DialogCode.Rejected,
             ),
         ):
             self.panel._confirm_delete("m_done")
@@ -76,11 +87,10 @@ class TestPastMeetingsDelete:
                 return_value=True,
             ),
             patch.object(
-                QMessageBox,
+                MeetingDeleteDialog,
                 "exec",
-                return_value=QMessageBox.StandardButton.Yes,
+                return_value=QDialog.DialogCode.Accepted,
             ),
-            patch.object(QCheckBox, "isChecked", return_value=False),
         ):
             self.panel._confirm_delete("m_done")
 
@@ -100,15 +110,10 @@ class TestPastMeetingsDelete:
                 return_value=True,
             ),
             patch.object(
-                QMessageBox,
+                MeetingDeleteDialog,
                 "exec",
-                return_value=QMessageBox.StandardButton.Yes,
+                new=_accept_with_recordings,
             ),
-            patch(
-                "ui_qt.widgets.past_meetings_panel.QComboBox.currentData",
-                return_value=True,
-            ),
-            patch.object(QCheckBox, "isChecked", return_value=False),
         ):
             self.panel._confirm_delete("m_done")
 
@@ -121,11 +126,10 @@ class TestPastMeetingsDelete:
                 return_value=True,
             ),
             patch.object(
-                QMessageBox,
+                MeetingDeleteDialog,
                 "exec",
-                return_value=QMessageBox.StandardButton.Yes,
+                new=_accept_without_future_confirmation,
             ),
-            patch.object(QCheckBox, "isChecked", return_value=True),
             patch(
                 "ui_qt.widgets.past_meetings_panel.settings_manager.save_setting"
             ) as save_setting,
@@ -150,7 +154,7 @@ class TestPastMeetingsDelete:
                 "ui_qt.widgets.past_meetings_panel.settings_manager.get",
                 return_value=False,
             ),
-            patch.object(QMessageBox, "exec") as show_confirmation,
+            patch.object(MeetingDeleteDialog, "exec") as show_confirmation,
         ):
             self.panel._confirm_delete("m_done")
 

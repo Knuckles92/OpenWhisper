@@ -19,10 +19,8 @@ from services.settings import SettingsKey, settings_manager
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
+    QDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -34,6 +32,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
 
 logger = logging.getLogger(__name__)
 
@@ -557,46 +557,19 @@ class PastMeetingsPanel(QWidget):
             self.delete_meeting_requested.emit(meeting_id, False)
             return
 
-        confirmation = QMessageBox(self)
-        confirmation.setIcon(QMessageBox.Icon.Warning)
-        confirmation.setWindowTitle("Delete Meeting")
-        confirmation.setText("Delete this meeting from Past Meetings?")
-        confirmation.setInformativeText("This cannot be undone.")
-        confirmation.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
-
-        audio_choice = None
         meeting = self._meeting_by_id(meeting_id)
-        if self._meeting_has_audio(meeting):
-            audio_label = QLabel("Delete saved recordings too?", confirmation)
-            audio_choice = QComboBox(confirmation)
-            audio_choice.addItem("No — keep the recordings", False)
-            audio_choice.addItem("Yes — permanently delete them", True)
-            audio_choice.setToolTip(
-                "Choose whether this meeting's audio spool should also "
-                "be deleted"
-            )
-            message_layout = confirmation.layout()
-            if isinstance(message_layout, QGridLayout):
-                row = message_layout.rowCount()
-                columns = max(1, message_layout.columnCount())
-                message_layout.addWidget(audio_label, row, 0, 1, columns)
-                message_layout.addWidget(
-                    audio_choice, row + 1, 0, 1, columns
-                )
-
-        dont_ask_again = QCheckBox("Don't ask me again", confirmation)
-        confirmation.setCheckBox(dont_ask_again)
-
-        if confirmation.exec() != QMessageBox.StandardButton.Yes:
+        has_audio = self._meeting_has_audio(meeting)
+        confirmation = MeetingDeleteDialog(self, has_audio=has_audio)
+        if confirmation.exec() != QDialog.DialogCode.Accepted:
+            confirmation.deleteLater()
             return
 
         delete_recordings = bool(
-            audio_choice is not None and audio_choice.currentData()
+            has_audio and confirmation.delete_recordings.isChecked()
         )
-        if dont_ask_again.isChecked():
+        dont_ask_again = confirmation.dont_ask_again.isChecked()
+        confirmation.deleteLater()
+        if dont_ask_again:
             try:
                 settings_manager.save_setting(
                     SettingsKey.CONFIRM_MEETING_DELETE,

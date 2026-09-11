@@ -449,6 +449,40 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertFalse(self.tab.end_button.isEnabled())
         self.assertEqual(self.tab.elapsed_label.text(), "00:00")
 
+    def test_startup_status_does_not_flash_idle_before_active_confirmation(self):
+        self.tab.set_meeting_state({"active": False, "status": "starting"})
+
+        # Engine status can arrive before the runtime confirms startup.
+        for payload in ({"status": "active"}, {"status": "active", "active": False}):
+            self.tab.set_meeting_state(payload)
+            self.app.processEvents()
+            self.assertTrue(self.tab.idle_card.isHidden())
+            self.assertFalse(self.tab.session_card.isHidden())
+            self.assertEqual(self.tab.status_pill.text(), "Starting")
+            self.assertFalse(self.tab.is_meeting_active)
+            self.assertFalse(self.tab._elapsed_timer.isActive())
+            self.assertFalse(self.tab.pause_button.isEnabled())
+            self.assertFalse(self.tab.end_button.isEnabled())
+
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.app.processEvents()
+        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.session_card.isHidden())
+        self.assertEqual(self.tab.status_pill.text(), "Active")
+        self.assertTrue(self.tab._elapsed_timer.isActive())
+        self.assertTrue(self.tab.pause_button.isEnabled())
+        self.assertTrue(self.tab.end_button.isEnabled())
+
+    def test_startup_failure_returns_to_idle_after_early_active_status(self):
+        self.tab.set_meeting_state({"active": False, "status": "starting"})
+        self.tab.set_meeting_state({"status": "active"})
+        self.tab.set_meeting_state({"active": False, "status": "failed"})
+        self.app.processEvents()
+
+        self.assertFalse(self.tab.idle_card.isHidden())
+        self.assertTrue(self.tab.session_card.isHidden())
+        self.assertFalse(self.tab._elapsed_timer.isActive())
+
     def test_start_emits_cloud_choice(self):
         """Start Meeting emits the current cloud-intelligence choice."""
         received = []

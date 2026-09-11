@@ -741,8 +741,14 @@ class MeetingModeTab(QWidget):
 
         if "status" in payload:
             status = str(payload["status"])
-            self.set_status_text(status.capitalize())
-            self._starting = status == "starting"
+            # Engine status may arrive before the runtime confirms startup.
+            # Keep the session card visible and controls disabled until then.
+            self._starting = status == "starting" or (
+                self._starting
+                and status in {"active", "paused"}
+                and not payload.get("active", self._active)
+            )
+            self.set_status_text("Starting" if self._starting else status.capitalize())
             # A new meeting start clears any previous finalization result.
             if status == "starting":
                 self._background_available = False

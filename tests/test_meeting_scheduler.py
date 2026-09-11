@@ -3,7 +3,7 @@ Tests for CheckpointScheduler: adaptive intervals, coalescing, Jaccard early fir
 """
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -99,7 +99,6 @@ class TestAdaptiveInterval:
     def test_defaults_prioritize_live_dashboard_freshness(self):
         sched = CheckpointScheduler(FakeEngine(), FakeAgent())
 
-        assert sched._initial_interval_s == 3.0
         assert sched._interval_for(2) == 20.0
         assert sched._interval_for(3) == 15.0
         assert sched._interval_for(8) == 5.0
@@ -117,6 +116,92 @@ class TestAdaptiveInterval:
         assert sched._interval_for(7) == 45.0
         assert sched._interval_for(8) == 30.0   # pressure floor
         assert sched._interval_for(20) == 30.0
+
+class TestInitialContext:
+    @staticmethod
+    def run_tick(sched):
+        # Run a single worker iteration synchronously without a real timer.
+        sched._stop_event = threading.Event()
+        sched._wake = Mock()
+        ticks = 0
+
+        def wait_tick(timeout):
+            nonlocal ticks
+            if ticks:
+                sched._stop_event.set()
+            ticks += 1
+
+        sched._wake.wait.side_effect = wait_tick
+        sched._run_loop()
+
+    @pytest.mark.parametrize("guidance", [False, True])
+    def test_waits_until_two_minutes_then_sends_accumulated_context(self, guidance):
+        segments = [
+            {"id": f"sg_{i}", "start_s": float(i), "text": f"Opening claim {i}"}
+            for i in range(12)
+        ]
+        engine = FakeEngine(segments, clock_s=119.9)
+        engine.store = FakeStore({"cards": {}, "topic": {}, "rolling_summary": ""})
+        agent = FakeAgent()
+        agent.supports_notes_pass = True
+        sched = CheckpointScheduler(engine, agent)
+        sched.notify_segments(len(segments))
+        if guidance:
+            sched.notify_guidance()
+        pending = sched._pending_segments
+
+        self.run_tick(sched)
+        assert agent.calls == []
+        assert engine.store.apply_calls == []
+        assert sched._pending_segments == pending
+        assert sched._guidance_pending is guidance
+        assert sched._sent_starts == {}
+
+        engine.clock._now = 120.0
+        self.run_tick(sched)
+        assert [seg["id"] for seg in agent.calls[0].new_segments] == [
+            seg["id"] for seg in segments
+        ]
+        assert any(call.is_notes for call in agent.calls)
+
+    def test_background_notes_and_polish_wait_even_without_pending_speech(self):
+        sched = CheckpointScheduler(FakeEngine(clock_s=30.0), FakeAgent())
+        with patch.object(sched, "_maybe_fire_notes") as notes, patch.object(
+            sched, "_maybe_fire_polish"
+        ) as polish:
+            self.run_tick(sched)
+        notes.assert_not_called()
+        polish.assert_not_called()
+
+    def test_paused_time_does_not_complete_warmup(self):
+        from meeting.clock import MeetingClock
+
+        engine = FakeEngine([{"id": "sg_1", "start_s": 1.0, "text": "Opening"}])
+        agent = FakeAgent()
+        with patch("meeting.clock.time.monotonic", return_value=0.0) as now:
+            engine.clock = MeetingClock()
+            engine.clock.start()
+            sched = CheckpointScheduler(engine, agent)
+            sched.notify_segments(1)
+            now.return_value = 60.0
+            engine.clock.pause()
+            now.return_value = 600.0
+            self.run_tick(sched)
+            assert agent.calls == []
+            engine.clock.resume()
+            now.return_value = 660.0
+            self.run_tick(sched)
+        assert len(agent.calls) == 1
+
+    def test_short_meeting_still_gets_final_insights(self):
+        segment = {"id": "sg_1", "start_s": 1.0, "text": "We agreed to ship."}
+        agent = FakeAgent()
+        sched = CheckpointScheduler(FakeEngine([segment], clock_s=30.0), agent)
+        result = sched.run_consolidation()
+        assert result.status == "completed"
+        assert agent.calls[0].is_consolidation
+        assert agent.calls[0].new_segments == [segment]
+
 
 class TestCoalescing:
     def test_pending_while_in_flight_coalesce_into_next_fire(self):

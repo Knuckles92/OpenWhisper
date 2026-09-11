@@ -3,6 +3,7 @@ plus report-view consolidation prompt trimming."""
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 from meeting.agent.openrouter_direct import DirectOpenRouterAgent
 from meeting.agent.pi_sidecar import PiSidecarAgent
@@ -279,6 +280,8 @@ class FakeStore:
 
 class FakeEngine:
     def __init__(self, segments=None):
+        # Cadence tests model an ongoing meeting after the initial warm-up.
+        self.clock = SimpleNamespace(now_s=lambda: 200.0)
         self.store = FakeStore()
         self._segments = list(segments or [])
 
