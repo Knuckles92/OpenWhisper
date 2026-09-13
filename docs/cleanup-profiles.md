@@ -3,7 +3,8 @@
 Profiles turn dictated speech into a reusable output format. **Support ticket**
 and **Email** are included as editable starters.
 
-1. Open **Quick Record → Cleanup profile → Manage…**, or **Settings → Profiles**.
+1. On **Quick Record**, check **AI cleanup** to show **Cleanup profile**, then
+   click **Manage…**. You can also open **Settings → Profiles**.
 2. Select a starter, or click **New profile**. Give it a name and instructions
    describing the structure, headings, tone, and details you want.
 3. Optionally include your learned rules and set a dedicated recording shortcut.

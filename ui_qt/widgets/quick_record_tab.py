@@ -105,9 +105,9 @@ class QuickRecordTab(TranscriptionTabBase):
         self.collapsed_copy_button.setText("Copy")
 
     def _build_content_before_status(self, layout: QVBoxLayout):
-        card = QFrame()
-        card.setObjectName("engineCard")
-        body = QVBoxLayout(card)
+        self.profile_card = QFrame()
+        self.profile_card.setObjectName("engineCard")
+        body = QVBoxLayout(self.profile_card)
         body.setContentsMargins(14, 10, 14, 10)
         body.setSpacing(6)
         row = QHBoxLayout()
@@ -127,7 +127,7 @@ class QuickRecordTab(TranscriptionTabBase):
         self.profile_hint.setTextFormat(Qt.TextFormat.PlainText)
         self.profile_hint.setObjectName("infoLabel")
         body.addWidget(self.profile_hint)
-        layout.addWidget(card)
+        layout.addWidget(self.profile_card)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         self.refresh_cleanup_profiles()
 
@@ -189,6 +189,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.cleanup_check.setChecked(True)
             self.cleanup_check.blockSignals(False)
         self.cleanup_check.setEnabled(not selected)
+        self.profile_card.setVisible(self.cleanup_check.isChecked())
 
     def _build_content_after_status(self, layout: QVBoxLayout):
         control_panel = ControlPanel()
@@ -229,6 +230,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def _connect_signals(self):
         super()._connect_signals()
+        self.cleanup_check.toggled.connect(self.profile_card.setVisible)
         self.record_button.clicked.connect(self._on_record_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
