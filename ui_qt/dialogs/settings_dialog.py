@@ -109,6 +109,8 @@ from ui_qt.widgets import (
     WrappedLabel,
 )
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, HotkeyCaptureThread
+from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
+from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
 
 logger = logging.getLogger(__name__)
@@ -133,6 +135,7 @@ GENERAL = "general"
 RECORDING = "recording"
 CLEANUP = "cleanup"
 CLEANUP_RULES = "cleanup_rules"
+CLEANUP_PROFILES = "cleanup_profiles"
 MEETING_INTELLIGENCE = "meeting_intelligence"
 MEETING_AFTER = "meeting_after"
 MEETING_DASHBOARD = "meeting_dashboard"
@@ -177,6 +180,8 @@ class SettingsDialog(QDialog):
     on_api_keys_changed: Optional[Callable[[], None]] = None
     on_developer_mode_changed: Optional[Callable] = None
     on_cleanup_changed: Optional[Callable] = None
+    on_cleanup_profiles_changed: Optional[Callable] = None
+    on_profile_hotkey_capture: Optional[Callable] = None
     on_hotkeys_changed: Optional[Callable[[Dict[str, str]], None]] = None
     on_recording_trigger_mode_changed: Optional[Callable[[str], None]] = None
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
@@ -270,6 +275,9 @@ class SettingsDialog(QDialog):
         self.rail.add_destination(
             CLEANUP_RULES, "Learned rules", _design_icon("stack-slate.svg")
         )
+        self.rail.add_destination(
+            CLEANUP_PROFILES, "Profiles", _design_icon("typography-blue.svg")
+        )
         self.rail.add_group("Meeting Mode")
         self.rail.add_destination(
             MEETING_INTELLIGENCE, "Intelligence", _design_icon("stack-purple.svg")
@@ -333,6 +341,12 @@ class SettingsDialog(QDialog):
             "Teach OpenWhisper your preferred spellings, terminology, and "
             "formatting. Applied whenever AI cleanup runs.",
             self._build_cleanup_rules_page,
+        )
+        self._add_page(
+            CLEANUP_PROFILES,
+            "Cleanup profiles",
+            "Turn a recording into a support ticket, email, or your own format.",
+            self._build_cleanup_profiles_page,
         )
         self._add_page(
             MEETING_INTELLIGENCE,
@@ -810,6 +824,22 @@ class SettingsDialog(QDialog):
         cleanup_btn_row.addStretch()
         self.cleanup_prompt_tile.add_body_layout(cleanup_btn_row)
         self._tile_group(layout, "Prompt", [self.cleanup_prompt_tile])
+
+    def _build_cleanup_profiles_page(self, layout: QVBoxLayout) -> None:
+        self.cleanup_profiles_panel = CleanupProfilesPanel(manager=settings_manager)
+        self.cleanup_profiles_panel.profiles_changed.connect(self._on_profiles_saved)
+        self.cleanup_profiles_panel.capture_changed.connect(self._on_profile_capture)
+        self.cleanup_profiles_panel.model_requested.connect(lambda: self.model_manager_requested.emit("text"))
+        layout.addWidget(self.cleanup_profiles_panel)
+
+    def _on_profiles_saved(self) -> None:
+        self._refresh_rail_values()
+        if self.on_cleanup_profiles_changed:
+            self.on_cleanup_profiles_changed()
+
+    def _on_profile_capture(self, suspended: bool) -> None:
+        if self.on_profile_hotkey_capture:
+            self.on_profile_hotkey_capture(suspended)
 
     def _build_cleanup_rules_page(self, layout: QVBoxLayout) -> None:
         self.cleanup_rules_gate_tile = InfoTile(
@@ -1539,6 +1569,9 @@ class SettingsDialog(QDialog):
         )
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
+        profile_link = Button("Profile recording shortcuts…")
+        profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
+        layout.addWidget(profile_link)
         instruction_card = QFrame()
         instruction_card.setObjectName("hotkeyInstructionCard")
         instruction_row = QHBoxLayout(instruction_card)
@@ -1805,6 +1838,7 @@ class SettingsDialog(QDialog):
     def refresh(self) -> None:
         """Reload persisted values and rail captions."""
         self._cancel_hotkey_capture()
+        self.cleanup_profiles_panel.refresh()
         self._loading = True
         try:
             self._load_settings()
@@ -1821,6 +1855,7 @@ class SettingsDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
+        self.cleanup_profiles_panel.hotkey_input.cancel_capture()
         self._cancel_hotkey_capture()
         self._persist_cleanup_prompt()
         self._release_rule_recorder()
@@ -1856,6 +1891,7 @@ class SettingsDialog(QDialog):
         return True
 
     def _refresh_rail_values(self) -> None:
+        self.rail.set_value(CLEANUP_PROFILES, f"{len(load_cleanup_profiles(settings_manager.load_all_settings()))} profiles")
         if self.auto_paste_check.isChecked():
             general = "Auto-paste on"
         elif self.copy_clipboard_check.isChecked():
@@ -2571,6 +2607,14 @@ class SettingsDialog(QDialog):
         updated = config.DEFAULT_HOTKEYS.copy()
         updated.update(hotkeys)
         try:
+            settings = settings_manager.load_all_settings()
+            for profile in load_cleanup_profiles(settings):
+                conflict = profile_hotkey_conflict(
+                    profile.hotkey, settings, exclude_id=profile.id,
+                    standard_hotkeys=updated,
+                )
+                if conflict:
+                    raise ValueError(f"{profile.name}'s shortcut is already used by {conflict}. Choose another.")
             if self.on_hotkeys_changed:
                 self.on_hotkeys_changed(updated.copy())
             else:

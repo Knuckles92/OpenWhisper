@@ -268,6 +268,7 @@ Access settings via **File > Settings** or the system tray menu:
 - **Recording:** Microphone input, saved-recording retention, and the live preview overlay (dictation preview and its font size).
 - **Cleanup:** Enable AI transcript cleanup and set its custom prompt. Provider, model, and thinking level live in **Model Manager → On-demand → Text cleanup**.
 - **Learned rules:** Personal spelling and formatting rules, taught by text or voice. Applied whenever AI cleanup runs.
+- **Profiles:** Build reusable support-ticket, email, or custom formats with dedicated recording shortcuts. Select one from **Quick Record → Cleanup profile**, or open **Manage…** to edit it. See [cleanup profiles](docs/cleanup-profiles.md).
 - **Intelligence:** What the meeting agent may search, and which models it uses.
 - **After the meeting:** End-of-meeting steps (re-transcription, AI cleanup, final report with Ribbon, Brief, and Signal views).
 - **Dashboard:** Localhost vs. LAN sharing and port.

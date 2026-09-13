@@ -13,6 +13,7 @@ from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
 from services.transcript_cleanup import CleanupInfo, TranscriptCleanup
+from services.cleanup_profiles import find_cleanup_profile, compose_profile_prompt
 from services.batch_upload import (
     BatchItemResult,
     BatchResult,
@@ -55,6 +56,7 @@ class TranscriptionRuntime:
         self.controller = controller
         self._transcript_cleanup = TranscriptCleanup()
         self._job_lock = threading.Lock()
+        self._capture_lock = threading.RLock()
         self._job_active = False
         # Backends reset their own cancel flag on every transcribe() call, so
         # a cancel that lands between files of a batch would be lost; this
@@ -67,6 +69,8 @@ class TranscriptionRuntime:
         # window and its result stays there; the Upload File tab has its own
         # Copy buttons. Set per job after the slot is claimed.
         self._deliver_to_clipboard = True
+        self._recording_profile = None
+        self._profile_settings = None
 
     @property
     def has_active_job(self) -> bool:
@@ -85,6 +89,8 @@ class TranscriptionRuntime:
 
     def _finish_job(self) -> None:
         with self._job_lock:
+            self._recording_profile = None
+            self._profile_settings = None
             self._job_active = False
             self._deliver_to_clipboard = True
 
@@ -93,28 +99,46 @@ class TranscriptionRuntime:
         self.controller.status_update.emit(message)
         logger.info(message)
 
-    def start_recording(self) -> None:
+    def start_recording(self, profile_id: str = "") -> bool:
+        with self._capture_lock:
+            return self._start_recording(profile_id)
+
+    def _start_recording(self, profile_id: str) -> bool:
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
                 "Meeting Mode is active — end the meeting to use dictation"
             )
-            return
+            return False
         readiness = getattr(self.controller, "transcription_readiness_message", None)
         message = readiness() if callable(readiness) else None
         if message:
             self.controller.status_update.emit(message)
-            return
+            return False
         if self.has_active_job:
             self._report_busy("starting another recording")
-            return
+            return False
+        if self.controller.recorder.is_recording:
+            return False
+        settings = settings_manager.load_all_settings() if profile_id else None
+        profile = find_cleanup_profile(settings, profile_id) if profile_id else None
+        if profile_id and profile is None:
+            self.controller.status_update.emit("Cleanup profile no longer exists")
+            return False
         if self.controller.recorder.start_recording():
+            # Snapshot before publishing Recording: edits and other shortcuts
+            # cannot replace the format of a recording already in progress.
+            self._recording_profile = profile
+            self._profile_settings = settings
             logger.info("Recording started")
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
             self.controller.recording_state_changed.emit(True)
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
-            self.controller.status_update.emit("Recording...")
+            self.controller.status_update.emit(
+                f"Recording · {profile.name}..." if profile else "Recording..."
+            )
+            return True
         else:
             reason = getattr(
                 self.controller.recorder, "last_start_error", None
@@ -123,9 +147,14 @@ class TranscriptionRuntime:
             self.controller.recording_state_changed.emit(False)
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit(f"Failed to start recording: {reason}")
+            return False
 
     def stop_recording(self) -> None:
         """Stop audio recording and start transcription."""
+        with self._capture_lock:
+            self._stop_recording()
+
+    def _stop_recording(self) -> None:
         if self.controller._streaming_enabled:
             # Dismiss preview overlay immediately so the classic waveform
             # processing/transcribing states are the only post-stop UI.
@@ -206,7 +235,10 @@ class TranscriptionRuntime:
                 self.controller.recorder.get_recording_duration()
             )
             self.controller._pending_file_size = file_size
-            self.controller._pending_source_name = "Quick Record"
+            self.controller._pending_source_name = (
+                f"Quick Record · {self._recording_profile.name}"
+                if self._recording_profile else "Quick Record"
+            )
 
             logger.info(
                 "Transcription started. Duration: "
@@ -256,6 +288,10 @@ class TranscriptionRuntime:
 
     def cancel(self) -> None:
         """Cancel an active recording or transcription, depending on state."""
+        with self._capture_lock:
+            self._cancel()
+
+    def _cancel(self) -> None:
         logger.info(f"Cancel called. Recording: {self.controller.recorder.is_recording}")
 
         if self.controller.recorder.is_recording:
@@ -274,6 +310,8 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.recorder.stop_recording()
         self.controller.recorder.clear_recording_data()
+        self._recording_profile = None
+        self._profile_settings = None
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Recording canceled")
         logger.info("Recording canceled")
@@ -704,8 +742,9 @@ class TranscriptionRuntime:
                 a dictation.
         """
         self._last_cleanup_failure = None
-        settings = settings_manager.load_all_settings()
-        enabled = settings.get(
+        profile = self._recording_profile
+        settings = self._profile_settings if profile else settings_manager.load_all_settings()
+        enabled = profile is not None or settings.get(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
             config.TRANSCRIPT_CLEANUP_ENABLED,
         )
@@ -727,10 +766,13 @@ class TranscriptionRuntime:
             return raw, None, None
 
         self.controller.overlay_state_update.emit(OverlayState.CLEANING)
-        self.controller.status_update.emit("Cleaning up...")
-        prompt = compose_transcript_cleanup_prompt(
-            resolve_transcript_cleanup_prompt(settings),
-            resolve_transcript_cleanup_rules(settings),
+        self.controller.status_update.emit(
+            f"Formatting · {profile.name}..." if profile else "Cleaning up..."
+        )
+        rules = resolve_transcript_cleanup_rules(settings)
+        prompt = (
+            compose_profile_prompt(profile, rules) if profile else
+            compose_transcript_cleanup_prompt(resolve_transcript_cleanup_prompt(settings), rules)
         )
         if batch_context:
             prompt = compose_batch_cleanup_prompt(prompt, batch_context)
@@ -902,13 +944,18 @@ class TranscriptionRuntime:
         finally:
             self._clear_pending_audio_metadata()
 
+        cleanup_notice = (
+            f" — {self._recording_profile.name} formatting failed "
+            f"({self._last_cleanup_failure}); using raw transcript"
+            if self._recording_profile and self._last_cleanup_failure else ""
+        )
         if not self._deliver_to_clipboard:
-            self.controller.ui_controller.set_status("Ready")
+            self.controller.ui_controller.set_status("Ready" + cleanup_notice)
             self._finish_job()
             return
 
         try:
-            self._apply_clipboard_and_paste(transcript)
+            self._apply_clipboard_and_paste(transcript, status_suffix=cleanup_notice)
         finally:
             self._finish_job()
 

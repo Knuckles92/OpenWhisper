@@ -415,6 +415,24 @@ class TestPushHoldRuntimeHandlers(unittest.TestCase):
 
         self.assertEqual(controller.calls, [])
 
+    def test_previous_hold_cannot_cancel_a_profile_recording(self):
+        recorder = _FakeRecorder()
+        controller = _FakeController(recorder)
+        runtime = self.HotkeyRuntime(controller)
+        with patch.object(time, "monotonic", side_effect=[100.0, 100.5, 100.5]):
+            runtime.record_key_pressed()
+            runtime.record_key_released()
+        self.assertFalse(runtime._record_start_accepted)
+
+        # A profile starts independently. Pressing/releasing the standard
+        # hold shortcut must not inherit ownership from the previous hold.
+        recorder.is_recording = True
+        controller.calls.clear()
+        runtime.record_key_pressed()
+        runtime.record_key_released()
+        self.assertEqual(controller.calls, [])
+        self.assertTrue(recorder.is_recording)
+
     def test_release_before_stream_open_waits_then_no_ops(self):
         # Model a start that never opens the stream: is_recording stays False
         # and the release must give up quietly instead of stopping/canceling.

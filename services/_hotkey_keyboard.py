@@ -103,6 +103,11 @@ class HotkeyManager:
         self._debouncer = Debouncer(config.HOTKEY_DEBOUNCE_MS)
         # Guards auto-repeat KEY_DOWNs while the record key is held.
         self._record_key_held = False
+        self._profile_hotkeys = {}
+        self._profile_held = {}
+        self._profile_debouncers = {}
+        self.on_profile_toggle = None
+        self.capture_suspended = False
 
         self.on_record_toggle: Optional[Callable] = None
         self.on_record_press: Optional[Callable] = None
@@ -120,9 +125,12 @@ class HotkeyManager:
     def _setup_keyboard_hook(self):
         # A rehook may miss the KEY_UP while unhooked, so forget held state.
         self._record_key_held = False
+        self._profile_held.clear()
         keyboard.hook(self._handle_keyboard_event, suppress=True)
 
     def _handle_keyboard_event(self, event):
+        if self.capture_suspended:
+            return True
         if event.event_type == keyboard.KEY_DOWN:
             if self._matches_hotkey(event, self.hotkeys['enable_disable']):
                 self._toggle_program_enabled()
@@ -167,6 +175,18 @@ class HotkeyManager:
                     threading.Thread(target=self.on_minimize_tray, daemon=True).start()
                 return False
 
+            for profile_id, hotkey in self._profile_hotkeys.items():
+                if self._matches_hotkey(event, hotkey):
+                    if profile_id not in self._profile_held:
+                        self._profile_held[profile_id] = hotkey
+                        debouncer = self._profile_debouncers.get(profile_id)
+                        if (debouncer and debouncer.should_trigger()
+                                and self.on_profile_toggle):
+                            threading.Thread(
+                                target=self.on_profile_toggle, args=(profile_id,), daemon=True
+                            ).start()
+                    return False
+
         elif (event.event_type == keyboard.KEY_UP
               and self._record_key_held
               and self._matches_record_main_key(event)):
@@ -181,7 +201,29 @@ class HotkeyManager:
                 ).start()
             return False
 
+        if event.event_type == keyboard.KEY_UP:
+            released = [
+                profile_id for profile_id, hotkey in tuple(self._profile_held.items())
+                if self._matches_main_key(event, hotkey)
+            ]
+            for profile_id in released:
+                self._profile_held.pop(profile_id, None)
+            if released:
+                return False
+
         return True
+
+    def set_profile_hotkeys(self, hotkeys: Dict[str, str], callback: Callable) -> None:
+        self.on_profile_toggle = callback
+        self._profile_debouncers = {
+            key: Debouncer(config.HOTKEY_DEBOUNCE_MS) for key in hotkeys
+        }
+        self._profile_hotkeys = dict(hotkeys)
+
+    def set_capture_suspended(self, suspended: bool) -> None:
+        self.capture_suspended = suspended
+        self._record_key_held = False
+        self._profile_held.clear()
 
     def set_record_mode(self, mode: str) -> None:
         """Switch the record hotkey between toggle and push-and-hold."""
@@ -206,7 +248,10 @@ class HotkeyManager:
         The user may release modifiers before the main key, so release
         matching cannot require the hotkey's modifier set.
         """
-        hotkey_string = self.hotkeys.get('record_toggle')
+        return self._matches_main_key(event, self.hotkeys.get('record_toggle'))
+
+    @staticmethod
+    def _matches_main_key(event, hotkey_string: str) -> bool:
         if not hotkey_string:
             return False
 

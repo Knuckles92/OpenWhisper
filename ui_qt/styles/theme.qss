@@ -987,6 +987,34 @@ QLineEdit#hotkeyInput {
     font-weight: 600;
 }
 
+QWidget#cleanupProfilesPanel,
+QWidget#cleanupProfileLibrary,
+QWidget#cleanupProfileEditor,
+QWidget#cleanupProfilesPanel QLabel,
+QWidget#cleanupProfilesPanel QCheckBox {
+    background: transparent;
+}
+
+QListWidget#cleanupProfilesList {
+    background: @slate-surface;
+    color: @slate-text;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+    padding: 5px;
+    font-size: 13px;
+    outline: none;
+}
+
+QListWidget#cleanupProfilesList::item {
+    padding: 10px 8px;
+    border-radius: 6px;
+}
+
+QListWidget#cleanupProfilesList::item:selected {
+    background: @accent-tint-strong;
+    color: @accent-soft;
+}
+
 QLineEdit#hotkeyInput:focus {
     border-color: @accent-border;
 }

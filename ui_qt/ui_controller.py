@@ -33,7 +33,7 @@ from ui_qt.main_window import MainWindow
 from ui_qt.overlays import WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
-from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
+from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, CLEANUP_PROFILES, SettingsDialog
 from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
@@ -118,6 +118,9 @@ class UIController(QObject):
         self.on_record_cancel: Optional[Callable] = None
         self.on_model_changed: Optional[Callable] = None
         self.on_hotkeys_changed: Optional[Callable] = None
+        self.on_profile_record_start: Optional[Callable] = None
+        self.on_cleanup_profiles_changed: Optional[Callable] = None
+        self.on_profile_hotkey_capture: Optional[Callable] = None
         self.on_recording_trigger_mode_changed: Optional[Callable] = None
         self.on_retranscribe: Optional[Callable] = None
         self.on_upload_audio: Optional[Callable] = None
@@ -185,6 +188,7 @@ class UIController(QObject):
 
     def _setup_connections(self):
         self.main_window.record_toggled.connect(self._on_record_toggled)
+        self.main_window.quick_record_tab.profiles_requested.connect(self.open_cleanup_profiles)
         self.main_window.record_canceled.connect(self.cancel_recording)
         self.main_window.model_changed.connect(self._on_model_changed)
         self.main_window.whisper_engine_changed.connect(self._on_whisper_engine_changed)
@@ -275,7 +279,7 @@ class UIController(QObject):
 
     def _on_record_toggled(self, is_recording: bool):
         if is_recording:
-            self.start_recording()
+            self.start_recording(self.main_window.quick_record_tab.selected_cleanup_profile_id())
         else:
             self.stop_recording()
 
@@ -367,10 +371,14 @@ class UIController(QObject):
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
 
-    def start_recording(self):
+    def start_recording(self, profile_id: str = ""):
         """Request a recording start; UI flips only after the stream opens."""
         self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
-        if self.on_record_start:
+        if profile_id and self.on_profile_record_start:
+            if self.on_profile_record_start(profile_id) is False:
+                self._revert_refused_record_start()
+                return False
+        elif self.on_record_start:
             if self.on_record_start() is False:
                 self._revert_refused_record_start()
                 return False
@@ -384,6 +392,10 @@ class UIController(QObject):
         self.is_recording = False
         self.main_window.is_recording = False
         self.main_window._update_recording_state()
+
+    def on_dictation_started(self, profile) -> None:
+        self._transcription_source_tab = TabbedContentWidget.TAB_QUICK_RECORD
+        self.main_window.quick_record_tab.set_recording_profile(profile)
 
     def stop_recording(self):
         """Request a recording stop; UI flips via recording_state_changed."""
@@ -654,6 +666,21 @@ class UIController(QObject):
         dialog.select_destination(HOTKEYS)
         self._raise_dialog(dialog)
 
+    def open_cleanup_profiles(self) -> None:
+        dialog = self._prepare_settings_dialog()
+        dialog.refresh()
+        dialog.select_destination(CLEANUP_PROFILES)
+        self._raise_dialog(dialog)
+
+    def _on_cleanup_profiles_changed(self) -> None:
+        self.main_window.quick_record_tab.refresh_cleanup_profiles()
+        if self.on_cleanup_profiles_changed:
+            self.on_cleanup_profiles_changed()
+
+    def _on_profile_hotkey_capture(self, suspended: bool) -> None:
+        if self.on_profile_hotkey_capture:
+            self.on_profile_hotkey_capture(suspended)
+
     def _prepare_settings_dialog(self) -> SettingsDialog:
         dialog = self._ensure_settings_dialog()
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
@@ -670,6 +697,8 @@ class UIController(QObject):
         )
         dialog.on_cleanup_changed = self.refresh_cleanup_controls
         dialog.on_hotkeys_changed = self._on_settings_hotkeys_changed
+        dialog.on_cleanup_profiles_changed = self._on_cleanup_profiles_changed
+        dialog.on_profile_hotkey_capture = self._on_profile_hotkey_capture
         dialog.on_recording_trigger_mode_changed = (
             self._on_settings_recording_trigger_mode_changed
         )

@@ -56,6 +56,8 @@ class SettingsKey:
     TEXT_LLM_PROFILES: Final[str] = "text_llm_profiles"
     # JSON list of user-taught rule strings appended to the cleanup prompt
     TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
+    TRANSCRIPT_CLEANUP_PROFILES: Final[str] = "transcript_cleanup_profiles"
+    QUICK_RECORD_PROFILE: Final[str] = "quick_record_profile"
     # Multi-file upload: last relation preset (BatchRelation) and the Custom
     # preset's description and combine choice
     TRANSCRIPT_BATCH_RELATION: Final[str] = "transcript_batch_relation"

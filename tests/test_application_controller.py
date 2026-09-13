@@ -173,6 +173,13 @@ class FakeHotkeyManager:
     def set_record_mode(self, mode):
         self.record_mode = mode
 
+    def set_profile_hotkeys(self, hotkeys, callback):
+        self.profile_hotkeys = hotkeys
+        self.profile_callback = callback
+
+    def set_capture_suspended(self, suspended):
+        self.capture_suspended = suspended
+
     def update_hotkeys(self, hotkeys):
         self.hotkeys = hotkeys
 
@@ -583,6 +590,9 @@ class DummyUIController:
     def update_hotkey_display(self, hotkeys):
         self.hotkeys = hotkeys
 
+    def on_dictation_started(self, profile):
+        self.recording_profile = profile
+
     def set_status(self, status):
         self.statuses.append(status)
 
@@ -691,6 +701,9 @@ def _install_module_stubs(settings_manager, history_manager, audio_processor, ke
     hotkey_module.is_accessibility_trusted = lambda: True
     # Keep the Qt focus-window hotkey fallback out of the headless test path.
     hotkey_module.USE_PYNPUT_BACKEND = False
+    from services.hotkey_manager import parse_hotkey, format_hotkey
+    hotkey_module.parse_hotkey = parse_hotkey
+    hotkey_module.format_hotkey = format_hotkey
 
     from services import settings as real_settings
     import inspect
@@ -1599,6 +1612,101 @@ class TestApplicationController:
         assert entry.get("raw_text") is None
         assert entry.get("cleanup_provider") is None
         assert entry.get("cleanup_model") is None
+
+    def test_profile_recording_formats_with_start_snapshot_and_copies_result(self):
+        from services.cleanup_profiles import STARTER_PROFILES
+
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        cleanup = runtime._transcript_cleanup
+        cleanup.is_available = lambda: True
+        prompts = []
+        cleanup.cleanup = lambda text, system_prompt=None: (
+            prompts.append(system_prompt) or "Subject: Help\n\nPlease fix the login issue."
+        )
+        self.settings.all_settings["transcript_cleanup_rules"] = ["Spell Acme exactly."]
+        assert controller.start_profile_recording("email")
+        # A library edit after Start must not change this job's format/rules.
+        self.settings.all_settings["transcript_cleanup_profiles"] = []
+        self.settings.all_settings["transcript_cleanup_rules"] = ["Replace every name."]
+        controller.stop_recording()
+        worker, args = controller.executor.submissions[-1]
+        worker(*args)
+        assert STARTER_PROFILES[1].instructions in prompts[0]
+        assert "Spell Acme exactly." in prompts[0]
+        assert "Replace every name." not in prompts[0]
+        entry = self.history_manager.entries[-1]
+        assert entry["source_name"] == "Quick Record · Email"
+        assert entry["raw_text"]
+        assert entry["text"].startswith("Subject: Help")
+        assert controller.ui_controller.copied[-1] == entry["text"]
+        assert runtime._recording_profile is None
+        assert not runtime.has_active_job
+        assert not self.settings.all_settings["transcript_cleanup_enabled"]
+
+    def test_profile_shortcut_stops_without_replacing_recording_format(self):
+        controller = self._create_controller()
+        assert controller.start_profile_recording("support-ticket")
+        controller.profile_record_requested.emit("email")
+        assert not controller.recorder.is_recording
+        assert controller.transcription_runtime._recording_profile.id == "support-ticket"
+
+    def test_cancel_profile_then_standard_recording_and_upload_use_standard_cleanup(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        assert controller.start_profile_recording("email")
+        controller.cancel()
+        assert runtime._recording_profile is None
+        assert controller.start_recording()
+        assert runtime._recording_profile is None
+        controller.cancel()
+        # Upload/retranscription calls share this cleanup path, but no profile.
+        assert runtime._maybe_cleanup_transcript("unformatted") == ("unformatted", None, None)
+
+    def test_missing_busy_and_failed_profile_starts_do_not_leak_profile(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        assert not controller.start_profile_recording("deleted")
+        assert not controller.recorder.is_recording
+        runtime._claim_job()
+        assert not controller.start_profile_recording("email")
+        runtime._finish_job()
+        controller.recorder.start_should_fail = True
+        assert not controller.start_profile_recording("email")
+        assert runtime._recording_profile is None
+        assert runtime._profile_settings is None
+
+    def test_unavailable_profile_cleanup_reports_raw_fallback(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        runtime._transcript_cleanup.is_available = lambda: False
+        assert controller.start_profile_recording("email")
+        controller.stop_recording()
+        worker, args = controller.executor.submissions[-1]
+        worker(*args)
+        assert "Email formatting failed" in controller.ui_controller.statuses[-1]
+        assert "using raw transcript" in controller.ui_controller.statuses[-1]
+        assert runtime._recording_profile is None
+
+    def test_profile_shortcuts_refresh_and_capture_preserve_standard_hotkeys(self):
+        from dataclasses import replace
+        from services.cleanup_profiles import STARTER_PROFILES
+
+        controller = self._create_controller()
+        profile = replace(STARTER_PROFILES[0], hotkey="ctrl+alt+t")
+        self.settings.all_settings["transcript_cleanup_profiles"] = [profile.to_dict()]
+        controller.hotkey_runtime.refresh_profile_hotkeys()
+        assert controller.hotkey_manager.profile_hotkeys == {"support-ticket": "ctrl+alt+t"}
+        assert controller.hotkey_manager.hotkeys["record_toggle"] == "f1"
+        controller.hotkey_runtime.set_capture_suspended(True)
+        assert controller.hotkey_manager.capture_suspended
+        controller.hotkey_manager.profile_callback("support-ticket")
+        assert controller.recorder.is_recording
+        assert controller.transcription_runtime._recording_profile.id == "support-ticket"
+        self.settings.all_settings["transcript_cleanup_profiles"] = []
+        controller.hotkey_runtime.refresh_profile_hotkeys()
+        assert controller.hotkey_manager.profile_hotkeys == {}
+        controller.cancel()
 
     # Multi-file uploads
 

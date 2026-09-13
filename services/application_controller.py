@@ -72,6 +72,7 @@ class ApplicationController(QObject):
     status_update = pyqtSignal(str)
     stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
+    profile_record_requested = pyqtSignal(str)
     partial_transcription = pyqtSignal(str, bool)
     streaming_text_update = pyqtSignal(str, bool)
     streaming_overlay_show = pyqtSignal()
@@ -239,6 +240,9 @@ class ApplicationController(QObject):
 
     def _setup_ui_callbacks(self) -> None:
         self.ui_controller.on_record_start = self.start_recording
+        self.ui_controller.on_profile_record_start = self.start_profile_recording
+        self.ui_controller.on_cleanup_profiles_changed = self.hotkey_runtime.refresh_profile_hotkeys
+        self.ui_controller.on_profile_hotkey_capture = self.hotkey_runtime.set_capture_suspended
         self.ui_controller.on_record_stop = self.stop_recording
         self.ui_controller.on_record_cancel = self.cancel
         self.ui_controller.on_model_changed = self.on_model_changed
@@ -1489,8 +1493,20 @@ class ApplicationController(QObject):
         if unavailable:
             self.status_update.emit(unavailable)
             return False
-        self.transcription_runtime.start_recording()
-        return True
+        return self.transcription_runtime.start_recording() is not False
+
+    def start_profile_recording(self, profile_id: str) -> bool:
+        if self._refuse_dictation_during_meeting():
+            return False
+        return self.transcription_runtime.start_recording(profile_id) is not False
+
+    def toggle_profile_recording(self, profile_id: str) -> None:
+        # A shortcut pressed during capture only stops that capture. Its
+        # profile snapshot remains the one chosen when recording started.
+        if self.recorder.is_recording:
+            self.stop_recording()
+        else:
+            self.start_profile_recording(profile_id)
 
     def stop_recording(self) -> None:
         self.transcription_runtime.stop_recording()
@@ -1674,6 +1690,7 @@ class ApplicationController(QObject):
             logger.error(f"Meeting recovery dialog failed: {exc}")
 
     def _connect_signals(self) -> None:
+        self.profile_record_requested.connect(self.toggle_profile_recording)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
         self.batch_completed.connect(self._on_batch_complete)
@@ -1761,6 +1778,8 @@ class ApplicationController(QObject):
         self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
 
     def _on_recording_state_changed(self, is_recording: bool) -> None:
+        if is_recording:
+            self.ui_controller.on_dictation_started(self.transcription_runtime._recording_profile)
         self.ui_controller.is_recording = is_recording
         self.ui_controller.main_window.is_recording = is_recording
         self.ui_controller.main_window._update_recording_state()

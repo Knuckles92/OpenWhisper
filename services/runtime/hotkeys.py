@@ -11,6 +11,7 @@ from PyQt6.QtCore import QTimer, Qt
 
 from config import config
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
+from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from services.settings import (
     RecordingTriggerMode,
     SettingsKey,
@@ -204,6 +205,7 @@ class HotkeyRuntime:
             on_status_update_auto_hide=self.controller.update_status_with_auto_hide,
         )
         self.controller.ui_controller.update_hotkey_display(hotkeys)
+        self.refresh_profile_hotkeys()
         self._install_active_window_hotkey_filter()
         self._check_autopaste_permission()
 
@@ -223,6 +225,8 @@ class HotkeyRuntime:
 
     def record_key_pressed(self) -> None:
         """Push-and-hold: the record hotkey was pressed; start recording."""
+        self._record_press_monotonic = None
+        self._record_start_accepted = False
         if self.controller.recorder.is_recording:
             # A previous stop's post-roll still owns the recorder; ignore the
             # press rather than surfacing a failed-start status.
@@ -236,6 +240,7 @@ class HotkeyRuntime:
         self._record_press_monotonic = None
         if not self._record_start_accepted:
             return  # start was refused; its status message already surfaced
+        self._record_start_accepted = False
         # The release thread can beat the stream open, so wait briefly for
         # is_recording before deciding between stop and cancel.
         deadline = time.monotonic() + 0.5
@@ -284,6 +289,24 @@ class HotkeyRuntime:
             settings_manager.save_hotkey_settings(hotkeys)
             self.controller.ui_controller.update_hotkey_display(hotkeys)
             self.controller.ui_controller.set_status("Hotkeys updated")
+            self.refresh_profile_hotkeys()
+
+    def refresh_profile_hotkeys(self) -> None:
+        manager = self.controller.hotkey_manager
+        if manager is None:
+            return
+        settings = settings_manager.load_all_settings()
+        shortcuts = {
+            p.id: p.hotkey for p in load_cleanup_profiles(settings)
+            if p.hotkey and not profile_hotkey_conflict(
+                p.hotkey, settings, exclude_id=p.id, standard_hotkeys=manager.hotkeys
+            )
+        }
+        manager.set_profile_hotkeys(shortcuts, self.controller.profile_record_requested.emit)
+
+    def set_capture_suspended(self, suspended: bool) -> None:
+        if self.controller.hotkey_manager:
+            self.controller.hotkey_manager.set_capture_suspended(suspended)
 
     def setup_hook_watchdog(self) -> None:
         self.controller._watchdog_interval_ms = config.HOTKEY_WATCHDOG_INTERVAL_MS

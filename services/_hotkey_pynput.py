@@ -451,6 +451,11 @@ class HotkeyManager:
         # Set while the record hotkey is held in push-and-hold mode.
         self._record_key_held = False
 
+        self._profile_hotkeys = {}
+        self._profile_held = {}
+        self.on_profile_toggle = None
+        self.capture_suspended = False
+
         self.on_record_toggle: Optional[Callable] = None
         self.on_record_press: Optional[Callable] = None
         self.on_record_release: Optional[Callable] = None
@@ -481,6 +486,7 @@ class HotkeyManager:
         self._pressed_main_keys.clear()
         # A rehook may miss the release while stopped, so forget held state.
         self._record_key_held = False
+        self._profile_held.clear()
 
         if self._use_carbon and self._setup_carbon_hotkeys():
             self.backend_available = True
@@ -530,7 +536,8 @@ class HotkeyManager:
             self._carbon_registrar = _hotkey_carbon.CarbonHotkeyRegistrar(
                 on_action=self.trigger_action
             )
-        self._carbon_registrar.register_hotkeys(self.hotkeys)
+        if not self.capture_suspended:
+            self._carbon_registrar.register_hotkeys(self._all_hotkeys())
         logger.info("Carbon global hotkeys registered (no Accessibility required)")
         return True
 
@@ -559,6 +566,8 @@ class HotkeyManager:
         source: str = "global",
     ) -> bool:
         """Dispatch a normalized press and return whether a hotkey matched."""
+        if self.capture_suspended:
+            return False
         # Enable/disable toggle works even while the program is disabled.
         if self._matches_hotkey(active_modifiers, main_key, self.hotkeys.get("enable_disable")):
             logger.debug(f"Enable/disable hotkey matched from {source}")
@@ -592,6 +601,10 @@ class HotkeyManager:
             self.trigger_action("minimize_tray")
             return True
 
+        for profile_id, hotkey in self._profile_hotkeys.items():
+            if self._matches_hotkey(active_modifiers, main_key, hotkey):
+                self.trigger_action(f"profile:{profile_id}")
+                return True
         return False
 
     def handle_hotkey_release(
@@ -606,8 +619,13 @@ class HotkeyManager:
         focused-window fallback). Modifiers are ignored on purpose: the user
         may release them before the main key.
         """
+        profile_released = False
+        for profile_id, hotkey in tuple(self._profile_held.items()):
+            if parse_hotkey(hotkey)[1] == main_key:
+                self.trigger_action(f"profile:{profile_id}", released=True)
+                profile_released = True
         if not self._record_key_held:
-            return False
+            return profile_released
 
         _, expected_key = parse_hotkey(self.hotkeys.get("record_toggle") or "")
         if expected_key is None or main_key != expected_key:
@@ -627,7 +645,12 @@ class HotkeyManager:
         ``released`` routes Carbon's hotkey-released events, which only the
         record hotkey acts on (push-and-hold mode).
         """
+        if self.capture_suspended:
+            return
         if released:
+            if action.startswith("profile:"):
+                self._profile_held.pop(action.removeprefix("profile:"), None)
+                return
             if action == "record_toggle":
                 action = "record_release"
             else:
@@ -677,6 +700,39 @@ class HotkeyManager:
         elif action == "meeting_toggle":
             if self._should_accept_action("meeting_toggle") and self.on_meeting_toggle:
                 threading.Thread(target=self.on_meeting_toggle, daemon=True).start()
+        elif action.startswith("profile:"):
+            profile_id = action.removeprefix("profile:")
+            hotkey = self._profile_hotkeys.get(profile_id)
+            if hotkey and profile_id not in self._profile_held:
+                self._profile_held[profile_id] = hotkey
+                if self.on_profile_toggle and self._should_accept_action(action):
+                    threading.Thread(
+                        target=self.on_profile_toggle, args=(profile_id,), daemon=True
+                    ).start()
+
+    def _all_hotkeys(self) -> dict:
+        return {
+            **self.hotkeys,
+            **{f"profile:{key}": value for key, value in self._profile_hotkeys.items()},
+        }
+
+    def set_profile_hotkeys(self, hotkeys: Dict[str, str], callback: Callable) -> None:
+        self.on_profile_toggle = callback
+        self._profile_hotkeys = dict(hotkeys)
+        if self._carbon_registrar is not None and not self.capture_suspended:
+            self._carbon_registrar.register_hotkeys(self._all_hotkeys())
+
+    def set_capture_suspended(self, suspended: bool) -> None:
+        self.capture_suspended = suspended
+        self._record_key_held = False
+        self._pressed_main_keys.clear()
+        self._pressed_modifiers.clear()
+        self._profile_held.clear()
+        if self._carbon_registrar is not None:
+            if suspended:
+                self._carbon_registrar.unregister_all()
+            else:
+                self._carbon_registrar.register_hotkeys(self._all_hotkeys())
 
     def _on_release(self, key) -> None:
         modifier = modifier_of(key)
@@ -755,10 +811,10 @@ class HotkeyManager:
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Replace configured hotkeys and update OS registrations."""
         self.hotkeys.update(new_hotkeys)
-        if self._carbon_registrar is not None:
+        if self._carbon_registrar is not None and not self.capture_suspended:
             # Carbon hotkeys are registered with the OS, not matched live, so the
             # new combos must be re-registered. (pynput matches self.hotkeys live.)
-            self._carbon_registrar.register_hotkeys(self.hotkeys)
+            self._carbon_registrar.register_hotkeys(self._all_hotkeys())
         logger.info("Hotkeys updated successfully")
 
     def cleanup(self):
