@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from config import bundle_root, config
+from config import config
 from ui_qt.app import QtApplication
 from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
 from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog

@@ -3,11 +3,15 @@
 All notable changes to OpenWhisper will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Releases use major.minor.patch numbering with a two-digit patch starting at 2.6.01.
+Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps are reserved for deliberate milestones.
 
 ## [Unreleased]
 
+## [2.6.01] - 2026-09-14
+
 ### Added
+- Cleanup profiles with dedicated recording hotkeys, so each shortcut can apply its own cleanup instructions. Profiles appear in Quick Record when AI cleanup is enabled.
 - Meeting dashboard **Offer insight to agent**: select any text on the dashboard to correct a misheard term or brief the AI about what is being discussed. Term corrections apply across the transcript, exports, and speech previews, prime the local speech recognizer with the right spelling for the rest of the meeting, and stay reversible from the Notes card. Every insight prompts the meeting agent to reconsider its topic, summary, and notes without waiting for new speech.
 - Optional speech-model setup explicitly identifies the required runtime and prompts to install it when downloading a model or selecting an already-downloaded model. Existing runtimes and active installs are reused.
 - Apple Silicon Mac NVIDIA Speech CPU component and isolated native worker, allowing Parakeet to reuse downloaded GGUF weights. Unsupported runtimes report their platform limitation instead of pointing to an absent Downloads installer.
@@ -18,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Light theme. **Settings → General → Appearance → Theme** offers Dark, Light, and Match system; Match system follows the operating system as it changes. Every window, dialog, the loading screen, the waveform overlay, and rendered Markdown follow the choice without a restart. New installs stay dark.
 
 ### Fixed
+- Live transcription previews remove overlapping phrases and drain accepted audio when recording stops.
+- Meeting checkpoints wait for enough context, and transcript corrections use coverage checks to avoid replacing speech with incomplete redecodes.
+- macOS Accessibility setup gives clearer guidance for auto-paste.
 - Meeting transcript cleanup reports an incomplete pass when a later block fails or times out, while retaining completed edits. Internal decoder errors no longer trigger compatibility retries that repeat work.
 - Dashboard full-meeting export stays disabled after a transcript loading failure, preserves loaded speech, and offers a retry.
 - History and meeting export sections finish their visibility and sizing transitions when another control interrupts an animation.

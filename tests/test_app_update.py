@@ -139,6 +139,16 @@ class TestDetectChannel:
 
 
 class TestCompareVersions:
+    def test_padded_patch_release_preserves_update_asset_names(self):
+        from services.update_contract import is_newer_version, parse_strict_version
+
+        assert compare_versions("2.6.0", "v2.6.01") == UpdateStatus.UPDATE_AVAILABLE
+        assert compare_versions("2.6.01", "v2.6.1") == UpdateStatus.UP_TO_DATE
+        assert is_newer_version("2.6.09", "2.6.10")
+        assert parse_strict_version("v2.6.01") == (2, 6, 1)
+        assert setup_asset_name("v2.6.01") == "OpenWhisper-Setup-2.6.01.exe"
+        assert archive_asset_name("v2.6.01") == "OpenWhisper-2.6.01-win64.tar.xz"
+
     def test_equal_tag_is_up_to_date(self):
         assert compare_versions("2.1.1", "v2.1.1") == UpdateStatus.UP_TO_DATE
 

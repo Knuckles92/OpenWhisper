@@ -236,9 +236,9 @@ def test_available_component_ids_by_platform():
 def test_meeting_agent_catalog_is_published():
     """The self-contained sidecar is offered on every supported target."""
     expected = {
-        components.PLATFORM_WIN_AMD64: ("node-exe", 101_654_617),
-        components.PLATFORM_LINUX_X86_64: ("node-tar", 139_493_705),
-        components.PLATFORM_LINUX_AARCH64: ("node-tar", 136_816_417),
+        components.PLATFORM_WIN_AMD64: ("node-exe", 101_658_517),
+        components.PLATFORM_LINUX_X86_64: ("node-tar", 139_497_605),
+        components.PLATFORM_LINUX_AARCH64: ("node-tar", 136_820_317),
     }
     for tag, (node_extract, install_bytes) in expected.items():
         assert components.component_is_published(

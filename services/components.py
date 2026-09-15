@@ -92,10 +92,10 @@ _PLACEHOLDER_SHA256: Final[str] = "0" * 64
 
 # Version of the meeting-agent payload (portable Node LTS + the built
 # Pi sidecar bundle.cjs). Versioned by its own contents, like the GPU payload.
-MEETING_AGENT_COMPONENT_VERSION: Final[str] = "node22-pi1"
+MEETING_AGENT_COMPONENT_VERSION: Final[str] = "node22-pi2"
 MEETING_AGENT_NODE_VERSION: Final[str] = "22.23.2"
 # Hosting pin for the sidecar zip — not the latest app installer tag.
-MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.3.0"
+MEETING_AGENT_RELEASE_TAG: Final[str] = "v2.6.01"
 
 PLATFORM_WIN_AMD64: Final[str] = "win_amd64"
 PLATFORM_LINUX_X86_64: Final[str] = "linux_x86_64"
@@ -124,8 +124,8 @@ _MEETING_AGENT_BUNDLE_ARCHIVE: Final[dict] = {
         # payload is the platform-neutral bundle.cjs zip.
         f"meeting-agent-win_amd64-{MEETING_AGENT_COMPONENT_VERSION}.zip"
     ),
-    "sha256": "f8c0f140f62ac3e8a947fc65d56edbae3086b5c8b691daa2ee0b9d8595ad389e",
-    "size_bytes": 2_587_836,
+    "sha256": "8c57c604f6e193de3b350875c6a43a8ca700ff21485d6660f480c7a61f29b95b",
+    "size_bytes": 2_588_716,
     "extract": "zip",
 }
 
@@ -135,7 +135,7 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
         "version": MEETING_AGENT_COMPONENT_VERSION,
         "component_api": COMPONENT_API,
         "platform": PLATFORM_WIN_AMD64,
-        "install_bytes": 101_654_617,
+        "install_bytes": 101_658_517,
         "archives": (
             {
                 "name": f"node-v{MEETING_AGENT_NODE_VERSION}-win-x64.zip",
@@ -158,7 +158,7 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
         "component_api": COMPONENT_API,
         "platform": PLATFORM_LINUX_X86_64,
         # Exact Node binary + uncompressed bundle.cjs bytes.
-        "install_bytes": 139_493_705,
+        "install_bytes": 139_497_605,
         "archives": (
             {
                 "name": f"node-v{MEETING_AGENT_NODE_VERSION}-linux-x64.tar.xz",
@@ -184,7 +184,7 @@ _BUILTIN_MEETING_AGENT_BY_PLATFORM: Final[Dict[str, dict]] = {
         "component_api": COMPONENT_API,
         "platform": PLATFORM_LINUX_AARCH64,
         # Exact Node binary + uncompressed bundle.cjs bytes.
-        "install_bytes": 136_816_417,
+        "install_bytes": 136_820_317,
         "archives": (
             {
                 "name": f"node-v{MEETING_AGENT_NODE_VERSION}-linux-arm64.tar.xz",
