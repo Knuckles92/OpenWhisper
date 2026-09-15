@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, Qt
-from PyQt6.QtTest import QTest
+from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.settings import SettingsKey, settings_manager
@@ -27,6 +27,9 @@ def make_tabs(monkeypatch):
         tabs.resize(720, 240)
         tabs.show()
         app.processEvents()
+        assert QTest.qWaitForWindowExposed(tabs)
+        tabs.activateWindow()
+        app.processEvents()
         widgets.append(tabs)
         return tabs
 
@@ -42,12 +45,14 @@ def test_user_tab_selection_is_saved_and_restored(make_tabs, selected_tab):
     settings_manager.save_setting(SettingsKey.LAST_TAB_INDEX, (selected_tab + 1) % 3)
     tabs = make_tabs()
 
+    saved = QSignalSpy(tabs._tab_save_timer.timeout)
     QTest.mouseClick(
         tabs.tab_bar,
         Qt.MouseButton.LeftButton,
         pos=tabs.tab_bar.tabRect(selected_tab).center(),
     )
-    QTest.qWait(300)
+    assert tabs.current_index() == selected_tab
+    assert saved or saved.wait(2000)
 
     assert settings_manager.get(SettingsKey.LAST_TAB_INDEX) == selected_tab
     reopened = make_tabs()
