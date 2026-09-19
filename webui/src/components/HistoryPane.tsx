@@ -1,6 +1,7 @@
 import InsightReview from './InsightReview';
 import HighlightPulseStrip, { pulseTime } from './HighlightPulseStrip';
 import { playMoment } from '../playback';
+import RecordingPlayer, { type PlaybackMoment } from './RecordingPlayer';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
@@ -39,6 +40,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playbackMoment, setPlaybackMoment] = useState<PlaybackMoment | null>(null);
   const reportRef = useRef<HTMLDivElement | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
   const focusReport = useMemo(
@@ -101,6 +103,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
 
   useEffect(() => {
     setDetail(null);
+    setPlaybackMoment(null);
     setDetailSegments([]);
     setDetailError(null);
     setRerunNote(null);
@@ -306,18 +309,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   };
 
   const seekTo = useCallback((seconds: number) => {
-    const el = audioRef.current;
-    if (!el) return;
-    const apply = () => {
-      try {
-        el.currentTime = seconds;
-        void el.play();
-      } catch {
-        /* seeking may fail until metadata is ready */
-      }
-    };
-    if (el.readyState >= 1) apply();
-    else el.addEventListener('loadedmetadata', apply, { once: true });
+    setPlaybackMoment({ start_s: seconds, text: 'Listen from this point in the meeting.' });
+    playMoment(audioRef.current, seconds);
   }, []);
 
   const handleEvidenceClick = useCallback((segmentId: string) => {
@@ -478,7 +471,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 </div>
 
-                {detail && <HighlightPulseStrip pulses={detail.live_highlights ?? []} onSelect={pulse => {
+                {detail && <HighlightPulseStrip pulses={detail.live_highlights ?? []} playbackAvailable={selected.has_audio !== false} onSelect={pulse => {
+                  setPlaybackMoment(pulse);
                   setHighlightSegmentId(pulse.segment_id);
                   playMoment(audioRef.current, pulse.start_s);
                 }} />}
@@ -598,13 +592,13 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                     {selected.has_audio === false ? (
                       <p className="empty-state">No audio was captured for this meeting.</p>
                     ) : (
-                      <audio
-                        ref={audioRef}
-                        controls
-                        aria-label={`Audio recording for ${selected.display_title || selected.title || 'meeting'}`}
-                        preload="metadata"
+                      <RecordingPlayer
+                        key={selected.id}
+                        audioRef={audioRef}
+                        label={`Audio recording for ${selected.display_title || selected.title || 'meeting'}`}
                         src={api.audioUrl(token, selected.id)}
-                        style={{ width: '100%' }}
+                        moment={playbackMoment}
+                        onClose={() => setPlaybackMoment(null)}
                       />
                     )}
                   </div>

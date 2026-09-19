@@ -25,6 +25,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
 )
+from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.widgets.past_meetings_panel import PastMeetingsPanel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -347,6 +348,12 @@ class HistoryItemWidget(QFrame):
                 lambda: self.retranscribe_requested.emit(self._audio_path)
             )
 
+        # Always listed so the menu keeps its shape, but only live for entries
+        # whose recording is still on disk.
+        show_in_folder_action = menu.addAction("Show in Folder")
+        show_in_folder_action.setEnabled(bool(self._audio_path))
+        show_in_folder_action.triggered.connect(self._on_show_in_folder)
+
         menu.addSeparator()
 
         delete_action = menu.addAction("Delete")
@@ -355,6 +362,15 @@ class HistoryItemWidget(QFrame):
         )
 
         menu.exec(self.mapToGlobal(pos))
+
+    def _on_show_in_folder(self):
+        """Reveal this entry's recording; the path can go stale after deletion."""
+        if not self._audio_path:
+            return
+        if not reveal_in_file_manager(self._audio_path):
+            logger.warning(
+                f"Could not show recording in the file manager: {self._audio_path}"
+            )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

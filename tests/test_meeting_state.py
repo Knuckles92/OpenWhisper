@@ -1151,3 +1151,63 @@ class TestFinalizationState:
         assert rebuilt.finalization.steps[0]["status"] == "completed"
         assert rebuilt.finalization.summary_stats["segments"] == 35
         assert rebuilt.finalization.summary_stats["key_points"] == 4
+
+
+def test_spoken_note_survives_agent_updates_but_remains_editable_and_removable():
+    store, repo = make_store()
+    [added] = store.apply("system", "voice_command", [{
+        "op": "add_item", "card": "key_points", "text": "Budget A needs $1,000.",
+        "evidence": ["sg_known"], "data": {"source": "voice_command", "command": "note_this"},
+    }])
+    assert added.ok and added.effect["item"]["status"] == "proposed"
+    for op in [
+        {"op": "update_item", "id": added.target_id, "base_revision": 1,
+         "set": {"text": "The participant tested voice commands."}},
+        {"op": "remove_item", "id": added.target_id, "base_revision": 1},
+    ]:
+        [result] = store.apply("agent", "agent", [op])
+        assert not result.ok and result.reason == "human_edited"
+    assert store.apply("host", "me", [{"op": "update_item", "id": added.target_id,
+                                     "set": {"text": "Budget A needs $2,000."}}])[0].ok
+    assert store.apply("host", "me", [{"op": "remove_item", "id": added.target_id}])[0].ok
+
+
+def test_spoken_note_protection_survives_persistence_without_protecting_other_system_items():
+    from meeting.state.schema import CardItem
+    note = CardItem(id="spoken", card="key_points", text="Budget A needs $1,000.",
+                    author_type="system", author_id="voice_command")
+    assert CardItem.from_dict(note.to_dict()).protected
+    note.author_id = "state_repair"
+    assert not note.protected
+    note.author_type, note.author_id = "agent", "voice_command"
+    assert not note.protected
+
+
+def test_spoken_note_is_marked_protected_in_the_agent_context():
+    from meeting.agent.prompts import render_state_compact
+    state = {"cards": {"key_points": [{"id": "spoken", "text": "Budget A needs $1,000.",
+             "author_type": "system", "author_id": "voice_command", "status": "proposed"}]}}
+    rendered = render_state_compact(state)
+    assert "author_type=system author_id=voice_command protected" in rendered
+
+
+def test_live_and_offline_finalization_cleanup_preserve_spoken_notes():
+    from meeting.engine import MeetingEngine
+    from meeting.refinalize import _strip_unevidenced_proposed
+    from meeting.state.schema import CardItem
+    for cleanup in ("live", "offline"):
+        state = MeetingState(meeting_id="spoken-finalization")
+        state.cards["key_points"] = [
+            CardItem(id="spoken", card="key_points", text="Budget A needs $1,000.",
+                     author_type="system", author_id="voice_command"),
+            CardItem(id="automatic", card="key_points", text="An obsolete draft."),
+        ]
+        store = MeetingStateStore(state)
+        if cleanup == "live":
+            engine = MeetingEngine.__new__(MeetingEngine)
+            engine.store = store
+            engine._strip_proposed_cards()
+        else:
+            _strip_unevidenced_proposed(store)
+        statuses = {i["id"]: i["status"] for i in store.snapshot()["cards"]["key_points"]}
+        assert statuses == {"spoken": "proposed", "automatic": "removed"}

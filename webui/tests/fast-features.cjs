@@ -17,7 +17,7 @@ const {act} = React;
 const {createRoot} = require('react-dom/client');
 const PulseStrip = require('../src/components/HighlightPulseStrip.tsx').default;
 const CitationBadge = require('../src/components/CitationBadge.tsx').default;
-const {playMoment} = require('../src/playback.ts');
+const {playMoment, stopPlayback} = require('../src/playback.ts');
 const {correctionText} = require('../src/corrections.ts');
 let root;
 async function mount(component, props) {
@@ -99,4 +99,81 @@ test('history meaning search exposes keyword fallback and ignores stale response
     assert.match(container.textContent, /Showing keyword results/);
     assert.equal(search.disabled, false);
   } finally {api.meetings=originalMeetings; api.searchHistory=originalSearch;}
+});
+
+
+test('closing a replay while metadata is loading cancels the pending autoplay', () => {
+  const audio = document.createElement('audio');
+  let plays = 0, pauses = 0;
+  audio.load = () => {};
+  audio.play = () => { plays++; return Promise.resolve(); };
+  audio.pause = () => { pauses++; };
+  playMoment(audio, 60, '/recording');
+  stopPlayback(audio);
+  audio.dispatchEvent(new dom.window.Event('loadedmetadata'));
+  assert.equal(plays, 0);
+  assert.equal(pauses, 1);
+});
+
+test('replay keeps one controllable audio element and supports skipping, closing, and load failures', async () => {
+  const RecordingPlayer = require('../src/components/RecordingPlayer.tsx').default;
+  const audioRef = {current: null};
+  let closed = 0, plays = 0;
+  const props = {audioRef, src: '/recording', label: 'Meeting audio', moment: null, onClose: () => { closed++; }};
+  const container = await mount(RecordingPlayer, props);
+  const audio = audioRef.current;
+  audio.load = () => {};
+  audio.pause = () => {};
+  audio.play = () => { plays++; return Promise.resolve(); };
+  Object.defineProperty(audio, 'duration', {value: 150});
+  const moment = {kind: 'number', start_s: 60.874, text: 'Budget A needs a thousand dollars.'};
+  await act(async () => root.render(React.createElement(RecordingPlayer, {...props, moment})));
+  assert.equal(container.querySelector('audio'), audio);
+  assert.equal(audio.controls, true); // The original player is reused when the floating controls close.
+  assert.equal(container.querySelectorAll('audio').length, 1);
+  assert.match(document.body.textContent, /Budget A needs a thousand dollars/);
+  assert.ok(document.querySelector('.is-floating'));
+  const back = document.querySelector('[aria-label="Skip back 10 seconds"]');
+  const forward = document.querySelector('[aria-label="Skip forward 10 seconds"]');
+  assert.equal(back.disabled, true);
+  await act(async () => audio.dispatchEvent(new dom.window.Event('loadedmetadata')));
+  audio.currentTime = 60;
+  await act(async () => forward.click());
+  assert.equal(audio.currentTime, 70);
+  await act(async () => back.click());
+  assert.equal(audio.currentTime, 60);
+  audio.currentTime = 4;
+  await act(async () => back.click());
+  assert.equal(audio.currentTime, 0);
+  audio.currentTime = 149;
+  await act(async () => forward.click());
+  assert.equal(audio.currentTime, 150);
+  await act(async () => {
+    playMoment(audio, 60, '/fresh-recording');
+    document.querySelector('[aria-label="Close replay and stop audio"]').click();
+    audio.dispatchEvent(new dom.window.Event('loadedmetadata'));
+  });
+  assert.equal(closed, 1);
+  assert.equal(plays, 0);
+  await act(async () => audio.dispatchEvent(new dom.window.Event('error')));
+  assert.match(document.body.textContent, /Recording unavailable/);
+  assert.equal(forward.disabled, true);
+  await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Retry').click());
+  await act(async () => audio.dispatchEvent(new dom.window.Event('loadedmetadata')));
+  assert.equal(plays, 1);
+  playMoment(audio, 80, '/another-recording');
+  await act(async () => root.unmount()); root = null;
+  audio.dispatchEvent(new dom.window.Event('loadedmetadata'));
+  assert.equal(plays, 1);
+});
+
+test('highlights without a recording explain why playback is disabled', async () => {
+  let picked = false;
+  const container = await mount(PulseStrip, {pulses: [{id:'p',kind:'number',start_s:60,text:'Budget'}],
+    playbackAvailable: false, onSelect: () => { picked = true; }});
+  assert.match(container.textContent, /No recording available/);
+  const button = container.querySelector('button');
+  assert.equal(button.disabled, true);
+  await act(async () => button.click());
+  assert.equal(picked, false);
 });

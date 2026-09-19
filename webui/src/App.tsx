@@ -1,6 +1,7 @@
 import InsightReview from './components/InsightReview';
 import HighlightPulseStrip from './components/HighlightPulseStrip';
 import { playMoment } from './playback';
+import RecordingPlayer, { type PlaybackMoment } from './components/RecordingPlayer';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
 import SelectionInsight from './components/SelectionInsight';
@@ -64,6 +65,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     resolveReportView(['ribbon', 'brief', 'signal']),
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playbackMoment, setPlaybackMoment] = useState<PlaybackMoment | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -182,18 +184,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   }, [showHistory]);
 
   const seekTo = useCallback((seconds: number) => {
-    const el = audioRef.current;
-    if (!el) return;
-    const apply = () => {
-      try {
-        el.currentTime = seconds;
-        void el.play();
-      } catch {
-        /* seeking may fail until metadata is ready */
-      }
-    };
-    if (el.readyState >= 1) apply();
-    else el.addEventListener('loadedmetadata', apply, { once: true });
+    setPlaybackMoment({ start_s: seconds, text: 'Listen from this point in the meeting.' });
+    playMoment(audioRef.current, seconds);
   }, []);
 
   if (!ui.state) {
@@ -225,6 +217,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         onClientError={(message) => dispatch({ type: 'client_error', message })}
         onClearError={() => dispatch({ type: 'clear_error' })}
         onToggleHistory={() => {
+          setPlaybackMoment(null);
           setShowHistory((v) => !v);
         }}
         showHistory={showHistory}
@@ -264,17 +257,14 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 }
                 headerExtra={
                   <div className="recording-inline">
-                    <audio
-                      ref={audioRef}
+                    <RecordingPlayer
+                      audioRef={audioRef}
                       key={`${ui.state.meeting_id}:${ui.state.status}`}
-                      controls
-                      aria-label="Meeting audio recording"
+                      label="Meeting audio recording"
                       preload={ui.state.status === 'active' ? 'none' : 'metadata'}
-                      src={api.audioUrl(
-                        token,
-                        ui.state.meeting_id,
-                        ui.state.status,
-                      )}
+                      src={api.audioUrl(token, ui.state.meeting_id, ui.state.status)}
+                      moment={playbackMoment}
+                      onClose={() => setPlaybackMoment(null)}
                     />
                   </div>
                 }
@@ -287,6 +277,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   cloudEnabled={ui.state.cloud_enabled}
                   paused={ui.state.status === 'paused'} isHost={isHost} />}
               <HighlightPulseStrip pulses={ui.state.live_highlights ?? []} onSelect={pulse => {
+                setPlaybackMoment(pulse);
                 void handleEvidenceClick(pulse.segment_id);
                 playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));
               }} />

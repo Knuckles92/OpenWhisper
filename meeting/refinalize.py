@@ -41,7 +41,7 @@ from meeting.stored import (
     meeting_endpoint as _meeting_endpoint,
     open_store as _open_store,
 )
-from meeting.state.schema import CARD_KEYS, FinalizationState, MeetingState
+from meeting.state.schema import CARD_KEYS, CardItem, FinalizationState, MeetingState
 from meeting.state.store import MeetingStateStore
 from meeting.time_utils import elapsed_seconds
 
@@ -121,7 +121,7 @@ def _strip_unevidenced_proposed(store: MeetingStateStore) -> None:
         for item in cards_snapshot.get(key) or []:
             if not isinstance(item, dict):
                 continue
-            if item.get("status") != "proposed" or item.get("pinned"):
+            if item.get("status") != "proposed" or CardItem.from_dict(item).protected:
                 continue
             if item.get("evidence"):
                 continue

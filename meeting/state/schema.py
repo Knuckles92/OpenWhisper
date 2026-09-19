@@ -79,7 +79,10 @@ class CardItem:
     @property
     def protected(self) -> bool:
         """True when agent ops may no longer modify this item."""
-        return self.pinned or self.status in ("edited", "confirmed")
+        # Spoken requests remain proposed/reversible, but later summary passes
+        # must not overwrite the content the participant explicitly asked to save.
+        spoken = self.author_type == "system" and self.author_id == "voice_command"
+        return spoken or self.pinned or self.status in ("edited", "confirmed")
 
     def to_dict(self) -> Dict[str, Any]:
         return {

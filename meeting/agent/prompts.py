@@ -153,7 +153,8 @@ Past-meeting recall hits are not evidence and must never be cited as sg_ ids.
 
 PROVISIONAL CONTENT AND PROTECTION
 Everything you write appears as "proposed" until a human touches it. Items whose
-status is "edited" or "confirmed", or which are pinned, are protected: your
+status is "edited" or "confirmed", which are pinned, or whose author_type is
+"system" and author_id is "voice_command", are protected: your
 updates and removals against them are rejected with reason human_edited — never
 retry those targets; work around them. update_item and remove_item also require
 the current base_revision; on revision_mismatch the current revision is echoed
@@ -465,7 +466,8 @@ CADENCE AND STYLE
 
 PROVISIONAL CONTENT AND PROTECTION
 Everything you write appears as "proposed" until a human touches it. Blocks
-whose status is "edited" or "confirmed", or which are pinned, are protected:
+whose status is "edited" or "confirmed", which are pinned, or whose author_type is
+"system" and author_id is "voice_command", are protected:
 your updates and removals against them are rejected with reason
 human_edited — never retry those targets; start a fresh block beside them
 instead. update_item and remove_item also require the current
@@ -509,6 +511,8 @@ def _render_item(item: Dict[str, Any], card: Optional[str] = None) -> str:
     flags = [f"rev={item.get('revision', 1)}", str(item.get("status", "proposed"))]
     if item.get("pinned"):
         flags.append("pinned")
+    if item.get("author_type") == "system" and item.get("author_id") == "voice_command":
+        flags.append("author_type=system author_id=voice_command protected")
     data = item.get("data") or {}
     extras = []
     if data.get("heading"):
@@ -714,6 +718,8 @@ def _render_note_item(item: Dict[str, Any]) -> str:
     flags = [f"rev={item.get('revision', 1)}", str(item.get("status", "proposed"))]
     if item.get("pinned"):
         flags.append("pinned")
+    if item.get("author_type") == "system" and item.get("author_id") == "voice_command":
+        flags.append("author_type=system author_id=voice_command protected")
     data = item.get("data") or {}
     extras = []
     if data.get("heading"):

@@ -329,3 +329,38 @@ def test_consent_revoked_during_judgment_prevents_save():
     listener, store, _, events = streaming_listener(judge=RevokingJudge(), allowed=lambda: allowed[0])
     listener.observe([dict(preview(), id="sg_cmd")])
     assert not store.calls and not any(e["phase"] == "saved" for e in events)
+
+
+def test_budget_note_from_real_meeting_uses_dictation_not_prior_praise():
+    listener, store, judge, events = streaming_listener(
+        judge=FakeJudge(ChoiceAnswer("note_this", .66, {})))
+    transcript = [
+        dict(id="sg_praise_1", channel="mic", start_s=48.074, end_s=49.114,
+             text="This is gonna work."),
+        dict(id="sg_praise_2", channel="mic", start_s=49.454, end_s=50.894,
+             text="Insanely good."),
+        dict(id="sg_wake", channel="mic", start_s=59.174, end_s=60.214,
+             text="Assistant."),
+        dict(id="sg_budget", channel="mic", start_s=60.874, end_s=66.074,
+             text="Add a note that we need to get a thousand dollars for budget A."),
+    ]
+    listener.observe(transcript)
+    op = store.calls[0][2][0]
+    assert op["text"] == "we need to get a thousand dollars for budget A."
+    assert op["evidence"] == ["sg_wake", "sg_budget"]
+    assert events[-1]["phase"] == "saved"
+    listener.observe(transcript)
+    assert len(store.calls) == 1
+
+
+def test_polite_dictation_and_split_note_preamble_preserve_the_requested_content():
+    for lead in ("Add a note that", "Please add a note that", "Can you please add a note that",
+                 "Could you take a note that", "Would you make a note that"):
+        listener, store, _, _ = streaming_listener()
+        listener.observe([dict(preview("Unrelated earlier point.", end=1), id="sg_old")])
+        listener.observe([dict(preview(f"Assistant, {lead}", start=1, end=2), id="sg_wake")])
+        assert not store.calls
+        listener.observe([dict(preview("budget A needs a thousand dollars.", start=2, end=5), id="sg_budget")])
+        op = store.calls[0][2][0]
+        assert op["text"] == "budget A needs a thousand dollars."
+        assert op["evidence"] == ["sg_wake", "sg_budget"]

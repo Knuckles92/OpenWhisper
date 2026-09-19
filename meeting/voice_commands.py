@@ -226,7 +226,7 @@ class VoiceCommandListener:
             row["_prefix"] = ""
         body = text[match.end():].lstrip(" .,!?:;").strip()
         # Copy only explicit argument forms. Deictic commands still use referents.
-        inline = re.search(r"^(?:please\s+)?(?:note that|note this:|remember that|(?:take|make) a note(?: that)?|"
+        inline = re.search(r"^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:note that|note this:|remember that|(?:take|make|add) a note(?: that)?|"
                            r"add (?:an action item|a decision)(?: that)?|write down|capture this:)"
                            r"\s*[.:,-]?\s+(.+)$", body, re.I)
         if inline:
@@ -238,8 +238,10 @@ class VoiceCommandListener:
         if not match:
             return False
         tail = text[match.end():].strip(" .,!?:;").lower()
-        return tail in ("", "please", "can you", "could you", "note that", "please note that",
-                        "mark that as", "write down", "take a note")
+        tail = re.sub(r"^(?:(?:can|could|would) you\s+)?(?:please\s+)?", "", tail)
+        return (tail in ("", "please", "can you", "could you", "would you", "note that",
+                         "mark that as", "write down")
+                or re.fullmatch(r"(?:take|make|add) a note(?: that)?", tail) is not None)
 
     def observe(self, rows: Sequence[Mapping[str, Any]]) -> int:
         """Queue bounded committed commands; join a wake name split across segments."""

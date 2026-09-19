@@ -1396,7 +1396,7 @@ class MeetingEngine:
         """
         if self.store is None:
             return
-        from meeting.state.schema import CARD_KEYS
+        from meeting.state.schema import CARD_KEYS, CardItem
 
         keys = tuple(cards) if cards is not None else CARD_KEYS
         snapshot = self.store.snapshot()
@@ -1408,7 +1408,7 @@ class MeetingEngine:
             for item in cards_snapshot.get(key) or []:
                 if not isinstance(item, dict):
                     continue
-                if item.get("status") != "proposed" or item.get("pinned"):
+                if item.get("status") != "proposed" or CardItem.from_dict(item).protected:
                     continue
                 if keep_evidenced and (item.get("evidence") or []):
                     continue
