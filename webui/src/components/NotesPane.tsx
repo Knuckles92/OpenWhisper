@@ -28,6 +28,8 @@ interface NotesPaneProps {
   lastSeqByTarget: Record<string, number>;
   /** Hide composer and edit actions (print / archive). */
   readOnly?: boolean;
+  /** Live pane: newest block on top, matching the Captured rail. */
+  newestFirst?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -329,18 +331,20 @@ export default function NotesPane({
   onUndo,
   lastSeqByTarget,
   readOnly = false,
+  newestFirst = false,
 }: NotesPaneProps) {
   const flowRef = useRef<HTMLDivElement | null>(null);
   // Stay put until the reader scrolls the workspace to the notes. Starting
   // "on" yanked the page to the first block and hid the topic hero.
   const stickToLatest = useRef(false);
   const lastCountRef = useRef(0);
-  const sorted = sortedNoteItems(notes.filter((item) => item.status !== 'removed'));
+  const sorted = sortedNoteItems(notes.filter((item) => item.status !== 'removed'), newestFirst);
 
   // Follow the newest block inside the workspace scroller only. Never move
   // the window — that hid Pause / End whenever the note taker wrote.
+  // Newest-first needs no following: new blocks land at the top of the flow.
   useEffect(() => {
-    if (readOnly) return undefined;
+    if (readOnly || newestFirst) return undefined;
     const flow = flowRef.current;
     if (!flow) return undefined;
     const scroller = workspaceScroller(flow);
@@ -350,10 +354,10 @@ export default function NotesPane({
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
     return () => scroller.removeEventListener('scroll', onScroll);
-  }, [readOnly]);
+  }, [readOnly, newestFirst]);
 
   useEffect(() => {
-    if (readOnly) return;
+    if (readOnly || newestFirst) return;
     const flow = flowRef.current;
     if (!flow || sorted.length === lastCountRef.current) return;
     lastCountRef.current = sorted.length;
@@ -361,7 +365,7 @@ export default function NotesPane({
     if (scroller && stickToLatest.current) {
       scroller.scrollTop = scroller.scrollHeight;
     }
-  }, [readOnly, sorted.length]);
+  }, [readOnly, newestFirst, sorted.length]);
 
   return (
     <section className="panel notes-pane">

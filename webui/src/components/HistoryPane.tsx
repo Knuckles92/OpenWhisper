@@ -14,12 +14,38 @@ import ReportTabs from './report/ReportTabs';
 interface HistoryPaneProps {
   token: string;
   initialMeetingId?: string | null;
+  /** Lifted selection, so the header can act on the meeting being viewed. */
+  selectedId?: string | null;
+  onSelectMeeting?: (meetingId: string | null) => void;
+  /** Full view: the list steps aside and the selected meeting fills the pane. */
+  focused?: boolean;
+  onFocusChange?: (focused: boolean) => void;
   onClose: () => void;
 }
 
-export default function HistoryPane({ token, initialMeetingId, onClose }: HistoryPaneProps) {
+export default function HistoryPane({
+  token,
+  initialMeetingId,
+  selectedId: controlledSelectedId,
+  onSelectMeeting,
+  focused: controlledFocused,
+  onFocusChange,
+  onClose,
+}: HistoryPaneProps) {
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(initialMeetingId ?? null);
+  const [ownSelectedId, setOwnSelectedId] = useState<string | null>(initialMeetingId ?? null);
+  const [ownFocused, setOwnFocused] = useState(false);
+  // Controlled when the dashboard drives it, self-contained when mounted alone.
+  const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : ownSelectedId;
+  const focused = controlledFocused !== undefined ? controlledFocused : ownFocused;
+  const selectMeeting = useCallback((meetingId: string | null) => {
+    setOwnSelectedId(meetingId);
+    onSelectMeeting?.(meetingId);
+  }, [onSelectMeeting]);
+  const setFocused = useCallback((next: boolean) => {
+    setOwnFocused(next);
+    onFocusChange?.(next);
+  }, [onFocusChange]);
   const [query, setQuery] = useState('');
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('semantic');
   const searchGeneration = useRef(0);
@@ -136,11 +162,22 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
         setPendingDeleteId(null);
         return;
       }
+      // Escape steps back out of the full view before it leaves history.
+      if (focused) {
+        setFocused(false);
+        return;
+      }
       onClose();
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose, pendingDeleteId]);
+  }, [onClose, pendingDeleteId, focused, setFocused]);
+
+  useEffect(() => {
+    if (!focused) return;
+    const scroller = document.querySelector('.app-main');
+    if (scroller) scroller.scrollTop = 0;
+  }, [focused, selectedId]);
 
   const runSearch = async () => {
     if (searching) return;
@@ -172,7 +209,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     const meetingId = String(row.meeting_id ?? '');
     const segmentId = String(row.segment_id ?? '');
     if (!meetingId) return;
-    setSelectedId(meetingId);
+    selectMeeting(meetingId);
     setHighlightSegmentId(segmentId || null);
   };
 
@@ -203,7 +240,10 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     setDeleting(true);
     try {
       await api.deleteMeeting(token, meetingId);
-      if (selectedId === meetingId) setSelectedId(null);
+      if (selectedId === meetingId) {
+        selectMeeting(null);
+        setFocused(false);
+      }
       setPendingDeleteId(null);
       await loadMeetings();
     } catch (err) {
@@ -325,8 +365,26 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     >
       <div className="panel-header no-print">
         <div className="history-pane-title">
-          <span id="meeting-history-heading">Past Meetings</span>
-          {!loading && <span className="status-chip">{meetings.length}</span>}
+          {focused ? (
+            <>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setFocused(false)}
+                aria-label="Back to the meeting list"
+              >
+                ← All meetings
+              </button>
+              <span id="meeting-history-heading">
+                {String(selected?.display_title || selected?.title || 'Meeting')}
+              </span>
+            </>
+          ) : (
+            <>
+              <span id="meeting-history-heading">Past Meetings</span>
+              {!loading && <span className="status-chip">{meetings.length}</span>}
+            </>
+          )}
         </div>
         <button type="button" className="ghost" onClick={onClose} aria-label="Close meeting history">
           Close
@@ -339,7 +397,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
           </div>
         )}
 
-        <div className="history-detail-grid">
+        <div className={`history-detail-grid${focused ? ' focused' : ''}`}>
+          {!focused && (
           <div className="history-sidebar-column no-print">
             <label className="search-mode">Search by
               <select value={searchMode} aria-label="Search mode" onChange={e => { ++searchGeneration.current; setSearchStatus(''); setSearchMode(e.target.value as 'keyword' | 'semantic'); }}>
@@ -390,7 +449,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                       type="button"
                       className={`history-item${selectedId === m.id ? ' active' : ''}`}
                       aria-current={selectedId === m.id ? 'true' : undefined}
-                      onClick={() => setSelectedId(m.id)}
+                      onClick={() => selectMeeting(m.id)}
                     >
                       <span
                         className="history-item-title"
@@ -424,6 +483,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
               </ul>
             )}
           </div>
+          )}
 
           <div className="history-content-column">
             {!selected ? (
@@ -577,6 +637,8 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                       meeting={selected}
                       onEvidenceClick={handleEvidenceClick}
                       onSeek={seekTo}
+                      audioRef={selected.has_audio === false ? undefined : audioRef}
+                      audioKey={selected.id}
                       transcriptComplete={transcriptComplete}
                     />
                   </div>
@@ -599,6 +661,7 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                         src={api.audioUrl(token, selected.id)}
                         moment={playbackMoment}
                         onClose={() => setPlaybackMoment(null)}
+                        onPopOut={setPlaybackMoment}
                       />
                     )}
                   </div>
@@ -620,6 +683,14 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                       highlightSegmentId={highlightSegmentId}
                       onHighlightClear={() => setHighlightSegmentId(null)}
                       onReassignSpeaker={() => undefined}
+                      audioRef={selected.has_audio === false ? undefined : audioRef}
+                      audioKey={selected.id}
+                      onPlaySegment={selected.has_audio === false ? undefined : (startSeconds) => {
+                        const audio = audioRef.current;
+                        playMoment(audio, startSeconds, audio && audio.readyState >= 1
+                          ? undefined
+                          : api.audioUrl(token, selected.id));
+                      }}
                       readOnly
                     />
                   </div>

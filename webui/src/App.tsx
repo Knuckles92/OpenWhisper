@@ -56,6 +56,12 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   const [showHistory, setShowHistory] = useState(
     isHost && Boolean(initialHistoryMeetingId),
   );
+  // Lifted out of HistoryPane so the header button can open the meeting the
+  // host picked, instead of dropping them back on this dashboard's own meeting.
+  const [historyMeetingId, setHistoryMeetingId] = useState<string | null>(
+    initialHistoryMeetingId,
+  );
+  const [historyFocused, setHistoryFocused] = useState(false);
   const [showActivity, setShowActivity] = useState(true);
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
   const [transcriptLoad, setTranscriptLoad] = useState<TranscriptLoadState>({ status: 'loading' });
@@ -201,6 +207,10 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     );
   }
 
+  // Re-keying the player swaps the <audio> node; the minimap playhead needs
+  // the same key so it re-binds to the live element.
+  const audioKey = `${ui.state.meeting_id}:${ui.state.status}`;
+
   return (
     <div className="app-shell">
       {!showHistory && <SelectionInsight key={ui.state.meeting_id} onSend={sendOp} live={ui.state.status === 'active'} online={ui.state.cloud_enabled && ui.state.intelligence_online} />}
@@ -218,11 +228,17 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         onClearError={() => dispatch({ type: 'clear_error' })}
         onToggleHistory={() => {
           setPlaybackMoment(null);
+          setHistoryFocused(false);
           setShowHistory((v) => !v);
         }}
         showHistory={showHistory}
+        historySelectionId={historyMeetingId}
+        historyFocused={historyFocused}
+        onOpenHistoryMeeting={() => setHistoryFocused(true)}
+        onExitHistoryMeeting={() => setHistoryFocused(false)}
         onToggleActivity={() => {
           setShowActivity((v) => !v);
+          setHistoryFocused(false);
           setShowHistory(false);
         }}
         showActivity={showActivity}
@@ -238,7 +254,14 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           <HistoryPane
             token={token}
             initialMeetingId={initialHistoryMeetingId}
-            onClose={() => setShowHistory(false)}
+            selectedId={historyMeetingId}
+            onSelectMeeting={setHistoryMeetingId}
+            focused={historyFocused}
+            onFocusChange={setHistoryFocused}
+            onClose={() => {
+              setHistoryFocused(false);
+              setShowHistory(false);
+            }}
           />
         </div>
       ) : (
@@ -255,16 +278,28 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 onReassignSpeaker={(segmentId, participantId) =>
                   sendOp({ op: 'reassign_segment_speaker', segment_id: segmentId, participant_id: participantId })
                 }
+                audioRef={audioRef}
+                audioKey={audioKey}
+                onPlaySegment={(startSeconds) => {
+                  // While the meeting is live the player is `preload="none"`, so
+                  // there is no metadata to seek against until a source is handed
+                  // over; a finished recording is already loaded and just moves.
+                  const audio = audioRef.current;
+                  playMoment(audio, startSeconds, audio && audio.readyState >= 1
+                    ? undefined
+                    : api.audioUrl(token, ui.state!.meeting_id, Date.now()));
+                }}
                 headerExtra={
                   <div className="recording-inline">
                     <RecordingPlayer
                       audioRef={audioRef}
-                      key={`${ui.state.meeting_id}:${ui.state.status}`}
+                      key={audioKey}
                       label="Meeting audio recording"
                       preload={ui.state.status === 'active' ? 'none' : 'metadata'}
                       src={api.audioUrl(token, ui.state.meeting_id, ui.state.status)}
                       moment={playbackMoment}
                       onClose={() => setPlaybackMoment(null)}
+                      onPopOut={setPlaybackMoment}
                     />
                   </div>
                 }
@@ -311,6 +346,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   meeting={ui.meeting}
                   onEvidenceClick={handleEvidenceClick}
                   onSeek={seekTo}
+                  audioRef={audioRef}
+                  audioKey={audioKey}
                   transcriptComplete={transcriptComplete}
                   showDownload={false}
                   showSwitcher={false}
@@ -346,6 +383,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   />
 
                   <NotesPane
+                    newestFirst
                     onRequestAdjustment={(text) => api.requestNoteAdjustment(token, text)}
                     notes={ui.state.cards.live_notes ?? []}
                     status={ui.state.status}

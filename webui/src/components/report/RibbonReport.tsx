@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import {
   clock,
   formatMeetingWhen,
@@ -6,11 +7,11 @@ import {
   meetingDuration,
   ownerId,
   severity,
-  speakerColor,
   speakerName,
 } from '../../report';
 import type { CardItem, MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import ReportTimestamp from './ReportTimestamp';
+import TimelineMinimap, { type MarkerCard, type MinimapMarker } from './TimelineMinimap';
 
 interface RibbonReportProps {
   state: MeetingStateDoc;
@@ -19,6 +20,8 @@ interface RibbonReportProps {
   meeting?: MeetingInfo | null;
   onEvidenceClick?: (segmentId: string) => void;
   onSeek?: (seconds: number) => void;
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  audioKey?: string;
 }
 
 type CutKind = 'settled' | 'watch' | 'owed';
@@ -36,6 +39,8 @@ export default function RibbonReport({
   meeting,
   onEvidenceClick,
   onSeek,
+  audioRef,
+  audioKey,
 }: RibbonReportProps) {
   const duration = Math.max(meetingDuration(segments), 1);
   const people = Object.values(state.participants);
@@ -63,7 +68,12 @@ export default function RibbonReport({
     return stamp != null && Math.abs(stamp - time) < 60 ? last : null;
   };
 
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const markers: MinimapMarker[] = ([
+    ['decisions', decisions], ['risks', risks], ['action_items', actions],
+  ] as [MarkerCard, CardItem[]][]).flatMap(([card, items]) => items.flatMap((item) => {
+    const time = itemTime(item, segs);
+    return time == null ? [] : [{ id: item.id, card, time, text: item.text }];
+  }));
   const startedAt = typeof meeting?.started_at === 'string' ? meeting.started_at : null;
   const openCount = (state.questions || []).filter((question) => question.status === 'open').length;
 
@@ -86,59 +96,15 @@ export default function RibbonReport({
           </span>
         </div>
 
-        <div className="minimap">
-          <div className="mm-track">
-            {segments.map((segment) => {
-              const left = (segment.start_s / duration) * 100;
-              const width = Math.max(0.35, ((segment.end_s - segment.start_s) / duration) * 100);
-              const height = 18 + Math.min(40, (segment.end_s - segment.start_s) * 1.9);
-              return (
-                <i
-                  key={segment.id}
-                  className="mm-seg"
-                  style={{
-                    left: `${left}%`,
-                    width: `${width}%`,
-                    height: `${height}px`,
-                    background: speakerColor(segment.speaker_participant_id),
-                  }}
-                />
-              );
-            })}
-            {[
-              ...decisions.map((item) => ({ item, card: 'decisions' })),
-              ...risks.map((item) => ({ item, card: 'risks' })),
-              ...actions.map((item) => ({ item, card: 'action_items' })),
-            ].map(({ item, card }) => {
-              const time = itemTime(item, segs);
-              if (time == null) return null;
-              return (
-                <button
-                  key={`${card}-${item.id}`}
-                  type="button"
-                  className={`mm-marker ${card}`}
-                  style={{ left: `${(time / duration) * 100}%` }}
-                  title={item.text}
-                  aria-label={`${card === 'decisions' ? 'Decision' : card === 'risks' ? 'Risk' : 'Commitment'} at ${clock(time)}: ${item.text}`}
-                  onClick={() => onSeek?.(time)}
-                />
-              );
-            })}
-          </div>
-          <div className="mm-axis">
-            {ticks.map((fraction) => (
-              <span key={fraction}>{clock(duration * fraction)}</span>
-            ))}
-          </div>
-          <div className="mm-legend">
-            <span><i style={{ background: 'var(--leaf)' }} /> decision</span>
-            <span><i style={{ background: 'var(--clay)' }} /> risk</span>
-            <span><i style={{ background: 'var(--ink)' }} /> commitment</span>
-            <span style={{ color: 'var(--faint)' }}>
-              bar height = length of turn, colour = speaker
-            </span>
-          </div>
-        </div>
+        <TimelineMinimap
+          segments={segments}
+          markers={markers}
+          participants={state.participants}
+          duration={duration}
+          audioRef={audioRef}
+          audioKey={audioKey}
+          onSeek={onSeek}
+        />
       </div>
 
       <div className="rb-flow">

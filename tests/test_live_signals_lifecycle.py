@@ -197,13 +197,22 @@ def test_final_pulses_persist_and_broadcast(repo, monkeypatch):
                                segment_exists=lambda sid: repo.get_segment("m_final", sid) is not None)
     events = []
     target.subscribe(lambda seq, results: events.extend(results))
-    judge = SimpleNamespace(ask=lambda *a, **k: {"number": {"noul": .95}, "number_anchor": {"choice": "sg_final"}})
+    judge = SimpleNamespace(ask=lambda *a, **k: {"number": {"noul": .95}, "number_anchor": {
+        "choice": "sg_final", "confidence": .7, "probabilities": {"sg_final": .9, "none": .1}}})
     worker = LiveSignals(target, repo, judge, lambda: True, executor=Queue())
     worker.finalize()
     import json
     saved = json.loads(repo.get_meeting("m_final")["state_json"])
     assert saved["live_highlights"][0]["segment_id"] == "sg_final"
     assert events[0].effect["entity"] == "live_highlights"
+    assessment = saved["live_highlights"][0]["assessment"]
+    assert assessment["scores"] == {"number": .95}
+    assert assessment["source_confidence"] == .7
+    assert assessment["source_probability"] == .9
+    assert assessment["source_rank"] == 1
+    assert events[0].effect["pulses"] == saved["live_highlights"]
+    restored = MeetingState.from_dict(saved).to_dict()
+    assert restored["live_highlights"] == saved["live_highlights"]
 
 
 @pytest.mark.parametrize("status", ["active", "canceled", "needs_recovery"])

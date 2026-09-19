@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { usePlayingSpanId } from '../playback';
 import { scrollChildIntoView } from '../scroll';
 import type { Participant, Segment, SpeechPreviewMsg } from '../types';
 
@@ -16,6 +17,12 @@ interface TranscriptPaneProps {
   segmentIdPrefix?: string;
   /** Live rail: newest speech at the top. Print / history stay chronological. */
   newestFirst?: boolean;
+  /** Play the recording from this turn. Omit to leave the list inert (print). */
+  onPlaySegment?: (startSeconds: number, segmentId: string) => void;
+  /** The recording element, so the turn being played can mark itself. */
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  /** Changes whenever that element is replaced, so the listeners re-bind. */
+  audioKey?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -43,6 +50,9 @@ export default function TranscriptPane({
   headerExtra,
   segmentIdPrefix = '',
   newestFirst = false,
+  onPlaySegment,
+  audioRef,
+  audioKey,
 }: TranscriptPaneProps) {
   const sorted = useMemo(
     () =>
@@ -68,13 +78,31 @@ export default function TranscriptPane({
     return () => window.clearTimeout(timer);
   }, [highlightSegmentId, highlightedAvailable, segmentIdPrefix]);
 
+  const playingSegmentId = usePlayingSpanId(sorted, audioRef, audioKey);
+  const seekable = Boolean(onPlaySegment);
+
+  /**
+   * Anywhere in the turn is a play target, which is why this is a click
+   * handler and not a wrapping button: the row already owns a speaker picker,
+   * and the text has to stay selectable for people quoting it.
+   */
+  const playFromRow = (event: MouseEvent<HTMLElement>, segment: Segment) => {
+    if (!onPlaySegment) return;
+    if ((event.target as HTMLElement).closest('select, button, a, input, textarea')) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    onPlaySegment(segment.start_s, segment.id);
+  };
+
   return (
     <section className="panel">
-      <div className="panel-header">
-        <span>Conversation</span>
-        <span className="meta">{sorted.length} segments</span>
+      {/* One block so the title and the player stick to the rail together. */}
+      <div className="panel-head">
+        <div className="panel-header">
+          <span>Conversation</span>
+          <span className="meta">{sorted.length} segments</span>
+        </div>
+        {headerExtra && <div className="no-print">{headerExtra}</div>}
       </div>
-      {headerExtra && <div className="no-print">{headerExtra}</div>}
       <div className="panel-body">
         {!readOnly && previews.filter(p => p.text.trim()).map(p => (
           <div className="segment no-print" key={p.channel} aria-live="polite">
@@ -93,15 +121,29 @@ export default function TranscriptPane({
           <div className="segment-list">
             {sorted.map((seg) => {
               const highlighted = seg.id === highlightSegmentId;
+              const nowPlaying = seg.id === playingSegmentId;
               return (
                 <article
                   key={seg.id}
                   id={`${segmentIdPrefix}seg-${seg.id}`}
-                  className={`segment${highlighted ? ' highlight' : ''}`}
+                  className={`segment${highlighted ? ' highlight' : ''}${nowPlaying ? ' is-playing' : ''}${seekable ? ' is-seekable' : ''}`}
                   tabIndex={highlighted ? -1 : undefined}
+                  aria-current={nowPlaying ? 'true' : undefined}
+                  onClick={seekable ? (event) => playFromRow(event, seg) : undefined}
                   aria-label={`${speakerLabel(participants, seg.speaker_participant_id, seg.channel)} at ${formatTime(seg.start_s)}`}
                 >
-                  <time className="segment-time">{formatTime(seg.start_s)}</time>
+                  {seekable ? (
+                    <button
+                      type="button"
+                      className="segment-time segment-seek"
+                      aria-label={`Play the recording from ${formatTime(seg.start_s)}`}
+                      onClick={() => onPlaySegment?.(seg.start_s, seg.id)}
+                    >
+                      {formatTime(seg.start_s)}
+                    </button>
+                  ) : (
+                    <time className="segment-time">{formatTime(seg.start_s)}</time>
+                  )}
                   <div>
                     <div className="segment-meta">
                       <span className="segment-speaker">

@@ -78,6 +78,16 @@ export interface HighlightPulse {
   segment_id: string;
   probability: number;
   text: string;
+  assessment?: {
+    threshold: number;
+    window_start_s: number;
+    window_end_s: number;
+    scores: Partial<Record<HighlightPulse['kind'], number>>;
+    source_confidence?: number;
+    source_probability?: number;
+    source_rank?: number;
+    source_option_count?: number;
+  };
 }
 
 export interface CardItem {

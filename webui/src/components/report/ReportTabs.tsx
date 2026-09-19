@@ -1,5 +1,5 @@
 import { ReviewCorrections } from '../InsightReview';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type RefObject } from 'react';
 import {
   enabledReportViews,
   resolveReportView,
@@ -22,6 +22,10 @@ interface ReportTabsProps {
   meeting?: MeetingInfo | null;
   onEvidenceClick?: (segmentId: string) => void;
   onSeek?: (seconds: number) => void;
+  /** Recording element the Ribbon minimap draws its playhead from. */
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  /** Changes whenever that element is replaced, so the playhead re-binds. */
+  audioKey?: string;
   /** When false, Full download stays disabled so a partial transcript is never printed. */
   transcriptComplete?: boolean;
   /** Hide the in-toolbar download when the header already owns it. */
@@ -38,6 +42,8 @@ export default function ReportTabs({
   meeting,
   onEvidenceClick,
   onSeek,
+  audioRef,
+  audioKey,
   transcriptComplete = false,
   showDownload = true,
   showSwitcher = true,
@@ -89,7 +95,7 @@ export default function ReportTabs({
         )}
         <div className="report-sheet">
           <ReviewCorrections state={state} />
-          {active === 'ribbon' && <RibbonReport {...shared} />}
+          {active === 'ribbon' && <RibbonReport {...shared} audioRef={audioRef} audioKey={audioKey} />}
           {active === 'brief' && <BriefReport {...shared} />}
           {active === 'signal' && <SignalReport {...shared} />}
         </div>

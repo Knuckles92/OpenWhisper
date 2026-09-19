@@ -1,4 +1,4 @@
-"""Open the desktop file manager with a file selected.
+"""Open the desktop file manager on a file or a folder.
 
 Every desktop spells "select this file" differently — Explorer wants
 ``/select,``, Finder wants ``open -R``, and Linux has no portable equivalent —
@@ -39,6 +39,23 @@ def reveal_in_file_manager(path: str) -> bool:
             logger.warning(f"Failed to reveal {target}: {e}")
 
     return _open_containing_folder(target)
+
+
+def open_folder_in_file_manager(path: str) -> bool:
+    """Open ``path`` itself so its contents are visible.
+
+    Use this instead of :func:`reveal_in_file_manager` when the folder *is*
+    the thing the user wants — selecting it would only highlight it inside
+    its parent and leave the files one double-click away. A folder that is
+    gone is reported, never quietly swapped for its parent.
+    """
+    if not path:
+        return False
+    folder = os.path.abspath(path)
+    if not os.path.isdir(folder):
+        logger.warning(f"No folder to open: {folder}")
+        return False
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
 
 def _open_containing_folder(target: str) -> bool:

@@ -25,6 +25,10 @@ interface HeaderBarProps {
   onClearError: () => void;
   onToggleHistory: () => void;
   showHistory: boolean;
+  historySelectionId?: string | null;
+  historyFocused?: boolean;
+  onOpenHistoryMeeting?: () => void;
+  onExitHistoryMeeting?: () => void;
   onToggleActivity: () => void;
   showActivity: boolean;
   transcriptLoadError: string | null;
@@ -48,6 +52,10 @@ export default function HeaderBar({
   onClearError,
   onToggleHistory,
   showHistory,
+  historySelectionId = null,
+  historyFocused = false,
+  onOpenHistoryMeeting,
+  onExitHistoryMeeting,
   onToggleActivity,
   showActivity,
   transcriptLoadError,
@@ -67,6 +75,7 @@ export default function HeaderBar({
 
   const meetingLive = state.status === 'active';
   const meetingEnding = state.status === 'ending';
+  const sessionRunning = meetingLive || state.status === 'paused' || meetingEnding;
   const statusClass = meetingLive
     ? 'live'
     : state.status === 'paused'
@@ -230,11 +239,25 @@ export default function HeaderBar({
           </>
         )}
         {isHost && showHistory && (
-          <button type="button" className="primary" onClick={onToggleHistory}>
-            {meetingLive || state.status === 'paused' || meetingEnding
-              ? 'Back to live'
-              : 'Back to meeting'}
-          </button>
+          <>
+            {historyFocused ? (
+              <button type="button" className="ghost" onClick={onExitHistoryMeeting}>
+                All meetings
+              </button>
+            ) : historySelectionId ? (
+              <button type="button" className="primary" onClick={onOpenHistoryMeeting}>
+                Open meeting
+              </button>
+            ) : null}
+            {/* Leaving history returns to this dashboard's own meeting, which is
+                only worth a header slot while that meeting is still running or
+                while no past meeting is open. The pane's Close always exits. */}
+            {(sessionRunning || (!historyFocused && !historySelectionId)) && (
+              <button type="button" className="primary" onClick={onToggleHistory}>
+                {sessionRunning ? 'Back to live' : 'Back to meeting'}
+              </button>
+            )}
+          </>
         )}
       </div>
 

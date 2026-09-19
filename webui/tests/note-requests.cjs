@@ -34,3 +34,18 @@ test('request input disables when cloud is off, offline, or meeting is over', ()
 test('archive and print views omit the note request composer', () => {
   assert.doesNotMatch(render({readOnly: true}), /Ask the note agent/);
 });
+
+const noteBlock = (id, startS, heading) => ({
+  id, card: 'live_notes', text: `${heading} body`, data: {heading, start_s: startS},
+  status: 'proposed', author_type: 'system', author_id: 'note_agent', revision: 1,
+  evidence: [], created_at: '2026-09-19T19:00:00Z', updated_at: '2026-09-19T19:00:00Z',
+});
+test('the live pane leads with the newest block, the archived document stays chronological', () => {
+  const notes = [noteBlock('first', 12, 'Opening block'), noteBlock('latest', 600, 'Closing block')];
+  const live = render({notes, newestFirst: true});
+  assert.ok(live.indexOf('Closing block') < live.indexOf('Opening block'),
+    'live notes should read newest first, like the Captured rail');
+  const archived = render({notes, readOnly: true});
+  assert.ok(archived.indexOf('Opening block') < archived.indexOf('Closing block'),
+    'the archived document should still read oldest first');
+});

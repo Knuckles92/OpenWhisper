@@ -271,3 +271,51 @@ def test_no_advisory_writes_when_no_checks_exist():
     verifier.invalidate()
     pool.run()
     assert target.seq == seq
+
+
+def test_pulse_assessment_preserves_window_scores_and_source_ranking():
+    state, _ = window_request([row(), row("sg_other", "Another passage", 30)], {}, radar=False)
+    answers = {
+        "decision": {"noul": .95}, "decision_anchor": {
+            "choice": "sg_one", "confidence": .4,
+            "probabilities": {"sg_one": .65, "sg_other": .25, "none": .1}},
+        "number": {"noul": .81}, "number_anchor": {"choice": "sg_other"},
+        "commitment": {"noul": .2}, "disagreement": {"noul": 0},
+    }
+    pulses = window_ops(0, state, answers, {})[0]["pulses"]
+    assert pulses[0]["assessment"] == {
+        "threshold": .8, "window_start_s": 0, "window_end_s": 60,
+        "scores": {"decision": .95, "disagreement": 0, "commitment": .2, "number": .81},
+        "source_confidence": .4, "source_probability": .65,
+        "source_rank": 1, "source_option_count": 3,
+    }
+    assert "source_confidence" not in pulses[1]["assessment"]
+    assert "source_rank" not in pulses[1]["assessment"]
+    # Evaluations and other pulses must not mutate this pulse's saved evidence.
+    answers["decision"]["noul"] = .1
+    pulses[1]["assessment"]["scores"]["decision"] = .2
+    assert pulses[0]["assessment"]["scores"]["decision"] == .95
+
+
+@pytest.mark.parametrize("probabilities,rank", [
+    ({"sg_one": .5, "none": .5}, 1),
+    ({"sg_one": .4, "none": .6}, 2),
+    ({"sg_one": .9}, None),
+    ({"sg_one": .9, "none": .1, "unasked": 0}, None),
+    ({"sg_one": float("nan"), "none": .1}, None),
+    ({"sg_one": True, "none": 0}, None),
+])
+def test_source_ranking_uses_complete_distribution_and_handles_ties(probabilities, rank):
+    state, _ = window_request([row(start=130, end=135)], {}, radar=False)
+    answers = {"number": {"noul": .8}, "number_anchor": {
+        "choice": "sg_one", "confidence": 0, "probabilities": probabilities}}
+    pulse = window_ops(2, state, answers, {})[0]["pulses"][0]
+    assessment = pulse["assessment"]
+    assert assessment["source_confidence"] == 0
+    assert assessment["scores"] == {"number": .8}
+    assert assessment["window_start_s"] == 120
+    assert assessment["window_end_s"] == 180
+    assert assessment.get("source_rank") == rank
+    if rank is None:
+        assert "source_probability" not in assessment
+        assert "source_option_count" not in assessment

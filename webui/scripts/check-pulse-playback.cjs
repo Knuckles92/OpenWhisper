@@ -7,7 +7,9 @@ const http = require('node:http');
 const participant = {id:'me',display_name:'Me',kind:'me',name_source:'human'};
 const meeting = {id:'replay-test',title:'Budget planning',status:'active',has_audio:true,started_at:'2026-09-19T19:24:00Z'};
 const pulses = [
-  {id:'budget',kind:'number',start_s:60.874,segment_id:'budget',text:'Add a note that we need to get a thousand dollars for budget A.',probability:.81},
+  {id:'budget',kind:'number',start_s:60.874,segment_id:'budget',text:'Add a note that we need to get a thousand dollars for budget A.',probability:.81,
+    assessment:{threshold:.8,window_start_s:60,window_end_s:120,scores:{decision:.95,number:.81,commitment:.27,disagreement:.02},
+      source_probability:.86,source_confidence:.65,source_rank:1,source_option_count:3}},
   {id:'decision',kind:'decision',start_s:105,segment_id:'decision',text:'We will review the revised budget on Friday.',probability:.95},
 ];
 const segments = pulses.map(p => ({id:p.segment_id,meeting_id:meeting.id,channel:'mic',start_s:p.start_s,end_s:p.start_s+5,text:p.text,speaker_participant_id:'me',speaker_source:'human',speaker_pinned:false}));
@@ -59,7 +61,8 @@ const server = http.createServer((req,res) => {
         await mark.hover();
         const preview = page.getByRole('tooltip');
         await preview.waitFor();
-        assert.match(await preview.textContent(), /Why this pulse.*concrete amount/);
+        assert.match(await preview.textContent(), /Detection probability81%Cutoff 80%\+1 pt above/);
+        assert.match(await preview.textContent(), /Selected passage probability86%Source rank#1 of 3 optionsSelection confidence65%/);
         assert.equal(await mark.getAttribute('title'), null);
         const previewRect = await preview.boundingBox();
         assert.ok(previewRect.x >= 0 && previewRect.y >= 0 && previewRect.x + previewRect.width <= width && previewRect.y + previewRect.height <= 800,
@@ -113,6 +116,29 @@ const server = http.createServer((req,res) => {
         console.log(`PASS ${mode} ${width}px: visible replay, pause/play and scrubber, skip, close, new moment, Escape`);
       }
     }
+    // Keep a long excerpt readable at both timeline edges and in a short viewport.
+    state.status=meeting.status='active';
+    const originalPulse = {...pulses[0]};
+    pulses[0].text = 'The proposed budget is one thousand dollars for the next phase, including development, quality, security, and support. We will review the allocation together before approving any additional spending. '.repeat(2);
+    for (const start of [0,600]) {
+      pulses[0].start_s=start;
+      await page.setViewportSize({width:320,height:480});
+      await page.goto(`${base}/m/test`);
+      const edgeMark=page.locator('.pulse-number.pulse-mark');
+      await edgeMark.hover();
+      const edgePreview=page.getByRole('tooltip');
+      await edgePreview.waitFor();
+      const box=await edgePreview.boundingBox();
+      const anchor=await edgeMark.boundingBox();
+      assert.ok(box.x>=0 && box.y>=0 && box.x+box.width<=320 && box.y+box.height<=480);
+      assert.ok(box.y+box.height<=anchor.y || box.y>=anchor.y+anchor.height, 'Preview must not cover its trigger');
+      await edgePreview.hover();
+      assert.equal(await edgePreview.evaluate(el=>el.scrollWidth<=el.clientWidth), true);
+      await page.keyboard.press('Escape');
+    }
+    Object.assign(pulses[0],originalPulse);
+    await page.setViewportSize({width:390,height:800});
+    console.log('PASS long excerpts at both timeline edges in a short viewport');
     state.status=meeting.status='ended'; meeting.has_audio=false;
     await page.goto(`${base}/m/test?history=replay-test`);
     const unavailable = page.locator('.pulse-number.pulse-mark');

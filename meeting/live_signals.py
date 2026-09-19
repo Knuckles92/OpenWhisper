@@ -11,6 +11,7 @@ from meeting.state.patches import MAX_OPEN_QUESTIONS
 from services.settings import resolve_typesafe_feature_enabled
 
 logger = logging.getLogger(__name__)
+HIGHLIGHT_THRESHOLD = .8
 KINDS = {
     "decision": "an explicit decision or agreement, rather than a suggestion",
     "disagreement": "an explicitly stated disagreement or conflict, including a report that other people or groups disagree or have an issue with each other",
@@ -74,13 +75,35 @@ def window_request(rows, snapshot, *, highlights=True, radar=True):
 def window_ops(minute, state, answers, snapshot):
     passages = state["passages"]
     pulses, ops = [], []
+    scores = {kind: answers[kind]["noul"] for kind in KINDS
+              if "noul" in answers.get(kind, {})}
     for kind in KINDS:
         answer = answers.get(kind, {})
-        sid = answers.get(kind + "_anchor", {}).get("choice")
-        if answer.get("noul", 0) >= .8 and sid in passages:
+        anchor = answers.get(kind + "_anchor", {})
+        sid = anchor.get("choice")
+        if answer.get("noul", 0) >= HIGHLIGHT_THRESHOLD and sid in passages:
+            assessment = {
+                "threshold": HIGHLIGHT_THRESHOLD,
+                "window_start_s": minute * 60, "window_end_s": (minute + 1) * 60,
+                "scores": dict(scores),
+            }
+            if "confidence" in anchor:
+                assessment["source_confidence"] = anchor["confidence"]
+            probabilities = anchor.get("probabilities") or {}
+            # Only rank a complete, valid distribution over the requested options.
+            # Missing scores are unavailable, not zero-probability alternatives.
+            if (set(probabilities) == set(passages) | {"none"}
+                    and all(isinstance(p, (int, float)) and not isinstance(p, bool)
+                            and 0 <= p <= 1 for p in probabilities.values())):
+                assessment.update(
+                    source_probability=probabilities[sid],
+                    source_rank=1 + sum(p > probabilities[sid] for p in probabilities.values()),
+                    source_option_count=len(probabilities),
+                )
             pulses.append({"id": f"pulse_{minute}_{kind}", "kind": kind,
                            "start_s": passages[sid]["start_s"], "segment_id": sid,
-                           "probability": answer["noul"], "text": passages[sid]["text"][:250]})
+                           "probability": answer["noul"], "text": passages[sid]["text"][:250],
+                           "assessment": assessment})
     if pulses:
         ops.append({"op": "publish_highlights", "pulses": pulses})
     capacity = MAX_OPEN_QUESTIONS - sum(q["status"] == "open" for q in snapshot.get("questions", []))

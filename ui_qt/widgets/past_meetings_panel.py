@@ -15,6 +15,7 @@ from meeting.content import (
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
 from services.settings import SettingsKey, settings_manager
+from ui_qt.utils.file_reveal import open_folder_in_file_manager
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
@@ -179,6 +180,29 @@ class PastMeetingItem(QFrame):
             return bool(summary.get("has_transcript"))
         return bool(meeting_preview_text(self.meeting))
 
+    def _spool_dir(self) -> str:
+        """Absolute path to this meeting's recording folder, if it survives.
+
+        ``spool_dir`` is stored relative to the app's working directory when
+        running from source, so it only means anything once resolved. Returns
+        "" when the meeting never spooled or its recordings were cleared.
+        """
+        spool = str(self.meeting.get("spool_dir") or "").strip()
+        if not spool:
+            return ""
+        folder = os.path.abspath(spool)
+        return folder if os.path.isdir(folder) else ""
+
+    def _on_show_in_folder(self) -> None:
+        """Open the meeting's recording folder; it can go stale after a clear."""
+        folder = self._spool_dir()
+        if not folder:
+            return
+        if not open_folder_in_file_manager(folder):
+            logger.warning(
+                f"Could not show meeting recordings in the file manager: {folder}"
+            )
+
     def _show_context_menu(self, pos) -> None:
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLESHEET)
@@ -187,6 +211,13 @@ class PastMeetingItem(QFrame):
         copy_action.triggered.connect(
             lambda: self.copy_transcript_requested.emit(self.meeting_id)
         )
+
+        # Always listed so the menu keeps its shape, but only live while this
+        # meeting's recordings are still spooled on disk.
+        show_in_folder_action = menu.addAction("Show in Folder")
+        show_in_folder_action.setEnabled(bool(self._spool_dir()))
+        show_in_folder_action.triggered.connect(self._on_show_in_folder)
+
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
         delete_action.triggered.connect(

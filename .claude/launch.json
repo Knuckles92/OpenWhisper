@@ -1,0 +1,53 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meeting-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/BIGD~1/AppData/Local/Temp/claude/D--coding-whisper-local/40f318a5-c131-4876-ba2c-a2c49b4fd3c2/scratchpad/preview-server.cjs"
+      ],
+      "port": 5599
+    },
+    {
+      "name": "meeting-preview-baseline",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/BIGD~1/AppData/Local/Temp/claude/D--coding-whisper-local/40f318a5-c131-4876-ba2c-a2c49b4fd3c2/scratchpad/preview-server-head.cjs"
+      ],
+      "port": 5600
+    },
+    {
+      "name": "rail-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/BIGD~1/AppData/Local/Temp/claude/D--coding-whisper-local/78f9f0b1-822f-4485-93bb-38dcbfc22e53/scratchpad/rail-preview.cjs"
+      ],
+      "port": 5601
+    },
+    {
+      "name": "popout-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/BIGD~1/AppData/Local/Temp/claude/D--coding-whisper-local/9c42c27a-9327-42ed-926d-b8e047cfff98/scratchpad/popout-preview.cjs"
+      ],
+      "port": 5610,
+      "url": "http://127.0.0.1:5610"
+    },
+    {
+      "name": "history-full-view",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "webui",
+        "--",
+        "--port",
+        "5602",
+        "--strictPort"
+      ],
+      "port": 5602
+    }
+  ]
+}

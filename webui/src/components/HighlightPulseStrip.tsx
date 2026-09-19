@@ -10,13 +10,76 @@ export function pulseTime(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 
-// Explain detection criteria without inventing a rationale for an individual passage.
-const PULSE_REASONS: Record<HighlightPulse['kind'], string> = {
-  decision: 'Flagged as a possible decision or agreement on what to do next.',
-  disagreement: 'Flagged as a possible disagreement or conflict, including one reported about other people or groups.',
-  commitment: 'Flagged as a possible commitment to do something by a stated date or deadline.',
-  number: 'Flagged for a concrete amount, quantity, metric, or percentage discussed in the conversation.',
-};
+function isProbability(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function percent(value: number): string {
+  return `${Number((value * 100).toFixed(1))}%`;
+}
+
+function PulseEvidence({ pulse }: { pulse: HighlightPulse }) {
+  const assessment = pulse.assessment;
+  const probability = isProbability(pulse.probability) ? pulse.probability : undefined;
+  const threshold = isProbability(assessment?.threshold) ? assessment.threshold : undefined;
+  const scores = (Object.keys(PULSE_LABELS) as Array<HighlightPulse['kind']>)
+    .flatMap(kind => {
+      const score = assessment?.scores?.[kind];
+      return isProbability(score) ? [{ kind, score }] : [];
+    }).sort((a, b) => b.score - a.score);
+  const margin = probability !== undefined && threshold !== undefined
+    ? Number(((probability - threshold) * 100).toFixed(1)) : undefined;
+  const sourceProbability = assessment?.source_probability;
+  const sourceConfidence = assessment?.source_confidence;
+  const sourceRank = assessment?.source_rank;
+  const sourceCount = assessment?.source_option_count;
+  const hasSourceRank = Number.isInteger(sourceRank) && Number.isInteger(sourceCount)
+    && sourceRank! > 0 && sourceRank! <= sourceCount!;
+  const hasSource = isProbability(sourceProbability) || isProbability(sourceConfidence) || hasSourceRank;
+
+  return <>
+    <div className="pulse-preview-score">
+      <div><span>Detection probability</span><strong>{probability === undefined ? 'Unavailable' : percent(probability)}</strong></div>
+      {threshold !== undefined && <div className="pulse-preview-cutoff"><span>Cutoff {percent(threshold)}</span>
+        {margin !== undefined && <strong>{margin > 0 ? `+${margin} ${margin === 1 ? 'pt' : 'pts'} above` : margin === 0 ? 'At cutoff' : `${Math.abs(margin)} ${Math.abs(margin) === 1 ? 'pt' : 'pts'} below`}</strong>}
+      </div>}
+    </div>
+    {scores.length > 0 && <section className="pulse-preview-evidence" aria-label="Category scores">
+      <div className="pulse-preview-section-heading"><strong>Category scores</strong>
+        {Number.isFinite(assessment?.window_start_s) && Number.isFinite(assessment?.window_end_s)
+          && <span>{pulseTime(assessment!.window_start_s)}–{pulseTime(assessment!.window_end_s)}</span>}
+      </div>
+      <ol className="pulse-score-list">
+        {scores.map(({ kind, score }) => {
+          const rank = 1 + scores.filter(other => other.score > score).length;
+          return <li key={kind} className={`pulse-score-row pulse-${kind}`} data-selected={kind === pulse.kind || undefined}
+            aria-label={`${PULSE_LABELS[kind]}: ${percent(score)}, rank ${rank}`}>
+            <span className="pulse-score-rank">#{rank}</span>
+            <div className="pulse-score-detail"><span>{PULSE_LABELS[kind]}{kind === pulse.kind && <b> This pulse</b>}</span>
+              <div className="pulse-score-track" aria-hidden="true"><i style={{ width: percent(score) }} />
+                {threshold !== undefined && <em style={{ left: percent(threshold) }} />}
+              </div>
+            </div>
+            <strong>{percent(score)}</strong>
+          </li>;
+        })}
+      </ol>
+      <p>Independent probabilities for this minute; several categories can qualify.</p>
+    </section>}
+    {hasSource && <section className="pulse-preview-evidence" aria-label="Source selection">
+      <div className="pulse-preview-section-heading"><strong>Source selection</strong></div>
+      <dl className="pulse-source-scores">
+        {isProbability(sourceProbability) && <div><dt>Selected passage probability</dt><dd>{percent(sourceProbability)}</dd></div>}
+        {hasSourceRank && <div><dt>Source rank</dt><dd>#{sourceRank} of {sourceCount} options</dd></div>}
+        {isProbability(sourceConfidence) && <div><dt>Selection confidence</dt><dd>{percent(sourceConfidence)}</dd></div>}
+      </dl>
+      {hasSourceRank && <p>Options include “no matching passage”.</p>}
+      {isProbability(sourceConfidence) && <p>Confidence measures how concentrated the source scores are.</p>}
+    </section>}
+    <blockquote className="pulse-preview-quote">{pulse.text}</blockquote>
+    {!assessment && <p className="pulse-preview-unavailable">Additional scoring details were not saved for this pulse.</p>}
+  </>;
+}
 
 function PulsePreview({ pulse, anchor, id, playbackAvailable, onDismiss, onEnter, onLeave }: {
   pulse: HighlightPulse;
@@ -28,21 +91,26 @@ function PulsePreview({ pulse, anchor, id, playbackAvailable, onDismiss, onEnter
   onLeave: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ left: 0, top: 0, arrow: 0, above: false });
+  const [position, setPosition] = useState({ left: 0, top: 0, arrow: 0, above: false, maxHeight: 0 });
 
   useLayoutEffect(() => {
     const place = () => {
       const card = cardRef.current;
       if (!card || !anchor.isConnected) return;
       const target = anchor.getBoundingClientRect();
-      const { width, height } = card.getBoundingClientRect();
+      const { width } = card.getBoundingClientRect();
+      const body = card.querySelector<HTMLElement>('.pulse-preview-body');
+      const height = card.scrollHeight + 2 + (body ? body.scrollHeight - body.clientHeight : 0);
       const margin = 12, gap = 10;
       const center = target.left + target.width / 2;
       const left = Math.max(margin, Math.min(center - width / 2, window.innerWidth - width - margin));
-      const above = target.top >= height + gap + margin;
-      const top = Math.max(margin, Math.min(above ? target.top - height - gap : target.bottom + gap,
-        window.innerHeight - height - margin));
-      setPosition({ left, top, above, arrow: Math.max(20, Math.min(center - left, width - 20)) });
+      const roomAbove = target.top - gap - margin;
+      const roomBelow = window.innerHeight - target.bottom - gap - margin;
+      const above = height <= roomAbove || (height > roomBelow && roomAbove > roomBelow);
+      // Scroll the excerpt when neither side has enough room; never cover the marker.
+      const maxHeight = Math.max(0, above ? roomAbove : roomBelow);
+      const top = above ? target.top - gap - Math.min(height, maxHeight) : target.bottom + gap;
+      setPosition({ left, top, above, maxHeight, arrow: Math.max(20, Math.min(center - left, width - 20)) });
     };
     place();
     window.addEventListener('resize', place);
@@ -70,7 +138,7 @@ function PulsePreview({ pulse, anchor, id, playbackAvailable, onDismiss, onEnter
 
   return createPortal(<div ref={cardRef} id={id} role="tooltip"
     className={`pulse-preview pulse-${pulse.kind} no-print`} data-side={position.above ? 'above' : 'below'}
-    style={{ left: position.left, top: position.top, '--pulse-arrow-left': `${position.arrow}px` } as CSSProperties}
+    style={{ left: position.left, top: position.top, maxHeight: position.maxHeight || undefined, '--pulse-arrow-left': `${position.arrow}px` } as CSSProperties}
     onPointerEnter={onEnter} onPointerLeave={onLeave}>
     <div className="pulse-preview-heading">
       <div><span className="pulse-preview-eyebrow">Meeting pulse</span>
@@ -79,8 +147,7 @@ function PulsePreview({ pulse, anchor, id, playbackAvailable, onDismiss, onEnter
       <span className="pulse-preview-time">{pulseTime(pulse.start_s)}</span>
     </div>
     <div className="pulse-preview-body">
-      <blockquote className="pulse-preview-quote">{pulse.text}</blockquote>
-      <div className="pulse-preview-reason"><span>Why this pulse</span><p>{PULSE_REASONS[pulse.kind]}</p></div>
+      <PulseEvidence pulse={pulse} />
     </div>
     <div className="pulse-preview-footer">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">

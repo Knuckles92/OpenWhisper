@@ -443,16 +443,17 @@ export function capturedFeedEntries(
 
 /**
  * Note-taker blocks in page order: by data.start_s when stamped, falling
- * back to created_at, oldest first — the notes page reads chronologically.
+ * back to created_at. The archived document reads chronologically; the live
+ * pane asks for newest first so it runs the same way as the Captured rail.
  */
-export function sortedNoteItems(items: CardItem[]): CardItem[] {
+export function sortedNoteItems(items: CardItem[], newestFirst = false): CardItem[] {
   const stamp = (item: CardItem): number => {
     const startS = (item.data as { start_s?: unknown }).start_s;
     if (typeof startS === 'number' && Number.isFinite(startS)) return startS;
     const created = Date.parse(item.created_at);
     return Number.isNaN(created) ? 0 : created / 1000;
   };
-  return [...items].sort((a, b) => stamp(a) - stamp(b));
+  return [...items].sort((a, b) => (newestFirst ? stamp(b) - stamp(a) : stamp(a) - stamp(b)));
 }
 
 export const CARD_LABELS: Record<CardKey, string> = {
