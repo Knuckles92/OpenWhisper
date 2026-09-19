@@ -8,12 +8,18 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.02] - 2026-09-18
+
 ### Added
-- **TypeSafe fast judgments** (Settings → Meeting Mode → Intelligence, off by default; key under API keys as `TYPESAFE_API_KEY`). A shared client asks a decision model narrow yes/no and multiple-choice questions about short transcript excerpts in about 0.2 s and never generates text. Every judgment falls back to the existing deterministic behaviour when disabled, unkeyed, or unanswered, and nothing is sent while a meeting's cloud intelligence is off.
+- **Experimental TypeSafe fast judgments** (Settings → Meeting Mode → Intelligence, off by default; key under API keys as `TYPESAFE_API_KEY`). A shared client asks a decision model narrow yes/no and multiple-choice questions about short transcript excerpts in about 0.2 s and never generates text. Every judgment falls back to the existing deterministic behaviour when disabled, unkeyed, or unanswered, and nothing is sent while a meeting's cloud intelligence is off.
 - **Semantic topic-change trigger** for early checkpoints. Replaces the content-word overlap rule when TypeSafe is on; on human-labelled AMI meetings it doubled the precision of early checkpoints at similar recall.
 - **Spoken instructions to the note taker.** Say "note taker, mark that as a decision", "…add that as an action item", "…put that in the notes", or "…new topic: budget". Only segments that name the assistant are judged; results land as proposed items citing the spoken segments.
-- **Sensitive-dictation gate** for cloud cleanup (Settings → Dictation → AI cleanup). Dictation bound for a remote cleanup model is first judged for credentials, identifiers, and personal details; flagged text is returned raw. Local endpoints are never screened.
+- **Sensitive-dictation gate** for cloud cleanup (Settings → Dictation → AI cleanup). Dictation bound for a remote cleanup model is first sent to TypeSafe to check for credentials, identifiers, and personal details; flagged text is returned raw without reaching the cleanup model. Local endpoints are never screened. If the check is unavailable, cleanup proceeds.
+- **Experimental end-of-meeting insight review** (Settings → Meeting Mode → After End, off by default). With TypeSafe sharing consent and meeting cloud intelligence enabled, the dashboard asks source-linked questions about uncertain action items, decisions, and risks. Answers update the linked insight, preserve protected user clarifications in reports and exports, and can be revised later from Past Meetings. Recording and saving do not wait for review; stale questions cannot overwrite newer edits.
 - Human-label benchmark harness under `benchmarks/typesafe_human_labels/` with the write-up in `docs/typesafe-human-label-benchmark.md`.
+
+### Changed
+- Reorganized the README around platform installation, running from source, and everyday usage.
 
 ## [2.6.01] - 2026-09-14
 
