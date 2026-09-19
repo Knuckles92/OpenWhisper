@@ -1183,7 +1183,6 @@ class SettingsDialog(QDialog):
         self.meeting_review_check = self.meeting_review_tile.checkbox
         self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
         review_row = QHBoxLayout()
-        review_row.addWidget(QLabel("Sensitivity"))
         self.meeting_review_sensitivity = ElidingComboBox()
         self.meeting_review_sensitivity.addItem("Normal", "normal")
         self.meeting_review_sensitivity.addItem("Thorough", "thorough")
@@ -1191,15 +1190,18 @@ class SettingsDialog(QDialog):
             lambda _: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
                                     self.meeting_review_sensitivity.currentData())
         )
-        review_row.addWidget(self.meeting_review_sensitivity)
-        review_row.addWidget(QLabel("Maximum questions"))
         self.meeting_review_limit = NoWheelSpinBox()
         self.meeting_review_limit.setRange(1, 5)
         self.meeting_review_limit.setValue(3)
         self.meeting_review_limit.valueChanged.connect(
             lambda value: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT, value)
         )
-        review_row.addWidget(self.meeting_review_limit)
+        review_row.addWidget(
+            self._field("Sensitivity", self.meeting_review_sensitivity)
+        )
+        review_row.addWidget(
+            self._field("Maximum questions", self.meeting_review_limit)
+        )
         self.meeting_review_tile.add_body_layout(review_row)
 
         self._tile_group(

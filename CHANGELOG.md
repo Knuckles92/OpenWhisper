@@ -21,6 +21,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ### Changed
 - Reorganized the README around platform installation, running from source, and everyday usage.
 
+### Fixed
+- Insight-review controls no longer force the Settings window wider than its default size on Linux.
+
 ## [2.6.01] - 2026-09-14
 
 ### Added
