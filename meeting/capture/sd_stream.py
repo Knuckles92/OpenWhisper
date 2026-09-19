@@ -13,6 +13,7 @@ watchdog.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Callable, Optional
 
@@ -115,12 +116,22 @@ class SdCaptureSource:
             t_mono = time.monotonic()
             try:
                 adc = float(time_info.inputBufferAdcTime)
-                stream = self._stream
-                now_pa = float(stream.time) if stream is not None else 0.0
-                if adc > 0.0 and now_pa >= adc:
-                    # Shift back by PortAudio's buffering latency so t_mono
-                    # approximates the capture instant of the first frame.
-                    t_mono -= (now_pa - adc)
+                current = float(time_info.currentTime)
+                if (
+                    math.isfinite(adc)
+                    and math.isfinite(current)
+                    and current > 0.0
+                    and 0.0 <= adc <= current
+                ):
+                    # Use the two timestamps from this callback together.
+                    # Windows MME can report currentTime=0 (unavailable) yet
+                    # add a small ADC offset to alternate adapted buffers.
+                    # Comparing that offset with stream.time backdates those
+                    # buffers by the system uptime: the spool discards them
+                    # as overlaps and inserts silence for the lost audio.
+                    # Unsupported clocks keep the monotonic delivery stamp.
+                    # Also avoid querying PortAudio from its own callback.
+                    t_mono -= current - adc
             except Exception:
                 pass  # keep the plain monotonic stamp
 

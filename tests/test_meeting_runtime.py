@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.settings import SettingsKey
+from services.settings import MeetingSpeakerIdBackend, SettingsKey
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -88,6 +89,35 @@ def _record_launch(rt, monkeypatch):
 
     monkeypatch.setattr(rt, "_launch", fake_launch)
     return launched
+
+
+def test_off_backend_skips_speaker_model_download(runtime, monkeypatch):
+    rt, _controller = runtime
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"],
+        "load_all_settings",
+        lambda: {SettingsKey.MEETING_SPEAKER_ID_BACKEND: MeetingSpeakerIdBackend.OFF},
+    )
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"],
+        "load_audio_input_device",
+        lambda: None,
+    )
+    called = []
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS,
+        "ensure_speaker_model",
+        lambda: called.append("download") or "/should-not-use",
+    )
+    monkeypatch.setitem(
+        _RUNTIME_GLOBALS,
+        "meeting_agent_payload_dir",
+        lambda *args, **kwargs: None,
+    )
+    options = rt._build_options(False, demo=False)
+    assert called == []
+    assert options.diarization_model_path is None
+    assert options.speaker_id_backend == MeetingSpeakerIdBackend.OFF
 
 
 def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
@@ -1396,3 +1426,24 @@ def test_open_background_meeting_reuses_its_processing_dashboard(
     assert opened == ["http://127.0.0.1:8765/h/background"]
     assert rt._archive_dashboard is None
     assert rt._card_meeting_id is None
+
+
+def test_voice_feedback_reaches_no_desktop_surface(runtime, caplog):
+    """The dashboard owns command acknowledgements; the desktop shows none.
+
+    Both once drew the same bubble bottom-center, the desktop one always on
+    top, so every acknowledgement appeared twice and drifted out of phase.
+    """
+    rt, controller = runtime
+    current = object()
+    rt._engine = current
+    states, statuses, errors = [], [], []
+    controller.meeting_state_changed.connect(states.append)
+    controller.meeting_status_update.connect(statuses.append)
+    controller.meeting_error.connect(errors.append)
+    feedback = {"seq": 1, "phase": "heard", "message": "Heard you"}
+    with caplog.at_level(logging.DEBUG):
+        rt._route_engine_event(current, "voice_feedback", feedback)
+    assert not states and not statuses and not errors
+    # Handled deliberately, not by falling through to the unknown-event branch.
+    assert "Unhandled meeting engine event" not in caplog.text

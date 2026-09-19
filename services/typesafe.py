@@ -24,6 +24,7 @@ import logging
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
@@ -109,7 +110,7 @@ def validate_answers(body: Any, questions: Mapping[str, Mapping[str, Any]]) -> D
             raise TypeSafeError(f"answer type mismatch on {name}")
         if kind == "noul":
             value = answer.get("noul")
-            if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
                 raise TypeSafeError(f"invalid probability on {name}")
             checked[name] = {"type": "noul", "noul": float(value)}
         elif kind == "choice":
@@ -249,9 +250,19 @@ class TypeSafeJudge:
         logger.warning(message, *args)
 
 
+def key_present() -> bool:
+    """True when a key resolves from the store, the environment or ``.env``.
+
+    Separate from :func:`is_configured` so the UI can tell "switched off" from
+    "switched on but unusable" — the two need different copy and a different
+    next step.
+    """
+    return bool(resolve_credential(CREDENTIAL_ENV))
+
+
 def is_configured(settings: Optional[Dict[str, Any]] = None) -> bool:
     """True when the master switch is on and a key can be resolved."""
-    return resolve_typesafe_enabled(settings) and bool(resolve_credential(CREDENTIAL_ENV))
+    return resolve_typesafe_enabled(settings) and key_present()
 
 
 def judge_from_settings(settings: Optional[Dict[str, Any]] = None,
@@ -264,6 +275,56 @@ def judge_from_settings(settings: Optional[Dict[str, Any]] = None,
         logger.debug("TypeSafe enabled but %s is not set", CREDENTIAL_ENV)
         return None
     return TypeSafeJudge(key, **kwargs)
+
+
+#: Host shown in verification copy, so the user knows who answered.
+VERIFY_HOST = "api.typesafe.ai"
+#: A manual test is a one-off, so it can wait longer than a live judgment.
+VERIFY_TIMEOUT_S = 10.0
+#: The smallest real judgment there is. It proves the key and the pinned model
+#: in one round trip and carries nothing about the user.
+_VERIFY_STATE = {"text": "ok"}
+_VERIFY_QUESTIONS: Dict[str, Dict[str, Any]] = {
+    "q": {"type": "noul", "instructions": "Is `text` non-empty?"}
+}
+
+
+def verify_key(api_key: str, *, timeout_s: float = VERIFY_TIMEOUT_S,
+               endpoint: str = ENDPOINT,
+               transport: Optional[Transport] = None) -> Tuple[bool, str]:
+    """Make one authenticated judgment with ``api_key`` and report the outcome.
+
+    Unlike :meth:`TypeSafeJudge.ask`, this reports failures instead of
+    swallowing them: it exists precisely so somebody can find out why nothing
+    is happening. Only the status class reaches the caller — an error body may
+    echo the credential back.
+    """
+    key = (api_key or "").strip()
+    if not key:
+        return False, "Paste a key first."
+    host = urllib.parse.urlsplit(endpoint).hostname or VERIFY_HOST
+    payload = {"model": MODEL, "state": _VERIFY_STATE, "questions": dict(_VERIFY_QUESTIONS)}
+    post = transport or (lambda body, seconds: _http_post(
+        body, seconds, api_key=key, endpoint=endpoint))
+    try:
+        status, text = post(payload, timeout_s)
+    except Exception as exc:  # network, timeout, TLS
+        logger.debug("TypeSafe key verification failed: %s", type(exc).__name__)
+        return False, f"Couldn't reach {host} ({type(exc).__name__})."
+    if status == 401:
+        return False, f"{host} rejected the key (HTTP 401)."
+    if status == 403:
+        return False, f"{host} accepted the key but denied access (HTTP 403)."
+    if status == 429:
+        # Throttling only happens after authentication, so the key is good.
+        return True, f"{host} accepted the key but is rate limiting it (HTTP 429)."
+    if status != 200:
+        return False, f"{host} answered HTTP {status}."
+    try:
+        validate_answers(json.loads(text), _VERIFY_QUESTIONS)
+    except (ValueError, TypeSafeError) as exc:
+        return False, f"{host} accepted the key but answered oddly: {exc}."
+    return True, f"{host} accepted the key and {MODEL} answered."
 
 
 # -- dictation-side question -----------------------------------------------------

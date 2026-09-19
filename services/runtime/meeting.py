@@ -24,6 +24,7 @@ from services.components import (
 )
 from services.settings import (
     MeetingAgentCore,
+    MeetingSpeakerIdBackend,
     SettingsKey,
     resolve_meeting_agent_core,
     resolve_meeting_audio_upload_consent,
@@ -726,7 +727,16 @@ class MeetingRuntime:
 
             self._shutdown_archive_dashboard()
             self._shutdown_engine()  # drop a previous (ended) session's server
-            if not demo and speaker_model_path() is None:
+            speaker_backend = (
+                MeetingSpeakerIdBackend.LOCAL
+                if demo
+                else resolve_meeting_speaker_id_backend()
+            )
+            if (
+                not demo
+                and speaker_backend != MeetingSpeakerIdBackend.OFF
+                and speaker_model_path() is None
+            ):
                 self.controller.meeting_status_update.emit(
                     "Downloading speaker identification model..."
                 )
@@ -864,6 +874,15 @@ class MeetingRuntime:
             )
             agent_kind = MeetingAgentCore.DIRECT
 
+        speaker_backend = (
+            MeetingSpeakerIdBackend.LOCAL
+            if demo
+            else resolve_meeting_speaker_id_backend(settings)
+        )
+        want_speaker_model = (
+            not demo and speaker_backend != MeetingSpeakerIdBackend.OFF
+        )
+
         return MeetingEngineOptions(
             title="Demo Planning Sync" if demo else "",
             cloud_enabled=cloud,
@@ -876,12 +895,9 @@ class MeetingRuntime:
             agent_core_kind=agent_kind,
             sidecar_payload_dir=payload_dir,
             diarization_model_path=(
-                None if demo else ensure_speaker_model()
+                ensure_speaker_model() if want_speaker_model else None
             ),
-            speaker_id_backend=(
-                "local" if demo
-                else resolve_meeting_speaker_id_backend(settings)
-            ),
+            speaker_id_backend=speaker_backend,
             speaker_id_audio_consent=(
                 False if demo
                 else resolve_meeting_audio_upload_consent(settings)
@@ -1734,6 +1750,11 @@ class MeetingRuntime:
                     "Meeting intelligence online" if online
                     else "Meeting intelligence offline — transcript-only"
                 )
+            elif kind == "voice_feedback":
+                # Command acknowledgements belong to the browser dashboard,
+                # which receives them over its own socket. The desktop app
+                # deliberately shows no second bubble of its own.
+                pass
             elif kind == "segments":
                 # Segments stream to the browser dashboard; the Qt panel does
                 # not render them.

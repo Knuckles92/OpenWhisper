@@ -3041,7 +3041,6 @@ select {
 .pulse-commitment { color: #75509f; } .pulse-number { color: #28658f; }
 button.pulse-mark:hover:not(:disabled) { background: currentColor; }
 .pulse-scale { display: flex; justify-content: space-between; margin-left: 124px; font-size: 10px; opacity: .65; }
-.voice-feedback { padding: 10px 14px; border-left: 3px solid #79b8e2; font-size: 13px; }
 .citation-badge { display: inline-block; border-radius: 4px; padding: 2px 6px; font-size: 10px; color: var(--text-muted, #8997a7); border: 1px solid currentColor; margin: 4px 0; }
 .citation-supported { color: #23745f; }
 .citation-contradicted, .citation-unsupported, .citation-missing { color: #a7442d; }

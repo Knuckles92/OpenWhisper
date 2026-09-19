@@ -195,14 +195,14 @@ def test_spoken_correction_without_source_or_replacement_is_rejected():
 
 
 def test_recap_routes_to_note_agent_and_reports_completion():
-    from meeting.engine import MeetingEngine
+    from meeting.engine import MeetingEngine, MeetingEngineOptions
     target, requests, future = store(), [], Future()
-    engine = MeetingEngine.__new__(MeetingEngine)
+    engine = MeetingEngine(MeetingEngineOptions(), repository=Repo([]))
     engine.store = target
     engine.request_note_adjustment = lambda text: requests.append(text) or future
     engine._apply_spoken_action("recap", row(text="Note taker, recap the decisions."), [])
     assert "recap the decisions" in requests[0]
-    assert "requested" in target.snapshot()["voice_feedback"]["message"]
+    assert "Preparing a recap" in target.snapshot()["voice_feedback"]["message"]
     future.set_result(AgentResult(True, [OpResult(True, {"op": "add_item"})]))
     assert "added" in target.snapshot()["voice_feedback"]["message"]
 

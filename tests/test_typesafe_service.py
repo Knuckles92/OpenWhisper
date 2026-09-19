@@ -148,3 +148,76 @@ class TestSensitiveContent:
         transport = RecordingTransport(body={})
         assert sensitive_content_probability(TypeSafeJudge("k", transport=transport), "   ") is None
         assert transport.calls == []
+
+
+GOOD_VERIFY_BODY = {"answers": {"q": {"type": "noul", "noul": 1.0}}}
+
+
+class TestKeyPresence:
+    def test_reports_whether_a_key_resolves(self, monkeypatch):
+        monkeypatch.setattr(typesafe, "resolve_credential", lambda name: None)
+        assert typesafe.key_present() is False
+        monkeypatch.setattr(typesafe, "resolve_credential", lambda name: "key")
+        assert typesafe.key_present() is True
+
+    def test_is_configured_still_needs_the_master_switch(self, monkeypatch):
+        monkeypatch.setattr(typesafe, "resolve_credential", lambda name: "key")
+        assert typesafe.key_present() is True
+        assert typesafe.is_configured({"typesafe_enabled": False}) is False
+
+
+class TestVerifyKey:
+    """Verification must report failures that ``ask`` deliberately swallows."""
+
+    def test_accepts_a_working_key(self):
+        transport = RecordingTransport(body=GOOD_VERIFY_BODY)
+        ok, detail = typesafe.verify_key("k", transport=transport)
+        assert ok is True
+        assert typesafe.MODEL in detail
+        payload = transport.calls[0][0]
+        assert payload["model"] == typesafe.MODEL
+        assert payload["state"] == {"text": "ok"}
+        assert set(payload["questions"]) == {"q"}
+
+    def test_blank_key_is_not_sent(self):
+        transport = RecordingTransport(body=GOOD_VERIFY_BODY)
+        ok, detail = typesafe.verify_key("   ", transport=transport)
+        assert ok is False
+        assert detail == "Paste a key first."
+        assert transport.calls == []
+
+    @pytest.mark.parametrize("status,fragment", [
+        (401, "rejected the key"),
+        (403, "denied access"),
+        (500, "HTTP 500"),
+    ])
+    def test_reports_the_status_class(self, status, fragment):
+        transport = RecordingTransport(status=status, body={})
+        ok, detail = typesafe.verify_key("k", transport=transport)
+        assert ok is False
+        assert fragment in detail
+
+    def test_rate_limiting_still_proves_the_key(self):
+        # 429 is only reachable after authentication, so "failed" would mislead.
+        ok, detail = typesafe.verify_key("k", transport=RecordingTransport(status=429, body={}))
+        assert ok is True
+        assert "429" in detail
+
+    def test_rejects_a_200_that_does_not_answer(self):
+        transport = RecordingTransport(body={"answers": {"other": {"type": "noul", "noul": 1.0}}})
+        ok, detail = typesafe.verify_key("k", transport=transport)
+        assert ok is False
+        assert "answered oddly" in detail
+
+    def test_network_failure_names_the_host_not_the_key(self):
+        transport = RecordingTransport(exc=OSError("unreachable"))
+        ok, detail = typesafe.verify_key("secret-key", transport=transport)
+        assert ok is False
+        assert typesafe.VERIFY_HOST in detail
+        assert "secret-key" not in detail
+
+    def test_uses_a_longer_timeout_than_a_live_judgment(self):
+        transport = RecordingTransport(body=GOOD_VERIFY_BODY)
+        typesafe.verify_key("k", transport=transport)
+        assert transport.calls[0][1] == typesafe.VERIFY_TIMEOUT_S
+        assert typesafe.VERIFY_TIMEOUT_S > typesafe.DEFAULT_TIMEOUT_S

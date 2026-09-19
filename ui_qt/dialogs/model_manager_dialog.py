@@ -478,6 +478,10 @@ class ModelManagerDialog(QDialog):
         self.meeting_speaker_id_combo.setObjectName("meetingSpeakerIdCombo")
         self.meeting_speaker_id_combo.setMinimumHeight(40)
         self.meeting_speaker_id_combo.addItem(
+            "Off (Me / Others channel labels only)",
+            MeetingSpeakerIdBackend.OFF,
+        )
+        self.meeting_speaker_id_combo.addItem(
             "On-device (WeSpeaker · Speaker 1, Speaker 2, …)",
             MeetingSpeakerIdBackend.LOCAL,
         )
@@ -485,6 +489,7 @@ class ModelManagerDialog(QDialog):
             "OpenAI (gpt-4o-transcribe-diarize, system audio after End)",
             MeetingSpeakerIdBackend.OPENAI,
         )
+        self._speaker_id_backend_previous = MeetingSpeakerIdBackend.LOCAL
         self.meeting_speaker_id_combo.currentIndexChanged.connect(
             self._on_speaker_id_backend_changed
         )
@@ -756,12 +761,17 @@ class ModelManagerDialog(QDialog):
                         SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN, True,
                     )
                 else:
-                    local_index = self.meeting_speaker_id_combo.findData(
-                        MeetingSpeakerIdBackend.LOCAL
+                    previous = getattr(
+                        self,
+                        "_speaker_id_backend_previous",
+                        MeetingSpeakerIdBackend.LOCAL,
+                    )
+                    previous_index = self.meeting_speaker_id_combo.findData(
+                        previous
                     )
                     blocker = self.meeting_speaker_id_combo.blockSignals(True)
                     self.meeting_speaker_id_combo.setCurrentIndex(
-                        max(0, local_index)
+                        max(0, previous_index)
                     )
                     self.meeting_speaker_id_combo.blockSignals(blocker)
                     return
@@ -776,6 +786,8 @@ class ModelManagerDialog(QDialog):
             self.message_label.setText(
                 f"Couldn't save speaker identification: {exc}"
             )
+        else:
+            self._speaker_id_backend_previous = backend
         self._refresh_speaker_id_status()
 
     # ---- text endpoint profiles ----
@@ -1224,12 +1236,12 @@ class ModelManagerDialog(QDialog):
 
         self._sync_pi_core_availability(settings)
 
-        backend_index = self.meeting_speaker_id_combo.findData(
-            resolve_meeting_speaker_id_backend(settings)
-        )
+        resolved_backend = resolve_meeting_speaker_id_backend(settings)
+        backend_index = self.meeting_speaker_id_combo.findData(resolved_backend)
         blocker = self.meeting_speaker_id_combo.blockSignals(True)
         self.meeting_speaker_id_combo.setCurrentIndex(max(0, backend_index))
         self.meeting_speaker_id_combo.blockSignals(blocker)
+        self._speaker_id_backend_previous = resolved_backend
         self._refresh_speaker_id_status()
 
     def refresh_engine_selection(self) -> None:
@@ -1306,6 +1318,12 @@ class ModelManagerDialog(QDialog):
 
     def _refresh_speaker_id_status(self) -> None:
         backend = self.meeting_speaker_id_combo.currentData()
+        if backend == MeetingSpeakerIdBackend.OFF:
+            self.speaker_id_status.setText(
+                "Channel labels only: microphone is Me, system audio is "
+                "Others. No on-device model and no audio upload."
+            )
+            return
         if backend == MeetingSpeakerIdBackend.OPENAI:
             self.speaker_id_status.setText(
                 "Uploads system audio after End and relabels speakers on the "

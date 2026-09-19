@@ -394,15 +394,16 @@ class TestRerunSpeakers:
         engine.ended = True
         return tc
 
-    def test_on_device_backend_is_400(self, client, monkeypatch):
+    @pytest.mark.parametrize("backend", ["local", "off"])
+    def test_non_openai_backend_is_400(self, client, monkeypatch, backend):
         tc = self._ended(client)
         monkeypatch.setattr(
             "services.settings.resolve_meeting_speaker_id_backend",
-            lambda settings=None: "local",
+            lambda settings=None, chosen=backend: chosen,
         )
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 400
-        assert r.json()["detail"] == "speaker identification is set to on-device"
+        assert r.json()["detail"] == "speaker identification is not set to OpenAI"
 
     def test_missing_audio_consent_is_400(self, client, monkeypatch):
         tc = self._ended(client)

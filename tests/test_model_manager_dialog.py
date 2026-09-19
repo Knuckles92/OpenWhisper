@@ -638,6 +638,70 @@ class TestMeetingDestinations(_DialogTestCase):
         assert values[SettingsKey.MEETING_LANGUAGE] == "en"
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
 
+    def test_speaker_id_combo_includes_off_and_persists(self):
+        dialog, values = self._make_meeting_dialog()
+        combo = dialog.meeting_speaker_id_combo
+        backends = [combo.itemData(i) for i in range(combo.count())]
+        assert backends == [
+            MeetingSpeakerIdBackend.OFF,
+            MeetingSpeakerIdBackend.LOCAL,
+            MeetingSpeakerIdBackend.OPENAI,
+        ]
+        off_index = combo.findData(MeetingSpeakerIdBackend.OFF)
+        combo.setCurrentIndex(off_index)
+        assert values[SettingsKey.MEETING_SPEAKER_ID_BACKEND] == (
+            MeetingSpeakerIdBackend.OFF
+        )
+        status = dialog.speaker_id_status.text()
+        assert "Me" in status
+        assert "Others" in status
+        assert "No on-device model" in status
+
+    def test_openai_consent_decline_restores_previous_off(self):
+        dialog, values = self._make_meeting_dialog(
+            extra={
+                SettingsKey.MEETING_SPEAKER_ID_BACKEND: (
+                    MeetingSpeakerIdBackend.OFF
+                )
+            }
+        )
+        assert dialog.meeting_speaker_id_combo.currentData() == (
+            MeetingSpeakerIdBackend.OFF
+        )
+
+        class _DeclinedConsent:
+            RESULT_ENABLE = "enable"
+            result_action = "cancel"
+
+            def __init__(self, parent=None):
+                pass
+
+            def exec(self):
+                return 0
+
+        with (
+            patch.object(
+                dialog_module,
+                "resolve_meeting_audio_upload_consent",
+                return_value=False,
+            ),
+            patch(
+                "ui_qt.dialogs.meeting_audio_consent_dialog.MeetingAudioConsentDialog",
+                _DeclinedConsent,
+            ),
+        ):
+            openai_index = dialog.meeting_speaker_id_combo.findData(
+                MeetingSpeakerIdBackend.OPENAI
+            )
+            dialog.meeting_speaker_id_combo.setCurrentIndex(openai_index)
+
+        assert dialog.meeting_speaker_id_combo.currentData() == (
+            MeetingSpeakerIdBackend.OFF
+        )
+        assert values[SettingsKey.MEETING_SPEAKER_ID_BACKEND] == (
+            MeetingSpeakerIdBackend.OFF
+        )
+
     def test_speaker_id_status_points_at_downloads_when_not_installed(self):
         dialog, _values = self._make_meeting_dialog()
         with patch.object(
@@ -846,6 +910,28 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             assert saved[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
             assert saved[SettingsKey.MEETING_SPEAKER_ID_BACKEND] == MeetingSpeakerIdBackend.OPENAI
             assert saved[SettingsKey.TEXT_LLM_PROFILES][0]["id"] == "custom_abcd1234"
+
+    def test_settings_recap_shows_off_speaker_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
+            isolated.save_all_settings(
+                {
+                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: (
+                        MeetingSpeakerIdBackend.OFF
+                    ),
+                }
+            )
+            with (
+                patch.object(settings_dialog_module, "settings_manager", isolated),
+                patch.object(
+                    settings_dialog_module.history_manager,
+                    "set_max_recordings",
+                ),
+            ):
+                dialog = settings_dialog_module.SettingsDialog()
+                assert "Speaker ID · Off (Me / Others)" in (
+                    dialog.meeting_model_summary.text()
+                )
 
     def test_meeting_tab_links_to_model_manager(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -286,10 +286,11 @@ class MeetingAgentCore:
 
 class MeetingSpeakerIdBackend:
     """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
+    OFF: Final[str] = "off"        # Me / Others channel labels only
     LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
     OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize
 
-    ALL: Final[Tuple[str, ...]] = (LOCAL, OPENAI)
+    ALL: Final[Tuple[str, ...]] = (OFF, LOCAL, OPENAI)
 
 
 class MeetingLanguage:

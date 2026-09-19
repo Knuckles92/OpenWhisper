@@ -445,8 +445,11 @@ class WsHub:
             segments = []
         guest_url = await asyncio.to_thread(self._guest_url, meeting)
 
+        from meeting.voice_help import voice_command_guide
+        guide = await asyncio.to_thread(voice_command_guide)
         payload: Dict[str, Any] = {
             "type": "hello",
+            "voice_commands": guide,
             "role": conn.role,
             "participant_id": conn.participant_id,
             "seq": state.get("seq", 0),

@@ -129,6 +129,17 @@ class LocalSpeechBackend(TranscriptionBackend):
         with self._decode_lock:
             return self._request_audio("stream", audio, language, session=session, finish=finish)["events"]
 
+    def preview_audio(self, audio: np.ndarray, language=None, *, busy=lambda: False):
+        """Best-effort short decode; never queue behind durable transcription."""
+        if busy() or not self._decode_lock.acquire(blocking=False):
+            return None
+        try:
+            if busy():
+                return None
+            return self._transcribe_audio(audio, language)
+        finally:
+            self._decode_lock.release()
+
     def cancel_stream(self, session: str):
         with self._decode_lock:
             if self._process:

@@ -8,6 +8,14 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Speaker identification can be turned off** — Model Manager → Meeting voice now includes Off (Me / Others channel labels only). Meetings skip WeSpeaker clustering and the post-meeting OpenAI pass, and keep microphone as Me and system audio as Others.
+
+### Fixed
+- Settings now says when TypeSafe features cannot run for want of a key. Meeting Mode → Fast judgments shows a notice while `TYPESAFE_API_KEY` is unset, the nav rail reads "No key", and the **Test** button on the API keys page verifies a TypeSafe key instead of doing nothing (TypeSafe is not an OpenAI-compatible endpoint, so it had no verification path).
+- The sensitive-dictation gate no longer implies protection it is not providing. When the switch is on but TypeSafe is off or unkeyed, the tile states that nothing is being screened and that dictation is reaching the cloud endpoint unchecked. Cleanup behaviour is unchanged — only the messaging was missing.
+- Corrected stale Settings copy that pointed at "Meeting Mode → Intelligence" for TypeSafe switches, which live under "Fast judgments".
+
 ## [2.6.03] - 2026-09-18
 
 ### Fixed

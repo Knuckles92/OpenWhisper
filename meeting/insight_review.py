@@ -3,17 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-import httpx
-
 from meeting.state.schema import new_id, now_iso
 from services.settings import resolve_typesafe_enabled
+from services.typesafe import CREDENTIAL_ENV, MODEL, TypeSafeJudge
 
-MODEL = "jev-1.13.0"
 CONSENT = "typesafe-text-v1"
 MAX_ITEMS = 40
 MAX_CONTEXT_CHARS = 16000
@@ -31,37 +28,18 @@ def consented(snapshot):
 
 class TypeSafeReviewer:
     def __init__(self, api_key):
-        self.api_key = api_key
+        self._judge = TypeSafeJudge(api_key, timeout_s=12.0)
 
     def evaluate(self, state, questions, *, consent):
         if consent != CONSENT:
             raise ReviewUnavailable("Enable TypeSafe sharing in Meeting settings before reviewing.")
         if not resolve_typesafe_enabled():
             raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
-        try:
-            with httpx.Client(timeout=httpx.Timeout(12.0, connect=5.0), follow_redirects=False) as client:
-                response = client.post(
-                    "https://api.typesafe.ai/v1/systemone",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": MODEL, "state": state, "questions": questions},
-                )
-                if response.status_code != 200:
-                    raise ReviewUnavailable("TypeSafe could not complete the check. Retry later.")
-                payload = response.json()
-            scores = {}
-            for key in questions:
-                answer = payload["answers"][key]
-                value = answer["noul"]
-                if (answer.get("type") != "noul" or isinstance(value, bool)
-                        or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1):
-                    raise ValueError("invalid probability")
-                scores[key] = float(value)
-            return scores
-        except ReviewUnavailable:
-            raise
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            # Neither credentials nor provider response bodies belong in UI errors/logs.
-            raise ReviewUnavailable("The review service was unavailable or returned an incomplete check.") from None
+        answers = self._judge.ask(state, questions)
+        if answers is None:
+            # Shared transport failures never expose keys or provider bodies.
+            raise ReviewUnavailable("The review service was unavailable or returned an incomplete check.")
+        return {key: answer["noul"] for key, answer in answers.items()}
 
 
 def review_config(enabled=False, sensitivity="normal", max_questions=3, consent="", cloud_enabled=True):
@@ -194,8 +172,8 @@ def run_review(store, repository, run_id, reviewer=None):
         if reviewer is None:
             if not resolve_typesafe_enabled():
                 raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
-            from services.text_llm import lookup_env_value
-            key = lookup_env_value("TYPESAFE_API_KEY")
+            from services.credentials import resolve_credential
+            key = resolve_credential(CREDENTIAL_ENV)
             if not key:
                 raise ReviewUnavailable("Add a TypeSafe key in Settings → API keys or TYPESAFE_API_KEY in your environment, then retry.")
             reviewer = TypeSafeReviewer(key)

@@ -190,10 +190,16 @@ class MeetingAsrEngine:
     def start_preview(self, callback) -> None:
         from transcriber.optional_backend import LocalSpeechBackend
         from services.local_asr.catalog import MODELS
-        if isinstance(self._backend, LocalSpeechBackend) and MODELS[self._backend.model_name].streaming:
-            from meeting.asr.preview import MeetingSpeechPreview
-            self._preview = MeetingSpeechPreview(
-                self._backend, callback, lambda: self._outstanding > 0, self.language or "auto",
+        if not isinstance(self._backend, LocalSpeechBackend) or self._preview is not None:
+            return
+        from meeting.asr.preview import MeetingSpeechPreview, WindowSpeechPreview
+        model = MODELS[self._backend.model_name]
+        preview_type = (MeetingSpeechPreview if model.streaming else
+                        WindowSpeechPreview if model.backend == "parakeet" else None)
+        if preview_type is not None:
+            self._preview = preview_type(
+                self._backend, callback, lambda: self._outstanding > 0 or self._stopping,
+                self.language or "auto",
             )
 
     def feed_preview(self, block, start_s: float) -> None:

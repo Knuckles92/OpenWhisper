@@ -497,6 +497,9 @@ class TestMeetingSettings:
         assert self.resolve_llm_model(saved) == "gpt-4o-mini"
         assert self.resolve_agent_core(saved) == self.agent_cores.DIRECT
         assert self.resolve_speaker_id(saved) == self.speaker_backends.OPENAI
+        assert self.resolve_speaker_id(
+            {self.keys.MEETING_SPEAKER_ID_BACKEND: self.speaker_backends.OFF}
+        ) == self.speaker_backends.OFF
         assert self.resolve_audio_consent(saved)
         assert self.resolve_preview_ack(saved)
         assert self.resolve_platform_ack(saved)

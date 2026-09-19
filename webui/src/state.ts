@@ -14,6 +14,8 @@ import {
   type Segment,
   type ServerMessage,
   type SpeechPreviewMsg,
+  type VoiceFeedbackMsg,
+  type VoiceCommandGuide,
 } from './types';
 import type { SocketStatus } from './ws';
 
@@ -26,6 +28,8 @@ export interface MeetingUiState {
   state: MeetingStateDoc | null;
   segments: Segment[];
   speechPreviews: Record<string, SpeechPreviewMsg>;
+  voiceFeedback: VoiceFeedbackMsg | null;
+  voiceCommandGuide?: VoiceCommandGuide;
   meeting: MeetingInfo | null;
   guestUrl: string | null;
   socketStatus: SocketStatus;
@@ -45,6 +49,7 @@ export const initialUiState: MeetingUiState = {
   state: null,
   segments: [],
   speechPreviews: {},
+  voiceFeedback: null,
   meeting: null,
   guestUrl: null,
   socketStatus: 'closed',
@@ -191,6 +196,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
   switch (action.type) {
     case 'socket_status':
       return { ...state, socketStatus: action.status,
+        voiceFeedback: action.status === 'open' ? state.voiceFeedback : null,
         speechPreviews: action.status === 'open' ? state.speechPreviews : {} };
 
     case 'clear_error':
@@ -210,6 +216,8 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
           return {
             ...state,
             speechPreviews: {},
+            voiceFeedback: null,
+            voiceCommandGuide: h.voice_commands,
             role: h.role,
             participantId: h.participant_id,
             state: h.state,
@@ -254,6 +262,10 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
             lastSeqByTarget: trackSeqs(state.lastSeqByTarget, msg.results),
           };
         }
+        case 'voice_feedback':
+          if (state.meetingEnded || state.state?.status === 'paused' ||
+              msg.seq <= (state.voiceFeedback?.seq ?? -1)) return state;
+          return { ...state, voiceFeedback: msg };
         case 'speech_preview': {
           const previous = state.speechPreviews[msg.channel];
           if (state.meetingEnded || msg.end_s < (previous?.end_s ?? -1)) return state;
@@ -301,6 +313,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
               finalization: nextFinalization ?? null,
             },
             meetingEnded: isTerminalStatus(status),
+            voiceFeedback: status === 'active' ? state.voiceFeedback : null,
           };
         case 'action_result': {
           let next = {
@@ -356,6 +369,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
           return {
             ...state,
             meetingEnded: true,
+            voiceFeedback: null,
             state: state.state
               ? { ...state.state, status: msg.status ?? 'ended' }
               : null,

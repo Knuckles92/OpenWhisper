@@ -27,3 +27,14 @@ state = receive({ ...state, meetingEnded: true }, partial);
 assert.deepEqual(state.speechPreviews, {});
 console.log('Live preview reducer: stale events, commit clearing, reconnect, and ended meetings passed.');
 
+
+const heard = {type:'voice_feedback',seq:1,phase:'heard',message:'Heard you'};
+state = receive(initialUiState, heard);
+state = receive(state, {...heard,seq:3,phase:'saved',message:'Note taken'});
+state = receive(state, {...heard,seq:2,phase:'recognized'});
+assert.equal(state.voiceFeedback.phase, 'saved');
+state = meetingReducer(state, {type:'socket_status',status:'closed'});
+assert.equal(state.voiceFeedback, null);
+state = receive(state, {type:'meeting_ended'});
+state = receive(state, {...heard,seq:4});
+assert.equal(state.voiceFeedback, null);

@@ -41,6 +41,8 @@ from services.credentials import (
 )
 from services.credentials import store as credential_store
 from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
+from services.typesafe import key_present as typesafe_key_present
+from services.typesafe import verify_key as typesafe_verify_key
 from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
@@ -93,6 +95,7 @@ from services.settings import (
 )
 from services.text_llm import (
     credential_label,
+    get_profile as get_text_llm_profile,
     list_profiles,
     profile_display_name,
     verify_api_key,
@@ -785,7 +788,7 @@ class SettingsDialog(QDialog):
             "Before dictation reaches a cloud model, TypeSafe judges whether "
             "it holds passwords, account numbers, or personal details; flagged "
             "text is returned raw. Needs TypeSafe fast judgments (Meeting Mode "
-            "→ Intelligence). Local endpoints are never screened.",
+            "→ Fast judgments). Local endpoints are never screened.",
             _design_icon("stack-slate.svg"),
         )
         self.cleanup_sensitivity_gate_check = (
@@ -798,6 +801,16 @@ class SettingsDialog(QDialog):
             lambda checked: self._persist(
                 SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, bool(checked)
             )
+        )
+        # Screening needs a remote judgment, so an unkeyed gate screens nothing
+        # and cleanup proceeds. A checked box must not imply otherwise.
+        self.cleanup_sensitivity_gate_status = self._caption("")
+        self.cleanup_sensitivity_gate_status.setObjectName(
+            "cleanupSensitivityGateStatus"
+        )
+        self.cleanup_sensitivity_gate_status.hide()
+        self.cleanup_sensitivity_gate_tile.add_body(
+            self.cleanup_sensitivity_gate_status
         )
         self._tile_group(
             layout, "AI cleanup",
@@ -1086,6 +1099,27 @@ class SettingsDialog(QDialog):
         )
 
     def _build_meeting_fast_page(self, layout: QVBoxLayout) -> None:
+        # Every switch on this page is inert without a key, and the features
+        # themselves degrade silently by design, so the page has to say so.
+        self.typesafe_key_notice = InfoTile(
+            "No TypeSafe API key",
+            "",
+            _design_icon("info-warning.svg"),
+        )
+        self.typesafe_key_notice.setProperty("kind", "notice")
+        self.open_typesafe_key_btn = QPushButton("Add a key")
+        self.open_typesafe_key_btn.setObjectName("typesafeKeyNoticeLink")
+        self.open_typesafe_key_btn.setFlat(True)
+        self.open_typesafe_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_typesafe_key_btn.setToolTip(
+            "Open API keys with the TypeSafe credential selected"
+        )
+        self.open_typesafe_key_btn.clicked.connect(
+            lambda: self.focus_api_keys(TYPESAFE_CREDENTIAL_ENV)
+        )
+        self.typesafe_key_notice.add_trailing(self.open_typesafe_key_btn)
+        layout.addWidget(self.typesafe_key_notice)
+
         self.typesafe_enabled_tile = SettingTile(
             "TypeSafe fast judgments (Experimental)",
             "Off by default. Answers narrow yes/no questions about a minute of "
@@ -1569,10 +1603,10 @@ class SettingsDialog(QDialog):
             )
         elif env_name == TYPESAFE_CREDENTIAL_ENV:
             text = (
-                "Used for TypeSafe fast judgments: semantic topic-change "
-                "detection, spoken instructions to the note taker, and the "
-                "sensitive-dictation gate for cloud cleanup. Enable them under "
-                "Meeting Mode → Intelligence and Dictation → AI cleanup."
+                "Used for TypeSafe fast judgments: topic changes, spoken "
+                "instructions, live highlights, the questions radar, insight "
+                "review, and the sensitive-dictation gate. Enable them under "
+                "Meeting Mode → Fast judgments and Cleanup."
             )
         elif env_name:
             owners = [
@@ -1690,10 +1724,14 @@ class SettingsDialog(QDialog):
 
     def _test_api_key(self) -> None:
         name = self._selected_api_key_name()
-        profile = self._api_key_profile(name)
-        if profile is None or self._api_key_testing:
+        if self._api_key_testing or not name:
             return
-        label = credential_label(profile)
+        # TypeSafe is not an OpenAI-compatible endpoint and so has no entry in
+        # ``list_profiles``; it verifies through its own one-judgment probe.
+        profile = self._api_key_profile(name)
+        if profile is None and name != TYPESAFE_CREDENTIAL_ENV:
+            return
+        label = self._api_key_label(name)
         typed = self.api_key_edit.text()
         if typed.strip():
             try:
@@ -1711,7 +1749,10 @@ class SettingsDialog(QDialog):
         self.message_label.setText(f"Testing {label}…")
 
         def worker():
-            ok, detail = verify_api_key(profile, key)
+            if profile is None:
+                ok, detail = typesafe_verify_key(key)
+            else:
+                ok, detail = verify_api_key(profile, key)
             self._api_key_verified.emit(name, ok, detail)
 
         threading.Thread(target=worker, daemon=True, name="api-key-verify").start()
@@ -2086,6 +2127,10 @@ class SettingsDialog(QDialog):
         else:
             after = "Off"
         self.rail.set_value(MEETING_AFTER, after)
+        # A saved or removed key changes what the fast page can actually do,
+        # and every key change routes through here.
+        self._render_typesafe_key_state()
+        self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
         bind = self.meeting_bind_combo.currentData()
         port = self.meeting_port_spinbox.value()
         if bind == MeetingServerBind.LAN:
@@ -2331,11 +2376,12 @@ class SettingsDialog(QDialog):
             else "OpenCode v2 (beta)" if core == MeetingAgentCore.OPENCODE
             else "Direct (no sidecar)"
         )
-        speaker_label = (
-            "On-device (WeSpeaker)"
-            if speaker == MeetingSpeakerIdBackend.LOCAL
-            else "OpenAI (gpt-4o-transcribe-diarize)"
-        )
+        if speaker == MeetingSpeakerIdBackend.OFF:
+            speaker_label = "Off (Me / Others)"
+        elif speaker == MeetingSpeakerIdBackend.LOCAL:
+            speaker_label = "On-device (WeSpeaker)"
+        else:
+            speaker_label = "OpenAI (gpt-4o-transcribe-diarize)"
         self.meeting_model_summary.setText(
             f"Whisper · {whisper}\n"
             f"Spoken language · {language_label}\n"
@@ -2347,6 +2393,70 @@ class SettingsDialog(QDialog):
     def _on_typesafe_enabled_changed(self, checked: bool) -> None:
         self._persist(SettingsKey.TYPESAFE_ENABLED, bool(checked))
         self._update_typesafe_feature_tiles()
+
+    def _typesafe_key_present(self) -> bool:
+        """Whether a TypeSafe key resolves right now, never raising into the UI."""
+        try:
+            return typesafe_key_present()
+        except Exception:
+            logger.exception("TypeSafe key lookup failed")
+            return False
+
+    def _render_typesafe_key_state(self) -> None:
+        """Say plainly when a switch is on but the key that powers it is missing.
+
+        The features themselves are built to degrade to "no judgment", which
+        is right at runtime and wrong in Settings: without this the page looks
+        identical whether or not anything will ever run.
+        """
+        # Cleanup pages are built before the fast-judgments page and call this
+        # through ``_update_cleanup_prompt_ui`` while wiring themselves up.
+        if not hasattr(self, "typesafe_key_notice"):
+            return
+        present = self._typesafe_key_present()
+        master_on = self.typesafe_enabled_check.isChecked()
+        self.typesafe_key_notice.setVisible(not present)
+        if not present:
+            self.typesafe_key_notice.set_description(
+                "Nothing on this page runs without one, and these checks fail "
+                "quietly by design — no meeting will warn you. Add a key under "
+                f"API keys → TypeSafe, or set {TYPESAFE_CREDENTIAL_ENV}."
+                if master_on else
+                "Fast judgments are off and no key is saved. Turning anything "
+                "on below has no effect until you add a key under API keys → "
+                f"TypeSafe, or set {TYPESAFE_CREDENTIAL_ENV}."
+            )
+        # Only warn where the switch is actually claiming something: cleanup
+        # running, against a remote endpoint. A local endpoint is never
+        # screened anyway, which the tile's own description already says.
+        blocked = (
+            self.cleanup_sensitivity_gate_check.isChecked()
+            and self.transcript_cleanup_check.isChecked()
+            and self._cleanup_destination_is_remote()
+            and (not present or not master_on)
+        )
+        if blocked:
+            reason = (
+                "no TypeSafe API key is saved"
+                if not present else
+                "TypeSafe fast judgments is off"
+            )
+            self.cleanup_sensitivity_gate_status.setText(
+                f"Not screening anything: {reason}. Dictation is being sent to "
+                "the cloud endpoint unchecked. Cleanup keeps working — only the "
+                "screening step is missing."
+            )
+        self.cleanup_sensitivity_gate_status.setVisible(blocked)
+        self.cleanup_sensitivity_gate_tile.body.setVisible(blocked)
+
+    def _cleanup_destination_is_remote(self) -> bool:
+        """Whether cleanup text would leave the machine. Unknown counts as remote."""
+        try:
+            profile = get_text_llm_profile(resolve_transcript_cleanup_provider())
+        except Exception:
+            logger.exception("Cleanup destination lookup failed")
+            return True
+        return profile is None or not profile.is_local
 
     def _update_typesafe_feature_tiles(self) -> None:
         """Feature switches only mean something while the master switch is on."""
@@ -2364,6 +2474,25 @@ class SettingsDialog(QDialog):
             self.cleanup_sensitivity_gate_tile.setEnabled(
                 self.transcript_cleanup_check.isChecked()
             )
+        self._render_typesafe_key_state()
+        self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
+
+    def _meeting_fast_rail_value(self) -> str:
+        """Rail badge: the blocking condition first, the count only when usable."""
+        if not self.typesafe_enabled_check.isChecked():
+            return "Off"
+        if not self._typesafe_key_present():
+            return "No key"
+        active = sum(
+            1
+            for tile in (
+                self.typesafe_topic_shift_tile,
+                self.typesafe_voice_commands_tile,
+                *self.typesafe_feature_tiles.values(),
+            )
+            if tile.checkbox.isChecked()
+        )
+        return "On · no features" if active == 0 else f"On · {active}"
 
     def _update_cleanup_prompt_ui(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
@@ -2376,6 +2505,7 @@ class SettingsDialog(QDialog):
         self.cleanup_sensitivity_gate_tile.setEnabled(
             enabled and self.typesafe_enabled_check.isChecked()
         )
+        self._render_typesafe_key_state()
         self.cleanup_rules_gate_tile.setVisible(not enabled)
         self._update_cleanup_rule_controls()
 
@@ -2700,9 +2830,8 @@ class SettingsDialog(QDialog):
         self.typesafe_voice_commands_check.setChecked(
             settings.get(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False) is True
         )
-        from services.settings import resolve_typesafe_feature_enabled
         for feature, tile in self.typesafe_feature_tiles.items():
-            tile.checkbox.setChecked(resolve_typesafe_feature_enabled(feature, settings))
+            tile.checkbox.setChecked(settings.get(f"typesafe_{feature}_enabled", False) is True)
         self._update_typesafe_feature_tiles()
         self.meeting_context_folder_check.setChecked(
             resolve_meeting_context_folder_enabled(settings)

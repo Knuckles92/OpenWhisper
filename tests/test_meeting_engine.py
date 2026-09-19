@@ -178,7 +178,7 @@ class FakeScheduler:
     instances = []
 
     def __init__(self, engine, agent_core, base_interval_s=15.0,
-                 min_interval_s=5.0, max_interval_s=20.0, on_health=None):
+                 min_interval_s=5.0, max_interval_s=20.0, on_health=None, topic_judge=None):
         self.engine = engine
         self.agent_core = agent_core
         self.on_health = on_health
@@ -1346,6 +1346,26 @@ class TestCloudSpeakerStep:
     def test_local_backend_omits_speaker_step(self, make_engine):
         engine = make_engine(cloud_enabled=False)
         engine.start()
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        ids = [step["id"] for step in fin.get("steps") or []]
+        assert "speaker_id" not in ids
+        assert fin["status"] == "disabled"
+
+    def test_off_backend_omits_speaker_step_and_diarizer(
+            self, make_engine, fakes):
+        created = []
+        fakes.modules["meeting.diarize.clustering"].create_diarizer = (
+            lambda *args, **kwargs: created.append(True) or fakes.diarizer
+        )
+        engine = make_engine(cloud_enabled=False, speaker_id_backend="off")
+        engine.start()
+        assert engine._diarizer is None
+        assert created == []
+        assert engine.store.with_state(
+            lambda s: s.diarization_available
+        ) is False
         engine.end()
         engine._end_thread.join(timeout=10.0)
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())

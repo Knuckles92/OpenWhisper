@@ -1,0 +1,131 @@
+/* A single quiet line above the workspace: present, ignorable, dismissible.
+   It deliberately avoids the card treatment so it never competes with the
+   meeting's own panels for attention. */
+.voice-hint {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  color: var(--soft);
+}
+
+.voice-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+}
+
+.voice-hint-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--leaf);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--leaf) 13%, transparent);
+}
+
+.voice-hint.is-blocked .voice-hint-dot {
+  background: var(--faint);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--faint) 13%, transparent);
+}
+
+.voice-hint-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.voice-hint-lead b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.voice-hint-blocked {
+  color: var(--clay);
+}
+
+.voice-hint-more,
+.voice-hint-close {
+  flex: none;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 3px 7px;
+}
+
+.voice-hint-more {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--leaf);
+}
+
+.voice-hint-more:hover {
+  background: color-mix(in srgb, var(--leaf) 10%, transparent);
+}
+
+.voice-hint-close {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.voice-hint-close:hover {
+  color: var(--ink);
+  background: var(--hair);
+}
+
+.voice-hint-more:focus-visible,
+.voice-hint-close:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 1px;
+}
+
+.voice-hint-body {
+  border-top: 1px solid var(--hair);
+  padding: 10px 12px 11px;
+}
+
+.voice-hint-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  gap: 7px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-hint-list li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.voice-hint-phrase {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.voice-hint-label {
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.voice-hint-note {
+  margin: 11px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+@media (max-width: 560px) {
+  .voice-hint-lead {
+    font-size: 12px;
+  }
+}

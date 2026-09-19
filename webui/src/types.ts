@@ -372,7 +372,14 @@ export interface AgentActivityMsg extends AgentActivityRecord {
   type: 'agent_activity';
 }
 
+export interface VoiceCommandGuide {
+  names: string[];
+  primary: string;
+  examples: Array<{ label: string; phrase: string }>;
+}
+
 export interface HelloMsg {
+  voice_commands?: VoiceCommandGuide;
   type: 'hello';
   role: Role;
   participant_id: string | null;
@@ -443,7 +450,16 @@ export interface SpeechPreviewMsg {
   final: boolean;
 }
 
+export interface VoiceFeedbackMsg {
+  type: 'voice_feedback';
+  seq: number;
+  phase: 'heard' | 'recognized' | 'working' | 'saved' | 'uncertain' | 'error' | 'unavailable';
+  message: string;
+  command?: string;
+}
+
 export type ServerMessage =
+  | VoiceFeedbackMsg
   | SpeechPreviewMsg
   | HelloMsg
   | PatchMsg
@@ -462,6 +478,7 @@ export type ClientMessage =
   | { type: 'ping' };
 
 export interface SessionResponse {
+  voice_commands?: VoiceCommandGuide;
   role: Role;
   meeting: MeetingInfo;
   state: MeetingStateDoc;

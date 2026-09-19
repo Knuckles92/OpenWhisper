@@ -4,7 +4,6 @@ from unittest.mock import Mock
 import json
 import threading
 
-import httpx
 import pytest
 
 from meeting.insight_review import (
@@ -101,34 +100,72 @@ def test_no_worker_or_network_without_consent(monkeypatch, kwargs):
 
 
 def test_http_client_rejects_missing_consent_before_network(monkeypatch):
-    client = Mock()
-    monkeypatch.setattr("meeting.insight_review.httpx.Client", client)
+    post = Mock()
+    monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable):
         TypeSafeReviewer("synthetic-key").evaluate({}, {}, consent="")
-    client.assert_not_called()
+    post.assert_not_called()
 
 
-@pytest.mark.parametrize("value", [float("nan"), -1, 2, True, "0.9", None])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, 2, True, "0.9", None])
 def test_malformed_probability_is_unavailable(monkeypatch, value):
-    response = Mock(status_code=200)
-    response.json.return_value = {"answers": {"support": {"type": "noul", "noul": value}}}
-    client = Mock()
-    client.__enter__ = Mock(return_value=client)
-    client.__exit__ = Mock(return_value=None)
-    client.post.return_value = response
-    monkeypatch.setattr("meeting.insight_review.httpx.Client", lambda **_: client)
+    post = Mock(return_value=(200, json.dumps({
+        "answers": {"support": {"type": "noul", "noul": value}}})))
+    monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable):
-        TypeSafeReviewer("synthetic-key").evaluate({}, {"support": {}}, consent=CONSENT)
+        TypeSafeReviewer("synthetic-key").evaluate(
+            {}, {"support": {"type": "noul"}}, consent=CONSENT)
+    post.assert_called_once()
 
 
 def test_timeout_never_exposes_provider_or_key(monkeypatch):
-    client = Mock()
-    client.__enter__ = Mock(return_value=client)
-    client.__exit__ = Mock(return_value=None)
-    client.post.side_effect = httpx.ReadTimeout("secret provider body")
-    monkeypatch.setattr("meeting.insight_review.httpx.Client", lambda **_: client)
+    post = Mock(side_effect=TimeoutError("secret provider body"))
+    monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable) as error:
-        TypeSafeReviewer("secret-key").evaluate({}, {}, consent=CONSENT)
+        TypeSafeReviewer("secret-key").evaluate(
+            {}, {"support": {"type": "noul"}}, consent=CONSENT)
+    post.assert_called_once()
+    assert "secret" not in str(error.value)
+
+
+def test_review_uses_shared_model_transport_and_tls_bundle(monkeypatch):
+    from services.typesafe import ENDPOINT, MODEL
+
+    context = object()
+    tls = Mock(return_value=context)
+    response = Mock(status=200)
+    response.read.return_value = json.dumps({
+        "answers": {"support": {"type": "noul", "noul": .95}}}).encode()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=None)
+    urlopen = Mock(return_value=response)
+    monkeypatch.setattr("services.typesafe.verified_context", tls)
+    monkeypatch.setattr("services.typesafe.urllib.request.urlopen", urlopen)
+    state = {"insight": "The team agreed to ship."}
+    questions = {"support": {"type": "noul", "instructions": "Is it supported?"}}
+    assert TypeSafeReviewer("synthetic-key").evaluate(
+        state, questions, consent=CONSENT) == {"support": .95}
+    request = urlopen.call_args.args[0]
+    assert request.full_url == ENDPOINT
+    assert request.get_header("Authorization") == "Bearer synthetic-key"
+    assert json.loads(request.data) == {"model": MODEL, "state": state, "questions": questions}
+    assert urlopen.call_args.kwargs == {"timeout": 12.0, "context": context}
+    tls.assert_called_once()
+
+
+@pytest.mark.parametrize("status,body", [
+    (503, "secret provider response"),
+    (200, "not json"),
+    (200, '{"answers": {}}'),
+    (200, '{"answers": {"support": {"type": "choice", "choice": "yes"}}}'),
+])
+def test_shared_client_failures_are_review_unavailable(monkeypatch, status, body):
+    post = Mock(return_value=(status, body))
+    monkeypatch.setattr("services.typesafe._http_post", post)
+    with pytest.raises(ReviewUnavailable) as error:
+        TypeSafeReviewer("secret-key").evaluate(
+            {}, {"support": {"type": "noul"}}, consent=CONSENT)
+    post.assert_called_once()
     assert "secret" not in str(error.value)
 
 
@@ -417,8 +454,8 @@ def test_master_switch_off_blocks_review_even_with_review_consent():
 
 def test_master_switch_revocation_prevents_the_next_http_request(monkeypatch):
     monkeypatch.setattr("meeting.insight_review.resolve_typesafe_enabled", lambda: False)
-    client = Mock()
-    monkeypatch.setattr("meeting.insight_review.httpx.Client", client)
+    post = Mock()
+    monkeypatch.setattr("services.typesafe._http_post", post)
     with pytest.raises(ReviewUnavailable, match="off"):
         TypeSafeReviewer("synthetic-key").evaluate({}, {}, consent=CONSENT)
-    client.assert_not_called()
+    post.assert_not_called()

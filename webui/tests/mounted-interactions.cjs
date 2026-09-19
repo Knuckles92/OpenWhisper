@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test, afterEach } = require('node:test');
 const { JSDOM } = require('jsdom');
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
-for (const key of ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'KeyboardEvent', 'MouseEvent']) {
+for (const key of ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'KeyboardEvent', 'MouseEvent', 'sessionStorage']) {
   global[key] = key === 'window' ? dom.window : dom.window[key];
 }
 global.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
@@ -105,4 +105,64 @@ test('selection effects open dialog; failed save retains correction; retry saves
   assert.deepEqual(calls[0].data, {kind:'term_correction',selected_text:'Entropic',replacement:'Anthropic'});
   assert.deepEqual(calls[1], calls[0]);
   assert.match(container.textContent, /Saved. Agent review requested/);
+});
+
+
+test('assistant bubble announces progress, supports dismiss and cleans its timer', async () => {
+  const Bubble = require('../src/components/VoiceAssistantBubble.tsx').default;
+  const feedback = {type:'voice_feedback', seq:1, phase:'heard', message:'Heard you…'};
+  await mount(Bubble, {feedback});
+  assert.match(container.querySelector('[role=status]').textContent, /Heard you/);
+  assert.equal(container.querySelector('[role=status]').getAttribute('aria-live'), 'polite');
+  await act(async () => root.render(React.createElement(Bubble, {feedback:{...feedback,seq:2,phase:'saved',message:'Note taken'}})));
+  assert.match(container.textContent, /Note taken/);
+  assert.equal(container.querySelector('.voice-assistant').dataset.phase, 'saved');
+  await click(container.querySelector('button'));
+  assert.equal(container.querySelector('.voice-assistant'), null);
+  await act(async () => root.render(React.createElement(Bubble, {feedback:null})));
+  assert.equal(container.textContent, '');
+});
+
+
+test('voice hint stays collapsed, expands on demand and stays dismissed for the meeting', async () => {
+  sessionStorage.clear();
+  const Hint = require('../src/components/VoiceCommandHelp.tsx').default;
+  const guide = {names:['Assistant','Note taker'], primary:'Assistant',
+    examples:[{label:'Take a note', phrase:'Assistant, note that the launch is Friday.'},
+      {label:'Add an action', phrase:'Assistant, mark that as an action item.'}]};
+  const props = {guide, meetingId:'m1', cloudEnabled:true, paused:false, isHost:true};
+  await mount(Hint, props);
+  // Collapsed by default: the lead line only, no command list.
+  assert.match(container.textContent, /Say “Assistant, …”/);
+  assert.equal(container.querySelector('.voice-hint-list'), null);
+  const more = container.querySelector('.voice-hint-more');
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  await click(more);
+  assert.equal(container.querySelectorAll('.voice-hint-list li').length, 2);
+  assert.match(container.textContent, /note that the launch is Friday/);
+  assert.match(container.textContent, /also answers to “Note taker”/);
+  // Dismissal survives a remount of the same meeting but not a new one.
+  await click(container.querySelector('.voice-hint-close'));
+  assert.equal(container.querySelector('.voice-hint'), null);
+  await act(async () => root.render(React.createElement(Hint, props)));
+  assert.equal(container.querySelector('.voice-hint'), null);
+  await act(async () => root.render(React.createElement(Hint, {...props, meetingId:'m2'})));
+  assert.ok(container.querySelector('.voice-hint'));
+});
+
+
+test('voice hint explains why commands are inert without hiding itself', async () => {
+  sessionStorage.clear();
+  const Hint = require('../src/components/VoiceCommandHelp.tsx').default;
+  const guide = {names:['Assistant'], primary:'Assistant',
+    examples:[{label:'Take a note', phrase:'Assistant, note that.'}]};
+  await mount(Hint, {guide, meetingId:'m3', cloudEnabled:true, paused:true, isHost:true});
+  assert.match(container.querySelector('.voice-hint-blocked').textContent, /paused/);
+  await act(async () => root.render(React.createElement(Hint,
+    {guide, meetingId:'m3', cloudEnabled:false, paused:false, isHost:false})));
+  assert.match(container.querySelector('.voice-hint-blocked').textContent, /host has Cloud intelligence off/);
+  await click(container.querySelector('.voice-hint-more'));
+  assert.match(container.textContent, /this page does not open your microphone/);
+  // A guest is never told to go change host-only settings.
+  assert.doesNotMatch(container.textContent, /Fast judgments/);
 });

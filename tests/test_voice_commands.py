@@ -183,3 +183,149 @@ class TestListener:
         listener.shutdown()
         assert listener.observe(rows()) == 0
         assert judge.calls == []
+
+
+class ManualExecutor:
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, fn, *args):
+        self.jobs.append((fn, args))
+        return Future()
+
+    def run(self):
+        fn, args = self.jobs.pop(0)
+        return fn(*args)
+
+
+def streaming_listener(executor=None, judge=None, allowed=lambda: True):
+    events, store = [], FakeStore()
+    judge = judge or FakeJudge(ChoiceAnswer("note_this", .95, {}))
+    listener = VoiceCommandListener(store, judge, DEFAULT_VOICE_COMMAND_NAMES,
+                                    cloud_enabled=allowed, executor=executor or ImmediateExecutor(),
+                                    on_feedback=events.append)
+    return listener, store, judge, events
+
+
+def preview(text="Assistant, note that the launch is Friday.", start=0, end=3, channel="mic"):
+    return dict(channel=channel, start_s=start, end_s=end, text=text, final=False)
+
+
+def test_preview_acknowledges_without_mutating_and_commit_saves_once():
+    listener, store, judge, events = streaming_listener()
+    p = preview()
+    listener.observe_preview(p)
+    assert [e["phase"] for e in events] == ["heard", "recognized"]
+    assert not store.calls
+    row = dict(p, id="sg_command")
+    assert listener.observe([row]) == 1
+    assert store.calls[0][2][0]["text"] == "the launch is Friday."
+    assert store.calls[0][2][0]["evidence"] == ["sg_command"]
+    assert events[-1]["phase"] == "saved"
+    listener.observe([row])
+    count = len(events)
+    listener.observe_preview(dict(p, end_s=4))
+    assert len(store.calls) == 1 and len(events) == count
+
+
+def test_changed_preview_is_coalesced_while_judge_is_busy():
+    executor = ManualExecutor()
+    listener, store, judge, events = streaming_listener(executor)
+    for end in range(3, 80):
+        listener.observe_preview(preview(f"Assistant, note that the count is {end}.", end=end))
+    assert len(executor.jobs) == 1
+    executor.run()
+    assert len(judge.calls) == 1 and "79" in judge.calls[0]["segment"]
+    assert not store.calls
+
+
+def test_split_wake_and_instruction_preserve_both_evidence_ids():
+    listener, store, judge, events = streaming_listener()
+    listener.observe([dict(preview("Assistant.", end=1), id="sg_wake")])
+    assert not judge.calls and events[-1]["phase"] == "heard"
+    listener.observe([dict(preview("Note that the launch is Friday.", start=1, end=3), id="sg_body")])
+    op = store.calls[0][2][0]
+    assert op["text"] == "the launch is Friday."
+    assert op["evidence"] == ["sg_wake", "sg_body"]
+
+
+def test_split_wake_never_crosses_channel_or_long_gap():
+    for continuation in (preview("Note that launch is Friday", channel="loopback", start=1),
+                         preview("Note that launch is Friday", start=10, end=12)):
+        listener, store, judge, _ = streaming_listener()
+        listener.observe([dict(preview("Assistant.", end=1), id="sg_wake")])
+        listener.observe([dict(continuation, id="sg_body")])
+        assert not judge.calls and not store.calls
+
+
+def test_preview_wake_stub_and_continuation_are_joined():
+    listener, store, judge, events = streaming_listener()
+    listener.observe_preview(preview("Assistant.", end=1))
+    listener.observe_preview(preview("Note that launch is Friday.", start=1, end=3))
+    assert judge.calls[0]["segment"].startswith("Assistant, Note that")
+    assert events[-1]["phase"] == "recognized" and not store.calls
+
+
+def test_same_segment_point_is_captured_instead_of_unrelated_previous_point():
+    listener, store, judge, _ = streaming_listener()
+    listener.observe([dict(preview("Older unrelated discussion.", end=1), id="sg_old")])
+    listener.observe([dict(preview("The launch is Friday. Assistant, capture that.", start=1, end=4), id="sg_cmd")])
+    op = store.calls[0][2][0]
+    assert op["text"] == "The launch is Friday"
+    assert op["evidence"] == ["sg_cmd"]
+
+
+def test_preview_cannot_overwrite_committed_feedback_from_a_slow_judgment():
+    executor = ManualExecutor()
+    listener, store, judge, events = streaming_listener(executor)
+    listener.observe_preview(preview())
+    listener.observe([dict(preview(), id="sg_cmd")])
+    executor.run()  # Obsolete preview response must not announce recognition.
+    assert not any(e["phase"] == "recognized" for e in events)
+    executor.run()
+    assert events[-1]["phase"] == "saved" and len(store.calls) == 1
+
+
+def test_preview_consent_and_shutdown_block_network_and_mutations():
+    executor = ManualExecutor()
+    allowed = [True]
+    listener, store, judge, events = streaming_listener(executor, allowed=lambda: allowed[0])
+    listener.observe_preview(preview())
+    allowed[0] = False
+    executor.run()
+    assert not judge.calls and events[-1]["phase"] == "unavailable"
+    listener.observe_preview(preview("Assistant, note that Tuesday is cancelled.", end=4))
+    listener.shutdown()
+    count = len(events)
+    executor.run()
+    assert not judge.calls and not store.calls and len(events) == count
+
+
+def test_missing_key_and_service_failure_have_visible_feedback():
+    listener, store, judge, events = streaming_listener()
+    listener._judge = None
+    listener.observe_preview(preview())
+    assert events[-1]["phase"] == "unavailable"
+    listener._judge = FakeJudge(None)
+    listener.observe([dict(preview(), id="sg_cmd")])
+    assert events[-1]["phase"] == "error" and not store.calls
+
+
+def test_committed_queue_is_bounded_without_blocking_caller():
+    executor = ManualExecutor()
+    listener, store, judge, events = streaming_listener(executor)
+    for i in range(30):
+        listener.observe([dict(preview(start=i*4, end=i*4+3), id=f"sg_{i}")])
+    assert len(executor.jobs) == 16
+    assert events[-1]["phase"] == "error" and not store.calls
+
+
+def test_consent_revoked_during_judgment_prevents_save():
+    allowed = [True]
+    class RevokingJudge:
+        def choice(self, *args):
+            allowed[0] = False
+            return ChoiceAnswer("note_this", .99)
+    listener, store, _, events = streaming_listener(judge=RevokingJudge(), allowed=lambda: allowed[0])
+    listener.observe([dict(preview(), id="sg_cmd")])
+    assert not store.calls and not any(e["phase"] == "saved" for e in events)

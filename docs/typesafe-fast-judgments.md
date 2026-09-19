@@ -17,6 +17,16 @@ Evidence for the thresholds is in [the human-label benchmark](typesafe-human-lab
 
 Meeting-side judgments additionally require the meeting's cloud intelligence to be on; the closures check `state.cloud_enabled` on every call, so turning cloud off mid-meeting stops them immediately.
 
+## When there is no key
+
+Quiet degradation is the right runtime policy — a dead network must not interrupt capture — but it makes "you never set a key" indistinguishable from "nobody said anything checkable." Settings therefore reports the configuration case, which runtime deliberately will not:
+
+- **Meeting Mode → Fast judgments** shows a notice while no key resolves, with a button that opens API keys on the TypeSafe credential. The nav rail reads `No key` instead of a feature count.
+- **The sensitive-dictation gate** states that it is screening nothing when it is switched on but TypeSafe is off or unkeyed, and that dictation is reaching the cloud endpoint unchecked. Cleanup still runs; only the screening step is missing. The warning is suppressed when cleanup is off or its endpoint is local, since nothing is being sent in those cases.
+- **API keys → Test** verifies a TypeSafe key with one minimal judgment (`services.typesafe.verify_key`) and reports the status class. TypeSafe is not an OpenAI-compatible endpoint, so it cannot use the shared `verify_api_key` probe.
+
+`services.typesafe.key_present()` answers "is a key resolvable" on its own, separate from `is_configured()`, which also requires the master switch — the two cases need different copy and a different next step.
+
 ## Privacy
 
 Each judgment sends a short excerpt to `api.typesafe.ai`: about two minutes of transcript for a topic check, one segment plus three predecessors for a voice command, and the dictation itself for the sensitivity gate. The response is a probability or a label, not text. The sensitivity gate is therefore a trade, not a wall: flagged dictation is kept away from the cleanup model, but the gate itself has seen it. It is only consulted when the cleanup destination is remote, so a local endpoint never triggers a remote call, and it is described that way in Settings.
@@ -71,3 +81,34 @@ These four controls are **off by default** on **Meeting Mode → Fast judgments*
 Requests are bounded and run outside audio capture. A slow service cannot build an unbounded minute queue. Highlight thresholds (0.8), radar thresholds (0.85), and citation confidence (0.7) are initial product policies, **not newly benchmarked accuracy guarantees**. The new combined workflow's live accuracy, latency, and meeting-hour cost have not been measured; the proposed $0.02/hour is a target, not a verified price for this implementation.
 
 Offline coverage includes consent and revocation, source/revision invalidation, persistence, queue bounds, literal corrections and undo, recap routing, semantic fallback, pulse click anchors, and playback metadata races.
+
+
+## Live voice-command acknowledgements
+
+Parakeet meeting previews check a rolling eight-second audio window at roughly
+one-second intervals when the shared model is available. Preview audio is copied
+into a bounded queue after the recorder receives it. Queued durable transcription
+has priority; slow preview inference reduces preview frequency to leave capacity
+for the transcript. Recording and its recoverable WAV chunks keep their normal
+cadence. Native streaming engines also forward their preview utterances.
+
+Wake-named previews are classified with Jev on a background worker. Only the latest
+pending preview per audio channel is retained. A preview can acknowledge a command
+but cannot create or change a meeting item: the committed transcript is classified
+again before applying an action with real source IDs. This prevents rolling windows
+from saving duplicate notes. Short wake preambles split across adjacent segments on
+the same channel are joined. Explicit “assistant, note that …” content and a point
+spoken before the wake name in the same segment can be captured directly.
+
+A bottom-center assistant bubble appears in the live dashboard, which opens in the
+browser when a meeting starts. It shows heard, recognized, working, saved,
+uncertain, and unavailable states. It can be dismissed and disappears after the
+acknowledgement. The desktop app deliberately shows no bubble of its own: it drew
+the same design at the same screen position as the dashboard's, always on top, so
+every acknowledgement appeared twice and the two drifted out of phase. The dashboard
+honors reduced-motion preferences. Saving a note is acknowledged only after the
+store succeeds; a missing key, disabled cloud consent, failed judgment, or rejected
+write cannot claim success. Restart a source-launched app to load code changes.
+
+The voice-command tests use synthetic text and fake judges; model quality and the
+one-second target still depend on the configured hardware and service latency.

@@ -10,6 +10,8 @@ import CardsPane from './components/CardsPane';
 import HeaderBar from './components/HeaderBar';
 import HistoryPane from './components/HistoryPane';
 import ActivityPane from './components/ActivityPane';
+import VoiceAssistantBubble from './components/VoiceAssistantBubble';
+import VoiceCommandHelp from './components/VoiceCommandHelp';
 import JoinGate from './components/JoinGate';
 import MeetingOverview from './components/MeetingOverview';
 import NotesPane from './components/NotesPane';
@@ -69,6 +71,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
       type: 'server_message',
       msg: {
         type: 'hello',
+        voice_commands: initialSession.voice_commands,
         role,
         participant_id: null,
         seq: initialSession.state.seq,
@@ -279,7 +282,10 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             </aside>
 
             <div className="workspace-center">
-              {ui.state.voice_feedback?.message && <p className="voice-feedback" role="status">{ui.state.voice_feedback.message}</p>}
+              {['active', 'paused'].includes(ui.state.status) &&
+                <VoiceCommandHelp guide={ui.voiceCommandGuide} meetingId={ui.state.meeting_id}
+                  cloudEnabled={ui.state.cloud_enabled}
+                  paused={ui.state.status === 'paused'} isHost={isHost} />}
               <HighlightPulseStrip pulses={ui.state.live_highlights ?? []} onSelect={pulse => {
                 void handleEvidenceClick(pulse.segment_id);
                 playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));
@@ -388,6 +394,8 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
           </div>
         </EvidenceProvider>
       )}
+      {!showHistory && !ui.meetingEnded && ui.state.status === 'active' &&
+        <VoiceAssistantBubble feedback={ui.voiceFeedback} />}
     </div>
   );
 }

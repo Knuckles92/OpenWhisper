@@ -267,7 +267,10 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await _current_meeting()
         store = getattr(engine, "store", None)
         state = await asyncio.to_thread(store.snapshot) if store is not None else {}
-        return {"role": role, "meeting": _public_meeting(meeting), "state": state}
+        from meeting.voice_help import voice_command_guide
+        guide = await asyncio.to_thread(voice_command_guide)
+        return {"role": role, "meeting": _public_meeting(meeting), "state": state,
+                "voice_commands": guide}
 
     @app.get("/api/transcript")
     async def api_transcript(token: str = "", cursor: str = "",
@@ -518,7 +521,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if resolve_meeting_speaker_id_backend() != "openai":
             raise HTTPException(
                 status_code=400,
-                detail="speaker identification is set to on-device",
+                detail="speaker identification is not set to OpenAI",
             )
         if not resolve_meeting_audio_upload_consent():
             raise HTTPException(
