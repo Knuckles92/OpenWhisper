@@ -153,6 +153,14 @@ class MeetingWebServer:
             log_level="warning",
             access_log=False,
             lifespan="on",
+            # The host app owns logging (ui_qt.bootstrap.setup_logging). Left at
+            # its default, uvicorn runs dictConfig on a formatter that probes
+            # sys.stdout.isatty(); a windowed (--noconsole) frozen build has no
+            # stdout, so that raises and dictConfig reports it as the opaque
+            # "Unable to configure formatter 'default'". None keeps log_level
+            # and access_log honoured and lets uvicorn's loggers propagate to
+            # the app's rotating file handler.
+            log_config=None,
         )
         server = _ThreadedUvicornServer(config)
         self._server = server
