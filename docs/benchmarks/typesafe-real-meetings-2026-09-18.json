@@ -1,0 +1,626 @@
+{
+  "date": "2026-09-18",
+  "scope": "Public AMI cached ASR; production consolidation from empty state; excludes microphone, ASR runtime, live scheduler and UI.",
+  "limitations": [
+    "Three research meetings; one run per writer/arm.",
+    "Reference transcripts are human annotations; most evaluation labels are model judgments, not human gold.",
+    "Gemini judges its own writer family; no model-quality ranking is established.",
+    "Whole-record coverage audits failed; completeness is unmeasured.",
+    "Production cancellations preserve partial state and are not completed results.",
+    "Seeded ledger cases were selected during development, not held out.",
+    "Thin writers produce common record fields, not every production-agent artifact."
+  ],
+  "corpus": {
+    "name": "AMI Meeting Corpus",
+    "url": "https://groups.inf.ed.ac.uk/ami/corpus/",
+    "license": "CC BY 4.0",
+    "annotation_release": "1.7 (local README)",
+    "annotation_files": [
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\00README_MANUAL.txt",
+        "sha256": "001292e9082f0f403a155dd5e7e4a8d5ac6542dbf37b19a12c7b6030fabdd350"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\LICENCE.txt",
+        "sha256": "d52fd9c7c19eec9f0bec3107554c10937203e261259d73b01637a61501fec7f7"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1009.A.words.xml",
+        "sha256": "b8da842fbd878e881b72b9bf11f7a2e579649ab5a293b7fabaa941df721e9c0f"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1009.B.words.xml",
+        "sha256": "cf9b070e0d278acb4ecc4283f7974d50011341a70dbc5b4205d62d29c6401c5f"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1009.C.words.xml",
+        "sha256": "4c58f522b7e7133f22314aae85b56615684930bb29e6a11a42218900bf0052e8"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1009.D.words.xml",
+        "sha256": "38990bdb875fca1a569b578f2801687172bbe3601c33fc72c99479830634b084"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1005.A.words.xml",
+        "sha256": "d8f2b08896036b638b3c6f3e4edb9533ef9f198d1d28102386c5b0313e4aaa98"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1005.B.words.xml",
+        "sha256": "447b277788164452380fda3a9668afff3f6bed4b67504d9058fedff5c497e37f"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1005.C.words.xml",
+        "sha256": "728045f6f8d2fbda3d756e6aae1d849b01a492ab617f09d808e3674ec9c99ccd"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1005.D.words.xml",
+        "sha256": "a129961f2e3cbdb5e52875763175461beca4a28518df1e37728bcc70da16112f"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1007.A.words.xml",
+        "sha256": "d0f94c4bc9ae842dc29b84c381dd7005576355eed3d3263d617576deaffc24d0"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1007.B.words.xml",
+        "sha256": "b27e2e1aa9a757998b38236ebf5de126c1b5148655aee67eed4adf51a7f6bede"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1007.C.words.xml",
+        "sha256": "93a637cce2187e2d7ca21892d6cbfd40c63fc645eb80836c8a159125564c3e33"
+      },
+      {
+        "path": "benchmarks\\meeting_mode\\data\\ami\\annotations\\words\\IN1007.D.words.xml",
+        "sha256": "46240d0eee2604cd0105cc248deed809c73c5647c9ecaad9a782aade6acd1808"
+      }
+    ]
+  },
+  "meetings": [
+    {
+      "id": "IN1009",
+      "minutes": 20.939111458333333,
+      "asr_wer": 0.2527548209366391,
+      "source": {
+        "path": "benchmarks\\meeting_mode\\results\\auto-auto-draft-only-t5-m20-p50-offline\\IN1009.json",
+        "sha256": "945b770e6369a6cc39f7646fc3fcedd0bdcb7b100fa7567679c6b59818dd17ba"
+      },
+      "signals": {
+        "requests": 177,
+        "errors": 0,
+        "median_request_s": 0.15912070000194944,
+        "wall_s": 10.313791099993978,
+        "selected_segments": 2,
+        "input_tokens": 331398,
+        "estimated_cost_usd": 0.013918716000000001
+      }
+    },
+    {
+      "id": "IN1005",
+      "minutes": 46.6472,
+      "asr_wer": 0.21968935076544865,
+      "source": {
+        "path": "benchmarks\\meeting_mode\\results\\auto-auto-draft-only-t5-m20-p50-offline\\IN1005.json",
+        "sha256": "7bc3e67423c6ce5f26db7df57304e36c2c6d33b5d5f49437c3713ebf86a8d883"
+      },
+      "signals": {
+        "requests": 395,
+        "errors": 0,
+        "median_request_s": 0.1602788000018336,
+        "wall_s": 26.257024999998976,
+        "selected_segments": 3,
+        "input_tokens": 788765,
+        "estimated_cost_usd": 0.033128130000000006
+      }
+    },
+    {
+      "id": "IN1007",
+      "minutes": 40.188889583333335,
+      "asr_wer": 0.3281782756941062,
+      "source": {
+        "path": "benchmarks\\meeting_mode\\results\\auto-auto-draft-only-t5-m20-p50-offline\\IN1007.json",
+        "sha256": "2239d9d78f7ced6e9c0ed848e0d7b3dddfeed77c93855bef4a4dda18fd89dca7"
+      },
+      "signals": {
+        "requests": 312,
+        "errors": 0,
+        "median_request_s": 0.15398289999575354,
+        "wall_s": 18.86314199998742,
+        "selected_segments": 0,
+        "input_tokens": 592563,
+        "estimated_cost_usd": 0.024887646
+      }
+    }
+  ],
+  "signals": {
+    "model": "jev-1.13.0",
+    "calls": 884,
+    "questions": 3536,
+    "errors": 0,
+    "concurrency": 4,
+    "threshold": 0.8,
+    "lookback_seconds": 90,
+    "max_prior_segments": 20,
+    "median_request_seconds": 0.15796144999330863,
+    "p95_request_seconds_nearest_rank": 0.26996649999637157,
+    "total_audio_minutes": 107.77520104166666,
+    "selected_segments": 5,
+    "input_tokens": 1712726,
+    "estimated_cost_usd": 0.071934492
+  },
+  "signal_reference_audit": {
+    "judge": "google/gemini-3.8-flash",
+    "protocol": "20 fixed-seed uniform segments per meeting plus all threshold positives and prespecified top deferred signals; judge sees human words only, never TypeSafe scores or ASR.",
+    "labeled": 101,
+    "samples": {
+      "uniform": {
+        "cases": 60,
+        "commitments": {
+          "none": 60
+        },
+        "positive_labels": {
+          "assumption_broken": 0,
+          "actionable": 0,
+          "decision": 0
+        }
+      },
+      "positive": {
+        "cases": 5,
+        "commitments": {
+          "accepted": 2,
+          "proposed": 1,
+          "none": 2
+        },
+        "positive_labels": {
+          "assumption_broken": 0,
+          "actionable": 2,
+          "decision": 0
+        }
+      },
+      "challenging": {
+        "cases": 37,
+        "commitments": {
+          "none": 33,
+          "accepted": 4
+        },
+        "positive_labels": {
+          "assumption_broken": 0,
+          "actionable": 4,
+          "decision": 2
+        }
+      }
+    },
+    "known_ambiguity": "IN1005:388 judge calls a conditional link offer accepted; manual text review and seeded probe retain proposed. Raw labels unchanged.",
+    "sample_note": "Samples overlap; uniform has 60 cases, enriched union totals 101. Do not infer population recall from enriched cases."
+  },
+  "package_audits": [
+    {
+      "judge": "google/gemini-3.8-flash",
+      "protocol": "Blind randomized item audit against human-reference windows around cited ASR times, +/-15 seconds. Producer arm and TypeSafe signals hidden; uncertainty retained.",
+      "counts": {
+        "baseline": {
+          "supported": 49,
+          "overstated": 3,
+          "unclear": 1
+        },
+        "assisted": {
+          "overstated": 9,
+          "supported": 33
+        }
+      },
+      "cases": 95,
+      "labeled": 95
+    },
+    {
+      "judge": "google/gemini-3.8-flash",
+      "protocol": "Blind randomized item audit against human-reference windows around cited ASR times, +/-15 seconds. Producer arm and TypeSafe signals hidden; uncertainty retained.",
+      "counts": {
+        "thin-gemini": {
+          "supported": 33,
+          "contradicted": 1
+        },
+        "thin-gemini-assisted": {
+          "supported": 28,
+          "overstated": 2
+        }
+      },
+      "cases": 64,
+      "labeled": 64
+    }
+  ],
+  "packages": [
+    {
+      "meeting": "IN1009",
+      "arm": "baseline",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 223.1746946000203,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1009-baseline.json",
+      "items_in_saved_common_fields": 20,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "assisted",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 163.99128099999507,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1009-assisted.json",
+      "items_in_saved_common_fields": 19,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 203.4791543999745,
+      "draft_seconds": 203.47727299999679,
+      "invalid_evidence_items": 1,
+      "artifact": "package-IN1009-thin.json",
+      "items_in_saved_common_fields": 18,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.003010635
+      }
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin-assisted",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": false,
+      "error": "TextGenerationError during repair",
+      "seconds": null,
+      "draft_seconds": 222.12851140002022,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1009-thin-assisted.json",
+      "items_in_saved_common_fields": null,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.00278262
+      }
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin-gemini",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 12.234381299989764,
+      "draft_seconds": 12.232876399997622,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1009-thin-gemini.json",
+      "items_in_saved_common_fields": 11,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.01871625
+      }
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin-gemini-assisted",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 22.58431850001216,
+      "draft_seconds": 11.012318499997491,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1009-thin-gemini-assisted.json",
+      "items_in_saved_common_fields": 10,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.01757025,
+        "repair": 0.02129175
+      },
+      "verification": {
+        "items": 10,
+        "flagged": 10,
+        "seconds": 0.886502700013807,
+        "errors": 0
+      },
+      "reverification": {
+        "items": 10,
+        "flagged": 10,
+        "seconds": 0.7456228999944869,
+        "errors": 0
+      }
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "baseline",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": false,
+      "error": "canceled",
+      "seconds": 240.01768829999492,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1005-baseline.json",
+      "items_in_saved_common_fields": 19,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "assisted",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": false,
+      "error": "canceled",
+      "seconds": 240.01201690000016,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1005-assisted.json",
+      "items_in_saved_common_fields": 0,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin",
+      "provider": null,
+      "model": null,
+      "ok": false,
+      "error": "not completed before adaptive stop",
+      "seconds": null,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1005-thin.json",
+      "items_in_saved_common_fields": null,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin-assisted",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": false,
+      "error": "ablation stopped after slow draft; later stages censored",
+      "seconds": null,
+      "draft_seconds": 510.6091318000108,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1005-thin-assisted.json",
+      "items_in_saved_common_fields": null,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.00697518
+      }
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin-gemini",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 11.883625399990706,
+      "draft_seconds": 11.882188099989435,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1005-thin-gemini.json",
+      "items_in_saved_common_fields": 10,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.03315225
+      }
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin-gemini-assisted",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 22.351888700010022,
+      "draft_seconds": 10.634967099991627,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1005-thin-gemini-assisted.json",
+      "items_in_saved_common_fields": 9,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.0324915,
+        "repair": 0.035508
+      },
+      "verification": {
+        "items": 9,
+        "flagged": 9,
+        "seconds": 0.9797401999821886,
+        "errors": 0
+      },
+      "reverification": {
+        "items": 9,
+        "flagged": 9,
+        "seconds": 0.7685773999837693,
+        "errors": 0
+      }
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "baseline",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 208.68422630001442,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1007-baseline.json",
+      "items_in_saved_common_fields": 14,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "assisted",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ok": false,
+      "error": "canceled",
+      "seconds": 240.01302929999656,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1007-assisted.json",
+      "items_in_saved_common_fields": 23,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin",
+      "provider": null,
+      "model": null,
+      "ok": false,
+      "error": "not completed before adaptive stop",
+      "seconds": null,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1007-thin.json",
+      "items_in_saved_common_fields": null,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin-assisted",
+      "provider": null,
+      "model": null,
+      "ok": false,
+      "error": "not completed before adaptive stop",
+      "seconds": null,
+      "draft_seconds": null,
+      "invalid_evidence_items": null,
+      "artifact": "package-IN1007-thin-assisted.json",
+      "items_in_saved_common_fields": null,
+      "record_complete": false,
+      "stage_reported_llm_cost_usd": {}
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin-gemini",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 14.169182200013893,
+      "draft_seconds": 14.167789900006028,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1007-thin-gemini.json",
+      "items_in_saved_common_fields": 13,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.029622
+      }
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin-gemini-assisted",
+      "provider": "openrouter",
+      "model": "google/gemini-3.8-flash",
+      "ok": true,
+      "error": null,
+      "seconds": 26.541422899987083,
+      "draft_seconds": 13.152258299989626,
+      "invalid_evidence_items": 0,
+      "artifact": "package-IN1007-thin-gemini-assisted.json",
+      "items_in_saved_common_fields": 11,
+      "record_complete": true,
+      "stage_reported_llm_cost_usd": {
+        "generation": 0.02793675,
+        "repair": 0.0324225
+      },
+      "verification": {
+        "items": 11,
+        "flagged": 11,
+        "seconds": 0.7834291000035591,
+        "errors": 0
+      },
+      "reverification": {
+        "items": 11,
+        "flagged": 11,
+        "seconds": 1.0394517999957316,
+        "errors": 0
+      }
+    }
+  ],
+  "ledger": {
+    "protocol": "Seven hand-selected actual-ASR episodes with manually seeded task candidates and memory. Development probe, not automatic discovery or held-out accuracy. Labels excluded from requests.",
+    "cases": [
+      {
+        "id": "paper_offer",
+        "expected": "proposed",
+        "choice": "proposed",
+        "confidence": 0.57,
+        "seconds": 0.31813500000862405
+      },
+      {
+        "id": "paper_acceptance",
+        "expected": "accepted",
+        "choice": "accepted",
+        "confidence": 0.21,
+        "seconds": 0.31497639999724925
+      },
+      {
+        "id": "paper_repeat",
+        "expected": "unchanged",
+        "choice": "unchanged",
+        "confidence": 0.93,
+        "seconds": 0.6250159999763127
+      },
+      {
+        "id": "conditional_offer",
+        "expected": "proposed",
+        "choice": "proposed",
+        "confidence": 0.81,
+        "seconds": 0.3061607000126969
+      },
+      {
+        "id": "math_not_task",
+        "expected": "none",
+        "choice": "none",
+        "confidence": 0.43,
+        "seconds": 0.15825750000658445
+      },
+      {
+        "id": "paper_handoff",
+        "expected": "accepted",
+        "choice": "accepted",
+        "confidence": 0.86,
+        "seconds": 0.16803999998955987
+      },
+      {
+        "id": "code_handoff",
+        "expected": "accepted",
+        "choice": "accepted",
+        "confidence": 0.78,
+        "seconds": 0.12912580001284368
+      }
+    ],
+    "matched": 7,
+    "confidence_at_least_08": 3
+  },
+  "costs": {
+    "signals_estimated_usd": 0.071934492,
+    "saved_verification_and_ledger_estimated_usd": 0.0032550420000000005,
+    "saved_writer_stages_reported_usd": 0.261479685,
+    "note": "Component costs only, not invoice total. Excludes judges, lost/cancelled/failed responses and unreported production-agent charges; zero Pi cost metadata is not treated as free."
+  },
+  "coverage_audit": {
+    "status": "unscorable",
+    "attempted_records": 12,
+    "failed_validation": 12,
+    "note": "Earlier multi-record judge returned empty objects. Isolated retry failed validation on all 12 records. No completeness scores reported."
+  }
+}

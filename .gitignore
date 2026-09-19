@@ -13,6 +13,11 @@ meetings/
 # Downloaded corpora and generated dogfood benchmark outputs.
 benchmarks/meeting_mode/data/
 benchmarks/meeting_mode/results/
+# Raw TypeSafe benchmark runs stay local; retain compact report summaries.
+benchmarks/typesafe_results/*
+!benchmarks/typesafe_results/comparison-summary.json
+benchmarks/typesafe_human_labels/results/*
+!benchmarks/typesafe_human_labels/results/summary.json
 # Local meeting-mode dogfood/eval workspace (audio, ffmpeg, DBs — can exceed GitHub limits).
 tmp_meeting_eval/
 

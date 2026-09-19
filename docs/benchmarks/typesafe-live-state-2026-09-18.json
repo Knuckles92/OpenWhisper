@@ -1,0 +1,642 @@
+{
+  "scope": "Four manually chosen candidates; selected chronological ASR updates; each lane carries its OWN previous predictions and source memory. Not automatic candidate discovery, full-stream replay, production scheduler comparison or held-out validation. No human-reference words in requests.",
+  "suite_sha256": "253bd0f340a5735d8d79b19fc884a2f3f3e205349c7a1ac63c01139837be4fa4",
+  "selected_checkpoints": 16,
+  "definite_checkpoints": 15,
+  "calls": 64,
+  "lanes": {
+    "jev-provisional": {
+      "model": "jev-1.13.0",
+      "matched_all": 10,
+      "matched_definite": 9,
+      "median_seconds": 0.1750107499974547,
+      "errors": 0,
+      "unknown_or_absent_when_event_expected": 0,
+      "states": [
+        {
+          "episode": "correctness_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.52
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.98
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 2,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.98
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 3,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.99
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.4
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.92
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 2,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "open",
+          "confidence": 0.82
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 3,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "open",
+          "confidence": 0.97
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 4,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "open",
+          "confidence": 0.98
+        },
+        {
+          "episode": "math_not_task",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.84
+        },
+        {
+          "episode": "math_not_task",
+          "step": 1,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.86
+        },
+        {
+          "episode": "papers",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.87
+        },
+        {
+          "episode": "papers",
+          "step": 1,
+          "expected": [
+            "absent",
+            "proposed"
+          ],
+          "applied": "proposed",
+          "confidence": 0.5
+        },
+        {
+          "episode": "papers",
+          "step": 2,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "proposed",
+          "confidence": 0.68
+        },
+        {
+          "episode": "papers",
+          "step": 3,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "proposed",
+          "confidence": 0.95
+        },
+        {
+          "episode": "papers",
+          "step": 4,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "proposed",
+          "confidence": 0.79
+        }
+      ]
+    },
+    "jev-confirmed": {
+      "model": "jev-1.13.0",
+      "matched_all": 4,
+      "matched_definite": 3,
+      "median_seconds": 0.18538000000989996,
+      "errors": 0,
+      "unknown_or_absent_when_event_expected": 12,
+      "states": [
+        {
+          "episode": "correctness_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.54
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.75
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 2,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.82
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 3,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.6
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.3
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "unknown",
+          "confidence": 0.21
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 2,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "unknown",
+          "confidence": 0.21
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 3,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "unknown",
+          "confidence": 0.77
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 4,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "unknown",
+          "confidence": 0.66
+        },
+        {
+          "episode": "math_not_task",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.86
+        },
+        {
+          "episode": "math_not_task",
+          "step": 1,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.87
+        },
+        {
+          "episode": "papers",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.87
+        },
+        {
+          "episode": "papers",
+          "step": 1,
+          "expected": [
+            "absent",
+            "proposed"
+          ],
+          "applied": "absent",
+          "confidence": 0.51
+        },
+        {
+          "episode": "papers",
+          "step": 2,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "absent",
+          "confidence": 0.45
+        },
+        {
+          "episode": "papers",
+          "step": 3,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "absent",
+          "confidence": 0.79
+        },
+        {
+          "episode": "papers",
+          "step": 4,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "absent",
+          "confidence": 0.19
+        }
+      ]
+    },
+    "gemini": {
+      "model": "google/gemini-3.8-flash",
+      "matched_all": 15,
+      "matched_definite": 14,
+      "median_seconds": 1.7265192499908153,
+      "errors": 0,
+      "unknown_or_absent_when_event_expected": 0,
+      "states": [
+        {
+          "episode": "correctness_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": null
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": null
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 2,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": null
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 3,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": null
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": null
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "resolved",
+          "confidence": null
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 2,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "resolved",
+          "confidence": null
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 3,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "resolved",
+          "confidence": null
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 4,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "resolved",
+          "confidence": null
+        },
+        {
+          "episode": "math_not_task",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": null
+        },
+        {
+          "episode": "math_not_task",
+          "step": 1,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": null
+        },
+        {
+          "episode": "papers",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": null
+        },
+        {
+          "episode": "papers",
+          "step": 1,
+          "expected": [
+            "absent",
+            "proposed"
+          ],
+          "applied": "proposed",
+          "confidence": null
+        },
+        {
+          "episode": "papers",
+          "step": 2,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": null
+        },
+        {
+          "episode": "papers",
+          "step": 3,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": null
+        },
+        {
+          "episode": "papers",
+          "step": 4,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": null
+        }
+      ]
+    },
+    "jev-evidence-first": {
+      "model": "jev-1.13.0",
+      "matched_all": 13,
+      "matched_definite": 12,
+      "median_seconds": 0.17206630000146106,
+      "errors": 0,
+      "unknown_or_absent_when_event_expected": 0,
+      "states": [
+        {
+          "episode": "correctness_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.95
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.88
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 2,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.89
+        },
+        {
+          "episode": "correctness_concern",
+          "step": 3,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.87
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 0,
+          "expected": [
+            "open"
+          ],
+          "applied": "open",
+          "confidence": 0.78
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 1,
+          "expected": [
+            "open"
+          ],
+          "applied": "resolved",
+          "confidence": 0.24
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 2,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "resolved",
+          "confidence": 0.32
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 3,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "open",
+          "confidence": 0.27
+        },
+        {
+          "episode": "evaluation_concern",
+          "step": 4,
+          "expected": [
+            "resolved"
+          ],
+          "applied": "open",
+          "confidence": 0.4
+        },
+        {
+          "episode": "math_not_task",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.68
+        },
+        {
+          "episode": "math_not_task",
+          "step": 1,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.32
+        },
+        {
+          "episode": "papers",
+          "step": 0,
+          "expected": [
+            "absent"
+          ],
+          "applied": "absent",
+          "confidence": 0.7
+        },
+        {
+          "episode": "papers",
+          "step": 1,
+          "expected": [
+            "absent",
+            "proposed"
+          ],
+          "applied": "proposed",
+          "confidence": 0.65
+        },
+        {
+          "episode": "papers",
+          "step": 2,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": 0.53
+        },
+        {
+          "episode": "papers",
+          "step": 3,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": 0.78
+        },
+        {
+          "episode": "papers",
+          "step": 4,
+          "expected": [
+            "accepted"
+          ],
+          "applied": "accepted",
+          "confidence": 0.95
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Four hand-selected candidate records; no automated discovery or full-stream scheduler replay.",
+    "Expected states authored from inspected human transcripts; not independent human labels.",
+    "One partial-utterance checkpoint allows absent or proposed; excluded from definite denominator.",
+    "Evidence-first is an adaptive follow-up changing both prompt and memory handling, not an isolated causal ablation.",
+    "Confirmed-lane mismatches include abstentions/unknown state, not just false assertions.",
+    "Gemini baseline uses the same small state task, not the production Pi scheduler."
+  ],
+  "costs": {
+    "typesafe_input_tokens": 128814,
+    "typesafe_estimated_usd": 0.005410188,
+    "gemini_reported_usd": 0.02917575
+  }
+}

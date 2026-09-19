@@ -1,0 +1,210 @@
+{
+  "review_date": "2026-09-18",
+  "method": "Direct review by the current assistant of all 12 saved records and all three human-reference transcripts; not blind, not an independent human panel; no new API judge calls.",
+  "sources": [
+    {
+      "meeting": "IN1009",
+      "human_reference_excerpt_file": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\direct-review-reference-IN1009.txt",
+      "sha256": "ff76c36ca0f524e5cea85f8805e6463bef02d050f47988cf9fb1594a50871dea",
+      "last_annotated_word_seconds": 1200.77
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "baseline",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1009-baseline.json",
+      "sha256": "3139a0f3a6d7a2c121d4786464326cbbf88f333118f8ef0a23a623e729677e30",
+      "completed": true
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1009-assisted.json",
+      "sha256": "c85e59009b40c6e57733e26d2177987d79f521225c330c1544414241f1bc90d1",
+      "completed": true
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin-gemini",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1009-thin-gemini.json",
+      "sha256": "f8897a0ed7561f6763519e27f995c47f6d58ec4404d99fb2f4a88dcf232bf27e",
+      "completed": true
+    },
+    {
+      "meeting": "IN1009",
+      "arm": "thin-gemini-assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1009-thin-gemini-assisted.json",
+      "sha256": "fce654ca15d1e040f6086425abc86ea7dad50a95262ac4eabfeb500eeca29ded",
+      "completed": true
+    },
+    {
+      "meeting": "IN1005",
+      "human_reference_excerpt_file": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\direct-review-reference-IN1005.txt",
+      "sha256": "e5e316e2f57503a5df561178d0fbdc146e7f0b33a7854b11fbc4ad149bf4a011",
+      "last_annotated_word_seconds": 2769.21
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "baseline",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1005-baseline.json",
+      "sha256": "63df63401c9c457f6b3bc1883facda29943cbd8bb9c14eef707f6e4fbd52bddb",
+      "completed": false
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1005-assisted.json",
+      "sha256": "265d61585d9ebbebfe78d78a05eace90533753389e8c91049f0297a41466d9ef",
+      "completed": false
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin-gemini",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1005-thin-gemini.json",
+      "sha256": "0a9d9c6dd903c66ba980685bd9af76e74da24c9232e3f0f7d0d145f63e3764e0",
+      "completed": true
+    },
+    {
+      "meeting": "IN1005",
+      "arm": "thin-gemini-assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1005-thin-gemini-assisted.json",
+      "sha256": "e639280e4773eab70f06ddd090e1facf529fcda62b1c5d824cfd3565d9250a9b",
+      "completed": true
+    },
+    {
+      "meeting": "IN1007",
+      "human_reference_excerpt_file": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\direct-review-reference-IN1007.txt",
+      "sha256": "ba0a2bb21a3cb1c7770fab36f608c97eaabcbd0c8297db89e7b4ed819428a224",
+      "last_annotated_word_seconds": 2375.27
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "baseline",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1007-baseline.json",
+      "sha256": "787a6b7611dd7373a68f0f6ba1343eedaafe589a4b7b5c3f0ca1345e280cb1e1",
+      "completed": true
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1007-assisted.json",
+      "sha256": "04b4dcb65b418cb0f32a8e3319ac01ebfaa240a4eee623ee39011fe04fd941ea",
+      "completed": false
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin-gemini",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1007-thin-gemini.json",
+      "sha256": "68d5791b721bb890a5db610e45fa84f36e81c7a130b45068393cdd7cc99fc7e7",
+      "completed": true
+    },
+    {
+      "meeting": "IN1007",
+      "arm": "thin-gemini-assisted",
+      "path": "benchmarks\\meeting_mode\\results\\typesafe-real-20260918\\package-IN1007-thin-gemini-assisted.json",
+      "sha256": "594cdc1a7952061a584f8f48801b4e05e0d8f2bed4c84a2f7553742b7bb8dd2b",
+      "completed": true
+    }
+  ],
+  "repair_changes": [
+    {
+      "meeting": "IN1009",
+      "items_before": 10,
+      "items_after": 10,
+      "summary_changed": false,
+      "topic_changed": false,
+      "changes": [
+        {
+          "index": 8,
+          "fields": [
+            "evidence"
+          ]
+        }
+      ]
+    },
+    {
+      "meeting": "IN1005",
+      "items_before": 9,
+      "items_after": 9,
+      "summary_changed": false,
+      "topic_changed": false,
+      "changes": [
+        {
+          "index": 2,
+          "fields": [
+            "evidence",
+            "text"
+          ]
+        },
+        {
+          "index": 3,
+          "fields": [
+            "card",
+            "evidence",
+            "text"
+          ]
+        },
+        {
+          "index": 4,
+          "fields": [
+            "evidence",
+            "text"
+          ]
+        },
+        {
+          "index": 6,
+          "fields": [
+            "commitment_status",
+            "text"
+          ]
+        },
+        {
+          "index": 7,
+          "fields": [
+            "evidence",
+            "text"
+          ]
+        }
+      ]
+    },
+    {
+      "meeting": "IN1007",
+      "items_before": 11,
+      "items_after": 11,
+      "summary_changed": false,
+      "topic_changed": false,
+      "changes": [
+        {
+          "index": 0,
+          "fields": [
+            "evidence"
+          ]
+        },
+        {
+          "index": 4,
+          "fields": [
+            "evidence",
+            "text"
+          ]
+        },
+        {
+          "index": 5,
+          "fields": [
+            "evidence"
+          ]
+        },
+        {
+          "index": 6,
+          "fields": [
+            "evidence"
+          ]
+        },
+        {
+          "index": 10,
+          "fields": [
+            "evidence"
+          ]
+        }
+      ]
+    }
+  ]
+}
