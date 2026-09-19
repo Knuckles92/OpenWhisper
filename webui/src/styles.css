@@ -3036,11 +3036,58 @@ select {
 .pulse-label { font-size: 11px; }
 .pulse-track { position: relative; height: 22px; background: color-mix(in srgb, currentColor 5%, transparent); border-radius: 3px; }
 .pulse-mark { position: absolute; top: 1px; height: 20px; min-width: 12px; width: 12px; padding: 0; border: 0; border-radius: 3px; background: currentColor; cursor: pointer; }
-.pulse-mark:hover, .pulse-mark:focus-visible { transform: scaleY(1.25); outline: 2px solid currentColor; outline-offset: 2px; }
+.pulse-mark:hover, .pulse-mark:focus-visible, .pulse-mark[data-preview="open"] { transform: scaleY(1.25); outline: 2px solid currentColor; outline-offset: 2px; }
 .pulse-decision { color: #23745f; } .pulse-disagreement { color: #a7442d; }
 .pulse-commitment { color: #75509f; } .pulse-number { color: #28658f; }
 button.pulse-mark:hover:not(:disabled) { background: currentColor; }
 .pulse-scale { display: flex; justify-content: space-between; margin-left: 124px; font-size: 10px; opacity: .65; }
+/* Portaled pulse previews stay above the meeting's scroll containers. */
+.pulse-mark { transition: transform 140ms ease, box-shadow 140ms ease; }
+.pulse-mark[aria-disabled="true"] { cursor: help; }
+.pulse-preview {
+  --pulse-accent: currentColor;
+  position: fixed;
+  z-index: 90;
+  width: min(368px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, currentColor 22%, var(--line));
+  border-radius: 16px;
+  background: #fcfdfb;
+  box-shadow: 0 16px 48px -12px rgba(26, 36, 32, .24), 0 3px 10px rgba(26, 36, 32, .06);
+  animation: pulse-preview-in 140ms ease-out;
+}
+.pulse-preview::before {
+  content: '';
+  position: absolute;
+  left: var(--pulse-arrow-left);
+  width: 10px;
+  height: 10px;
+  background: #fcfdfb;
+  border: inherit;
+  transform: translateX(-50%) rotate(45deg);
+  z-index: -1;
+}
+.pulse-preview[data-side="below"]::before { top: -6px; border-right: 0; border-bottom: 0; }
+.pulse-preview[data-side="above"]::before { bottom: -6px; border-left: 0; border-top: 0; }
+.pulse-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; flex-shrink: 0; }
+.pulse-preview-eyebrow { display: block; margin-bottom: 6px; color: var(--soft); font-size: 9px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; }
+.pulse-preview-kind { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.pulse-preview-kind > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 9%, transparent); }
+.pulse-preview-time { padding: 5px 9px; border-radius: 7px; background: color-mix(in srgb, currentColor 8%, transparent); font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+.pulse-preview-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 20px 18px; overflow-wrap: anywhere; }
+.pulse-preview-quote { margin: 2px 0 18px; padding: 0 0 0 13px; border-left: 2px solid color-mix(in srgb, currentColor 35%, transparent); font: 21px/1.35 var(--font-display); }
+.pulse-preview-quote::before { content: '“'; }
+.pulse-preview-quote::after { content: '”'; }
+.pulse-preview-reason { padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, currentColor 6%, transparent); }
+.pulse-preview-reason > span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; }
+.pulse-preview-reason p { margin: 5px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
+.pulse-preview-footer { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-top: 1px solid var(--hair); color: var(--soft); font-size: 11px; flex-shrink: 0; }
+.pulse-preview-footer svg { flex-shrink: 0; }
+.pulse-preview-footer kbd { margin-left: auto; white-space: nowrap; border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font: 9px var(--font); }
+@keyframes pulse-preview-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pulse-preview { animation: none; } .pulse-mark { transition: none; } }
 .citation-badge { display: inline-block; border-radius: 4px; padding: 2px 6px; font-size: 10px; color: var(--text-muted, #8997a7); border: 1px solid currentColor; margin: 4px 0; }
 .citation-supported { color: #23745f; }
 .citation-contradicted, .citation-unsupported, .citation-missing { color: #a7442d; }

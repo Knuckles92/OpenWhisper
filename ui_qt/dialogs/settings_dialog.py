@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
     QTextEdit,
@@ -103,6 +105,7 @@ from services.text_llm import (
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.utils.app_icon import app_icon
+from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.widgets import (
     Button,
     DangerButton,
@@ -164,6 +167,48 @@ def _design_icon(filename: str) -> QIcon:
     return icon
 
 
+class _SettingsPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._tile_grids = []
+        # Let the viewport supply the width before the grids choose their columns.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def add_tile_grid(self, grid: QGridLayout, tiles: list, columns: int) -> None:
+        self._tile_grids.append([grid, tiles, columns, 0])
+        self._reflow_tiles()
+
+    def _reflow_tiles(self) -> None:
+        minimum_tile_width = round(300 * current_ui_font_scale())
+        for entry in self._tile_grids:
+            grid, tiles, maximum_columns, current_columns = entry
+            spacing = grid.horizontalSpacing()
+            columns = min(
+                maximum_columns,
+                max(1, (self.width() + spacing) // (minimum_tile_width + spacing)),
+            )
+            if columns == current_columns:
+                continue
+            while grid.count():
+                grid.takeAt(0)
+            for column in range(maximum_columns):
+                grid.setColumnStretch(column, 1 if column < columns else 0)
+            for index, tile in enumerate(tiles):
+                row, column = divmod(index, columns)
+                span = columns - column if index == len(tiles) - 1 else 1
+                grid.addWidget(tile, row, column, 1, span)
+            entry[3] = columns
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow_tiles()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._reflow_tiles()
+
+
 class SettingsDialog(QDialog):
     """Non-modal Settings window with a Model Manager-style rail.
 
@@ -171,7 +216,8 @@ class SettingsDialog(QDialog):
     re-raises it instead of stacking copies.
     """
 
-    DEFAULT_SIZE = QSize(980, 810)
+    DEFAULT_SIZE = QSize(980, 700)
+    MINIMUM_SIZE = QSize(800, 480)
 
     model_manager_requested = pyqtSignal(str)
     _cleanup_rule_polished = pyqtSignal(str, str, str)
@@ -229,6 +275,7 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
 
         self._setup_ui()
+        self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
 
         self._cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
@@ -240,8 +287,8 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self) -> None:
         root = QHBoxLayout(self)
-        # Recompute the window floor when wrapping or font scaling changes.
-        root.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        # Only the shell constrains the window; page contents scroll independently.
+        root.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_rail_pane())
@@ -324,6 +371,7 @@ class SettingsDialog(QDialog):
         self.stack = QStackedWidget()
         self.stack.setObjectName("modelManagerStack")
         self._pages: Dict[str, QWidget] = {}
+        self._page_scrolls: Dict[str, QScrollArea] = {}
         self._headings: Dict[str, tuple] = {}
         self._add_page(
             GENERAL,
@@ -423,7 +471,7 @@ class SettingsDialog(QDialog):
     def _add_page(
         self, key: str, title: str, subtitle: str, builder: Callable
     ) -> None:
-        page = QWidget()
+        page = _SettingsPage()
         page.setObjectName(f"settingsPage_{key}")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -432,7 +480,14 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         self._pages[key] = page
         self._headings[key] = (title, subtitle)
-        self.stack.addWidget(page)
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsPageScroll")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        self._page_scrolls[key] = scroll
+        self.stack.addWidget(scroll)
 
     def _field(self, label: str, widget: QWidget) -> QWidget:
         wrapper = QWidget()
@@ -488,16 +543,8 @@ class SettingsDialog(QDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
-        for column in range(columns):
-            grid.setColumnStretch(column, 1)
-        for index, tile in enumerate(tiles):
-            row, column = divmod(index, columns)
-            is_last = index == len(tiles) - 1
-            if is_last and column < columns - 1:
-                grid.addWidget(tile, row, column, 1, columns - column)
-            else:
-                grid.addWidget(tile, row, column)
         layout.addLayout(grid)
+        layout.parentWidget().add_tile_grid(grid, tiles, columns)
         layout.addSpacing(6)
         return caption, intro_label
 
@@ -2019,7 +2066,8 @@ class SettingsDialog(QDialog):
         page = self._pages.get(key)
         if page is None:
             return
-        self.stack.setCurrentWidget(page)
+        self.stack.setCurrentWidget(self._page_scrolls[key])
+        self.rail.scrollToItem(self.rail.currentItem())
         title, subtitle = self._headings[key]
         self.page_title.setText(title)
         self.page_subtitle.setText(subtitle)

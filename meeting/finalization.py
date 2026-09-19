@@ -5,6 +5,45 @@ from typing import Any
 # Shared per-block budget for transcript cleanup, including provider tool rounds.
 POLISH_TIMEOUT_S = 180.0
 
+# Cleanup emits a revision for each changed segment. Large batches can spend
+# the entire RPC budget reasoning before applying even one edit. Bound both
+# per-segment work and text volume, including a little boundary context.
+POLISH_MAX_SEGMENTS = 80
+POLISH_MAX_TEXT_CHARS = 8_000
+POLISH_OVERLAP_SEGMENTS = 8
+
+
+def polish_blocks(
+    segments: Sequence[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """Cover the transcript with bounded, overlapping cleanup windows.
+
+    A single oversized segment stays intact: splitting it would change its
+    identity and let separate revisions overwrite parts of the same speech.
+    Overlap shrinks when needed so every block advances into unseen segments.
+    """
+    blocks: list[list[dict[str, Any]]] = []
+    start = 0
+    covered = 0
+    while covered < len(segments):
+        end = start
+        chars = 0
+        while end < len(segments) and end - start < POLISH_MAX_SEGMENTS:
+            size = len(segments[end].get("text") or "")
+            if end > start and chars + size > POLISH_MAX_TEXT_CHARS:
+                break
+            chars += size
+            end += 1
+        if end <= covered:
+            # Context consumed the text budget; retry without that overlap.
+            start = covered
+            continue
+        blocks.append(list(segments[start:end]))
+        covered = end
+        overlap = min(POLISH_OVERLAP_SEGMENTS, (end - start) // 4)
+        start = end - overlap
+    return blocks
+
 
 def sparse_redecode_detail(new_words: int, old_words: int) -> str:
     return (

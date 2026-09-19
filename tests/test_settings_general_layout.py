@@ -6,14 +6,17 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, QSize, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QApplication,
+    QComboBox,
     QFormLayout,
     QFrame,
     QLabel,
-    QScrollArea,
+    QLineEdit,
+    QPushButton,
 )
 
 from ui_qt.dialogs.settings_dialog import (
@@ -43,7 +46,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_uses_rail_and_stack_without_scroll_areas(self):
+    def test_uses_rail_and_independently_scrollable_pages(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
         try:
@@ -65,7 +68,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     ADVANCED,
                 ),
             )
-            self.assertIsNone(dialog.findChild(QScrollArea))
+            for key in dialog.rail.keys():
+                scroll = dialog._page_scrolls[key]
+                self.assertIs(scroll.widget(), dialog._pages[key])
+                self.assertTrue(scroll.widgetResizable())
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
             self.assertEqual(len(tiles), 5)
@@ -294,7 +300,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog.open_cleanup_btn.click()
             self.app.processEvents()
             self.assertEqual(dialog.rail.current_key(), CLEANUP)
-            self.assertIs(dialog.stack.currentWidget(), dialog._pages[CLEANUP])
+            self.assertIs(dialog.stack.currentWidget(), dialog._page_scrolls[CLEANUP])
             self.assertTrue(dialog.transcript_cleanup_check.hasFocus())
         finally:
             dialog.close()
@@ -317,32 +323,69 @@ class TestSettingsGeneralLayout(unittest.TestCase):
         finally:
             dialog.close()
 
-    def test_every_destination_fits_the_default_height(self):
+    def test_pages_scroll_without_forcing_the_window_taller(self):
         previous_stylesheet = self.app.styleSheet()
         self.app.setStyleSheet(ThemeManager().stylesheet)
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
         try:
             dialog.show()
-            self.app.processEvents()
-            self.assertEqual((dialog.width(), dialog.height()), (980, 810))
-            self.assertEqual(
-                dialog.minimumSize(), dialog.minimumSizeHint()
-            )
-            for key in dialog.rail.keys():
-                dialog.rail.select(key)
+            for _ in range(8):
                 self.app.processEvents()
-                page = dialog._pages[key]
-                self.assertLessEqual(
-                    page.sizeHint().height(),
-                    page.height(),
-                    msg=f"{key} overflows ({page.sizeHint().height()} > {page.height()})",
-                )
+            self.assertEqual(dialog.size(), SettingsDialog.DEFAULT_SIZE)
+            close = dialog.findChild(QPushButton, "modelManagerCloseButton")
+            for size in (QSize(980, 560), SettingsDialog.MINIMUM_SIZE):
+                dialog.resize(size)
+                for key in dialog.rail.keys():
+                    dialog.rail.select(key)
+                    for _ in range(8):
+                        self.app.processEvents()
+                    with self.subTest(size=size, page=key):
+                        self.assertEqual(dialog.size(), size)
+                        self.assertEqual(dialog.minimumSize(), SettingsDialog.MINIMUM_SIZE)
+                        scroll = dialog._page_scrolls[key]
+                        page = dialog._pages[key]
+                        self.assertEqual(page.width(), scroll.viewport().width())
+                        self.assertGreaterEqual(page.height(), page.minimumSizeHint().height())
+                        self.assertTrue(dialog.rect().contains(
+                            close.mapTo(dialog, close.rect().bottomRight())
+                        ))
+                        bar = scroll.verticalScrollBar()
+                        bar.setValue(bar.maximum())
+                        self.app.processEvents()
+                        self.assertLessEqual(
+                            page.mapTo(scroll.viewport(), page.rect().bottomRight()).y(),
+                            scroll.viewport().height(),
+                        )
+            self.assertGreater(dialog._page_scrolls[GENERAL].verticalScrollBar().maximum(), 0)
+            self.assertGreater(dialog.rail.verticalScrollBar().maximum(), 0)
+            item_rect = dialog.rail.visualItemRect(dialog.rail.currentItem())
+            self.assertTrue(dialog.rail.viewport().rect().contains(item_rect))
         finally:
             dialog.close()
             self.app.setStyleSheet(previous_stylesheet)
 
-    def test_tile_descriptions_fit_after_font_and_width_changes(self):
+    def test_cards_reflow_when_the_window_narrows(self):
+        with patch.object(SettingsDialog, "_load_settings", lambda self: None):
+            dialog = SettingsDialog()
+        try:
+            dialog.show()
+            for width in (1200, 800, 1200):
+                dialog.resize(width, 600)
+                for _ in range(8):
+                    self.app.processEvents()
+                left, right = dialog.auto_paste_tile, dialog.copy_clipboard_tile
+                with self.subTest(width=width):
+                    if width == 800:
+                        self.assertEqual(left.x(), right.x())
+                        self.assertGreater(right.y(), left.geometry().bottom())
+                    else:
+                        self.assertEqual(left.y(), right.y())
+                        self.assertGreater(right.x(), left.geometry().right())
+        finally:
+            dialog.close()
+
+    def test_tile_titles_and_descriptions_fit_after_font_and_width_changes(self):
         previous_stylesheet = self.app.styleSheet()
         previous_font = self.app.font()
         previous_scale = current_ui_font_scale_percent()
@@ -353,24 +396,46 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog.show()
             for scale in (100, 115, 130, 100):
                 apply_ui_font_scale(scale, app=self.app, theme_manager=manager)
-                for width in (980, 900, 1100):
-                    dialog.resize(width, 810)
+                for width in (980, 800, 1100):
+                    dialog.resize(width, 560)
                     for key in dialog.rail.keys():
                         dialog.rail.select(key)
                         for _ in range(8):
                             self.app.processEvents()
-                        for tile in dialog._pages[key].findChildren(TileBase):
-                            label = tile.description_label
-                            if not label.isVisible():
+                        page = dialog._pages[key]
+                        controls = (page.findChildren(QAbstractButton)
+                                    + page.findChildren(QComboBox)
+                                    + page.findChildren(QLineEdit))
+                        for control in controls:
+                            if not control.isVisible():
                                 continue
                             with self.subTest(scale=scale, width=width, page=key,
-                                              tile=tile.title_label.text()):
+                                              control=control.objectName()):
                                 self.assertGreaterEqual(
-                                    label.height(), label.heightForWidth(label.width())
+                                    control.mapTo(page, control.rect().topLeft()).x(), 0
                                 )
-                                self.assertTrue(tile.rect().contains(
-                                    label.mapTo(tile, label.rect().bottomRight())
-                                ))
+                                self.assertLess(
+                                    control.mapTo(page, control.rect().bottomRight()).x(),
+                                    page.width(),
+                                )
+                        for tile in page.findChildren(TileBase):
+                            for label in (tile.title_label, tile.description_label):
+                                if not label.isVisible():
+                                    continue
+                                with self.subTest(scale=scale, width=width, page=key,
+                                                  tile=tile.title_label.text(),
+                                                  label=label.objectName()):
+                                    self.assertTrue(label.wordWrap())
+                                    self.assertEqual(QLabel.text(label), label.text())
+                                    self.assertGreaterEqual(
+                                        label.height(), label.heightForWidth(label.width())
+                                    )
+                                    self.assertTrue(tile.rect().contains(
+                                        label.mapTo(tile, label.rect().bottomRight())
+                                    ))
+                                    self.assertTrue(dialog._pages[key].rect().contains(
+                                        tile.geometry()
+                                    ))
         finally:
             dialog.close()
             apply_ui_font_scale(previous_scale, app=self.app)

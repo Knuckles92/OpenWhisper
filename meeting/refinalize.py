@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from meeting.finalization import (
     POLISH_TIMEOUT_S,
+    polish_blocks,
     sparse_redecode_detail,
     STEP_DETAILS,
     STEP_NAMES,
@@ -47,9 +48,6 @@ from meeting.time_utils import elapsed_seconds
 
 logger = logging.getLogger(__name__)
 
-
-#: Same block size the live scheduler uses for transcript cleanup.
-_POLISH_MAX_SEGMENTS = 400
 
 OPTIONAL_RERUN_STEPS = frozenset({
     "redecode", "speaker_id", "polish", "consolidation",
@@ -550,17 +548,6 @@ def rerun_redecode(
     return {"ok": True, "error": None}
 
 
-def _polish_blocks(segments: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    rows = list(segments)
-    if len(rows) <= _POLISH_MAX_SEGMENTS:
-        return [rows] if rows else []
-    step = max(1, _POLISH_MAX_SEGMENTS - 40)
-    return [
-        rows[start:start + _POLISH_MAX_SEGMENTS]
-        for start in range(0, len(rows), step)
-    ]
-
-
 def _run_checkpoint(core: Any, payload: CheckpointPayload,
                     timeout_s: float) -> AgentResult:
     box: Dict[str, AgentResult] = {}
@@ -624,7 +611,7 @@ def rerun_polish(
     segments = repository.get_segments(meeting_id)
     if not segments:
         return {"ok": True, "applied": 0, "error": None}
-    blocks = _polish_blocks(segments)
+    blocks = polish_blocks(segments)
     try:
         from meeting.agent.base import create_agent_core
         from meeting.agent.prompts import build_system_prompt

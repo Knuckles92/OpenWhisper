@@ -14,6 +14,7 @@ from meeting.agent.scheduler import (
     _content_words,
 )
 from meeting.interfaces import AgentResult, OpResult
+from meeting.finalization import POLISH_MAX_SEGMENTS, POLISH_MAX_TEXT_CHARS
 
 class FakeStore:
     def __init__(self, snapshot=None):
@@ -541,6 +542,47 @@ class TestConsolidationRace:
         assert "model down" in outcome.message
 
 class TestFinalPolish:
+    @pytest.mark.parametrize("count,text", [(435, "short line"), (30, "x" * 1_000)])
+    def test_final_polish_bounds_every_request_and_covers_the_recording(self, count, text):
+        segments = [
+            {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": text}
+            for i in range(count)
+        ]
+        agent = FakeAgent()
+        progress = []
+        outcome = CheckpointScheduler(FakeEngine(segments), agent).run_final_polish(
+            timeout_s=5.0, progress_cb=lambda *args: progress.append(args),
+        )
+        assert outcome.status == "completed"
+        assert len(agent.calls) > 1
+        assert len({call.request_id for call in agent.calls}) == len(agent.calls)
+        seen = {}
+        for call in agent.calls:
+            assert call.is_polish and not call.is_consolidation
+            assert len(call.new_segments) <= POLISH_MAX_SEGMENTS
+            assert sum(len(row["text"]) for row in call.new_segments) <= POLISH_MAX_TEXT_CHARS
+            seen.update((row["id"], row) for row in call.new_segments)
+        assert list(seen.values()) == segments
+        assert [(current, total) for _, current, total in progress] == [
+            (i, len(agent.calls)) for i in range(1, len(agent.calls) + 1)
+        ]
+
+    @pytest.mark.parametrize("text", ["short line", "x" * 1_000])
+    def test_rolling_polish_is_bounded_and_keeps_the_newest_speech(self, text):
+        segments = [
+            {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": text}
+            for i in range(435)
+        ]
+        agent = FakeAgent()
+        scheduler = CheckpointScheduler(FakeEngine(segments), agent)
+        scheduler._successful_checkpoints = 6
+        scheduler._maybe_fire_polish()
+        assert len(agent.calls) == 1
+        block = agent.calls[0].new_segments
+        assert 0 < len(block) <= POLISH_MAX_SEGMENTS
+        assert sum(len(row["text"]) for row in block) <= POLISH_MAX_TEXT_CHARS
+        assert block == segments[-len(block):]
+
     def test_final_polish_uses_full_transcript_and_is_polish(self):
         engine = FakeEngine([
             {"id": "sg_1", "start_s": 0.0, "end_s": 5.0, "text": "hello"},
@@ -559,7 +601,7 @@ class TestFinalPolish:
     def test_later_block_failure_keeps_prior_work_but_reports_failure(self, timeout, caplog):
         engine = FakeEngine([
             {"id": f"sg_{i}", "start_s": float(i), "end_s": float(i + 1), "text": "draft"}
-            for i in range(401)
+            for i in range(POLISH_MAX_SEGMENTS + 1)
         ])
 
         class LaterFailureAgent(FakeAgent):

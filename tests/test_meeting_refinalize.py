@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime
 
 from meeting.interfaces import AgentResult, TranscriptSegment
+from meeting.finalization import POLISH_MAX_SEGMENTS, POLISH_MAX_TEXT_CHARS
 from meeting.refinalize import rerun_finalization, rerun_polish, rerun_redecode
 from meeting.state.schema import CardItem, FinalizationState, MeetingState
 
@@ -334,6 +335,38 @@ class TestStepSelection:
         assert polish["status"] == "failed"
         assert result["finalization"]["status"] == "failed"
         assert core.payload is not None
+
+    @pytest.mark.parametrize("count,text", [(435, "short line"), (30, "x" * 1_000)])
+    def test_polish_retry_bounds_requests_and_covers_the_recording(self, repo, monkeypatch, count, text):
+        make_meeting(repo)
+        repo.add_segments([
+            TranscriptSegment(
+                segment_id=f"sg_{i}", meeting_id="m_retry", chunk_id=None,
+                channel="mic", start_s=float(i), end_s=float(i + 1), text=text,
+            )
+            for i in range(count)
+        ])
+        core = FakeAgentCore()
+        install_cores(monkeypatch, core)
+        progress = []
+        result = rerun_polish(
+            repo, "m_retry", provider="openrouter", model="test/model",
+            progress_cb=lambda *args: progress.append(args),
+        )
+        assert result["ok"] is True
+        assert len(core.polish_payloads) > 1
+        seen = {}
+        for payload in core.polish_payloads:
+            assert payload.is_polish and not payload.is_consolidation
+            assert len(payload.new_segments) <= POLISH_MAX_SEGMENTS
+            assert sum(len(row["text"]) for row in payload.new_segments) <= POLISH_MAX_TEXT_CHARS
+            seen.update((row["id"], row) for row in payload.new_segments)
+        assert list(seen.values()) == repo.get_segments("m_retry")
+        assert len({p.request_id for p in core.polish_payloads}) == len(core.polish_payloads)
+        assert [(current, total) for _, current, total in progress] == [
+            (i, len(core.polish_payloads)) for i in range(1, len(core.polish_payloads) + 1)
+        ]
+        assert core.shutdown_calls == 1
 
     def test_later_polish_block_failure_is_not_reported_as_success(
             self, repo, monkeypatch):

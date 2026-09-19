@@ -225,6 +225,10 @@ Only emit no operations when the dashboard already reflects this new speech."""
 _POLISH_INSTRUCTIONS = """\
 ## INSTRUCTIONS — TRANSCRIPT POLISH PASS
 Your only job this round is cleaning ASR transcript text.
+The transcript below is one bounded block of a potentially longer recording.
+Review only this block; do not try to reconstruct the rest of the meeting.
+Apply clear corrections together in a patch_state call; skip uncertain text
+instead of spending the pass speculating about it.
 1. Emit ONLY revise_segment_text ops. Do not touch cards, topic, summary,
    participants, or questions.
 2. Fix clear speech-to-text mistakes: wrong words, missing punctuation/casing,
@@ -850,7 +854,9 @@ def build_checkpoint_user_prompt(state: Dict[str, Any],
         parts.append("## RECENT TRANSCRIPT CONTEXT (already seen; may correct)")
         parts.extend(format_segment_line(segment, participants) for segment in context)
         parts.append("")
-    if is_consolidation or is_polish:
+    if is_polish:
+        parts.append("## TRANSCRIPT BLOCK FOR CLEANUP")
+    elif is_consolidation:
         parts.append("## FULL MEETING TRANSCRIPT")
     else:
         parts.append("## NEW TRANSCRIPT SEGMENTS")

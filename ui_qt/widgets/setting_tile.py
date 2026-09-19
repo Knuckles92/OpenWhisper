@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 
@@ -56,9 +55,7 @@ class TileBase(QFrame):
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(3)
-        # A plain QLabel reports its text width as a minimum, which lets one
-        # long title widen its grid column and unbalance the row.
-        self.title_label = ElidingLabel(title)
+        self.title_label = WrappedLabel(title)
         self.title_label.setObjectName("settingsTileTitle")
         text.addWidget(self.title_label)
         self.description_label = WrappedLabel(description)

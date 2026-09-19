@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -11,6 +12,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -38,6 +40,7 @@ class CleanupProfilesPanel(QWidget):
     def __init__(self, parent=None, *, manager=None):
         super().__init__(parent)
         self.setObjectName("cleanupProfilesPanel")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.manager = manager or settings_manager
         self._profile_id = ""
         self._saved = None
@@ -54,17 +57,17 @@ class CleanupProfilesPanel(QWidget):
         layout.addWidget(intro)
 
         root = layout
-        columns = QHBoxLayout()
+        columns = self._columns = QHBoxLayout()
         columns.setSpacing(18)
         root.addLayout(columns, 1)
-        library = QWidget()
+        library = self._library = QWidget()
         library.setObjectName("cleanupProfileLibrary")
         library.setFixedWidth(180)
         library_layout = QVBoxLayout(library)
         library_layout.setContentsMargins(0, 0, 0, 0)
         library_layout.setSpacing(8)
         columns.addWidget(library)
-        editor = QWidget()
+        editor = self._editor = QWidget()
         editor.setObjectName("cleanupProfileEditor")
         layout = QVBoxLayout(editor)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -80,7 +83,7 @@ class CleanupProfilesPanel(QWidget):
         self.profile_list.setMinimumHeight(95)
         self.profile_list.currentItemChanged.connect(self._selection_changed)
         library_layout.addWidget(self.profile_list, 1)
-        actions = QVBoxLayout()
+        actions = self._library_actions = QVBoxLayout()
         for text, callback in (
             ("New profile", self.new_profile),
             ("Duplicate", self.duplicate_profile),
@@ -159,6 +162,21 @@ class CleanupProfilesPanel(QWidget):
         footer.addWidget(self.save_button)
         root.addLayout(footer)
         self.refresh()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not hasattr(self, "_editor"):
+            return
+        narrow = self.width() < 180 + self._columns.spacing() + self._editor.minimumSizeHint().width()
+        self._columns.setDirection(
+            QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight
+        )
+        self._library.setMinimumWidth(0 if narrow else 180)
+        self._library.setMaximumWidth(16777215 if narrow else 180)
+        self.profile_list.setMaximumHeight(160 if narrow else 16777215)
+        self._library_actions.setDirection(
+            QBoxLayout.Direction.LeftToRight if narrow else QBoxLayout.Direction.TopToBottom
+        )
 
     def _draft(self) -> CleanupProfile:
         return CleanupProfile(

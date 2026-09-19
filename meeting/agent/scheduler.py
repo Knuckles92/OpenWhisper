@@ -21,7 +21,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from meeting.finalization import POLISH_TIMEOUT_S
+from meeting.finalization import POLISH_MAX_SEGMENTS, POLISH_TIMEOUT_S, polish_blocks
 from meeting.interfaces import AgentResult, CheckpointPayload
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,6 @@ _POLISH_EVERY_N_CHECKPOINTS = 6
 #: last polish (even if checkpoint count is low).
 _POLISH_MIN_INTERVAL_S = 45.0
 _POLISH_INITIAL_DELAY_S = 15.0
-#: How much recent transcript to prefer in a polish payload (full digest still
-#: included via get_transcript; this caps enormous meetings for the prompt).
-_POLISH_MAX_SEGMENTS = 400
 #: Fire the dedicated note-taker pass after this many successful card
 #: checkpoints (when the agent core supports it). Notes are the note taker's
 #: only job, so its cadence is denser than polish.
@@ -638,8 +635,9 @@ class CheckpointScheduler:
             return
         if not segments:
             return
-        if len(segments) > _POLISH_MAX_SEGMENTS:
-            segments = segments[-_POLISH_MAX_SEGMENTS:]
+        # Fill from the newest speech, then restore chronological order.
+        recent = list(reversed(segments[-POLISH_MAX_SEGMENTS:]))
+        segments = list(reversed(polish_blocks(recent)[0]))
         payload = self._build_payload(segments, is_consolidation=False, is_polish=True)
         if payload is None:
             return
@@ -1099,14 +1097,7 @@ class CheckpointScheduler:
                 status="completed",
                 message="No transcript text needed cleanup.",
             )
-        if len(segments) > _POLISH_MAX_SEGMENTS:
-            step = max(1, _POLISH_MAX_SEGMENTS - 40)
-            blocks = [
-                segments[start:start + _POLISH_MAX_SEGMENTS]
-                for start in range(0, len(segments), step)
-            ]
-        else:
-            blocks = [segments]
+        blocks = polish_blocks(segments)
 
         last_error = ""
         total_blocks = len(blocks)

@@ -55,7 +55,30 @@ const server = http.createServer((req,res) => {
       for (const width of [1280,390,320]) {
         await page.setViewportSize({width,height:800});
         await page.goto(`${base}/m/test${mode==='history' ? '?history=replay-test' : ''}`);
-        await page.locator('.pulse-number.pulse-mark').click();
+        const mark = page.locator('.pulse-number.pulse-mark');
+        await mark.hover();
+        const preview = page.getByRole('tooltip');
+        await preview.waitFor();
+        assert.match(await preview.textContent(), /Why this pulse.*concrete amount/);
+        assert.equal(await mark.getAttribute('title'), null);
+        const previewRect = await preview.boundingBox();
+        assert.ok(previewRect.x >= 0 && previewRect.y >= 0 && previewRect.x + previewRect.width <= width && previewRect.y + previewRect.height <= 800,
+          `${mode} ${width}: hover preview fits viewport ${JSON.stringify(previewRect)}`);
+        assert.equal(await preview.evaluate(el => el.scrollWidth <= el.clientWidth), true);
+        await preview.hover();
+        await page.waitForTimeout(220); // Stay longer than the marker-to-preview dismissal delay.
+        assert.equal(await preview.count(), 1);
+        if (process.env.UI_SCREENSHOTS && width !== 320) {
+          fs.mkdirSync(process.env.UI_SCREENSHOTS, {recursive:true});
+          await page.screenshot({path:path.join(process.env.UI_SCREENSHOTS, `pulse-hover-${mode}-${width}.png`)});
+        }
+        await page.keyboard.press('Escape');
+        assert.equal(await preview.count(), 0);
+        await mark.focus();
+        await preview.waitFor();
+        await mark.press('Escape');
+        assert.equal(await preview.count(), 0);
+        await mark.click();
         const player=page.getByRole('region',{name:'Meeting replay',exact:true});
         await player.waitFor();
         await page.waitForFunction(()=>{ const a=document.querySelector('audio'); return a && !a.paused && a.currentTime>=60.874 && a.currentTime<65; });
@@ -90,6 +113,16 @@ const server = http.createServer((req,res) => {
         console.log(`PASS ${mode} ${width}px: visible replay, pause/play and scrubber, skip, close, new moment, Escape`);
       }
     }
+    state.status=meeting.status='ended'; meeting.has_audio=false;
+    await page.goto(`${base}/m/test?history=replay-test`);
+    const unavailable = page.locator('.pulse-number.pulse-mark');
+    await unavailable.focus();
+    await page.getByRole('tooltip').waitFor();
+    assert.match(await page.getByRole('tooltip').textContent(), /No recording available for this moment/);
+    await unavailable.press('Enter');
+    assert.equal(await page.getByRole('region',{name:'Meeting replay',exact:true}).count(), 0);
+    meeting.has_audio=true;
+    console.log('PASS no-recording preview remains keyboard accessible without starting playback');
     state.status=meeting.status='active'; failAudio=true;
     await page.goto(`${base}/m/test`);
     await page.locator('.pulse-number.pulse-mark').click();

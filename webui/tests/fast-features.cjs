@@ -173,7 +173,10 @@ test('highlights without a recording explain why playback is disabled', async ()
     playbackAvailable: false, onSelect: () => { picked = true; }});
   assert.match(container.textContent, /No recording available/);
   const button = container.querySelector('button');
-  assert.equal(button.disabled, true);
+  assert.equal(button.getAttribute('aria-disabled'), 'true');
+  await act(async () => button.focus());
+  assert.match(document.querySelector('[role=tooltip]').textContent, /Why this pulse.*concrete amount/);
+  assert.match(document.querySelector('[role=tooltip]').textContent, /No recording available for this moment/);
   await act(async () => button.click());
   assert.equal(picked, false);
 });
@@ -222,3 +225,61 @@ for (const [props, expected] of [
     assert.doesNotMatch(container.textContent, /when live highlights are enabled/);
   });
 }
+
+test('pulse previews explain each category, follow keyboard focus, and dismiss with Escape', async () => {
+  const pulses = ['decision','disagreement','commitment','number'].map((kind,i) => ({
+    id:`preview-${i}`, kind, start_s:61+i, segment_id:`source-${i}`, probability:.95, text:`Quoted passage ${i}`,
+  }));
+  const reasons = [/decision or agreement/, /disagreement or conflict/, /stated date or deadline/, /amount, quantity, metric, or percentage/];
+  const props = {pulses, onSelect:() => {}};
+  const container = await mount(PulseStrip, props);
+  const buttons = [...container.querySelectorAll('.pulse-mark')];
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+  for (const [i, button] of buttons.entries()) {
+    await act(async () => button.focus());
+    const tooltip = document.querySelector('[role=tooltip]');
+    assert.equal(document.querySelectorAll('[role=tooltip]').length, 1);
+    assert.equal(button.hasAttribute('title'), false);
+    assert.equal(button.getAttribute('aria-describedby'), tooltip.id);
+    assert.equal(tooltip.querySelector('blockquote').textContent, pulses[i].text);
+    assert.match(tooltip.textContent, new RegExp(`1:0${i+1}`));
+    assert.match(tooltip.querySelector('.pulse-preview-reason').textContent, reasons[i]);
+    assert.match(tooltip.textContent, /Click pulse to replay/);
+  }
+  await act(async () => document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key:'Escape',bubbles:true})));
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(buttons[3].hasAttribute('aria-describedby'), false);
+  assert.equal(document.activeElement, buttons[3]);
+  await act(async () => buttons[0].focus());
+  await act(async () => root.render(React.createElement(PulseStrip, {...props, pulses:[]})));
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+});
+
+test('hover preview can be read under the pointer and dismisses on leaving or meeting scroll', async () => {
+  const pulse = {id:'hover',kind:'number',start_s:53,text:'We need a thousand dollars.'};
+  let picked = null;
+  const container = await mount(PulseStrip, {pulses:[pulse], onSelect:p => {picked=p;}});
+  const button = container.querySelector('.pulse-mark');
+  const pointer = (target, type, relatedTarget=null) => target.dispatchEvent(new dom.window.MouseEvent(type, {bubbles:true, relatedTarget}));
+  const settle = () => new Promise(resolve => setTimeout(resolve, 200));
+  await act(async () => pointer(button, 'pointerover'));
+  let tooltip = document.querySelector('[role=tooltip]');
+  assert.ok(tooltip);
+  await act(async () => {
+    pointer(button, 'pointerout', tooltip);
+    pointer(tooltip, 'pointerover', button);
+    await settle();
+  });
+  assert.equal(document.querySelector('[role=tooltip]'), tooltip);
+  await act(async () => tooltip.querySelector('.pulse-preview-body').dispatchEvent(new dom.window.Event('scroll')));
+  assert.equal(document.querySelector('[role=tooltip]'), tooltip);
+  await act(async () => {pointer(tooltip, 'pointerout', document.body); await settle();});
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+  await act(async () => pointer(button, 'pointerover'));
+  await act(async () => container.dispatchEvent(new dom.window.Event('scroll')));
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+  await act(async () => pointer(button, 'pointerover'));
+  await act(async () => button.click());
+  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(picked, pulse);
+});

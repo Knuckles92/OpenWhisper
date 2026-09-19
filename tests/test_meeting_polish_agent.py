@@ -37,7 +37,9 @@ def test_polish_prompt_limits_the_agent_to_transcript_text():
 
     assert "TRANSCRIPT POLISH PASS" in prompt
     assert "ONLY revise_segment_text" in prompt
-    assert "## FULL MEETING TRANSCRIPT" in prompt
+    assert "## TRANSCRIPT BLOCK FOR CLEANUP" in prompt
+    assert "## FULL MEETING TRANSCRIPT" not in prompt
+    assert "Review only this block" in prompt
     assert "search_past_meetings" in prompt
     assert "search_context_files" in prompt
 

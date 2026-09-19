@@ -194,7 +194,7 @@ def test_standard_hotkey_editor_rejects_profile_collision():
     assert "Support ticket" in dialog.message_label.text()
     assert settings_manager.load_hotkey_settings()["record_toggle"] != "ctrl+alt+t"
     dialog.select_destination(CLEANUP_PROFILES)
-    assert dialog.stack.currentWidget() is dialog._pages[CLEANUP_PROFILES]
+    assert dialog.stack.currentWidget().widget() is dialog._pages[CLEANUP_PROFILES]
 
 
 def test_quick_record_selection_persists_without_changing_standard_cleanup():

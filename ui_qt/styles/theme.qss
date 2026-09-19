@@ -244,6 +244,9 @@ QWidget#modelManagerStack > QWidget {
 /* Let the page surface show through the scroll area, its viewport, and the
    scrolled content (the three-level selector Qt needs for the latter two).
    Otherwise the default widget grey frames every card in a lighter inset. */
+QScrollArea#settingsPageScroll,
+QScrollArea#settingsPageScroll > QWidget,
+QScrollArea#settingsPageScroll > QWidget > QWidget,
 #downloadsDialog QScrollArea,
 #downloadsDialog QScrollArea > QWidget,
 #downloadsDialog QScrollArea > QWidget > QWidget,
