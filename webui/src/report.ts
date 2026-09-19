@@ -62,7 +62,10 @@ export function enabledReportViews(state: MeetingStateDoc): ReportViewId[] {
 }
 
 export function liveItems(items: CardItem[] | undefined): CardItem[] {
-  return (items ?? []).filter((item) => item.status !== 'removed');
+  return (items ?? []).filter((item) => item.status !== 'removed').map(item => {
+    const label = item.review?.state === 'unsupported' ? 'Needs verification' : item.review?.state === 'provisional' ? 'Provisional' : '';
+    return label ? {...item, text: `${label}: ${item.text}`} : item;
+  });
 }
 
 export function segmentMap(segments: Segment[]): Map<string, Segment> {

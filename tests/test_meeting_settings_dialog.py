@@ -110,3 +110,34 @@ class TestCoverageGuardSettings(_DialogTestCase):
             reopened.meeting_redecode_coverage_guard_check.setChecked(False)
             reopened.close()
         assert isolated.load_all_settings()[SettingsKey.MEETING_REDECODE_COVERAGE_GUARD] is False
+
+class TestInsightReviewSettings(_DialogTestCase):
+    _open = TestKnowledgeFolderSettings._open
+
+    def test_explicit_typesafe_consent_and_settings_round_trip(self, tmp_path):
+        from PyQt6.QtWidgets import QMessageBox
+        isolated = SettingsManager(str(tmp_path / "review-settings.json"))
+        settings_patch, history_patch = self._open(isolated)
+        with settings_patch, history_patch:
+            dialog = settings_dialog_module.SettingsDialog()
+            assert not dialog.meeting_review_check.isChecked()
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+                dialog.meeting_review_check.setChecked(True)
+            assert not dialog.meeting_review_check.isChecked()
+            assert not isolated.load_all_settings().get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT)
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+                dialog.meeting_review_check.setChecked(True)
+            dialog.meeting_review_limit.setValue(4)
+            dialog.meeting_review_sensitivity.setCurrentIndex(1)
+            dialog.close()
+            with patch.object(QMessageBox, "question") as confirm:
+                reopened = settings_dialog_module.SettingsDialog()
+                confirm.assert_not_called()
+            assert reopened.meeting_review_check.isChecked()
+            assert reopened.meeting_review_limit.value() == 4
+            assert reopened.meeting_review_sensitivity.currentData() == "thorough"
+            reopened.meeting_review_check.setChecked(False)
+            reopened.close()
+        saved = isolated.load_all_settings()
+        assert not saved[SettingsKey.MEETING_INSIGHT_REVIEW]
+        assert saved[SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT] == ""

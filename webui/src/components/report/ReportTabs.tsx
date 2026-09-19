@@ -1,3 +1,4 @@
+import { ReviewCorrections } from '../InsightReview';
 import { useEffect, useMemo, useState } from 'react';
 import {
   enabledReportViews,
@@ -87,6 +88,7 @@ export default function ReportTabs({
           </div>
         )}
         <div className="report-sheet">
+          <ReviewCorrections state={state} />
           {active === 'ribbon' && <RibbonReport {...shared} />}
           {active === 'brief' && <BriefReport {...shared} />}
           {active === 'signal' && <SignalReport {...shared} />}

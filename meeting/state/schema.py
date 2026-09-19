@@ -11,6 +11,7 @@ Serialization contract: ``MeetingState.to_dict()`` round-trips through
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -72,6 +73,8 @@ class CardItem:
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
 
+    review: Dict[str, Any] = field(default_factory=dict)
+
     @property
     def protected(self) -> bool:
         """True when agent ops may no longer modify this item."""
@@ -85,12 +88,14 @@ class CardItem:
             "pinned": self.pinned, "revision": self.revision,
             "evidence": list(self.evidence),
             "created_at": self.created_at, "updated_at": self.updated_at,
+            "review": deepcopy(self.review),
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "CardItem":
         return cls(
             id=d["id"], card=d["card"], text=d.get("text", ""),
+            review=dict(d.get("review") or {}),
             data=dict(d.get("data") or {}), status=d.get("status", "proposed"),
             author_type=d.get("author_type", "agent"),
             author_id=d.get("author_id"),
@@ -548,6 +553,8 @@ class MeetingState:
         default_factory=lambda: ["ribbon", "brief", "signal"]
     )
 
+    insight_review: Dict[str, Any] = field(default_factory=dict)
+
     def find_item(self, item_id: str) -> Optional[CardItem]:
         """Locate a card item by id across all cards."""
         for items in self.cards.values():
@@ -580,6 +587,7 @@ class MeetingState:
             "questions": [q.to_dict() for q in self.questions.values()],
             "finalization": self.finalization.to_dict(),
             "report_views": list(self.report_views),
+            "insight_review": deepcopy(self.insight_review),
         }
 
     @classmethod
@@ -621,6 +629,7 @@ class MeetingState:
                 "message": str((d.get("capture") or {}).get("message", "")),
             },
             finalization=finalization,
+            insight_review=dict(d.get("insight_review") or {}),
             report_views=list(d.get("report_views") or ["ribbon", "brief", "signal"]),
         )
         for pid, pd in (d.get("participants") or {}).items():

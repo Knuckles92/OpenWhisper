@@ -124,7 +124,7 @@ Use **Help → Check for Updates**. Windows applies an in-app update or opens se
 3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
-For meetings, open **Meeting Mode**. After local transcription finishes, **Continue in the background** lets you start another meeting while cleanup and reports finish; results remain in Past Meetings.
+For meetings, open **Meeting Mode**. After local transcription finishes, **Continue in the background** lets you start another meeting while cleanup and reports finish; results remain in Past Meetings. Optional [insight review](docs/meeting-insight-review.md) uses TypeSafe to ask a few questions about uncertain commitments, owners, deadlines, or decisions; your answers update the insights and notes.
 
 ### Hotkeys
 

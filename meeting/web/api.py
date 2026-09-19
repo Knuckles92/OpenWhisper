@@ -129,6 +129,7 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
     )
     #: Meeting ids with a consolidation run in flight (double-click guard).
     insights_running: Set[str] = set()
+    review_stores: Dict[str, Any] = {}
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -212,6 +213,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 cloud_enabled=bool(raw.get("cloud_enabled", False)),
                 meeting_status=str(raw.get("status") or "ended"),
             ).to_dict()
+            if (raw.get("insight_review") or {}).get("status") == "running":
+                raw["insight_review"].update(status="unavailable", message="Review was interrupted. Retry when ready.")
             return MeetingState.from_dict(raw).to_dict()
         except (KeyError, TypeError, ValueError):
             logger.exception("Corrupt state_json for meeting %s", meeting_id)
@@ -231,6 +234,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         store = getattr(engine, "store", None)
         if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
             return await asyncio.to_thread(store.snapshot)
+        if meeting_id in review_stores:
+            return await asyncio.to_thread(review_stores[meeting_id].snapshot)
         return await asyncio.to_thread(_stored_state, meeting_id, meeting)
 
     async def _json_body(request: Request) -> Dict[str, Any]:
@@ -359,9 +364,49 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
             if meeting is None:
                 raise HTTPException(status_code=404, detail="unknown meeting")
-            await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
-            ok = True
+            if meeting_id in review_stores:
+                results = await asyncio.to_thread(review_stores[meeting_id].apply, "host", None,
+                                                  [{"op": "set_title", "text": title}])
+                ok = bool(results and results[0].ok)
+            else:
+                await asyncio.to_thread(repository.rename_meeting, meeting_id, title)
+                ok = True
         return {"ok": ok, "title": title}
+
+    @app.post("/api/meetings/{meeting_id}/review")
+    async def api_insight_review(meeting_id: str, request: Request, token: str = "") -> Dict[str, Any]:
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        action = body.get("op")
+        if action not in ("start", "review_answer", "review_skip", "review_reopen"):
+            raise HTTPException(status_code=400, detail="invalid review action")
+        if meeting_id in insights_running:
+            raise HTTPException(status_code=409, detail="Wait for final insights to finish")
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        from meeting.state.store import MeetingStateStore
+        from meeting.insight_review import start_review
+        store = getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id else None
+        if store is None:
+            if meeting_id not in review_stores:
+                review_stores[meeting_id] = MeetingStateStore(
+                    MeetingState.from_dict(_stored_state(meeting_id, meeting)), repository=repository,
+                    segment_exists=lambda sid: repository.segment_exists(meeting_id, sid))
+            store = review_stores[meeting_id]
+        if meeting_id in insights_running:
+            raise HTTPException(status_code=409, detail="A meeting update is already running")
+        insights_running.add(meeting_id)
+        try:
+            if action == "start":
+                result = await asyncio.to_thread(start_review, store, repository)
+            else:
+                results = await asyncio.to_thread(store.apply, "host", None, [body])
+                result = {"ok": bool(results and results[0].ok),
+                          "error": results[0].reason if results and not results[0].ok else None}
+            return {**result, "state": await asyncio.to_thread(store.snapshot)}
+        finally:
+            insights_running.discard(meeting_id)
 
     @app.post("/api/meetings/{meeting_id}/reinsights")
     async def api_rerun_insights(meeting_id: str,
@@ -408,10 +453,15 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 status_code=409,
                 detail="insights are already running for this meeting",
             )
+        live_review_store = (getattr(engine, "store", None)
+                             if getattr(engine, "meeting_id", None) == meeting_id else review_stores.get(meeting_id))
+        if live_review_store and live_review_store.snapshot().get("insight_review", {}).get("status") == "running":
+            raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+        review_stores.pop(meeting_id, None)
         insights_running.add(meeting_id)
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 insights_executor,
                 functools.partial(
                     rerun_finalization, repository, meeting_id,
@@ -424,6 +474,10 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                     speaker_api_key=speaker_api_key,
                 ),
             )
+            replace_state = getattr(live_review_store, "replace_document", None)
+            if callable(replace_state) and result.get("state"):
+                replace_state(MeetingState.from_dict(result["state"]))
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -482,10 +536,12 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                 status_code=409,
                 detail="a post-meeting pass is already running for this meeting",
             )
+        store = (getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id
+                 else review_stores.get(meeting_id))
+        if store and store.snapshot().get("insight_review", {}).get("status") == "running":
+            raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+        review_stores.pop(meeting_id, None)
         insights_running.add(meeting_id)
-        store = None
-        if getattr(engine, "meeting_id", None) == meeting_id:
-            store = getattr(engine, "store", None)
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
@@ -507,6 +563,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         if getattr(engine, "meeting_id", None) == meeting_id and engine.is_active():
             raise HTTPException(status_code=409,
                                 detail="cannot delete the active meeting")
+        store = (getattr(engine, "store", None) if getattr(engine, "meeting_id", None) == meeting_id
+                 else review_stores.get(meeting_id))
+        if meeting_id in insights_running or (store and store.snapshot().get("insight_review", {}).get("status") == "running"):
+            raise HTTPException(status_code=409, detail="Wait for the meeting update to finish before deleting")
+        review_stores.pop(meeting_id, None)
         meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="unknown meeting")

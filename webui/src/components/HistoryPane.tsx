@@ -1,3 +1,4 @@
+import InsightReview from './InsightReview';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
@@ -81,6 +82,17 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
     }
     return { state: response.state, segments };
   }, [token]);
+
+  useEffect(() => {
+    if (!selectedId || detail?.insight_review?.status !== 'running') return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      api.meeting(token, selectedId).then(response => {
+        if (!cancelled) setDetail(response.state);
+      }).catch(() => { if (!cancelled) setDetailError('Could not refresh the review. Reopen this meeting to reconnect.'); });
+    }, 2000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [token, selectedId, detail?.insight_review?.status]);
 
   useEffect(() => {
     setDetail(null);
@@ -538,6 +550,17 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   <p className="empty-state" role="status" aria-live="polite">Loading meeting report…</p>
                 ) : (
                   <div ref={reportRef} id="history-report">
+                    <InsightReview key={detail.meeting_id} state={detail} onEvidenceClick={handleEvidenceClick}
+                      onSendOp={async op => {
+                        const result = await api.review(token, detail.meeting_id, op);
+                        setDetail(result.state);
+                        return result.ok;
+                      }}
+                      onRetry={async () => {
+                        const result = await api.review(token, detail.meeting_id, {op: 'start'});
+                        setDetail(result.state);
+                        if (!result.ok) throw new Error(result.error);
+                      }} />
                     <ReportTabs
                       state={detail}
                       segments={detailSegments}

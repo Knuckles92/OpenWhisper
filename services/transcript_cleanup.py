@@ -2,7 +2,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -23,9 +23,13 @@ from services.settings import (
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
     default_transcript_cleanup_model,
+    resolve_typesafe_cleanup_sensitivity_gate,
 )
 
 logger = logging.getLogger(__name__)
+
+#: ``last_error`` value when the sensitivity gate kept dictation local.
+SENSITIVE_SKIP_REASON = "skipped: sensitive content kept local"
 
 # Back-compat aliases.
 CLEANUP_MODEL = config.TRANSCRIPT_CLEANUP_MODEL
@@ -112,6 +116,7 @@ class TranscriptCleanup:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         reasoning: Optional[str] = None,
+        sensitivity_gate: Optional[Callable[[str], Optional[float]]] = None,
     ):
         self.provider = self._normalize_provider(provider)
         self.model = model or default_transcript_cleanup_model(self.provider)
@@ -125,7 +130,55 @@ class TranscriptCleanup:
         # Lets callers distinguish "cleanup ran, no changes" from "failed".
         self.last_error: Optional[str] = "not run"
         self._connection: Optional[tuple] = None
+        # ``text -> P(sensitive)`` consulted before any remote cleanup call.
+        # None means no screening; a gate that returns None lets cleanup run.
+        self.sensitivity_gate = (
+            sensitivity_gate if sensitivity_gate is not None
+            else self._default_sensitivity_gate()
+        )
         self._initialize_client()
+
+    @staticmethod
+    def _default_sensitivity_gate() -> Optional[Callable[[str], Optional[float]]]:
+        """Build the TypeSafe screening closure when the user has enabled it."""
+        if not resolve_typesafe_cleanup_sensitivity_gate():
+            return None
+        try:
+            from services.typesafe import (
+                judge_from_settings,
+                sensitive_content_probability,
+            )
+            judge = judge_from_settings()
+        except Exception:
+            logger.exception("TypeSafe sensitivity gate unavailable")
+            return None
+        if judge is None:
+            return None
+        return lambda text: sensitive_content_probability(judge, text)
+
+    def _sensitive_for_cloud(self, text: str) -> bool:
+        """True when the gate flags ``text`` and the cleanup destination is remote.
+
+        Local endpoints are never screened: the point of the gate is to keep
+        flagged dictation off third-party services, and screening itself is a
+        remote call. A missing or failed judgment lets cleanup proceed, so an
+        outage of the screening service cannot disable cleanup.
+        """
+        gate = self.sensitivity_gate
+        if gate is None:
+            return False
+        profile = get_profile(self.provider)
+        if profile is not None and profile.is_local:
+            return False
+        try:
+            probability = gate(text)
+        except Exception:
+            logger.exception("Sensitivity gate failed; cleanup proceeds")
+            return False
+        if probability is None:
+            return False
+        from services.typesafe import SENSITIVE_CONTENT_THRESHOLD
+        return float(probability) >= SENSITIVE_CONTENT_THRESHOLD
 
     @staticmethod
     def _normalize_provider(provider: Optional[str]) -> str:
@@ -249,6 +302,11 @@ class TranscriptCleanup:
         if not self.is_available():
             self.last_error = "cleanup unavailable"
             logger.warning("Transcript cleanup unavailable; returning raw text")
+            return text
+
+        if self._sensitive_for_cloud(text):
+            self.last_error = SENSITIVE_SKIP_REASON
+            logger.info("Transcript cleanup skipped: sensitivity gate kept the text local")
             return text
 
         prompt = (system_prompt or "").strip() or config.TRANSCRIPT_CLEANUP_PROMPT

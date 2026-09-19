@@ -36,11 +36,45 @@ export const GENERIC_CARD_KEYS: CardKey[] = CARD_KEYS.filter(
   (key) => key !== 'live_notes',
 );
 
+export interface InsightAssessment {
+  state?: 'inferred' | 'provisional' | 'unsupported' | 'human';
+  scores?: Record<string, number>;
+  revision?: number;
+  field?: string;
+}
+
+export interface ReviewQuestion {
+  id: string;
+  item_id: string;
+  revision: number;
+  field: string;
+  text: string;
+  choices: Record<string, string>;
+  status: 'open' | 'answered' | 'skipped';
+  evidence: string[];
+  sources: Array<{id: string; start_s: number; text: string}>;
+  owners: Array<{id: string; display_name: string}>;
+  score?: number;
+  reason: string;
+  answer?: string;
+  correction?: string;
+  superseded?: boolean;
+  insight?: CardItem;
+}
+
+export interface InsightReviewState {
+  enabled: boolean;
+  status: 'disabled' | 'pending' | 'running' | 'ready' | 'partial' | 'failed' | 'unavailable';
+  message: string;
+  questions: ReviewQuestion[];
+}
+
 export interface CardItem {
   id: string;
   card: CardKey;
   text: string;
   data: Record<string, unknown>;
+  review?: InsightAssessment;
   status: ItemStatus;
   author_type: string;
   author_id: string | null;
@@ -139,6 +173,7 @@ export interface MeetingStateDoc {
   finalization?: FinalizationState | null;
   /** Enabled post-meeting report views. Legacy snapshots omit this. */
   report_views?: string[];
+  insight_review?: Partial<InsightReviewState>;
 }
 
 export interface Segment {
@@ -244,6 +279,7 @@ export const ops = {
 };
 
 export type Effect =
+  | { entity: 'review'; review: InsightReviewState; items: CardItem[] }
   | { entity: 'item'; item: CardItem }
   | { entity: 'topic'; topic: TopicState }
   | { entity: 'rolling_summary'; text: string; evidence: string[] }

@@ -154,6 +154,9 @@ class MeetingStateStore:
                             fields.get("status", candidate.status)
                         ),
                     )
+                    if value.status == "running" and candidate.finalization.status != "running":
+                        from meeting.state.review import invalidate_checks
+                        invalidate_checks(candidate)
                 setattr(candidate, key, value)
             if self._repository is not None:
                 try:

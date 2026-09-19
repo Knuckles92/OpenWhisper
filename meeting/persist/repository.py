@@ -993,7 +993,11 @@ class SqlMeetingRepository:
         """Write-through mirror of one applied op's effect."""
         effect = result.effect or {}
         entity = effect.get("entity")
-        if entity == "item":
+        if entity == "review":
+            for item in effect.get("items", []):
+                self._mirror_effect(session, meeting_id, OpResult(
+                    ok=True, op={}, effect={"entity": "item", "item": item}))
+        elif entity == "item":
             item = effect["item"]
             session.merge(MeetingStateItem(
                 id=item["id"], meeting_id=meeting_id, card=item["card"],

@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from meeting.state.review import REVIEW_HANDLERS, item_effect
 from meeting.interfaces import OpResult
 from meeting.state.schema import (
     CARD_KEYS,
@@ -124,7 +125,7 @@ HOST_ONLY_OPS = frozenset({"set_topic", "set_rolling_summary", "set_title"})
 SEGMENT_OPS = frozenset({"reassign_segment_speaker", "revise_segment_text"})
 
 #: The full vocabulary (human actions include everything below).
-ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset({
+ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset(REVIEW_HANDLERS) | frozenset({
     "pin_item", "unpin_item", "confirm_item",
     "answer_question", "dismiss_question", "reopen_question",
     "rename_participant", "set_title", "set_cloud_enabled",
@@ -383,11 +384,12 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
         item.status = op["restore_status"]
     elif ctx.is_human:
         item.status = "edited"
+    item.review = {}
     item.revision += 1
     item.updated_at = now_iso()
     return OpResult(
         ok=True, op=op, target_id=item.id,
-        effect={"entity": "item", "item": item.to_dict()},
+        effect=item_effect(state, item),
         inverse={"op": "update_item", "id": item.id, "set": prev,
                  "restore_status": prev_status, "force": True},
     )
@@ -411,7 +413,7 @@ def _op_remove_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
     item.updated_at = now_iso()
     return OpResult(
         ok=True, op=op, target_id=item.id,
-        effect={"entity": "item", "item": item.to_dict()},
+        effect=item_effect(state, item),
         inverse={"op": "update_item", "id": item.id, "set": {},
                  "restore_status": prev_status, "force": True},
     )
@@ -840,6 +842,7 @@ def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
 # Dispatch
 
 _HANDLERS: Dict[str, Callable[[MeetingState, Dict[str, Any], OpContext], OpResult]] = {
+    **REVIEW_HANDLERS,
     "add_item": _op_add_item,
     "update_item": _op_update_item,
     "remove_item": _op_remove_item,

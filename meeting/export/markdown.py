@@ -68,6 +68,10 @@ def export_markdown(
         out += ["", metadata]
 
     if include_intelligence:
+        corrections = [q.get("correction") for q in (state.get("insight_review") or {}).get("questions", []) if q.get("correction") and not q.get("superseded")]
+        if corrections:
+            out += ["", "## User Clarifications", "", "These corrections supersede earlier wording on the same points.", ""]
+            out.extend(f"- {text}" for text in corrections)
         _append_topic(out, state)
         _append_summary(out, state)
 
@@ -171,7 +175,9 @@ def _live_items(state: Dict[str, Any], card: str) -> List[Dict[str, Any]]:
     """Items on a card that are not removed and have non-empty text."""
     items = (state.get("cards") or {}).get(card) or []
     return [
-        item for item in items
+        {**item, "text": ("Needs verification: " if (item.get("review") or {}).get("state") == "unsupported"
+                           else "Provisional: " if (item.get("review") or {}).get("state") == "provisional" else "") + item["text"]}
+        for item in items
         if item.get("status") != "removed" and (item.get("text") or "").strip()
     ]
 

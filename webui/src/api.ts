@@ -2,6 +2,8 @@
 // page token (?token=); the server resolves host vs guest role from it.
 import type {
   ExportFormat,
+  MeetingStateDoc,
+  Op,
   MeetingDetailResponse,
   MeetingRow,
   AuditEvent,
@@ -65,6 +67,11 @@ function asArray<T>(data: unknown, ...keys: string[]): T[] {
 }
 
 export const api = {
+  review(token: string, meetingId: string, op: Op): Promise<{ok: boolean; error?: string; state: MeetingStateDoc}> {
+    return request(`/api/meetings/${encodeURIComponent(meetingId)}/review?${qs({token})}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(op),
+    });
+  },
   session(token: string): Promise<SessionResponse> {
     return request<SessionResponse>(`/api/session?${qs({ token })}`);
   },

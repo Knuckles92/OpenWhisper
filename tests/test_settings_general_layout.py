@@ -98,13 +98,17 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.recording_retention_combo,
             )
             intelligence = dialog._pages[MEETING_INTELLIGENCE]
-            self.assertEqual(len(intelligence.findChildren(SettingTile)), 2)
+            # Two search tiles plus the three TypeSafe fast-judgment tiles.
+            self.assertEqual(len(intelligence.findChildren(SettingTile)), 5)
             self.assertIs(
                 dialog.meeting_context_folder_path.parentWidget(),
                 dialog.meeting_context_folder_tile.body,
             )
+            self.assertIs(
+                dialog.typesafe_enabled_check, dialog.typesafe_enabled_tile.checkbox
+            )
             after = dialog._pages[MEETING_AFTER]
-            self.assertEqual(len(after.findChildren(SettingTile)), 6)
+            self.assertEqual(len(after.findChildren(SettingTile)), 7)
             dashboard = dialog._pages[MEETING_DASHBOARD]
             self.assertEqual(len(dashboard.findChildren(FieldTile)), 2)
             self.assertEqual(len(dashboard.findChildren(TileBase)), 2)
@@ -139,7 +143,12 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             helpers = recording.findChildren(WrappedLabel)
             self.assertGreaterEqual(len(helpers), 2)
             cleanup = dialog._pages[CLEANUP]
-            self.assertEqual(len(cleanup.findChildren(SettingTile)), 1)
+            # The AI-cleanup switch plus the TypeSafe sensitivity gate.
+            self.assertEqual(len(cleanup.findChildren(SettingTile)), 2)
+            self.assertIs(
+                dialog.cleanup_sensitivity_gate_check,
+                dialog.cleanup_sensitivity_gate_tile.checkbox,
+            )
             self.assertEqual(len(cleanup.findChildren(FieldTile)), 1)
             self.assertEqual(len(cleanup.findChildren(InfoTile)), 1)
             self.assertIs(

@@ -82,6 +82,9 @@ function CardItemRow({
   return (
     <div className={`card-item ${statusClass}${item.pinned ? ' pinned' : ''}`}>
       <div className="capture-tag">{tag}</div>
+      {(item.review?.state === 'provisional' || item.review?.state === 'unsupported') &&
+        <span className="review-badge">{item.review.state === 'unsupported' ? 'Needs verification' : 'Provisional'}</span>}
+      {item.review?.state === 'human' && <span className="review-badge">User clarified</span>}
       {editing ? (
         <textarea
           value={draft}

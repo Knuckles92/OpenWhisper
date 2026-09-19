@@ -1,3 +1,4 @@
+import { ReviewCorrections } from '../InsightReview';
 import type { MeetingStateDoc, Segment } from '../../types';
 import CardsPane from '../CardsPane';
 import NotesPane from '../NotesPane';
@@ -34,6 +35,7 @@ export default function FullMeetingDocument({
 
   return (
     <div className="full-meeting-document" aria-hidden="true">
+      <ReviewCorrections state={state} />
       {(currentTopic || previousTopics.length > 0) && (
         <section className="panel">
           <div className="panel-header">

@@ -104,6 +104,10 @@ class SettingsKey:
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
     MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
+    MEETING_INSIGHT_REVIEW: Final[str] = "meeting_insight_review"
+    MEETING_INSIGHT_REVIEW_CONSENT: Final[str] = "meeting_insight_review_consent"
+    MEETING_INSIGHT_REVIEW_SENSITIVITY: Final[str] = "meeting_insight_review_sensitivity"
+    MEETING_INSIGHT_REVIEW_LIMIT: Final[str] = "meeting_insight_review_limit"
     MEETING_END_REPORT: Final[str] = "meeting_end_report"
     MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
     MEETING_REPORT_BRIEF: Final[str] = "meeting_report_brief"
@@ -128,6 +132,17 @@ class SettingsKey:
     MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
     MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
     MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    # TypeSafe fast judgments. The master switch gates every remote judgment;
+    # each feature has its own switch so one can be trialled at a time.
+    TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
+    TYPESAFE_TOPIC_SHIFT_ENABLED: Final[str] = "typesafe_topic_shift_enabled"
+    TYPESAFE_VOICE_COMMANDS_ENABLED: Final[str] = (
+        "typesafe_voice_commands_enabled"
+    )
+    TYPESAFE_VOICE_COMMAND_NAMES: Final[str] = "typesafe_voice_command_names"
+    TYPESAFE_CLEANUP_SENSITIVITY_GATE: Final[str] = (
+        "typesafe_cleanup_sensitivity_gate"
+    )
     # In-app updater. Absent keys mean both automatic check and notify are on.
     UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
     UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
@@ -1014,6 +1029,84 @@ def resolve_meeting_past_recall_enabled(
     )
 
 
+#: Names participants can use to address the note-taking assistant. The
+#: bare word "whisper" is deliberately absent: it is ordinary speech.
+DEFAULT_VOICE_COMMAND_NAMES: Final[Tuple[str, ...]] = (
+    "note taker", "notetaker", "assistant", "openwhisper", "open whisper",
+)
+
+
+def resolve_typesafe_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether TypeSafe fast judgments may run at all.
+
+    Off by default. TypeSafe is a separate remote decision service: each
+    judgment sends a short excerpt of text and receives a typed answer, not
+    generated text. Every feature below also requires this switch, and
+    meeting features additionally require the meeting's cloud consent.
+    """
+    return _resolve_bool_setting(settings, SettingsKey.TYPESAFE_ENABLED, False)
+
+
+def resolve_typesafe_topic_shift_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the checkpoint scheduler may ask TypeSafe about topic shifts.
+
+    On by default once TypeSafe is enabled; the lexical Jaccard rule remains
+    the fallback whenever a judgment is unavailable.
+    """
+    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
+        settings, SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True,
+    )
+
+
+def resolve_typesafe_voice_commands_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether spoken instructions to the note taker are acted on.
+
+    Off by default. Only segments that name the assistant are ever judged.
+    """
+    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
+        settings, SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False,
+    )
+
+
+def resolve_typesafe_voice_command_names(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return the lowercased wake names for voice commands, defaults when unset."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.TYPESAFE_VOICE_COMMAND_NAMES)
+    if not isinstance(raw, list):
+        return DEFAULT_VOICE_COMMAND_NAMES
+    names = tuple(
+        " ".join(item.strip().lower().split())
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    )
+    return names or DEFAULT_VOICE_COMMAND_NAMES
+
+
+def resolve_typesafe_cleanup_sensitivity_gate(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether dictation is screened before cloud cleanup.
+
+    Off by default. When on, text bound for a remote cleanup model is first
+    sent to TypeSafe, which answers only with a probability that it contains
+    credentials, identifiers, or personal details; flagged dictation is
+    returned raw instead of being cleaned in the cloud. Local cleanup
+    endpoints are never screened.
+    """
+    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
+        settings, SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, False,
+    )
+
+
 def resolve_meeting_context_folder_enabled(
     settings: Optional[Dict[str, Any]] = None,
 ) -> bool:
@@ -1226,3 +1319,18 @@ def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str
         f"{base_prompt}\n\n"
         f"Additional user-taught rules (always apply):\n{numbered}"
     )
+
+
+def resolve_meeting_insight_review(settings=None):
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    enabled = _resolve_bool_setting(settings, SettingsKey.MEETING_INSIGHT_REVIEW, False)
+    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1"
+    sensitivity = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, "normal")
+    if sensitivity not in ("normal", "thorough"):
+        sensitivity = "normal"
+    limit = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT, 3)
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        limit = 3
+    return {"enabled": enabled and consent and resolve_typesafe_enabled(settings), "consent": "typesafe-text-v1" if consent else "",
+            "sensitivity": sensitivity, "max_questions": max(1, min(5, limit))}

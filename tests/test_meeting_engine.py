@@ -1600,3 +1600,18 @@ def test_sparse_redecode_explains_preserved_transcript(make_engine, repo, fakes,
     assert [r["id"] for r in repo.get_segments(meeting_id)] == [
         "sg_draft" if guard else "sg_sparse"
     ]
+
+
+def test_optional_review_starts_after_meeting_is_saved(make_engine, monkeypatch):
+    from unittest.mock import Mock
+    from meeting.insight_review import CONSENT
+    start = Mock(return_value={"ok": True})
+    monkeypatch.setattr("meeting.insight_review.start_review", start)
+    engine = make_engine(cloud_enabled=True, end_polish=False, end_report=False,
+                         insight_review={"enabled": True, "consent": CONSENT})
+    engine.start()
+    engine.end()
+    engine._end_thread.join(3)
+    assert not engine._end_thread.is_alive()
+    start.assert_called_once_with(engine.store, engine.repository)
+    assert engine.store.snapshot()["status"] == "ended"

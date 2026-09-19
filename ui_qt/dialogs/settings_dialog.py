@@ -40,6 +40,7 @@ from services.credentials import (
     validate_api_key,
 )
 from services.credentials import store as credential_store
+from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
@@ -64,10 +65,12 @@ from services.settings import (
     resolve_meeting_end_redecode,
     resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
+    resolve_meeting_insight_review,
     resolve_meeting_language,
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
     resolve_meeting_past_recall_enabled,
+    resolve_typesafe_enabled,
     resolve_meeting_report_brief,
     resolve_meeting_report_ribbon,
     resolve_meeting_report_signal,
@@ -767,7 +770,29 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
-        self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
+        self.cleanup_sensitivity_gate_tile = SettingTile(
+            "Keep sensitive dictation out of cloud cleanup (Experimental)",
+            "Before dictation reaches a cloud model, TypeSafe judges whether "
+            "it holds passwords, account numbers, or personal details; flagged "
+            "text is returned raw. Needs TypeSafe fast judgments (Meeting Mode "
+            "→ Intelligence). Local endpoints are never screened.",
+            _design_icon("stack-slate.svg"),
+        )
+        self.cleanup_sensitivity_gate_check = (
+            self.cleanup_sensitivity_gate_tile.checkbox
+        )
+        self.cleanup_sensitivity_gate_check.setObjectName(
+            "cleanupSensitivityGateCheck"
+        )
+        self.cleanup_sensitivity_gate_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, bool(checked)
+            )
+        )
+        self._tile_group(
+            layout, "AI cleanup",
+            [self.transcript_cleanup_tile, self.cleanup_sensitivity_gate_tile],
+        )
 
         self.cleanup_model_tile = InfoTile(
             "Text model",
@@ -1050,6 +1075,65 @@ class SettingsDialog(QDialog):
             ),
         )
 
+        self.typesafe_enabled_tile = SettingTile(
+            "TypeSafe fast judgments (Experimental)",
+            "Off by default. Answers narrow yes/no questions about a minute of "
+            "transcript in about 0.2 s; never writes text. Key: API keys → "
+            "TypeSafe.",
+            _design_icon("bolt-green.svg"),
+        )
+        self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
+        self.typesafe_enabled_check.setObjectName("typesafeEnabledCheck")
+        self.typesafe_enabled_check.toggled.connect(self._on_typesafe_enabled_changed)
+
+        self.typesafe_topic_shift_tile = SettingTile(
+            "Semantic topic changes (Experimental)",
+            "Fire early checkpoints on a judged topic change instead of "
+            "word overlap. Doubled precision on human-labelled meetings; "
+            "falls back to word overlap when no answer arrives.",
+            _design_icon("stack-purple.svg"),
+        )
+        self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
+        self.typesafe_topic_shift_check.setObjectName("typesafeTopicShiftCheck")
+        self.typesafe_topic_shift_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, bool(checked)
+            )
+        )
+
+        self.typesafe_voice_commands_tile = SettingTile(
+            "Spoken instructions (Experimental)",
+            "\"Note taker, mark that as a decision\", \"…add an action item\", "
+            "\"…put that in the notes\", \"…new topic: budget\". Only segments "
+            "naming the assistant are judged; results land as proposed items.",
+            _design_icon("stack-slate.svg"),
+        )
+        self.typesafe_voice_commands_check = (
+            self.typesafe_voice_commands_tile.checkbox
+        )
+        self.typesafe_voice_commands_check.setObjectName(
+            "typesafeVoiceCommandsCheck"
+        )
+        self.typesafe_voice_commands_check.toggled.connect(
+            lambda checked: self._persist(
+                SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, bool(checked)
+            )
+        )
+        self._tile_group(
+            layout,
+            "Fast judgments",
+            [
+                self.typesafe_enabled_tile,
+                self.typesafe_topic_shift_tile,
+                self.typesafe_voice_commands_tile,
+            ],
+            columns=3,
+            intro=(
+                "Transcript excerpts go to TypeSafe (api.typesafe.ai) only "
+                "while cloud intelligence is on for the meeting."
+            ),
+        )
+
     def _build_meeting_after_page(self, layout: QVBoxLayout) -> None:
         self.meeting_end_redecode_tile = SettingTile(
             "Re-transcribe the full recording",
@@ -1088,6 +1172,36 @@ class SettingsDialog(QDialog):
             self._on_end_report_toggled
         )
 
+        self.meeting_review_tile = SettingTile(
+            "Review uncertain insights at the end (Experimental)",
+            "Optional, for new meetings. Sends relevant transcript excerpts, speaker names, "
+            "and insights to TypeSafe to select a few questions. No audio is sent. "
+            "Requires cloud intelligence, TypeSafe fast judgments under Intelligence, "
+            "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
+            _design_icon("check-green.svg"),
+        )
+        self.meeting_review_check = self.meeting_review_tile.checkbox
+        self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
+        review_row = QHBoxLayout()
+        review_row.addWidget(QLabel("Sensitivity"))
+        self.meeting_review_sensitivity = ElidingComboBox()
+        self.meeting_review_sensitivity.addItem("Normal", "normal")
+        self.meeting_review_sensitivity.addItem("Thorough", "thorough")
+        self.meeting_review_sensitivity.currentIndexChanged.connect(
+            lambda _: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
+                                    self.meeting_review_sensitivity.currentData())
+        )
+        review_row.addWidget(self.meeting_review_sensitivity)
+        review_row.addWidget(QLabel("Maximum questions"))
+        self.meeting_review_limit = NoWheelSpinBox()
+        self.meeting_review_limit.setRange(1, 5)
+        self.meeting_review_limit.setValue(3)
+        self.meeting_review_limit.valueChanged.connect(
+            lambda value: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT, value)
+        )
+        review_row.addWidget(self.meeting_review_limit)
+        self.meeting_review_tile.add_body_layout(review_row)
+
         self._tile_group(
             layout,
             "After End",
@@ -1095,6 +1209,7 @@ class SettingsDialog(QDialog):
                 self.meeting_end_redecode_tile,
                 self.meeting_end_polish_tile,
                 self.meeting_end_report_tile,
+                self.meeting_review_tile,
             ],
             intro=(
                 "Live captions stay on short chunks so text appears quickly. "
@@ -1320,10 +1435,14 @@ class SettingsDialog(QDialog):
         for profile in list_profiles(settings):
             if profile.api_key_env:
                 names.setdefault(profile.api_key_env, []).append(profile.name)
-        return [
+        entries = [
             (env_name, f"{' / '.join(owners)} · {env_name}")
             for env_name, owners in names.items()
         ]
+        # TypeSafe is a decision service rather than a text-model profile, so
+        # it is not in ``list_profiles`` but still needs a home for its key.
+        entries.append((TYPESAFE_CREDENTIAL_ENV, f"TypeSafe · {TYPESAFE_CREDENTIAL_ENV}"))
+        return entries
 
     def _load_api_key_settings(self, settings: dict) -> None:
         current = self.api_key_combo.currentData()
@@ -1357,6 +1476,8 @@ class SettingsDialog(QDialog):
         return None
 
     def _api_key_label(self, env_name: str) -> str:
+        if env_name == TYPESAFE_CREDENTIAL_ENV:
+            return "TypeSafe API key"
         profile = self._api_key_profile(env_name)
         return credential_label(profile) if profile is not None else env_name
 
@@ -1417,6 +1538,13 @@ class SettingsDialog(QDialog):
             text = (
                 "Used for transcript cleanup and meeting intelligence through "
                 "OpenRouter."
+            )
+        elif env_name == TYPESAFE_CREDENTIAL_ENV:
+            text = (
+                "Used for TypeSafe fast judgments: semantic topic-change "
+                "detection, spoken instructions to the note taker, and the "
+                "sensitive-dictation gate for cloud cleanup. Enable them under "
+                "Meeting Mode → Intelligence and Dictation → AI cleanup."
             )
         elif env_name:
             owners = [
@@ -2063,6 +2191,28 @@ class SettingsDialog(QDialog):
         if self._persist(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT, stored):
             self._saved_cleanup_prompt = stored
 
+    def _on_meeting_review_toggled(self, checked: bool) -> None:
+        if self._loading:
+            return
+        if checked:
+            reply = QMessageBox.question(
+                self, "Enable experimental TypeSafe insight review?",
+                "For future meetings with cloud intelligence on, send relevant transcript "
+                "excerpts, speaker names, and generated insights to TypeSafe after the meeting? "
+                "This is a separate service from your meeting LLM. No audio is sent. "
+                "Review is optional and does not block saving your recording.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.meeting_review_check.blockSignals(True)
+                self.meeting_review_check.setChecked(False)
+                self.meeting_review_check.blockSignals(False)
+                return
+        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT,
+                      "typesafe-text-v1" if checked else "")
+        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW, bool(checked))
+
     def _on_end_report_toggled(self, checked: bool) -> None:
         self._update_report_views_enabled()
         self._persist(SettingsKey.MEETING_END_REPORT, bool(checked))
@@ -2166,6 +2316,26 @@ class SettingsDialog(QDialog):
             f"Speaker ID · {speaker_label}"
         )
 
+    def _on_typesafe_enabled_changed(self, checked: bool) -> None:
+        self._persist(SettingsKey.TYPESAFE_ENABLED, bool(checked))
+        self._update_typesafe_feature_tiles()
+
+    def _update_typesafe_feature_tiles(self) -> None:
+        """Feature switches only mean something while the master switch is on."""
+        enabled = self.typesafe_enabled_check.isChecked()
+        for tile in (
+            self.typesafe_topic_shift_tile,
+            self.typesafe_voice_commands_tile,
+            self.cleanup_sensitivity_gate_tile,
+        ):
+            tile.setEnabled(enabled)
+        if not enabled:
+            self.cleanup_sensitivity_gate_tile.setEnabled(False)
+        else:
+            self.cleanup_sensitivity_gate_tile.setEnabled(
+                self.transcript_cleanup_check.isChecked()
+            )
+
     def _update_cleanup_prompt_ui(self) -> None:
         enabled = self.transcript_cleanup_check.isChecked()
         for widget in (
@@ -2174,6 +2344,9 @@ class SettingsDialog(QDialog):
             self.cleanup_rules_library_tile,
         ):
             widget.setEnabled(enabled)
+        self.cleanup_sensitivity_gate_tile.setEnabled(
+            enabled and self.typesafe_enabled_check.isChecked()
+        )
         self.cleanup_rules_gate_tile.setVisible(not enabled)
         self._update_cleanup_rule_controls()
 
@@ -2473,6 +2646,14 @@ class SettingsDialog(QDialog):
         })
 
     def _load_meeting_settings(self, settings: dict) -> None:
+        review = resolve_meeting_insight_review(settings)
+        self.meeting_review_check.setChecked(
+            settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
+            and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == "typesafe-text-v1"
+        )
+        self.meeting_review_sensitivity.setCurrentIndex(
+            self.meeting_review_sensitivity.findData(review["sensitivity"]))
+        self.meeting_review_limit.setValue(review["max_questions"])
         self._refresh_meeting_model_summary()
 
         bind_index = self.meeting_bind_combo.findData(
@@ -2483,6 +2664,14 @@ class SettingsDialog(QDialog):
         self.meeting_past_recall_check.setChecked(
             resolve_meeting_past_recall_enabled(settings)
         )
+        self.typesafe_enabled_check.setChecked(resolve_typesafe_enabled(settings))
+        self.typesafe_topic_shift_check.setChecked(
+            settings.get(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, True) is True
+        )
+        self.typesafe_voice_commands_check.setChecked(
+            settings.get(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False) is True
+        )
+        self._update_typesafe_feature_tiles()
         self.meeting_context_folder_check.setChecked(
             resolve_meeting_context_folder_enabled(settings)
         )
@@ -2682,6 +2871,10 @@ class SettingsDialog(QDialog):
                     SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
                     config.TRANSCRIPT_CLEANUP_ENABLED,
                 )
+            )
+            self.cleanup_sensitivity_gate_check.setChecked(
+                settings.get(SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, False)
+                is True
             )
             prompt = resolve_transcript_cleanup_prompt(settings)
             self.cleanup_prompt_edit.setPlainText(prompt)

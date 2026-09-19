@@ -21,7 +21,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
@@ -103,6 +103,7 @@ class MeetingEngineOptions:
     end_polish: bool = True
     end_report: bool = True
     report_views: Tuple[str, ...] = ('ribbon', 'brief', 'signal')
+    insight_review: Dict[str, Any] = field(default_factory=dict)
     demo_mode: bool = False
     #: System-audio policy for this session only (never persisted).
     #: ``auto`` keeps existing Windows/macOS degrade-to-mic-only behavior;
@@ -222,6 +223,7 @@ class MeetingEngine:
         Args:
             context: Short description of the teardown path, for logging.
         """
+        self._shutdown_voice_commands()
         asr = self._asr
         if asr is None:
             return True
@@ -488,6 +490,8 @@ class MeetingEngine:
 
             from meeting.state.schema import FinalizationState
 
+            from meeting.insight_review import review_config
+
             state = MeetingState(
                 meeting_id=meeting_id,
                 cloud_enabled=self.options.cloud_enabled,
@@ -496,6 +500,7 @@ class MeetingEngine:
                     self.options.cloud_enabled
                 ),
                 report_views=list(self.options.report_views),
+                insight_review=review_config(**self.options.insight_review, cloud_enabled=self.options.cloud_enabled),
             )
             self.store = MeetingStateStore(
                 state,
@@ -1174,6 +1179,9 @@ class MeetingEngine:
                     logger.exception("Scheduler stop failed")
                 self._scheduler = None
             self._shutdown_agent_core()
+            if self.store and self.store.snapshot().get("insight_review", {}).get("enabled"):
+                from meeting.insight_review import start_review
+                start_review(self.store, self.repository)
         except Exception as exc:
             logger.exception("Meeting end failed")
             self._active = False
@@ -2272,6 +2280,12 @@ class MeetingEngine:
         if rows:
             self._emit("segments", {"items": rows})
             self._broadcast({"type": "segments", "items": rows})
+            listener = self._voice_command_listener()
+            if listener is not None:
+                try:
+                    listener.observe(rows)
+                except Exception:
+                    logger.exception("Voice command observe failed")
         self._maybe_revise_transcript(chunk)
 
     def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
@@ -2546,8 +2560,13 @@ class MeetingEngine:
                 self._report_intelligence_unusable(created_core)
                 return
             if self._scheduler is None:
+                scheduler_kwargs: Dict[str, Any] = {}
+                topic_judge = self._typesafe_topic_judge()
+                if topic_judge is not None:
+                    scheduler_kwargs["topic_judge"] = topic_judge
                 scheduler = CheckpointScheduler(
                     self, self._agent_core, on_health=self._on_intelligence_health,
+                    **scheduler_kwargs,
                 )
                 self._seed_scheduler_watermark(scheduler)
                 scheduler.start()
@@ -2850,6 +2869,99 @@ class MeetingEngine:
         notify = getattr(self._scheduler, "notify_guidance", None)
         if callable(notify):
             notify()
+
+    # -- TypeSafe fast judgments ----------------------------------------------
+    # Each helper reads its setting once per meeting and degrades to "no
+    # judgment": a missing key, a disabled switch or a remote failure leaves
+    # the deterministic behaviour in place. Nothing is sent while the host has
+    # cloud intelligence off.
+
+    def _typesafe_judge(self):
+        """Shared TypeSafe client for this meeting, or None when disabled or unkeyed."""
+        cached = getattr(self, "_typesafe_judge_cache", None)
+        if cached is not None:
+            return cached or None
+        judge = None
+        try:
+            from services.typesafe import judge_from_settings
+            judge = judge_from_settings()
+        except Exception:
+            logger.exception("TypeSafe judge unavailable")
+        self._typesafe_judge_cache = judge if judge is not None else False
+        return judge
+
+    def _cloud_enabled_now(self) -> bool:
+        store = self.store
+        if store is None:
+            return False
+        try:
+            return bool(store.with_state(lambda state: state.cloud_enabled))
+        except Exception:
+            logger.exception("Cloud consent check failed")
+            return False
+
+    def _typesafe_topic_judge(self):
+        """Closure for the scheduler's semantic topic-shift trigger, or None."""
+        try:
+            from services.settings import resolve_typesafe_topic_shift_enabled
+            if not resolve_typesafe_topic_shift_enabled():
+                return None
+        except Exception:
+            logger.exception("TypeSafe topic-shift setting unreadable")
+            return None
+        judge = self._typesafe_judge()
+        if judge is None:
+            return None
+        from meeting.agent.typesafe_signals import topic_shift_probability
+
+        def probability(previous_window: str, window: str):
+            if not self._cloud_enabled_now():
+                return None
+            return topic_shift_probability(judge, previous_window, window)
+
+        return probability
+
+    def _voice_command_listener(self):
+        """Lazily build the spoken-instruction listener when enabled, else None."""
+        cached = getattr(self, "_voice_commands", None)
+        if cached is not None:
+            return cached or None
+        listener = None
+        try:
+            from services.settings import (
+                resolve_typesafe_voice_command_names,
+                resolve_typesafe_voice_commands_enabled,
+            )
+            if resolve_typesafe_voice_commands_enabled() and self.store is not None:
+                judge = self._typesafe_judge()
+                if judge is not None:
+                    from meeting.voice_commands import VoiceCommandListener
+                    listener = VoiceCommandListener(
+                        self.store, judge, resolve_typesafe_voice_command_names(),
+                        cloud_enabled=self._cloud_enabled_now,
+                        on_applied=self._on_voice_command_applied,
+                    )
+        except Exception:
+            logger.exception("Voice command listener unavailable")
+        self._voice_commands = listener if listener is not None else False
+        return listener
+
+    def _shutdown_voice_commands(self) -> None:
+        listener = getattr(self, "_voice_commands", None)
+        # False keeps a late chunk from rebuilding the listener after teardown.
+        self._voice_commands = False
+        if listener:
+            try:
+                listener.shutdown()
+            except Exception:
+                logger.exception("Voice command listener shutdown failed")
+
+    def _on_voice_command_applied(self, command: str, results) -> None:
+        applied = sum(1 for result in results if getattr(result, "ok", False))
+        self._emit("voice_command", {
+            "command": command, "applied": applied,
+            "rejected": len(results) - applied,
+        })
 
     def _active_term_rules(self) -> Dict[str, str]:
         """Live human term corrections for the ASR engine's decoder prompt.

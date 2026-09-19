@@ -60,6 +60,11 @@ export function applyEffect(doc: MeetingStateDoc, effect: Effect): MeetingStateD
   const next = { ...doc, participants: { ...doc.participants }, cards: { ...doc.cards } };
 
   switch (effect.entity) {
+    case 'review': {
+      let updated: MeetingStateDoc = { ...next, insight_review: effect.review };
+      for (const item of effect.items) updated = applyEffect(updated, { entity: 'item', item });
+      return updated;
+    }
     case 'item': {
       const item = effect.item;
       const list = [...(next.cards[item.card] ?? [])];

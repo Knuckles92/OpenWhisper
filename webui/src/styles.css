@@ -3014,3 +3014,15 @@ select {
   color: var(--soft);
   font-weight: 600;
 }
+
+.insight-review { margin-bottom: 20px; }
+.review-question { padding: 16px 0; border-top: 1px solid var(--border, #d9d9d0); }
+.review-question h3 { margin: 0 0 10px; font-size: 1rem; }
+.review-question blockquote { margin: 12px 0; padding: 10px 14px; border-left: 3px solid #a68b51; }
+.review-question details { margin: 12px 0; }
+.review-editor { display: grid; gap: 12px; margin: 14px 0; }
+.review-editor label { display: grid; gap: 6px; }
+.review-editor textarea, .review-editor input, .review-editor select { width: 100%; }
+.review-corrections { padding: 16px 20px; margin-bottom: 20px; border: 1px solid #a68b51; border-radius: 8px; }
+.review-corrections h3 { margin-top: 0; }
+.review-badge { display: inline-block; font-size: 11px; padding: 2px 6px; border: 1px solid #a68b51; border-radius: 4px; margin-bottom: 6px; }

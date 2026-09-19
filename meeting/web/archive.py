@@ -85,6 +85,8 @@ class ArchivedMeetingDashboard:
             cloud_enabled=payload["cloud_enabled"],
             meeting_status=payload["status"],
         ).to_dict()
+        if (payload.get("insight_review") or {}).get("status") == "running":
+            payload["insight_review"].update(status="unavailable", message="Review was interrupted. Retry when ready.")
         return MeetingState.from_dict(payload)
 
     def attach_server(self, server: Any) -> None:

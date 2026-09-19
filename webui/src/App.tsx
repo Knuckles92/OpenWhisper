@@ -1,3 +1,4 @@
+import InsightReview from './components/InsightReview';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
 import SelectionInsight from './components/SelectionInsight';
@@ -292,6 +293,12 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
               )}
 
               {ui.state.status === 'ended' || ui.state.finalization?.status === 'completed' ? (
+                <>
+                {isHost && <InsightReview state={ui.state} onSendOp={sendOp} onEvidenceClick={handleEvidenceClick}
+                  onRetry={async () => {
+                    const result = await api.review(token, ui.state!.meeting_id, {op: 'start'});
+                    if (!result.ok) throw new Error(result.error);
+                  }} />}
                 <ReportTabs
                   state={ui.state}
                   segments={segments}
@@ -304,6 +311,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   activeView={reportView}
                   onViewChange={selectReportView}
                 />
+                </>
               ) : (
                 <>
                   <MeetingOverview
