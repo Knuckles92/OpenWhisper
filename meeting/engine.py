@@ -271,10 +271,11 @@ class MeetingEngine:
         """Emit the current status to listeners and connected web clients."""
         if self.store is None:
             return
-        status, intel, diar, capture, finalization = self.store.with_state(
+        self._refresh_live_highlights_status()
+        status, intel, diar, capture, finalization, highlights = self.store.with_state(
             lambda s: (
                 s.status, s.intelligence_online, s.diarization_available,
-                dict(s.capture), s.finalization.to_dict(),
+                dict(s.capture), s.finalization.to_dict(), s.live_highlights_status,
             )
         )
         payload = {
@@ -283,6 +284,7 @@ class MeetingEngine:
             "diarization_available": diar,
             "capture": capture,
             "finalization": dict(finalization),
+            "live_highlights_status": highlights,
         }
         listener_payload = dict(payload)
         if note:
@@ -542,6 +544,7 @@ class MeetingEngine:
                 self._start_diarizer()
                 self._start_asr()
                 capture_note = self._start_capture()
+            self._refresh_live_highlights_status()
             url = self._start_server()
             self._maybe_start_intelligence()
             self._emit_status(note=capture_note)
@@ -1177,6 +1180,8 @@ class MeetingEngine:
                             "insights could not run."
                         ),
                     )
+            if complete or offline_ok:
+                self._finalize_highlights()
             if scheduler is not None:
                 try:
                     scheduler.stop()
@@ -1769,6 +1774,8 @@ class MeetingEngine:
                 logger.exception("Meeting heartbeat failed")
             try:
                 self._start_fast_features()
+                if self._refresh_live_highlights_status():
+                    self._emit_status()
             except Exception:
                 logger.exception("Fast meeting features could not start")
 
@@ -2302,7 +2309,7 @@ class MeetingEngine:
         self._start_fast_features()
         signals = getattr(self, "_live_signals", None)
         if signals is not None:
-            signals.observe(rows)
+            signals.observe(rows, frontier=frontier)
         self._maybe_revise_transcript(chunk)
 
     def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
@@ -2376,6 +2383,9 @@ class MeetingEngine:
         verifier = getattr(self, "_citation_verifier", None)
         if verifier is not None:
             verifier.invalidate([r["id"] for r in items] + removed_ids)
+        signals = getattr(self, "_live_signals", None)
+        if signals is not None:
+            signals.observe(items)
         payload = {"items": items, "removed_ids": removed_ids}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -2907,6 +2917,46 @@ class MeetingEngine:
     def _fast_features_allowed(self):
         from services.settings import resolve_typesafe_enabled
         return self._cloud_enabled_now() and resolve_typesafe_enabled()
+
+    def _refresh_live_highlights_status(self) -> bool:
+        from services.settings import resolve_typesafe_feature_enabled
+
+        with self._fast_features_lock:
+            if self.store is None:
+                return False
+            meeting_status, previous = self.store.with_state(
+                lambda state: (state.status, state.live_highlights_status)
+            )
+            if meeting_status not in {"active", "paused"}:
+                return False
+            if not resolve_typesafe_feature_enabled("highlights"):
+                status = "off"
+            elif self._typesafe_judge() is None:
+                status = "unavailable"
+            else:
+                status = "on"
+            return status != previous and self.store.update_runtime_fields(
+                live_highlights_status=status
+            )
+
+    def _finalize_highlights(self):
+        """Catch up pulses after the final transcript, even without a notes agent."""
+        from services.settings import resolve_typesafe_feature_enabled
+
+        if self.store is None or not self._fast_features_allowed() or not resolve_typesafe_feature_enabled("highlights"):
+            return
+        judge = self._typesafe_judge()
+        if judge is None:
+            return
+        from meeting.live_signals import LiveSignals
+
+        worker = LiveSignals(self.store, self.repository, judge, self._fast_features_allowed)
+        try:
+            worker.finalize()
+        except Exception:
+            logger.exception("Final highlight check failed")
+        finally:
+            worker.shutdown()
 
     def _start_fast_features(self):
         with self._fast_features_lock:

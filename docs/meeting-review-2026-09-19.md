@@ -56,3 +56,10 @@ A Windows asyncio `ConnectionResetError` / WinError 10054 occurred during socket
 - Ruff correctness checks on changed Python files and `git diff --check` passed.
 
 The saved meeting database and original artifacts were inspected read-only. The verification replays the recorded command text offline and uses synthetic silent audio for browser tests; it does not replace a fresh end-to-end microphone/cloud run. Restart the source app to load the Python changes and refresh the dashboard to use its rebuilt bundle.
+
+
+## Follow-up: direct display in Meeting Notes
+
+Spoken `note_this` requests now write directly to `live_notes`, the Meeting Notes panel highlighted in the follow-up screenshot. They appear as a timestamped “Requested note” block with a “Spoken note” label. Decisions and action commands keep their respective destinations.
+
+The listener saves and broadcasts the note as soon as its committed transcript has been classified. It does not wait for the periodic AI notes pass. Provisional ASR previews only acknowledge the request; they cannot create a durable note. Feedback now says “Added to Meeting Notes” after persistence and publication succeed. A real SQLite regression checks that ordering, and a mounted UI regression checks the immediate item patch, timestamp, source link, and duplicate suppression.

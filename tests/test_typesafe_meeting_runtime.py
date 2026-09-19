@@ -250,3 +250,57 @@ def test_intelligence_attaches_topic_callback_before_typesafe_is_enabled(runtime
     runtime.values["typesafe_enabled"] = True
     runtime.credential["key"] = "synthetic-key"
     assert callback("budget", "hiring") == .9
+
+
+@pytest.mark.parametrize(("master", "highlights", "key", "expected"), [
+    (False, True, True, "off"),
+    (True, False, True, "off"),
+    (True, True, False, "unavailable"),
+    (True, True, True, "on"),
+])
+def test_highlight_status_reaches_snapshots_and_live_clients(runtime, monkeypatch, master, highlights, key, expected):
+    runtime.values.update(typesafe_enabled=master, typesafe_highlights_enabled=highlights)
+    runtime.credential["key"] = "synthetic-key" if key else None
+    broadcast = Mock()
+    monkeypatch.setattr(runtime.engine, "_broadcast", broadcast)
+    runtime.engine._emit_status()
+    snapshot = runtime.engine.store.snapshot()
+    assert snapshot["live_highlights_status"] == expected
+    assert MeetingState.from_dict(snapshot).to_dict()["live_highlights_status"] == expected
+    assert broadcast.call_args.args[0]["live_highlights_status"] == expected
+    assert broadcast.call_args.args[0]["type"] == "status"
+    runtime.post.assert_not_called()
+
+
+def test_heartbeat_updates_highlight_status_after_settings_change_without_speech(runtime, monkeypatch):
+    engine = runtime.engine
+    engine._emit_status()
+    broadcast = Mock()
+    monkeypatch.setattr(engine, "_broadcast", broadcast)
+
+    def heartbeat():
+        engine._hb_stop = Mock()
+        engine._hb_stop.wait.side_effect = [False, True]
+        engine._heartbeat_loop()
+
+    runtime.values.update(typesafe_enabled=True, typesafe_highlights_enabled=True)
+    heartbeat()
+    assert broadcast.call_args.args[0]["live_highlights_status"] == "unavailable"
+    runtime.credential["key"] = "synthetic-key"
+    heartbeat()
+    assert broadcast.call_args.args[0]["live_highlights_status"] == "on"
+    assert engine._live_signals is not None
+    runtime.values["typesafe_highlights_enabled"] = False
+    heartbeat()
+    assert broadcast.call_args.args[0]["live_highlights_status"] == "off"
+    broadcast.reset_mock()
+    heartbeat()
+    broadcast.assert_not_called()
+    runtime.post.assert_not_called()
+
+
+def test_highlight_status_does_not_apply_current_settings_to_ended_meetings(runtime):
+    assert MeetingState.from_dict({"meeting_id": "legacy"}).live_highlights_status == "unknown"
+    runtime.engine.store.update_runtime_fields(status="ended", live_highlights_status="on")
+    runtime.engine._emit_status()
+    assert runtime.engine.store.snapshot()["live_highlights_status"] == "on"

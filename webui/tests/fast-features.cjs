@@ -177,3 +177,48 @@ test('highlights without a recording explain why playback is disabled', async ()
   await act(async () => button.click());
   assert.equal(picked, false);
 });
+
+
+test('highlight status from hello and live updates replaces the empty message without losing pulses', async () => {
+  const {initialUiState, meetingReducer} = require('../src/state.ts');
+  const pulse = {id:'p', kind:'number', start_s:60, text:'Budget'};
+  let ui = meetingReducer(initialUiState, {type:'server_message', msg:{
+    type:'hello', role:'host', participant_id:null, segments:[], urls:{},
+    state:{status:'active', cloud_enabled:true, live_highlights_status:'off', live_highlights:[], participants:{}, cards:{}},
+  }});
+  const props = () => ({pulses:ui.state.live_highlights, highlightStatus:ui.state.live_highlights_status,
+    meetingStatus:ui.state.status, cloudEnabled:ui.state.cloud_enabled, isHost:true, onSelect:() => {}});
+  const container = await mount(PulseStrip, props());
+  assert.match(container.querySelector('[role=status]').textContent, /Live highlights are off/);
+  assert.doesNotMatch(container.textContent, /Click a moment/);
+  const update = async msg => {
+    ui = meetingReducer(ui, {type:'server_message', msg});
+    await act(async () => root.render(React.createElement(PulseStrip, props())));
+  };
+  await update({type:'status', live_highlights_status:'on'});
+  assert.match(container.textContent, /Live highlights are on.*once a minute/);
+  await update({type:'status', intelligence_online:false});
+  assert.match(container.textContent, /Live highlights are on/);
+  await update({type:'patch', results:[{seq:1, effect:{entity:'live_highlights', pulses:[pulse]}}]});
+  await update({type:'status', live_highlights_status:'off'});
+  assert.match(container.textContent, /Live highlights are off/);
+  assert.equal(container.querySelectorAll('.pulse-mark').length, 1);
+  await update({type:'status', live_highlights_status:'on'});
+  await update({type:'patch', results:[{seq:2, effect:{entity:'cloud_enabled', enabled:false}}]});
+  assert.match(container.textContent, /Live highlights are on, but Cloud insights are off/);
+});
+
+for (const [props, expected] of [
+  [{highlightStatus:'off', isHost:false}, /Live highlights are off.*host can enable/],
+  [{highlightStatus:'unavailable', isHost:true}, /Live highlights are on, but unavailable.*Meeting settings/],
+  [{highlightStatus:'on', cloudEnabled:false, isHost:false}, /host has Cloud insights turned off/],
+  [{highlightStatus:'on', meetingStatus:'paused'}, /Live highlights are on.*Resume the meeting/],
+  [{}, /Live highlight status is unavailable/],
+  [{highlightStatus:'on', meetingStatus:'ended'}, /No highlights were captured for this meeting/],
+]) {
+  test('highlights explain current availability: ' + expected, async () => {
+    const container = await mount(PulseStrip, {pulses:[], meetingStatus:'active', onSelect:() => {}, ...props});
+    assert.match(container.textContent, expected);
+    assert.doesNotMatch(container.textContent, /when live highlights are enabled/);
+  });
+}

@@ -310,6 +310,7 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
               diarization_available:
                 msg.diarization_available ?? state.state.diarization_available,
               capture: msg.capture ?? state.state.capture,
+              live_highlights_status: msg.live_highlights_status ?? state.state.live_highlights_status,
               finalization: nextFinalization ?? null,
             },
             meetingEnded: isTerminalStatus(status),

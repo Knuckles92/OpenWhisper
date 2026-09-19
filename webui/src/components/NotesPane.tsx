@@ -47,7 +47,9 @@ function noteStartS(item: CardItem): number | null {
 }
 
 function statusLabel(item: CardItem): string {
-  if (item.status === 'proposed') return 'AI note';
+  if (item.status === 'proposed') {
+    return item.author_type === 'system' && item.author_id === 'voice_command' ? 'Spoken note' : 'AI note';
+  }
   if (item.status === 'edited') return 'Edited';
   if (item.status === 'confirmed') return 'Confirmed';
   return '';

@@ -276,7 +276,9 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 <VoiceCommandHelp guide={ui.voiceCommandGuide} meetingId={ui.state.meeting_id}
                   cloudEnabled={ui.state.cloud_enabled}
                   paused={ui.state.status === 'paused'} isHost={isHost} />}
-              <HighlightPulseStrip pulses={ui.state.live_highlights ?? []} onSelect={pulse => {
+              <HighlightPulseStrip pulses={ui.state.live_highlights ?? []}
+                highlightStatus={ui.state.live_highlights_status} meetingStatus={ui.state.status}
+                cloudEnabled={ui.state.cloud_enabled} isHost={isHost} onSelect={pulse => {
                 setPlaybackMoment(pulse);
                 void handleEvidenceClick(pulse.segment_id);
                 playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));

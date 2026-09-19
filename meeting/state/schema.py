@@ -561,6 +561,7 @@ class MeetingState:
 
     insight_review: Dict[str, Any] = field(default_factory=dict)
     live_highlights: List[Dict[str, Any]] = field(default_factory=list)
+    live_highlights_status: str = "unknown"
     voice_feedback: Dict[str, Any] = field(default_factory=dict)
 
     def find_item(self, item_id: str) -> Optional[CardItem]:
@@ -597,6 +598,7 @@ class MeetingState:
             "report_views": list(self.report_views),
             "insight_review": deepcopy(self.insight_review),
             "live_highlights": deepcopy(self.live_highlights),
+            "live_highlights_status": self.live_highlights_status,
             "voice_feedback": dict(self.voice_feedback),
         }
 
@@ -641,6 +643,7 @@ class MeetingState:
             finalization=finalization,
             insight_review=dict(d.get("insight_review") or {}),
             live_highlights=deepcopy(d.get("live_highlights") or []),
+            live_highlights_status=d.get("live_highlights_status", "unknown"),
             voice_feedback=dict(d.get("voice_feedback") or {}),
             report_views=list(d.get("report_views") or ["ribbon", "brief", "signal"]),
         )

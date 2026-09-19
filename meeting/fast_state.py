@@ -8,12 +8,19 @@ from meeting.state.schema import now_iso
 def publish_highlights(state, op, ctx):
     if ctx.actor_type != "system" or ctx.actor_id != "live-signals":
         return OpResult(False, op, reason="system_only")
-    if not state.cloud_enabled or state.status not in ("active", "paused"):
+    statuses = ("ending", "ended") if op.get("final") is True else ("active", "paused")
+    if not state.cloud_enabled or state.status not in statuses:
         return OpResult(False, op, reason="inactive")
     pulses = op.get("pulses", [])
     if not isinstance(pulses, list) or len(pulses) > 4:
         return OpResult(False, op, reason="invalid_pulses")
     existing = {p["id"]: p for p in state.live_highlights}
+    minute = op.get("minute")
+    if minute is not None:
+        if isinstance(minute, bool) or not isinstance(minute, int) or minute < 0:
+            return OpResult(False, op, reason="invalid_minute")
+        for kind in ("decision", "disagreement", "commitment", "number"):
+            existing.pop(f"pulse_{minute}_{kind}", None)
     for pulse in pulses:
         if pulse.get("kind") not in ("decision", "disagreement", "commitment", "number"):
             return OpResult(False, op, reason="invalid_pulse")

@@ -95,7 +95,7 @@ def test_request_budget_with_dense_minute_and_full_inbox():
 def test_minute_worker_is_nonblocking_bounded_and_deduplicates(monkeypatch):
     monkeypatch.setattr("meeting.live_signals.resolve_typesafe_feature_enabled", lambda _: True)
     target, pool, calls = store(), ManualExecutor(), []
-    judge = SimpleNamespace(ask=lambda s, q: calls.append(s) or {})
+    judge = SimpleNamespace(ask=lambda s, q: calls.append(s) or {"decision": {"noul": 0.0}})
     worker = LiveSignals(target, Repo([row()]), judge, lambda: True, executor=pool)
     worker.observe([row(end=59)])
     assert not pool.jobs
@@ -104,6 +104,7 @@ def test_minute_worker_is_nonblocking_bounded_and_deduplicates(monkeypatch):
     assert len(pool.jobs) == 1 and not calls
     pool.run()
     worker.observe([row(end=60)])
+    pool.run()
     assert len(calls) == 1 and not pool.jobs
     worker.shutdown()
     worker.observe([row(end=180)])

@@ -69,6 +69,8 @@ export interface InsightReviewState {
   questions: ReviewQuestion[];
 }
 
+export type LiveHighlightsStatus = 'on' | 'off' | 'unavailable' | 'unknown';
+
 export interface HighlightPulse {
   id: string;
   kind: 'decision' | 'disagreement' | 'commitment' | 'number';
@@ -185,6 +187,7 @@ export interface MeetingStateDoc {
   report_views?: string[];
   insight_review?: Partial<InsightReviewState>;
   live_highlights?: HighlightPulse[];
+  live_highlights_status?: LiveHighlightsStatus;
   voice_feedback?: {message?: string; at?: string};
 }
 
@@ -413,6 +416,7 @@ export interface PresenceMsg {
 
 export interface StatusMsg {
   type: 'status';
+  live_highlights_status?: LiveHighlightsStatus;
   status?: string;
   intelligence_online?: boolean;
   diarization_available?: boolean;

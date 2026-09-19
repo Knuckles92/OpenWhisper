@@ -166,3 +166,30 @@ test('voice hint explains why commands are inert without hiding itself', async (
   // A guest is never told to go change host-only settings.
   assert.doesNotMatch(container.textContent, /Fast judgments/);
 });
+
+
+test('a spoken-note patch renders immediately in Meeting Notes with its source and timestamp', async () => {
+  const {applyEffect} = require('../src/state.ts');
+  let doc = {cards: {live_notes: [], key_points: []}, participants: {}};
+  const selected = [];
+  const props = {...noteProps(undefined), onEvidenceClick: id => selected.push(id)};
+  await mount(NotesPane, {...props, notes: doc.cards.live_notes});
+  assert.match(container.textContent, /0 blocks/);
+  const item = {id:'spoken', card:'live_notes', text:'Budget A needs a thousand dollars.',
+    data:{heading:'Requested note', start_s:60, source:'voice_command', command:'note_this'},
+    status:'proposed', author_type:'system', author_id:'voice_command', revision:1,
+    evidence:['sg_budget'], created_at:'2026-09-19T19:25:00Z', updated_at:'2026-09-19T19:25:00Z'};
+  doc = applyEffect(doc, {entity:'item', item});
+  await act(async () => root.render(React.createElement(NotesPane, {...props, notes:doc.cards.live_notes})));
+  assert.match(container.textContent, /Meeting Notes/);
+  assert.match(container.textContent, /1 block/);
+  assert.match(container.textContent, /Budget A needs a thousand dollars/);
+  assert.match(container.textContent, /Spoken note/);
+  assert.equal(container.querySelector('.note-time').textContent, '1:00');
+  await click(container.querySelector('.evidence-chip'));
+  assert.deepEqual(selected, ['sg_budget']);
+  assert.equal(doc.cards.key_points.length, 0);
+  doc = applyEffect(doc, {entity:'item', item});
+  await act(async () => root.render(React.createElement(NotesPane, {...props, notes:doc.cards.live_notes})));
+  assert.equal(container.querySelectorAll('.note-block').length, 1);
+});

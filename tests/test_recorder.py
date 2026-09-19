@@ -3,9 +3,11 @@ import tempfile
 import os
 import wave
 import numpy as np
+from datetime import datetime
 from unittest.mock import patch
 
 from services.recorder import AudioRecorder
+from services.wav_metadata import read_bext_origination, read_info_icrd, read_info_isft
 from config import config
 
 
@@ -102,8 +104,11 @@ class TestAudioRecorder:
     def test_save_recording_with_data(self):
         audio = np.arange(500, dtype=np.int16)
         self.recorder._audio_callback(audio, len(audio), None, None)
+        when = datetime(2026, 9, 19, 13, 5, 7)
 
-        result = self.recorder.save_recording(self.test_audio_file)
+        with patch("services.recorder.datetime") as mock_datetime:
+            mock_datetime.now.return_value = when
+            result = self.recorder.save_recording(self.test_audio_file)
 
         assert result
         assert os.path.exists(self.test_audio_file)
@@ -113,6 +118,26 @@ class TestAudioRecorder:
             assert wf.getframerate() == config.SAMPLE_RATE
             assert wf.getsampwidth() == np.dtype(config.AUDIO_FORMAT).itemsize
             assert wf.readframes(len(audio)) == audio.tobytes()
+        assert read_info_icrd(self.test_audio_file) == "2026-09-19"
+        assert read_info_isft(self.test_audio_file) == "OpenWhisper"
+        assert read_bext_origination(self.test_audio_file) == (
+            "2026-09-19",
+            "13:05:07",
+        )
+
+    def test_save_recording_keeps_wav_when_metadata_stamp_fails(self):
+        audio = np.arange(32, dtype=np.int16)
+        self.recorder._audio_callback(audio, len(audio), None, None)
+
+        with patch(
+            "services.recorder.stamp_wav_origination",
+            side_effect=OSError("disk full"),
+        ):
+            assert self.recorder.save_recording(self.test_audio_file)
+
+        with wave.open(self.test_audio_file, "rb") as wf:
+            assert wf.readframes(len(audio)) == audio.tobytes()
+        assert read_info_icrd(self.test_audio_file) is None
 
     def test_save_recording_default_filename(self):
         audio = np.arange(32, dtype=np.int16)

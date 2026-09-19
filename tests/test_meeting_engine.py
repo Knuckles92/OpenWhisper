@@ -1635,3 +1635,25 @@ def test_optional_review_starts_after_meeting_is_saved(make_engine, monkeypatch)
     assert not engine._end_thread.is_alive()
     start.assert_called_once_with(engine.store, engine.repository)
     assert engine.store.snapshot()["status"] == "ended"
+
+
+@pytest.mark.parametrize("end_report", [True, False])
+def test_final_highlights_run_after_transcript_edits(make_engine, fakes, end_report):
+    engine = make_engine(end_report=end_report)
+    engine.start()
+    scheduler = fakes.schedulers[0]
+    checks = []
+
+    def finalize_highlights():
+        assert engine._asr is None
+        assert getattr(engine, "_live_signals", None) is None
+        assert engine.store.snapshot()["status"] == "ended"
+        assert scheduler.polishes == 1
+        assert scheduler.consolidations == int(end_report)
+        checks.append(True)
+
+    engine._finalize_highlights = finalize_highlights
+    engine.end()
+    engine._end_thread.join(timeout=10)
+    assert not engine._end_thread.is_alive()
+    assert checks == [True]

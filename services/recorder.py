@@ -7,9 +7,11 @@ import os
 import tempfile
 import numpy as np
 import time
+from datetime import datetime
 
 from typing import BinaryIO, Callable, List, Optional, Tuple
 from config import config
+from services.wav_metadata import stamp_wav_origination
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +322,14 @@ class AudioRecorder:
 
                 os.replace(temp_path, filename)
                 temp_path = ""
+                try:
+                    stamp_wav_origination(filename, datetime.now())
+                except Exception:
+                    logger.warning(
+                        "Failed to stamp WAV origination metadata on %s",
+                        filename,
+                        exc_info=True,
+                    )
 
                 total_bytes = recorded_bytes + len(padding_bytes)
                 if padding_bytes:

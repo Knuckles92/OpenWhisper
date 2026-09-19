@@ -115,7 +115,10 @@ class TestBuildOps:
     def test_action_and_note_cards(self):
         rs = rows()
         assert build_ops("mark_action", rs[2], rs[1:2])[0]["card"] == "action_items"
-        assert build_ops("note_this", rs[2], rs[1:2])[0]["card"] == "key_points"
+        note = build_ops("note_this", rs[2], rs[1:2])[0]
+        assert note["card"] == "live_notes"
+        assert note["data"]["heading"] == "Requested note"
+        assert note["data"]["start_s"] == rs[1]["start_s"]
 
     def test_set_topic_uses_extracted_phrase_only(self):
         cmd = {"id": "sg_9", "start_s": 1.0, "end_s": 2.0, "text": "note taker new topic: vendor review"}
@@ -347,6 +350,8 @@ def test_budget_note_from_real_meeting_uses_dictation_not_prior_praise():
     listener.observe(transcript)
     op = store.calls[0][2][0]
     assert op["text"] == "we need to get a thousand dollars for budget A."
+    assert op["card"] == "live_notes"
+    assert op["data"]["start_s"] == 59.174
     assert op["evidence"] == ["sg_wake", "sg_budget"]
     assert events[-1]["phase"] == "saved"
     listener.observe(transcript)
@@ -364,3 +369,48 @@ def test_polite_dictation_and_split_note_preamble_preserve_the_requested_content
         op = store.calls[0][2][0]
         assert op["text"] == "budget A needs a thousand dollars."
         assert op["evidence"] == ["sg_wake", "sg_budget"]
+
+
+def test_spoken_note_is_persisted_and_broadcast_before_saved_feedback_without_an_agent(repo):
+    import json
+    from meeting.interfaces import TranscriptSegment
+    from meeting.state.schema import MeetingState
+    from meeting.state.store import MeetingStateStore
+
+    mid = "spoken-note-immediate"
+    repo.create_meeting(id=mid, title="Budget planning", status="active",
+                        started_at="2026-09-19T19:24:00Z", host_token="host", guest_token="guest",
+                        cloud_enabled=True, spool_dir="unused")
+    row = dict(id="sg_budget", channel="mic", start_s=60, end_s=66,
+               text="Assistant, add a note that budget A needs a thousand dollars.")
+    repo.add_segments([TranscriptSegment(segment_id=row["id"], meeting_id=mid, chunk_id=None,
+                                        channel="mic", start_s=60, end_s=66, text=row["text"])])
+    store = MeetingStateStore(MeetingState(meeting_id=mid), repository=repo,
+                              segment_exists=lambda segment_id: repo.segment_exists(mid, segment_id))
+    order, patches = [], []
+    def persisted_notes():
+        return json.loads(repo.get_meeting(mid)["state_json"])["cards"]["live_notes"]
+    def broadcast(seq, results):
+        assert persisted_notes()[0]["text"] == "budget A needs a thousand dollars."
+        order.append("broadcast")
+        patches.extend(r.effect for r in results)
+    def feedback(event):
+        if event["phase"] == "saved":
+            assert persisted_notes() and patches
+            assert event["message"] == "Added to Meeting Notes"
+            order.append("saved")
+    store.subscribe(broadcast)
+    executor = ManualExecutor()
+    listener = VoiceCommandListener(store, FakeJudge(ChoiceAnswer("note_this", .95, {})),
+                                    DEFAULT_VOICE_COMMAND_NAMES, executor=executor, on_feedback=feedback)
+    listener.observe([row])
+    assert not store.snapshot()["cards"]["live_notes"]
+    executor.run()
+    assert order == ["broadcast", "saved"]
+    assert patches[0]["entity"] == "item" and patches[0]["item"]["card"] == "live_notes"
+    assert patches[0]["item"]["data"]["start_s"] == 60
+    assert not store.snapshot()["cards"]["key_points"]
+    restored = MeetingState.from_dict(json.loads(repo.get_meeting(mid)["state_json"]))
+    assert restored.cards["live_notes"][0].protected
+    listener.observe([row])
+    assert not executor.jobs and len(persisted_notes()) == 1

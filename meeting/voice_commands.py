@@ -37,13 +37,12 @@ ACTOR_ID = "voice_command"
 #: Segments spoken this long before the command may be what "that" refers to.
 REFERENT_MAX_GAP_S = 20.0
 REFERENT_MAX_ROWS = 2
-#: Card each command writes to. ``note_this`` uses key points because the
-#: note-taker pass owns ``live_notes`` headings and ``user_notes`` is the
-#: human-only guidance channel.
+#: Spoken notes go straight to the notes page without waiting for an agent pass.
+#: ``user_notes`` remains the human guidance channel.
 COMMAND_CARDS: Mapping[str, str] = {
     "mark_decision": "decisions",
     "mark_action": "action_items",
-    "note_this": "key_points",
+    "note_this": "live_notes",
 }
 _TOPIC_LEAD_INS = (
     r"new topic(?: is)?", r"the topic is(?: now)?", r"topic is(?: now)?",
@@ -134,10 +133,14 @@ def build_ops(command: str, command_row: Mapping[str, Any],
         return []
     evidence = [] if content else [r["id"] for r in referents if r.get("id")]
     evidence.extend(command_row.get("_evidence_ids") or ([command_id] if command_id else []))
+    data = {"source": "voice_command", "command": command,
+            "command_segment_id": command_id}
+    if card == "live_notes":
+        anchor = command_row if content or not referents else referents[0]
+        data.update(heading="Requested note", start_s=float(anchor.get("start_s") or 0.0))
     return [{
         "op": "add_item", "card": card, "text": text, "evidence": evidence,
-        "data": {"source": "voice_command", "command": command,
-                 "command_segment_id": command_id},
+        "data": data,
     }]
 
 
@@ -444,7 +447,7 @@ class VoiceCommandListener:
         )
         self._feedback("saved" if applied else "error", {
             "mark_decision": "Decision noted", "mark_action": "Action item added",
-            "note_this": "Note taken", "set_topic": "Topic updated",
+            "note_this": "Added to Meeting Notes", "set_topic": "Topic updated",
         }.get(answer.choice, "Saved") if applied else "The command could not be saved.", answer.choice)
         if self._on_applied is not None:
             try:

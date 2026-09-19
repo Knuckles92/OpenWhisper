@@ -9,10 +9,13 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [Unreleased]
 
 ### Added
+- **Quick Record WAVs carry origination date and time** — Saved dictation files now include LIST INFO and Broadcast Wave origination tags, so File Explorer can sort the recordings folder by Media created. Upload File copies of the user's original audio are unchanged.
 - **Speaker identification can be turned off** — Model Manager → Meeting voice now includes Off (Me / Others channel labels only). Meetings skip WeSpeaker clustering and the post-meeting OpenAI pass, and keep microphone as Me and system audio as Others.
 - **Show in Folder** on history cards — right-clicking an entry in the Quick Record history sidebar now offers Show in Folder, which reveals that entry's saved recording in the file manager (selected on Windows and macOS, containing folder elsewhere). The item is greyed out for entries with no recording on disk.
 
 ### Fixed
+- Meeting pulses recognize spoken budget amounts in requests and reported disagreements involving people outside the meeting. Pulse checks retain queued and revised transcript windows, advance through silence, and catch up after finalization, including the last partial minute.
+- Spoken note requests now appear directly in Meeting Notes as soon as the committed command is recognized, with a timestamp and spoken-note label, without waiting for the AI notes pass.
 - Spoken “add a note that…” requests capture the dictated content, including polite and split-segment requests. Spoken notes remain editable by the user and survive AI summary rewrites and finalization cleanup.
 - Selecting a Meeting Pulse opens a floating replay player with play/pause, a seekable timeline, elapsed/total time, and ten-second skip controls in live meetings and history. Closing stops playback, and recording failures offer a retry.
 - Settings now says when TypeSafe features cannot run for want of a key. Meeting Mode → Fast judgments shows a notice while `TYPESAFE_API_KEY` is unset, the nav rail reads "No key", and the **Test** button on the API keys page verifies a TypeSafe key instead of doing nothing (TypeSafe is not an OpenAI-compatible endpoint, so it had no verification path).
