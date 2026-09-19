@@ -79,6 +79,42 @@ function ReviewRow({q, item, onSend, onEvidenceClick}: {
   </article>;
 }
 
+function ReviewQuestions({questions, items, collapsed, onSend, onEvidenceClick}: {
+  questions: ReviewQuestion[]; items: CardItem[]; collapsed: boolean;
+  onSend: (op: Op) => Promise<boolean>; onEvidenceClick: (id: string) => void;
+}) {
+  // Keep the initial three fixed as answers arrive; continuing is always optional.
+  const [revealed, setRevealed] = useState(() => questions.filter(q => q.status === 'open').slice(0, 3).map(q => q.id));
+  const open = questions.filter(q => q.status === 'open');
+  const closed = questions.filter(q => q.status !== 'open');
+  const visible = open.filter(q => revealed.includes(q.id));
+  const remaining = open.filter(q => !revealed.includes(q.id));
+  const send = async (op: Op) => {
+    const ok = await onSend(op);
+    const questionId = op.question_id;
+    if (ok && op.op === 'review_reopen' && typeof questionId === 'string') {
+      setRevealed(ids => ids.includes(questionId) ? ids : [...ids, questionId]);
+    }
+    return ok;
+  };
+  const row = (q: ReviewQuestion) => <ReviewRow key={`${q.id}:${q.revision}:${q.status}`} q={q}
+    item={items.find(i => i.id === q.item_id) ?? q.insight} onSend={send} onEvidenceClick={onEvidenceClick} />;
+  return <>
+    <div hidden={collapsed}>
+      {remaining.length > 0 && <p className="muted">
+        {visible.length > 0 ? 'Start with the highest-priority questions. Review more whenever you’re ready.' : 'You’ve finished this set. You can review more ambiguities whenever you’re ready.'}
+      </p>}
+      {visible.map(row)}
+      {remaining.length > 0 && <button type="button" onClick={() => setRevealed(ids => [...ids, ...remaining.map(q => q.id)])}>
+        Review more ({remaining.length} remaining)
+      </button>}
+    </div>
+    {closed.length > 0 && <details><summary>Reviewed or skipped ({closed.length})</summary>
+      {closed.map(row)}
+    </details>}
+  </>;
+}
+
 export default function InsightReview({state, onSendOp, onRetry, onEvidenceClick}: {
   state: MeetingStateDoc; onSendOp: (op: Op) => Promise<boolean>;
   onRetry: () => Promise<unknown>; onEvidenceClick: (id: string) => void;
@@ -91,7 +127,8 @@ export default function InsightReview({state, onSendOp, onRetry, onEvidenceClick
   const items = Object.values(state.cards).flat();
   const questions = review.questions ?? [];
   const open = questions.filter(q => q.status === 'open');
-  const closed = questions.filter(q => q.status !== 'open');
+  // A new meeting or set of questions starts with a fresh priority preview.
+  const questionSetKey = JSON.stringify([state.meeting_id, questions.map(q => q.id)]);
   const pending = review.status === 'running' || state.finalization?.status === 'running' || state.finalization?.status === 'pending';
   const retry = async () => {
     setBusy(true); setError('');
@@ -104,10 +141,8 @@ export default function InsightReview({state, onSendOp, onRetry, onEvidenceClick
       <p role="status">{review.message || 'Review will begin after the final insights are saved.'}</p>
       <p className="muted">Your meeting is saved. Answers update the insight and notes. Skipping keeps the uncertainty.</p>
       {open.length > 0 && <button type="button" onClick={() => setLater(!later)}>{later ? 'Continue review' : 'Review later'}</button>}
-      {!later && !pending && open.map(q => <ReviewRow key={`${q.id}:${q.revision}:${q.status}`} q={q} item={items.find(i => i.id === q.item_id) ?? q.insight} onSend={onSendOp} onEvidenceClick={onEvidenceClick} />)}
-      {closed.length > 0 && <details><summary>Reviewed or skipped ({closed.length})</summary>
-        {closed.map(q => <ReviewRow key={`${q.id}:${q.revision}:${q.status}`} q={q} item={items.find(i => i.id === q.item_id) ?? q.insight} onSend={onSendOp} onEvidenceClick={onEvidenceClick} />)}
-      </details>}
+      <ReviewQuestions key={questionSetKey} questions={questions} items={items} collapsed={later || pending}
+        onSend={onSendOp} onEvidenceClick={onEvidenceClick} />
       {!pending && <button type="button" disabled={busy || !state.cloud_enabled} onClick={() => void retry()}>{busy ? 'Starting…' : 'Retry review'}</button>}
       {error && <p role="alert">{error}</p>}
     </div>

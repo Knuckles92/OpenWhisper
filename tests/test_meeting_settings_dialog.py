@@ -127,14 +127,12 @@ class TestInsightReviewSettings(_DialogTestCase):
             assert not isolated.load_all_settings().get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT)
             with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
                 dialog.meeting_review_check.setChecked(True)
-            dialog.meeting_review_limit.setValue(4)
             dialog.meeting_review_sensitivity.setCurrentIndex(1)
             dialog.close()
             with patch.object(QMessageBox, "question") as confirm:
                 reopened = settings_dialog_module.SettingsDialog()
                 confirm.assert_not_called()
             assert reopened.meeting_review_check.isChecked()
-            assert reopened.meeting_review_limit.value() == 4
             assert reopened.meeting_review_sensitivity.currentData() == "thorough"
             reopened.meeting_review_check.setChecked(False)
             reopened.close()

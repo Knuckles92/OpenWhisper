@@ -42,10 +42,9 @@ class TypeSafeReviewer:
         return {key: answer["noul"] for key, answer in answers.items()}
 
 
-def review_config(enabled=False, sensitivity="normal", max_questions=3, consent="", cloud_enabled=True):
+def review_config(enabled=False, sensitivity="normal", consent="", cloud_enabled=True):
     enabled = bool(enabled and consent == CONSENT)
     return {"enabled": enabled, "consent": consent, "sensitivity": sensitivity,
-            "max_questions": max(1, min(5, int(max_questions))),
             "status": "pending" if enabled and cloud_enabled else "unavailable" if enabled else "disabled",
             "questions": [], "message": "" if cloud_enabled else "Cloud intelligence is off for this meeting."}
 

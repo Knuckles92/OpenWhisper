@@ -107,7 +107,6 @@ class SettingsKey:
     MEETING_INSIGHT_REVIEW: Final[str] = "meeting_insight_review"
     MEETING_INSIGHT_REVIEW_CONSENT: Final[str] = "meeting_insight_review_consent"
     MEETING_INSIGHT_REVIEW_SENSITIVITY: Final[str] = "meeting_insight_review_sensitivity"
-    MEETING_INSIGHT_REVIEW_LIMIT: Final[str] = "meeting_insight_review_limit"
     MEETING_END_REPORT: Final[str] = "meeting_end_report"
     MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
     MEETING_REPORT_BRIEF: Final[str] = "meeting_report_brief"
@@ -1346,8 +1345,5 @@ def resolve_meeting_insight_review(settings=None):
     sensitivity = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, "normal")
     if sensitivity not in ("normal", "thorough"):
         sensitivity = "normal"
-    limit = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT, 3)
-    if not isinstance(limit, int) or isinstance(limit, bool):
-        limit = 3
     return {"enabled": enabled and consent and resolve_typesafe_enabled(settings), "consent": "typesafe-text-v1" if consent else "",
-            "sensitivity": sensitivity, "max_questions": max(1, min(5, limit))}
+            "sensitivity": sensitivity}

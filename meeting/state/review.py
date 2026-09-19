@@ -77,8 +77,6 @@ def finish_review(state, op, ctx):
             q["status"] = "skipped"
         seen.add(q["item_id"])
         questions.append(q)
-        if len(questions) >= review.get("max_questions", 3):
-            break
     if op.get("status") in ("ready", "partial"):
         review["questions"] = retained[-50:] + questions
     review.update(status=op["status"], message=op.get("message", ""), checked_at=now_iso())

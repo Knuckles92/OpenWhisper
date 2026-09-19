@@ -79,12 +79,12 @@ def test_explicit_consent_and_enabled_are_both_required(settings):
     assert not resolve_meeting_insight_review(settings)["enabled"]
 
 
-def test_setting_bounds_and_defaults():
+def test_setting_defaults_ignore_legacy_question_limit():
     result = resolve_meeting_insight_review({SettingsKey.TYPESAFE_ENABLED: True, SettingsKey.MEETING_INSIGHT_REVIEW: True,
         SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT: CONSENT,
-        SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT: 100,
+        "meeting_insight_review_limit": 1,
         SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY: "invalid"})
-    assert result == {"enabled": True, "consent": CONSENT, "sensitivity": "normal", "max_questions": 5}
+    assert result == {"enabled": True, "consent": CONSENT, "sensitivity": "normal"}
 
 
 @pytest.mark.parametrize("kwargs", [{"consent": ""}, {"enabled": False}, {"cloud": False}])
@@ -169,10 +169,25 @@ def test_shared_client_failures_are_review_unavailable(monkeypatch, status, body
     assert "secret" not in str(error.value)
 
 
-def test_queue_cap_and_raw_scores_do_not_confirm_items():
+@pytest.mark.parametrize("legacy_limit", [None, 1, 3, 5])
+def test_all_ranked_questions_survive_reload_without_confirming_items(legacy_limit):
     store, repo = make_store(8)
-    questions = prepare(store, repo)
-    assert len(questions) == 3
+    if legacy_limit is not None:
+        state = MeetingState.from_dict(store.snapshot())
+        state.insight_review["max_questions"] = legacy_limit
+        store.replace_document(state)
+
+    class RankedReviewer(Reviewer):
+        def evaluate(self, state, *args, **kwargs):
+            scores = super().evaluate(state, *args, **kwargs)
+            scores["acceptance"] = .8 - int(state["insight"]["text"].split()[-1]) * .09
+            return scores
+
+    questions = prepare(store, repo, RankedReviewer())
+    assert [q["item_id"] for q in questions] == [f"it{i}" for i in reversed(range(8))]
+    reopened = MeetingStateStore(MeetingState.from_dict(repo.saved), repository=repo)
+    assert reopened.snapshot()["insight_review"]["questions"] == questions
+    assert answer(reopened, questions[-1]).ok
     snapshot = store.snapshot()
     assert all(i["status"] == "proposed" for i in snapshot["cards"]["action_items"])
     assert all(i["review"]["state"] == "provisional" for i in snapshot["cards"]["action_items"])

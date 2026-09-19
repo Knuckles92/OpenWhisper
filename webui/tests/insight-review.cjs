@@ -25,7 +25,7 @@ const state = () => ({meeting_id:'m1',status:'ended',cloud_enabled:true,seq:1,pa
 const props = onSendOp => ({state:state(),onSendOp,onRetry:async()=>{},onEvidenceClick:()=>{}});
 async function mount(Component, data) {container=document.createElement('div'); document.body.append(container);root=createRoot(container);await act(async()=>root.render(React.createElement(Component,data)));}
 afterEach(async()=>{if(root) await act(async()=>root.unmount());document.body.replaceChildren();});
-function button(text) {return [...container.querySelectorAll('button')].find(b=>b.textContent===text);}
+function button(text) {return [...container.querySelectorAll('button')].find(b=>b.textContent===text && !b.closest('[hidden]'));}
 async function click(el) {await act(async()=>el.click());}
 async function input(el,value) {await act(async()=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));});}
 
@@ -94,4 +94,82 @@ test('reports preserve uncertainty labels and show authoritative corrections',as
   await mount(ReviewCorrections,{state:doc});
   assert.match(container.textContent,/supersede earlier wording/);
   assert.match(container.textContent,/Only offered; no commitment/);
+});
+
+function reviewSet(count) {
+  const doc=state();
+  doc.cards.action_items=Array.from({length:count},(_,i)=>({...structuredClone(item),id:`it${i}`,text:`Priority ${i+1}`}));
+  doc.insight_review.questions=doc.cards.action_items.map((it,i)=>({...structuredClone(q),id:`q${i}`,item_id:it.id}));
+  return doc;
+}
+function openRows() {
+  return [...container.querySelectorAll('.review-question')].filter(el=>!el.closest('[hidden], details'));
+}
+
+test('initial review shows the first three and reveals every remaining question without retrying',async()=>{
+  const p={...props(async()=>true),state:reviewSet(8),onRetry:async()=>assert.fail('expansion must not recheck insights')};
+  await mount(InsightReview,p);
+  assert.match(container.textContent,/8 to review/);
+  assert.deepEqual(openRows().map(el=>el.querySelector('blockquote').textContent),['Priority 1','Priority 2','Priority 3']);
+  await click(button('Review more (5 remaining)'));
+  assert.deepEqual(openRows().map(el=>el.querySelector('blockquote').textContent),Array.from({length:8},(_,i)=>`Priority ${i+1}`));
+  assert.equal(button('Review more (5 remaining)'),undefined);
+  await click(button('Review later'));
+  assert.equal(openRows().length,0);
+  await click(button('Continue review'));
+  assert.equal(openRows().length,8);
+});
+
+test('answering or skipping the first three does not automatically reveal more',async()=>{
+  const p={...props(async()=>true),state:reviewSet(8)};
+  p.onSendOp=async op=>{
+    p.state=structuredClone(p.state);
+    p.state.insight_review.questions.find(question=>question.id===op.question_id).status=op.op==='review_skip'?'skipped':'answered';
+    root.render(React.createElement(InsightReview,p));
+    return true;
+  };
+  await mount(InsightReview,p);
+  await click(button('Agreed'));
+  assert.equal(openRows().length,2);
+  await click(button('Skip'));
+  await click(button('Agreed'));
+  assert.equal(openRows().length,0);
+  assert.match(container.textContent,/5 to review/);
+  assert.ok(button('Review more (5 remaining)'));
+  await click(button('Review more (5 remaining)'));
+  assert.equal(openRows().length,5);
+  assert.equal(openRows()[0].querySelector('blockquote').textContent,'Priority 4');
+});
+
+test('a new question set resets the preview and a reopened hidden question becomes visible',async()=>{
+  const p={...props(async()=>true),state:reviewSet(8)};
+  p.state.insight_review.questions[7].status='skipped';
+  p.onSendOp=async op=>{
+    p.state=structuredClone(p.state);
+    p.state.insight_review.questions.find(question=>question.id===op.question_id).status='open';
+    root.render(React.createElement(InsightReview,p));
+    return true;
+  };
+  await mount(InsightReview,p);
+  await click(button('Reopen'));
+  assert.equal(openRows().length,4);
+  assert.equal(openRows()[3].querySelector('blockquote').textContent,'Priority 8');
+  await click(button('Review more (4 remaining)'));
+  assert.equal(openRows().length,8);
+  p.state=reviewSet(6);
+  p.state.insight_review.questions.forEach(question=>question.id=`new-${question.id}`);
+  await act(async()=>root.render(React.createElement(InsightReview,p)));
+  assert.equal(openRows().length,3);
+  assert.ok(button('Review more (3 remaining)'));
+});
+
+test('small reviews show all questions and hiding review preserves a draft',async()=>{
+  await mount(InsightReview,{...props(async()=>true),state:reviewSet(2)});
+  assert.equal(openRows().length,2);
+  assert.equal([...container.querySelectorAll('button')].some(b=>b.textContent.includes('Review more')),false);
+  await click(button('Correct it'));
+  await input(container.querySelector('textarea'),'Clarified wording');
+  await click(button('Review later'));
+  await click(button('Continue review'));
+  assert.equal(container.querySelector('textarea').value,'Clarified wording');
 });

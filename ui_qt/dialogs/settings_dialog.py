@@ -1235,7 +1235,8 @@ class SettingsDialog(QDialog):
         self.meeting_review_tile = SettingTile(
             "Review uncertain insights at the end (Experimental)",
             "Optional, for new meetings. Sends relevant transcript excerpts, speaker names, "
-            "and insights to TypeSafe to select a few questions. No audio is sent. "
+            "and insights to TypeSafe to identify ambiguities. Start with the three "
+            "highest-priority questions, then choose Review more to see the rest. No audio is sent. "
             "Requires cloud intelligence, TypeSafe fast judgments on the Fast judgments page, "
             "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
             _design_icon("check-green.svg"),
@@ -1250,17 +1251,8 @@ class SettingsDialog(QDialog):
             lambda _: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
                                     self.meeting_review_sensitivity.currentData())
         )
-        self.meeting_review_limit = NoWheelSpinBox()
-        self.meeting_review_limit.setRange(1, 5)
-        self.meeting_review_limit.setValue(3)
-        self.meeting_review_limit.valueChanged.connect(
-            lambda value: self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_LIMIT, value)
-        )
         review_row.addWidget(
             self._field("Sensitivity", self.meeting_review_sensitivity)
-        )
-        review_row.addWidget(
-            self._field("Maximum questions", self.meeting_review_limit)
         )
         self.meeting_review_tile.add_body_layout(review_row)
 
@@ -2812,7 +2804,6 @@ class SettingsDialog(QDialog):
         )
         self.meeting_review_sensitivity.setCurrentIndex(
             self.meeting_review_sensitivity.findData(review["sensitivity"]))
-        self.meeting_review_limit.setValue(review["max_questions"])
         self._refresh_meeting_model_summary()
 
         bind_index = self.meeting_bind_combo.findData(

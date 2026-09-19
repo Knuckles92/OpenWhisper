@@ -4,11 +4,11 @@
 
 Enable **Settings → Meeting Mode → Intelligence → TypeSafe fast judgments**, then **After End → Review uncertain insights at the end** for future meetings. Accept the TypeSafe sharing disclosure, supply a TypeSafe key in **Settings → API keys** or `TYPESAFE_API_KEY` in the environment or `.env`, and enable cloud intelligence for the meeting. Review is off by default. Changing this setting does not retroactively authorize sending older meetings to TypeSafe.
 
-Normal sensitivity selects up to three questions by default. Thorough sensitivity selects more borderline cases; the maximum is configurable from one to five. Recording and saving do not wait for the service or for your answers.
+Review starts with the three highest-priority questions. **Review more** shows all remaining questions in priority order, with no five-question cutoff. Normal sensitivity selects material issues; Thorough also selects more borderline cases. Recording and saving do not wait for the service or for your answers.
 
 ## What the host sees
 
-After final insights are saved, the dashboard checks action items, decisions, and risks. It selects consequential ambiguities about agreement, responsibility, deadlines, claim support, or risk resolution. Each question links to source excerpts and timestamps. Use **Review later** to collapse the panel, **Skip** to leave a question unresolved, or reopen it from **Reviewed or skipped**. The same controls work in Past Meetings.
+After final insights are saved, the dashboard checks action items, decisions, and risks. It selects consequential ambiguities about agreement, responsibility, deadlines, claim support, or risk resolution. Each question links to source excerpts and timestamps. The panel shows the total number of open questions and keeps additional questions behind **Review more** even after you finish the first three. Use **Review later** to collapse the panel, **Skip** to leave a question unresolved, or reopen it from **Reviewed or skipped**. The same controls work in Past Meetings. Older reviews saved with a question cap need **Retry review** to generate their previously omitted questions.
 
 Answers update the linked insight and create a protected user note. Source-linked meeting notes receive an explicit clarification. The transcript remains intact. Reports and Markdown exports place user clarifications before the earlier narrative and label remaining provisional or unsupported insights. Corrections supplement the narrative; they do not silently rewrite every sentence of the original summary.
 
@@ -26,7 +26,7 @@ The meeting LLM still produces the insights. Jev checks each insight in a separa
 
 The implementation stores separate Noul probabilities for applicable fields. These are probabilities of individual yes/no judgments, not a measured probability that an entire insight is true. Near zero means evidence against that proposition; it is not generic uncertainty. Strong contradiction, unreliable transcript evidence, and missing ownership can override otherwise high support. No score marks an insight as human-confirmed.
 
-Normal and Thorough use initial field-support thresholds of 0.85 and 0.95 respectively. These are routing policies, not calibrated meeting-accuracy guarantees. Review priorities combine the field issue with whether it affects an action or decision. Questions are deduplicated and capped. Routine key points and free-form notes are not separately scored.
+Normal and Thorough use initial field-support thresholds of 0.85 and 0.95 respectively. These are routing policies, not calibrated meeting-accuracy guarantees. Review priorities combine the field issue with whether it affects an action or decision. Questions are deduplicated and retained in priority order; the initial three-question view does not discard the rest. Routine key points and free-form notes are not separately scored.
 
 One pass checks at most 40 unprotected action items, decisions, and risks. Each request has a 12-second HTTP timeout and a context budget of 16,000 serialized characters. Larger meetings or partial failures are explicitly reported as partial. Retries check the current eligible items; user-corrected items remain protected. Lexical context retrieval can miss paraphrased later resolutions, and ASR errors can still fool the checker. User review and representative meeting benchmarks remain necessary when tuning these thresholds.
 
