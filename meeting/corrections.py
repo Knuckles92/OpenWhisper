@@ -25,26 +25,34 @@ VOCABULARY_MAX_CHARS = 160
 _GUIDANCE_KINDS = ("agent_insight", "term_correction")
 
 
+def is_correction_author(item: Dict[str, Any]) -> bool:
+    data = item.get("data") or {}
+    return item.get("author_type") == "user" or (
+        item.get("author_type") == "system" and item.get("author_id") == "voice_command"
+        and data.get("source") == "voice_command" and data.get("command") == "fix_transcript"
+    )
+
+
 def _human_notes(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         item for item in ((state.get("cards") or {}).get("user_notes") or [])
         if isinstance(item, dict)
         and item.get("status") != "removed"
-        and item.get("author_type") == "user"
+        and is_correction_author(item)
     ]
 
 
 def term_rules_from_items(items: Iterable[Dict[str, Any]]) -> Dict[str, str]:
     """Map lower-cased misheard terms to their replacement.
 
-    Only live, human-authored ``term_correction`` items with bounded,
+    Only live human or explicitly attributed spoken ``term_correction`` items with bounded,
     non-blank strings qualify. Later notes win when two correct one term.
     """
     rules: Dict[str, str] = {}
     for item in items:
         if not isinstance(item, dict):
             continue
-        if item.get("status") == "removed" or item.get("author_type") != "user":
+        if item.get("status") == "removed" or not is_correction_author(item):
             continue
         data = item.get("data") or {}
         if not isinstance(data, dict) or data.get("kind") != "term_correction":

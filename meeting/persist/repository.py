@@ -182,6 +182,13 @@ def _remap_state_evidence(
                 if not isinstance(item, dict):
                     continue
                 item["evidence"] = remap_list(item.get("evidence"))
+                item["citation_check"] = {}
+    pulses = []
+    for pulse in state.get("live_highlights") or []:
+        mapped = remap_list([pulse.get("segment_id")])
+        if mapped:
+            pulses.append({**pulse, "segment_id": mapped[0]})
+    state["live_highlights"] = pulses
     questions = state.get("questions") or []
     if isinstance(questions, list):
         for question in questions:
@@ -1124,6 +1131,53 @@ class SqlMeetingRepository:
                 MeetingEvent.meeting_id == meeting_id,
                 MeetingEvent.action == f"undo:{int(seq)}",
             ).first() is not None
+
+    def search_candidates(self, query: str, *, exclude_meeting_id=None, limit=48):
+        """Broad term matches plus recent minute passages; only opted-in meetings."""
+        import re
+        terms = [t for t in re.findall(r"\w+", query) if len(t) > 2 and t.lower() not in {
+            "the", "did", "what", "when", "where", "how", "was", "were", "about", "with", "that", "meeting",
+        }][:20]
+        limit = max(1, min(int(limit), 48))
+        params = {"exclude": exclude_meeting_id or "", "limit": limit}
+        rows = []
+        with self._db.engine.connect() as conn:
+            if terms:
+                params["q"] = " OR ".join('"' + t + '"' for t in terms)
+                try:
+                    rows = list(conn.execute(sql_text("""
+                        SELECT ms.id AS segment_id, ms.meeting_id, ms.start_s, ms.end_s,
+                               ms.text, s.title, s.started_at
+                        FROM meeting_segments_fts
+                        JOIN meeting_segments ms ON ms.rowid = meeting_segments_fts.rowid
+                        JOIN meeting_sessions s ON s.id = ms.meeting_id
+                        WHERE meeting_segments_fts MATCH :q AND s.cloud_enabled = 1 AND s.id != :exclude
+                        ORDER BY bm25(meeting_segments_fts), s.started_at DESC LIMIT :limit
+                    """), params).mappings())
+                except Exception:
+                    logger.debug("Search index unavailable for semantic candidates")
+            recent = conn.execute(sql_text("""
+                WITH passages AS (
+                    SELECT ms.id AS segment_id, ms.meeting_id, ms.start_s, ms.end_s,
+                           ms.text, s.title, s.started_at,
+                           row_number() OVER (PARTITION BY ms.meeting_id, CAST(ms.start_s / 60 AS INTEGER)
+                                              ORDER BY length(ms.text) DESC, ms.id) AS minute_row
+                    FROM meeting_segments ms JOIN meeting_sessions s ON s.id = ms.meeting_id
+                    WHERE s.cloud_enabled = 1 AND s.id != :exclude AND length(ms.text) > 20
+                ), diverse AS (
+                    SELECT *, row_number() OVER (PARTITION BY meeting_id ORDER BY start_s DESC) AS meeting_row
+                    FROM passages WHERE minute_row = 1
+                )
+                SELECT segment_id, meeting_id, start_s, end_s, text, title, started_at
+                FROM diverse ORDER BY meeting_row, started_at DESC LIMIT :limit
+            """), params).mappings().all()
+        # Reserve half the budget for passages that may have no lexical overlap.
+        chosen = {r["segment_id"]: dict(r) for r in rows[:limit // 2]}
+        for row in [*recent, *rows[limit // 2:]]:
+            if len(chosen) >= limit:
+                break
+            chosen.setdefault(row["segment_id"], dict(row))
+        return list(chosen.values())
 
     def search_transcripts(self, query: str, *,
                            exclude_meeting_id: Optional[str] = None,

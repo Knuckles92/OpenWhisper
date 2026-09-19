@@ -141,6 +141,7 @@ CLEANUP_RULES = "cleanup_rules"
 CLEANUP_PROFILES = "cleanup_profiles"
 MEETING_INTELLIGENCE = "meeting_intelligence"
 MEETING_AFTER = "meeting_after"
+MEETING_FAST = "meeting_fast"
 MEETING_DASHBOARD = "meeting_dashboard"
 API_KEYS = "api_keys"
 HOTKEYS = "hotkeys"
@@ -286,6 +287,9 @@ class SettingsDialog(QDialog):
             MEETING_INTELLIGENCE, "Intelligence", _design_icon("stack-purple.svg")
         )
         self.rail.add_destination(
+            MEETING_FAST, "Fast judgments", _design_icon("bolt-green.svg")
+        )
+        self.rail.add_destination(
             MEETING_AFTER, "After the meeting", _design_icon("check-green.svg")
         )
         self.rail.add_destination(
@@ -357,6 +361,12 @@ class SettingsDialog(QDialog):
             "What the meeting agent may search, and which models it uses. "
             "Nothing is sent until you enable intelligence for a meeting.",
             self._build_meeting_intelligence_page,
+        )
+        self._add_page(
+            MEETING_FAST,
+            "Fast judgments",
+            "Optional TypeSafe/Jev checks. Each feature describes the text it shares.",
+            self._build_meeting_fast_page,
         )
         self._add_page(
             MEETING_AFTER,
@@ -1075,6 +1085,7 @@ class SettingsDialog(QDialog):
             ),
         )
 
+    def _build_meeting_fast_page(self, layout: QVBoxLayout) -> None:
         self.typesafe_enabled_tile = SettingTile(
             "TypeSafe fast judgments (Experimental)",
             "Off by default. Answers narrow yes/no questions about a minute of "
@@ -1105,7 +1116,7 @@ class SettingsDialog(QDialog):
             "Spoken instructions (Experimental)",
             "\"Note taker, mark that as a decision\", \"…add an action item\", "
             "\"…put that in the notes\", \"…new topic: budget\". Only segments "
-            "naming the assistant are judged; results land as proposed items.",
+            "naming the assistant are judged. Recap updates notes; \"replace X with Y\" applies a reversible transcript correction.",
             _design_icon("stack-slate.svg"),
         )
         self.typesafe_voice_commands_check = (
@@ -1119,6 +1130,20 @@ class SettingsDialog(QDialog):
                 SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, bool(checked)
             )
         )
+        self.typesafe_feature_tiles = {}
+        for feature, key, title, description in (
+            ("citations", SettingsKey.TYPESAFE_CITATIONS_ENABLED, "Advisory citation checks",
+             "Send generated claims and their cited transcript excerpts to TypeSafe/Jev. Flags weak evidence without changing the claim."),
+            ("semantic_search", SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED, "Semantic history search",
+             "Send your search query and shortlisted excerpts from cloud-enabled past meetings to TypeSafe/Jev to rank by meaning. Keyword search stays available."),
+            ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
+             "Send a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
+            ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
+             "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments and numbers. Click a pulse to play that moment."),
+        ):
+            tile = SettingTile(title, description, _design_icon("bolt-green.svg"))
+            tile.checkbox.toggled.connect(lambda checked, setting=key: self._persist(setting, bool(checked)))
+            self.typesafe_feature_tiles[feature] = tile
         self._tile_group(
             layout,
             "Fast judgments",
@@ -1126,6 +1151,7 @@ class SettingsDialog(QDialog):
                 self.typesafe_enabled_tile,
                 self.typesafe_topic_shift_tile,
                 self.typesafe_voice_commands_tile,
+                *self.typesafe_feature_tiles.values(),
             ],
             columns=3,
             intro=(
@@ -1176,7 +1202,7 @@ class SettingsDialog(QDialog):
             "Review uncertain insights at the end (Experimental)",
             "Optional, for new meetings. Sends relevant transcript excerpts, speaker names, "
             "and insights to TypeSafe to select a few questions. No audio is sent. "
-            "Requires cloud intelligence, TypeSafe fast judgments under Intelligence, "
+            "Requires cloud intelligence, TypeSafe fast judgments on the Fast judgments page, "
             "and a TypeSafe API key (Settings → API keys or TYPESAFE_API_KEY).",
             _design_icon("check-green.svg"),
         )
@@ -2329,6 +2355,7 @@ class SettingsDialog(QDialog):
             self.typesafe_topic_shift_tile,
             self.typesafe_voice_commands_tile,
             self.cleanup_sensitivity_gate_tile,
+            *self.typesafe_feature_tiles.values(),
         ):
             tile.setEnabled(enabled)
         if not enabled:
@@ -2673,6 +2700,9 @@ class SettingsDialog(QDialog):
         self.typesafe_voice_commands_check.setChecked(
             settings.get(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, False) is True
         )
+        from services.settings import resolve_typesafe_feature_enabled
+        for feature, tile in self.typesafe_feature_tiles.items():
+            tile.checkbox.setChecked(resolve_typesafe_feature_enabled(feature, settings))
         self._update_typesafe_feature_tiles()
         self.meeting_context_folder_check.setChecked(
             resolve_meeting_context_folder_enabled(settings)

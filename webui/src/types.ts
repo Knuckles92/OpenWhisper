@@ -69,12 +69,22 @@ export interface InsightReviewState {
   questions: ReviewQuestion[];
 }
 
+export interface HighlightPulse {
+  id: string;
+  kind: 'decision' | 'disagreement' | 'commitment' | 'number';
+  start_s: number;
+  segment_id: string;
+  probability: number;
+  text: string;
+}
+
 export interface CardItem {
   id: string;
   card: CardKey;
   text: string;
   data: Record<string, unknown>;
   review?: InsightAssessment;
+  citation_check?: {status: string; revision: number; confidence?: number | null};
   status: ItemStatus;
   author_type: string;
   author_id: string | null;
@@ -174,6 +184,8 @@ export interface MeetingStateDoc {
   /** Enabled post-meeting report views. Legacy snapshots omit this. */
   report_views?: string[];
   insight_review?: Partial<InsightReviewState>;
+  live_highlights?: HighlightPulse[];
+  voice_feedback?: {message?: string; at?: string};
 }
 
 export interface Segment {
@@ -279,6 +291,8 @@ export const ops = {
 };
 
 export type Effect =
+  | { entity: 'live_highlights'; pulses: HighlightPulse[] }
+  | { entity: 'voice_feedback'; feedback: {message: string; at: string} }
   | { entity: 'review'; review: InsightReviewState; items: CardItem[] }
   | { entity: 'item'; item: CardItem }
   | { entity: 'topic'; topic: TopicState }

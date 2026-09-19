@@ -60,6 +60,8 @@ export function applyEffect(doc: MeetingStateDoc, effect: Effect): MeetingStateD
   const next = { ...doc, participants: { ...doc.participants }, cards: { ...doc.cards } };
 
   switch (effect.entity) {
+    case 'live_highlights': return {...next, live_highlights: effect.pulses};
+    case 'voice_feedback': return {...next, voice_feedback: effect.feedback};
     case 'review': {
       let updated: MeetingStateDoc = { ...next, insight_review: effect.review };
       for (const item of effect.items) updated = applyEffect(updated, { entity: 'item', item });

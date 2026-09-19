@@ -579,10 +579,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/search")
-    async def api_search(token: str = "", q: str = "") -> Dict[str, Any]:
+    async def api_search(token: str = "", q: str = "", mode: str = "keyword") -> Dict[str, Any]:
         await _require(token, host_only=True)
-        results = await asyncio.to_thread(repository.search_transcripts, q)
-        return {"results": results}
+        if mode not in ("keyword", "semantic"):
+            raise HTTPException(status_code=400, detail="invalid search mode")
+        if mode == "keyword":
+            return {"results": await asyncio.to_thread(repository.search_transcripts, q), "mode": "keyword", "message": ""}
+        from meeting.semantic_search import search_history
+        return await asyncio.to_thread(search_history, repository, q, semantic=mode == "semantic")
 
     @app.get("/api/events")
     async def api_events(token: str = "", before_seq: Optional[int] = None,

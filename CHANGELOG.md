@@ -11,6 +11,8 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 ## [2.6.02] - 2026-09-18
 
 ### Added
+- Optional advisory citation badges, semantic history search, open questions radar, and clickable live highlight pulses, under Meeting Mode → Fast judgments. Each feature is off by default and describes its TypeSafe/Jev text sharing.
+- Spoken “recap” requests now generate a cited live note. Explicit “replace X with Y” transcript commands create reversible spoken correction notes, with dashboard feedback.
 - **Experimental TypeSafe fast judgments** (Settings → Meeting Mode → Intelligence, off by default; key under API keys as `TYPESAFE_API_KEY`). A shared client asks a decision model narrow yes/no and multiple-choice questions about short transcript excerpts in about 0.2 s and never generates text. Every judgment falls back to the existing deterministic behaviour when disabled, unkeyed, or unanswered, and nothing is sent while a meeting's cloud intelligence is off.
 - **Semantic topic-change trigger** for early checkpoints. Replaces the content-word overlap rule when TypeSafe is on; on human-labelled AMI meetings it doubled the precision of early checkpoints at similar recall.
 - **Spoken instructions to the note taker.** Say "note taker, mark that as a decision", "…add that as an action item", "…put that in the notes", or "…new topic: budget". Only segments that name the assistant are judged; results land as proposed items citing the spoken segments.

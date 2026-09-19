@@ -272,6 +272,9 @@ def item_effect(state, item):
 
 
 def invalidate_checks(state):
+    for items in state.cards.values():
+        for item in items:
+            item.citation_check = {}
     review = state.insight_review
     if not review.get("enabled"):
         return

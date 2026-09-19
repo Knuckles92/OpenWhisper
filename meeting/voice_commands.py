@@ -14,8 +14,8 @@ evidence. Two gates keep ordinary speech out:
 
 Applied ops use the ``system`` actor with ``voice_command`` attribution and
 land as ``proposed`` items, so a mistaken trigger is one click to remove and
-never masquerades as a human-confirmed item. Recap and transcript-fix
-commands are recognised but not yet acted on: both need generated text.
+never masquerades as a human-confirmed item. Recaps use the existing note
+agent; explicit term corrections remain reversible source-backed notes.
 """
 from __future__ import annotations
 
@@ -45,8 +45,6 @@ COMMAND_CARDS: Mapping[str, str] = {
     "mark_action": "action_items",
     "note_this": "key_points",
 }
-#: Recognised but not applied in this version.
-UNSUPPORTED_COMMANDS = frozenset({"recap", "fix_transcript"})
 _TOPIC_LEAD_INS = (
     r"new topic(?: is)?", r"the topic is(?: now)?", r"topic is(?: now)?",
     r"set the topic to", r"set topic to", r"we're moving on to",
@@ -154,7 +152,8 @@ class VoiceCommandListener:
                  cloud_enabled: Optional[Callable[[], bool]] = None,
                  confidence: float = VOICE_COMMAND_CONFIDENCE,
                  on_applied: Optional[Callable[[str, List[Any]], None]] = None,
-                 executor: Optional[ThreadPoolExecutor] = None) -> None:
+                 executor: Optional[ThreadPoolExecutor] = None,
+                 on_command: Optional[Callable] = None) -> None:
         self._store = store
         self._judge = judge
         self._names = tuple(names)
@@ -162,6 +161,7 @@ class VoiceCommandListener:
         self._cloud_enabled = cloud_enabled
         self._confidence = float(confidence)
         self._on_applied = on_applied
+        self._on_command = on_command
         self._executor = executor or ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="voice-command",
         )
@@ -190,6 +190,8 @@ class VoiceCommandListener:
             if not mentions_assistant(text, self._pattern):
                 continue
             with self._lock:
+                if str(row.get("id")) in self._command_ids:
+                    continue
                 self._command_ids.append(str(row.get("id")))
                 excluded = list(self._command_ids)
             try:
@@ -228,8 +230,11 @@ class VoiceCommandListener:
         if answer is None or answer.choice == "none" or answer.confidence < self._confidence:
             logger.debug("Voice command not applied: %s", answer)
             return None
-        if answer.choice in UNSUPPORTED_COMMANDS:
-            logger.info("Voice command %r recognised but not supported yet", answer.choice)
+        if self._closed or (self._cloud_enabled is not None and not self._cloud_enabled()):
+            return None
+        if answer.choice in ("recap", "fix_transcript"):
+            if self._on_command is not None:
+                return self._on_command(answer.choice, row, previous)
             return None
         ops = build_ops(answer.choice, row, referent_rows(previous, row, exclude_ids=excluded))
         if not ops:

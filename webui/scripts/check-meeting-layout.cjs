@@ -12,6 +12,7 @@ const participant = { id: 'me', display_name: long, kind: 'me', name_source: 'hu
 const segments = Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, meeting_id: meeting.id, channel: 'mic', start_s: i * 20, end_s: i * 20 + 15, text: `Discussion ${i}: ${long}`, speaker_participant_id: 'me', speaker_source: 'human', speaker_pinned: false }));
 const cards = Object.fromEntries(['key_points','decisions','action_items','risks','timeline','live_notes','user_notes'].map(card => [card, [{ id: card, card, text: `A planning point with ${long}`, data: { title: title, owner_id: 'me' }, status: 'confirmed', author_type: 'human', author_id: 'me', pinned: true, revision: 1, evidence: ['s1'], created_at: '2026-09-07T18:49:10Z', updated_at: '2026-09-07T18:49:10Z' }]]));
 const state = { meeting_id: meeting.id, seq: 0, status: 'ended', title, cloud_enabled: true, intelligence_online: true, diarization_available: true, topic: { current: title, history: [] }, rolling_summary: `Planning the next release. ${long}`, rolling_summary_evidence: [], capture: { mic_available: true, loopback_available: true, message: '' }, participants: { me: participant }, cards, questions: [], report_views: ['ribbon','brief','signal'] };
+state.live_highlights = ['decision','disagreement','commitment','number'].map((kind,i)=>({id:'pulse'+i,kind,start_s:20+i*45,segment_id:'s'+i,text:'A source-backed highlight',probability:.95}));
 const dist = path.resolve(__dirname, '../dist');
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -20,7 +21,7 @@ const server = http.createServer((req, res) => {
     if (url.pathname === '/api/session') result = { role: 'host', state, meeting, urls: {} };
     else if (url.pathname === '/api/meetings') result = Array.from({ length: 30 }, (_, i) => ({ ...meeting, id: i ? `m${i}` : meeting.id, title: i === 1 ? long : title }));
     else if (url.pathname.endsWith('/transcript')) result = { items: segments, next_cursor: null };
-    else if (url.pathname === '/api/search') result = [{ meeting_id: meeting.id, segment_id: 's1', text: long }];
+    else if (url.pathname === '/api/search') result = {results:[{ meeting_id: meeting.id, segment_id:'s1', title:'Launch planning', start_s:20, text:long }], mode:'semantic', message:'Synthetic semantic results'};
     else if (url.pathname.startsWith('/api/meetings/')) result = { meeting, state, segments, transcript_next_cursor: null };
     else result = [];
     res.setHeader('Content-Type', 'application/json');
@@ -82,6 +83,7 @@ const server = http.createServer((req, res) => {
       await page.goto(base + '/m/test');
       await page.locator('.card-add-row').waitFor();
       await check(`${width}px live meeting`);
+      if (process.env.UI_SCREENSHOTS && [1920,390].includes(width)) await page.screenshot({path:path.join(process.env.UI_SCREENSHOTS,`live-${width}.png`)});
       state.status = 'ended'; meeting.status = 'ended';
       await page.goto(base + '/m/test');
       await page.locator('.report-sheet').waitFor();

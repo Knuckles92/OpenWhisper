@@ -74,6 +74,7 @@ class CardItem:
     updated_at: str = field(default_factory=now_iso)
 
     review: Dict[str, Any] = field(default_factory=dict)
+    citation_check: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def protected(self) -> bool:
@@ -89,6 +90,7 @@ class CardItem:
             "evidence": list(self.evidence),
             "created_at": self.created_at, "updated_at": self.updated_at,
             "review": deepcopy(self.review),
+            "citation_check": deepcopy(self.citation_check),
         }
 
     @classmethod
@@ -96,6 +98,7 @@ class CardItem:
         return cls(
             id=d["id"], card=d["card"], text=d.get("text", ""),
             review=dict(d.get("review") or {}),
+            citation_check=dict(d.get("citation_check") or {}),
             data=dict(d.get("data") or {}), status=d.get("status", "proposed"),
             author_type=d.get("author_type", "agent"),
             author_id=d.get("author_id"),
@@ -554,6 +557,8 @@ class MeetingState:
     )
 
     insight_review: Dict[str, Any] = field(default_factory=dict)
+    live_highlights: List[Dict[str, Any]] = field(default_factory=list)
+    voice_feedback: Dict[str, Any] = field(default_factory=dict)
 
     def find_item(self, item_id: str) -> Optional[CardItem]:
         """Locate a card item by id across all cards."""
@@ -588,6 +593,8 @@ class MeetingState:
             "finalization": self.finalization.to_dict(),
             "report_views": list(self.report_views),
             "insight_review": deepcopy(self.insight_review),
+            "live_highlights": deepcopy(self.live_highlights),
+            "voice_feedback": dict(self.voice_feedback),
         }
 
     @classmethod
@@ -630,6 +637,8 @@ class MeetingState:
             },
             finalization=finalization,
             insight_review=dict(d.get("insight_review") or {}),
+            live_highlights=deepcopy(d.get("live_highlights") or []),
+            voice_feedback=dict(d.get("voice_feedback") or {}),
             report_views=list(d.get("report_views") or ["ribbon", "brief", "signal"]),
         )
         for pid, pd in (d.get("participants") or {}).items():

@@ -1,4 +1,6 @@
 import InsightReview from './InsightReview';
+import HighlightPulseStrip, { pulseTime } from './HighlightPulseStrip';
+import { playMoment } from '../playback';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
@@ -18,8 +20,11 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialMeetingId ?? null);
   const [query, setQuery] = useState('');
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('semantic');
+  const searchGeneration = useRef(0);
   const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
   const [searchStatus, setSearchStatus] = useState('');
+  const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -135,24 +140,28 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
   }, [onClose, pendingDeleteId]);
 
   const runSearch = async () => {
+    if (searching) return;
+    const generation = ++searchGeneration.current;
     const q = query.trim();
     if (!q) {
       setSearchResults([]);
       setSearchStatus('');
       return;
     }
+    setSearching(true);
     setSearchStatus('Searching meeting transcripts…');
     try {
-      const results = await api.search(token, q);
-      setSearchResults(results);
-      setSearchStatus(
-        results.length === 1
-          ? '1 meeting transcript result.'
-          : `${results.length} meeting transcript results.`,
-      );
+      const response = await api.searchHistory(token, q, searchMode);
+      if (generation !== searchGeneration.current) return;
+      setSearchResults(response.results);
+      setError(null);
+      setSearchStatus(`${response.results.length} results. ${response.message || ''}`);
     } catch (err) {
+      if (generation !== searchGeneration.current) return;
       setError(err instanceof Error ? err.message : 'Search failed');
       setSearchStatus('Meeting transcript search failed.');
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -339,22 +348,27 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
 
         <div className="history-detail-grid">
           <div className="history-sidebar-column no-print">
+            <label className="search-mode">Search by
+              <select value={searchMode} aria-label="Search mode" onChange={e => { ++searchGeneration.current; setSearchStatus(''); setSearchMode(e.target.value as 'keyword' | 'semantic'); }}>
+                <option value="semantic">Meaning</option><option value="keyword">Keywords</option>
+              </select>
+            </label>
             <div className="history-search">
               <input
                 type="search"
-                placeholder="Search transcripts…"
+                placeholder="What did we decide about…?"
                 aria-label="Search meeting transcripts"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => { ++searchGeneration.current; setSearchStatus(''); setQuery(e.target.value); }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') runSearch();
                 }}
               />
-              <button type="button" className="primary" onClick={runSearch}>
+              <button type="button" className="primary" disabled={searching} onClick={runSearch}>
                 Search
               </button>
             </div>
-            <p className="sr-only" role="status" aria-live="polite">
+            <p className="search-status" role="status" aria-live="polite">
               {searchStatus}
             </p>
 
@@ -363,11 +377,9 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                 <h3 className="card-section-title">Search results ({searchResults.length})</h3>
                 {searchResults.map((row, i) => (
                   <button key={i} type="button" className="search-hit" onClick={() => selectSearchResult(row)}>
-                    {Object.entries(row).map(([k, v]) => (
-                      <div key={k}>
-                        <strong>{k}:</strong> {String(v)}
-                      </div>
-                    ))}
+                    <strong>{String(row.title || 'Untitled meeting')}</strong>
+                    <span>{pulseTime(Number(row.start_s) || 0)} · {String(row.started_at || '').slice(0, 10)}</span>
+                    <p>{String(row.snippet || row.text || '')}</p>
                   </button>
                 ))}
               </div>
@@ -466,6 +478,10 @@ export default function HistoryPane({ token, initialMeetingId, onClose }: Histor
                   </div>
                 </div>
 
+                {detail && <HighlightPulseStrip pulses={detail.live_highlights ?? []} onSelect={pulse => {
+                  setHighlightSegmentId(pulse.segment_id);
+                  playMoment(audioRef.current, pulse.start_s);
+                }} />}
                 <div className="history-actions-bar no-print">
                   <div className="history-action-group">
                     <span className="history-action-group-label">Export:</span>

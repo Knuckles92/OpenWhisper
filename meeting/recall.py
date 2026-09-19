@@ -122,9 +122,10 @@ def _search_meetings(
     search = getattr(repository, "search_transcripts", None)
     if not callable(search):
         return _disabled("Past-meeting recall is not available.")
-    rows = search(
-        cleaned, exclude_meeting_id=current_meeting_id or None, limit=limit,
-    ) or []
+    from meeting.semantic_search import search_history
+    result = search_history(repository, cleaned, semantic=True,
+                            exclude_meeting_id=current_meeting_id or None, limit=limit)
+    rows = result["results"]
     return _format_hits(rows, limit=limit, current_meeting_id=current_meeting_id)
 
 

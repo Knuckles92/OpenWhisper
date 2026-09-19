@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ops, type CardItem, type CardKey, type MeetingStateDoc, type Op } from '../types';
 import { CAPTURE_TAGS, selectSpotlightItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
+import CitationBadge from './CitationBadge';
 
 interface SpotlightRowProps {
   cards: MeetingStateDoc['cards'];
@@ -108,6 +109,7 @@ function SpotlightCard({
           {item.text}
         </p>
       )}
+      <CitationBadge item={item} />
       <EvidenceRow ids={item.evidence} onClick={onEvidenceClick} />
       <div className="spotlight-foot">
         <span className="spotlight-meta">

@@ -135,6 +135,10 @@ class SettingsKey:
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
+    TYPESAFE_CITATIONS_ENABLED: Final[str] = "typesafe_citations_enabled"
+    TYPESAFE_SEMANTIC_SEARCH_ENABLED: Final[str] = "typesafe_semantic_search_enabled"
+    TYPESAFE_QUESTION_RADAR_ENABLED: Final[str] = "typesafe_question_radar_enabled"
+    TYPESAFE_HIGHLIGHTS_ENABLED: Final[str] = "typesafe_highlights_enabled"
     TYPESAFE_TOPIC_SHIFT_ENABLED: Final[str] = "typesafe_topic_shift_enabled"
     TYPESAFE_VOICE_COMMANDS_ENABLED: Final[str] = (
         "typesafe_voice_commands_enabled"
@@ -1047,6 +1051,18 @@ def resolve_typesafe_enabled(
     meeting features additionally require the meeting's cloud consent.
     """
     return _resolve_bool_setting(settings, SettingsKey.TYPESAFE_ENABLED, False)
+
+
+def resolve_typesafe_feature_enabled(feature: str, settings=None) -> bool:
+    keys = {
+        "citations": SettingsKey.TYPESAFE_CITATIONS_ENABLED,
+        "semantic_search": SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED,
+        "question_radar": SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED,
+        "highlights": SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED,
+    }
+    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
+        settings, keys[feature], False,
+    )
 
 
 def resolve_typesafe_topic_shift_enabled(

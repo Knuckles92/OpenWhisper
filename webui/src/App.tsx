@@ -1,4 +1,6 @@
 import InsightReview from './components/InsightReview';
+import HighlightPulseStrip from './components/HighlightPulseStrip';
+import { playMoment } from './playback';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api } from './api';
 import SelectionInsight from './components/SelectionInsight';
@@ -277,6 +279,11 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             </aside>
 
             <div className="workspace-center">
+              {ui.state.voice_feedback?.message && <p className="voice-feedback" role="status">{ui.state.voice_feedback.message}</p>}
+              <HighlightPulseStrip pulses={ui.state.live_highlights ?? []} onSelect={pulse => {
+                void handleEvidenceClick(pulse.segment_id);
+                playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));
+              }} />
               {isHost && showActivity && (
                 <ActivityPane
                   token={token}

@@ -144,6 +144,10 @@ export const api = {
     });
   },
 
+  searchHistory(token: string, query: string, mode: 'keyword' | 'semantic'): Promise<{results: SearchRow[]; mode: string; message: string}> {
+    return request(`/api/search?${qs({token, q: query, mode})}`);
+  },
+
   async search(token: string, query: string): Promise<SearchRow[]> {
     const data = await request<unknown>(`/api/search?${qs({ token, q: query })}`);
     return asArray<SearchRow>(data, 'results', 'items');

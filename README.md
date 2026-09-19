@@ -126,6 +126,8 @@ Use **Help → Check for Updates**. Windows applies an in-app update or opens se
 
 For meetings, open **Meeting Mode**. After local transcription finishes, **Continue in the background** lets you start another meeting while cleanup and reports finish; results remain in Past Meetings. Optional [insight review](docs/meeting-insight-review.md) uses TypeSafe to ask a few questions about uncertain commitments, owners, deadlines, or decisions; your answers update the insights and notes.
 
+Optional [fast judgments](docs/typesafe-fast-judgments.md) add advisory citation checks, meaning-based history search, an open-question radar, and clickable highlight pulses. Enable them individually under **Meeting Mode → Fast judgments**. Spoken instructions also support recaps and reversible term corrections.
+
 ### Hotkeys
 
 Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Hotkeys**. Toggle starts and stops recording with successive presses; push-and-hold records until you release the shortcut.

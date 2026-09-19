@@ -3,6 +3,7 @@ import { isStuckToEnd, workspaceScroller } from '../scroll';
 import { ops, type CardItem, type Op } from '../types';
 import { sortedNoteItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
+import CitationBadge from './CitationBadge';
 
 interface NoteRequestResult {
   ok: boolean;
@@ -153,6 +154,7 @@ function NoteBlock({
           {item.text}
         </p>
       )}
+      <CitationBadge item={item} />
       <EvidenceRow
         ids={item.evidence}
         onClick={onEvidenceClick}

@@ -2,7 +2,7 @@
 
 **Experimental:** semantic topic changes, spoken instructions, and sensitive-dictation screening are available for testing. Their behavior and thresholds may change.
 
-Added September 18, 2026. Three optional features share one small client for TypeSafe's System One model (`jev-1.13.0`): a decision service that answers narrow typed questions about short text in about 0.2 s and never generates prose. Everything here is off by default, needs a `TYPESAFE_API_KEY` (Settings → API keys → TypeSafe), and degrades to the previous deterministic behaviour whenever a judgment is disabled, unkeyed, or unanswered.
+Added September 18, 2026. Optional features share one small client for TypeSafe's System One model (`jev-1.13.0`): a decision service that answers narrow typed questions about short text in about 0.2 s and never generates prose. Everything here is off by default, needs a `TYPESAFE_API_KEY` (Settings → API keys → TypeSafe), and degrades to the previous deterministic behaviour whenever a judgment is disabled, unkeyed, or unanswered.
 
 Evidence for the thresholds is in [the human-label benchmark](typesafe-human-label-benchmark.md); the earlier synthetic and LLM-judged work is in [typesafe-experiments.md](typesafe-experiments.md) and [typesafe-api-benchmark.md](typesafe-api-benchmark.md). The live ledger, insight verification and end-of-meeting review described in [typesafe-live-state.md](typesafe-live-state.md) are separate work and can reuse the client below.
 
@@ -10,7 +10,7 @@ Evidence for the thresholds is in [the human-label benchmark](typesafe-human-lab
 
 | Feature | Setting | Where it acts | Fallback |
 |---|---|---|---|
-| Master switch | Meeting Mode → Intelligence → TypeSafe fast judgments | gates every judgment | everything below stays off |
+| Master switch | Meeting Mode → Fast judgments → TypeSafe fast judgments | gates every judgment | everything below stays off |
 | Semantic topic changes | same page (on once the master switch is on) | `CheckpointScheduler._detect_topic_shift` | content-word Jaccard < 0.15 |
 | Spoken instructions | same page (off) | `MeetingEngine._on_chunk_result` → `meeting/voice_commands.py` | none; nothing is applied |
 | Sensitive-dictation gate | Dictation → AI cleanup (off) | `TranscriptCleanup.cleanup` before the remote call | cleanup proceeds |
@@ -34,7 +34,7 @@ Two gates, in this order:
 
 The first gate exists because the judge alone, while producing zero false positives on 884 real segments, does fire on person-directed requests such as "can you write that down for me in your notebook" (0.98). With the wake name required, 18 of the 24 benchmarked command phrasings still trigger and none of the person-directed ones do.
 
-Applied ops use the `system` actor with `voice_command` attribution and land as `proposed` items, never as human-edited or confirmed, so a mistake is one click to remove and cannot masquerade as something the user typed. Decisions and action items copy the one or two segments spoken within 20 s before the command and cite them plus the command segment as evidence. `note_this` writes a key point. `set_topic` copies the phrase after a lead-in such as "new topic:", "moving on to", "set the topic to" and does nothing when no phrase follows. `recap` and `fix_transcript` are recognised and logged but not applied: both need generated text, which belongs to the LLM agent.
+Applied ops use the `system` actor with `voice_command` attribution and land as `proposed` items, never as human-edited or confirmed, so a mistake is one click to remove and cannot masquerade as something the user typed. Decisions and action items copy the one or two segments spoken within 20 s before the command and cite them plus the command segment as evidence. `note_this` writes a key point. `set_topic` copies the phrase after a lead-in such as "new topic:", "moving on to", "set the topic to" and does nothing when no phrase follows. `recap` queues a request on the existing note agent and adds a cited Recap block to live notes. The dashboard shows queued, completed, or unavailable feedback. `fix_transcript` accepts explicit “replace X with Y”, “change X to Y”, and “I said Y, not X” forms only when X occurs in recent speech. It adds a system-attributed, removable term-correction note; the raw transcript stays intact.
 
 Judgment and application run on one background thread so a slow answer never delays a transcript commit. The engine emits a `voice_command` event with applied and rejected counts.
 
@@ -58,3 +58,16 @@ Before `TranscriptCleanup` sends dictation to a remote model it asks one Noul: d
 - Per-occurrence gating of term corrections (measured 87% vs 53% for replace-all) is deferred: corrections are applied server-side in two places and mirrored in the browser, so a server-only gate would make the notes disagree with the live transcript.
 - Agenda coverage tracking needs an agenda concept and a dashboard panel; the benchmark supports it (63% per-window accuracy, exact coverage sets on three of four meetings) but it is a feature, not a switch.
 - Text-only choice between ASR hypotheses and text-only artifact detection were tested and rejected.
+
+## Advisory citations, semantic search, radar, and pulses
+
+These four controls are **off by default** on **Meeting Mode → Fast judgments**. Each describes the text sent to TypeSafe/Jev and also requires the master switch and a key. Live features additionally require meeting cloud intelligence. They do not enable themselves when a meeting starts.
+
+- **Advisory citation checks** annotate generated cards and live notes as supported, conflicting, unsupported, uncertain, missing, or unavailable. They check the cited speech, not external truth. Checks never reject, rewrite, confirm, or remove insights. Edits and source changes invalidate old checks; provider failures leave the insight intact. This is separate from the optional end-of-meeting clarification questionnaire.
+- **Semantic history search** adds Meaning / Keywords to Past Meetings. Broad local keyword matches and diverse recent passages form a shortlist of at most 48 passages; Jev ranks relevance, including paraphrases. This is bounded reranking, not an exhaustive embedding index: older passages with no lexical overlap can be omitted. Only cloud-enabled saved meetings enter remote ranking. Results retain meeting and timestamp links. Unavailable or disabled ranking visibly falls back to keyword results. Agent recall uses the same ranking when its separate past-recall opt-in is enabled.
+- **Open questions radar** copies substantive unanswered questions from each completed transcript minute into the existing question inbox. Jev filters rhetorical, already answered, and duplicate questions. It respects the seven-question cap and dismissed questions. Later source-selected answers are suggestions for the host to accept; the radar does not automatically close questions.
+- **Live highlight pulses** mark decisions, disagreements, dated commitments, and meaningful numbers in four labelled, colored lanes. One request per completed minute batches four Noul judgments and source-anchor Choices, plus radar questions when enabled. Clicking a pulse refreshes the live audio snapshot, seeks to that timestamp, and highlights the transcript. Pulses persist in history; playback requires retained audio. Partial minutes and minutes skipped behind a slow service do not produce pulses.
+
+Requests are bounded and run outside audio capture. A slow service cannot build an unbounded minute queue. Highlight thresholds (0.8), radar thresholds (0.85), and citation confidence (0.7) are initial product policies, **not newly benchmarked accuracy guarantees**. The new combined workflow's live accuracy, latency, and meeting-hour cost have not been measured; the proposed $0.02/hour is a target, not a verified price for this implementation.
+
+Offline coverage includes consent and revocation, source/revision invalidation, persistence, queue bounds, literal corrections and undo, recap routing, semantic fallback, pulse click anchors, and playback metadata races.

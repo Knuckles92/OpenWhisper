@@ -37,7 +37,7 @@ class TypeSafeReviewer:
         if consent != CONSENT:
             raise ReviewUnavailable("Enable TypeSafe sharing in Meeting settings before reviewing.")
         if not resolve_typesafe_enabled():
-            raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Intelligence.")
+            raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
         try:
             with httpx.Client(timeout=httpx.Timeout(12.0, connect=5.0), follow_redirects=False) as client:
                 response = client.post(
@@ -193,7 +193,7 @@ def run_review(store, repository, run_id, reviewer=None):
         review = snapshot["insight_review"]
         if reviewer is None:
             if not resolve_typesafe_enabled():
-                raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Intelligence.")
+                raise ReviewUnavailable("TypeSafe fast judgments is off. Enable it under Meeting settings → Fast judgments.")
             from services.text_llm import lookup_env_value
             key = lookup_env_value("TYPESAFE_API_KEY")
             if not key:

@@ -27,6 +27,7 @@ from ui_qt.dialogs.settings_dialog import (
     MEETING_AFTER,
     MEETING_DASHBOARD,
     MEETING_INTELLIGENCE,
+    MEETING_FAST,
     RECORDING,
     SettingsDialog,
 )
@@ -56,6 +57,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     CLEANUP_RULES,
                     CLEANUP_PROFILES,
                     MEETING_INTELLIGENCE,
+                    MEETING_FAST,
                     MEETING_AFTER,
                     MEETING_DASHBOARD,
                     API_KEYS,
@@ -98,8 +100,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.recording_retention_combo,
             )
             intelligence = dialog._pages[MEETING_INTELLIGENCE]
-            # Two search tiles plus the three TypeSafe fast-judgment tiles.
-            self.assertEqual(len(intelligence.findChildren(SettingTile)), 5)
+            self.assertEqual(len(intelligence.findChildren(SettingTile)), 2)
+            self.assertEqual(len(dialog._pages[MEETING_FAST].findChildren(SettingTile)), 7)
             self.assertIs(
                 dialog.meeting_context_folder_path.parentWidget(),
                 dialog.meeting_context_folder_tile.body,

@@ -31,7 +31,8 @@ export function termRules(notes: readonly CardItem[] | undefined): Map<string, s
   const rules = new Map<string, string>();
   for (const item of notes ?? []) {
     const data = item.data ?? {};
-    if (item.status === 'removed' || item.author_type !== 'user' || data.kind !== 'term_correction') continue;
+    const spoken = item.author_type === 'system' && item.author_id === 'voice_command' && data.source === 'voice_command' && data.command === 'fix_transcript';
+    if (item.status === 'removed' || (item.author_type !== 'user' && !spoken) || data.kind !== 'term_correction') continue;
     if (typeof data.selected_text !== 'string' || typeof data.replacement !== 'string') continue;
     const source = data.selected_text.trim();
     const target = data.replacement.trim();

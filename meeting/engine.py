@@ -224,6 +224,7 @@ class MeetingEngine:
             context: Short description of the teardown path, for logging.
         """
         self._shutdown_voice_commands()
+        self._shutdown_fast_features(signals_only=True)
         asr = self._asr
         if asr is None:
             return True
@@ -526,6 +527,7 @@ class MeetingEngine:
             if results and results[0].ok and results[0].effect:
                 self._me_participant_id = results[0].effect["participant"]["id"]
 
+            self._start_fast_features()
             self.clock.start()
             self._start_heartbeat()
 
@@ -1603,6 +1605,7 @@ class MeetingEngine:
                 )
             )
         # Best-effort: never leave a durable finalization=running across exit.
+        self._shutdown_fast_features()
         self._interrupt_finalization_on_shutdown()
         self.revoke_agent_writes()
         server = self._server
@@ -2286,6 +2289,9 @@ class MeetingEngine:
                     listener.observe(rows)
                 except Exception:
                     logger.exception("Voice command observe failed")
+        signals = getattr(self, "_live_signals", None)
+        if signals is not None:
+            signals.observe(rows)
         self._maybe_revise_transcript(chunk)
 
     def _maybe_revise_transcript(self, chunk: SpooledChunk) -> None:
@@ -2356,6 +2362,9 @@ class MeetingEngine:
                         row["speaker_source"] = seg.speaker_source
                         break
 
+        verifier = getattr(self, "_citation_verifier", None)
+        if verifier is not None:
+            verifier.invalidate([r["id"] for r in items] + removed_ids)
         payload = {"items": items, "removed_ids": removed_ids}
         self._emit("segments", payload)
         self._broadcast({"type": "segments", **payload})
@@ -2786,6 +2795,7 @@ class MeetingEngine:
                 results[0].reason if results else "cloud state update failed"
             )
         if enabled:
+            self._start_fast_features()
             self.allow_agent_writes()
             self._set_finalization("pending", emit=False)
             self._maybe_start_intelligence()
@@ -2876,6 +2886,66 @@ class MeetingEngine:
     # the deterministic behaviour in place. Nothing is sent while the host has
     # cloud intelligence off.
 
+    def _fast_features_allowed(self):
+        from services.settings import resolve_typesafe_enabled
+        return self._cloud_enabled_now() and resolve_typesafe_enabled()
+
+    def _start_fast_features(self):
+        if self.store is None or getattr(self, "_live_signals", None) is not None:
+            return
+        judge = self._typesafe_judge()
+        if judge is None:
+            return
+        from meeting.live_signals import LiveSignals
+        from meeting.citation_verifier import CitationVerifier
+        self._live_signals = LiveSignals(self.store, self.repository, judge, self._fast_features_allowed)
+        self._citation_verifier = CitationVerifier(self.store, self.repository, judge, self._fast_features_allowed)
+
+    def _shutdown_fast_features(self, signals_only=False):
+        for name in (("_live_signals",) if signals_only else ("_live_signals", "_citation_verifier")):
+            worker = getattr(self, name, None)
+            if worker is not None:
+                worker.shutdown()
+                setattr(self, name, None)
+
+    def _voice_feedback(self, message):
+        if self.store is not None:
+            self.store.apply("system", "voice_command", [{"op": "voice_feedback", "message": message}])
+
+    def _apply_spoken_action(self, command, row, previous):
+        if not self._cloud_enabled_now() or self.store is None:
+            return []
+        if command == "fix_transcript":
+            from meeting.voice_actions import correction_op
+            op = correction_op(row, previous)
+            if not op:
+                self._voice_feedback('Correction not applied. Say “note taker, replace X with Y” using a term in the recent transcript.')
+                return []
+            results = self.store.apply("system", "voice_command", [op])
+            self._notify_human_guidance(results)
+            self._on_voice_command_applied(command, results)
+            self._voice_feedback("Transcript correction applied. Remove the spoken correction note to undo it." if any(r.ok for r in results) else "The transcript correction could not be saved.")
+            return results
+        try:
+            future = self.request_note_adjustment(
+                "Add a concise recap of the meeting so far as a new live note headed Recap. "
+                "Cover the requested scope, cite supporting transcript segments, preserve unrelated notes, "
+                "and distinguish proposals from agreements. Spoken request: " + row.get("text", "")[:1000]
+            )
+            self._voice_feedback("Recap requested. It will appear in the live notes.")
+            def finished(done):
+                try:
+                    result = done.result()
+                    count = sum(r.ok for r in (getattr(result, "op_results", None) or []))
+                    message = "Recap added to the live notes." if result.ok and count else "The recap produced no saved notes. Try again from the notes request box."
+                except Exception:
+                    message = "The recap could not finish. Try again from the notes request box."
+                self._voice_feedback(message)
+            future.add_done_callback(finished)
+        except Exception:
+            self._voice_feedback("Recap is unavailable while the note agent is offline.")
+        return []
+
     def _typesafe_judge(self):
         """Shared TypeSafe client for this meeting, or None when disabled or unkeyed."""
         cached = getattr(self, "_typesafe_judge_cache", None)
@@ -2921,6 +2991,10 @@ class MeetingEngine:
 
         return probability
 
+    def _voice_commands_allowed(self):
+        from services.settings import resolve_typesafe_voice_commands_enabled
+        return self._cloud_enabled_now() and resolve_typesafe_voice_commands_enabled()
+
     def _voice_command_listener(self):
         """Lazily build the spoken-instruction listener when enabled, else None."""
         cached = getattr(self, "_voice_commands", None)
@@ -2938,8 +3012,9 @@ class MeetingEngine:
                     from meeting.voice_commands import VoiceCommandListener
                     listener = VoiceCommandListener(
                         self.store, judge, resolve_typesafe_voice_command_names(),
-                        cloud_enabled=self._cloud_enabled_now,
+                        cloud_enabled=self._voice_commands_allowed,
                         on_applied=self._on_voice_command_applied,
+                        on_command=self._apply_spoken_action,
                     )
         except Exception:
             logger.exception("Voice command listener unavailable")

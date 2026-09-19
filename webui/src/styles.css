@@ -3026,3 +3026,26 @@ select {
 .review-corrections { padding: 16px 20px; margin-bottom: 20px; border: 1px solid #a68b51; border-radius: 8px; }
 .review-corrections h3 { margin-top: 0; }
 .review-badge { display: inline-block; font-size: 11px; padding: 2px 6px; border: 1px solid #a68b51; border-radius: 4px; margin-bottom: 6px; }
+
+/* Meeting signals use labels as well as color. */
+.highlight-pulses { padding: 14px 18px; }
+.pulse-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.pulse-heading h3 { margin: 0; font-size: 14px; }
+.pulse-heading > span, .pulse-empty, .search-status { font-size: 12px; color: var(--text-muted, #8997a7); }
+.pulse-lane { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 26px; }
+.pulse-label { font-size: 11px; }
+.pulse-track { position: relative; height: 22px; background: color-mix(in srgb, currentColor 5%, transparent); border-radius: 3px; }
+.pulse-mark { position: absolute; top: 1px; height: 20px; min-width: 12px; width: 12px; padding: 0; border: 0; border-radius: 3px; background: currentColor; cursor: pointer; }
+.pulse-mark:hover, .pulse-mark:focus-visible { transform: scaleY(1.25); outline: 2px solid currentColor; outline-offset: 2px; }
+.pulse-decision { color: #23745f; } .pulse-disagreement { color: #a7442d; }
+.pulse-commitment { color: #75509f; } .pulse-number { color: #28658f; }
+button.pulse-mark:hover:not(:disabled) { background: currentColor; }
+.pulse-scale { display: flex; justify-content: space-between; margin-left: 124px; font-size: 10px; opacity: .65; }
+.voice-feedback { padding: 10px 14px; border-left: 3px solid #79b8e2; font-size: 13px; }
+.citation-badge { display: inline-block; border-radius: 4px; padding: 2px 6px; font-size: 10px; color: var(--text-muted, #8997a7); border: 1px solid currentColor; margin: 4px 0; }
+.citation-supported { color: #23745f; }
+.citation-contradicted, .citation-unsupported, .citation-missing { color: #a7442d; }
+.search-mode { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.search-hit > strong, .search-hit > span { display: block; }
+.search-hit > span { font-size: 11px; opacity: .7; margin: 4px 0; }
+.search-hit > p { margin: 0; }
