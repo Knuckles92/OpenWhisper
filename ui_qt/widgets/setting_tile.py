@@ -52,7 +52,11 @@ class TileBase(QFrame):
             self.icon_label.setPixmap(icon.pixmap(self.ICON_SIZE, self.ICON_SIZE))
         self._row.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignTop)
 
-        text = QVBoxLayout()
+        # A widget boundary propagates wrapped-label size changes through
+        # the top-aligned row without retaining a nested layout height.
+        text_widget = QWidget()
+        text_widget.setObjectName("settingsTileText")
+        text = QVBoxLayout(text_widget)
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(3)
         self.title_label = WrappedLabel(title)
@@ -64,8 +68,7 @@ class TileBase(QFrame):
         # Pin the text to the top instead of adding a stretch: an expanding
         # spacer would make the tile itself expanding, and the page layout
         # would then pad every tile row with the spare height.
-        self._row.addLayout(text, stretch=1)
-        self._row.setAlignment(text, Qt.AlignmentFlag.AlignTop)
+        self._row.addWidget(text_widget, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
         column.addLayout(self._row)
 
         self.body = QWidget()

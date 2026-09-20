@@ -886,7 +886,8 @@ QFrame#settingsTile[kind="notice"]:hover {
     border-color: @warning-tint-border;
 }
 
-QWidget#settingsTileBody {
+QWidget#settingsTileBody,
+QWidget#settingsTileText {
     background-color: transparent;
 }
 
