@@ -24,6 +24,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - Long transcript cleanup uses bounded, overlapping blocks to keep each polishing request manageable.
 
 ### Fixed
+- Settings descriptions refresh their wrapped height after layout changes, preventing clipped text on Linux.
 - Windows microphone capture handles unavailable PortAudio timestamps without discarding audio or inserting silence.
 - Parakeet meetings show live speech previews, and streaming previews preserve every returned event.
 - Meeting pulses recognize spoken budget amounts in requests and reported disagreements involving people outside the meeting. Pulse checks retain queued and revised transcript windows, advance through silence, and catch up after finalization, including the last partial minute.

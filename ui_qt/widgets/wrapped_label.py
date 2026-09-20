@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtWidgets import QLabel
 
 
@@ -16,6 +16,9 @@ class WrappedLabel(QLabel):
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
         self.setWordWrap(True)
+        self._geometry_timer = QTimer(self)
+        self._geometry_timer.setSingleShot(True)
+        self._geometry_timer.timeout.connect(self.updateGeometry)
 
     def hasHeightForWidth(self) -> bool:
         """Report a width-independent height so layouts use the size hints.
@@ -46,4 +49,6 @@ class WrappedLabel(QLabel):
         """Re-report geometry when the wrap width changes."""
         super().resizeEvent(event)
         if event.oldSize().width() != event.size().width():
-            self.updateGeometry()
+            # A parent may still be assigning geometry; invalidate its cached
+            # height after that layout pass has finished.
+            self._geometry_timer.start(0)
