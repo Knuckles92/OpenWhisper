@@ -609,39 +609,48 @@ a {
   margin-top: 12px;
 }
 
-.spotlight-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+/* The top-ranked insights are highlighted in place at the head of the
+   Captured rail rather than duplicated into a second row beside the notes. */
+.capture-lead {
+  margin: 0 -12px 4px;
+  padding: 10px 12px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--leaf) 30%, var(--line));
+  background: color-mix(in srgb, var(--wash) 90%, white);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--leaf) 55%, transparent);
 }
 
-.spotlight-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 18px 20px 16px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--line) 74%, white);
-  background: color-mix(in srgb, var(--paper) 82%, white);
-  backdrop-filter: blur(6px);
-  animation: spotlight-in 480ms ease both;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+.capture-lead > .card-section-title {
+  margin: 0;
 }
 
-.spotlight-card:hover {
-  border-color: color-mix(in srgb, var(--leaf) 28%, var(--line));
-  box-shadow: 0 12px 32px -20px rgba(26, 36, 32, 0.4);
+.capture-lead-ghost {
+  margin: 6px 0 4px;
+  color: var(--soft);
+  font-size: 0.9rem;
 }
 
-.spotlight-card.pinned {
-  border-color: color-mix(in srgb, var(--leaf) 55%, var(--line));
+.card-item.featured {
+  border-top-color: color-mix(in srgb, var(--leaf) 22%, var(--line));
+  animation: capture-lead-in 420ms ease both;
 }
 
-@keyframes spotlight-in {
+.capture-lead .card-item.featured:first-of-type {
+  border-top: none;
+  padding-top: 6px;
+}
+
+.card-item.featured .card-item-text {
+  font-size: 1.02rem;
+  line-height: 1.42;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+@keyframes capture-lead-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -649,100 +658,10 @@ a {
   }
 }
 
-.spotlight-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.spotlight-card-top .capture-tag {
-  margin: 0;
-}
-
-.spotlight-card.proposed .spotlight-card-top .capture-tag::after {
-  content: ' · proposed';
-  font-weight: 600;
+/* De-emphasised divider between the highlighted lead and the full stream. */
+.card-section-title.capture-rest-title {
+  margin: 18px 0 0;
   color: var(--soft);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.spotlight-pin {
-  flex: none;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--leaf);
-  background: var(--confirmed);
-  border-radius: 999px;
-  padding: 3px 9px;
-}
-
-.spotlight-text {
-  margin: 0;
-  font-size: 1.06rem;
-  line-height: 1.42;
-  color: var(--ink);
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  overflow: hidden;
-  cursor: default;
-}
-
-.spotlight-card.pinned .spotlight-text {
-  font-weight: 600;
-}
-
-.spotlight-edit {
-  font-size: 1.02rem;
-}
-
-.spotlight-foot {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.spotlight-meta {
-  font-size: 0.74rem;
-  font-weight: 500;
-  color: var(--soft);
-}
-
-.spotlight-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.spotlight-actions button {
-  font-size: 12px;
-  padding: 4px 10px;
-}
-
-.spotlight-ghost {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 148px;
-  padding: 18px;
-  border-radius: 18px;
-  border: 1px dashed color-mix(in srgb, var(--line) 85%, transparent);
-  color: var(--soft);
-  font-size: 0.9rem;
-  text-align: center;
-}
-
-@media (max-width: 900px) {
-  .spotlight-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 .agent-activity {

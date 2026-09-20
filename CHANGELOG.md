@@ -8,13 +8,24 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.04] - 2026-09-19
+
 ### Added
 - **Quick Record WAVs carry origination date and time** — Saved dictation files now include LIST INFO and Broadcast Wave origination tags, so File Explorer can sort the recordings folder by Media created. Upload File copies of the user's original audio are unchanged.
 - **Speaker identification can be turned off** — Model Manager → Meeting voice now includes Off (Me / Others channel labels only). Meetings skip WeSpeaker clustering and the post-meeting OpenAI pass, and keep microphone as Me and system audio as Others.
 - **Show in Folder** on history cards — right-clicking an entry in the Quick Record history sidebar now offers Show in Folder, which reveals that entry's saved recording in the file manager (selected on Windows and macOS, containing folder elsewhere). The item is greyed out for entries with no recording on disk.
 - **Show in Folder** on past meetings — right-clicking a meeting in the Past Meetings sidebar now offers Show in Folder, which opens that meeting's own recording folder so its audio files are immediately visible. The item is greyed out for meetings whose recordings have been cleared.
+- **Either replay player, on demand** — the conversation rail's audio bar now carries a pop-out button that opens the large replay panel, which previously appeared only after clicking a pulse or the meeting timeline. The panel gained a matching control that hands playback back to the small bar. Both keep the recording exactly where it was, so switching players never restarts or moves the audio; closing the panel still stops it.
+- Meeting replay includes a timeline overview for jumping to recorded speech, and spoken-command help and status feedback make note-taker requests easier to discover and follow.
+
+### Changed
+- **Top insights moved into Captured** — the three-card row that sat between the meeting summary and Meeting Notes is gone. The same ranked insights are now highlighted at the head of the Captured rail under a **Top insights** heading, with the rest of the stream below under **Everything captured**. Nothing is shown twice, the ranking is unchanged, and the centre column is left to the meeting pulses, summary, and notes.
+- Meeting insight review no longer caps the number of clarification questions.
+- Long transcript cleanup uses bounded, overlapping blocks to keep each polishing request manageable.
 
 ### Fixed
+- Windows microphone capture handles unavailable PortAudio timestamps without discarding audio or inserting silence.
+- Parakeet meetings show live speech previews, and streaming previews preserve every returned event.
 - Meeting pulses recognize spoken budget amounts in requests and reported disagreements involving people outside the meeting. Pulse checks retain queued and revised transcript windows, advance through silence, and catch up after finalization, including the last partial minute.
 - Spoken note requests now appear directly in Meeting Notes as soon as the committed command is recognized, with a timestamp and spoken-note label, without waiting for the AI notes pass.
 - Spoken “add a note that…” requests capture the dictated content, including polite and split-segment requests. Spoken notes remain editable by the user and survive AI summary rewrites and finalization cleanup.

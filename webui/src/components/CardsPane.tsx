@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op, type Question } from '../types';
-import { CAPTURE_TAGS, CARD_LABELS, capturedFeedEntries, sortedCardItems } from '../state';
+import { CAPTURE_TAGS, CARD_LABELS, capturedRailFeed, sortedCardItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
 import CitationBadge from './CitationBadge';
 import { QuestionRow } from './QuestionInbox';
@@ -21,6 +21,27 @@ interface CardsPaneProps {
   newestFirst?: boolean;
   /** Interleaved into the newest-first feed when `newestFirst` is set. */
   questions?: Question[];
+  /**
+   * Live rail: lift this many top-ranked insights into a highlighted lead
+   * group above the stream. 0 keeps the rail as one flat feed.
+   */
+  highlightTop?: number;
+  /** Meeting status, for the lead group's empty-state copy. */
+  status?: string;
+  cloudEnabled?: boolean;
+  intelligenceOnline?: boolean;
+}
+
+/** Why the highlighted lead is empty — the rail's only "nothing yet" copy. */
+function leadGhostText(
+  status: string,
+  cloudEnabled: boolean,
+  intelligenceOnline: boolean,
+): string {
+  if (status === 'ending') return 'Wrapping up insights…';
+  if (!cloudEnabled) return 'Enable cloud insights to generate live insights.';
+  if (!intelligenceOnline) return 'Cloud intelligence is offline';
+  return 'Listening for insights…';
 }
 
 function CardItemRow({
@@ -31,6 +52,7 @@ function CardItemRow({
   onUndo,
   undoSeq,
   readOnly = false,
+  featured = false,
 }: {
   item: CardItem;
   tag: string;
@@ -39,6 +61,8 @@ function CardItemRow({
   onUndo?: (seq: number) => Promise<boolean>;
   undoSeq?: number;
   readOnly?: boolean;
+  /** Row sits in the rail's highlighted lead group. */
+  featured?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -81,7 +105,9 @@ function CardItemRow({
   }
 
   return (
-    <div className={`card-item ${statusClass}${item.pinned ? ' pinned' : ''}`}>
+    <div
+      className={`card-item ${statusClass}${item.pinned ? ' pinned' : ''}${featured ? ' featured' : ''}`}
+    >
       <div className="capture-tag">{tag}</div>
       {(item.review?.state === 'provisional' || item.review?.state === 'unsupported') &&
         <span className="review-badge">{item.review.state === 'unsupported' ? 'Needs verification' : 'Provisional'}</span>}
@@ -250,12 +276,17 @@ export default function CardsPane({
   readOnly = false,
   newestFirst = false,
   questions = [],
+  highlightTop = 0,
+  status = 'active',
+  cloudEnabled = true,
+  intelligenceOnline = true,
 }: CardsPaneProps) {
-  const feed = newestFirst
-    ? capturedFeedEntries(cards, questions).filter((entry) =>
-        entry.kind === 'item' ? !readOnly || entry.item.status !== 'removed' : true,
-      )
-    : [];
+  const rail = newestFirst
+    ? capturedRailFeed(cards, questions, highlightTop)
+    : { top: [], rest: [] };
+  const feed = rail.rest.filter((entry) =>
+    entry.kind === 'item' ? !readOnly || entry.item.status !== 'removed' : true,
+  );
 
   const grouped = (
     <>
@@ -278,8 +309,40 @@ export default function CardsPane({
     </>
   );
 
+  const lead = highlightTop > 0 && (
+    <div className="capture-lead">
+      <h4 className="card-section-title">
+        Top insights
+        {rail.top.length > 0 && <span className="card-section-count">{rail.top.length}</span>}
+      </h4>
+      {rail.top.length === 0 ? (
+        <p className="capture-lead-ghost">
+          {leadGhostText(status, cloudEnabled, intelligenceOnline)}
+        </p>
+      ) : (
+        rail.top.map((item) => (
+          <CardItemRow
+            key={item.id}
+            item={item}
+            tag={CAPTURE_TAGS[item.card]}
+            onSendOp={onSendOp}
+            onEvidenceClick={onEvidenceClick}
+            onUndo={onUndo}
+            undoSeq={lastSeqByTarget[item.id]}
+            readOnly={readOnly}
+            featured
+          />
+        ))
+      )}
+    </div>
+  );
+
   const stream = (
     <>
+      {lead}
+      {highlightTop > 0 && feed.length > 0 && (
+        <h4 className="card-section-title capture-rest-title">Everything captured</h4>
+      )}
       {feed.map((entry) =>
         entry.kind === 'item' ? (
           <CardItemRow

@@ -1,10 +1,7 @@
 """Tests for the history card's "Show in Folder" action and its reveal helper."""
 
 import os
-import sys
 from unittest.mock import patch
-
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

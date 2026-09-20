@@ -17,7 +17,6 @@ import JoinGate from './components/JoinGate';
 import MeetingOverview from './components/MeetingOverview';
 import NotesPane from './components/NotesPane';
 import ParticipantsPane from './components/ParticipantsPane';
-import SpotlightRow from './components/SpotlightRow';
 import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
 import { EvidenceProvider } from './evidence';
@@ -371,17 +370,6 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                     onEvidenceClick={handleEvidenceClick}
                   />
 
-                  <SpotlightRow
-                    cards={ui.state.cards}
-                    status={ui.state.status}
-                    cloudEnabled={ui.state.cloud_enabled}
-                    intelligenceOnline={ui.state.intelligence_online}
-                    onSendOp={sendOp}
-                    onEvidenceClick={handleEvidenceClick}
-                    onUndo={isHost ? sendUndo : undefined}
-                    lastSeqByTarget={ui.lastSeqByTarget}
-                  />
-
                   <NotesPane
                     newestFirst
                     onRequestAdjustment={(text) => api.requestNoteAdjustment(token, text)}
@@ -411,6 +399,10 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                     lastSeqByTarget={ui.lastSeqByTarget}
                     newestFirst
                     embedded
+                    highlightTop={3}
+                    status={ui.state.status}
+                    cloudEnabled={ui.state.cloud_enabled}
+                    intelligenceOnline={ui.state.intelligence_online}
                   />
                 </div>
               </section>

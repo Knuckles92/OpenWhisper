@@ -509,7 +509,7 @@ function isDuplicateSpotlightText(text: string, picks: SpotlightPick[]): boolean
 }
 
 /**
- * The up-to-three card items shown in the prominent spotlight row.
+ * The up-to-three card items the Captured rail lifts to its highlighted lead.
  * Ranked pinned → human-touched (edited/confirmed) → most recently updated,
  * preferring one item per card category and deduplicating by text similarity;
  * repeats only fill leftover slots when distinct.
@@ -550,4 +550,32 @@ export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3)
     usedIds.add(pick.item.id);
   }
   return picks;
+}
+
+export interface CapturedRailFeed {
+  /** Top-ranked insights, highlighted at the head of the rail. */
+  top: CardItem[];
+  /** Everything else captured, newest-first. */
+  rest: CapturedFeedEntry[];
+}
+
+/**
+ * The Captured rail split into a highlighted lead and the rest of the stream.
+ * `top` keeps the spotlight ranking order (not the feed's newest-first order)
+ * because it is a ranking, not a timeline; `rest` stays chronological so the
+ * rail still reads like Conversation beside it.
+ */
+export function capturedRailFeed(
+  cards: MeetingStateDoc['cards'],
+  questions: Question[] = [],
+  limit = 3,
+): CapturedRailFeed {
+  const entries = capturedFeedEntries(cards, questions);
+  if (limit <= 0) return { top: [], rest: entries };
+  const top = selectSpotlightItems(cards, limit).map((pick) => pick.item);
+  const topIds = new Set(top.map((item) => item.id));
+  const rest = entries.filter(
+    (entry) => entry.kind !== 'item' || !topIds.has(entry.item.id),
+  );
+  return { top, rest };
 }
