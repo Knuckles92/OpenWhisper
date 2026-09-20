@@ -425,7 +425,7 @@ def test_cancel_during_runtime_check_does_not_start_worker(monkeypatch):
 
 def test_packaged_worker_entry_does_not_start_ui():
     completed = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve().parents[1] / 'app_qt.py'), '--local-asr-worker'],
+        [sys.executable, str(Path(__file__).resolve().parents[1] / 'main.py'), '--local-asr-worker'],
         input='{"id": 1, "op": "cancel_stream", "session": "test"}\n{"id": 2, "op": "shutdown"}\n',
         text=True, capture_output=True, timeout=10,
     )

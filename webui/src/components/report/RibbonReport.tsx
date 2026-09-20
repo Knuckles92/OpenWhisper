@@ -29,7 +29,7 @@ type CutKind = 'settled' | 'watch' | 'owed';
 interface Attached {
   item: CardItem;
   kind: CutKind;
-  t: number;
+  t: number | null;
 }
 
 export default function RibbonReport({
@@ -55,7 +55,20 @@ export default function RibbonReport({
     ...decisions.map((item) => ({ item, kind: 'settled' as const, t: itemTime(item, segs) })),
     ...risks.map((item) => ({ item, kind: 'watch' as const, t: itemTime(item, segs) })),
     ...actions.map((item) => ({ item, kind: 'owed' as const, t: itemTime(item, segs) })),
-  ].filter((entry): entry is Attached => entry.t != null);
+  ];
+
+  // Items without a timestamp (or before the first beat) still belong in
+  // the exported report. Assign once, then render unmatched items separately.
+  const attached = new Map<string, Attached[]>();
+  const unplaced: Attached[] = [];
+  for (const entry of extras) {
+    const beat = entry.t == null ? undefined : [...beats].reverse().find(candidate => {
+      const time = itemTime(candidate, segs);
+      return time != null && time <= entry.t!;
+    });
+    if (!beat) unplaced.push(entry);
+    else attached.set(beat.id, [...(attached.get(beat.id) ?? []), entry]);
+  }
 
   const noteFor = (time: number): CardItem | null => {
     const candidates = notes.filter((note) => {
@@ -76,6 +89,34 @@ export default function RibbonReport({
   }));
   const startedAt = typeof meeting?.started_at === 'string' ? meeting.started_at : null;
   const openCount = (state.questions || []).filter((question) => question.status === 'open').length;
+
+  const renderCut = ({ item, kind }: Attached) => {
+    const label = kind === 'settled' ? 'Settled' : kind === 'watch' ? 'Risk' : 'Owed';
+    const sev = severity(item);
+    const owner = ownerId(item);
+    return (
+      <div className={`rb-cut ${kind}`} key={item.id}>
+        <span className="rb-cut-kind">
+          {label}{sev ? ` · ${sev}` : ''}
+        </span>
+        <p>
+          {item.text}{' '}
+          <ReportTimestamp
+            evidence={item.evidence}
+            segs={segs}
+            limit={3}
+            onEvidenceClick={onEvidenceClick}
+            onSeek={onSeek}
+          />
+        </p>
+        {owner && (
+          <div className="rb-owner">
+            <b>{speakerName(state.participants, owner)}</b> picked this up
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="ribbon">
@@ -111,12 +152,10 @@ export default function RibbonReport({
         {beats.length === 0 && (
           <p className="rb-note">No timeline beats were recorded for this meeting.</p>
         )}
-        {beats.map((beat, index) => {
+        {beats.map((beat) => {
           const time = itemTime(beat, segs) ?? 0;
-          const next = index + 1 < beats.length ? itemTime(beats[index + 1], segs) : Infinity;
-          const mine = extras
-            .filter((entry) => entry.t >= time && entry.t < (next ?? Infinity))
-            .sort((left, right) => left.t - right.t);
+          const mine = (attached.get(beat.id) ?? [])
+            .sort((left, right) => left.t! - right.t!);
           const note = noteFor(time);
           return (
             <div className="rb-row" key={beat.id}>
@@ -125,37 +164,17 @@ export default function RibbonReport({
               <div className="rb-body">
                 <h3 className="rb-beat">{beat.text}</h3>
                 {note && <p className="rb-note">{note.text}</p>}
-                {mine.map(({ item, kind }) => {
-                  const label = kind === 'settled' ? 'Settled' : kind === 'watch' ? 'Risk' : 'Owed';
-                  const sev = severity(item);
-                  const owner = ownerId(item);
-                  return (
-                    <div className={`rb-cut ${kind}`} key={item.id}>
-                      <span className="rb-cut-kind">
-                        {label}{sev ? ` · ${sev}` : ''}
-                      </span>
-                      <p>
-                        {item.text}{' '}
-                        <ReportTimestamp
-                          evidence={item.evidence}
-                          segs={segs}
-                          limit={3}
-                          onEvidenceClick={onEvidenceClick}
-                          onSeek={onSeek}
-                        />
-                      </p>
-                      {owner && (
-                        <div className="rb-owner">
-                          <b>{speakerName(state.participants, owner)}</b> picked this up
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {mine.map(renderCut)}
               </div>
             </div>
           );
         })}
+        {unplaced.length > 0 && (
+          <section className="rb-body">
+            <h3 className="rb-beat">Additional insights</h3>
+            {unplaced.map(renderCut)}
+          </section>
+        )}
       </div>
     </div>
   );

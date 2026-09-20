@@ -8,6 +8,9 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Changed
+- Renamed the source entry point to `main.py`. Launch with `python main.py` or `uv run python main.py`; the `ow` and `openwhisper` source launchers use the new entry point.
+
 ## [2.6.04] - 2026-09-19
 
 ### Added

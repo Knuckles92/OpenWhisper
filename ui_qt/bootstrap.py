@@ -19,22 +19,22 @@ _QT_MESSAGE_HANDLER_INSTALLED = False
 def log_cuda_preload_summary() -> None:
     """Report the Linux CUDA preload once logging is available.
 
-    ``app_qt`` preloads the NVIDIA wheel libraries before logging is configured,
+    ``main`` preloads the NVIDIA wheel libraries before logging is configured,
     so it cannot report the outcome itself. This is the only signal that
     distinguishes "no CUDA wheels installed" from "wheels present but
     unloadable" when GPU transcription falls back to the CPU.
 
     The entry module is looked up through ``sys.modules`` rather than imported,
-    because ``app_qt`` imports this module at its own module level and importing
+    because ``main`` imports this module at its own module level and importing
     it back would be a cycle. Both keys must be tried: running
-    ``python app_qt.py`` registers the entry module as ``__main__``, so checking
-    only ``"app_qt"`` silently skipped this log in every real launch — verified
+    ``python main.py`` registers the entry module as ``__main__``, so checking
+    only ``"main"`` silently skipped this log in every real launch — verified
     on Linux, where neither branch below ever fired.
     """
     if sys.platform != "linux":
         return
 
-    entrypoint = sys.modules.get("app_qt") or sys.modules.get("__main__")
+    entrypoint = sys.modules.get("main") or sys.modules.get("__main__")
     preloaded = getattr(entrypoint, "CUDA_PRELOADED_LIBRARIES", None)
     if preloaded is None:
         return

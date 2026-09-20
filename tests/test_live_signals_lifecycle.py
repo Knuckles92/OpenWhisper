@@ -210,6 +210,10 @@ def test_final_pulses_persist_and_broadcast(repo, monkeypatch):
     assert assessment["source_confidence"] == .7
     assert assessment["source_probability"] == .9
     assert assessment["source_rank"] == 1
+    assert assessment["source_options"] == [
+        {"segment_id": "sg_final", "probability": .9, "start_s": 8, "text": "The budget is 1000 dollars."},
+        {"segment_id": None, "probability": .1},
+    ]
     assert events[0].effect["pulses"] == saved["live_highlights"]
     restored = MeetingState.from_dict(saved).to_dict()
     assert restored["live_highlights"] == saved["live_highlights"]

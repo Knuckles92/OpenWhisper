@@ -15,8 +15,9 @@ Before submitting a change, remove temporary notes and commented-out experiments
 
 ## Validation
 
-Activate the repository virtual environment before Python commands. Run tests
-through pytest so the shared fixtures isolate settings, manage Qt, and handle
+Use `uv run` as described below, or activate the repository virtual environment
+before Python commands. Run tests through pytest so the shared fixtures isolate
+settings, manage Qt, and handle
 native-runtime teardown:
 
 ```powershell
@@ -38,6 +39,78 @@ for typing or import order as part of behavior changes.
 
 Dashboard changes also require `npm test` in `webui` before the locked build
 below. It covers transcript loading, action acknowledgements, and speech previews.
+
+## Development with uv
+
+[Install uv](https://docs.astral.sh/uv/getting-started/installation/) once. On Windows:
+
+```powershell
+winget install --id astral-sh.uv -e
+```
+
+Open a new terminal after installation. From the repository root:
+
+```powershell
+uv sync --locked
+uv run python main.py
+uv run python -m pytest tests/
+uv run ruff check --select F .
+```
+
+No activation is needed. uv uses Python 3.12 (matching the release builders),
+creates `.venv`, and installs the locked app dependencies, pytest, Ruff, and build
+tools. It can download Python 3.12 if it is missing. An existing `venv` is retained;
+the `ow`/`openwhisper` launchers and installer scripts still use that environment.
+Use `uv run python main.py` when you want the uv development environment. On
+macOS, the existing source launcher also handles app-bundle identification for
+Accessibility permissions; use the documented pip/launcher workflow when testing
+that integration. Linux still needs the audio and Qt system libraries described
+in the README.
+
+On Windows, install **GPU Acceleration** through **Downloads → Components** in the
+app. Source launches activate installed components automatically, so the normal
+`uv run python main.py` command supports GPU use without an extra flag. Other
+speech runtimes and downloaded models also use the app's component manager.
+
+The `gpu` extra is an alternative way to put CUDA wheels in `.venv`, intended for
+Linux source installs (the downloadable GPU component is Windows-only) or for
+explicit testing of wheel-based GPU setups:
+
+```powershell
+uv sync --locked --extra gpu
+uv run --extra gpu python main.py
+```
+
+Keep `--extra gpu` on sync/run commands only when choosing that wheel-based setup.
+Point your editor at `.venv/Scripts/python.exe` on Windows or `.venv/bin/python`
+on macOS/Linux. JavaScript work in `webui` and the sidecars retains its existing
+Node/Bun workflow.
+
+### Updating dependencies
+
+The existing requirements files remain the source of truth for app, GPU, build,
+and release dependencies. `scripts/sync_uv_dependencies.py` mirrors them into the
+marked block in `pyproject.toml`, including release constraints, so development
+does not silently upgrade packages used by the installers. Edit the appropriate
+requirements file first, then run:
+
+```powershell
+python scripts/sync_uv_dependencies.py
+uv lock
+uv sync --locked
+python scripts/sync_uv_dependencies.py --check
+uv lock --check
+```
+
+Commit the requirements changes, generated `pyproject.toml` block, and `uv.lock`
+together. CI checks that the generated declarations match the requirements files
+and that the lockfile is current.
+Use `python3` for the standalone maintenance script if that is your platform's
+Python command. It uses only the standard library and does not require activation.
+Release pins should only change as part of a deliberate dependency update. Use
+`uv add` only for experiments: permanent dependency changes must also go through
+the requirements files and generator. uv itself is optional for source users and
+is not required by the release builders.
 
 ## Local speech backends and models
 

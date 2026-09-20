@@ -18,11 +18,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Meeting Mode normally starts through app_qt.py, whose import-time bootstrap
+# Meeting Mode normally starts through main.py, whose import-time bootstrap
 # registers the pip-installed CUDA DLL directories before CTranslate2 loads.
 # The benchmark must follow that same native-runtime path or it silently falls
 # back to CPU and measures a configuration the desktop app does not use.
-import app_qt as _app_bootstrap  # noqa: E402,F401
+import main as _app_bootstrap  # noqa: E402,F401
 
 from benchmarks.meeting_mode.ami import (  # noqa: E402
     MeetingSpec,

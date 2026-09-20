@@ -21,7 +21,7 @@ resolve_script_dir() {
 SCRIPT_DIR="$(resolve_script_dir)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON="$REPO/venv/bin/python"
-ENTRY="$REPO/app_qt.py"
+ENTRY="$REPO/main.py"
 VIRTUAL_ENV="$REPO/venv"
 
 if [ ! -x "$PYTHON" ]; then
@@ -38,7 +38,7 @@ export PATH="$VIRTUAL_ENV/bin:$PATH"
 unset PYTHONHOME
 
 if [ "$(uname -s)" = "Linux" ]; then
-    # app_qt.py preloads these with RTLD_GLOBAL, which is enough on its own.
+    # main.py preloads these with RTLD_GLOBAL, which is enough on its own.
     # Exporting LD_LIBRARY_PATH as well costs nothing and covers the loader
     # paths a preload cannot reach: libraries dlopen'd by a child process, and
     # any NVIDIA wheel layout that does not set RPATH on its own libraries.

@@ -23,6 +23,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Check optional uv development configuration
+        run: |
+          python scripts/sync_uv_dependencies.py --check
+          python -m pip install uv==0.11.8
+          uv lock --check
       - name: Install test runtime
         run: |
           sudo apt-get update

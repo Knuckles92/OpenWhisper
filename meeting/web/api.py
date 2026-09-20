@@ -619,8 +619,9 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         state = await _state_for(target_id, meeting)
         segments = await asyncio.to_thread(repository.get_segments, target_id)
         exporter, media_type, extension = entry
+        # Keep host export metadata; JSON strips capabilities and volatile fields.
         content = await asyncio.to_thread(
-            exporter, _public_meeting(meeting), state, segments
+            exporter, {**meeting, **_public_meeting(meeting)}, state, segments
         )
         filename = f"meeting-{target_id}.{extension}"
         return Response(

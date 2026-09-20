@@ -62,5 +62,5 @@ No, not for transcription. Speech can run entirely locally. Cloud intelligence, 
 
 ```
 venv\Scripts\activate
-python app_qt.py
+python main.py
 ```

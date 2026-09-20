@@ -3,6 +3,8 @@ import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateD
 import { CAPTURE_TAGS, CARD_LABELS, capturedRailFeed, sortedCardItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
 import CitationBadge from './CitationBadge';
+import { useEvidenceLookup } from '../evidence';
+import { clock } from '../report';
 import { QuestionRow } from './QuestionInbox';
 
 interface CardsPaneProps {
@@ -42,6 +44,26 @@ function leadGhostText(
   if (!cloudEnabled) return 'Enable cloud insights to generate live insights.';
   if (!intelligenceOnline) return 'Cloud intelligence is offline';
   return 'Listening for insights…';
+}
+
+/** Metadata must survive the full-meeting print even when absent from the wording. */
+function PrintedItemDetails({ item }: { item: CardItem }) {
+  const { participants } = useEvidenceLookup();
+  const details: string[] = [];
+  if (item.card === 'action_items') {
+    const owner = participants.find(person => person.id === item.data.owner_participant_id);
+    details.push(`Owner: ${owner?.display_name || 'Unassigned'}`);
+    const deadline = item.data.deadline || item.data.due_date;
+    if (typeof deadline === 'string' && deadline.trim()) details.push(`Due: ${deadline.trim()}`);
+  }
+  if (item.card === 'risks' && typeof item.data.severity === 'string' && item.data.severity.trim()) {
+    details.push(`Severity: ${item.data.severity}`);
+  }
+  if (item.card === 'timeline' && typeof item.data.start_s === 'number' && Number.isFinite(item.data.start_s)) {
+    details.push(clock(item.data.start_s));
+  }
+  if (item.author_type === 'system' && item.author_id === 'voice_command') details.push('Spoken request');
+  return details.length ? <p className="meta">{details.join(' · ')}</p> : null;
 }
 
 function CardItemRow({
@@ -126,6 +148,7 @@ function CardItemRow({
           {item.text}
         </p>
       )}
+      {readOnly && <PrintedItemDetails item={item} />}
       <CitationBadge item={item} />
       <EvidenceRow
         ids={item.evidence}

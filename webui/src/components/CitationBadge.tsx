@@ -6,11 +6,17 @@ const labels: Record<string, string> = {
   unavailable: 'Citation check unavailable', stale: 'Citation needs recheck',
 };
 
-export default function CitationBadge({ item }: {item: CardItem}) {
+export function citationLabel(item: CardItem): string | null {
   const check = item.citation_check;
-  if (!check || check.revision !== item.revision || !labels[check.status]) return null;
+  return check && check.revision === item.revision ? labels[check.status] ?? null : null;
+}
+
+export default function CitationBadge({ item }: {item: CardItem}) {
+  const label = citationLabel(item);
+  if (!label) return null;
+  const check = item.citation_check!;
   return <span className={`citation-badge citation-${check.status}`}
     title="Advisory check against cited transcript excerpts. This does not certify accuracy or change the insight.">
-    {labels[check.status]}
+    {label}
   </span>;
 }

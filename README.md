@@ -21,7 +21,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
 - **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
 - **Model Manager:** Select speech and text models; install local models and optional runtimes through Downloads.
-- **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON.
+- **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
 
@@ -92,7 +92,7 @@ After setup, use these commands whenever you want to run OpenWhisper. Run them f
 
 ```powershell
 . .\venv\Scripts\Activate.ps1
-python app_qt.py
+python main.py
 ```
 
 **macOS / Linux:**
@@ -106,6 +106,10 @@ The macOS/Linux launcher selects the project's virtual environment automatically
 ### Optional: launch from any terminal
 
 To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows or `./install.sh` on macOS/Linux once from your checkout folder. Open a new terminal, then use `ow` or `openwhisper` from any folder without activating the virtual environment. See [source launchers](CONTRIBUTING.md#source-launchers) for details.
+
+### Optional: develop with uv
+
+Contributors can use `uv sync` and `uv run python main.py` without activating a virtual environment. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and NVIDIA GPU support. The pip instructions above and packaged releases do not require uv.
 
 ## GPU acceleration
 

@@ -37,7 +37,7 @@ def register_dll_directory(path: str) -> bool:
     Without the PATH prepend, transcription fails with "Library
     cublas64_12.dll is not found or cannot be loaded" even though the DLL is
     present. This mirrors the behavior of ``_register_cuda_dll_directories``
-    in ``app_qt.py`` for source installs.
+    in ``main.py`` for source installs.
 
     """
     if sys.platform != "win32" or not os.path.isdir(path):

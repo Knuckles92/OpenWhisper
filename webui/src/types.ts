@@ -87,6 +87,12 @@ export interface HighlightPulse {
     source_probability?: number;
     source_rank?: number;
     source_option_count?: number;
+    source_options?: Array<{
+      segment_id: string | null;
+      probability: number;
+      start_s?: number;
+      text?: string;
+    }>;
   };
 }
 

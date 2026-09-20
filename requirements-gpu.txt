@@ -25,10 +25,10 @@
 #
 # Loading these libraries differs per platform, because Linux has no mutable
 # equivalent of the Windows DLL search path:
-#     Windows   app_qt._register_cuda_dll_directories() registers the wheels'
+#     Windows   main._register_cuda_dll_directories() registers the wheels'
 #               bin/ directories with os.add_dll_directory and prepends them to
 #               PATH (CTranslate2's loader ignores the former).
-#     Linux     app_qt._preload_cuda_libraries() loads the .so files with
+#     Linux     main._preload_cuda_libraries() loads the .so files with
 #               RTLD_GLOBAL, because LD_LIBRARY_PATH is read by ld.so at process
 #               start and cannot be changed from inside a running process.
 

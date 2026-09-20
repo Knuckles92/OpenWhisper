@@ -300,7 +300,7 @@ def _strip_system_cxx(toc):
 
 
 a = Analysis(
-    ["app_qt.py"],
+    ["main.py"],
     pathex=[str(REPO_ROOT)],
     binaries=binaries,
     datas=datas,

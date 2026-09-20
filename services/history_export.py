@@ -294,6 +294,8 @@ def _render_txt(entry: Dict[str, Any]) -> str:
     stamp = entry.get("formatted_timestamp") or entry.get("timestamp") or ""
     model = entry.get("model") or ""
     lines = [f"[{stamp}] {model}"]
+    if entry.get("source_name"):
+        lines.append(f"Source: {entry['source_name']}")
     if _was_cleaned(entry):
         lines.append(f"Cleanup: {_cleanup_label(entry)}")
     text = (entry.get("text") or "").rstrip()

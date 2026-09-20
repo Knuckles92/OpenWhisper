@@ -1,3 +1,148 @@
+# BEGIN generated uv dependencies
+# Edit requirements*.txt, then run python scripts/sync_uv_dependencies.py.
+[project]
+name = "openwhisper-dev"
+# Environment metadata only; the app version lives in _version.py.
+version = "0.0.0"
+# Match release builders; pip source installs also support Python 3.11.
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sounddevice>=0.5.0",
+    "numpy>=1.24.0",
+    "keyboard>=0.13.5 ; sys_platform == \"win32\"",
+    "pynput>=1.7.6 ; sys_platform != \"win32\"",
+    "openai>=1.3.0",
+    "certifi>=2024.2.2",
+    "faster-whisper>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "keyring>=25.0",
+    "SecretStorage>=3.3.3 ; sys_platform == \"linux\"",
+    "PyQt6>=6.0.0",
+    "sqlalchemy>=2.0.0",
+    "pypdf>=5.0.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=1.0.0",
+    "openpyxl>=3.1.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "soundcard>=0.4.3 ; sys_platform == \"win32\" or sys_platform == \"linux\"",
+    "pyobjc-framework-ScreenCaptureKit>=10.0 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-CoreMedia>=10.0 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-Quartz>=10.0 ; sys_platform == \"darwin\"",
+]
+
+[project.optional-dependencies]
+# Alternative CUDA wheels for Linux or explicit developer testing.
+gpu = [
+    "nvidia-cublas-cu12>=12.3 ; sys_platform == \"win32\" or sys_platform == \"linux\"",
+    "nvidia-cuda-runtime-cu12>=12.3 ; sys_platform == \"win32\" or sys_platform == \"linux\"",
+]
+
+[dependency-groups]
+dev = [{ include-group = "build" }, "ruff==0.16.4"]
+# Component builders use pip's JSON dependency report.
+build = [
+    "pyinstaller>=6.10.0",
+    "pytest>=8.0",
+    "pip>=24",
+]
+
+[tool.uv]
+package = false
+# Apply release pins to development without changing release builds.
+constraint-dependencies = [
+    "altgraph==0.17.5",
+    "annotated-doc==0.0.5",
+    "annotated-types==0.8.0",
+    "anyio==4.14.2",
+    "av==18.1.0",
+    "certifi==2026.7.22",
+    "cffi==2.1.1",
+    "click==8.5.0",
+    "cryptography==50.0.1",
+    "ctranslate2==4.8.1",
+    "et_xmlfile==2.0.0",
+    "evdev==2.0.0",
+    "fastapi==0.141.1",
+    "faster-whisper==1.2.1",
+    "filelock==3.32.4",
+    "flatbuffers==25.12.19",
+    "fsspec==2026.7.0",
+    "greenlet==3.5.5",
+    "h11==0.16.0",
+    "hf-xet==1.6.0",
+    "httpcore==1.0.9",
+    "httpcore2==2.12.0",
+    "httptools==0.8.0",
+    "httpx==0.28.1",
+    "httpx2==2.12.0",
+    "idna==3.19",
+    "iniconfig==2.3.0",
+    "jaraco.classes==3.4.0",
+    "jaraco.context==6.1.2",
+    "jaraco.functools==4.6.0",
+    "jeepney==0.9.0",
+    "jiter==0.16.0",
+    "keyboard==0.13.5",
+    "keyring==25.7.0",
+    "lxml==6.1.2",
+    "more-itertools==11.1.0",
+    "numpy==2.5.2",
+    "onnxruntime==1.29.0",
+    "openai==3.6.0",
+    "openpyxl==3.1.5",
+    "packaging==26.3",
+    "pefile==2024.8.26",
+    "pillow==12.3.0",
+    "pluggy==1.6.0",
+    "protobuf==7.36.0",
+    "pycparser==3.0",
+    "pydantic==2.13.5",
+    "pydantic_core==2.46.5",
+    "Pygments==2.21.0",
+    "pyinstaller==6.22.2",
+    "pyinstaller-hooks-contrib==2026.7",
+    "pynput==1.8.2",
+    "pypdf==6.16.2",
+    "pyobjc-core==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-ApplicationServices==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-Cocoa==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-CoreMedia==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-CoreText==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-Quartz==12.2.2 ; sys_platform == \"darwin\"",
+    "pyobjc-framework-ScreenCaptureKit==12.2.2 ; sys_platform == \"darwin\"",
+    "PyQt6==6.11.0",
+    "PyQt6-Qt6==6.11.2",
+    "PyQt6_sip==13.12.0",
+    "pytest==9.1.1",
+    "python-docx==1.2.0",
+    "python-dotenv==1.2.3",
+    "python-pptx==1.0.2",
+    "python-xlib==0.33",
+    "PyYAML==6.0.3",
+    "pywin32-ctypes==0.2.3",
+    "SecretStorage==3.5.0",
+    "setuptools==84.0.0",
+    "six==1.17.0",
+    "sniffio==1.3.1",
+    "SoundCard==0.4.6",
+    "sounddevice==0.5.6",
+    "SQLAlchemy==2.0.52",
+    "starlette==1.6.0",
+    "tokenizers==0.23.1",
+    "tqdm==4.70.0",
+    "truststore==0.10.4",
+    "typing-inspection==0.4.4",
+    "typing_extensions==4.16.0",
+    "uvicorn==0.52.4",
+    "uvloop==0.22.1",
+    "watchfiles==1.2.0",
+    "websockets==17.1",
+    "xlsxwriter==3.2.9",
+]
+
+# END generated uv dependencies
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

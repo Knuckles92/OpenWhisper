@@ -223,8 +223,6 @@ def _patch_subprocess_for_windows() -> None:
 
 
 def _activate_downloadable_components() -> None:
-    if not getattr(sys, "frozen", False):
-        return
     try:
         from services.component_runtime import activate_components
         activate_components()

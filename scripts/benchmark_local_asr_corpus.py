@@ -19,7 +19,7 @@ from benchmarks.provenance import identity, model_identity
 
 
 def run(args):
-    import app_qt  # noqa: F401 -- registers production native library paths
+    import main as _app_bootstrap  # noqa: F401 -- registers production native library paths
     from faster_whisper.audio import decode_audio
     from services.local_asr.catalog import MODELS
     from services.local_asr import cache

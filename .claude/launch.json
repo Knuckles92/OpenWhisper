@@ -48,6 +48,29 @@
         "--strictPort"
       ],
       "port": 5602
+    },
+    {
+      "name": "rail-lead-api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/BIGD~1/AppData/Local/Temp/claude/D--coding-whisper-local/ab453a1d-57d3-482b-ab30-e5a95dd96c96/scratchpad/rail-lead-api.cjs"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "rail-lead-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "webui",
+        "--",
+        "--port",
+        "5613",
+        "--strictPort"
+      ],
+      "port": 5613
     }
   ]
 }

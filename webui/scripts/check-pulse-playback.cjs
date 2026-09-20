@@ -9,7 +9,12 @@ const meeting = {id:'replay-test',title:'Budget planning',status:'active',has_au
 const pulses = [
   {id:'budget',kind:'number',start_s:60.874,segment_id:'budget',text:'Add a note that we need to get a thousand dollars for budget A.',probability:.81,
     assessment:{threshold:.8,window_start_s:60,window_end_s:120,scores:{decision:.95,number:.81,commitment:.27,disagreement:.02},
-      source_probability:.86,source_confidence:.65,source_rank:1,source_option_count:3}},
+      source_probability:.86,source_confidence:.65,source_rank:1,source_option_count:3,
+      source_options:[
+        {segment_id:'decision',start_s:105,text:'We will review the revised budget on Friday.',probability:.1},
+        {segment_id:null,probability:.04},
+        {segment_id:'budget',start_s:60.874,text:'Add a note that we need to get a thousand dollars for budget A.',probability:.86},
+      ]}},
   {id:'decision',kind:'decision',start_s:105,segment_id:'decision',text:'We will review the revised budget on Friday.',probability:.95},
 ];
 const segments = pulses.map(p => ({id:p.segment_id,meeting_id:meeting.id,channel:'mic',start_s:p.start_s,end_s:p.start_s+5,text:p.text,speaker_participant_id:'me',speaker_source:'human',speaker_pinned:false}));
@@ -59,10 +64,10 @@ const server = http.createServer((req,res) => {
         await page.goto(`${base}/m/test${mode==='history' ? '?history=replay-test' : ''}`);
         const mark = page.locator('.pulse-number.pulse-mark');
         await mark.hover();
-        const preview = page.getByRole('tooltip');
+        const preview = page.getByRole('dialog');
         await preview.waitFor();
         assert.match(await preview.textContent(), /Detection probability81%Cutoff 80%\+1 pt above/);
-        assert.match(await preview.textContent(), /Selected passage probability86%Source rank#1 of 3 optionsSelection confidence65%/);
+        assert.doesNotMatch(await preview.textContent(), /Source selection|Selected passage|Source rank|Selection confidence/);
         assert.equal(await mark.getAttribute('title'), null);
         const previewRect = await preview.boundingBox();
         assert.ok(previewRect.x >= 0 && previewRect.y >= 0 && previewRect.x + previewRect.width <= width && previewRect.y + previewRect.height <= 800,
@@ -71,6 +76,7 @@ const server = http.createServer((req,res) => {
         await preview.hover();
         await page.waitForTimeout(220); // Stay longer than the marker-to-preview dismissal delay.
         assert.equal(await preview.count(), 1);
+        assert.equal(await page.locator('audio').evaluate(a => a.paused), true, 'reading the preview does not play audio');
         if (process.env.UI_SCREENSHOTS && width !== 320) {
           fs.mkdirSync(process.env.UI_SCREENSHOTS, {recursive:true});
           await page.screenshot({path:path.join(process.env.UI_SCREENSHOTS, `pulse-hover-${mode}-${width}.png`)});
@@ -78,8 +84,11 @@ const server = http.createServer((req,res) => {
         await page.keyboard.press('Escape');
         assert.equal(await preview.count(), 0);
         await mark.focus();
+        if (!await preview.count()) await mark.press('ArrowDown');
         await preview.waitFor();
-        await mark.press('Escape');
+        await mark.press('Tab');
+        assert.equal(await preview.getByRole('button', {name:'Close',exact:true}).evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('Escape');
         assert.equal(await preview.count(), 0);
         await mark.click();
         const player=page.getByRole('region',{name:'Meeting replay',exact:true});
@@ -116,6 +125,15 @@ const server = http.createServer((req,res) => {
         console.log(`PASS ${mode} ${width}px: visible replay, pause/play and scrubber, skip, close, new moment, Escape`);
       }
     }
+    await page.setViewportSize({width:390,height:800});
+    await page.goto(`${base}/m/test`);
+    await page.locator('.pulse-number.pulse-mark').focus();
+    const preview = page.getByRole('dialog');
+    await preview.waitFor();
+    await preview.getByRole('button', {name:'Close',exact:true}).click();
+    assert.equal(await preview.count(), 0);
+    assert.equal(await page.locator('.pulse-number.pulse-mark').evaluate(el => el === document.activeElement), true);
+    console.log('PASS close returns focus to the pulse');
     // Keep a long excerpt readable at both timeline edges and in a short viewport.
     state.status=meeting.status='active';
     const originalPulse = {...pulses[0]};
@@ -126,7 +144,7 @@ const server = http.createServer((req,res) => {
       await page.goto(`${base}/m/test`);
       const edgeMark=page.locator('.pulse-number.pulse-mark');
       await edgeMark.hover();
-      const edgePreview=page.getByRole('tooltip');
+      const edgePreview=page.getByRole('dialog');
       await edgePreview.waitFor();
       const box=await edgePreview.boundingBox();
       const anchor=await edgeMark.boundingBox();
@@ -143,9 +161,10 @@ const server = http.createServer((req,res) => {
     await page.goto(`${base}/m/test?history=replay-test`);
     const unavailable = page.locator('.pulse-number.pulse-mark');
     await unavailable.focus();
-    await page.getByRole('tooltip').waitFor();
-    assert.match(await page.getByRole('tooltip').textContent(), /No recording available for this moment/);
+    await page.getByRole('dialog').waitFor();
+    assert.match(await page.getByRole('dialog').textContent(), /No recording available for this moment/);
     await unavailable.press('Enter');
+    assert.doesNotMatch(await page.getByRole('dialog').textContent(), /Source selection|View all/);
     assert.equal(await page.getByRole('region',{name:'Meeting replay',exact:true}).count(), 0);
     meeting.has_audio=true;
     console.log('PASS no-recording preview remains keyboard accessible without starting playback');

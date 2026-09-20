@@ -206,8 +206,8 @@ test('highlights without a recording explain why playback is disabled', async ()
   const button = container.querySelector('button');
   assert.equal(button.getAttribute('aria-disabled'), 'true');
   await act(async () => button.focus());
-  assert.match(document.querySelector('[role=tooltip]').textContent, /Detection probabilityUnavailable/);
-  assert.match(document.querySelector('[role=tooltip]').textContent, /No recording available for this moment/);
+  assert.match(document.querySelector('[role=dialog]').textContent, /Detection probabilityUnavailable/);
+  assert.match(document.querySelector('[role=dialog]').textContent, /No recording available for this moment/);
   await act(async () => button.click());
   assert.equal(picked, false);
 });
@@ -264,13 +264,14 @@ test('legacy pulse previews show individual saved scores, follow keyboard focus,
   const props = {pulses, onSelect:() => {}};
   const container = await mount(PulseStrip, props);
   const buttons = [...container.querySelectorAll('.pulse-mark')];
-  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(document.querySelector('[role=dialog]'), null);
   for (const [i, button] of buttons.entries()) {
     await act(async () => button.focus());
-    const tooltip = document.querySelector('[role=tooltip]');
-    assert.equal(document.querySelectorAll('[role=tooltip]').length, 1);
+    const tooltip = document.querySelector('[role=dialog]');
+    assert.equal(document.querySelectorAll('[role=dialog]').length, 1);
     assert.equal(button.hasAttribute('title'), false);
-    assert.equal(button.getAttribute('aria-describedby'), tooltip.id);
+    assert.equal(button.getAttribute('aria-controls'), tooltip.id);
+    assert.equal(tooltip.querySelector('.pulse-preview-body').firstElementChild, tooltip.querySelector('blockquote'));
     assert.equal(tooltip.querySelector('blockquote').textContent, pulses[i].text);
     assert.match(tooltip.textContent, new RegExp(`1:0${i+1}`));
     assert.match(tooltip.querySelector('.pulse-preview-score').textContent, new RegExp(`${81 + i * 4}%`));
@@ -279,12 +280,12 @@ test('legacy pulse previews show individual saved scores, follow keyboard focus,
     assert.match(tooltip.textContent, /Click pulse to replay/);
   }
   await act(async () => document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key:'Escape',bubbles:true})));
-  assert.equal(document.querySelector('[role=tooltip]'), null);
-  assert.equal(buttons[3].hasAttribute('aria-describedby'), false);
+  assert.equal(document.querySelector('[role=dialog]'), null);
+  assert.equal(buttons[3].hasAttribute('aria-controls'), false);
   assert.equal(document.activeElement, buttons[3]);
   await act(async () => buttons[0].focus());
   await act(async () => root.render(React.createElement(PulseStrip, {...props, pulses:[]})));
-  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(document.querySelector('[role=dialog]'), null);
 });
 
 test('hover preview can be read under the pointer and dismisses on leaving or meeting scroll', async () => {
@@ -295,28 +296,28 @@ test('hover preview can be read under the pointer and dismisses on leaving or me
   const pointer = (target, type, relatedTarget=null) => target.dispatchEvent(new dom.window.MouseEvent(type, {bubbles:true, relatedTarget}));
   const settle = () => new Promise(resolve => setTimeout(resolve, 200));
   await act(async () => pointer(button, 'pointerover'));
-  let tooltip = document.querySelector('[role=tooltip]');
+  let tooltip = document.querySelector('[role=dialog]');
   assert.ok(tooltip);
   await act(async () => {
     pointer(button, 'pointerout', tooltip);
     pointer(tooltip, 'pointerover', button);
     await settle();
   });
-  assert.equal(document.querySelector('[role=tooltip]'), tooltip);
+  assert.equal(document.querySelector('[role=dialog]'), tooltip);
   await act(async () => tooltip.querySelector('.pulse-preview-body').dispatchEvent(new dom.window.Event('scroll')));
-  assert.equal(document.querySelector('[role=tooltip]'), tooltip);
+  assert.equal(document.querySelector('[role=dialog]'), tooltip);
   await act(async () => {pointer(tooltip, 'pointerout', document.body); await settle();});
-  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(document.querySelector('[role=dialog]'), null);
   await act(async () => pointer(button, 'pointerover'));
   await act(async () => container.dispatchEvent(new dom.window.Event('scroll')));
-  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(document.querySelector('[role=dialog]'), null);
   await act(async () => pointer(button, 'pointerover'));
   await act(async () => button.click());
-  assert.equal(document.querySelector('[role=tooltip]'), null);
+  assert.equal(document.querySelector('[role=dialog]'), null);
   assert.equal(picked, pulse);
 });
 
-test('pulse evidence ranks actual window scores and distinguishes detection from source selection', async () => {
+test('pulse evidence shows detection probability without source selection', async () => {
   const pulse = {id:'scored',kind:'number',start_s:63,segment_id:'budget',probability:.81,text:'Budget is a thousand dollars.',
     assessment:{threshold:.8,window_start_s:60,window_end_s:120,
       scores:{number:.81,decision:.95,commitment:.81,disagreement:0},
@@ -324,29 +325,65 @@ test('pulse evidence ranks actual window scores and distinguishes detection from
   const props = {pulses:[pulse], onSelect:() => {}};
   const container = await mount(PulseStrip, props);
   await act(async () => container.querySelector('button').focus());
-  const tooltip = document.querySelector('[role=tooltip]');
+  const tooltip = document.querySelector('[role=dialog]');
   assert.match(tooltip.querySelector('.pulse-preview-score').textContent, /Detection probability81%Cutoff 80%\+1 pt above/);
-  assert.match(tooltip.textContent, /Category scores1:00–2:00/);
-  const scores = [...tooltip.querySelectorAll('.pulse-score-row')];
-  assert.deepEqual(scores.map(row => row.getAttribute('aria-label')), [
-    'Decision: 95%, rank 1', 'Dated commitment: 81%, rank 2', 'Number: 81%, rank 2', 'Disagreement: 0%, rank 4',
-  ]);
-  assert.match(tooltip.querySelector('.pulse-score-row[data-selected]').textContent, /Number.*This pulse.*81%/);
-  assert.match(tooltip.textContent, /Selected passage probability65%Source rank#1 of 3 optionsSelection confidence40%/);
-  assert.match(tooltip.textContent, /Independent probabilities for this minute/);
-  // An open preview follows a newly published assessment and its recorded threshold.
+  assert.doesNotMatch(tooltip.textContent, /Source selection|Selected passage|Source rank|Selection confidence|Category scores|This pulse|Independent probabilities/);
+  assert.equal(tooltip.querySelector('details'), null);
   const updated = {...pulse,probability:.9,assessment:{...pulse.assessment,threshold:.9,scores:{number:.9},source_confidence:0}};
   await act(async () => root.render(React.createElement(PulseStrip, {...props,pulses:[updated]})));
   assert.match(tooltip.querySelector('.pulse-preview-score').textContent, /90%Cutoff 90%At cutoff/);
-  assert.match(tooltip.textContent, /Selection confidence0%/);
-  assert.equal(tooltip.querySelectorAll('.pulse-score-row').length, 1);
 });
 
 test('unavailable pulse scores never become zero or fabricated rankings', async () => {
   const pulse = {id:'missing',kind:'number',start_s:1,text:'A saved passage',probability:null};
   const container = await mount(PulseStrip, {pulses:[pulse],onSelect:() => {}});
   await act(async () => container.querySelector('button').focus());
-  const tooltip = document.querySelector('[role=tooltip]');
+  const tooltip = document.querySelector('[role=dialog]');
   assert.match(tooltip.textContent, /Detection probabilityUnavailable/);
   assert.doesNotMatch(tooltip.textContent, /0%|NaN|Cutoff|Source rank/);
+});
+
+
+test('pulse preview keyboard access reaches Close without showing source options', async () => {
+  const pulse = {id:'options', kind:'number', start_s:63, segment_id:'budget', probability:.94, text:'Budget excerpt',
+    assessment:{threshold:.8, window_start_s:60, window_end_s:120, scores:{number:.94},
+      source_probability:.4998, source_rank:1, source_option_count:4, source_confidence:.2,
+      source_options:[
+        {segment_id:'tiny', probability:.0004, start_s:65, text:'A very unlikely passage'},
+        {segment_id:null, probability:0},
+        {segment_id:'other', probability:.4998, start_s:80, text:'Another amount'},
+        {segment_id:'budget', probability:.4998, start_s:63, text:'The full budget passage saved during evaluation.'},
+      ]}};
+  const picked = [];
+  const container = await mount(PulseStrip, {pulses:[pulse], onSelect:p => picked.push(p)});
+  const mark = container.querySelector('.pulse-mark');
+  await act(async () => mark.focus());
+  const preview = document.querySelector('[role=dialog]');
+  assert.equal(preview.querySelector('details'), null);
+  assert.doesNotMatch(preview.textContent, /Source selection|View all|No matching passage|Other source options/);
+  assert.equal(mark.getAttribute('aria-haspopup'), 'dialog');
+  await act(async () => mark.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key:'Tab', bubbles:true, cancelable:true})));
+  assert.equal(document.activeElement, preview.querySelector('.pulse-preview-close'));
+  await act(async () => {
+    preview.dispatchEvent(new dom.window.MouseEvent('pointerout', {bubbles:true,relatedTarget:document.body}));
+    await new Promise(resolve => setTimeout(resolve, 200));
+  });
+  assert.equal(document.querySelector('[role=dialog]'), preview, 'keyboard focus keeps the preview open');
+  await act(async () => document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key:'Escape',bubbles:true})));
+  assert.equal(document.querySelector('[role=dialog]'), null);
+  assert.equal(document.activeElement, mark);
+  await act(async () => mark.click());
+  assert.deepEqual(picked, [pulse], 'original pulse playback is unchanged');
+});
+
+test('saved source fields stay off the preview when a recording is unavailable', async () => {
+  const pulse = {id:'partial', kind:'number', start_s:10, segment_id:'budget', probability:.9, text:'Budget',
+    assessment:{source_probability:.9, source_option_count:3, source_rank:1,
+      source_options:[{segment_id:'budget', start_s:10, text:'Budget', probability:.9}]}};
+  const container = await mount(PulseStrip, {pulses:[pulse], playbackAvailable:false, onSelect:() => assert.fail('playback')});
+  await act(async () => container.querySelector('.pulse-mark').click());
+  const preview = document.querySelector('[role=dialog]');
+  assert.equal(preview.querySelector('details'), null);
+  assert.doesNotMatch(preview.textContent, /Source selection|Other source options|Source rank/);
+  assert.match(preview.textContent, /No recording available for this moment/);
 });

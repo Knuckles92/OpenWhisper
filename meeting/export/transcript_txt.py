@@ -18,6 +18,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from meeting.time_utils import as_local_time
+
 logger = logging.getLogger(__name__)
 
 #: Fallback speaker labels when a segment has no resolvable participant.
@@ -78,7 +80,7 @@ def format_mmss(seconds: float) -> str:
 def resolve_title(meeting: Dict[str, Any], state: Dict[str, Any]) -> str:
     """Pick the best display title for an export.
 
-    Preference order: the state document's title, the meeting row's title,
+    Preference order: the meeting row's title, the state document's title,
     then ``Meeting <date>`` derived from ``started_at``, then ``Meeting``.
 
     Args:
@@ -91,7 +93,7 @@ def resolve_title(meeting: Dict[str, Any], state: Dict[str, Any]) -> str:
     title = (meeting.get("title") or "").strip() or (state.get("title") or "").strip()
     if title:
         return title
-    started = parse_iso(meeting.get("started_at"))
+    started = as_local_time(meeting.get("started_at"))
     if started is not None:
         return f"Meeting {started.strftime('%Y-%m-%d')}"
     return "Meeting"
@@ -107,7 +109,7 @@ def format_meeting_date(meeting: Dict[str, Any]) -> Optional[str]:
         The formatted stamp, the raw value when it is present but unparsable,
         or None when there is no start time at all.
     """
-    started = parse_iso(meeting.get("started_at"))
+    started = as_local_time(meeting.get("started_at"))
     if started is not None:
         return started.strftime("%Y-%m-%d %H:%M")
     raw = meeting.get("started_at")

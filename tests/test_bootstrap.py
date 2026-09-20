@@ -187,8 +187,8 @@ class TestBootstrap:
 class TestCudaPreloadSummary:
     """The Linux CUDA preload log must survive being run as ``__main__``.
 
-    ``python app_qt.py`` registers the entry module as ``__main__``, not
-    ``app_qt``, so a lookup of only ``sys.modules["app_qt"]`` silently logged
+    ``python main.py`` registers the entry module as ``__main__``, not
+    ``main``, so a lookup of only ``sys.modules["main"]`` silently logged
     nothing in every real launch — confirmed on Linux hardware.
     """
 
@@ -204,25 +204,25 @@ class TestCudaPreloadSummary:
                 bootstrap.log_cuda_preload_summary()
         return caplog.text
 
-    def test_logs_when_entry_module_is_main(self, caplog):
+    def test_logs_when_entry_module_is_dunder_main(self, caplog):
         entry = self._Entrypoint(["libcublas.so.12", "libcudart.so.12"])
         modules = {"__main__": entry}
         with patch.dict(bootstrap.sys.modules, {}, clear=False):
-            bootstrap.sys.modules.pop("app_qt", None)
+            bootstrap.sys.modules.pop("main", None)
             output = self._capture(modules, caplog)
 
         assert "Preloaded 2 CUDA library/libraries" in output
         assert "libcublas.so.12" in output
 
-    def test_logs_when_entry_module_is_app_qt(self, caplog):
+    def test_logs_when_entry_module_is_main(self, caplog):
         entry = self._Entrypoint(["libcublas.so.12"])
-        output = self._capture({"app_qt": entry}, caplog)
+        output = self._capture({"main": entry}, caplog)
 
         assert "Preloaded 1 CUDA library/libraries" in output
 
     def test_reports_when_nothing_was_preloaded(self, caplog):
         """An empty list is a real answer: wheels absent, so CPU it is."""
-        output = self._capture({"app_qt": self._Entrypoint([])}, caplog)
+        output = self._capture({"main": self._Entrypoint([])}, caplog)
 
         assert "No NVIDIA CUDA libraries preloaded" in output
 

@@ -1,4 +1,5 @@
 import { ReviewCorrections } from '../InsightReview';
+import { PULSE_LABELS, pulseTime } from '../HighlightPulseStrip';
 import type { MeetingStateDoc, Segment } from '../../types';
 import CardsPane from '../CardsPane';
 import NotesPane from '../NotesPane';
@@ -31,6 +32,9 @@ export default function FullMeetingDocument({
   const previousTopics = (state.topic.history || []).slice(0, -1).filter((entry) =>
     (entry.text || '').trim(),
   );
+  const pulses = (state.live_highlights ?? [])
+    .filter(pulse => pulse.text.trim() && Number.isFinite(pulse.start_s) && PULSE_LABELS[pulse.kind])
+    .slice().sort((a, b) => a.start_s - b.start_s);
   const noop = () => undefined;
 
   return (
@@ -59,6 +63,32 @@ export default function FullMeetingDocument({
                 </ul>
               </>
             )}
+          </div>
+        </section>
+      )}
+
+      {state.rolling_summary?.trim() && (
+        <section className="panel" aria-label="Meeting summary">
+          <div className="panel-header"><span>Summary</span></div>
+          <div className="panel-body">
+            <p style={{ whiteSpace: 'pre-wrap' }}>{state.rolling_summary}</p>
+          </div>
+        </section>
+      )}
+
+      {pulses.length > 0 && (
+        <section className="panel" aria-label="Meeting pulses">
+          <div className="panel-header"><span>Meeting pulses</span></div>
+          <div className="panel-body">
+            <p>Automatically detected moments; labels are advisory.</p>
+            <ul>
+              {pulses.map(pulse => (
+                <li key={pulse.id}>
+                  <time>{pulseTime(pulse.start_s)}</time>{' '}
+                  <strong>{PULSE_LABELS[pulse.kind]}:</strong> {pulse.text}
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
       )}

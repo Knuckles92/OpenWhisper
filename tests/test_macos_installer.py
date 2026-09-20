@@ -18,7 +18,7 @@ SPEC = ROOT / "OpenWhisper.spec"
 WORKFLOW = ROOT / ".github" / "workflows" / "build-installers.yml"
 GENERATE_ICON = ROOT / "scripts" / "generate_icon.py"
 CONSTRAINTS = ROOT / "requirements-release-constraints.txt"
-APP_QT = ROOT / "app_qt.py"
+ENTRYPOINT = ROOT / "main.py"
 
 
 def test_macos_build_script_is_executable_and_valid_bash():
@@ -65,7 +65,7 @@ def test_spec_retains_lazy_macos_framework_imports():
 
 
 def test_package_self_test_imports_macos_capture_stack():
-    source = APP_QT.read_text(encoding="utf-8")
+    source = ENTRYPOINT.read_text(encoding="utf-8")
     # Keep the Darwin branch self-contained so a freeze cannot pass without SCK.
     darwin_block = source.split('elif sys.platform == "darwin":', 1)[1].split(
         "else:", 1

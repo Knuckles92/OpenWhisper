@@ -99,6 +99,12 @@ def window_ops(minute, state, answers, snapshot):
                     source_probability=probabilities[sid],
                     source_rank=1 + sum(p > probabilities[sid] for p in probabilities.values()),
                     source_option_count=len(probabilities),
+                    source_options=[
+                        {"segment_id": option if option != "none" else None,
+                         "probability": probability,
+                         **(passages[option] if option != "none" else {})}
+                        for option, probability in probabilities.items()
+                    ],
                 )
             pulses.append({"id": f"pulse_{minute}_{kind}", "kind": kind,
                            "start_s": passages[sid]["start_s"], "segment_id": sid,

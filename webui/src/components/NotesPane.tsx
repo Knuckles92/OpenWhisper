@@ -158,6 +158,12 @@ function NoteBlock({
           {item.text}
         </p>
       )}
+      {readOnly && (
+        <span className="note-status">
+          {item.author_type === 'system' && item.author_id === 'voice_command'
+            ? 'Spoken note' : statusLabel(item)}
+        </span>
+      )}
       <CitationBadge item={item} />
       <EvidenceRow
         ids={item.evidence}

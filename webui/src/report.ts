@@ -1,3 +1,4 @@
+import { citationLabel } from './components/CitationBadge';
 import { sortedCardItems } from './state';
 import type { CardItem, MeetingStateDoc, Participant, Segment } from './types';
 
@@ -64,7 +65,14 @@ export function enabledReportViews(state: MeetingStateDoc): ReportViewId[] {
 export function liveItems(items: CardItem[] | undefined): CardItem[] {
   return (items ?? []).filter((item) => item.status !== 'removed').map(item => {
     const label = item.review?.state === 'unsupported' ? 'Needs verification' : item.review?.state === 'provisional' ? 'Provisional' : '';
-    return label ? {...item, text: `${label}: ${item.text}`} : item;
+    let text = label ? `${label}: ${item.text}` : item.text;
+    const deadline = item.data.deadline || item.data.due_date;
+    if (item.card === 'action_items' && typeof deadline === 'string' && deadline.trim()) {
+      text += ` — Due: ${deadline.trim()}`;
+    }
+    const citation = citationLabel(item);
+    if (citation) text += ` (Advisory: ${citation})`;
+    return text === item.text ? item : {...item, text};
   });
 }
 

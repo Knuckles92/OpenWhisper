@@ -5,7 +5,7 @@ rem %~dp0 = directory of this .cmd file (with trailing backslash). %~dp0.. = rep
 setlocal
 set "REPO=%~dp0.."
 set "PYTHONW=%REPO%\venv\Scripts\pythonw.exe"
-set "ENTRY=%REPO%\app_qt.py"
+set "ENTRY=%REPO%\main.py"
 
 if not exist "%PYTHONW%" (
     echo [openwhisper] Could not find "%PYTHONW%".

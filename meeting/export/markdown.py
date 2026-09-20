@@ -11,6 +11,7 @@ Pure functions, standard library only.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 from meeting.export.transcript_txt import (
@@ -22,6 +23,7 @@ from meeting.export.transcript_txt import (
     resolve_title,
     transcript_lines,
 )
+from meeting.time_utils import as_local_time, elapsed_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,7 @@ def export_markdown(
             out.extend(f"- {text}" for text in corrections)
         _append_topic(out, state)
         _append_summary(out, state)
+        _append_highlights(out, state)
 
         for card, heading in _CARD_SECTIONS:
             items = _live_items(state, card)
@@ -129,12 +132,9 @@ def _duration_s(meeting: Dict[str, Any],
     ends = [float(s.get("end_s") or 0.0) for s in segments]
     if ends and max(ends) > 0:
         return max(ends)
-    started = parse_iso(meeting.get("started_at"))
-    ended = parse_iso(meeting.get("ended_at"))
-    if started is not None and ended is not None:
-        span = (ended - started).total_seconds()
-        if span >= 0:
-            return span
+    span = elapsed_seconds(meeting.get("started_at"), meeting.get("ended_at"))
+    if span is not None and span >= 0:
+        return span
     return None
 
 
@@ -155,7 +155,7 @@ def _append_topic(out: List[str], state: Dict[str, Any]) -> None:
         text = (entry.get("text") or "").strip()
         if not text:
             continue
-        ts = parse_iso(entry.get("ts"))
+        ts = as_local_time(entry.get("ts"))
         stamp = f" ({ts.strftime('%H:%M')})" if ts else ""
         rendered.append(f"- {text}{stamp}")
     if rendered:
@@ -171,12 +171,70 @@ def _append_summary(out: List[str], state: Dict[str, Any]) -> None:
 
 # Cards
 
+_PULSE_LABELS = {
+    "decision": "Decision",
+    "disagreement": "Disagreement",
+    "commitment": "Dated commitment",
+    "number": "Number",
+}
+
+_CITATION_LABELS = {
+    "supported": "Citation supports claim",
+    "contradicted": "Citation conflicts with claim",
+    "unsupported": "Check citation",
+    "missing": "Missing citation",
+    "uncertain": "Citation uncertain",
+    "unavailable": "Citation check unavailable",
+    "stale": "Citation needs recheck",
+}
+
+
+def _append_highlights(out: List[str], state: Dict[str, Any]) -> None:
+    """Keep saved meeting pulses in the shareable meeting record."""
+    pulses = [
+        pulse for pulse in state.get("live_highlights") or []
+        if (pulse.get("text") or "").strip()
+        and pulse.get("kind") in _PULSE_LABELS
+        and isinstance(pulse.get("start_s"), (int, float))
+        and not isinstance(pulse["start_s"], bool)
+        and math.isfinite(pulse["start_s"])
+    ]
+    if not pulses:
+        return
+    out += ["", "## Meeting Pulses", "",
+            "Automatically detected moments; labels are advisory.", ""]
+    for pulse in sorted(pulses, key=lambda p: p["start_s"]):
+        out.append(
+            f"- [{format_mmss(pulse['start_s'])}] "
+            f"**{_PULSE_LABELS[pulse['kind']]}:** {pulse['text'].strip()}"
+        )
+
+
+def _item_text(item: Dict[str, Any]) -> str:
+    """Preserve review, spoken provenance, and current citation advisories."""
+    labels = []
+    review = (item.get("review") or {}).get("state")
+    if review == "unsupported":
+        labels.append("Needs verification")
+    elif review == "provisional":
+        labels.append("Provisional")
+    elif review == "human":
+        labels.append("User clarified")
+    if item.get("author_type") == "system" and item.get("author_id") == "voice_command":
+        labels.append("Spoken note" if item.get("card") == "live_notes" else "Spoken request")
+    text = (": ".join(labels) + ": " if labels else "") + item["text"]
+    check = item.get("citation_check") or {}
+    label = _CITATION_LABELS.get(check.get("status"))
+    if label and item.get("revision") is not None and check.get("revision") == item["revision"]:
+        text += f" _(Advisory: {label})_"
+    return text
+
+
 def _live_items(state: Dict[str, Any], card: str) -> List[Dict[str, Any]]:
     """Items on a card that are not removed and have non-empty text."""
     items = (state.get("cards") or {}).get(card) or []
     return [
-        {**item, "text": ("Needs verification: " if (item.get("review") or {}).get("state") == "unsupported"
-                           else "Provisional: " if (item.get("review") or {}).get("state") == "provisional" else "") + item["text"]}
+        {**item, "text": _item_text(item)}
         for item in items
         if item.get("status") != "removed" and (item.get("text") or "").strip()
     ]
@@ -196,7 +254,11 @@ def _action_item_lines(items: List[Dict[str, Any]],
     unassigned: List[str] = []
     for item in items:
         text = item["text"].strip()
-        owner_id = (item.get("data") or {}).get("owner_participant_id")
+        data = item.get("data") or {}
+        deadline = data.get("deadline") or data.get("due_date")
+        if isinstance(deadline, str) and deadline.strip():
+            text += f" — Due: {deadline.strip()}"
+        owner_id = data.get("owner_participant_id")
         # item["data"] contents come straight from the model and are only
         # validated to be a dict, so an unhashable value here would abort the
         # whole document.
@@ -255,8 +317,15 @@ def _live_note_lines(items: List[Dict[str, Any]]) -> List[str]:
     Heading and stamp come from ``data.heading`` / ``data.start_s``; either
     may be absent, in which case the bullet degrades gracefully.
     """
+    def note_order(item: Dict[str, Any]) -> float:
+        start_s = (item.get("data") or {}).get("start_s")
+        if isinstance(start_s, (int, float)) and not isinstance(start_s, bool) and math.isfinite(start_s):
+            return float(start_s)
+        created = parse_iso(item.get("created_at"))
+        return created.timestamp() if created else 0.0
+
     lines: List[str] = []
-    for item in items:
+    for item in sorted(items, key=note_order):
         text = " ".join(item["text"].split())
         data = item.get("data") or {}
         heading = str(data.get("heading") or "").strip()

@@ -288,11 +288,21 @@ def test_pulse_assessment_preserves_window_scores_and_source_ranking():
         "scores": {"decision": .95, "disagreement": 0, "commitment": .2, "number": .81},
         "source_confidence": .4, "source_probability": .65,
         "source_rank": 1, "source_option_count": 3,
+        "source_options": [
+            {"segment_id": "sg_one", "probability": .65, "start_s": 10, "text": row()["text"]},
+            {"segment_id": "sg_other", "probability": .25, "start_s": 30, "text": "Another passage"},
+            {"segment_id": None, "probability": .1},
+        ],
     }
     assert "source_confidence" not in pulses[1]["assessment"]
     assert "source_rank" not in pulses[1]["assessment"]
+    assert "source_options" not in pulses[1]["assessment"]
     # Evaluations and other pulses must not mutate this pulse's saved evidence.
     answers["decision"]["noul"] = .1
+    answers["decision_anchor"]["probabilities"]["sg_one"] = .1
+    state["passages"]["sg_one"]["text"] = "Changed transcript"
+    assert pulses[0]["assessment"]["source_options"][0] == {
+        "segment_id": "sg_one", "probability": .65, "start_s": 10, "text": row()["text"]}
     pulses[1]["assessment"]["scores"]["decision"] = .2
     assert pulses[0]["assessment"]["scores"]["decision"] == .95
 
@@ -319,3 +329,23 @@ def test_source_ranking_uses_complete_distribution_and_handles_ties(probabilitie
     if rank is None:
         assert "source_probability" not in assessment
         assert "source_option_count" not in assessment
+        assert "source_options" not in assessment
+    else:
+        assert {option["segment_id"] or "none": option["probability"]
+                for option in assessment["source_options"]} == probabilities
+
+
+def test_source_options_save_every_evaluated_passage_in_full():
+    rows = [row(f"sg_{i}", "Passage " + str(i), i * 3) for i in range(17)]
+    rows[0]["text"] = "The budget is one thousand dollars. " * 10
+    state, _ = window_request(rows, {}, radar=False)
+    probabilities = {sid: (.99 if sid == "sg_0" else .000625) for sid in state["passages"]}
+    probabilities["none"] = .000625
+    pulse = window_ops(0, state, {"number": {"noul": .94}, "number_anchor": {
+        "choice": "sg_0", "probabilities": probabilities}}, {})[0]["pulses"][0]
+    options = pulse["assessment"]["source_options"]
+    assert len(options) == pulse["assessment"]["source_option_count"] == 17
+    assert options[0]["text"] == rows[0]["text"].strip()
+    assert len(options[0]["text"]) > len(pulse["text"])
+    assert {option["segment_id"] for option in options} == set(state["passages"]) | {None}
+    assert "sg_16" not in state["passages"]
