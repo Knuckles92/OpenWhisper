@@ -97,6 +97,8 @@ test('marker clicks seek once, without also firing the track behind them', async
   const seeks = [];
   await mount(TimelineMinimap, props({ onSeek: (s) => seeks.push(s) }));
   const marker = container.querySelector('.mm-marker');
+  assert.equal(marker.tagName, 'BUTTON');
+  assert.equal(marker.getAttribute('type'), 'button');
   assert.match(marker.getAttribute('aria-label'), /Decision at 0:18: Split the review/);
   await clickAt(marker, 60);
   assert.deepEqual(seeks, [18]);
