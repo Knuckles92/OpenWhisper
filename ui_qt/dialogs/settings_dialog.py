@@ -770,11 +770,11 @@ class SettingsDialog(QDialog):
 
         self.streaming_enabled_tile = SettingTile(
             "Real-time transcription preview",
-            "Shows text as you speak on the near-cursor overlay. Parakeet and "
-            "Nemotron Streaming preview with the engine already loaded for "
-            "dictation; Local Whisper loads a small tiny.en preview model. The "
-            "final transcript still uses your selected model and the General "
-            "paste and clipboard settings.",
+            "Shows text as you speak on the near-cursor overlay. Nemotron uses "
+            "native streaming; Parakeet transcribes short audio chunks with the "
+            "loaded model; Local Whisper uses a separate tiny.en preview model. "
+            "The final transcript uses your selected model and follows the "
+            "General paste and clipboard settings.",
             _design_icon("bolt-green.svg"),
         )
         self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
