@@ -2,6 +2,7 @@ import { ReviewCorrections } from '../InsightReview';
 import { PULSE_LABELS, pulseTime } from '../HighlightPulseStrip';
 import type { MeetingStateDoc, Segment } from '../../types';
 import CardsPane from '../CardsPane';
+import CustomReports from './CustomReports';
 import NotesPane from '../NotesPane';
 import ParticipantsPane from '../ParticipantsPane';
 import QuestionInbox from '../QuestionInbox';
@@ -28,6 +29,8 @@ export default function FullMeetingDocument({
   segments,
 }: FullMeetingDocumentProps) {
   const participants = Object.values(state.participants);
+  // What the host asked this record to deliver, kept with it as context.
+  const brief = (state.intent?.text || '').trim();
   const currentTopic = (state.topic.current || '').trim();
   const previousTopics = (state.topic.history || []).slice(0, -1).filter((entry) =>
     (entry.text || '').trim(),
@@ -40,6 +43,14 @@ export default function FullMeetingDocument({
   return (
     <div className="full-meeting-document" aria-hidden="true">
       <ReviewCorrections state={state} />
+      {brief && (
+        <section className="panel" aria-label="Meeting brief">
+          <div className="panel-header"><span>Meeting Brief</span></div>
+          <div className="panel-body">
+            <p style={{ whiteSpace: 'pre-wrap' }}>{brief}</p>
+          </div>
+        </section>
+      )}
       {(currentTopic || previousTopics.length > 0) && (
         <section className="panel">
           <div className="panel-header">
@@ -121,6 +132,8 @@ export default function FullMeetingDocument({
           />
         </div>
       </section>
+
+      <CustomReports state={state} token="" meetingId={state.meeting_id} readOnly />
 
       <ParticipantsPane participants={participants} onlineIds={new Set()} readOnly />
 

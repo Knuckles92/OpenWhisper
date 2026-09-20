@@ -52,10 +52,10 @@ const cards = () => ({
 test('the rail lifts the ranked picks and never repeats them in the stream', () => {
   const {top, rest} = capturedRailFeed(cards(), [], 3);
   assert.equal(top.length, 3);
-  // One per category, newest first, and note-taker blocks stay out.
-  assert.deepEqual(top.map((i) => i.id), ['kp_new', 'tl_1', 'dc_1']);
+  // Insights lead; timeline navigation stays in the ordinary stream.
+  assert.deepEqual(top.map((i) => i.id), ['kp_new', 'dc_1', 'kp_old']);
   const restIds = rest.map((entry) => entry.item.id);
-  assert.deepEqual(restIds, ['kp_old']);
+  assert.deepEqual(restIds, ['tl_1']);
   assert.ok(!restIds.includes('nb_1'));
 });
 
@@ -96,4 +96,44 @@ test('with nothing captured the lead explains why instead of leaving a gap', asy
   });
   assert.match(container.querySelector('.capture-lead-ghost').textContent, /Enable cloud insights/);
   assert.equal(container.querySelector('.capture-rest-title'), null);
+});
+
+
+test('legacy repair snippets are not displayed as captured insights', async () => {
+  const doc = cards();
+  const legacy = {author_type: 'system', author_id: 'state_repair'};
+  doc.key_points.push(item('raw_transition', 'key_points', "Let's take a look at this.", legacy));
+  doc.timeline.push(item('raw_label', 'timeline', 'Seasoning.', legacy));
+  const feed = capturedRailFeed(doc, [], 3);
+  assert.ok(!feed.top.some((i) => i.id.startsWith('raw_')));
+  assert.ok(!feed.rest.some((e) => e.item.id.startsWith('raw_')));
+  const container = await mount(CardsPane, {
+    cards: doc, questions: [], onEvidenceClick() {}, lastSeqByTarget: {},
+    newestFirst: true, embedded: true, highlightTop: 3,
+  });
+  assert.ok(!container.textContent.includes('Seasoning.'));
+  assert.ok(!container.textContent.includes("Let's take a look at this."));
+});
+
+test('a human can retain or feature a repair item or timeline beat', () => {
+  for (const change of [{pinned: true}, {status: 'edited'}, {status: 'confirmed'}]) {
+    const doc = cards();
+    doc.timeline.push(item('human_choice', 'timeline', 'Seasoning.', {
+      author_type: 'system', author_id: 'state_repair', ...change,
+    }));
+    assert.equal(capturedRailFeed(doc).top[0].id, 'human_choice');
+  }
+});
+
+test('timeline-only speech leaves top insights empty', () => {
+  const doc = {timeline: [item('transition', 'timeline', "Let's take a look at this.")]};
+  assert.deepEqual(capturedRailFeed(doc).top, []);
+});
+
+
+test('a synthesized replacement of a legacy sample can become a capture', () => {
+  const doc = {key_points: [item('rewritten', 'key_points', 'The meal exceeded the budget by 13 cents.', {
+    author_type: 'system', author_id: 'state_repair', data: {insight_synthesized: true},
+  })]};
+  assert.equal(capturedRailFeed(doc).top[0].id, 'rewritten');
 });

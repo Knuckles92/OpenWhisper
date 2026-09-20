@@ -73,7 +73,7 @@ export type LiveHighlightsStatus = 'on' | 'off' | 'unavailable' | 'unknown';
 
 export interface HighlightPulse {
   id: string;
-  kind: 'decision' | 'disagreement' | 'commitment' | 'number';
+  kind: 'decision' | 'disagreement' | 'commitment' | 'number' | 'takeaway';
   start_s: number;
   segment_id: string;
   probability: number;
@@ -151,6 +151,13 @@ export interface TopicState {
   history: TopicRevision[];
 }
 
+/** What the host wants out of this meeting's record; steers every agent pass. */
+export interface MeetingIntent {
+  text: string;
+  updated_at: string;
+  author_id: string;
+}
+
 export type FinalizationStatus =
   | 'pending'
   | 'running'
@@ -178,6 +185,30 @@ export interface FinalizationState {
   card_deferred?: boolean;
 }
 
+/** A report a participant asked for in their own words. */
+export interface CustomReport {
+  id: string;
+  request: string;
+  status: 'running' | 'ready' | 'failed';
+  title: string;
+  markdown: string;
+  message: string;
+  run_id: string;
+  sources: {
+    transcript_lines?: number;
+    duration_s?: number;
+    transcript_complete?: boolean;
+    tools_used?: Record<string, number>;
+    past_meetings?: boolean;
+    knowledge_folder?: boolean;
+    model?: string;
+    provider?: string;
+  };
+  requested_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MeetingStateDoc {
   meeting_id: string;
   seq: number;
@@ -186,6 +217,8 @@ export interface MeetingStateDoc {
   intelligence_online: boolean;
   diarization_available: boolean;
   title: string;
+  /** The host's standing brief. Legacy snapshots omit it. */
+  intent?: MeetingIntent;
   topic: TopicState;
   rolling_summary: string;
   rolling_summary_evidence: string[];
@@ -205,6 +238,8 @@ export interface MeetingStateDoc {
   live_highlights?: HighlightPulse[];
   live_highlights_status?: LiveHighlightsStatus;
   voice_feedback?: {message?: string; at?: string};
+  /** Tailored reports, oldest first. Legacy snapshots omit this. */
+  custom_reports?: CustomReport[];
 }
 
 export interface Segment {
@@ -286,6 +321,9 @@ export const ops = {
   setTopic(text: string): Op {
     return { op: 'set_topic', text };
   },
+  setMeetingIntent(text: string): Op {
+    return { op: 'set_meeting_intent', text };
+  },
   setTitle(text: string): Op {
     return { op: 'set_title', text };
   },
@@ -313,10 +351,12 @@ export type Effect =
   | { entity: 'live_highlights'; pulses: HighlightPulse[] }
   | { entity: 'voice_feedback'; feedback: {message: string; at: string} }
   | { entity: 'review'; review: InsightReviewState; items: CardItem[] }
+  | { entity: 'custom_report'; report: CustomReport; removed: boolean }
   | { entity: 'item'; item: CardItem }
   | { entity: 'topic'; topic: TopicState }
   | { entity: 'rolling_summary'; text: string; evidence: string[] }
   | { entity: 'title'; text: string }
+  | { entity: 'intent'; intent: MeetingIntent }
   | { entity: 'cloud_enabled'; enabled: boolean }
   | { entity: 'participant'; participant: Participant }
   | { entity: 'question'; question: Question }

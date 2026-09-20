@@ -2,8 +2,9 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { createPortal } from 'react-dom';
 import type { HighlightPulse, LiveHighlightsStatus } from '../types';
 
-export const PULSE_LABELS = {
+export const PULSE_LABELS: Record<HighlightPulse['kind'], string> = {
   decision: 'Decision', disagreement: 'Disagreement', commitment: 'Dated commitment', number: 'Number',
+  takeaway: 'Takeaways',
 };
 
 export function pulseTime(seconds: number): string {

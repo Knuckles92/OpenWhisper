@@ -1090,12 +1090,13 @@ class UIController(QObject):
             return "required"
         return "auto"
 
-    def _on_meeting_start_requested(self, cloud_enabled: bool):
+    def _on_meeting_start_requested(self, cloud_enabled: bool, intent: str = ""):
         policy = self.ensure_meeting_start_readiness()
         if policy is None:
             return
         if self.on_meeting_start:
-            self.on_meeting_start(cloud_enabled, system_audio_policy=policy)
+            self.on_meeting_start(cloud_enabled, system_audio_policy=policy,
+                                  intent=intent)
 
     def _on_meeting_demo_requested(self, cloud_enabled: bool):
         # Demo mode seeds canned transcript data and never opens capture. Keep
@@ -1136,12 +1137,14 @@ class UIController(QObject):
         if self.on_meeting_defer_insights:
             self.on_meeting_defer_insights()
 
-    def _on_meeting_start_new_requested(self, cloud_enabled: bool):
+    def _on_meeting_start_new_requested(self, cloud_enabled: bool,
+                                        intent: str = ""):
         policy = self.ensure_meeting_start_readiness()
         if policy is None:
             return
         if self.on_meeting_start_new:
-            self.on_meeting_start_new(cloud_enabled, system_audio_policy=policy)
+            self.on_meeting_start_new(cloud_enabled, system_audio_policy=policy,
+                                      intent=intent)
 
     def _on_past_meeting_requested(self, meeting_id: str) -> None:
         if self.on_meeting_open_past:

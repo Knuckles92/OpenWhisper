@@ -1272,6 +1272,27 @@ class TestDiarizationDegradation:
 # Store wiring
 
 class TestStoreWiring:
+    def test_pre_meeting_brief_is_live_before_the_first_word(
+            self, make_engine):
+        """The desktop field seeds the state, not a later host op."""
+        brief = "Flag anything about the Q3 budget, especially the numbers."
+        engine = make_engine(cloud_enabled=False, intent=f"  {brief}  ")
+
+        engine.start()
+
+        intent = engine.store.snapshot()["intent"]
+        assert intent["text"] == brief
+        assert intent["updated_at"]
+
+    def test_no_brief_leaves_the_field_empty_and_unstamped(self, make_engine):
+        engine = make_engine(cloud_enabled=False)
+
+        engine.start()
+
+        assert engine.store.snapshot()["intent"] == {
+            "text": "", "updated_at": "", "author_id": "",
+        }
+
     def test_pinned_segments_are_protected_from_the_diarizer(
             self, make_engine, repo):
         engine = make_engine(cloud_enabled=False)

@@ -42,6 +42,7 @@ function fixture() {
     insight_review:{questions:[{id:'r1', correction:'Budget was only proposed.'}]},
     live_highlights:[
       {id:'late', kind:'number', text:'5000 budget', start_s:90, probability:0.9, segment_id:'s1'},
+      {id:'lesson', kind:'takeaway', text:'Early feedback prevents rework', start_s:45, probability:0.93, segment_id:'s1'},
       {id:'early', kind:'decision', text:'Choose June', start_s:5, probability:0.95, segment_id:'s1'},
     ],
   };
@@ -58,10 +59,11 @@ test('full meeting retains pulses, structured details, spoken notes and citation
   }, React.createElement(FullMeetingDocument, {state, segments})));
   const document = dom(html);
   const text = document.body.textContent;
-  for (const value of ['We discussed delivery.','Meeting pulses','1:30','Number:','5000 budget','Spoken note',
+  for (const value of ['We discussed delivery.','Meeting pulses','Takeaways:','Early feedback prevents rework','0:45','1:30','Number:','5000 budget','Spoken note',
     'Owner: Sam','Due: Friday','Severity: high','1:35','Citation conflicts with claim',
     'Provisional','Budget was only proposed.','Maya will send the RFC']) assert.ok(text.includes(value), value);
-  assert.ok(text.indexOf('Choose June') < text.indexOf('5000 budget'));
+  assert.ok(text.indexOf('Choose June') < text.indexOf('Early feedback prevents rework'));
+  assert.ok(text.indexOf('Early feedback prevents rework') < text.indexOf('5000 budget'));
   assert.ok(!text.includes('REMOVED NOTE'));
   assert.ok(!text.includes('Myra will send the RFC'));
   assert.equal(document.querySelectorAll('textarea,input,select').length, 0);

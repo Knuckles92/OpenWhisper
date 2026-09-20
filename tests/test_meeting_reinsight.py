@@ -175,8 +175,8 @@ class TestHappyPath:
 
         result = rerun_insights(repo, "m_rerun", provider="openrouter", model="m")
 
-        # Agent update rejected; structural repairs still run.
-        assert result["applied"] >= 3
+        # Agent update rejected; summary/topic can use existing human text.
+        assert result["applied"] == 2
         items = result["state"]["cards"]["key_points"]
         human = next(item for item in items if item["id"] == "it_human")
         assert human["text"] == "Human wrote this"
@@ -185,7 +185,8 @@ class TestHappyPath:
             item for item in result["state"]["cards"]["timeline"]
             if item.get("status") != "removed"
         ]
-        assert len(timeline) >= 1
+        # No evidence on the human note: do not borrow unrelated speech.
+        assert timeline == []
 
 
 class TestFailure:
@@ -199,9 +200,10 @@ class TestFailure:
 
         assert result["ok"] is False
         assert "model exploded" in result["error"]
-        # Structural repairs still run so a failed agent does not leave an
-        # empty durable record when a transcript exists.
-        assert result["applied"] == 4
+        # Failure leaves the transcript intact without manufacturing insights.
+        assert result["applied"] == 0
+        assert all(not items for items in result["state"]["cards"].values())
+        assert len(repo.get_segments("m_rerun")) == 2
         assert result["state"]["meeting_id"] == "m_rerun"
         assert core.shutdown_calls == 1
 

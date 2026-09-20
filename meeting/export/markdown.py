@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Any, Dict, List, Optional
 
 from meeting.export.transcript_txt import (
@@ -23,6 +24,7 @@ from meeting.export.transcript_txt import (
     resolve_title,
     transcript_lines,
 )
+from meeting.highlights import PULSE_LABELS
 from meeting.time_utils import as_local_time, elapsed_seconds
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,10 @@ def export_markdown(
     if metadata:
         out += ["", metadata]
 
+    # Human-authored, so it survives an intelligence-free export: it is what
+    # the reader needs to judge whether the record met its purpose.
+    _append_intent(out, state)
+
     if include_intelligence:
         corrections = [q.get("correction") for q in (state.get("insight_review") or {}).get("questions", []) if q.get("correction") and not q.get("superseded")]
         if corrections:
@@ -97,6 +103,7 @@ def export_markdown(
                 out.extend(f"- {item['text'].strip()}" for item in items)
 
         _append_questions(out, state, participants)
+        _append_custom_reports(out, state)
 
     if include_transcript:
         lines = transcript_lines(segments, participants)
@@ -138,6 +145,16 @@ def _duration_s(meeting: Dict[str, Any],
     return None
 
 
+def _append_intent(out: List[str], state: Dict[str, Any]) -> None:
+    """Append the host's standing brief as a blockquote under the header."""
+    text = str((state.get("intent") or {}).get("text") or "").strip()
+    if not text:
+        return
+    out += ["", "## Meeting Brief", ""]
+    # Blockquote every line so a multi-line brief reads as one quoted block.
+    out.extend(f"> {line}".rstrip() for line in text.splitlines())
+
+
 # Topic / summary
 
 def _append_topic(out: List[str], state: Dict[str, Any]) -> None:
@@ -171,13 +188,6 @@ def _append_summary(out: List[str], state: Dict[str, Any]) -> None:
 
 # Cards
 
-_PULSE_LABELS = {
-    "decision": "Decision",
-    "disagreement": "Disagreement",
-    "commitment": "Dated commitment",
-    "number": "Number",
-}
-
 _CITATION_LABELS = {
     "supported": "Citation supports claim",
     "contradicted": "Citation conflicts with claim",
@@ -194,7 +204,7 @@ def _append_highlights(out: List[str], state: Dict[str, Any]) -> None:
     pulses = [
         pulse for pulse in state.get("live_highlights") or []
         if (pulse.get("text") or "").strip()
-        and pulse.get("kind") in _PULSE_LABELS
+        and pulse.get("kind") in PULSE_LABELS
         and isinstance(pulse.get("start_s"), (int, float))
         and not isinstance(pulse["start_s"], bool)
         and math.isfinite(pulse["start_s"])
@@ -206,7 +216,7 @@ def _append_highlights(out: List[str], state: Dict[str, Any]) -> None:
     for pulse in sorted(pulses, key=lambda p: p["start_s"]):
         out.append(
             f"- [{format_mmss(pulse['start_s'])}] "
-            f"**{_PULSE_LABELS[pulse['kind']]}:** {pulse['text'].strip()}"
+            f"**{PULSE_LABELS[pulse['kind']]}:** {pulse['text'].strip()}"
         )
 
 
@@ -402,6 +412,84 @@ def _append_questions(out: List[str], state: Dict[str, Any],
         if answer:
             badge = _answer_badge(question, participants)
             out.append(f"  - Answer: {answer} — _{badge}_")
+
+
+#: Heading depth a report body is pushed down to. The document already owns
+#: ``#`` (title), ``##`` (sections), and ``###`` (one report), so a report's
+#: own ``#`` becomes ``####`` and its structure nests instead of colliding.
+_REPORT_HEADING_OFFSET = 3
+
+_HEADING_RE = re.compile(r"^(#{1,6})(\s)")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def demote_headings(markdown: str, offset: int = _REPORT_HEADING_OFFSET) -> str:
+    """Push every ATX heading down ``offset`` levels, capped at ``######``.
+
+    Fenced blocks are skipped: a ``#`` inside a code fence is a comment, not
+    a heading, and rewriting it would corrupt the sample.
+
+    Args:
+        markdown: A standalone Markdown document.
+        offset: Levels to add to each heading.
+
+    Returns:
+        The same document, safe to nest inside a larger one.
+    """
+    lines: List[str] = []
+    fence = ""
+    for line in (markdown or "").splitlines():
+        fence_match = _FENCE_RE.match(line)
+        if fence_match:
+            marker = fence_match.group(1)
+            fence = "" if fence == marker else (fence or marker)
+            lines.append(line)
+            continue
+        match = None if fence else _HEADING_RE.match(line)
+        if match:
+            depth = min(6, len(match.group(1)) + offset)
+            lines.append("#" * depth + line[match.end(1):])
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _append_custom_reports(out: List[str], state: Dict[str, Any]) -> None:
+    """Append the reports participants asked for, each under its own heading.
+
+    Only finished reports are rendered: a failed or in-flight one is a UI
+    state, not part of the document someone is about to circulate.
+    """
+    reports = [
+        report for report in (state.get("custom_reports") or [])
+        if isinstance(report, dict)
+        and report.get("status") == "ready"
+        and (report.get("markdown") or "").strip()
+    ]
+    if not reports:
+        return
+    out += ["", "## Requested Reports"]
+    for report in reports:
+        request = " ".join(str(report.get("request") or "").split())
+        title = str(report.get("title") or "").strip() or request or "Report"
+        out += ["", f"### {title}", ""]
+        if request:
+            out += [f"> Requested: {request}", ""]
+        out.append(demote_headings(_strip_leading_title(
+            str(report["markdown"]).strip(), title,
+        )))
+
+
+def _strip_leading_title(markdown: str, title: str) -> str:
+    """Drop a report's own opening ``# `` line when it repeats the heading."""
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.strip().startswith("# ") and line.strip()[2:].strip() == title:
+            return "\n".join(lines[index + 1:]).lstrip("\n")
+        return markdown
+    return markdown
 
 
 def _answer_badge(question: Dict[str, Any],

@@ -518,10 +518,9 @@ class CheckpointScheduler:
         if not segments and not guidance:
             return
 
-        # Seed structural live state before the network request. A slow or
-        # uncooperative model must not leave the visible topic, summary, and
-        # key points blank until the checkpoint eventually returns.
-        self._maybe_backfill_live_insights()
+        # Only the agent can judge which speech deserves a capture. Seeding
+        # cards with transcript snippets promotes filler into insights and
+        # anchors the model on it before the model has read the context.
         payload = self._build_payload(segments, is_consolidation=False)
         if payload is None:
             if guidance:
@@ -566,47 +565,6 @@ class CheckpointScheduler:
                 result.error or "checkpoint failed",
                 request_id=payload.request_id,
             )
-
-    def _dashboard_needs_live_seed(self, snapshot: Dict[str, Any]) -> bool:
-        """True when live insights have not seeded the visible dashboard yet."""
-        topic = ((snapshot.get("topic") or {}).get("current") or "").strip()
-        summary = (snapshot.get("rolling_summary") or "").strip()
-        cards = snapshot.get("cards") or {}
-        has_key_point = any(
-            isinstance(item, dict) and item.get("status") != "removed"
-            for item in (cards.get("key_points") or [])
-        )
-        return not topic or not summary or not has_key_point
-
-    def _maybe_backfill_live_insights(self) -> None:
-        """Deterministically seed an empty live dashboard from the transcript."""
-        if self._consolidating or self._stop_event.is_set():
-            return
-        store = getattr(self._engine, "store", None)
-        if store is None:
-            return
-        try:
-            snapshot = store.snapshot()
-        except Exception:
-            logger.exception("Live insight backfill could not snapshot state")
-            return
-        if not self._dashboard_needs_live_seed(snapshot):
-            return
-        try:
-            segments = self._engine.get_transcript()
-        except Exception:
-            logger.exception("Live insight backfill transcript fetch failed")
-            return
-        if not segments:
-            return
-        try:
-            from meeting.state.repair import repair_meeting_state
-
-            applied = repair_meeting_state(store, segments)
-            if applied:
-                logger.info("Live insight backfill applied %d op(s)", applied)
-        except Exception:
-            logger.exception("Live insight backfill failed")
 
     def _maybe_fire_polish(self) -> None:
         """Review transcript text on count/time cadence, including during silence."""

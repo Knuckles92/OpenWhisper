@@ -842,15 +842,15 @@ def test_start_new_meeting_defers_then_starts(runtime, monkeypatch):
     monkeypatch.setattr(
         rt,
         "_begin_start",
-        lambda cloud, demo=False, system_audio_policy="auto": started.append(
-            (cloud, demo, system_audio_policy)
+        lambda cloud, demo=False, system_audio_policy="auto", intent="": (
+            started.append((cloud, demo, system_audio_policy, intent))
         ),
     )
 
-    rt.start_new_meeting(True)
+    rt.start_new_meeting(True, intent="Capture the budget numbers.")
 
     assert persisted[0][1]["finalization"]["card_deferred"] is True
-    assert started == [(True, False, "auto")]
+    assert started == [(True, False, "auto", "Capture the budget numbers.")]
     assert rt._card_meeting_id is None
 
 
@@ -868,6 +868,33 @@ def test_cloud_start_without_consent_emits_and_does_not_launch(runtime, monkeypa
     assert rt._consent_pending_kind == "start"
     assert rt.is_claimed is True
     assert controller.meeting_active is False
+
+
+def test_brief_survives_the_consent_round_trip(runtime, monkeypatch):
+    """The consent dialog suspends the start; the typed brief must outlast it."""
+    rt, _ = runtime
+    _record_launch(rt, monkeypatch)
+    monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
+    brief = "Flag anything about the Q3 budget."
+
+    rt.start_meeting(cloud_enabled=True, intent=brief)
+    rt.on_consent_result(True)
+
+    assert rt._build_options(True).intent == brief
+
+
+def test_a_later_meeting_does_not_inherit_the_previous_brief(runtime, monkeypatch):
+    """Each start rewrites the pending brief, including back to empty."""
+    rt, _ = runtime
+    _record_launch(rt, monkeypatch)
+
+    rt.start_meeting(cloud_enabled=False, intent="Yesterday's brief.")
+    # The real _launch releases the start claim on the worker thread; the
+    # fake one cannot, so release it here to reach a second genuine start.
+    rt._starting = False
+    rt.start_meeting(cloud_enabled=False)
+
+    assert rt._build_options(False).intent == ""
 
 
 def test_demo_start_without_consent_uses_start_demo_kind(runtime, monkeypatch):

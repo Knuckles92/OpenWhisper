@@ -28,6 +28,7 @@ from meeting.agent.base import (
 )
 from meeting.agent.prompts import (
     build_checkpoint_user_prompt, build_note_taker_system_prompt, build_notes_user_prompt,
+    intent_prompt,
 )
 from meeting.finalization import POLISH_TIMEOUT_S
 from meeting.interfaces import (
@@ -671,8 +672,15 @@ class SidecarAgent:
                 "evidence": self._citable_ids, "pass": self._pass_kind,
             }
         from meeting.corrections import guidance_prompt
+        # Bundles that build their own prompt ignore ``user_prompt`` and read
+        # only ``human_guidance``; the brief rides along so an older sidecar
+        # still works to the host's stated intent.
         params: Dict[str, Any] = {
-            "human_guidance": guidance_prompt(payload.state_snapshot),
+            "human_guidance": "\n\n".join(
+                part for part in (intent_prompt(payload.state_snapshot),
+                                  guidance_prompt(payload.state_snapshot))
+                if part
+            ),
             "user_prompt": (
                 build_notes_user_prompt(payload.state_snapshot, payload.new_segments)
                 if is_notes else build_checkpoint_user_prompt(

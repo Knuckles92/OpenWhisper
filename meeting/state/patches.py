@@ -19,12 +19,14 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from meeting.state.custom_reports import CUSTOM_REPORT_HANDLERS
 from meeting.state.review import REVIEW_HANDLERS, item_effect
 from meeting.fast_state import FAST_HANDLERS
 from meeting.interfaces import OpResult
 from meeting.state.schema import (
     CARD_KEYS,
     CardItem,
+    MeetingIntent,
     MeetingState,
     Participant,
     Question,
@@ -40,6 +42,11 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_LEN = 4000
 MAX_TOPIC_LEN = 500
 MAX_NAME_LEN = 120
+#: Ceiling on the host's standing brief. Long enough for a few sentences of
+#: real direction ("we decide the vendor today - capture who objected and
+#: why; ignore the status round-robin at the start"), short enough that it
+#: stays a brief and keeps its weight in every agent prompt.
+MAX_INTENT_LEN = 2000
 MAX_SUMMARY_LEN = 8000
 MAX_OPEN_QUESTIONS = 7
 MAX_EVIDENCE_REFS = 20
@@ -119,17 +126,19 @@ AGENT_ONLY_OPS = frozenset({"resolve_question", "revise_segment_text"})
 
 #: Meeting-level metadata only the host may change, matching the host-only REST
 #: routes. Guests edit card items, not the meeting's identity or its summary.
-HOST_ONLY_OPS = frozenset({"set_topic", "set_rolling_summary", "set_title"})
+HOST_ONLY_OPS = frozenset({"set_topic", "set_rolling_summary", "set_title",
+                           "set_meeting_intent"})
 
 #: Ops that target the transcript segment log rather than the state document.
 #: They are validated here but applied by the store's segment handler.
 SEGMENT_OPS = frozenset({"reassign_segment_speaker", "revise_segment_text"})
 
 #: The full vocabulary (human actions include everything below).
-ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset(FAST_HANDLERS) | frozenset(REVIEW_HANDLERS) | frozenset({
+ALL_OPS = AGENT_OPS | SEGMENT_OPS | frozenset(FAST_HANDLERS) | frozenset(REVIEW_HANDLERS) | frozenset(CUSTOM_REPORT_HANDLERS) | frozenset({
     "pin_item", "unpin_item", "confirm_item",
     "answer_question", "dismiss_question", "reopen_question",
     "rename_participant", "set_title", "set_cloud_enabled",
+    "set_meeting_intent",
 })
 
 
@@ -371,6 +380,12 @@ def _op_update_item(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> 
                 if key not in new_data and key in item.data:
                     new_data[key] = item.data[key]
         item.data = new_data
+    # A repaired sample keeps its creation provenance. Mark a real agent
+    # rewrite so the capture rail can show the synthesized replacement;
+    # metadata-only edits do not turn the original snippet into an insight.
+    if ctx.is_agent and item.author_type == "system" and item.author_id == "state_repair":
+        if item.text != prev["text"] or prev["data"].get("insight_synthesized") is True:
+            item.data["insight_synthesized"] = True
     if force and isinstance(changes.get("evidence"), list):
         # Undo path: restore the exact prior anchor set.
         item.evidence = list(changes["evidence"])
@@ -512,6 +527,34 @@ def _op_set_title(state: MeetingState, op: Dict[str, Any], ctx: OpContext) -> Op
         ok=True, op=op,
         effect={"entity": "title", "text": state.title},
         inverse={"op": "set_title", "text": prev} if prev else None,
+    )
+
+
+def _op_set_meeting_intent(state: MeetingState, op: Dict[str, Any],
+                           ctx: OpContext) -> OpResult:
+    """Host writes (or clears) the standing brief the agent works against.
+
+    Host-only for the same reason as the title: the brief steers every agent
+    pass, so a guest must not be able to redirect what the meeting's record
+    captures. Blank text is a valid clear — unlike the rolling summary, the
+    brief is the host's own words and removing it removes only their own
+    direction, and the inverse op restores it on undo.
+    """
+    if ctx.actor_type not in ("host", "system"):
+        return _reject(op, "host_only")
+    text = op.get("text", "")
+    if not isinstance(text, str) or len(text) > MAX_INTENT_LEN:
+        return _reject(op, "invalid_text")
+    previous = state.intent
+    state.intent = MeetingIntent(
+        text=text.strip(),
+        updated_at=now_iso(),
+        author_id=str(ctx.actor_id or ""),
+    )
+    return OpResult(
+        ok=True, op=op,
+        effect={"entity": "intent", "intent": state.intent.to_dict()},
+        inverse={"op": "set_meeting_intent", "text": previous.text},
     )
 
 
@@ -846,6 +889,7 @@ def _op_revise_segment_text(state: MeetingState, op: Dict[str, Any],
 _HANDLERS: Dict[str, Callable[[MeetingState, Dict[str, Any], OpContext], OpResult]] = {
     **REVIEW_HANDLERS,
     **FAST_HANDLERS,
+    **CUSTOM_REPORT_HANDLERS,
     "add_item": _op_add_item,
     "update_item": _op_update_item,
     "remove_item": _op_remove_item,
@@ -855,6 +899,7 @@ _HANDLERS: Dict[str, Callable[[MeetingState, Dict[str, Any], OpContext], OpResul
     "set_topic": _op_set_topic,
     "set_rolling_summary": _op_set_rolling_summary,
     "set_title": _op_set_title,
+    "set_meeting_intent": _op_set_meeting_intent,
     "set_cloud_enabled": _op_set_cloud_enabled,
     "upsert_participant": _op_upsert_participant,
     "suggest_participant_name": _op_suggest_participant_name,

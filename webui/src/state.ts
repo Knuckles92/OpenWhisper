@@ -72,6 +72,18 @@ export function applyEffect(doc: MeetingStateDoc, effect: Effect): MeetingStateD
       for (const item of effect.items) updated = applyEffect(updated, { entity: 'item', item });
       return updated;
     }
+    case 'custom_report': {
+      const reports = [...(next.custom_reports ?? [])];
+      const idx = reports.findIndex((r) => r.id === effect.report.id);
+      if (effect.removed) {
+        if (idx >= 0) reports.splice(idx, 1);
+      } else if (idx >= 0) {
+        reports[idx] = effect.report;
+      } else {
+        reports.push(effect.report);
+      }
+      return { ...next, custom_reports: reports };
+    }
     case 'item': {
       const item = effect.item;
       const list = [...(next.cards[item.card] ?? [])];
@@ -95,6 +107,9 @@ export function applyEffect(doc: MeetingStateDoc, effect: Effect): MeetingStateD
       break;
     case 'title':
       next.title = effect.text;
+      break;
+    case 'intent':
+      next.intent = effect.intent;
       break;
     case 'cloud_enabled':
       next.cloud_enabled = effect.enabled;
@@ -397,11 +412,18 @@ export function sortedCardItems(items: CardItem[]): CardItem[] {
   });
 }
 
+/** Legacy repair samples have evidence anchors but were never selected as insights. */
+function isUnreviewedRepair(item: CardItem): boolean {
+  return item.author_type === 'system' && item.author_id === 'state_repair'
+    && !item.pinned && item.status !== 'edited' && item.status !== 'confirmed'
+    && item.data?.insight_synthesized !== true;
+}
+
 /** Generic Captured cards (excludes live_notes, which live in NotesPane). */
 export function flattenCapturedItems(cards: MeetingStateDoc['cards']): CardItem[] {
   const items: CardItem[] = [];
   for (const key of GENERIC_CARD_KEYS) {
-    items.push(...(cards[key] ?? []));
+    items.push(...(cards[key] ?? []).filter((item) => !isUnreviewedRepair(item)));
   }
   return items;
 }
@@ -512,7 +534,8 @@ function isDuplicateSpotlightText(text: string, picks: SpotlightPick[]): boolean
  * The up-to-three card items the Captured rail lifts to its highlighted lead.
  * Ranked pinned → human-touched (edited/confirmed) → most recently updated,
  * preferring one item per card category and deduplicating by text similarity;
- * repeats only fill leftover slots when distinct.
+ * repeats only fill leftover slots when distinct. Timeline navigation and
+ * unreviewed repair samples are not top insights; human selections take priority.
  * Note-taker blocks are excluded — they live in the dedicated NotesPane.
  */
 export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3): SpotlightPick[] {
@@ -520,7 +543,10 @@ export function selectSpotlightItems(cards: MeetingStateDoc['cards'], limit = 3)
   for (const key of Object.keys(cards) as CardKey[]) {
     if (key === 'live_notes' || key === 'user_notes') continue;
     for (const item of cards[key] ?? []) {
-      if (item.status !== 'removed') ranked.push({ key, item });
+      if (item.status === 'removed' || isUnreviewedRepair(item)) continue;
+      const touched = item.pinned || item.status === 'edited' || item.status === 'confirmed';
+      if (key === 'timeline' && !touched) continue;
+      ranked.push({ key, item });
     }
   }
   ranked.sort((a, b) => {

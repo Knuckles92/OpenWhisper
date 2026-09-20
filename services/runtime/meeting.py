@@ -123,6 +123,11 @@ class MeetingRuntime:
         # pattern in ApplicationController.
         self._consent_pending_kind: Optional[str] = None
         self._pending_system_audio_policy: str = "auto"
+        #: The brief typed on the Meeting Mode tab for the start now in
+        #: flight. Held here because a cloud-consent dialog can suspend the
+        #: start between the click and ``_build_options``. Every start
+        #: rewrites it, so an abandoned one cannot leak into the next.
+        self._pending_intent: str = ""
 
     def setup(self) -> None:
         """Kick off the startup crash-recovery scan for interrupted meetings.
@@ -486,6 +491,7 @@ class MeetingRuntime:
         self,
         cloud_enabled: Optional[bool],
         system_audio_policy: str = "auto",
+        intent: str = "",
     ) -> None:
         """Defer any leftover card, then start a new session."""
         with self._lock:
@@ -501,6 +507,7 @@ class MeetingRuntime:
             cloud_enabled,
             demo=False,
             system_audio_policy=system_audio_policy,
+            intent=intent,
         )
 
     @property
@@ -532,12 +539,14 @@ class MeetingRuntime:
         self,
         cloud_enabled: Optional[bool] = None,
         system_audio_policy: str = "auto",
+        intent: str = "",
     ) -> None:
         """Start a meeting using the explicit or remembered cloud setting."""
         self._begin_start(
             cloud_enabled,
             demo=False,
             system_audio_policy=system_audio_policy,
+            intent=intent,
         )
 
     def start_demo_meeting(
@@ -567,6 +576,7 @@ class MeetingRuntime:
         *,
         demo: bool,
         system_audio_policy: str = "auto",
+        intent: str = "",
     ) -> None:
         # ``is_active`` is engine-derived and stays False for the seconds
         # ``_start_worker`` takes, so the authoritative guard is the
@@ -624,6 +634,7 @@ class MeetingRuntime:
             cloud = bool(cloud_enabled)
 
         self._pending_system_audio_policy = str(system_audio_policy or "auto")
+        self._pending_intent = str(intent or "")
         if cloud and not self._cloud_consent_given():
             # One-time informed consent before any transcript leaves the
             # machine; the controller shows the dialog on the Qt main thread
@@ -885,6 +896,7 @@ class MeetingRuntime:
 
         return MeetingEngineOptions(
             title="Demo Planning Sync" if demo else "",
+            intent=self._pending_intent,
             cloud_enabled=cloud,
             mic_device_id=settings_manager.load_audio_input_device(),
             asr_model=resolve_meeting_whisper_model(settings),

@@ -29,13 +29,15 @@ async function mount(component, props) {
 afterEach(async () => {if (root) {await act(async () => root.unmount()); root = null;} document.body.replaceChildren();});
 
 test('every pulse is labelled and passes its exact playback anchor on click', async () => {
-  const pulses = ['decision','disagreement','commitment','number'].map((kind,i) => ({id:`p${i}`, kind, start_s:61+i, segment_id:`sg_${i}`, probability:.95, text:`Moment ${i}`}));
+  const pulses = ['decision','disagreement','commitment','number','takeaway'].map((kind,i) => ({id:`p${i}`, kind, start_s:61+i, segment_id:`sg_${i}`, probability:.95, text:`Moment ${i}`}));
   const picked = [];
   const container = await mount(PulseStrip, {pulses, onSelect:p=>picked.push(p)});
   const buttons = [...container.querySelectorAll('button')];
-  assert.equal(buttons.length, 4);
+  assert.equal(buttons.length, 5);
+  assert.equal(container.querySelector('.pulse-label.pulse-takeaway').textContent, 'Takeaways');
+  assert.match(container.querySelector('.pulse-mark.pulse-takeaway').getAttribute('aria-label'), /^Takeaways at 1:05:/);
   for (const button of buttons) {
-    assert.match(button.getAttribute('aria-label'), /at 1:0[1-4]/);
+    assert.match(button.getAttribute('aria-label'), /at 1:0[1-5]/);
     await act(async () => button.click());
   }
   assert.deepEqual(picked, pulses);
@@ -215,7 +217,7 @@ test('highlights without a recording explain why playback is disabled', async ()
 
 test('highlight status from hello and live updates replaces the empty message without losing pulses', async () => {
   const {initialUiState, meetingReducer} = require('../src/state.ts');
-  const pulse = {id:'p', kind:'number', start_s:60, text:'Budget'};
+  const pulse = {id:'p', kind:'takeaway', start_s:60, text:'Early feedback prevents rework'};
   let ui = meetingReducer(initialUiState, {type:'server_message', msg:{
     type:'hello', role:'host', participant_id:null, segments:[], urls:{},
     state:{status:'active', cloud_enabled:true, live_highlights_status:'off', live_highlights:[], participants:{}, cards:{}},
@@ -258,7 +260,7 @@ for (const [props, expected] of [
 }
 
 test('legacy pulse previews show individual saved scores, follow keyboard focus, and dismiss with Escape', async () => {
-  const pulses = ['decision','disagreement','commitment','number'].map((kind,i) => ({
+  const pulses = ['decision','disagreement','commitment','number','takeaway'].map((kind,i) => ({
     id:`preview-${i}`, kind, start_s:61+i, segment_id:`source-${i}`, probability:.81 + i * .04, text:`Quoted passage ${i}`,
   }));
   const props = {pulses, onSelect:() => {}};
@@ -281,8 +283,8 @@ test('legacy pulse previews show individual saved scores, follow keyboard focus,
   }
   await act(async () => document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key:'Escape',bubbles:true})));
   assert.equal(document.querySelector('[role=dialog]'), null);
-  assert.equal(buttons[3].hasAttribute('aria-controls'), false);
-  assert.equal(document.activeElement, buttons[3]);
+  assert.equal(buttons[4].hasAttribute('aria-controls'), false);
+  assert.equal(document.activeElement, buttons[4]);
   await act(async () => buttons[0].focus());
   await act(async () => root.render(React.createElement(PulseStrip, {...props, pulses:[]})));
   assert.equal(document.querySelector('[role=dialog]'), null);
@@ -318,9 +320,9 @@ test('hover preview can be read under the pointer and dismisses on leaving or me
 });
 
 test('pulse evidence shows detection probability without source selection', async () => {
-  const pulse = {id:'scored',kind:'number',start_s:63,segment_id:'budget',probability:.81,text:'Budget is a thousand dollars.',
+  const pulse = {id:'scored',kind:'takeaway',start_s:63,segment_id:'budget',probability:.81,text:'Budget is a thousand dollars.',
     assessment:{threshold:.8,window_start_s:60,window_end_s:120,
-      scores:{number:.81,decision:.95,commitment:.81,disagreement:0},
+      scores:{takeaway:.81,decision:.95,commitment:.81,disagreement:0},
       source_probability:.65,source_confidence:.4,source_rank:1,source_option_count:3}};
   const props = {pulses:[pulse], onSelect:() => {}};
   const container = await mount(PulseStrip, props);

@@ -83,6 +83,10 @@ Listener = Callable[[str, Dict[str, Any]], None]
 class MeetingEngineOptions:
     """Plain-value configuration for one meeting (resolved by the caller)."""
     title: str = ''
+    #: The host's standing brief, stated before the meeting starts: what they
+    #: want out of the notes, and any moment the agent should watch for. Seeds
+    #: ``MeetingState.intent``; the host can still edit it from the dashboard.
+    intent: str = ''
     cloud_enabled: bool = False
     mic_device_id: Optional[int] = None
     asr_model: str = 'auto'
@@ -494,14 +498,22 @@ class MeetingEngine:
             self.meeting_id = meeting_id
             self._spool_dir = spool_dir
 
-            from meeting.state.schema import FinalizationState
+            from meeting.state.schema import FinalizationState, MeetingIntent
+            from meeting.state.patches import MAX_INTENT_LEN
 
             from meeting.insight_review import review_config
 
+            # Clamped rather than rejected: a start must not fail over an
+            # over-long brief, and the validation layer owns the limit.
+            intent_text = (self.options.intent or "").strip()[:MAX_INTENT_LEN]
             state = MeetingState(
                 meeting_id=meeting_id,
                 cloud_enabled=self.options.cloud_enabled,
                 title=self.options.title,
+                intent=MeetingIntent(
+                    text=intent_text,
+                    updated_at=now_iso() if intent_text else "",
+                ),
                 finalization=FinalizationState.default_for_cloud(
                     self.options.cloud_enabled
                 ),
@@ -2896,15 +2908,19 @@ class MeetingEngine:
         return results
 
     def _notify_human_guidance(self, results: List[OpResult]) -> None:
-        """Ask the agent to re-read the dashboard after a user note changes.
+        """Ask the agent to re-read the dashboard after human direction changes.
 
         Corrections and insights live on the ``user_notes`` card; adding,
         editing, removing, or undoing one changes what the agent should
-        believe, so the next checkpoint must not wait for new speech.
+        believe, so the next checkpoint must not wait for new speech. A
+        rewritten meeting brief is the same kind of change — the host has
+        just told the agent what to look for, and a quiet room must not
+        delay it.
         """
-        if not any(result.ok and
-                   ((result.effect or {}).get("item") or {}).get("card") == "user_notes"
-                   for result in results):
+        if not any(result.ok and (
+                    ((result.effect or {}).get("item") or {}).get("card") == "user_notes"
+                    or (result.effect or {}).get("entity") == "intent"
+                   ) for result in results):
             return
         notify = getattr(self._scheduler, "notify_guidance", None)
         if callable(notify):

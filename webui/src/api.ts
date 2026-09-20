@@ -157,6 +157,31 @@ export const api = {
     return `/api/export/${fmt}?${qs({ token, meeting_id: meetingId })}`;
   },
 
+  /** Ask for a report written to the host's own description (host only). */
+  requestReport(token: string, meetingId: string, text: string): Promise<{
+    ok: boolean; report_id: string | null; error?: string | null; state: MeetingStateDoc;
+  }> {
+    return request(`/api/meetings/${encodeURIComponent(meetingId)}/reports?${qs({ token })}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request: text }),
+    });
+  },
+
+  /** Discard a report, including one stranded by an interrupted run. */
+  deleteReport(token: string, meetingId: string, reportId: string): Promise<{
+    ok: boolean; state: MeetingStateDoc;
+  }> {
+    return request(
+      `/api/meetings/${encodeURIComponent(meetingId)}/reports/${encodeURIComponent(reportId)}?${qs({ token })}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  reportDownloadUrl(token: string, meetingId: string, reportId: string): string {
+    return `/api/meetings/${encodeURIComponent(meetingId)}/reports/${encodeURIComponent(reportId)}/download?${qs({ token })}`;
+  },
+
   audioUrl(token: string, meetingId: string, revision?: string | number): string {
     return `/api/meetings/${encodeURIComponent(meetingId)}/audio?${qs({ token, revision })}`;
   },

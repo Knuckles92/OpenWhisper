@@ -10,6 +10,7 @@ import {
 import { EvidenceProvider } from '../../evidence';
 import type { MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import BriefReport from './BriefReport';
+import CustomReports from './CustomReports';
 import FullMeetingDocument from './FullMeetingDocument';
 import ReportDownload from './ReportDownload';
 import ReportViewSelect from './ReportViewSelect';
@@ -34,6 +35,10 @@ interface ReportTabsProps {
   showSwitcher?: boolean;
   activeView?: ReportViewId;
   onViewChange?: (view: ReportViewId) => void;
+  /** Page token. Omitted for guests, which hides the report composer. */
+  token?: string;
+  /** Fresh state after a report action, for views without a live socket. */
+  onState?: (state: MeetingStateDoc) => void;
 }
 
 export default function ReportTabs({
@@ -49,6 +54,8 @@ export default function ReportTabs({
   showSwitcher = true,
   activeView,
   onViewChange,
+  token,
+  onState,
 }: ReportTabsProps) {
   const views = enabledReportViews(state);
   const segs = useMemo(() => segmentMap(segments), [segments]);
@@ -99,6 +106,14 @@ export default function ReportTabs({
           {active === 'brief' && <BriefReport {...shared} />}
           {active === 'signal' && <SignalReport {...shared} />}
         </div>
+        {token && (
+          <CustomReports
+            state={state}
+            token={token}
+            meetingId={state.meeting_id}
+            onState={onState}
+          />
+        )}
         <FullMeetingDocument state={state} segments={segments} />
       </section>
     </EvidenceProvider>

@@ -1220,7 +1220,7 @@ class SettingsDialog(QDialog):
             ("question_radar", SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, "Open questions radar",
              "Send a minute of transcript and tracked questions to TypeSafe/Jev to find unanswered questions and suggest answers."),
             ("highlights", SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, "Live highlight pulses",
-             "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments and numbers. Click a pulse to play that moment."),
+             "Send a minute of transcript to TypeSafe/Jev to mark decisions, disagreement, dated commitments, numbers and takeaways (key insights, lessons learned and conclusions). Click a pulse to play that moment."),
         ):
             tile = SettingTile(title, description, _design_icon("bolt-green.svg"))
             tile.checkbox.toggled.connect(lambda checked, setting=key: self._persist(setting, bool(checked)))

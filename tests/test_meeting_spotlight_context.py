@@ -119,3 +119,48 @@ def test_render_state_compact_includes_top_insights():
     assert "Top Insights (Dashboard Spotlight - 2 active):" in rendered
     assert "[it_2 confirmed] [decisions] Postpone mobile app until Q4" in rendered
     assert "[it_1 proposed] [key_points] Desktop release is primary focus" in rendered
+
+
+def test_spotlight_excludes_navigation_and_unreviewed_repair_samples():
+    cards = {
+        "key_points": [
+            {"id": "raw", "text": "Let's take a look at this.", "status": "proposed",
+             "author_type": "system", "author_id": "state_repair"},
+            {"id": "real", "text": "The meal exceeds its $3 budget by 13 cents.",
+             "status": "proposed", "author_type": "agent"},
+        ],
+        "timeline": [{"id": "beat", "text": "Seasoning.", "status": "proposed"}],
+    }
+    assert [item["id"] for item in select_spotlight_items(cards)] == ["real"]
+    cards["timeline"][0]["pinned"] = True
+    assert select_spotlight_items(cards)[0]["id"] == "beat"
+    cards["key_points"][0]["status"] = "confirmed"
+    assert "raw" in [item["id"] for item in select_spotlight_items(cards)]
+
+
+def test_agent_rewrite_of_legacy_sample_returns_to_spotlight_and_undo_restores_it():
+    from meeting.state.schema import MeetingState
+    from meeting.state.store import MeetingStateStore
+    from tests.test_meeting_state import FakeRepository
+
+    store = MeetingStateStore(MeetingState(meeting_id="m_rewrite"), repository=FakeRepository())
+    add = store.apply("system", "state_repair", [{
+        "op": "add_item", "card": "key_points", "text": "Let's take a look at this.",
+        "evidence": ["sg_known"],
+    }])[0]
+    assert select_spotlight_items(store.snapshot()["cards"]) == []
+    metadata = store.apply("agent", "agent", [{
+        "op": "update_item", "id": add.target_id, "base_revision": 1,
+        "set": {"data": {"start_s": 45.0}}, "evidence": ["sg_known"],
+    }])[0]
+    assert metadata.ok
+    assert select_spotlight_items(store.snapshot()["cards"]) == []
+    rewrite = store.apply("agent", "agent", [{
+        "op": "update_item", "id": add.target_id, "base_revision": 2,
+        "set": {"text": "The meal exceeds its $3 budget by 13 cents."},
+        "evidence": ["sg_known"],
+    }])[0]
+    assert rewrite.ok
+    assert select_spotlight_items(store.snapshot()["cards"])[0]["id"] == add.target_id
+    assert store.undo(rewrite.seq, "host")[0].ok
+    assert select_spotlight_items(store.snapshot()["cards"]) == []

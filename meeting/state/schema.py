@@ -33,6 +33,13 @@ CARD_KEYS = (
     "user_notes",
 )
 
+#: Lifecycle of one tailored report (orthogonal to meeting status).
+CUSTOM_REPORT_STATUSES = ("running", "ready", "failed")
+
+#: How many tailored reports one meeting may keep. Reports are whole
+#: documents, so the cap bounds ``state_json`` growth rather than a list.
+MAX_CUSTOM_REPORTS = 20
+
 #: Post-meeting cloud consolidation lifecycle (orthogonal to meeting status).
 FINALIZATION_STATUSES = (
     "pending",
@@ -158,6 +165,57 @@ class Question:
 
 
 @dataclass
+class CustomReport:
+    """One report a participant asked for in their own words.
+
+    ``request`` is the untouched ask ("what did we promise the vendor, with
+    quotes"); ``markdown`` is what the report agent wrote after reading the
+    meeting corpus. The record is created in ``running`` state so the
+    dashboard can show the work in flight, then finished in place — the id
+    never changes, so a client that saw the request also sees the result.
+
+    ``sources`` records what the agent actually read (segment count, the
+    read tools it called, whether past meetings or the knowledge folder were
+    in scope) so a reader can judge the report's reach.
+    """
+    id: str
+    request: str
+    status: str = "running"
+    title: str = ""
+    markdown: str = ""
+    message: str = ""
+    run_id: str = ""
+    sources: Dict[str, Any] = field(default_factory=dict)
+    requested_by: Optional[str] = None
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id, "request": self.request, "status": self.status,
+            "title": self.title, "markdown": self.markdown,
+            "message": self.message, "run_id": self.run_id,
+            "sources": deepcopy(self.sources),
+            "requested_by": self.requested_by,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CustomReport":
+        status = d.get("status", "running")
+        return cls(
+            id=d["id"], request=d.get("request", ""),
+            status=status if status in CUSTOM_REPORT_STATUSES else "failed",
+            title=d.get("title", ""), markdown=d.get("markdown", ""),
+            message=d.get("message", ""), run_id=d.get("run_id", ""),
+            sources=dict(d.get("sources") or {}),
+            requested_by=d.get("requested_by"),
+            created_at=d.get("created_at", now_iso()),
+            updated_at=d.get("updated_at", now_iso()),
+        )
+
+
+@dataclass
 class Participant:
     """A person in the meeting: the host ("me"), a diarized remote-speaker
     cluster, or a joined dashboard guest."""
@@ -201,6 +259,37 @@ class TopicState:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TopicState":
         return cls(current=d.get("current", ""), history=list(d.get("history") or []))
+
+
+@dataclass
+class MeetingIntent:
+    """The host's standing brief: what they want out of this meeting's notes.
+
+    Written before the meeting starts (or refined while it runs) and read by
+    every agent pass, so a request like "flag anything about the Q3 budget"
+    steers capture from the first checkpoint rather than being applied in
+    hindsight. Free text, not a schema: participants describe what they want
+    in their own words, including a moment to watch for.
+    """
+    text: str = ""
+    updated_at: str = ""
+    #: Participant id of the last human to write it; empty when seeded from
+    #: the desktop pre-meeting field, which runs before participants exist.
+    author_id: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"text": self.text, "updated_at": self.updated_at,
+                "author_id": self.author_id}
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "MeetingIntent":
+        if not isinstance(d, dict):
+            return cls()
+        return cls(
+            text=str(d.get("text") or ""),
+            updated_at=str(d.get("updated_at") or ""),
+            author_id=str(d.get("author_id") or ""),
+        )
 
 
 @dataclass
@@ -541,6 +630,8 @@ class MeetingState:
     intelligence_online: bool = False
     diarization_available: bool = False
     title: str = ""
+    #: The host's standing brief for this meeting (may be empty).
+    intent: MeetingIntent = field(default_factory=MeetingIntent)
     topic: TopicState = field(default_factory=TopicState)
     rolling_summary: str = ""
     rolling_summary_evidence: List[str] = field(default_factory=list)
@@ -563,6 +654,15 @@ class MeetingState:
     live_highlights: List[Dict[str, Any]] = field(default_factory=list)
     live_highlights_status: str = "unknown"
     voice_feedback: Dict[str, Any] = field(default_factory=dict)
+    #: Tailored reports, oldest first, each asked for in a participant's words.
+    custom_reports: List[CustomReport] = field(default_factory=list)
+
+    def find_custom_report(self, report_id: str) -> Optional[CustomReport]:
+        """Locate a tailored report by id."""
+        for report in self.custom_reports:
+            if report.id == report_id:
+                return report
+        return None
 
     def find_item(self, item_id: str) -> Optional[CardItem]:
         """Locate a card item by id across all cards."""
@@ -584,6 +684,7 @@ class MeetingState:
             "intelligence_online": self.intelligence_online,
             "diarization_available": self.diarization_available,
             "title": self.title,
+            "intent": self.intent.to_dict(),
             "topic": self.topic.to_dict(),
             "rolling_summary": self.rolling_summary,
             "rolling_summary_evidence": list(self.rolling_summary_evidence),
@@ -600,6 +701,7 @@ class MeetingState:
             "live_highlights": deepcopy(self.live_highlights),
             "live_highlights_status": self.live_highlights_status,
             "voice_feedback": dict(self.voice_feedback),
+            "custom_reports": [r.to_dict() for r in self.custom_reports],
         }
 
     @classmethod
@@ -626,6 +728,7 @@ class MeetingState:
             intelligence_online=bool(d.get("intelligence_online", False)),
             diarization_available=bool(d.get("diarization_available", False)),
             title=d.get("title", ""),
+            intent=MeetingIntent.from_dict(d.get("intent") or {}),
             topic=TopicState.from_dict(d.get("topic") or {}),
             rolling_summary=d.get("rolling_summary", ""),
             rolling_summary_evidence=list(
@@ -655,4 +758,7 @@ class MeetingState:
         for qd in d.get("questions") or []:
             q = Question.from_dict(qd)
             state.questions[q.id] = q
+        for rd in d.get("custom_reports") or []:
+            if isinstance(rd, dict) and rd.get("id"):
+                state.custom_reports.append(CustomReport.from_dict(rd))
         return state

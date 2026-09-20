@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from meeting.content import meeting_display_title, summarize_meeting_content
+from meeting.custom_report import start_custom_report
 from meeting.export.json_export import export_json
 from meeting.export.markdown import export_markdown
 from meeting.export.transcript_txt import export_transcript_txt
@@ -32,6 +33,7 @@ from meeting.audio_playback import build_playback
 from meeting.refinalize import rerun_finalization
 from meeting.respeaker import rerun_speakers
 from meeting.persist.data_lifecycle import delete_meeting_data
+from meeting.state.custom_reports import MAX_REQUEST_CHARS
 from meeting.state.schema import (
     FinalizationState,
     MeetingState,
@@ -54,6 +56,23 @@ _EXPORTERS = {
     "md": (export_markdown, "text/markdown", "md"),
     "json": (export_json, "application/json", "json"),
     "txt": (export_transcript_txt, "text/plain", "txt"),
+}
+
+#: Why a report request was turned down, in words the requester can act on.
+_REPORT_REJECTIONS = {
+    "report_running": "A report is already being written for this meeting.",
+    "meeting_not_ready": (
+        "Reports are written once the meeting has ended and its insights "
+        "have finished."
+    ),
+    "report_limit_reached": (
+        "This meeting is holding the maximum number of reports. Delete one "
+        "to make room."
+    ),
+    "invalid_request": "Describe the report you want.",
+    "request_too_long": "That request is too long.",
+    "host_only": "Only the meeting host can request a report.",
+    "persistence_error": "The report could not be saved. Retry.",
 }
 
 _TRANSCRIPT_PAGE_DEFAULT = 500
@@ -215,6 +234,14 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             ).to_dict()
             if (raw.get("insight_review") or {}).get("status") == "running":
                 raw["insight_review"].update(status="unavailable", message="Review was interrupted. Retry when ready.")
+            # A report whose worker died with the process is not still being
+            # written; showing it as running would also block every retry.
+            for report in raw.get("custom_reports") or []:
+                if isinstance(report, dict) and report.get("status") == "running":
+                    report.update(
+                        status="failed",
+                        message="This report was interrupted. Ask for it again.",
+                    )
             return MeetingState.from_dict(raw).to_dict()
         except (KeyError, TypeError, ValueError):
             logger.exception("Corrupt state_json for meeting %s", meeting_id)
@@ -267,6 +294,11 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         meeting = await _current_meeting()
         store = getattr(engine, "store", None)
         state = await asyncio.to_thread(store.snapshot) if store is not None else {}
+        if role != "host":
+            # Same rule as the WS hello and fan-out: tailored reports may draw
+            # on material outside this meeting, so guests never receive them.
+            state = {key: value for key, value in state.items()
+                     if key != "custom_reports"}
         from meeting.voice_help import voice_command_guide
         guide = await asyncio.to_thread(voice_command_guide)
         return {"role": role, "meeting": _public_meeting(meeting), "state": state,
@@ -411,6 +443,19 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
         finally:
             insights_running.discard(meeting_id)
 
+    def _report_in_flight(store: Any) -> bool:
+        """True while a tailored report is being written against this meeting.
+
+        A finalization re-run replaces the whole state document, so it must
+        not start while a report worker is about to write into it.
+        """
+        if store is None:
+            return False
+        return any(
+            report.get("status") == "running"
+            for report in store.snapshot().get("custom_reports") or []
+        )
+
     @app.post("/api/meetings/{meeting_id}/reinsights")
     async def api_rerun_insights(meeting_id: str,
                                  token: str = "") -> Dict[str, Any]:
@@ -460,6 +505,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                              if getattr(engine, "meeting_id", None) == meeting_id else review_stores.get(meeting_id))
         if live_review_store and live_review_store.snapshot().get("insight_review", {}).get("status") == "running":
             raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+        if _report_in_flight(live_review_store):
+            raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
         review_stores.pop(meeting_id, None)
         insights_running.add(meeting_id)
         try:
@@ -543,6 +590,8 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
                  else review_stores.get(meeting_id))
         if store and store.snapshot().get("insight_review", {}).get("status") == "running":
             raise HTTPException(status_code=409, detail="Wait for insight review to finish")
+        if _report_in_flight(store):
+            raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
         review_stores.pop(meeting_id, None)
         insights_running.add(meeting_id)
         try:
@@ -629,6 +678,143 @@ def create_app(engine: Any, repository: Any, hub: WsHub) -> FastAPI:
             media_type=media_type,
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+
+    def _report_store(meeting_id: str, meeting: Dict[str, Any]) -> Any:
+        """The one store allowed to write this meeting's state.
+
+        The live engine owns the current meeting; a past meeting reuses the
+        cached review store so a report and an insight review can never be
+        two writers racing over one ``state_json``.
+        """
+        store = getattr(engine, "store", None)
+        if store is not None and getattr(engine, "meeting_id", None) == meeting_id:
+            return store
+        if meeting_id not in review_stores:
+            from meeting.state.store import MeetingStateStore
+
+            review_stores[meeting_id] = MeetingStateStore(
+                MeetingState.from_dict(_stored_state(meeting_id, meeting)),
+                repository=repository,
+                segment_exists=lambda sid: repository.segment_exists(
+                    meeting_id, sid
+                ),
+            )
+        return review_stores[meeting_id]
+
+    def _report_endpoint(meeting: Dict[str, Any]) -> Dict[str, Any]:
+        """Provider, model, and endpoint for a report on this meeting.
+
+        The meeting's own recorded endpoint wins so a report matches the
+        intelligence that produced the record; the engine's current options
+        fill in for meetings recorded with cloud intelligence off.
+        """
+        options = getattr(engine, "options", None)
+        provider = (meeting.get("agent_provider")
+                    or getattr(options, "llm_provider", "") or "openrouter")
+        model = (meeting.get("agent_model")
+                 or getattr(options, "llm_model", "") or "")
+        endpoint = getattr(options, "llm_endpoint", None)
+        raw_endpoint = meeting.get("agent_endpoint_json")
+        if isinstance(raw_endpoint, dict):
+            endpoint = raw_endpoint
+        elif isinstance(raw_endpoint, str) and raw_endpoint.strip():
+            try:
+                parsed = json.loads(raw_endpoint)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                endpoint = parsed
+        return {"provider": provider, "model": model, "endpoint": endpoint}
+
+    def _find_report(state: Dict[str, Any], report_id: str) -> Dict[str, Any]:
+        for report in state.get("custom_reports") or []:
+            if report.get("id") == report_id:
+                return report
+        raise HTTPException(status_code=404, detail="unknown report")
+
+    @app.post("/api/meetings/{meeting_id}/reports")
+    async def api_request_report(meeting_id: str, request: Request,
+                                 token: str = "") -> Dict[str, Any]:
+        """Ask for a report written to the requester's own description."""
+        await _require(token, host_only=True)
+        body = await _json_body(request)
+        text = body.get("request")
+        if (not isinstance(text, str) or not text.strip()
+                or len(text) > MAX_REQUEST_CHARS):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Describe the report you want, in 1 to "
+                    f"{MAX_REQUEST_CHARS} characters."
+                ),
+            )
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        if meeting_id in insights_running:
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for the meeting's insights to finish",
+            )
+        store = await asyncio.to_thread(_report_store, meeting_id, meeting)
+        endpoint = _report_endpoint(meeting)
+        result = await asyncio.to_thread(
+            functools.partial(
+                start_custom_report, store, repository, text,
+                provider=endpoint["provider"], model=endpoint["model"],
+                endpoint=endpoint["endpoint"],
+            ),
+        )
+        if not result["ok"]:
+            raise HTTPException(
+                status_code=409,
+                detail=_REPORT_REJECTIONS.get(
+                    result["error"] or "",
+                    "The report could not be started.",
+                ),
+            )
+        return {**result, "state": await asyncio.to_thread(store.snapshot)}
+
+    @app.delete("/api/meetings/{meeting_id}/reports/{report_id}")
+    async def api_delete_report(meeting_id: str, report_id: str,
+                                token: str = "") -> Dict[str, Any]:
+        """Discard a report, including one stranded by an interrupted run."""
+        await _require(token, host_only=True)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        store = await asyncio.to_thread(_report_store, meeting_id, meeting)
+        results = await asyncio.to_thread(
+            store.apply, "host", None,
+            [{"op": "remove_custom_report", "report_id": report_id}],
+        )
+        if not results or not results[0].ok:
+            reason = results[0].reason if results else "rejected"
+            status = 404 if reason == "unknown_report" else 409
+            raise HTTPException(status_code=status, detail=reason)
+        return {"ok": True, "state": await asyncio.to_thread(store.snapshot)}
+
+    @app.get("/api/meetings/{meeting_id}/reports/{report_id}/download")
+    async def api_download_report(meeting_id: str, report_id: str,
+                                  token: str = "") -> Response:
+        """Download one finished report as a Markdown file."""
+        await _require(token, host_only=True)
+        meeting = await asyncio.to_thread(repository.get_meeting, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="unknown meeting")
+        state = await _state_for(meeting_id, meeting)
+        report = _find_report(state, report_id)
+        if report.get("status") != "ready":
+            raise HTTPException(status_code=409, detail="report is not ready")
+        return Response(
+            content=report.get("markdown") or "",
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="report-{report_id}.md"',
             },
         )
 

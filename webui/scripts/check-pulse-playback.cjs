@@ -15,6 +15,8 @@ const pulses = [
         {segment_id:null,probability:.04},
         {segment_id:'budget',start_s:60.874,text:'Add a note that we need to get a thousand dollars for budget A.',probability:.86},
       ]}},
+  {id:'takeaway',kind:'takeaway',start_s:125,segment_id:'takeaway',text:'We learned that early customer feedback prevents rework.',probability:.93,
+    assessment:{threshold:.8,window_start_s:120,window_end_s:180,scores:{takeaway:.93}}},
   {id:'decision',kind:'decision',start_s:105,segment_id:'decision',text:'We will review the revised budget on Friday.',probability:.95},
 ];
 const segments = pulses.map(p => ({id:p.segment_id,meeting_id:meeting.id,channel:'mic',start_s:p.start_s,end_s:p.start_s+5,text:p.text,speaker_participant_id:'me',speaker_source:'human',speaker_pinned:false}));
@@ -122,6 +124,17 @@ const server = http.createServer((req,res) => {
         await player.getByRole('button',{name:'Close replay and stop audio'}).focus();
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('.is-floating').count(),0);
+        const takeaway = page.locator('.pulse-takeaway.pulse-mark');
+        assert.match(await takeaway.getAttribute('aria-label'), /^Takeaways at 2:05:/);
+        await takeaway.hover();
+        await preview.waitFor();
+        assert.match(await preview.textContent(), /Takeaways/);
+        assert.match(await preview.textContent(), /Detection probability93%Cutoff 80%/);
+        await takeaway.click();
+        await player.waitFor();
+        await page.waitForFunction(() => {const a=document.querySelector('audio'); return a && !a.paused && a.currentTime>=125 && a.currentTime<130;});
+        assert.match(await player.textContent(), /Takeaways/);
+        await player.getByRole('button',{name:'Close replay and stop audio'}).click();
         console.log(`PASS ${mode} ${width}px: visible replay, pause/play and scrubber, skip, close, new moment, Escape`);
       }
     }

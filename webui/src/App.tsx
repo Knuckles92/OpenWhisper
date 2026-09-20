@@ -14,6 +14,7 @@ import ActivityPane from './components/ActivityPane';
 import VoiceAssistantBubble from './components/VoiceAssistantBubble';
 import VoiceCommandHelp from './components/VoiceCommandHelp';
 import JoinGate from './components/JoinGate';
+import MeetingBrief from './components/MeetingBrief';
 import MeetingOverview from './components/MeetingOverview';
 import NotesPane from './components/NotesPane';
 import ParticipantsPane from './components/ParticipantsPane';
@@ -352,10 +353,18 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                   showSwitcher={false}
                   activeView={reportView}
                   onViewChange={selectReportView}
+                  token={isHost ? token : undefined}
                 />
                 </>
               ) : (
                 <>
+                  <MeetingBrief
+                    intent={ui.state.intent}
+                    isHost={isHost}
+                    status={ui.state.status}
+                    onSendOp={sendOp}
+                  />
+
                   <MeetingOverview
                     meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
                     status={ui.state.status}

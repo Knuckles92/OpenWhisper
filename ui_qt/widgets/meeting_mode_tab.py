@@ -1,6 +1,8 @@
 """Meeting Mode tab for the main window.
 
-Idle state shows a Start Meeting control plus the cloud-intelligence toggle;
+Idle state shows a Start Meeting control, the cloud-intelligence toggle, and an
+optional brief saying what the host wants out of the meeting (carried into the
+engine so the agent works to it from the first checkpoint);
 during a meeting it becomes a status card with an elapsed timer and the
 pause/end/dashboard/guest-link controls. After capture ends, a persistent
 finalization card reports running/completed/disabled/unavailable/failed cloud
@@ -19,6 +21,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -101,7 +104,7 @@ def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool
 class MeetingModeTab(QWidget):
     """Full-page tab with Meeting Mode session controls."""
 
-    start_requested = pyqtSignal(bool)  # cloud_enabled
+    start_requested = pyqtSignal(bool, str)  # cloud_enabled, meeting brief
     demo_requested = pyqtSignal(bool)  # cloud_enabled
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
@@ -115,7 +118,8 @@ class MeetingModeTab(QWidget):
     retry_step_requested = pyqtSignal(str)
     background_requested = pyqtSignal()
     defer_insights_requested = pyqtSignal()
-    start_new_meeting_requested = pyqtSignal(bool)  # cloud_enabled
+    # cloud_enabled, meeting brief
+    start_new_meeting_requested = pyqtSignal(bool, str)
     #: Emitted whenever the visible controls change, so the window can keep
     #: enough height for the finalization checklist.
     content_height_changed = pyqtSignal()
@@ -322,6 +326,50 @@ class MeetingModeTab(QWidget):
         idle_layout.setContentsMargins(0, 8, 0, 8)
         idle_layout.setSpacing(16)
         idle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # The brief is stated before Start so the agent works to it from the
+        # first checkpoint. It stays editable on the dashboard afterwards.
+        self.brief_label = WrappedLabel(
+            "What do you want out of this meeting? (optional)"
+        )
+        self.brief_label.setObjectName("meetingBriefLabel")
+        self.brief_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        idle_layout.addWidget(self.brief_label)
+
+        self.brief_input = QPlainTextEdit()
+        self.brief_input.setObjectName("meetingBriefInput")
+        self.brief_input.setPlaceholderText(
+            "e.g. “We decide the vendor today — capture who objected "
+            "and why.”"
+        )
+        self.brief_input.setAccessibleName("Meeting brief")
+        self.brief_input.setAccessibleDescription(
+            "Optional. What you want out of this meeting's notes, including "
+            "anything the AI note taker should watch for. It is read on every "
+            "pass and can be changed from the dashboard during the meeting."
+        )
+        # Grows with the card up to a readable measure, and shrinks on a
+        # narrow window instead of forcing the tab to scroll sideways.
+        self.brief_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.brief_input.setMaximumWidth(460)
+        self.brief_input.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        # Four lines at the user's font scale, so a larger UI font grows the
+        # box instead of clipping the words inside it.
+        line_height = self.brief_input.fontMetrics().lineSpacing()
+        frame = 2 * int(self.brief_input.frameWidth())
+        self.brief_input.setFixedHeight(4 * line_height + frame + 16)
+        self.brief_input.setMinimumWidth(280)
+        brief_row = QHBoxLayout()
+        brief_row.addStretch(1)
+        # Stretch on the field too, or the spacers would claim every spare
+        # pixel and leave it at its (narrow) size hint.
+        brief_row.addWidget(self.brief_input, 4)
+        brief_row.addStretch(1)
+        idle_layout.addLayout(brief_row)
 
         self.start_button = SuccessButton("Start Meeting")
         self.start_button.setObjectName("meetingStartButton")
@@ -650,13 +698,26 @@ class MeetingModeTab(QWidget):
 
         content_layout.addStretch()
 
+    def meeting_brief(self) -> str:
+        """The host's pre-meeting brief, trimmed and capped for the engine."""
+        # Imported here rather than at module scope so the validation layer
+        # stays the single source of the cap without widening what the main
+        # window loads at startup.
+        from meeting.state.patches import MAX_INTENT_LEN
+
+        return self.brief_input.toPlainText().strip()[:MAX_INTENT_LEN]
+
     def _on_start_clicked(self):
-        """Emit the start request with the current cloud choice."""
-        self.start_requested.emit(self.cloud_checkbox.isChecked())
+        """Emit the start request with the current cloud choice and brief."""
+        self.start_requested.emit(
+            self.cloud_checkbox.isChecked(), self.meeting_brief()
+        )
 
     def _on_start_new_clicked(self):
         """Start a new meeting after saving the incomplete card for later."""
-        self.start_new_meeting_requested.emit(self.cloud_checkbox.isChecked())
+        self.start_new_meeting_requested.emit(
+            self.cloud_checkbox.isChecked(), self.meeting_brief()
+        )
 
     def _on_demo_clicked(self):
         """Emit the developer-mode demo meeting request."""

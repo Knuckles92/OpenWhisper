@@ -8,6 +8,11 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+### Added
+- **Takeaways in Meeting Pulse** - highlights explicitly stated key insights, lessons learned, and conclusions, with source playback, probability previews, saved history, and exports.
+- **Say what you want from a meeting before it starts** — the Meeting Mode tab now has an optional brief ("we decide the vendor today — capture who objected and why, and skip the status round-robin"). It reaches the AI note taker and the live copilot from the first checkpoint, so they watch for the moment you named as the meeting reaches it instead of applying your intent in hindsight, and it still frames the final report. The host can add or rewrite it on the dashboard at any time and the agent re-reads it immediately, without waiting for someone to speak. Guests can see the brief but cannot change it, and it appears at the head of the Markdown export.
+- **Ask for a report** — after a meeting ends, describe the document you want in your own words ("every commitment we made, who owns it, and by when") and an agent reads that meeting's whole record — transcript, notes, decisions, action items, risks, questions, and participant corrections — then writes it. Long meetings stay reachable through transcript search and time-range reads rather than being truncated, and past-meeting recall and the knowledge folder are available when you have enabled them. Reports are saved with the meeting, appear in the Markdown export and the Full meeting download, and can be copied or downloaded on their own. Host-only, one at a time, and never shown to dashboard guests.
+
 ### Changed
 - Renamed the source entry point to `main.py`. Launch with `python main.py` or `uv run python main.py`; the `ow` and `openwhisper` source launchers use the new entry point.
 

@@ -75,6 +75,7 @@ function eventDescription(event: AuditEvent): string {
     rename_participant: 'Renamed a participant',
     reassign_segment_speaker: 'Corrected a speaker',
     set_title: 'Renamed the meeting',
+    set_meeting_intent: 'Updated the meeting brief',
     set_cloud_enabled: 'Changed cloud intelligence',
   };
   if (event.action.startsWith('undo:')) return 'Undid an earlier change';

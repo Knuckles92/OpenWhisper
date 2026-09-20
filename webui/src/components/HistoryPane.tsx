@@ -116,16 +116,21 @@ export default function HistoryPane({
     return { state: response.state, segments };
   }, [token]);
 
+  // History has no live socket, so anything running server-side is followed
+  // by polling. A boolean dep keeps the interval stable across refreshes.
+  const workRunning = detail?.insight_review?.status === 'running'
+    || (detail?.custom_reports ?? []).some((report) => report.status === 'running');
+
   useEffect(() => {
-    if (!selectedId || detail?.insight_review?.status !== 'running') return;
+    if (!selectedId || !workRunning) return;
     let cancelled = false;
     const timer = setInterval(() => {
       api.meeting(token, selectedId).then(response => {
         if (!cancelled) setDetail(response.state);
-      }).catch(() => { if (!cancelled) setDetailError('Could not refresh the review. Reopen this meeting to reconnect.'); });
+      }).catch(() => { if (!cancelled) setDetailError('Could not refresh this meeting. Reopen it to reconnect.'); });
     }, 2000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [token, selectedId, detail?.insight_review?.status]);
+  }, [token, selectedId, workRunning]);
 
   useEffect(() => {
     setDetail(null);
@@ -640,6 +645,8 @@ export default function HistoryPane({
                       audioRef={selected.has_audio === false ? undefined : audioRef}
                       audioKey={selected.id}
                       transcriptComplete={transcriptComplete}
+                      token={token}
+                      onState={setDetail}
                     />
                   </div>
                 )}

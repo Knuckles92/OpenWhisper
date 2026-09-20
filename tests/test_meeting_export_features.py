@@ -28,6 +28,8 @@ def _recent_features():
         {"id": "late", "kind": "number", "start_s": 90, "text": "Budget is 5000",
          "segment_id": "sg_2", "probability": 0.9,
          "assessment": {"threshold": 0.8, "scores": {"number": 0.9}}},
+        {"id": "lesson", "kind": "takeaway", "start_s": 45,
+         "text": "Early customer feedback prevents rework", "segment_id": "sg_1", "probability": 0.93},
         {"id": "early", "kind": "decision", "start_s": 5, "text": "Choose June",
          "segment_id": "sg_1", "probability": 0.95},
     ]
@@ -49,7 +51,8 @@ def test_markdown_keeps_recent_features_without_mutating_snapshot():
     assert "## Meeting Pulses" in md
     assert "[00:05] **Decision:** Choose June" in md
     assert "[01:30] **Number:** Budget is 5000" in md
-    assert md.index("Choose June") < md.index("Budget is 5000")
+    assert "[00:45] **Takeaways:** Early customer feedback prevents rework" in md
+    assert md.index("Choose June") < md.index("Early customer feedback") < md.index("Budget is 5000")
     assert "Spoken note: Keep the budget" in md
     assert md.index("Opening note") < md.index("Keep the budget")
     assert "User clarified: Draft RFC" in md
@@ -85,7 +88,7 @@ def test_intelligence_toggle_omits_new_features_and_legacy_due_date_is_retained(
     data["due_date"] = data.pop("deadline")
     assert "Due: Friday" in export_markdown(meeting, state, segments)
     md = export_markdown(meeting, state, segments, include_intelligence=False)
-    for text in ("Meeting Pulses", "Budget is 5000", "Spoken note", "User Clarifications", "Due: Friday", "Advisory:"):
+    for text in ("Meeting Pulses", "Budget is 5000", "Early customer feedback prevents rework", "Spoken note", "User Clarifications", "Due: Friday", "Advisory:"):
         assert text not in md
     assert "Welcome everyone" in md
 
@@ -164,7 +167,7 @@ def test_history_export_preserves_every_persisted_field_and_upload_source():
         assert "ollama" in text and "qwen" in text
 
 @pytest.mark.parametrize("fmt", ["md", "json", "txt"])
-def test_web_downloads_preserve_current_features_and_match_bulk_content(client, fmt):
+def test_web_downloads_preserve_current_features_and_match_bulk_content(client, fmt):  # noqa: F811 -- pytest injects the imported endpoint fixture
     from meeting.export.bulk import render_meeting_document
     from tests.test_meeting_web_auth import HOST_TOKEN
 

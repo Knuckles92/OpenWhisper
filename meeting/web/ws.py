@@ -92,6 +92,20 @@ def _rejection(reason: str) -> List[Dict[str, Any]]:
              "seq": None, "effect": None}]
 
 
+#: State entities guests never receive. A tailored report can draw on past
+#: meetings and the knowledge folder — material a guest of *this* meeting was
+#: never party to — so it stays with the host who asked for it.
+HOST_ONLY_ENTITIES = frozenset({"custom_report"})
+
+
+def _is_host_only_effect(result: OpResult) -> bool:
+    effect = result.effect
+    return (
+        isinstance(effect, dict)
+        and effect.get("entity") in HOST_ONLY_ENTITIES
+    )
+
+
 def _clean_guest_id(value: Optional[str]) -> Optional[str]:
     """Sanitize the client's stable guest key.
 
@@ -208,17 +222,27 @@ class WsHub:
         self._subscribed_store = store
 
     def _on_store_batch(self, seq: int, applied: List[OpResult]) -> None:
-        """State-store subscriber: fan applied ops out as a ``patch``."""
-        message = {
-            "type": "patch",
-            "seq": seq,
-            "results": [
-                {"op": r.op, "target_id": r.target_id,
-                 "effect": r.effect, "seq": r.seq}
-                for r in applied
-            ],
-        }
-        self.schedule_broadcast(message)
+        """State-store subscriber: fan applied ops out as a ``patch``.
+
+        Host-scoped effects go out on their own host-only patch. Hosts also
+        receive the shared patch; applying a result twice is a no-op, and
+        the clients key off each result's own ``seq``, not the batch's.
+        """
+        def row(result: OpResult) -> Dict[str, Any]:
+            return {"op": result.op, "target_id": result.target_id,
+                    "effect": result.effect, "seq": result.seq}
+
+        shared = [row(r) for r in applied if not _is_host_only_effect(r)]
+        host_rows = [row(r) for r in applied]
+        if shared:
+            self.schedule_broadcast(
+                {"type": "patch", "seq": seq, "results": shared},
+            )
+        if len(host_rows) != len(shared):
+            self.schedule_broadcast(
+                {"type": "patch", "seq": seq, "results": host_rows},
+                host_only=True,
+            )
 
     def schedule_broadcast(self, message: Dict[str, Any], *,
                            host_only: bool = False) -> None:
@@ -447,6 +471,10 @@ class WsHub:
 
         from meeting.voice_help import voice_command_guide
         guide = await asyncio.to_thread(voice_command_guide)
+        if conn.role != "host":
+            # Same rule as the live fan-out: omitted entirely, not sent empty.
+            state = {key: value for key, value in state.items()
+                     if key != "custom_reports"}
         payload: Dict[str, Any] = {
             "type": "hello",
             "voice_commands": guide,

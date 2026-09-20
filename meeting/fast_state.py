@@ -1,6 +1,7 @@
 """System-owned advisory state operations for fast meeting judgments."""
 from copy import deepcopy
 
+from meeting.highlights import PULSE_LABELS
 from meeting.interfaces import OpResult
 from meeting.state.schema import now_iso
 
@@ -12,22 +13,23 @@ def publish_highlights(state, op, ctx):
     if not state.cloud_enabled or state.status not in statuses:
         return OpResult(False, op, reason="inactive")
     pulses = op.get("pulses", [])
-    if not isinstance(pulses, list) or len(pulses) > 4:
+    if not isinstance(pulses, list) or len(pulses) > len(PULSE_LABELS):
         return OpResult(False, op, reason="invalid_pulses")
     existing = {p["id"]: p for p in state.live_highlights}
     minute = op.get("minute")
     if minute is not None:
         if isinstance(minute, bool) or not isinstance(minute, int) or minute < 0:
             return OpResult(False, op, reason="invalid_minute")
-        for kind in ("decision", "disagreement", "commitment", "number"):
+        for kind in PULSE_LABELS:
             existing.pop(f"pulse_{minute}_{kind}", None)
     for pulse in pulses:
-        if pulse.get("kind") not in ("decision", "disagreement", "commitment", "number"):
+        if pulse.get("kind") not in PULSE_LABELS:
             return OpResult(False, op, reason="invalid_pulse")
         if ctx.segment_exists and not ctx.segment_exists(pulse.get("segment_id")):
             return OpResult(False, op, reason="unknown_evidence")
         existing[pulse["id"]] = deepcopy(pulse)
-    state.live_highlights = sorted(existing.values(), key=lambda p: p["start_s"])[-960:]
+    # Retain four hours at the maximum of one pulse per kind per minute.
+    state.live_highlights = sorted(existing.values(), key=lambda p: p["start_s"])[-240 * len(PULSE_LABELS):]
     return OpResult(True, op, effect={"entity": "live_highlights", "pulses": deepcopy(state.live_highlights)})
 
 

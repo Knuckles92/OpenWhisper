@@ -16,6 +16,7 @@ KINDS = {
     "decision": "an explicit decision or agreement, rather than a suggestion",
     "disagreement": "an explicitly stated disagreement or conflict, including a report that other people or groups disagree or have an issue with each other",
     "commitment": "an accepted commitment with a stated date or deadline",
+    "takeaway": "a substantive takeaway: an explicitly stated key insight, lesson learned, or conclusion drawn from the discussion or experience, even without the word takeaway; exclude routine status updates, isolated facts without an insight, suggestions without a conclusion, requests to generate takeaways, and discussion of the highlight feature itself",
     "number": "a concrete amount, quantity, metric or percentage being discussed, including amounts spoken in words and amounts in requests or proposals; exclude filler, list numbering and elapsed-meeting-time chatter",
 }
 

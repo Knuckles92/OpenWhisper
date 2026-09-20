@@ -609,6 +609,78 @@ a {
   margin-top: 12px;
 }
 
+/* The host's standing brief. It sits above the hero because it frames what
+   the record is for: the reader should see the goal before the topic. */
+.meeting-brief {
+  max-width: 720px;
+  margin: 12px auto 0;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--clay) 28%, var(--line));
+  background: var(--clay-soft);
+}
+
+.meeting-brief.empty {
+  align-items: flex-start;
+  border-style: dashed;
+  background: transparent;
+}
+
+.meeting-brief-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.meeting-brief-heading strong {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clay);
+}
+
+.meeting-brief-heading button {
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 0.85rem;
+}
+
+.meeting-brief-hint {
+  color: var(--soft);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.meeting-brief-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 1rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.meeting-brief textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.meeting-brief-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.meeting-brief-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
 /* The top-ranked insights are highlighted in place at the head of the
    Captured rail rather than duplicated into a second row beside the notes. */
 .capture-lead {
@@ -3035,6 +3107,7 @@ select {
 .pulse-mark:hover, .pulse-mark:focus-visible, .pulse-mark[data-preview="open"] { transform: scaleY(1.25); outline: 2px solid currentColor; outline-offset: 2px; }
 .pulse-decision { color: #23745f; } .pulse-disagreement { color: #a7442d; }
 .pulse-commitment { color: #75509f; } .pulse-number { color: #28658f; }
+.pulse-takeaway { color: #896013; }
 button.pulse-mark:hover:not(:disabled) { background: currentColor; }
 .pulse-scale { display: flex; justify-content: space-between; margin-left: 124px; font-size: 10px; opacity: .65; }
 /* Portaled pulse previews stay above the meeting's scroll containers. */
@@ -3277,4 +3350,235 @@ button.pulse-mark:hover:not(:disabled) { background: currentColor; }
     position: static;
     border-bottom: none;
   }
+}
+
+/* Tailored reports: ask in your own words, read what the agent wrote. */
+
+.custom-reports {
+  margin-top: 20px;
+}
+
+.custom-report-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.custom-report-composer > p {
+  margin: 0;
+  color: var(--soft);
+}
+
+.custom-report-composer textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.custom-report-composer .primary {
+  align-self: flex-end;
+}
+
+.custom-report-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.custom-report-examples button {
+  font-size: 0.85em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-align: left;
+}
+
+.custom-report-hint {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9em;
+}
+
+.custom-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.custom-report {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.custom-report-list > .custom-report:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.custom-report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-report-header h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15em;
+}
+
+.custom-report-ask {
+  margin: 2px 0 0;
+  color: var(--soft);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.custom-report-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.custom-report-status {
+  margin: 10px 0 0;
+  color: var(--soft);
+}
+
+.custom-report-status.warning {
+  color: var(--warning);
+}
+
+.custom-report-running .custom-report-status::after {
+  content: '';
+  animation: custom-report-ellipsis 1.6s steps(4, end) infinite;
+}
+
+@keyframes custom-report-ellipsis {
+  0% { content: ''; }
+  25% { content: '·'; }
+  50% { content: '··'; }
+  75% { content: '···'; }
+}
+
+.custom-report-sources {
+  margin: 12px 0 0;
+  color: var(--faint);
+  font-size: 0.85em;
+}
+
+/* Rendered report body. Headings start at h3 (see MarkdownView). */
+
+.report-md {
+  margin-top: 12px;
+  line-height: 1.6;
+}
+
+.report-md > :first-child {
+  margin-top: 0;
+}
+
+.report-md h3,
+.report-md h4,
+.report-md h5,
+.report-md h6 {
+  font-family: var(--font-display);
+  margin: 18px 0 6px;
+}
+
+.report-md h3 { font-size: 1.25em; }
+.report-md h4 { font-size: 1.1em; }
+.report-md h5,
+.report-md h6 { font-size: 1em; }
+
+.report-md p {
+  margin: 0 0 10px;
+}
+
+.report-md ul,
+.report-md ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.report-md li {
+  margin-bottom: 4px;
+}
+
+.report-md blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--line);
+  color: var(--soft);
+}
+
+.report-md code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--proposed);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.report-md pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--proposed);
+  border-radius: var(--radius-sm);
+}
+
+.report-md pre code {
+  background: none;
+  padding: 0;
+}
+
+.report-md hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 16px 0;
+}
+
+.report-md-table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.report-md-table th,
+.report-md-table td {
+  border: 1px solid var(--line);
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-md-table th {
+  background: var(--proposed);
+  font-weight: 600;
+}
+
+@media print {
+  .custom-report,
+  .report-md-table tr {
+    break-inside: avoid;
+  }
+}
+
+/* The report download is an anchor (it must be a real link for `download`),
+   so it borrows the button shape rather than reading as body-copy text. */
+.custom-report-actions .button-link {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, white 70%, transparent);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.custom-report-actions .button-link:hover {
+  background: var(--wash);
+  border-color: color-mix(in srgb, var(--leaf) 35%, var(--line));
 }

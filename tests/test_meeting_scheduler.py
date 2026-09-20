@@ -364,7 +364,7 @@ class TestSegmentWatermark:
         sched._fire()
         assert len(agent.calls) == 4
 
-    def test_empty_checkpoint_backfills_blank_dashboard(self):
+    def test_empty_checkpoint_does_not_manufacture_insights(self):
         empty_store = FakeStore({
             "meeting_id": "m_test",
             "seq": 1,
@@ -393,9 +393,9 @@ class TestSegmentWatermark:
             "meeting.state.repair.repair_meeting_state", return_value=2,
         ) as repair:
             sched._fire()
-            repair.assert_called_once()
-            assert repair.call_args.args[0] is empty_store
-            assert repair.call_args.args[1][0]["id"] == "sg_1"
+            repair.assert_not_called()
+        assert agent.calls[0].state_snapshot["cards"]["key_points"] == []
+        assert agent.calls[0].new_segments[0]["id"] == "sg_1"
 
     def test_prepare_for_end_never_blocks_on_agent_cancel(self):
         agent = FakeAgent()

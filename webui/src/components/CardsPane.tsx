@@ -43,6 +43,7 @@ function leadGhostText(
   if (status === 'ending') return 'Wrapping up insights…';
   if (!cloudEnabled) return 'Enable cloud insights to generate live insights.';
   if (!intelligenceOnline) return 'Cloud intelligence is offline';
+  if (status === 'ended') return 'No substantive insights captured yet.';
   return 'Listening for insights…';
 }
 

@@ -89,12 +89,15 @@ def test_late_channel_rechecks_the_earlier_minute(signals):
     assert len(worker.store.snapshot()["live_highlights"]) == 1
 
 
-def test_revised_evidence_is_checked_again_and_old_pulse_removed(signals):
+@pytest.mark.parametrize("kind", ["number", "takeaway"])
+def test_revised_evidence_is_checked_again_and_old_pulse_removed(signals, kind):
     worker, repo, queue, calls = signals
+    worker.judge.ask = lambda *a, **k: {kind: {"noul": .95}, kind + "_anchor": {"choice": "first"}}
     worker.observe([], frontier=60)
     queue.run()
+    assert worker.store.snapshot()["live_highlights"][0]["kind"] == kind
     repo.rows[0]["text"] = "No budget was mentioned."
-    worker.judge.ask = lambda *a, **k: {"number": {"noul": .1}}
+    worker.judge.ask = lambda *a, **k: {kind: {"noul": .1}}
     worker.observe(repo.rows)
     queue.run()
     assert worker.store.snapshot()["live_highlights"] == []
@@ -187,31 +190,35 @@ def test_engine_final_pulses_do_not_require_the_notes_agent(signals, monkeypatch
     assert len(worker.store.snapshot()["live_highlights"]) == 1
 
 
-def test_final_pulses_persist_and_broadcast(repo, monkeypatch):
+@pytest.mark.parametrize("kind,text", [("number", "The budget is 1000 dollars."),
+                                      ("takeaway", "We learned that early customer feedback prevents rework.")])
+def test_final_pulses_persist_and_broadcast(repo, monkeypatch, kind, text):
     monkeypatch.setattr("meeting.live_signals.resolve_typesafe_feature_enabled", lambda _: True)
     from meeting.interfaces import TranscriptSegment
     repo.create_meeting(id="m_final", title="Test", status="ended", started_at="2026-09-19T20:00:00Z",
                         host_token="host", guest_token="guest", cloud_enabled=True, spool_dir="unused")
-    repo.add_segments([TranscriptSegment("sg_final", "m_final", None, "mic", 8, 12, "The budget is 1000 dollars.")])
+    repo.add_segments([TranscriptSegment("sg_final", "m_final", None, "mic", 8, 12, text)])
     target = MeetingStateStore(MeetingState("m_final", status="ended", cloud_enabled=True), repository=repo,
                                segment_exists=lambda sid: repo.get_segment("m_final", sid) is not None)
     events = []
     target.subscribe(lambda seq, results: events.extend(results))
-    judge = SimpleNamespace(ask=lambda *a, **k: {"number": {"noul": .95}, "number_anchor": {
+    judge = SimpleNamespace(ask=lambda *a, **k: {kind: {"noul": .95}, kind + "_anchor": {
         "choice": "sg_final", "confidence": .7, "probabilities": {"sg_final": .9, "none": .1}}})
     worker = LiveSignals(target, repo, judge, lambda: True, executor=Queue())
     worker.finalize()
     import json
     saved = json.loads(repo.get_meeting("m_final")["state_json"])
     assert saved["live_highlights"][0]["segment_id"] == "sg_final"
+    assert saved["live_highlights"][0]["kind"] == kind
+    assert saved["live_highlights"][0]["text"] == text
     assert events[0].effect["entity"] == "live_highlights"
     assessment = saved["live_highlights"][0]["assessment"]
-    assert assessment["scores"] == {"number": .95}
+    assert assessment["scores"] == {kind: .95}
     assert assessment["source_confidence"] == .7
     assert assessment["source_probability"] == .9
     assert assessment["source_rank"] == 1
     assert assessment["source_options"] == [
-        {"segment_id": "sg_final", "probability": .9, "start_s": 8, "text": "The budget is 1000 dollars."},
+        {"segment_id": "sg_final", "probability": .9, "start_s": 8, "text": text},
         {"segment_id": None, "probability": .1},
     ]
     assert events[0].effect["pulses"] == saved["live_highlights"]
@@ -270,11 +277,12 @@ def test_rolling_revision_reaches_pulse_worker(signals):
 
 @pytest.mark.parametrize("probability,anchor,expected", [
     (.67, "first", 0), (.79, "first", 0), (.80, "first", 1),
-    (.94, "first", 1), (.99, "missing", 0),
+    (.94, "first", 1), (.99, "missing", 0), (.99, "none", 0),
 ])
-def test_clearer_definitions_preserve_threshold_and_real_evidence(probability, anchor, expected):
+@pytest.mark.parametrize("kind", ["number", "takeaway"])
+def test_clearer_definitions_preserve_threshold_and_real_evidence(probability, anchor, expected, kind):
     from meeting.live_signals import window_request, window_ops
     state, _ = window_request([row("first", 8)], {}, radar=False)
-    answers = {"number": {"noul": probability}, "number_anchor": {"choice": anchor, "confidence": 1.0}}
+    answers = {kind: {"noul": probability}, kind + "_anchor": {"choice": anchor, "confidence": 1.0}}
     pulses = [p for op in window_ops(0, state, answers, {}) for p in op.get("pulses", [])]
     assert len(pulses) == expected

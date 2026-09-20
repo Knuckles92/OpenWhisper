@@ -48,7 +48,7 @@ def test_build_ops_promotes_key_points_with_evidence():
     assert ops[0]["data"]["start_s"] == 5.0
 
 
-def test_build_ops_prepends_opening_when_key_points_start_late():
+def test_build_ops_does_not_invent_opening_beat_from_raw_speech():
     state = {
         "cards": {
             "key_points": [
@@ -63,11 +63,11 @@ def test_build_ops_prepends_opening_when_key_points_start_late():
         {"id": "sg_apple", "start_s": 27.7, "text": "Why is Apple innovative?"},
     ]
     ops = build_timeline_backfill_ops(state, segments)
-    assert [op["data"]["start_s"] for op in ops] == [0.0, 27.7]
-    assert "assumptions" in ops[0]["text"].lower()
+    assert [op["data"]["start_s"] for op in ops] == [27.7]
+    assert ops[0]["evidence"] == ["sg_apple"]
 
 
-def test_build_ops_falls_back_to_segment_windows():
+def test_build_ops_does_not_sample_transcript_windows():
     state = {"cards": {"key_points": [], "timeline": []}}
     segments = [
         {"id": "sg_0", "start_s": 0.0, "text": "Opening question"},
@@ -76,8 +76,7 @@ def test_build_ops_falls_back_to_segment_windows():
         {"id": "sg_3", "start_s": 50.0, "text": "Closing discovery"},
     ]
     ops = build_timeline_backfill_ops(state, segments)
-    assert [op["data"]["start_s"] for op in ops] == [0.0, 25.0, 50.0]
-    assert ops[0]["evidence"] == ["sg_0"]
+    assert ops == []
 
 
 def test_build_summary_ops_from_key_points_when_empty():
@@ -184,27 +183,19 @@ def test_repair_does_not_overwrite_human_title():
     assert store.snapshot()["title"] == "Planning sync"
 
 
-def test_build_keypoint_coverage_promotes_uncovered_timeline_beats():
-    from meeting.state.repair import build_keypoint_coverage_ops
-
-    state = {
-        "cards": {
-            "key_points": [
-                {"text": "Apple innovates despite same resources",
-                 "status": "proposed", "evidence": ["sg_1"]},
-            ],
-            "timeline": [
-                {"text": "Apple innovates despite same resources",
-                 "status": "proposed", "evidence": ["sg_1"]},
-                {"text": "Martin Luther King led the Civil Rights Movement",
-                 "status": "proposed", "evidence": ["sg_2"]},
-            ],
-        }
-    }
-    ops = build_keypoint_coverage_ops(state)
-    assert len(ops) == 1
-    assert ops[0]["card"] == "key_points"
-    assert "martin luther king" in ops[0]["text"].lower()
+def test_repair_does_not_promote_timeline_labels_to_key_points():
+    store = MeetingStateStore(MeetingState(meeting_id="m_labels"))
+    store.apply("system", "state_repair", [
+        {"op": "add_item", "card": "timeline", "text": "Seasoning.",
+         "data": {"start_s": 71.0}, "evidence": ["sg_1"]},
+        {"op": "add_item", "card": "timeline", "text": "Let's take a look at this.",
+         "data": {"start_s": 45.0}, "evidence": ["sg_2"]},
+    ])
+    assert repair_meeting_state(store, [
+        {"id": "sg_1", "start_s": 71.0, "text": "Seasoning."},
+        {"id": "sg_2", "start_s": 45.0, "text": "Let's take a look at this."},
+    ]) == 0
+    assert store.snapshot()["cards"]["key_points"] == []
 
 
 def test_timeline_coverage_adds_missing_key_point_beats():
@@ -235,34 +226,33 @@ def test_timeline_coverage_adds_missing_key_point_beats():
     assert "apple" in ops[0]["text"].lower()
 
 
-def test_build_keypoint_coverage_lifts_named_examples_from_segments():
-    from meeting.state.repair import build_keypoint_coverage_ops
-
-    state = {
-        "rolling_summary": (
-            "Examples include Apple's innovation and Martin Luther King."
-        ),
-        "topic": {"current": "Why some succeed"},
-        "cards": {
-            "key_points": [
-                {"text": "Opening: why do some defy assumptions?",
-                 "status": "proposed", "evidence": ["sg_0"]},
-            ],
-            "timeline": [],
-        },
-    }
+def test_repair_leaves_raw_transcript_for_agent_synthesis():
+    store = MeetingStateStore(MeetingState(meeting_id="m_raw", status="ended"))
     segments = [
-        {"id": "sg_0", "start_s": 0.0,
-         "text": "How do you explain when things don't go as we assume?"},
-        {"id": "sg_a", "start_s": 27.0,
-         "text": "For example, why is Apple so innovative?"},
-        {"id": "sg_m", "start_s": 50.0,
-         "text": "Why is it that Martin Luther King led the Civil Rights Movement?"},
+        {"id": "sg_0", "start_s": 0.0, "text": "Let's take a look at this."},
+        {"id": "sg_1", "start_s": 25.0, "text": "Seasoning."},
+        {"id": "sg_2", "start_s": 50.0, "text": "For example, why is Apple so innovative?"},
+        {"id": "sg_3", "start_s": 75.0, "text": "Oh I love it."},
     ]
-    ops = build_keypoint_coverage_ops(state, segments)
-    texts = " ".join(op["text"].lower() for op in ops)
-    assert "apple" in texts
-    assert "martin luther king" in texts
+    assert repair_meeting_state(store, segments) == 0
+    snapshot = store.snapshot()
+    assert all(not items for items in snapshot["cards"].values())
+    assert snapshot["rolling_summary"] == ""
+    assert snapshot["topic"]["current"] == ""
+    assert snapshot["title"] == ""
+
+
+def test_repair_does_not_recycle_legacy_key_point_samples():
+    store = MeetingStateStore(MeetingState(meeting_id="m_legacy"))
+    store.apply("system", "state_repair", [
+        {"op": "add_item", "card": "key_points", "text": "Let's take a look at this.",
+         "evidence": ["sg_1"]},
+    ])
+    assert repair_meeting_state(store, [
+        {"id": "sg_1", "start_s": 1.0, "text": "Let's take a look at this."},
+    ]) == 0
+    assert store.snapshot()["rolling_summary"] == ""
+    assert store.snapshot()["cards"]["timeline"] == []
 
 
 def test_repair_meeting_state_fills_summary_only():
@@ -290,6 +280,10 @@ def test_repair_skips_timeline_when_ribbon_disabled():
         report_views=["brief"],
     )
     store = MeetingStateStore(state)
+    store.apply("agent", "agent", [
+        {"op": "add_item", "card": "key_points",
+         "text": "The benchmarks held under peak load.", "evidence": ["sg_2"]},
+    ])
     segments = [
         {"id": "sg_1", "start_s": 0.0, "text": "Let's start with the migration."},
         {"id": "sg_2", "start_s": 25.0, "text": "The benchmarks held under peak load."},
@@ -387,29 +381,30 @@ def test_build_timeline_ops_from_live_notes_when_key_points_empty():
     assert "Canary" in texts
 
 
-def test_build_keypoint_coverage_from_live_notes():
-    from meeting.state.repair import build_keypoint_coverage_ops
+def test_notes_can_backfill_navigation_without_becoming_duplicate_captures():
+    store = MeetingStateStore(MeetingState(meeting_id="m_notes"))
+    store.apply("agent", "agent", [
+        {"op": "add_item", "card": "live_notes",
+         "text": "Database read replicas reduced latency by forty percent.",
+         "data": {"heading": "Database latency", "start_s": 30.0},
+         "evidence": ["sg_3"]},
+    ])
+    repair_meeting_state(store, [
+        {"id": "sg_3", "start_s": 30.0, "text": "Read replicas cut latency by forty percent."},
+    ])
+    snapshot = store.snapshot()
+    assert snapshot["cards"]["key_points"] == []
+    assert len(snapshot["cards"]["timeline"]) == 1
+    assert "forty percent" in snapshot["rolling_summary"]
 
-    state = {
-        "rolling_summary": "Discussed infrastructure upgrades.",
-        "topic": {"current": "Infrastructure"},
-        "cards": {
-            "key_points": [],
-            "timeline": [],
-            "live_notes": [
-                {
-                    "text": "Database read replicas reduced latency by forty percent.",
-                    "status": "proposed",
-                    "data": {"heading": "Database Latency", "start_s": 30.0},
-                    "evidence": ["sg_3"],
-                },
-            ],
-        },
-    }
-    ops = build_keypoint_coverage_ops(state, [])
-    assert len(ops) >= 1
-    assert any("Database Latency" in op["text"] or "latency" in op["text"] for op in ops)
 
+def test_notes_without_evidence_do_not_borrow_an_unrelated_segment():
+    state = {"cards": {"live_notes": [
+        {"text": "Deployment is delayed", "data": {"start_s": 20.0}},
+    ]}}
+    assert build_timeline_backfill_ops(state, [
+        {"id": "sg_1", "start_s": 1.0, "text": "Hello"},
+    ]) == []
 
 
 # Tolerant evidence-id repair (meeting.agent.evidence).

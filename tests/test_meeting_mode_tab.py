@@ -5,7 +5,12 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import QApplication, QPushButton, QToolButton
+from PyQt6.QtWidgets import (
+    QApplication,
+    QPlainTextEdit,
+    QPushButton,
+    QToolButton,
+)
 
 from config import config
 from services.settings import SettingsKey, settings_manager
@@ -486,10 +491,47 @@ class TestMeetingModeTabState(unittest.TestCase):
     def test_start_emits_cloud_choice(self):
         """Start Meeting emits the current cloud-intelligence choice."""
         received = []
-        self.tab.start_requested.connect(received.append)
+        self.tab.start_requested.connect(
+            lambda cloud, brief: received.append((cloud, brief))
+        )
         self.tab.cloud_checkbox.setChecked(True)
         self.tab.start_button.click()
-        self.assertEqual(received, [True])
+        self.assertEqual(received, [(True, "")])
+
+    def test_start_emits_typed_meeting_brief(self):
+        """The pre-meeting brief rides along with the start request."""
+        received = []
+        self.tab.start_requested.connect(
+            lambda cloud, brief: received.append((cloud, brief))
+        )
+        self.tab.brief_input.setPlainText(
+            "  Capture every objection to the vendor choice.  "
+        )
+        self.tab.cloud_checkbox.setChecked(False)
+        self.tab.start_button.click()
+        self.assertEqual(
+            received, [(False, "Capture every objection to the vendor choice.")]
+        )
+
+    def test_meeting_brief_is_capped_at_the_validation_limit(self):
+        """A pasted essay is trimmed here rather than rejected by the store."""
+        from meeting.state.patches import MAX_INTENT_LEN
+
+        self.tab.brief_input.setPlainText("b" * (MAX_INTENT_LEN + 500))
+        self.assertEqual(len(self.tab.meeting_brief()), MAX_INTENT_LEN)
+
+    def test_meeting_brief_field_is_hidden_during_a_meeting(self):
+        """The brief is a pre-meeting control; the dashboard owns it after.
+
+        It lives inside the idle card, so it leaves with the Start button
+        rather than needing visibility handling of its own.
+        """
+        self.assertIsNotNone(
+            self.tab.idle_card.findChild(QPlainTextEdit, "meetingBriefInput")
+        )
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.app.processEvents()
+        self.assertTrue(self.tab.idle_card.isHidden())
 
     def test_cloud_checkbox_presents_compact_tooltip(self):
         """Hover help belongs to the checkbox, without a separate icon."""
@@ -863,7 +905,9 @@ class TestMeetingModeTabState(unittest.TestCase):
         deferred = []
         started = []
         self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
-        self.tab.start_new_meeting_requested.connect(started.append)
+        self.tab.start_new_meeting_requested.connect(
+            lambda cloud, _brief: started.append(cloud)
+        )
         self.tab.cloud_checkbox.setChecked(True)
         self.tab.set_meeting_state({
             "active": False,
