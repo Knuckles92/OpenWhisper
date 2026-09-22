@@ -8,6 +8,8 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.05] - 2026-09-22
+
 ### Added
 - **Search every setting** — press Ctrl+K (or Ctrl+F) anywhere in Settings, or click the search box above the rail, to find a setting, a model, a component, or a help note by name. Each result says where it lives, Enter opens it and highlights the tile, and model results open Downloads on that model.
 - **Takeaways in Meeting Pulse** - highlights explicitly stated key insights, lessons learned, and conclusions, with source playback, probability previews, saved history, and exports.
