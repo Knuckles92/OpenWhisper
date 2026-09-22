@@ -25,6 +25,7 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 - **Sensitive-dictation gate** (Settings → AI cleanup → Keep sensitive dictation out of cloud cleanup). Screening sent every cloud-bound dictation to TypeSafe before cleanup, so the text left the machine either way, and it added a network round trip to each cleanup. Dictation is no longer sent to TypeSafe at all; a saved setting for it is ignored.
 
 ### Fixed
+- **Long local dictation matches the saved recording**: completed speech windows are verified against the saved WAV before their early results are reused. If platform resampling differs, transcription uses the saved file instead.
 - **AI cleanup can no longer hang a dictation** — a slow cleanup model could hold "Cleaning up..." indefinitely, because OpenRouter answers at once and then keeps the connection open while the model works, which the 8 s request timeout never caught. Cleanup now gives up after about 17 s and pastes the raw transcript. Cancel during cleanup now ends the job at once; before, it only changed the label, and every later record press was refused as "already in progress" until the provider finished.
 
 ## [2.6.04] - 2026-09-19

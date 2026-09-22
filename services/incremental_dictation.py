@@ -19,6 +19,7 @@ one that path would produce.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -31,7 +32,13 @@ from typing import Optional
 import numpy as np
 
 from config import config
-from services.local_asr.audio import MAX_SAMPLES, SAMPLE_RATE, WindowSplitter, resampler
+from services.local_asr.audio import (
+    MAX_SAMPLES,
+    SAMPLE_RATE,
+    WindowSplitter,
+    resampler,
+    windows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,7 @@ class DictationSession:
         # Completed windows not yet decoded, and the decoded windows' text.
         self._ready: list[tuple[float, np.ndarray]] = []
         self._texts: list[str] = []
+        self._fingerprints: list[tuple[float, int, bytes]] = []
         self._invalid: Optional[str] = None
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -203,6 +211,7 @@ class DictationSession:
                 return
             self._ready.pop(0)
             self._texts.append(text)
+            self._fingerprints.append(self._fingerprint(offset, audio))
             logger.info(
                 "Decoded window %d (%.1f-%.1f s) while recording in %.0f ms",
                 len(self._texts), offset, offset + len(audio) / SAMPLE_RATE,
@@ -253,7 +262,7 @@ class DictationSession:
         started = time.perf_counter()
         try:
             texts = self.backend.transcribe_windows(
-                self._final_windows(audio_path), self._language
+                self._verified_final_windows(audio_path), self._language
             )
             reason = self._stale()
             if reason:
@@ -268,6 +277,33 @@ class DictationSession:
             early, len(texts), (time.perf_counter() - started) * 1000,
         )
         return self.backend.join_texts(self._texts + texts)
+
+    @staticmethod
+    def _fingerprint(offset: float, audio: np.ndarray) -> tuple[float, int, bytes]:
+        return offset, len(audio), hashlib.sha256(audio.tobytes()).digest()
+
+    def _verified_final_windows(self, audio_path: str):
+        """Only reuse early decodes when every window matches the saved WAV.
+
+        PyAV may resample a stream and a decoded file differently on some
+        platforms even when the source PCM and total sample count agree.
+        Recognition must therefore use the saved file if any window differs.
+        """
+        file_windows = windows(audio_path)
+        try:
+            for fingerprint in self._fingerprints:
+                saved = next(file_windows, None)
+                if saved is None or self._fingerprint(*saved) != fingerprint:
+                    raise _Mismatch("the saved file's early window differs")
+            for live in self._final_windows(audio_path):
+                saved = next(file_windows, None)
+                if saved is None or self._fingerprint(*saved) != self._fingerprint(*live):
+                    raise _Mismatch("the saved file's final window differs")
+                yield live
+            if next(file_windows, None) is not None:
+                raise _Mismatch("the saved file has an extra window")
+        finally:
+            file_windows.close()
 
     def _final_windows(self, audio_path: str):
         """Yield the windows left at stop, once the saved file is verified.
@@ -292,8 +328,9 @@ class DictationSession:
         self._push(np.frombuffer(pcm, dtype=np.int16, offset=self._consumed))
         self._ready.extend(self._splitter.push(self._resampler.resample(None)))
         self._ready.extend(self._splitter.finish())
-        # Chunk-invariant resampling makes this exact; the swr flush lands
-        # within a sample of the ideal count for any input over 1000 frames.
+        # The swr flush lands within a sample of the ideal count for any
+        # input over 1000 frames. Window bytes are checked against the file
+        # separately, since resampling can differ by platform.
         expected = frames * SAMPLE_RATE / self.recorder.rate
         if abs(self._splitter.total - expected) >= 1:
             raise _Mismatch(

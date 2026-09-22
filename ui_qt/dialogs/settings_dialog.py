@@ -247,8 +247,9 @@ class SettingsDialog(QDialog):
     stacking copies.
     """
 
-    #: Wide enough for the Downloads catalog beside its profile at 100%.
-    DEFAULT_SIZE = QSize(1120, 720)
+    #: Client area; with the title bar it opens at about 1317x846 on a
+    #: 1080p screen, and leaves the Downloads catalog room beside its profile.
+    DEFAULT_SIZE = QSize(1315, 814)
     #: The Downloads filter row is the widest fixed content in the window.
     MINIMUM_SIZE = QSize(940, 520)
 

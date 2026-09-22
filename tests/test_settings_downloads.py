@@ -124,7 +124,8 @@ class _DialogTestCase:
 class TestPageShell(_DialogTestCase):
     """The page fills Settings' body; only the two content columns scroll."""
 
-    #: The body width Settings gives the page at its default window size.
+    #: A compact body: what Settings gave the page at its former 1120px
+    #: default, kept narrower than today's default so clipping still shows.
     SETTINGS_BODY = (1120 - 258 - 56, 560)
 
     def test_rows_are_not_clipped_at_the_settings_minimum_width(self):
