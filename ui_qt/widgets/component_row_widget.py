@@ -164,7 +164,7 @@ _PHASE_LABELS = {
 
 
 class ComponentRowWidget(QFrame):
-    """One row in the Model Manager's Components group.
+    """One row in the Components group of Settings → Downloads.
 
     The row is "dumb": it renders whatever state is handed to
     :meth:`update_state` / :meth:`set_progress` and re-emits button clicks with

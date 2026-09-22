@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+import time
+from typing import TYPE_CHECKING, Callable, Optional
 
 from config import config
 from services.settings import SettingsKey, settings_manager
@@ -80,6 +81,13 @@ class StreamingRuntime:
             sample_rate=config.SAMPLE_RATE,
             callback=self.on_partial_transcription,
         )
+        if getattr(self.controller.streaming_transcriber, "is_streaming", True) is False:
+            # The last recording's worker is still finishing a window (stop no
+            # longer waits for it), so this one records without a preview;
+            # showing the preview overlay would leave it empty throughout.
+            self.controller.recorder.set_streaming_callback(None)
+            logger.warning("Live preview skipped: the previous preview is still finishing")
+            return
         logger.info("Streaming transcription started")
 
         if self.controller._streaming_enabled:
@@ -93,17 +101,43 @@ class StreamingRuntime:
         self._stopping = True
 
     def stop_streaming_session(self) -> str:
-        """Stop streaming transcription and return the accumulated text."""
+        """Stop streaming transcription and return the text published so far.
+
+        The window preview returns at once and keeps its unfinished window for
+        ``finalize_streaming_text``; the native stream still finishes here.
+        """
         if not self.controller.streaming_transcriber:
             return ""
 
         self._stopping = True
         self.controller.recorder.set_streaming_callback(None)
+        started = time.perf_counter()
         streaming_text = self.controller.streaming_transcriber.stop_streaming()
         logger.info(
-            f"Streaming transcription stopped, got {len(streaming_text)} chars"
+            "Streaming transcription stopped in "
+            f"{(time.perf_counter() - started) * 1000:.0f} ms, "
+            f"got {len(streaming_text)} chars"
         )
         return streaming_text
+
+    def finalize_streaming_text(self) -> Optional[str]:
+        """Complete the stopped preview's text, decoding the tail it kept.
+
+        Blocking: it can wait out a window decode still in flight and then
+        decodes the few seconds of audio that were left, so only the
+        transcription worker calls it, and only when the final transcript is
+        empty. None when the preview
+        has nothing to finish lazily (none configured, or a native stream,
+        which flushed at stop).
+        """
+        finalize = getattr(self.controller.streaming_transcriber, "finalize_preview", None)
+        if not callable(finalize):
+            return None
+        try:
+            return finalize()
+        except Exception as exc:
+            logger.warning(f"Could not finish the live preview text: {exc}")
+            return None
 
     def cancel_streaming_session(self) -> None:
         """Cancel any active streaming session."""

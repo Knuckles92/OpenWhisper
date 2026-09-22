@@ -129,27 +129,31 @@ def test_timeout_never_exposes_provider_or_key(monkeypatch):
 
 
 def test_review_uses_shared_model_transport_and_tls_bundle(monkeypatch):
+    from services import typesafe
     from services.typesafe import ENDPOINT, MODEL
 
     context = object()
     tls = Mock(return_value=context)
-    response = Mock(status=200)
+    response = Mock(status=200, will_close=True)
     response.read.return_value = json.dumps({
         "answers": {"support": {"type": "noul", "noul": .95}}}).encode()
-    response.__enter__ = Mock(return_value=response)
-    response.__exit__ = Mock(return_value=None)
-    urlopen = Mock(return_value=response)
+    connection = Mock()
+    connection.getresponse.return_value = response
+    https = Mock(return_value=connection)
     monkeypatch.setattr("services.typesafe.verified_context", tls)
-    monkeypatch.setattr("services.typesafe.urllib.request.urlopen", urlopen)
+    monkeypatch.setattr(typesafe, "_proxied", lambda parts: False)
+    monkeypatch.setattr(typesafe, "_POOL", typesafe._KeepAlivePool())
+    monkeypatch.setattr(typesafe.http.client, "HTTPSConnection", https)
     state = {"insight": "The team agreed to ship."}
     questions = {"support": {"type": "noul", "instructions": "Is it supported?"}}
     assert TypeSafeReviewer("synthetic-key").evaluate(
         state, questions, consent=CONSENT) == {"support": .95}
-    request = urlopen.call_args.args[0]
-    assert request.full_url == ENDPOINT
-    assert request.get_header("Authorization") == "Bearer synthetic-key"
-    assert json.loads(request.data) == {"model": MODEL, "state": state, "questions": questions}
-    assert urlopen.call_args.kwargs == {"timeout": 12.0, "context": context}
+    method, path = connection.request.call_args.args
+    assert (method, "https://api.typesafe.ai" + path) == ("POST", ENDPOINT)
+    sent = connection.request.call_args.kwargs
+    assert sent["headers"]["Authorization"] == "Bearer synthetic-key"
+    assert json.loads(sent["body"]) == {"model": MODEL, "state": state, "questions": questions}
+    assert https.call_args.kwargs == {"timeout": 12.0, "context": context}
     tls.assert_called_once()
 
 

@@ -1,6 +1,6 @@
 """Bundled technical metadata for local Whisper models.
 
-The Model Manager uses this catalog to explain model tradeoffs without
+Settings → Downloads uses this catalog to explain model tradeoffs without
 contacting Hugging Face.  Values are curated from the upstream OpenAI Whisper
 model table, the Distil-Whisper model cards, and the CTranslate2 conversion
 repositories used by faster-whisper.

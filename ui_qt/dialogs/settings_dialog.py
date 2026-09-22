@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QSystemTrayIcon,
     QTextEdit,
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import bundle_root, config
+from services.components import component_coordinator
 from services.credentials import (
     MAX_API_KEY_LEN,
     CredentialSource,
@@ -45,16 +47,14 @@ from services.credentials import store as credential_store
 from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import key_present as typesafe_key_present
 from services.typesafe import verify_key as typesafe_verify_key
+from services.format_utils import format_file_size
 from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
 from services.recorder import AudioRecorder
 from services.settings import (
     LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
-    MeetingAgentCore,
-    MeetingLanguage,
     MeetingServerBind,
-    MeetingSpeakerIdBackend,
     RecordingRetentionMode,
     RecordingTriggerMode,
     SettingsKey,
@@ -62,7 +62,7 @@ from services.settings import (
     UiTheme,
     resolve_developer_mode,
     resolve_max_saved_recordings,
-    resolve_meeting_agent_core,
+    resolve_max_saved_recordings_bytes,
     resolve_meeting_context_folder_enabled,
     resolve_meeting_context_folder_path,
     resolve_meeting_end_polish,
@@ -70,9 +70,6 @@ from services.settings import (
     resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
     resolve_meeting_insight_review,
-    resolve_meeting_language,
-    resolve_meeting_llm_model,
-    resolve_meeting_llm_provider,
     resolve_meeting_past_recall_enabled,
     resolve_typesafe_enabled,
     resolve_meeting_report_brief,
@@ -81,8 +78,6 @@ from services.settings import (
     resolve_recording_trigger_mode,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
-    resolve_meeting_speaker_id_backend,
-    resolve_meeting_whisper_model,
     resolve_streaming_overlay_font_size,
     resolve_ui_font_scale,
     resolve_ui_theme,
@@ -104,6 +99,37 @@ from services.text_llm import (
 )
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
+from ui_qt.dialogs.settings_destinations import (
+    ADVANCED,
+    API_KEYS,
+    CLEANUP,
+    CLEANUP_PROFILES,
+    CLEANUP_RULES,
+    DOWNLOADS,
+    GENERAL,
+    HOTKEYS,
+    MEETING_AFTER,
+    MEETING_DASHBOARD,
+    MEETING_FAST,
+    MEETING_INTELLIGENCE,
+    MEETING_VOICE,
+    OVERVIEW,
+    RECORDING,
+    RUNTIME,
+    VOICE_MODEL,
+    resolve_destination,
+)
+from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs.settings_models import ModelAssignments
+from ui_qt.dialogs.settings_overview import OverviewPage, OverviewSummary
+from ui_qt.dialogs.settings_search import (
+    PageSource,
+    SearchEntry,
+    SearchPalette,
+    build_index,
+    keyword_entries,
+    shortcut_text,
+)
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.widgets import (
@@ -140,23 +166,25 @@ def is_native_wayland_session(
     )
 
 
-GENERAL = "general"
-RECORDING = "recording"
-CLEANUP = "cleanup"
-CLEANUP_RULES = "cleanup_rules"
-CLEANUP_PROFILES = "cleanup_profiles"
-MEETING_INTELLIGENCE = "meeting_intelligence"
-MEETING_AFTER = "meeting_after"
-MEETING_FAST = "meeting_fast"
-MEETING_DASHBOARD = "meeting_dashboard"
-API_KEYS = "api_keys"
-HOTKEYS = "hotkeys"
-ADVANCED = "advanced"
+_HF_POLICY_LABELS = {
+    HuggingFaceAccessPolicy.ASK: "ask first",
+    HuggingFaceAccessPolicy.ALWAYS: "always download",
+    HuggingFaceAccessPolicy.NEVER: "offline",
+}
 
-_HF_POLICY_RAIL = {
-    HuggingFaceAccessPolicy.ASK: "Ask first",
-    HuggingFaceAccessPolicy.ALWAYS: "Always allow",
-    HuggingFaceAccessPolicy.NEVER: "Offline",
+#: Destinations reached from search by a name the app used to use.
+_SEARCH_ALIASES = {
+    VOICE_MODEL: (
+        "Model assignments",
+        "Model Manager's choices now sit on Voice model, AI cleanup, Voice & "
+        "speakers, Intelligence, and Runtime",
+        "model manager models assign",
+    ),
+    DOWNLOADS: (
+        "Download models and components",
+        "Models & storage › Downloads",
+        "download manager library catalog hugging face",
+    ),
 }
 
 
@@ -210,16 +238,20 @@ class _SettingsPage(QWidget):
 
 
 class SettingsDialog(QDialog):
-    """Non-modal Settings window with a Model Manager-style rail.
+    """The one non-modal window for settings, model choices, and downloads.
 
-    Changes persist immediately. ``UIController`` holds a single instance and
-    re-raises it instead of stacking copies.
+    The rail is grouped by feature (Dictation, Meeting Mode, Models &
+    storage, App) under an Overview landing page, so every model choice sits
+    on the page for the feature it powers. Changes persist immediately.
+    ``UIController`` holds a single instance and re-raises it instead of
+    stacking copies.
     """
 
-    DEFAULT_SIZE = QSize(980, 700)
-    MINIMUM_SIZE = QSize(800, 480)
+    #: Wide enough for the Downloads catalog beside its profile at 100%.
+    DEFAULT_SIZE = QSize(1120, 720)
+    #: The Downloads filter row is the widest fixed content in the window.
+    MINIMUM_SIZE = QSize(940, 520)
 
-    model_manager_requested = pyqtSignal(str)
     _cleanup_rule_polished = pyqtSignal(str, str, str)
     _rule_dictation_finished = pyqtSignal(str, str)
     _api_key_verified = pyqtSignal(str, bool, str)
@@ -240,7 +272,20 @@ class SettingsDialog(QDialog):
     on_dictation_transcribe: Optional[Callable[[str], str]] = None
     get_meeting_active: Optional[Callable[[], bool]] = None
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
+        background_cache_scan: bool = True,
+    ):
+        """Build every destination.
+
+        Args:
+            parent: Owning window.
+            get_loaded_model: Provider returning the model the engine has
+                loaded (or None), so "auto" and the Delete lock are accurate.
+            background_cache_scan: Scan the model cache on a worker thread.
+        """
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setWindowIcon(app_icon())
@@ -250,6 +295,10 @@ class SettingsDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         self.setSizeGripEnabled(True)
 
+        self._get_loaded_model = get_loaded_model
+        self._background_cache_scan = bool(background_cache_scan)
+        self._pages_ready = False
+        self._search_flash: Optional[QWidget] = None
         self._loading = False
         self._tray_available = bool(QSystemTrayIcon.isSystemTrayAvailable())
         self._native_wayland = is_native_wayland_session()
@@ -273,6 +322,13 @@ class SettingsDialog(QDialog):
         self._rule_dictation_timer.setSingleShot(True)
         self._rule_dictation_timer.setInterval(60_000)
         self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
+        # Lets a burst of chevron or arrow-key steps settle into one
+        # retention change; typed counts commit on Enter or focus-out.
+        self._retention_commit_timer = QTimer(self)
+        self._retention_commit_timer.setSingleShot(True)
+        self._retention_commit_timer.setInterval(800)
+        self._retention_commit_timer.timeout.connect(self._commit_retention)
+        self._confirming_retention = False
 
         self._setup_ui()
         self.setMinimumSize(self.MINIMUM_SIZE)
@@ -282,7 +338,32 @@ class SettingsDialog(QDialog):
         self._rule_dictation_finished.connect(self._on_rule_dictation_finished)
         self._api_key_verified.connect(self._on_api_key_verified)
         self.finished.connect(self._release_rule_recorder)
-        self.rail.select(GENERAL)
+        self.models.assignments_changed.connect(self._refresh_rail_values)
+        self.models.downloads_requested.connect(self.show_downloads)
+        self.downloads.inventory_changed.connect(self._refresh_rail_values)
+        self.overview.destination_requested.connect(self.select_destination)
+
+        self.search_palette = SearchPalette(self, self._search_index)
+        self.search_palette.activated.connect(self._on_search_activated)
+        self._search_shortcuts = []
+        for sequence in (QKeySequence("Ctrl+K"), QKeySequence(QKeySequence.StandardKey.Find)):
+            shortcut = QShortcut(sequence, self)
+            shortcut.activated.connect(self.open_search)
+            self._search_shortcuts.append(shortcut)
+        self._search_flash_timer = QTimer(self)
+        self._search_flash_timer.setSingleShot(True)
+        self._search_flash_timer.setInterval(1600)
+        self._search_flash_timer.timeout.connect(self._clear_search_flash)
+        # Owned by the window, so a reveal queued just before the window is
+        # destroyed dies with it instead of touching deleted widgets.
+        self._reveal_target: Optional[QWidget] = None
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.setInterval(0)
+        self._reveal_timer.timeout.connect(self._run_reveal)
+
+        self._pages_ready = True
+        self.rail.select(OVERVIEW)
         self.refresh()
 
     def _setup_ui(self) -> None:
@@ -291,13 +372,27 @@ class SettingsDialog(QDialog):
         root.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._build_rail_pane())
-        root.addWidget(self._build_body(), stretch=1)
+        self.settings_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.settings_splitter.setObjectName("settingsSplitter")
+        self.settings_splitter.setHandleWidth(6)
+        self.settings_splitter.setChildrenCollapsible(False)
+        self.settings_splitter.addWidget(self._build_rail_pane())
+        self.settings_splitter.addWidget(self._build_body())
+        self.settings_splitter.setStretchFactor(0, 0)
+        self.settings_splitter.setStretchFactor(1, 1)
+        self.settings_splitter.setSizes(
+            [NavRail.RAIL_WIDTH, self.DEFAULT_SIZE.width() - NavRail.RAIL_WIDTH]
+        )
+        handle = self.settings_splitter.handle(1)
+        handle.setCursor(Qt.CursorShape.SizeHorCursor)
+        handle.setToolTip("Drag to resize the settings sidebar")
+        root.addWidget(self.settings_splitter)
 
     def _build_rail_pane(self) -> QWidget:
         pane = QWidget()
         pane.setObjectName("modelManagerRailPane")
-        pane.setFixedWidth(NavRail.RAIL_WIDTH)
+        pane.setMinimumWidth(220)
+        pane.setMaximumWidth(560)
         column = QVBoxLayout(pane)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
@@ -316,40 +411,75 @@ class SettingsDialog(QDialog):
         brand.addStretch()
         column.addLayout(brand)
 
+        self.search_button = QPushButton()
+        self.search_button.setObjectName("settingsRailSearch")
+        self.search_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Ctrl+K is the keyboard path; as the first control in the window it
+        # would otherwise take focus on open and show a permanent focus ring.
+        self.search_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.search_button.setToolTip("Search every setting, model, and help note")
+        self.search_button.setAccessibleName("Search settings and models")
+        search_row = QHBoxLayout(self.search_button)
+        search_row.setContentsMargins(10, 0, 8, 0)
+        search_row.setSpacing(8)
+        search_icon = QLabel()
+        search_icon.setObjectName("settingsRailSearchIcon")
+        search_icon.setPixmap(_design_icon("search-slate.svg").pixmap(14, 14))
+        search_row.addWidget(search_icon)
+        search_text = QLabel("Search settings")
+        search_text.setObjectName("settingsRailSearchText")
+        search_row.addWidget(search_text, stretch=1)
+        self.search_hint = QLabel(shortcut_text("Ctrl+K"))
+        self.search_hint.setObjectName("settingsRailSearchHint")
+        search_row.addWidget(self.search_hint)
+        for label in (search_icon, search_text, self.search_hint):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.search_button.setFixedHeight(34)
+        self.search_button.clicked.connect(lambda: self.open_search())
+        search_holder = QHBoxLayout()
+        search_holder.setContentsMargins(12, 0, 12, 8)
+        search_holder.addWidget(self.search_button)
+        column.addLayout(search_holder)
+
         self.rail = NavRail()
-        self.rail.add_group("General")
-        self.rail.add_destination(GENERAL, "General", _design_icon("bolt-green.svg"))
-        self.rail.add_destination(
-            RECORDING, "Recording", _design_icon("microphone-blue.svg")
-        )
-        self.rail.add_group("Dictation cleanup")
-        self.rail.add_destination(
-            CLEANUP, "Cleanup", _design_icon("stack-purple.svg")
-        )
-        self.rail.add_destination(
-            CLEANUP_RULES, "Learned rules", _design_icon("stack-slate.svg")
-        )
-        self.rail.add_destination(
-            CLEANUP_PROFILES, "Profiles", _design_icon("typography-blue.svg")
-        )
-        self.rail.add_group("Meeting Mode")
-        self.rail.add_destination(
-            MEETING_INTELLIGENCE, "Intelligence", _design_icon("stack-purple.svg")
-        )
-        self.rail.add_destination(
-            MEETING_FAST, "Fast judgments", _design_icon("bolt-green.svg")
-        )
-        self.rail.add_destination(
-            MEETING_AFTER, "After the meeting", _design_icon("check-green.svg")
-        )
-        self.rail.add_destination(
-            MEETING_DASHBOARD, "Dashboard", _design_icon("box-blue.svg")
-        )
-        self.rail.add_group("Cloud services")
-        self.rail.add_destination(API_KEYS, "API keys", _design_icon("key-blue.svg"))
-        self.rail.add_group("System")
-        self.rail.add_destination(HOTKEYS, "Hotkeys", _design_icon("bolt-green.svg"))
-        self.rail.add_destination(ADVANCED, "Advanced", _design_icon("box-blue.svg"))
+        self._rail_groups: Dict[str, str] = {}
+        self._rail_icons: Dict[str, str] = {}
+
+        def destination(key: str, name: str, icon: str, group: str) -> None:
+            self.rail.add_destination(key, name, _design_icon(icon))
+            self._rail_groups[key] = group
+            self._rail_icons[key] = icon
+
+        destination(OVERVIEW, "Overview", "layout-grid-blue.svg", "")
+        for group, items in (
+            ("Dictation", (
+                (VOICE_MODEL, "Voice model", "microphone-blue.svg"),
+                (RECORDING, "Recording", "microphone-blue.svg"),
+                (CLEANUP, "AI cleanup", "stack-purple.svg"),
+                (CLEANUP_RULES, "Learned rules", "stack-slate.svg"),
+                (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
+            )),
+            ("Meeting Mode", (
+                (MEETING_VOICE, "Voice & speakers", "microphone-blue.svg"),
+                (MEETING_INTELLIGENCE, "Intelligence", "stack-purple.svg"),
+                (MEETING_FAST, "Fast judgments", "bolt-green.svg"),
+                (MEETING_AFTER, "After the meeting", "check-green.svg"),
+                (MEETING_DASHBOARD, "Dashboard", "box-blue.svg"),
+            )),
+            ("Models & storage", (
+                (DOWNLOADS, "Downloads", "download-blue.svg"),
+                (RUNTIME, "Runtime", "cpu-blue.svg"),
+            )),
+            ("App", (
+                (GENERAL, "General", "bolt-green.svg"),
+                (HOTKEYS, "Hotkeys", "keyboard-green.svg"),
+                (API_KEYS, "API keys", "key-blue.svg"),
+                (ADVANCED, "Advanced", "box-blue.svg"),
+            )),
+        ):
+            self.rail.add_group(group)
+            for key, name, icon in items:
+                destination(key, name, icon, group)
         self.rail.destination_changed.connect(self._on_destination_changed)
         column.addWidget(self.rail, stretch=1)
         return pane
@@ -368,17 +498,40 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.page_title)
         layout.addWidget(self.page_subtitle)
 
+        # Shared by every page, so model and download messages land in one
+        # place. Created before the pages that report into it.
+        self.message_label = WrappedLabel("")
+        self.message_label.setObjectName("modelManagerMessage")
+        self.models = ModelAssignments(
+            self,
+            self.rail,
+            self.message_label,
+            get_loaded_model=self._get_loaded_model,
+            background_cache_scan=self._background_cache_scan,
+        )
+        self.downloads = DownloadsPage(
+            get_loaded_model=self._get_loaded_model,
+            background_cache_scan=self._background_cache_scan,
+        )
+        self.overview = OverviewPage()
+
         self.stack = QStackedWidget()
         self.stack.setObjectName("modelManagerStack")
         self._pages: Dict[str, QWidget] = {}
         self._page_scrolls: Dict[str, QScrollArea] = {}
         self._headings: Dict[str, tuple] = {}
         self._add_page(
-            GENERAL,
-            "General",
-            "How finished transcriptions leave the app, and how the window "
-            "behaves when you close it.",
-            self._build_general_page,
+            OVERVIEW,
+            "Overview",
+            "What OpenWhisper is running right now. Click any card to change it.",
+            lambda layout: layout.addWidget(self.overview),
+        )
+        self._add_page(
+            VOICE_MODEL,
+            "Voice model",
+            "The transcription engine used by Quick Record, hotkey dictation, "
+            "and Upload File.",
+            self.models.build_voice_page,
         )
         self._add_page(
             RECORDING,
@@ -389,8 +542,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             CLEANUP,
             "AI transcript cleanup",
-            "Rewrite a finished dictation with a chat model. Provider and "
-            "model live in Model Manager.",
+            "Rewrite a finished dictation with a chat model, together with your "
+            "learned rules.",
             self._build_cleanup_page,
         )
         self._add_page(
@@ -407,10 +560,17 @@ class SettingsDialog(QDialog):
             self._build_cleanup_profiles_page,
         )
         self._add_page(
+            MEETING_VOICE,
+            "Meeting voice & speakers",
+            "Meetings load their own speech model for live captions and the "
+            "optional end-of-meeting re-decode.",
+            self.models.build_meeting_voice_page,
+        )
+        self._add_page(
             MEETING_INTELLIGENCE,
             "Meeting intelligence",
-            "What the meeting agent may search, and which models it uses. "
-            "Nothing is sent until you enable intelligence for a meeting.",
+            "One chat model runs every Meeting Mode pass. Nothing is sent until "
+            "you enable intelligence for a meeting.",
             self._build_meeting_intelligence_page,
         )
         self._add_page(
@@ -432,12 +592,25 @@ class SettingsDialog(QDialog):
             self._build_meeting_dashboard_page,
         )
         self._add_page(
-            API_KEYS,
-            "API keys",
-            "Credentials for cloud providers and custom endpoints. Saved "
-            "keys live in your operating system's credential manager, never "
-            "in the settings file.",
-            self._build_api_keys_page,
+            DOWNLOADS,
+            "Downloads",
+            "Speech models and optional components, downloaded on demand.",
+            self._build_downloads_page,
+            scroll=False,
+        )
+        self._add_page(
+            RUNTIME,
+            "Runtime",
+            "How local Whisper models run. Dictation and Meeting Mode both "
+            "inherit these.",
+            self.models.build_runtime_page,
+        )
+        self._add_page(
+            GENERAL,
+            "General",
+            "How finished transcriptions leave the app, and how the window "
+            "behaves when you close it.",
+            self._build_general_page,
         )
         self._add_page(
             HOTKEYS,
@@ -447,18 +620,23 @@ class SettingsDialog(QDialog):
             self._build_hotkeys_page,
         )
         self._add_page(
+            API_KEYS,
+            "API keys",
+            "Credentials for cloud providers and custom endpoints. Saved "
+            "keys live in your operating system's credential manager, never "
+            "in the settings file.",
+            self._build_api_keys_page,
+        )
+        self._add_page(
             ADVANCED,
             "Advanced",
-            "Developer tools and when Hugging Face may download a missing "
-            "model.",
+            "Meeting re-transcription and developer tools.",
             self._build_advanced_page,
         )
         layout.addWidget(self.stack, stretch=1)
 
         footer = QHBoxLayout()
         footer.setSpacing(8)
-        self.message_label = WrappedLabel("")
-        self.message_label.setObjectName("modelManagerMessage")
         footer.addWidget(self.message_label, stretch=1)
         close_btn = Button("Close")
         close_btn.setObjectName("modelManagerCloseButton")
@@ -469,25 +647,67 @@ class SettingsDialog(QDialog):
         return body
 
     def _add_page(
-        self, key: str, title: str, subtitle: str, builder: Callable
+        self,
+        key: str,
+        title: str,
+        subtitle: str,
+        builder: Callable,
+        *,
+        scroll: bool = True,
     ) -> None:
+        """Add one destination.
+
+        Args:
+            scroll: Wrap the page in its own scroll area. Downloads opts out
+                because its catalog list is the page's only scroller.
+        """
         page = _SettingsPage()
         page.setObjectName(f"settingsPage_{key}")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         builder(layout)
-        layout.addStretch()
         self._pages[key] = page
         self._headings[key] = (title, subtitle)
-        scroll = QScrollArea()
-        scroll.setObjectName("settingsPageScroll")
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(page)
-        self._page_scrolls[key] = scroll
-        self.stack.addWidget(scroll)
+        if not scroll:
+            self.stack.addWidget(page)
+            return
+        layout.addStretch()
+        area = QScrollArea()
+        area.setObjectName("settingsPageScroll")
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(page)
+        self._page_scrolls[key] = area
+        self.stack.addWidget(area)
+
+    def _build_downloads_page(self, layout: QVBoxLayout) -> None:
+        self.hf_policy_combo = ElidingComboBox()
+        self.hf_policy_combo.setObjectName("hfPolicyCombo")
+        self.hf_policy_combo.addItem(
+            "Ask before downloading", HuggingFaceAccessPolicy.ASK
+        )
+        self.hf_policy_combo.addItem(
+            "Always allow downloads", HuggingFaceAccessPolicy.ALWAYS
+        )
+        self.hf_policy_combo.addItem(
+            "Never connect (fully offline)", HuggingFaceAccessPolicy.NEVER
+        )
+        self.hf_policy_combo.setMinimumHeight(34)
+        self.hf_policy_combo.setMaximumWidth(300)
+        self.hf_policy_combo.setToolTip(
+            "Models already on this computer always load locally without any "
+            "network checks. Hugging Face is only contacted to download a "
+            "missing model, and only when this policy or a one-time approval "
+            "allows it. An external HF_HUB_OFFLINE=1 environment variable "
+            "disables downloads entirely."
+        )
+        self.hf_policy_combo.currentIndexChanged.connect(self._on_hf_policy_changed)
+        self.downloads.add_policy_control(
+            "When a model is missing from this computer", self.hf_policy_combo
+        )
+        layout.addWidget(self.downloads, stretch=1)
 
     def _field(self, label: str, widget: QWidget) -> QWidget:
         wrapper = QWidget()
@@ -518,6 +738,14 @@ class SettingsDialog(QDialog):
         button.setMinimumWidth(fitted)
         button.setMaximumWidth(fitted)
 
+    @staticmethod
+    def _section_title(layout: QVBoxLayout, title: str) -> QLabel:
+        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
+        caption = QLabel(title.upper())
+        caption.setObjectName("settingsTileGroupTitle")
+        layout.addWidget(caption)
+        return caption
+
     def _tile_group(
         self,
         layout: QVBoxLayout,
@@ -532,9 +760,7 @@ class SettingsDialog(QDialog):
         A trailing odd tile spans the rest of its row so no column is left
         empty. Returns the caption and intro labels for callers that gate them.
         """
-        caption = QLabel(title.upper())
-        caption.setObjectName("settingsTileGroupTitle")
-        layout.addWidget(caption)
+        caption = self._section_title(layout, title)
         intro_label = None
         if intro:
             intro_label = self._caption(intro)
@@ -710,6 +936,9 @@ class SettingsDialog(QDialog):
         if hasattr(self, "_accessibility_timer"):
             self._refresh_accessibility_status()
             self._accessibility_timer.start()
+        if self._pages_ready and not event.spontaneous():
+            self.refresh_models()
+            self._refresh_recordings_usage()
 
     def hideEvent(self, event):
         if hasattr(self, "_accessibility_timer"):
@@ -737,7 +966,10 @@ class SettingsDialog(QDialog):
             "Keep all", RecordingRetentionMode.KEEP_ALL
         )
         self.recording_retention_combo.addItem(
-            "Custom", RecordingRetentionMode.CUSTOM
+            "By count", RecordingRetentionMode.CUSTOM
+        )
+        self.recording_retention_combo.addItem(
+            "By folder size", RecordingRetentionMode.SIZE_LIMIT
         )
         self.recording_retention_combo.setMinimumHeight(40)
         self.recording_retention_combo.currentIndexChanged.connect(
@@ -745,8 +977,10 @@ class SettingsDialog(QDialog):
         )
         self.recording_retention_tile = FieldTile(
             "Keep recordings",
-            "Older audio files are deleted automatically when the limit is "
-            "exceeded. Transcription history text is kept separately.",
+            "Keep a set number of recordings or cap the recordings folder "
+            "size. The oldest audio files are deleted automatically once the "
+            "limit is passed; the newest recording is always kept. "
+            "Transcription history text is kept separately.",
             self.recording_retention_combo,
             _design_icon("box-blue.svg"),
         )
@@ -758,12 +992,42 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
         self.max_recordings_spinbox.setMinimumHeight(40)
         self.max_recordings_spinbox.setMinimumWidth(120)
+        # Retention deletes audio, so typed digits commit on Enter or
+        # focus-out: tracking every keystroke once applied "1" on the way
+        # from 20 to 100 and pruned all but one recording.
+        self.max_recordings_spinbox.setKeyboardTracking(False)
         self.max_recordings_spinbox.valueChanged.connect(
-            self._on_max_recordings_changed
+            self._schedule_retention_commit
         )
-        self.recording_retention_tile.add_body_layout(
-            self._spin_form(self.max_recordings_label, self.max_recordings_spinbox)
+        self.max_recordings_spinbox.editingFinished.connect(
+            self._commit_retention
         )
+        self.max_recordings_mb_label = QLabel("Folder size limit:")
+        self.max_recordings_mb_label.setObjectName("settingsTileFieldLabel")
+        self.max_recordings_mb_spinbox = NoWheelSpinBox()
+        self.max_recordings_mb_spinbox.setMinimum(10)
+        self.max_recordings_mb_spinbox.setMaximum(1024 * 1024)
+        self.max_recordings_mb_spinbox.setSingleStep(100)
+        self.max_recordings_mb_spinbox.setSuffix(" MB")
+        self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
+        self.max_recordings_mb_spinbox.setMinimumHeight(40)
+        self.max_recordings_mb_spinbox.setMinimumWidth(140)
+        self.max_recordings_mb_spinbox.setKeyboardTracking(False)
+        self.max_recordings_mb_spinbox.valueChanged.connect(
+            self._schedule_retention_commit
+        )
+        self.max_recordings_mb_spinbox.editingFinished.connect(
+            self._commit_retention
+        )
+        retention_form = self._spin_form(
+            self.max_recordings_label, self.max_recordings_spinbox
+        )
+        retention_form.addRow(
+            self.max_recordings_mb_label, self.max_recordings_mb_spinbox
+        )
+        self.recording_retention_tile.add_body_layout(retention_form)
+        self.recordings_usage_label = self._caption("")
+        self.recording_retention_tile.add_body(self.recordings_usage_label)
         self._tile_group(
             layout, "Saved recordings", [self.recording_retention_tile]
         )
@@ -790,6 +1054,7 @@ class SettingsDialog(QDialog):
         self.streaming_font_size_spinbox.setValue(config.STREAMING_OVERLAY_FONT_SIZE)
         self.streaming_font_size_spinbox.setMinimumHeight(40)
         self.streaming_font_size_spinbox.setMinimumWidth(120)
+        self.streaming_font_size_spinbox.setKeyboardTracking(False)
         self.streaming_font_size_spinbox.valueChanged.connect(
             self._on_streaming_font_changed
         )
@@ -830,64 +1095,11 @@ class SettingsDialog(QDialog):
         self.transcript_cleanup_check.toggled.connect(
             self._on_cleanup_enabled_changed
         )
-        self.cleanup_sensitivity_gate_tile = SettingTile(
-            "Keep sensitive dictation out of cloud cleanup (Experimental)",
-            "Before dictation reaches a cloud model, TypeSafe judges whether "
-            "it holds passwords, account numbers, or personal details; flagged "
-            "text is returned raw. Needs TypeSafe fast judgments (Meeting Mode "
-            "→ Fast judgments). Local endpoints are never screened.",
-            _design_icon("stack-slate.svg"),
-        )
-        self.cleanup_sensitivity_gate_check = (
-            self.cleanup_sensitivity_gate_tile.checkbox
-        )
-        self.cleanup_sensitivity_gate_check.setObjectName(
-            "cleanupSensitivityGateCheck"
-        )
-        self.cleanup_sensitivity_gate_check.toggled.connect(
-            lambda checked: self._persist(
-                SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, bool(checked)
-            )
-        )
-        # Screening needs a remote judgment, so an unkeyed gate screens nothing
-        # and cleanup proceeds. A checked box must not imply otherwise.
-        self.cleanup_sensitivity_gate_status = self._caption("")
-        self.cleanup_sensitivity_gate_status.setObjectName(
-            "cleanupSensitivityGateStatus"
-        )
-        self.cleanup_sensitivity_gate_status.hide()
-        self.cleanup_sensitivity_gate_tile.add_body(
-            self.cleanup_sensitivity_gate_status
-        )
-        self._tile_group(
-            layout, "AI cleanup",
-            [self.transcript_cleanup_tile, self.cleanup_sensitivity_gate_tile],
-        )
+        self._tile_group(layout, "AI cleanup", [self.transcript_cleanup_tile])
 
-        self.cleanup_model_tile = InfoTile(
-            "Text model",
-            "Provider, model, and thinking level live in "
-            "Model Manager → On-demand → Text cleanup.",
-            _design_icon("box-blue.svg"),
-        )
-        self.open_model_manager_btn = QPushButton("Open Model Manager…")
-        self.open_model_manager_btn.setObjectName("cleanupModelManagerLink")
-        self.open_model_manager_btn.setFlat(True)
-        self.open_model_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.open_model_manager_btn.setToolTip(
-            "Open Model Manager → On-demand to choose the cleanup provider "
-            "and chat model, and set its thinking level"
-        )
-        self.open_model_manager_btn.clicked.connect(
-            lambda: self.model_manager_requested.emit("text")
-        )
-        self.cleanup_model_tile.add_trailing(self.open_model_manager_btn)
-        self.cleanup_model_summary = QLabel("")
-        self.cleanup_model_summary.setObjectName("cleanupModelSummary")
-        self.cleanup_model_summary.setWordWrap(True)
-        self.cleanup_model_tile.add_body(self.cleanup_model_summary)
-
-        self._tile_group(layout, "Model", [self.cleanup_model_tile])
+        self._section_title(layout, "Model")
+        self.cleanup_model_tile = self.models.build_cleanup_model_section(layout)
+        layout.addSpacing(6)
 
         self.cleanup_prompt_edit = QTextEdit()
         self.cleanup_prompt_edit.setAcceptRichText(False)
@@ -924,7 +1136,7 @@ class SettingsDialog(QDialog):
         self.cleanup_profiles_panel = CleanupProfilesPanel(manager=settings_manager)
         self.cleanup_profiles_panel.profiles_changed.connect(self._on_profiles_saved)
         self.cleanup_profiles_panel.capture_changed.connect(self._on_profile_capture)
-        self.cleanup_profiles_panel.model_requested.connect(lambda: self.model_manager_requested.emit("text"))
+        self.cleanup_profiles_panel.model_requested.connect(self.focus_cleanup_model)
         layout.addWidget(self.cleanup_profiles_panel)
 
     def _on_profiles_saved(self) -> None:
@@ -1050,33 +1262,9 @@ class SettingsDialog(QDialog):
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
-        self.meeting_model_tile = InfoTile(
-            "Meeting models",
-            "Whisper, spoken language, speaker identification, the chat "
-            "model, and the agent core live in Model Manager → Meeting Mode.",
-            _design_icon("box-blue.svg"),
-        )
-        self.open_meeting_model_manager_btn = QPushButton("Open Model Manager…")
-        self.open_meeting_model_manager_btn.setObjectName(
-            "meetingModelManagerLink"
-        )
-        self.open_meeting_model_manager_btn.setFlat(True)
-        self.open_meeting_model_manager_btn.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        self.open_meeting_model_manager_btn.setToolTip(
-            "Open Model Manager → Meeting Mode to choose transcription, "
-            "language, speaker ID, and intelligence models"
-        )
-        self.open_meeting_model_manager_btn.clicked.connect(
-            lambda: self.model_manager_requested.emit("meeting")
-        )
-        self.meeting_model_tile.add_trailing(self.open_meeting_model_manager_btn)
-        self.meeting_model_summary = QLabel("")
-        self.meeting_model_summary.setObjectName("meetingModelSummary")
-        self.meeting_model_summary.setWordWrap(True)
-        self.meeting_model_tile.add_body(self.meeting_model_summary)
-        self._tile_group(layout, "Models", [self.meeting_model_tile], columns=1)
+        self._section_title(layout, "Model")
+        self.meeting_model_tile = self.models.build_meeting_model_section(layout)
+        layout.addSpacing(6)
 
         self.meeting_past_recall_tile = SettingTile(
             "Search past transcripts",
@@ -1408,6 +1596,8 @@ class SettingsDialog(QDialog):
         self.meeting_port_spinbox.setValue(config.MEETING_SERVER_PORT)
         self.meeting_port_spinbox.setMinimumHeight(40)
         self.meeting_port_spinbox.setMinimumWidth(120)
+        # Save the finished port, not 8, 80, and 808 on the way to 8080.
+        self.meeting_port_spinbox.setKeyboardTracking(False)
         self.meeting_port_spinbox.valueChanged.connect(self._on_meeting_port_changed)
         self.meeting_port_tile = FieldTile(
             "Dashboard port",
@@ -2018,47 +2208,36 @@ class SettingsDialog(QDialog):
         self.developer_mode_check.toggled.connect(self._on_developer_mode_changed)
         self._tile_group(layout, "Developer", [self.developer_mode_tile])
 
-        self.hf_policy_combo = ElidingComboBox()
-        self.hf_policy_combo.setObjectName("hfPolicyCombo")
-        self.hf_policy_combo.addItem(
-            "Ask before downloading", HuggingFaceAccessPolicy.ASK
-        )
-        self.hf_policy_combo.addItem(
-            "Always allow downloads", HuggingFaceAccessPolicy.ALWAYS
-        )
-        self.hf_policy_combo.addItem(
-            "Never connect (fully offline)", HuggingFaceAccessPolicy.NEVER
-        )
-        self.hf_policy_combo.setMinimumHeight(40)
-        self.hf_policy_combo.currentIndexChanged.connect(self._on_hf_policy_changed)
-        self.hf_policy_tile = FieldTile(
-            "When a model is missing from this computer",
-            "Models already on this computer always load locally without any "
-            "network checks. Hugging Face is only contacted to download a "
-            "missing model, and only when this policy or a one-time approval "
-            "allows it. An external HF_HUB_OFFLINE=1 environment variable "
-            "disables downloads entirely.",
-            self.hf_policy_combo,
-            _design_icon("cloud-upload-blue.svg"),
-        )
-        self._tile_group(
-            layout, "Hugging Face downloads", [self.hf_policy_tile]
-        )
+    # ---- navigation ----
 
     def select_destination(self, key: str) -> None:
-        """Show one rail destination by stable key."""
+        """Show one destination by stable key or legacy alias."""
+        key = resolve_destination(key)
         if key in self._pages:
             self.rail.select(key)
 
     def focus_hf_policy(self) -> None:
-        """Open Advanced with the Hugging Face policy control focused."""
-        self.select_destination(ADVANCED)
+        """Open Downloads with the Hugging Face policy control focused."""
+        self.select_destination(DOWNLOADS)
         self.hf_policy_combo.setFocus()
 
     def focus_cleanup_toggle(self) -> None:
-        """Open Cleanup with the AI cleanup toggle focused."""
+        """Open AI cleanup with the AI cleanup toggle focused."""
         self.select_destination(CLEANUP)
         self.transcript_cleanup_check.setFocus()
+
+    def focus_cleanup_model(self) -> None:
+        """Open AI cleanup scrolled to its chat model."""
+        self.select_destination(CLEANUP)
+        self._reveal(self.cleanup_model_tile)
+
+    def show_downloads(self, backend: str = "", component_id: str = "") -> None:
+        """Open Downloads, filtered to one backend or focused on a component."""
+        self.select_destination(DOWNLOADS)
+        if backend:
+            self.downloads.show_backend(backend)
+        if component_id:
+            self.downloads.focus_component(component_id)
 
     def _on_destination_changed(self, key: str) -> None:
         if key != HOTKEYS:
@@ -2066,14 +2245,107 @@ class SettingsDialog(QDialog):
         page = self._pages.get(key)
         if page is None:
             return
-        self.stack.setCurrentWidget(self._page_scrolls[key])
+        self.stack.setCurrentWidget(self._page_scrolls.get(key, page))
         self.rail.scrollToItem(self.rail.currentItem())
         title, subtitle = self._headings[key]
         self.page_title.setText(title)
         self.page_subtitle.setText(subtitle)
+        if self._pages_ready:
+            self.models.on_destination_shown(key)
+            if key == OVERVIEW:
+                self._refresh_overview()
+
+    # ---- search ----
+
+    def open_search(self, text: str = "") -> None:
+        """Show the search palette over the window."""
+        self.search_palette.open(text)
+
+    def _search_index(self) -> list:
+        pages = []
+        for key in self.rail.keys():
+            if key not in self._pages:
+                continue
+            title, subtitle = self._headings[key]
+            name = self.rail.name(key)
+            group = self._rail_groups.get(key, "")
+            crumb = f"{group} › {name}" if group else name
+            pages.append(PageSource(
+                key, crumb, title, subtitle, self._pages[key],
+                self._rail_icons.get(key, "box-blue.svg"),
+            ))
+        return build_index(
+            pages, self.downloads, keyword_entries(_SEARCH_ALIASES)
+        )
+
+    def _on_search_activated(self, entry: SearchEntry) -> None:
+        if entry.model_name:
+            self.select_destination(DOWNLOADS)
+            self.downloads.reveal_model(entry.model_name)
+            return
+        if entry.component_id:
+            self.show_downloads(component_id=entry.component_id)
+            return
+        self.select_destination(entry.destination)
+        if entry.target is not None:
+            self._reveal(entry.target)
+
+    def _reveal(self, target: QWidget) -> None:
+        """Scroll a control into view, tint its card briefly, and focus it.
+
+        Runs once the event loop has laid out the newly selected page.
+        """
+        self._reveal_target = target
+        self._reveal_timer.start()
+
+    def _run_reveal(self) -> None:
+        target, self._reveal_target = self._reveal_target, None
+        if target is None:
+            return
+        try:
+            area = self._page_scrolls.get(self.rail.current_key())
+            if area is not None:
+                area.ensureWidgetVisible(target, 0, 40)
+            card = target
+            while card is not None and card.objectName() not in (
+                "settingsTile", "textModelFootnoteCard"
+            ):
+                card = card.parentWidget()
+            self._clear_search_flash()
+            if card is not None:
+                card.setProperty("searchHit", True)
+                card.style().unpolish(card)
+                card.style().polish(card)
+                self._search_flash = card
+                self._search_flash_timer.start()
+            focus = next(
+                (
+                    widget for widget in [target, *target.findChildren(QWidget)]
+                    if widget.focusPolicy() & Qt.FocusPolicy.TabFocus
+                    and widget.isEnabled() and widget.isVisibleTo(self)
+                ),
+                None,
+            )
+            if focus is not None:
+                focus.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        except RuntimeError:
+            pass  # The target's page was rebuilt before the reveal ran.
+
+    def _clear_search_flash(self) -> None:
+        card, self._search_flash = self._search_flash, None
+        if card is None:
+            return
+        try:
+            card.setProperty("searchHit", False)
+            card.style().unpolish(card)
+            card.style().polish(card)
+        except RuntimeError:
+            pass  # The card was destroyed with its page.
+
+    # ---- refresh ----
 
     def refresh(self) -> None:
-        """Reload persisted values and rail captions."""
+        """Reload persisted values, model assignments, and rail captions."""
         self._cancel_hotkey_capture()
         self.cleanup_profiles_panel.refresh()
         self._loading = True
@@ -2081,7 +2353,16 @@ class SettingsDialog(QDialog):
             self._load_settings()
         finally:
             self._loading = False
+        # A hidden window reuses the last cache scan; showEvent rescans.
+        visible = self.isVisible()
+        self.models.refresh(scan=visible)
+        self.downloads.refresh(scan=visible)
         self._refresh_rail_values()
+
+    def refresh_models(self) -> None:
+        """Re-read model assignments and downloads after the engine changes."""
+        self.models.refresh()
+        self.downloads.refresh()
 
     def eventFilter(self, obj, event):
         if (
@@ -2092,9 +2373,12 @@ class SettingsDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
+        self.search_palette.close_palette()
         self.cleanup_profiles_panel.hotkey_input.cancel_capture()
         self._cancel_hotkey_capture()
         self._persist_cleanup_prompt()
+        if self._retention_commit_timer.isActive():
+            self._commit_retention()
         self._release_rule_recorder()
         super().closeEvent(event)
 
@@ -2128,6 +2412,7 @@ class SettingsDialog(QDialog):
         return True
 
     def _refresh_rail_values(self) -> None:
+        self.rail.set_value(OVERVIEW, "What is running now")
         self.rail.set_value(CLEANUP_PROFILES, f"{len(load_cleanup_profiles(settings_manager.load_all_settings()))} profiles")
         if self.auto_paste_check.isChecked():
             general = "Auto-paste on"
@@ -2140,8 +2425,8 @@ class SettingsDialog(QDialog):
             RECORDING,
             self.audio_device_combo.currentText() or "System Default",
         )
+        model = self.models.active_text_model
         if self.transcript_cleanup_check.isChecked():
-            model = self.cleanup_model_summary.text().split(" · ")[-1].strip()
             self.rail.set_value(CLEANUP, f"On · {model}" if model else "On")
         else:
             self.rail.set_value(CLEANUP, "Off")
@@ -2150,14 +2435,6 @@ class SettingsDialog(QDialog):
             CLEANUP_RULES,
             "No rules" if rule_count == 0 else f"{rule_count} rules",
         )
-        meeting_lines = self.meeting_model_summary.text().splitlines()
-        intel = next(
-            (line for line in meeting_lines if " · " in line and "Whisper" not in line),
-            "",
-        )
-        if not intel:
-            intel = meeting_lines[2] if len(meeting_lines) > 2 else "Meeting models"
-        self.rail.set_value(MEETING_INTELLIGENCE, intel)
         if self.meeting_end_report_check.isChecked():
             after = "Report"
         elif self.meeting_end_polish_check.isChecked():
@@ -2180,10 +2457,100 @@ class SettingsDialog(QDialog):
             self.rail.set_value(MEETING_DASHBOARD, "Localhost")
         self.rail.set_value(API_KEYS, self._api_key_rail_value())
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
-        policy = self.hf_policy_combo.currentData()
+        self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
         self.rail.set_value(
-            ADVANCED, _HF_POLICY_RAIL.get(policy, "Ask first")
+            ADVANCED,
+            "Developer mode on" if self.developer_mode_check.isChecked()
+            else "Developer mode off",
         )
+        if self.rail.current_key() == OVERVIEW:
+            self._refresh_overview()
+
+    def _refresh_overview(self) -> None:
+        """Rebuild the Overview from the values every destination reports."""
+        if not self._pages_ready:
+            return
+        models = self.models
+        settings = self._settings_snapshot()
+        cleanup_on = self.transcript_cleanup_check.isChecked()
+        cleanup_remote = self._provider_is_remote(models.active_text_provider)
+        meeting_remote = self._provider_is_remote(models.active_meeting_provider)
+
+        local_items, cloud_items = [], []
+        (cloud_items if models.voice_is_remote() else local_items).append(
+            "Dictation voice"
+        )
+        local_items.append("Meeting voice")
+        if models.speaker_id_is_remote():
+            cloud_items.append("Speaker labels (system audio after End)")
+        cleanup_item = f"AI cleanup ({'on' if cleanup_on else 'off'})"
+        (cloud_items if cleanup_remote else local_items).append(cleanup_item)
+        (cloud_items if meeting_remote else local_items).append(
+            "Meeting intelligence (transcript text, when enabled)"
+            if meeting_remote else "Meeting intelligence"
+        )
+        local_items.extend(["Learned rules", "Recordings"])
+
+        hotkeys = self.current_hotkeys or {}
+        record = format_hotkey_display(hotkeys.get("record_toggle", "")) or "Not set"
+        cancel = format_hotkey_display(hotkeys.get("cancel", "")) or "not set"
+        minimize = format_hotkey_display(hotkeys.get("minimize_tray", "")) or "not set"
+        profile_count = len(load_cleanup_profiles(settings))
+
+        storage = self.downloads.storage_summary()
+        try:
+            components = [
+                (info.display_name, info.is_usable)
+                for info in component_coordinator.list_components()
+            ]
+        except Exception:
+            components = []
+        policy = self.hf_policy_combo.currentData()
+        self.overview.update_summary(OverviewSummary(
+            voice=(models.voice_summary(), models.voice_detail()),
+            cleanup=("On" if cleanup_on else "Off", models.text_summary()),
+            cleanup_on=cleanup_on,
+            profiles=(
+                f"{profile_count} profile{'' if profile_count == 1 else 's'}",
+                "A ticket, an email, or your own format",
+            ),
+            meeting_voice=(models.meeting_model_label(), models.meeting_voice_detail()),
+            intelligence=(
+                models.meeting_model_name(),
+                f"{profile_display_name(models.active_meeting_provider, settings)}"
+                f" · {models.meeting_agent_core_label()}",
+            ),
+            hotkeys=(f"Record {record}", f"Cancel {cancel} · Tray {minimize}"),
+            local_items=local_items,
+            cloud_items=cloud_items,
+            storage_downloaded=storage["downloaded"],
+            storage_total=storage["total"],
+            storage_bytes=storage["bytes"],
+            storage_by_backend=storage["by_backend"],
+            storage_checking=self.downloads.is_checking(),
+            components=components,
+            footer=(
+                f"API keys: {self._api_key_rail_value()}  ·  Runtime: "
+                f"{models.runtime_summary()}  ·  Missing models: "
+                f"{_HF_POLICY_LABELS.get(policy, 'ask first')}"
+            ),
+        ))
+
+    @staticmethod
+    def _settings_snapshot() -> dict:
+        try:
+            return settings_manager.load_all_settings()
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _provider_is_remote(provider: str) -> bool:
+        """Whether a text provider sends text off this machine."""
+        try:
+            profile = get_text_llm_profile(provider)
+        except Exception:
+            return True
+        return profile is None or not profile.is_local
 
     def _hotkey_rail_value(self) -> str:
         hotkeys = self.current_hotkeys
@@ -2216,34 +2583,147 @@ class SettingsDialog(QDialog):
 
     def _on_retention_mode_changed(self, _index: int = 0) -> None:
         self._update_recording_retention_ui()
-        if self._persist(
-            SettingsKey.RECORDING_RETENTION_MODE,
-            self.recording_retention_combo.currentData(),
+        self._commit_retention()
+
+    def _schedule_retention_commit(self, _value: int = 0) -> None:
+        # Typed values arrive only on Enter or focus-out, but chevron and
+        # arrow-key steps arrive one at a time; let a burst settle so it
+        # asks and prunes once.
+        if not self._loading:
+            self._retention_commit_timer.start()
+
+    def _commit_retention(self) -> None:
+        """Save finished retention edits, asking first if they delete audio."""
+        self._retention_commit_timer.stop()
+        if self._loading or self._confirming_retention:
+            return
+        edits = {
+            SettingsKey.RECORDING_RETENTION_MODE: (
+                self.recording_retention_combo.currentData()
+            ),
+            SettingsKey.MAX_SAVED_RECORDINGS: self.max_recordings_spinbox.value(),
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: (
+                self.max_recordings_mb_spinbox.value()
+            ),
+        }
+        saved = settings_manager.load_all_settings()
+        pending = {**saved, **edits}
+        limits = (
+            resolve_max_saved_recordings(pending),
+            resolve_max_saved_recordings_bytes(pending),
+        )
+        if limits == (
+            resolve_max_saved_recordings(saved),
+            resolve_max_saved_recordings_bytes(saved),
         ):
+            return
+        if not self._confirm_recording_removal(*limits):
+            self._loading = True
+            try:
+                self._load_retention_settings(saved)
+            finally:
+                self._loading = False
+            return
+        if self._persist_many(edits):
             self._apply_retention_limit()
 
-    def _on_max_recordings_changed(self, _value: int = 0) -> None:
-        if self._persist(
+    def _confirm_recording_removal(
+        self, max_recordings: Optional[int], max_bytes: Optional[int]
+    ) -> bool:
+        """Return True when these limits delete nothing or the user agrees."""
+        if max_recordings is None and max_bytes is None:
+            return True
+        try:
+            removed = history_manager.recordings_over_limit(
+                max_recordings, max_bytes
+            )
+        except Exception as exc:
+            logger.error("Couldn't preview recording retention: %s", exc)
+            self.message_label.setText(f"Couldn't check saved recordings: {exc}")
+            return False
+        if not removed:
+            return True
+        count = len(removed)
+        noun = "recording" if count == 1 else "recordings"
+        size = format_file_size(sum(rec.size_bytes for rec in removed))
+        # The modal takes focus from the spinbox, whose editingFinished would
+        # otherwise re-enter and stack a second prompt.
+        self._confirming_retention = True
+        try:
+            reply = QMessageBox.question(
+                self,
+                f"Delete {count} saved {noun}?",
+                f"The new limit permanently deletes {count} older saved "
+                f"{noun} ({size}) from disk right away. This can't be "
+                "undone.\n\nTranscription history text is kept.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+        finally:
+            self._confirming_retention = False
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _load_retention_settings(self, settings: dict) -> None:
+        retention_mode = settings.get(
+            SettingsKey.RECORDING_RETENTION_MODE,
+            RecordingRetentionMode.CUSTOM,
+        )
+        retention_index = self.recording_retention_combo.findData(retention_mode)
+        if retention_index < 0:
+            retention_index = self.recording_retention_combo.findData(
+                RecordingRetentionMode.CUSTOM
+            )
+        self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
+        max_recordings = settings.get(
             SettingsKey.MAX_SAVED_RECORDINGS,
-            self.max_recordings_spinbox.value(),
-        ):
-            self._apply_retention_limit()
+            config.MAX_SAVED_RECORDINGS,
+        )
+        try:
+            self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
+        except (TypeError, ValueError):
+            self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
+        max_recordings_mb = settings.get(
+            SettingsKey.MAX_SAVED_RECORDINGS_MB,
+            config.MAX_SAVED_RECORDINGS_MB,
+        )
+        try:
+            self.max_recordings_mb_spinbox.setValue(int(max_recordings_mb))
+        except (TypeError, ValueError):
+            self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
+        self._update_recording_retention_ui()
+        self._refresh_recordings_usage()
 
     def _apply_retention_limit(self) -> None:
         try:
-            history_manager.set_max_recordings(
-                resolve_max_saved_recordings(settings_manager.load_all_settings())
+            settings = settings_manager.load_all_settings()
+            history_manager.set_retention(
+                resolve_max_saved_recordings(settings),
+                resolve_max_saved_recordings_bytes(settings),
             )
         except Exception as exc:
             logger.error("Couldn't apply recording retention: %s", exc)
+        self._refresh_recordings_usage()
 
     def _update_recording_retention_ui(self) -> None:
-        is_custom = (
-            self.recording_retention_combo.currentData()
-            == RecordingRetentionMode.CUSTOM
+        mode = self.recording_retention_combo.currentData()
+        is_count = mode == RecordingRetentionMode.CUSTOM
+        is_size = mode == RecordingRetentionMode.SIZE_LIMIT
+        self.max_recordings_label.setEnabled(is_count)
+        self.max_recordings_spinbox.setEnabled(is_count)
+        self.max_recordings_mb_label.setEnabled(is_size)
+        self.max_recordings_mb_spinbox.setEnabled(is_size)
+
+    def _refresh_recordings_usage(self) -> None:
+        try:
+            count, total_bytes = history_manager.get_recordings_usage()
+        except Exception as exc:
+            logger.warning("Couldn't measure saved recordings: %s", exc)
+            self.recordings_usage_label.setText("")
+            return
+        noun = "recording" if count == 1 else "recordings"
+        self.recordings_usage_label.setText(
+            f"Currently {count} {noun} using {format_file_size(total_bytes)}."
         )
-        self.max_recordings_label.setEnabled(is_custom)
-        self.max_recordings_spinbox.setEnabled(is_custom)
 
     def _on_streaming_enabled_changed(self, checked: bool) -> None:
         self._update_streaming_font_ui()
@@ -2383,53 +2863,6 @@ class SettingsDialog(QDialog):
             self.meeting_context_folder_path.blockSignals(blocker)
         self._persist(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, path)
 
-    def _refresh_cleanup_model_summary(self) -> None:
-        try:
-            settings = settings_manager.load_all_settings()
-            saved_provider = resolve_transcript_cleanup_provider(settings)
-            saved_model = resolve_transcript_cleanup_model(settings)
-        except Exception:
-            settings = {}
-            saved_provider = config.TRANSCRIPT_CLEANUP_PROVIDER
-            saved_model = config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
-        provider_name = profile_display_name(saved_provider, settings)
-        self.cleanup_model_summary.setText(f"{provider_name} · {saved_model}")
-
-    def _refresh_meeting_model_summary(self) -> None:
-        try:
-            settings = settings_manager.load_all_settings()
-        except Exception:
-            settings = {}
-        whisper = resolve_meeting_whisper_model(settings)
-        language = resolve_meeting_language(settings)
-        provider = resolve_meeting_llm_provider(settings)
-        llm_model = resolve_meeting_llm_model(settings)
-        core = resolve_meeting_agent_core(settings)
-        speaker = resolve_meeting_speaker_id_backend(settings)
-        language_label = next(
-            (label for code, label in MeetingLanguage.CHOICES if code == language),
-            language,
-        )
-        provider_name = profile_display_name(provider, settings)
-        core_label = (
-            "Pi (sidecar)" if core == MeetingAgentCore.PI
-            else "OpenCode v2 (beta)" if core == MeetingAgentCore.OPENCODE
-            else "Direct (no sidecar)"
-        )
-        if speaker == MeetingSpeakerIdBackend.OFF:
-            speaker_label = "Off (Me / Others)"
-        elif speaker == MeetingSpeakerIdBackend.LOCAL:
-            speaker_label = "On-device (WeSpeaker)"
-        else:
-            speaker_label = "OpenAI (gpt-4o-transcribe-diarize)"
-        self.meeting_model_summary.setText(
-            f"Whisper · {whisper}\n"
-            f"Spoken language · {language_label}\n"
-            f"{provider_name} · {llm_model}\n"
-            f"Agent core · {core_label}\n"
-            f"Speaker ID · {speaker_label}"
-        )
-
     def _on_typesafe_enabled_changed(self, checked: bool) -> None:
         self._persist(SettingsKey.TYPESAFE_ENABLED, bool(checked))
         self._update_typesafe_feature_tiles()
@@ -2449,8 +2882,7 @@ class SettingsDialog(QDialog):
         is right at runtime and wrong in Settings: without this the page looks
         identical whether or not anything will ever run.
         """
-        # Cleanup pages are built before the fast-judgments page and call this
-        # through ``_update_cleanup_prompt_ui`` while wiring themselves up.
+        # Rail refreshes can run before the fast-judgments page is built.
         if not hasattr(self, "typesafe_key_notice"):
             return
         present = self._typesafe_key_present()
@@ -2466,37 +2898,6 @@ class SettingsDialog(QDialog):
                 "on below has no effect until you add a key under API keys → "
                 f"TypeSafe, or set {TYPESAFE_CREDENTIAL_ENV}."
             )
-        # Only warn where the switch is actually claiming something: cleanup
-        # running, against a remote endpoint. A local endpoint is never
-        # screened anyway, which the tile's own description already says.
-        blocked = (
-            self.cleanup_sensitivity_gate_check.isChecked()
-            and self.transcript_cleanup_check.isChecked()
-            and self._cleanup_destination_is_remote()
-            and (not present or not master_on)
-        )
-        if blocked:
-            reason = (
-                "no TypeSafe API key is saved"
-                if not present else
-                "TypeSafe fast judgments is off"
-            )
-            self.cleanup_sensitivity_gate_status.setText(
-                f"Not screening anything: {reason}. Dictation is being sent to "
-                "the cloud endpoint unchecked. Cleanup keeps working — only the "
-                "screening step is missing."
-            )
-        self.cleanup_sensitivity_gate_status.setVisible(blocked)
-        self.cleanup_sensitivity_gate_tile.body.setVisible(blocked)
-
-    def _cleanup_destination_is_remote(self) -> bool:
-        """Whether cleanup text would leave the machine. Unknown counts as remote."""
-        try:
-            profile = get_text_llm_profile(resolve_transcript_cleanup_provider())
-        except Exception:
-            logger.exception("Cleanup destination lookup failed")
-            return True
-        return profile is None or not profile.is_local
 
     def _update_typesafe_feature_tiles(self) -> None:
         """Feature switches only mean something while the master switch is on."""
@@ -2504,16 +2905,9 @@ class SettingsDialog(QDialog):
         for tile in (
             self.typesafe_topic_shift_tile,
             self.typesafe_voice_commands_tile,
-            self.cleanup_sensitivity_gate_tile,
             *self.typesafe_feature_tiles.values(),
         ):
             tile.setEnabled(enabled)
-        if not enabled:
-            self.cleanup_sensitivity_gate_tile.setEnabled(False)
-        else:
-            self.cleanup_sensitivity_gate_tile.setEnabled(
-                self.transcript_cleanup_check.isChecked()
-            )
         self._render_typesafe_key_state()
         self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
 
@@ -2542,10 +2936,6 @@ class SettingsDialog(QDialog):
             self.cleanup_rules_library_tile,
         ):
             widget.setEnabled(enabled)
-        self.cleanup_sensitivity_gate_tile.setEnabled(
-            enabled and self.typesafe_enabled_check.isChecked()
-        )
-        self._render_typesafe_key_state()
         self.cleanup_rules_gate_tile.setVisible(not enabled)
         self._update_cleanup_rule_controls()
 
@@ -2852,7 +3242,6 @@ class SettingsDialog(QDialog):
         )
         self.meeting_review_sensitivity.setCurrentIndex(
             self.meeting_review_sensitivity.findData(review["sensitivity"]))
-        self._refresh_meeting_model_summary()
 
         bind_index = self.meeting_bind_combo.findData(
             resolve_meeting_server_bind(settings)
@@ -3072,10 +3461,6 @@ class SettingsDialog(QDialog):
                     config.TRANSCRIPT_CLEANUP_ENABLED,
                 )
             )
-            self.cleanup_sensitivity_gate_check.setChecked(
-                settings.get(SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, False)
-                is True
-            )
             prompt = resolve_transcript_cleanup_prompt(settings)
             self.cleanup_prompt_edit.setPlainText(prompt)
             self._saved_cleanup_prompt = prompt
@@ -3084,7 +3469,6 @@ class SettingsDialog(QDialog):
                 resolve_transcript_cleanup_rules(settings)
             )
 
-            self._refresh_cleanup_model_summary()
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(
                 self._tray_available
@@ -3106,29 +3490,7 @@ class SettingsDialog(QDialog):
             theme_index = self.ui_theme_combo.findData(resolve_ui_theme(settings))
             self.ui_theme_combo.setCurrentIndex(max(0, theme_index))
 
-            retention_mode = settings.get(
-                SettingsKey.RECORDING_RETENTION_MODE,
-                RecordingRetentionMode.CUSTOM,
-            )
-            retention_index = self.recording_retention_combo.findData(
-                retention_mode
-            )
-            if retention_index < 0:
-                retention_index = self.recording_retention_combo.findData(
-                    RecordingRetentionMode.CUSTOM
-                )
-            self.recording_retention_combo.setCurrentIndex(
-                max(0, retention_index)
-            )
-            max_recordings = settings.get(
-                SettingsKey.MAX_SAVED_RECORDINGS,
-                config.MAX_SAVED_RECORDINGS,
-            )
-            try:
-                self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
-            except (TypeError, ValueError):
-                self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
-            self._update_recording_retention_ui()
+            self._load_retention_settings(settings)
 
             streaming_enabled = settings.get(
                 SettingsKey.STREAMING_ENABLED, config.STREAMING_ENABLED
@@ -3171,9 +3533,6 @@ class SettingsDialog(QDialog):
             self.cleanup_prompt_edit.setPlainText(config.TRANSCRIPT_CLEANUP_PROMPT)
             self._saved_cleanup_prompt = config.TRANSCRIPT_CLEANUP_PROMPT
             self.cleanup_rules_list.clear()
-            self.cleanup_model_summary.setText(
-                f"OpenRouter · {config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL}"
-            )
             self._update_cleanup_prompt_ui()
             self.minimize_tray_check.setChecked(self._tray_available)
             self.update_check_check.setChecked(config.UPDATE_CHECK_ENABLED)
@@ -3192,6 +3551,7 @@ class SettingsDialog(QDialog):
             )
             self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
             self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
+            self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
             self._update_recording_retention_ui()
             self.streaming_enabled_check.setChecked(config.STREAMING_ENABLED)
             self.streaming_font_size_spinbox.setValue(

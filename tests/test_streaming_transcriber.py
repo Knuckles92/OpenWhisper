@@ -159,6 +159,22 @@ def test_native_stream_pushes_each_interval_and_finishes_on_stop():
     assert not preview._session_open
 
 
+def test_native_stop_wakes_the_worker_instead_of_waiting_out_its_poll():
+    stream = _Stream()
+    preview = NativeStreamingTranscriber(stream, update_interval_sec=0.75)
+    # With a poll this long, only the stop marker can end the worker in time.
+    preview._POLL_SEC = 30.0
+    preview.start_streaming(config.SAMPLE_RATE, lambda *_: None)
+    preview.feed_audio(_tone(0.8))
+    assert stream.ready.wait(3)
+    preview.feed_audio(_tone(0.4))
+
+    # Still a full finish: the leftover block goes out with finish=True.
+    assert preview.stop_streaming() == "word word."
+    assert not preview.worker_thread
+    assert stream.calls[-1][1:] == (int(config.WHISPER_TARGET_SAMPLE_RATE * 0.4), "auto", True)
+
+
 def test_native_stream_keeps_silence_flowing_to_the_engine():
     stream = _Stream()
     preview = _native(stream)
@@ -257,17 +273,29 @@ def test_window_overlap_removes_redecoded_phrase_but_zero_overlap_preserves_it()
         assert preview.preview_text == expected
 
 
-def test_window_stop_flushes_recording_shorter_than_one_window():
+def _drained(preview):
+    """What the old draining stop returned: the native stream still finishes at
+    stop, while the window preview decodes its kept tail on request."""
+    text = preview.stop_streaming()
+    finalize = getattr(preview, "finalize_preview", None)
+    return finalize() if finalize else text
+
+
+def test_window_finalize_flushes_recording_shorter_than_one_window():
     preview = StreamingTranscriber(SimpleNamespace(model=_Decoder()))
     updates = []
     preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
     preview.feed_audio(_tone(.1))
-    assert preview.stop_streaming() == "hello there"
-    assert updates == [("hello there", True)]
+    # Stop keeps the partial window; only the empty-result fallback decodes it.
+    assert preview.stop_streaming() == ""
+    assert preview._chunk_count == 0
+    assert preview.finalize_preview() == "hello there"
+    # The overlay is gone by then, so the late window never reaches the UI.
+    assert updates == []
     assert preview._chunk_count == 1
 
 
-def test_window_stop_consumes_inflight_generator_and_partial_tail():
+def test_window_finalize_consumes_inflight_generator_and_partial_tail():
     entered, release = threading.Event(), threading.Event()
     calls = []
     def transcribe(audio, **options):
@@ -285,10 +313,10 @@ def test_window_stop_consumes_inflight_generator_and_partial_tail():
     preview.feed_audio(_tone(3))
     assert entered.wait(3)
     preview.feed_audio(_tone(.1))
-    # Request stop while the lazy model result is in flight.
-    preview._stop_requested = True
+    # Stop returns while the lazy model result is still in flight.
+    assert preview.stop_streaming() == ""
     release.set()
-    assert preview.stop_streaming() == "first window last word"
+    assert preview.finalize_preview() == "first window last word"
     assert len(calls) == 2
 
 
@@ -325,6 +353,8 @@ def test_timed_out_worker_cannot_publish_late_or_join_the_next_recording(monkeyp
     join = worker.join
     monkeypatch.setattr(worker, "join", lambda timeout=None: None)
     assert preview.stop_streaming() == ""
+    # The five-second deadline now bounds the fallback's wait for the worker.
+    assert preview.finalize_preview() == ""
     preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
     assert preview.worker_thread is worker
     assert not preview.is_streaming
@@ -335,7 +365,7 @@ def test_timed_out_worker_cannot_publish_late_or_join_the_next_recording(monkeyp
     preview.backend = SimpleNamespace(model=_Decoder())
     preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
     preview.feed_audio(_tone(.1))
-    assert preview.stop_streaming() == "hello there"
+    assert _drained(preview) == "hello there"
 
 
 @pytest.mark.parametrize("native", [False, True])
@@ -363,7 +393,7 @@ def test_abandoned_preview_suppresses_late_output_and_releases_native_session(mo
         assert entered.wait(3)
         if action == "timeout":
             monkeypatch.setattr(worker, "join", lambda timeout=None: None)
-            assert preview.stop_streaming() == ""
+            assert _drained(preview) == ""
         else:
             preview.cancel_streaming()
         # A second recording cannot share the old decoder while it is blocked.
@@ -379,7 +409,7 @@ def test_abandoned_preview_suppresses_late_output_and_releases_native_session(mo
     stream.calls.clear()  # The fake counts pushes; a canceled engine starts a fresh session.
     preview.start_streaming(config.SAMPLE_RATE, lambda *args: updates.append(args))
     preview.feed_audio(_tone(.1))
-    assert preview.stop_streaming() == ("word." if native else "old recording")
+    assert _drained(preview) == ("word." if native else "old recording")
 
 
 def test_runtime_stop_mutes_updates_but_preserves_postroll_until_worker_drains():

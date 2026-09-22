@@ -153,6 +153,8 @@ class AppConfig:
         default_factory=lambda: user_data_path("recordings")
     )
     MAX_SAVED_RECORDINGS: int = 20
+    # Folder-size retention default, in binary megabytes (~3 hours of audio).
+    MAX_SAVED_RECORDINGS_MB: int = 1024
     DATABASE_FILE: str = field(
         default_factory=lambda: user_data_path("openwhisper.db")
     )
@@ -242,8 +244,39 @@ class AppConfig:
     OVERLAY_HIDE_DELAY_MS: int = 1500
     CANCELLATION_ANIMATION_DURATION_MS: int = 800
     CANCELLATION_GRACE_MS: int = 200
+    # Capture keeps running after the stop press so a last word the press
+    # beat is not clipped. POST_ROLL_MS is the cap; waiting all of it was
+    # 1.22-1.25 s of a ~1.4 s stop->paste (September 2026 latency audit).
     POST_ROLL_MS: int = 1200
     POST_ROLL_FINALIZE_GRACE_MS: int = 800
+    # Adaptive post-roll: end capture once POST_ROLL_QUIET_MS in a row after
+    # the stop stay below the dictation's own noise floor (the level its
+    # quietest tenth of 1024-frame blocks stay under) plus
+    # POST_ROLL_QUIET_MARGIN_DB. False restores the fixed POST_ROLL_MS.
+    # Replaying the user's 20 saved dictations through the recorder cut the
+    # audio kept after the stop from 1231 ms to a median of 511 ms (p90
+    # 536 ms; one tail with steady noise ran to the cap), and Parakeet lost
+    # no words. Most of what remains is the stop key's own click, which lands
+    # ~70-200 ms after the press and restarts the quiet window. 400 ms would
+    # cost 116 ms more per dictation for nothing measured: with the click
+    # mixed into 100 stops pressed mid-sentence, both windows dropped words
+    # at the same 3 (pauses over 400 ms), and 18% of pauses inside the
+    # dictations reached 300 ms against 15% reaching 400 ms.
+    POST_ROLL_ADAPTIVE: bool = True
+    POST_ROLL_QUIET_MS: int = 300
+    POST_ROLL_QUIET_MARGIN_DB: float = 12.0
+    # Mics with noise suppression gate pauses to near digital silence
+    # (floors of -86 to -91 dBFS), where floor + 12 dB counts every faint
+    # rustle as speech and held those tails to 743-906 ms. Blocks this far
+    # under the speech level (the loudest tenth) count as quiet regardless;
+    # it only applies once speech is over 42 dB above the floor.
+    POST_ROLL_SPEECH_HEADROOM_DB: float = 30.0
+    # Below this speech-to-floor gap (loud rooms, or nobody spoke), or with
+    # less audio than POST_ROLL_FLOOR_MIN_MS before the stop, the floor is
+    # not trusted and the post-roll runs to the cap. The user's dictations
+    # sat 20-60 dB apart.
+    POST_ROLL_MIN_SNR_DB: float = 20.0
+    POST_ROLL_FLOOR_MIN_MS: int = 500
     END_PADDING_MS: int = 500
     # Debounce for whisper-engine reloads triggered by the inline main-GUI
     # controls; coalesces rapid model/device/quant changes into one reload.
@@ -305,10 +338,51 @@ class AppConfig:
     # CPU hosts are slower). Buffer this many seconds of recorder blocks
     # instead of STREAMING_QUEUE_SIZE's 0.23 s.
     STREAMING_NATIVE_QUEUE_SEC: float = 10.0
+    # Optional engines that run one throwaway 1 s decode after every load,
+    # before the busy state clears. A fresh worker's first "transcribe" pays
+    # a one-time cost per process, whatever the input length. Medians from
+    # September 2026 on an RTX 2060 for a saved 10.6 s dictation (cold first
+    # decode / first decode after warmup / warm repeat):
+    #   Parakeet CUDA            314 / 88 / 85 ms
+    #   Nemotron CUDA            350 / 131 / 105 ms
+    #   Parakeet, CPU ggml build 1040 / 850 / 790 ms
+    # The warmup takes 0.25-0.35 s. Nemotron's leftover ~25 ms did not shrink
+    # with 3-25 s or real-speech warmups, and it is within 15% of a warm
+    # decode that follows a few seconds of GPU idle, as real dictations do.
+    # Nemotron's native-stream preview warmup does not cover this path: its
+    # first offline decode after one still took 365-460 ms. Moonshine's first
+    # decode was already within CPU noise of warm, and its VAD drops the
+    # noise input anyway. Qwen was not measured, so it stays out: its
+    # autoregressive decoder has no fixed cost for a noise input, and it
+    # would take seconds on CPU.
+    SPEECH_WARMUP_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    # Optional engines that decode a long dictation's completed 30 s windows
+    # while it is still being recorded (services/incremental_dictation.py),
+    # so the stop only waits for the last partial window. The saved file is
+    # cut into the same windows, since each split depends only on the audio
+    # before it, and these engines decode identical input identically; the
+    # stop decodes the whole file as before whenever that cannot be verified.
+    # About a quarter of dictations run past 30 s, and those spent 343-619 ms
+    # decoding after stop at 37-88 s (September 2026, RTX 2060).
+    INCREMENTAL_DICTATION_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron")
+    # How often a session takes newly captured audio. Resampling it costs
+    # under a millisecond per second of audio; the interval only bounds how
+    # long a completed window waits before its decode starts.
+    INCREMENTAL_DICTATION_POLL_SEC: float = 1.0
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
     TRANSCRIPT_CLEANUP_TIMEOUT_S: float = 8.0
+    # The paste waits on cleanup. With the OpenAI SDK's default two retries a
+    # stalled provider held it for three timeouts plus backoff (~25.5 s)
+    # before raw text went out; one retry still rides out a dropped
+    # connection or a brief 5xx and caps that at two timeouts plus a ~0.5 s
+    # backoff (~16.5 s). The timeout alone cannot hold that line — it bounds
+    # each socket read, and OpenRouter sends 200 at once and then trickles
+    # the body while the model runs — so TranscriptCleanup also gives up at
+    # that wall-clock total and pastes raw text; a longer 429 Retry-After
+    # ends there too. Per-file batch cleanups share this cap and the timeout.
+    TRANSCRIPT_CLEANUP_MAX_RETRIES: int = 1
     TRANSCRIPT_CLEANUP_PROVIDER: str = "openrouter"
     TRANSCRIPT_CLEANUP_MODEL: str = "gpt-4o-mini"
     TRANSCRIPT_CLEANUP_OPENROUTER_MODEL: str = "openrouter/free"
@@ -353,6 +427,9 @@ class AppConfig:
     # 8 s dictation timeout would fail every combined cleanup. The client
     # retries twice, so a hung endpoint can take up to three times this.
     TRANSCRIPT_BATCH_CLEANUP_TIMEOUT_S: float = 120.0
+    # Nothing waits to paste a combined batch, so it keeps the SDK's default
+    # two retries rather than TRANSCRIPT_CLEANUP_MAX_RETRIES.
+    TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES: int = 2
     TRANSCRIPT_BATCH_CONTEXT_HEADER: str = (
         "How these recordings relate (from the user):"
     )

@@ -17,7 +17,7 @@ from services.settings import (
     SettingsManager,
 )
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, SettingsDialog
+from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, OVERVIEW, SettingsDialog
 from ui_qt.ui_controller import UIController
 
 
@@ -265,7 +265,7 @@ class TestHotkeySettingsNavigation(unittest.TestCase):
         controller = FakeController()
         UIController.open_settings_dialog(controller)
 
-        self.assertEqual(dialog.destination, GENERAL)
+        self.assertEqual(dialog.destination, OVERVIEW)
         self.assertIs(controller.raised, dialog)
 
 

@@ -1,8 +1,10 @@
 """Post-ASR cleanup via OpenAI-compatible chat models."""
 import logging
+import threading
+import time
 import uuid
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -23,13 +25,68 @@ from services.settings import (
     TranscriptCleanupProvider,
     TranscriptCleanupReasoning,
     default_transcript_cleanup_model,
-    resolve_typesafe_cleanup_sensitivity_gate,
 )
 
 logger = logging.getLogger(__name__)
 
-#: ``last_error`` value when the sensitivity gate kept dictation local.
-SENSITIVE_SKIP_REASON = "skipped: sensitive content kept local"
+#: ``last_error`` value when the owner's cancel event ended the wait.
+CANCELED_REASON = "canceled"
+
+#: Slack on top of the attempts' timeouts for the SDK's retry backoff, which
+#: is ~0.5 s before the one dictation retry.
+_RETRY_BACKOFF_ALLOWANCE_S = 1.0
+#: How often a waiting cleanup looks at the cancel event.
+_CANCEL_POLL_S = 0.05
+
+
+class _CleanupTimedOut(Exception):
+    pass
+
+
+class _CleanupCanceled(Exception):
+    pass
+
+
+def _call_with_deadline(
+    call: Callable[[], Any],
+    deadline_s: float,
+    cancel_event: Optional[threading.Event],
+) -> Any:
+    """Return ``call()``, giving up after ``deadline_s`` or on a cancel.
+
+    The HTTP timeout cannot bound a request by itself: it limits each socket
+    read, and OpenRouter answers 200 as soon as the provider accepts, then
+    keeps the connection alive while the model runs. A body that arrives a
+    few bytes at a time resets it on every read, so a slow model held the
+    paste — and the job slot — for as long as it liked. The request runs on
+    a daemon thread instead, and a wait that gives up leaves it to finish in
+    the background with its result dropped; closing its socket from here
+    could race the read on POSIX.
+    """
+    outcome: dict = {}
+    finished = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["value"] = call()
+        except Exception as exc:
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    threading.Thread(target=run, name="transcript-cleanup", daemon=True).start()
+    give_up_at = time.monotonic() + deadline_s
+    while True:
+        remaining = give_up_at - time.monotonic()
+        if remaining <= 0:
+            raise _CleanupTimedOut(f"timed out after {deadline_s:.0f} s")
+        if finished.wait(min(_CANCEL_POLL_S, remaining)):
+            break
+        if cancel_event is not None and cancel_event.is_set():
+            raise _CleanupCanceled(CANCELED_REASON)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 # Back-compat aliases.
 CLEANUP_MODEL = config.TRANSCRIPT_CLEANUP_MODEL
@@ -116,7 +173,7 @@ class TranscriptCleanup:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         reasoning: Optional[str] = None,
-        sensitivity_gate: Optional[Callable[[str], Optional[float]]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ):
         self.provider = self._normalize_provider(provider)
         self.model = model or default_transcript_cleanup_model(self.provider)
@@ -130,55 +187,12 @@ class TranscriptCleanup:
         # Lets callers distinguish "cleanup ran, no changes" from "failed".
         self.last_error: Optional[str] = "not run"
         self._connection: Optional[tuple] = None
-        # ``text -> P(sensitive)`` consulted before any remote cleanup call.
-        # None means no screening; a gate that returns None lets cleanup run.
-        self.sensitivity_gate = (
-            sensitivity_gate if sensitivity_gate is not None
-            else self._default_sensitivity_gate()
-        )
+        # Per-attempt HTTP timeout of the current client.
+        self._timeout_s = config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+        # Owned by the caller; once set, a waiting cleanup() returns the raw
+        # text at once instead of when the provider finishes.
+        self.cancel_event = cancel_event
         self._initialize_client()
-
-    @staticmethod
-    def _default_sensitivity_gate() -> Optional[Callable[[str], Optional[float]]]:
-        """Build the TypeSafe screening closure when the user has enabled it."""
-        if not resolve_typesafe_cleanup_sensitivity_gate():
-            return None
-        try:
-            from services.typesafe import (
-                judge_from_settings,
-                sensitive_content_probability,
-            )
-            judge = judge_from_settings()
-        except Exception:
-            logger.exception("TypeSafe sensitivity gate unavailable")
-            return None
-        if judge is None:
-            return None
-        return lambda text: sensitive_content_probability(judge, text)
-
-    def _sensitive_for_cloud(self, text: str) -> bool:
-        """True when the gate flags ``text`` and the cleanup destination is remote.
-
-        Local endpoints are never screened: the point of the gate is to keep
-        flagged dictation off third-party services, and screening itself is a
-        remote call. A missing or failed judgment lets cleanup proceed, so an
-        outage of the screening service cannot disable cleanup.
-        """
-        gate = self.sensitivity_gate
-        if gate is None:
-            return False
-        profile = get_profile(self.provider)
-        if profile is not None and profile.is_local:
-            return False
-        try:
-            probability = gate(text)
-        except Exception:
-            logger.exception("Sensitivity gate failed; cleanup proceeds")
-            return False
-        if probability is None:
-            return False
-        from services.typesafe import SENSITIVE_CONTENT_THRESHOLD
-        return float(probability) >= SENSITIVE_CONTENT_THRESHOLD
 
     @staticmethod
     def _normalize_provider(provider: Optional[str]) -> str:
@@ -218,10 +232,14 @@ class TranscriptCleanup:
             old_client = self.client
             if old_client is not None:
                 old_client.close()
+            self._timeout_s = (
+                120.0 if profile.kind == "ollama" else config.TRANSCRIPT_CLEANUP_TIMEOUT_S
+            )
             self.client = create_openai_client(
                 profile,
-                timeout=120.0 if profile.kind == "ollama" else config.TRANSCRIPT_CLEANUP_TIMEOUT_S,
+                timeout=self._timeout_s,
                 api_key=key,
+                max_retries=config.TRANSCRIPT_CLEANUP_MAX_RETRIES,
             )
             self._connection = connection_fingerprint(profile)
             logger.info(
@@ -289,11 +307,17 @@ class TranscriptCleanup:
                 default when empty or omitted.
             timeout_s: Per-request timeout that overrides the client's
                 default for this call only, e.g. for a stitched multi-file
-                transcript that is far longer than a dictation.
+                transcript that is far longer than a dictation. Such a call
+                is a long job nobody is waiting to paste, so it also gets
+                ``TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES`` instead of the
+                client's dictation cap.
 
         Returns:
             Cleaned text, or the original text if cleanup is skipped or fails.
             ``last_error`` is None afterwards only when cleanup succeeded.
+            The call returns within its attempts' timeouts plus a second of
+            backoff even when the provider keeps the response open, and at
+            once when ``cancel_event`` is set.
         """
         if not text or not text.strip():
             self.last_error = "empty input"
@@ -304,27 +328,40 @@ class TranscriptCleanup:
             logger.warning("Transcript cleanup unavailable; returning raw text")
             return text
 
-        if self._sensitive_for_cloud(text):
-            self.last_error = SENSITIVE_SKIP_REASON
-            logger.info("Transcript cleanup skipped: sensitivity gate kept the text local")
-            return text
-
         prompt = (system_prompt or "").strip() or config.TRANSCRIPT_CLEANUP_PROMPT
         request_kwargs = self._request_options()
         if timeout_s is not None:
             request_kwargs["timeout"] = timeout_s
 
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            self.last_error = CANCELED_REASON
+            return text
+
         try:
-            response = generate(
-                self.client, get_profile(self.provider),
-                session_id=str(uuid.uuid4()),
-                reasoning_level=self.reasoning,
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": text},
-                ],
-                **request_kwargs,
+            client = self.client
+            attempt_timeout_s = self._timeout_s
+            retries = config.TRANSCRIPT_CLEANUP_MAX_RETRIES
+            if timeout_s is not None:
+                attempt_timeout_s = timeout_s
+                retries = config.TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES
+                # A copy that shares the client's connection pool.
+                client = client.with_options(max_retries=retries)
+            profile = get_profile(self.provider)
+            messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ]
+            response = _call_with_deadline(
+                lambda: generate(
+                    client, profile,
+                    session_id=str(uuid.uuid4()),
+                    reasoning_level=self.reasoning,
+                    model=self.model,
+                    messages=messages,
+                    **request_kwargs,
+                ),
+                attempt_timeout_s * (retries + 1) + _RETRY_BACKOFF_ALLOWANCE_S,
+                self.cancel_event,
             )
             cleaned = response.text.strip()
             if not cleaned:
@@ -333,6 +370,10 @@ class TranscriptCleanup:
                 return text
             self.last_error = None
             return cleaned
+        except _CleanupCanceled:
+            self.last_error = CANCELED_REASON
+            logger.info("Transcript cleanup canceled; its response will be ignored")
+            return text
         except Exception as exc:
             self.last_error = str(exc)
             logger.warning("Transcript cleanup failed; using raw text: %s", exc)

@@ -217,8 +217,6 @@ QLineEdit:focus {
 }
 
 /* Model Manager — rail and stack; Downloads shares the same surfaces */
-QDialog#modelManagerDialog,
-QDialog#downloadsDialog,
 QDialog#settingsDialog,
 QDialog#componentDetailsDialog,
 QDialog#batchDownloadDialog {
@@ -247,9 +245,9 @@ QWidget#modelManagerStack > QWidget {
 QScrollArea#settingsPageScroll,
 QScrollArea#settingsPageScroll > QWidget,
 QScrollArea#settingsPageScroll > QWidget > QWidget,
-#downloadsDialog QScrollArea,
-#downloadsDialog QScrollArea > QWidget,
-#downloadsDialog QScrollArea > QWidget > QWidget,
+#downloadsPage QScrollArea,
+#downloadsPage QScrollArea > QWidget,
+#downloadsPage QScrollArea > QWidget > QWidget,
 QScrollArea#transcriptionTabScrollArea,
 QScrollArea#transcriptionTabScrollArea > QWidget,
 QScrollArea#transcriptionTabScrollArea > QWidget > QWidget {
@@ -261,7 +259,16 @@ QScrollArea#transcriptionTabScrollArea > QWidget > QWidget {
    working surface and the rail as chrome. */
 QWidget#modelManagerRailPane {
     background-color: @slate-rail;
-    border-right: 1px solid @slate-border-subtle;
+}
+
+QSplitter#settingsSplitter::handle:horizontal {
+    background-color: transparent;
+    border-left: 1px solid @slate-border-subtle;
+}
+
+QSplitter#settingsSplitter::handle:horizontal:hover {
+    background-color: @slate-rail-hover;
+    border-left: 1px solid @slate-border;
 }
 
 QLabel#modelManagerRailBrand {
@@ -337,28 +344,6 @@ QLabel#modelManagerRailValue {
 
 QLabel#modelManagerRailValue[selected="true"] {
     color: @accent-soft;
-}
-
-QLabel#modelManagerRailFootnote {
-    color: @slate-text-4;
-    background-color: transparent;
-    border: none;
-    font-size: 11px;
-}
-
-QPushButton#modelManagerDownloadsButton {
-    color: @slate-text-2;
-    background-color: @slate-field;
-    border: 1px solid @slate-border-strong;
-    border-radius: 9px;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QPushButton#modelManagerDownloadsButton:hover {
-    color: @slate-text;
-    background-color: @slate-raised;
-    border-color: @slate-border-hover;
 }
 
 QLabel#localModelPickerCaption {
@@ -552,10 +537,8 @@ QComboBox#textModelCombo:focus {
     border-color: @accent;
 }
 
-/* Every combo in these two windows. The global fallback draws its arrow from
-   two borders, which reads as a stray corner mark beside a real chevron. */
-QDialog#modelManagerDialog QComboBox::down-arrow,
-QDialog#downloadsDialog QComboBox::down-arrow,
+/* Every combo in Settings. The global fallback draws its arrow from two
+   borders, which reads as a stray corner mark beside a real chevron. */
 QDialog#settingsDialog QComboBox::down-arrow {
     image: url(ui_qt/assets/tabler/chevron-down-slate@icon-suffix.svg);
     border: none;
@@ -663,7 +646,7 @@ QLabel#downloadsEnvBanner {
     padding: 8px 12px;
 }
 
-/* Downloads window — catalog list plus the model profile inspector that
+/* Settings › Downloads — catalog list plus the model profile inspector that
    replaced the separate Model Details dialog. */
 QLabel#downloadsTitle {
     color: @slate-text;
@@ -749,8 +732,7 @@ QLabel#downloadsSourceNote {
 
 QPushButton#downloadsRepoButton,
 QPushButton#downloadsOriginButton,
-QPushButton#downloadsToolButton,
-QPushButton#downloadsCloseButton {
+QPushButton#downloadsToolButton {
     color: @slate-text-2;
     background-color: @slate-field;
     border: 1px solid @slate-border-strong;
@@ -760,8 +742,7 @@ QPushButton#downloadsCloseButton {
 
 QPushButton#downloadsRepoButton:hover,
 QPushButton#downloadsOriginButton:hover,
-QPushButton#downloadsToolButton:hover,
-QPushButton#downloadsCloseButton:hover {
+QPushButton#downloadsToolButton:hover {
     color: @slate-text;
     background-color: @slate-raised;
     border-color: @slate-border-hover;
@@ -775,7 +756,7 @@ QFrame#downloadsComponentStrip {
 
 /* The batch action sits in a 34 px toolbar row, so it drops the
    primary button's dialog-scale padding. */
-QDialog#downloadsDialog QPushButton#primaryButton {
+QWidget#downloadsPage QPushButton#primaryButton {
     font-size: 13px;
     padding: 6px 16px;
     border-radius: 8px;
@@ -889,16 +870,6 @@ QFrame#settingsTile[kind="notice"]:hover {
 QWidget#settingsTileBody,
 QWidget#settingsTileText {
     background-color: transparent;
-}
-
-/* A switch that is on but inert: warning colour, inside an otherwise normal
-   tile, so it reads as "this one is not doing anything" rather than an error. */
-QLabel#cleanupSensitivityGateStatus {
-    color: @warning-text-soft;
-    background-color: transparent;
-    border: none;
-    font-size: 12px;
-    padding-top: 0;
 }
 
 QLabel#settingsTileFieldLabel {
@@ -3213,4 +3184,329 @@ QCheckBox#batchRelationCombine {
     color: @text;
     font-size: 13px;
     background-color: transparent;
+}
+
+/* ---- Unified Settings: rail search, Overview, and the search palette ---- */
+
+QPushButton#settingsRailSearch {
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+    text-align: left;
+}
+
+QPushButton#settingsRailSearch:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QPushButton#settingsRailSearch:focus {
+    border-color: @accent;
+}
+
+QLabel#settingsRailSearchIcon {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#settingsRailSearchText {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#settingsRailSearchHint {
+    color: @slate-text-3;
+    background-color: @slate-raised;
+    border: 1px solid @slate-border-strong;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0px 5px;
+    font-size: 10px;
+}
+
+/* A search result's card is tinted briefly so the eye finds it. */
+QFrame#settingsTile[searchHit="true"],
+QFrame#textModelFootnoteCard[searchHit="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
+
+QLabel#engineInventoryLabel {
+    padding-top: 0;
+}
+
+QWidget#engineInventoryRow,
+QWidget#overviewPage,
+QWidget#downloadsPage {
+    background-color: transparent;
+}
+
+QLabel#downloadsPolicyLabel {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QComboBox#hfPolicyCombo {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 8px;
+    font-size: 12px;
+    padding-left: 12px;
+    padding-right: 32px;
+}
+
+/* The profile floats over the catalog when the page is too narrow to dock
+   it; the lifted border separates it from the rows underneath. */
+QFrame#downloadsInspector[overlay="true"] {
+    background-color: @slate-bg;
+    border: 1px solid @slate-border-hover;
+}
+
+QPushButton#downloadsInspectorClose {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: 1px solid @slate-border;
+    border-radius: 7px;
+    font-size: 11px;
+}
+
+QPushButton#downloadsInspectorClose:hover {
+    color: @slate-text;
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QFrame#overviewWhere {
+    background-color: transparent;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+QWidget#overviewWhereHalf {
+    background-color: transparent;
+}
+
+QFrame#overviewWhereDivider {
+    background-color: @slate-border;
+    border: none;
+}
+
+QLabel#overviewDot {
+    border: none;
+    border-radius: 4px;
+    background-color: @success;
+}
+
+QLabel#overviewDot[tone="warn"] {
+    background-color: @warning-text-soft;
+}
+
+QLabel#overviewWhereTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#overviewWhereList {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QFrame#overviewCard {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 12px;
+}
+
+QFrame#overviewCard:hover {
+    background-color: @slate-surface-hover;
+    border-color: @slate-border-strong;
+}
+
+QFrame#overviewCard:focus {
+    border-color: @accent;
+}
+
+QLabel#overviewCardIcon,
+QLabel#overviewArrow {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#overviewArrow {
+    color: @slate-text-4;
+    font-size: 13px;
+}
+
+QLabel#overviewEyebrow {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+QLabel#overviewRole {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QLabel#overviewValue {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#overviewValue[muted="true"] {
+    color: @slate-text-3;
+}
+
+QLabel#overviewDetail,
+QLabel#overviewLegend,
+QLabel#overviewComponents {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#overviewComponents {
+    color: @slate-text-2;
+    font-size: 12px;
+}
+
+QLabel#overviewFooter {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+}
+
+QWidget#settingsSearchOverlay {
+    background-color: transparent;
+}
+
+QFrame#settingsSearchPanel {
+    background-color: @slate-bg;
+    border: 1px solid @slate-border-strong;
+    border-radius: 14px;
+}
+
+QLineEdit#settingsSearchInput {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    border-bottom: 1px solid @slate-border-subtle;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    min-height: 52px;
+    padding: 0px 14px;
+    font-size: 16px;
+}
+
+QListWidget#settingsSearchResults {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    padding: 6px 8px;
+}
+
+QListWidget#settingsSearchResults::item {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+}
+
+QListWidget#settingsSearchResults::item:selected {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
+
+QListWidget#settingsSearchResults::item:hover:!selected {
+    background-color: @slate-surface-hover;
+}
+
+QWidget#settingsSearchRow {
+    background-color: transparent;
+}
+
+QLabel#settingsSearchSection {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 8px 12px 2px 12px;
+}
+
+QLabel#settingsSearchIcon {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 7px;
+}
+
+QLabel#settingsSearchTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#settingsSearchDetail {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#settingsSearchBadge {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.10);
+    border: 1px solid rgba(@accent-rgb, 0.28);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#settingsSearchBadge[tone="ok"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.10);
+    border: 1px solid rgba(@success-rgb, 0.28);
+}
+
+QLabel#settingsSearchEmpty {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    padding: 26px 20px;
+}
+
+QWidget#settingsSearchFooter {
+    background-color: transparent;
+    border-top: 1px solid @slate-border-subtle;
+}
+
+QLabel#settingsSearchHint {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
 }

@@ -1,26 +1,33 @@
-"""Whisper catalog, optional components, and per-model technical profile.
+"""Settings → Models & storage → Downloads: the speech-model catalog,
+optional components, and each model's technical profile.
 
-Split out of Model Manager so the assignment surface never has to host a
-sixteen-row list. This is the one place a scrolling list is correct, and it is
-the only scroller here: the header, toolbar, and component strip stay put.
+This is the one page in Settings whose list scrolls on its own: the header,
+toolbar, and selection bar stay put while the catalog moves. Settings is
+non-modal, so a multi-gigabyte download never locks the user out of
+recording.
 
-Non-modal, like Model Manager, because a multi-gigabyte download must not lock
-the user out of recording.
+The profile inspector docks beside the catalog when the page is wide enough
+for both, and floats over the catalog's right edge when it is not, so a large
+font scale never squeezes the rows below the point where a name or a size is
+still readable.
 """
 import threading
 from typing import Callable, Dict, List, Optional, Set
 
-from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QRect, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QScrollArea,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -119,7 +126,7 @@ class BatchDownloadDialog(QDialog):
 
         note = WrappedLabel(
             "Models download one at a time, in the order listed. You can "
-            "stop after the current model from the Downloads window while "
+            "stop after the current model from Settings → Downloads while "
             "the queue runs. Models such as Parakeet also need a separate "
             "runtime to work; you will be prompted to install any missing "
             "required runtime."
@@ -131,29 +138,27 @@ class BatchDownloadDialog(QDialog):
         buttons.setSpacing(8)
         buttons.addStretch()
         cancel_button = Button("Cancel")
-        DownloadsDialog._compact_button(cancel_button, 100)
+        DownloadsPage._compact_button(cancel_button, 100)
         cancel_button.clicked.connect(self.reject)
         buttons.addWidget(cancel_button)
         download_button = PrimaryButton(f"Download {count} {noun}\u2026")
-        DownloadsDialog._compact_button(download_button, 0)
+        DownloadsPage._compact_button(download_button, 0)
         download_button.clicked.connect(self.accept)
         buttons.addWidget(download_button)
         layout.addLayout(buttons)
 
 
-class DownloadsDialog(QDialog):
-    #: Wide enough for a catalog row and the inspector side by side: the widest
-    #: row plus its scroll bar plus the inspector. The floor is well above Qt's
-    #: own minimum, because the rows elide rather than clip and would shrink
-    #: past the point where a repo id or a size is still readable.
-    DEFAULT_SIZE = QSize(1060, 680)
-    MINIMUM_SIZE = QSize(980, 560)
+class DownloadsPage(QWidget):
+    """The catalog page Settings hosts under Models & storage."""
 
+    #: Width the side profile takes when it docks beside the catalog.
     INSPECTOR_WIDTH = 300
 
     component_install_requested = pyqtSignal(str)
     component_cancel_requested = pyqtSignal(str)
     component_remove_requested = pyqtSignal(str)
+    #: Cache totals or download progress changed (rail value, Overview).
+    inventory_changed = pyqtSignal()
     _cache_scan_finished = pyqtSignal(int, object)
 
     #: Assigned by UIController; called with the model name.
@@ -175,13 +180,17 @@ class DownloadsDialog(QDialog):
             get_loaded_model: Provider returning the model name currently
                 loaded by the engine (or None). Its files are memory-mapped, so
                 Delete stays disabled for it.
+            background_cache_scan: Scan the cache on a worker thread. Tests
+                pass False to scan synchronously through a patched scanner.
         """
         super().__init__(parent)
+        self.setObjectName("downloadsPage")
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
         self._cache_inventory_loading = False
         self._downloading_model: Optional[str] = None
+        self._download_fraction: Optional[float] = None
         self._component_rows: Dict[str, ComponentRowWidget] = {}
         self._selected_model: Optional[str] = None
         self._selected_models: Set[str] = set()
@@ -189,46 +198,27 @@ class DownloadsDialog(QDialog):
         self._batch_done = 0
         self._batch_failed = 0
         self._downloads_blocked = False
-
-        self.setWindowTitle("Downloads — Model Manager")
-        self.setWindowIcon(app_icon())
-        self.setObjectName("downloadsDialog")
-        self.setModal(False)
-        self.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
-        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.setSizeGripEnabled(True)
-        self.setMinimumSize(self.MINIMUM_SIZE)
+        self._cached_sizes: Dict[str, int] = {}
+        self._inspector_docked = True
+        self._inspector_open = False
 
         self._setup_ui()
-        self.resize(self.DEFAULT_SIZE)
         self._cache_scan_finished.connect(self._on_cache_scan_finished)
-        self.refresh()
 
     # ---- construction ----
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 18, 22, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-
-        head = QVBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(8)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
-        title_block = QVBoxLayout()
-        title_block.setSpacing(2)
-        title = QLabel("Downloads")
-        title.setObjectName("downloadsTitle")
         # Elides rather than wraps: the cache path is long and would otherwise
         # push the toolbar and the list down by two lines.
         self.stats_label = ElidingLabel("")
         self.stats_label.setObjectName("downloadsSubtitle")
-        title_block.addWidget(title)
-        title_block.addWidget(self.stats_label)
-        header_row.addLayout(title_block)
-        header_row.addStretch()
+        header_row.addWidget(self.stats_label, stretch=1)
 
         self.download_all_button = Button("Download all…")
         self.download_all_button.setObjectName("downloadsToolButton")
@@ -247,13 +237,14 @@ class DownloadsDialog(QDialog):
         )
         open_folder_btn.clicked.connect(self._on_open_cache_folder)
         header_row.addWidget(open_folder_btn)
+        layout.addLayout(header_row)
 
-        close_btn = Button("Close")
-        close_btn.setObjectName("downloadsCloseButton")
-        self._compact_button(close_btn, 100)
-        close_btn.clicked.connect(self.close)
-        header_row.addWidget(close_btn)
-        head.addLayout(header_row)
+        # Settings places the Hugging Face download policy here, next to the
+        # catalog it governs.
+        self.policy_row = QHBoxLayout()
+        self.policy_row.setContentsMargins(0, 0, 0, 0)
+        self.policy_row.setSpacing(10)
+        layout.addLayout(self.policy_row)
 
         self.env_banner = QLabel(
             "Downloads are disabled by the HF_HUB_OFFLINE environment "
@@ -262,14 +253,15 @@ class DownloadsDialog(QDialog):
         self.env_banner.setObjectName("downloadsEnvBanner")
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
-        head.addWidget(self.env_banner)
-        layout.addLayout(head)
+        layout.addWidget(self.env_banner)
 
-        split = QHBoxLayout()
-        split.setSpacing(12)
-        split.addWidget(self._build_catalog_column(), stretch=1)
-        split.addWidget(self._build_inspector())
-        layout.addLayout(split, stretch=1)
+        self._split = QHBoxLayout()
+        self._split.setSpacing(12)
+        self.catalog_column = self._build_catalog_column()
+        self._split.addWidget(self.catalog_column, stretch=1)
+        self.inspector = self._build_inspector()
+        self._split.addWidget(self.inspector)
+        layout.addLayout(self._split, stretch=1)
 
         self.message_row = QHBoxLayout()
         self.message_row.setSpacing(8)
@@ -288,6 +280,14 @@ class DownloadsDialog(QDialog):
         layout.addLayout(self.message_row)
 
         # Runtime rows live inside the existing catalog scroller.
+
+    def add_policy_control(self, label: str, control: QWidget) -> None:
+        """Place a labeled control on the row under the header."""
+        caption = QLabel(label)
+        caption.setObjectName("downloadsPolicyLabel")
+        self.policy_row.addWidget(caption)
+        self.policy_row.addWidget(control, stretch=1)
+        self.policy_row.addStretch()
 
     def _build_catalog_column(self) -> QWidget:
         """Stack the filters directly above the rows they filter."""
@@ -452,10 +452,71 @@ class DownloadsDialog(QDialog):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._sync_toolbar_gutter()
+        self._update_inspector_mode()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_toolbar_gutter()
+        self._update_inspector_mode()
+
+    # ---- inspector docking ----
+
+    def _catalog_min_width(self) -> int:
+        """Width the catalog needs before its rows start eliding sizes."""
+        rows = [row for row in self.rows.values() if not row.isHidden()] or list(
+            self.rows.values()
+        )
+        widest = max((row.minimumSizeHint().width() for row in rows), default=0)
+        scroll_bar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        toolbar = self._toolbar_layout.minimumSize().width()
+        return max(widest + scroll_bar + 8, toolbar)
+
+    def inspector_docked(self) -> bool:
+        return self._inspector_docked
+
+    def _update_inspector_mode(self) -> None:
+        """Dock the profile beside the catalog when both fit, else float it."""
+        needed = (
+            self._catalog_min_width() + self._split.spacing() + self.INSPECTOR_WIDTH
+        )
+        docked = self.width() >= needed
+        if docked != self._inspector_docked:
+            self._inspector_docked = docked
+            if docked:
+                self.inspector.setGraphicsEffect(None)
+                self._split.addWidget(self.inspector)
+            else:
+                self._split.removeWidget(self.inspector)
+                shadow = QGraphicsDropShadowEffect(self.inspector)
+                shadow.setBlurRadius(28)
+                shadow.setOffset(-6, 0)
+                shadow.setColor(QColor(0, 0, 0, 110))
+                self.inspector.setGraphicsEffect(shadow)
+            self.inspector.setProperty("overlay", not docked)
+            self.inspector.style().unpolish(self.inspector)
+            self.inspector.style().polish(self.inspector)
+            self.inspector_close_button.setVisible(not docked)
+        if docked:
+            self.inspector.setVisible(True)
+            return
+        column = self.catalog_column.geometry()
+        self.inspector.setGeometry(
+            QRect(
+                column.right() - self.INSPECTOR_WIDTH + 1,
+                column.top(),
+                self.INSPECTOR_WIDTH,
+                column.height(),
+            )
+        )
+        self.inspector.setVisible(self._inspector_open)
+        if self._inspector_open:
+            self.inspector.raise_()
+
+    def close_inspector(self) -> None:
+        """Hide the floating profile; a docked profile always stays open."""
+        self._inspector_open = False
+        if not self._inspector_docked:
+            self.inspector.setVisible(False)
 
     def _build_inspector(self) -> QWidget:
         """Build the side profile that replaced the Model Details dialog."""
@@ -466,9 +527,22 @@ class DownloadsDialog(QDialog):
         outer.setContentsMargins(16, 14, 16, 14)
         outer.setSpacing(10)
 
+        eyebrow_row = QHBoxLayout()
+        eyebrow_row.setContentsMargins(0, 0, 0, 0)
         eyebrow = QLabel("SELECTED MODEL")
         eyebrow.setObjectName("downloadsEyebrow")
-        outer.addWidget(eyebrow)
+        eyebrow_row.addWidget(eyebrow)
+        eyebrow_row.addStretch()
+        # Only shown while the profile floats over the catalog.
+        self.inspector_close_button = QPushButton("✕")
+        self.inspector_close_button.setObjectName("downloadsInspectorClose")
+        self.inspector_close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.inspector_close_button.setToolTip("Close the model profile")
+        self.inspector_close_button.setFixedSize(26, 26)
+        self.inspector_close_button.clicked.connect(self.close_inspector)
+        self.inspector_close_button.setVisible(False)
+        eyebrow_row.addWidget(self.inspector_close_button)
+        outer.addLayout(eyebrow_row)
 
         self.inspector_name = ElidingLabel("—")
         self.inspector_name.setObjectName("downloadsInspectorName")
@@ -639,6 +713,25 @@ class DownloadsDialog(QDialog):
             row.style().unpolish(row)
             row.style().polish(row)
             row.update()
+        self._inspector_open = True
+        self._update_inspector_mode()
+
+    def reveal_model(self, model_name: str) -> None:
+        """Clear filters that hide a model, select it, and scroll to it."""
+        row = self.rows.get(model_name)
+        if row is None:
+            return
+        if row.isHidden():
+            self.filter_edit.clear()
+            self.backend_filter_combo.setCurrentIndex(0)
+            self.status_filter_combo.setCurrentIndex(0)
+        self.select_model(model_name)
+        self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
+
+    def show_backend(self, backend: str) -> None:
+        """Filter the catalog to one backend; an empty value shows every model."""
+        index = self.backend_filter_combo.findData(backend or "all")
+        self.backend_filter_combo.setCurrentIndex(max(0, index))
 
     def _render_inspector(self) -> None:
         details = self._details
@@ -867,7 +960,13 @@ class DownloadsDialog(QDialog):
 
     # ---- public state API (driven by UIController) ----
 
-    def refresh(self) -> None:
+    def refresh(self, scan: bool = True) -> None:
+        """Re-read download state.
+
+        Args:
+            scan: Rescan the model cache. Without it, the last shared scan is
+                reused, so loading a hidden window never touches the disk.
+        """
         if not self._background_cache_scan:
             self._cache_inventory_loading = False
             self._refresh_cached_model_state(
@@ -876,14 +975,19 @@ class DownloadsDialog(QDialog):
             return
 
         cached = peek_cached_models()
-        self._cache_inventory_loading = cached is None
+        self._cache_inventory_loading = cached is None and scan
         self._refresh_cached_model_state(cached or {})
+        if not scan:
+            return
         self._cache_scan_generation += 1
         generation = self._cache_scan_generation
 
         def load() -> None:
             result = scan_cached_models(max_age_seconds=30.0)
-            self._cache_scan_finished.emit(generation, result)
+            try:
+                self._cache_scan_finished.emit(generation, result)
+            except RuntimeError:
+                pass  # Settings was destroyed before the scan finished.
 
         threading.Thread(
             target=load,
@@ -929,10 +1033,12 @@ class DownloadsDialog(QDialog):
             slot_busy or downloads_blocked or self._cache_inventory_loading
         )
         seen_repos: Dict[str, CachedModelInfo] = {}
+        self._cached_sizes = {}
         for model_name, row in self.rows.items():
             info = cached.get(row.repo_id)
             if info is not None:
                 seen_repos[row.repo_id] = info
+                self._cached_sizes[model_name] = info.size_bytes
             row.update_state(
                 info,
                 is_active=False,
@@ -944,7 +1050,7 @@ class DownloadsDialog(QDialog):
                         and model_name != self._downloading_model),
                 selection_enabled=not selection_locked,
             )
-            # Assignment lives in Model Manager; this window only downloads.
+            # Assignment lives on each feature's page; this one only downloads.
             row.set_active_button.setVisible(False)
             row.set_usage(
                 self._usage_for(model_name, dictation_resolved, meeting_model)
@@ -979,6 +1085,47 @@ class DownloadsDialog(QDialog):
             self.select_all_button.setEnabled(False)
             self.download_all_button.setEnabled(False)
             self.download_selected_button.setEnabled(False)
+        self.inventory_changed.emit()
+
+    # ---- summaries read by Settings (rail, Overview) ----
+
+    def is_checking(self) -> bool:
+        return self._cache_inventory_loading
+
+    def storage_summary(self) -> dict:
+        """Downloaded count, catalog size, and bytes per backend label."""
+        from services.local_asr.catalog import BACKENDS
+        by_backend: Dict[str, int] = {}
+        for model_name, size in self._cached_sizes.items():
+            backend = self.rows[model_name].backend
+            label = BACKENDS.get(backend, "Whisper")
+            by_backend[label] = by_backend.get(label, 0) + size
+        return {
+            "downloaded": len(self._cached_sizes),
+            "total": len(self.rows),
+            "bytes": sum(self._cached_sizes.values()),
+            "by_backend": by_backend,
+        }
+
+    def rail_value(self) -> str:
+        """Download progress while one runs, otherwise the cache totals."""
+        if self._downloading_model:
+            name = self._display_name(self._downloading_model)
+            if self._download_fraction is not None:
+                return f"Downloading {name} · {round(self._download_fraction * 100)}%"
+            return f"Downloading {name}…"
+        if self._cache_inventory_loading:
+            return "Checking downloaded models…"
+        summary = self.storage_summary()
+        return (
+            f"{summary['downloaded']} of {summary['total']} · "
+            f"{format_size_bytes(summary['bytes'])}"
+        )
+
+    @staticmethod
+    def _display_name(model_name: str) -> str:
+        from services.local_asr.catalog import MODELS
+        return MODELS[model_name].label if model_name in MODELS else model_name
 
     def refresh_components(self) -> None:
         for component_id, row in self._component_rows.items():
@@ -1003,6 +1150,7 @@ class DownloadsDialog(QDialog):
 
     def set_downloading(self, model_name: str) -> None:
         self._downloading_model = model_name
+        self._download_fraction = None
         if self._batch_queue:
             position = self._batch_done + 1
             total = self._batch_done + len(self._batch_queue)
@@ -1022,10 +1170,17 @@ class DownloadsDialog(QDialog):
                 f'Downloading "{model_name}"… '
                 f"{format_size_bytes(done)} of {format_size_bytes(total)}"
             )
+            previous = self._download_fraction
+            self._download_fraction = min(1.0, max(0.0, done / total))
+            if previous is None or round(previous * 100) != round(
+                self._download_fraction * 100
+            ):
+                self.inventory_changed.emit()
 
     def finish_download(self, model_name: str, success: bool) -> None:
         if self._downloading_model == model_name:
             self._downloading_model = None
+            self._download_fraction = None
         if model_name in self._batch_queue:
             self._batch_queue.remove(model_name)
             self._batch_done += 1
@@ -1123,7 +1278,7 @@ class DownloadsDialog(QDialog):
     ) -> str:
         uses = []
         if model_name == dictation_model:
-            uses.append("On-demand")
+            uses.append("Dictation")
         if model_name == meeting_model:
             uses.append("Meetings")
         return " · ".join(uses)

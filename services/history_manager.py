@@ -3,19 +3,34 @@ import logging
 import os
 import shutil
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 from config import config
 from services.database import db
 from services.format_utils import format_file_size, format_timestamp
 from services.models import TranscriptionHistory as HistoryEntry
-from services.settings import resolve_max_saved_recordings
+from services.settings import (
+    resolve_max_saved_recordings,
+    resolve_max_saved_recordings_bytes,
+    settings_manager,
+)
 
 logger = logging.getLogger(__name__)
 
 # Sentinel so callers can pass ``max_recordings=None`` for keep-all.
 _UNSET = object()
+
+
+def _describe_retention(
+    max_recordings: Optional[int], max_bytes: Optional[int]
+) -> str:
+    limits = []
+    if max_recordings is not None:
+        limits.append(str(max_recordings))
+    if max_bytes is not None:
+        limits.append(format_file_size(max_bytes))
+    return ", ".join(limits) or "all"
 
 
 @dataclass
@@ -42,28 +57,43 @@ class HistoryManager:
         self,
         recordings_folder: str = None,
         max_recordings: Optional[int] = _UNSET,
+        max_bytes: Optional[int] = _UNSET,
     ):
-        """Use saved retention when ``max_recordings`` is omitted; None keeps all."""
+        """Use saved retention when no limit is passed; None disables a limit.
+
+        Passing either limit describes the whole policy, so an omitted one is
+        off rather than read from settings.
+        """
         self.recordings_folder = recordings_folder or config.RECORDINGS_FOLDER
-        if max_recordings is _UNSET:
-            self.max_recordings = resolve_max_saved_recordings()
+        if max_recordings is _UNSET and max_bytes is _UNSET:
+            settings = settings_manager.load_all_settings()
+            self.max_recordings = resolve_max_saved_recordings(settings)
+            self.max_bytes = resolve_max_saved_recordings_bytes(settings)
         else:
-            self.max_recordings = max_recordings
+            self.max_recordings = (
+                None if max_recordings is _UNSET else max_recordings
+            )
+            self.max_bytes = None if max_bytes is _UNSET else max_bytes
 
         os.makedirs(self.recordings_folder, exist_ok=True)
 
         logger.info(
             "HistoryManager initialized (recordings: %s, max: %s)",
             self.recordings_folder,
-            self.max_recordings if self.max_recordings is not None else "all",
+            _describe_retention(self.max_recordings, self.max_bytes),
         )
 
-    def set_max_recordings(self, max_recordings: Optional[int]) -> None:
-        """Apply a retention limit immediately; None keeps all recordings."""
+    def set_retention(
+        self,
+        max_recordings: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+    ) -> None:
+        """Apply retention limits immediately; None disables that limit."""
         self.max_recordings = max_recordings
+        self.max_bytes = max_bytes
         logger.info(
             "Recording retention updated (max: %s)",
-            max_recordings if max_recordings is not None else "all",
+            _describe_retention(max_recordings, max_bytes),
         )
         self._rotate_recordings()
 
@@ -166,29 +196,53 @@ class HistoryManager:
         return self._save_recording(source_path)
 
     def _rotate_recordings(self) -> None:
-        """Remove oldest recordings if we exceed max_recordings."""
-        if self.max_recordings is None:
+        """Remove the oldest recordings beyond the count or folder-size limit."""
+        if self.max_recordings is None and self.max_bytes is None:
             return
 
         try:
-            recordings = self.get_recordings()
+            expired = self.recordings_over_limit(self.max_recordings, self.max_bytes)
+            for rec in expired:
+                try:
+                    os.remove(rec.file_path)
+                    logger.info(f"Removed old recording: {rec.filename}")
 
-            if len(recordings) > self.max_recordings:
-                recordings.sort(key=lambda r: r.timestamp)
+                    db.clear_history_audio_file(rec.filename)
 
-                to_remove = recordings[:-self.max_recordings]
-                for rec in to_remove:
-                    try:
-                        os.remove(rec.file_path)
-                        logger.info(f"Removed old recording: {rec.filename}")
-
-                        db.clear_history_audio_file(rec.filename)
-
-                    except Exception as e:
-                        logger.error(f"Failed to remove recording {rec.filename}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to remove recording {rec.filename}: {e}")
 
         except Exception as e:
             logger.error(f"Failed to rotate recordings: {e}")
+
+    def recordings_over_limit(
+        self,
+        max_recordings: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+    ) -> List[RecordingInfo]:
+        """Return the recordings these limits would delete, newest first.
+
+        Rotation deletes exactly this list, so callers can preview a change
+        before applying it. The newest recording is always kept, even when it
+        alone exceeds the size cap, so the entry just saved keeps its audio.
+        """
+        recordings = self.get_recordings()
+        keep = len(recordings)
+        if max_recordings is not None:
+            keep = min(keep, max_recordings)
+        if max_bytes is not None:
+            total = 0
+            for index, rec in enumerate(recordings[:keep]):
+                total += rec.size_bytes
+                if index > 0 and total > max_bytes:
+                    keep = index
+                    break
+        return recordings[keep:]
+
+    def get_recordings_usage(self) -> Tuple[int, int]:
+        """Return ``(count, total_bytes)`` for saved recordings."""
+        recordings = self.get_recordings()
+        return len(recordings), sum(rec.size_bytes for rec in recordings)
 
     def get_history(self, limit: Optional[int] = None) -> List[HistoryEntry]:
         """Return history entries newest first."""

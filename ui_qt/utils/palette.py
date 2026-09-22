@@ -6,7 +6,7 @@ active theme's value for each token. Painted widgets read the same roles as
 ``QColor`` through :func:`current_palette`.
 
 Two neutral families exist because the product does. The main window and its
-dialogs use Apple's system greys; Settings, Model Manager, Downloads, and the
+dialogs use Apple's system greys; the Settings window (with its Downloads page) and the
 export dialogs use a cooler slate. Each family has its own light values so the
 two keep their distinct character in both themes.
 
@@ -120,7 +120,7 @@ _DARK_TOKENS: Final[Dict[str, str]] = {
     "overlay-text": "#f5f5f7",
     "splash-bg": "#1c1c1e",
     "splash-border": "#1e293b",
-    # Slate family (Settings, Model Manager, Downloads, export dialogs)
+    # Slate family (Settings and its Downloads page, export dialogs)
     "slate-bg": "#10161c",
     "slate-rail": "#0c1116",
     "slate-rail-hover": "#141d26",

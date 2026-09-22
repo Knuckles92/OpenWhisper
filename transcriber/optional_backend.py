@@ -1,11 +1,13 @@
 """Optional local speech engines running in isolated, persistent processes."""
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,6 +15,16 @@ import numpy as np
 from transcriber.base import TranscriptionBackend
 from services.local_asr.catalog import BACKENDS, MODELS, selected_model, selected_device, resolve_runtime
 from services.local_asr import cache
+
+logger = logging.getLogger(__name__)
+
+# warmup() input: one second of seeded noise at about -40 dBFS. Quiet enough
+# that Parakeet and Nemotron return no text for it, but well above the
+# 0.00025 peak below which _transcribe_audio skips a window, so unlike zeros
+# it reaches the engine. Longer inputs measured no better (see
+# config.SPEECH_WARMUP_BACKENDS).
+_WARMUP_SAMPLES = 16000
+_WARMUP_LEVEL = 0.01
 
 
 class LocalSpeechBackend(TranscriptionBackend):
@@ -58,6 +70,16 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     def is_available(self):
         return self._process is not None and self.model is not None and self._process.process.poll() is None
+
+    @property
+    def generation(self) -> int:
+        """Advances on every cleanup, so a changed value means a different worker.
+
+        Incremental dictation compares it across the windows it decodes early:
+        text from before a reload or cancel is never joined with text after.
+        """
+        with self._state_lock:
+            return self._generation
 
     def reload_model(self, model_name=None):
         with self._state_lock:
@@ -125,6 +147,47 @@ class LocalSpeechBackend(TranscriptionBackend):
         super().cancel_transcription()
         self.cleanup()
 
+    def warmup(self) -> bool:
+        """Run one throwaway decode so the first real one after a load is warm.
+
+        The first "transcribe" request in a fresh worker pays a one-time
+        cost: on an RTX 2060 Parakeet decoded a 10.6 s dictation in 314 ms
+        cold against 85 ms warm. This decode takes about 0.3 s and leaves the
+        next one at 88 ms (config.SPEECH_WARMUP_BACKENDS has the other
+        engines).
+
+        Best-effort and non-fatal. It skips when another decode already holds
+        the worker (that decode warms it), and a cleanup or reload closing
+        the worker mid-request just ends it. Deliberately leaves
+        ``is_transcribing`` alone so a cancel press cannot tear the engine
+        down over it. Returns True when the decode ran.
+        """
+        with self._state_lock:
+            generation = self._generation
+            if self._process is None or self.model is None:
+                return False
+        if not self._decode_lock.acquire(blocking=False):
+            return False
+        started = time.perf_counter()
+        try:
+            with self._state_lock:
+                if generation != self._generation:
+                    return False
+            noise = np.random.default_rng(0).standard_normal(_WARMUP_SAMPLES) * _WARMUP_LEVEL
+            self._recognize(noise.astype(np.float32))
+        except Exception as exc:
+            with self._state_lock:
+                superseded = generation != self._generation or self.should_cancel
+            if superseded:
+                logger.info("%s warmup stopped by a reload or cancel", self.name)
+            else:
+                logger.warning("%s warmup failed (non-fatal): %s", self.name, exc)
+            return False
+        finally:
+            self._decode_lock.release()
+        logger.info("%s warmed up in %.0f ms", self.name, (time.perf_counter() - started) * 1000)
+        return True
+
     def stream_audio(self, session: str, audio: np.ndarray, language=None, *, finish=False):
         with self._decode_lock:
             return self._request_audio("stream", audio, language, session=session, finish=finish)["events"]
@@ -148,6 +211,10 @@ class LocalSpeechBackend(TranscriptionBackend):
     def _recognize(self, audio: np.ndarray, language=None) -> dict:
         return self._request_audio("transcribe", audio, language)
 
+    def request_language(self) -> str:
+        """The language a request made without one asks the worker for."""
+        return self._settings().get("local_asr_language", "en")
+
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
@@ -158,8 +225,7 @@ class LocalSpeechBackend(TranscriptionBackend):
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
             path = os.path.join(directory, "audio.f32")
             np.asarray(audio, dtype=np.float32).tofile(path)
-            settings = self._settings()
-            language = language or settings.get("local_asr_language", "en")
+            language = language or self.request_language()
             result = process.request(op, audio_path=path, language=language, timeout=300, **options)
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
@@ -167,6 +233,16 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     def transcribe(self, audio_path: str) -> str:
         from services.local_asr.audio import windows
+        return self.join_texts(self.transcribe_windows(windows(audio_path)))
+
+    def transcribe_windows(self, windows, language=None) -> list[str]:
+        """Decode ``(offset, audio)`` windows as one durable transcription.
+
+        ``transcribe`` passes a file's ``windows()``; incremental dictation
+        passes the windows a recording had left at stop. Both mark the engine
+        busy for the cancel flow and refuse a canceled or unloaded engine the
+        same way. Returns each window's text, in order.
+        """
         with self._decode_lock:
             self.is_transcribing = True
             try:
@@ -174,10 +250,26 @@ class LocalSpeechBackend(TranscriptionBackend):
                     raise RuntimeError("Transcription canceled")
                 if not self.is_available():
                     raise RuntimeError(self.device_info)
-                return " ".join(self._transcribe_audio(audio)["text"]
-                                for _offset, audio in windows(audio_path)).strip()
+                return [self._transcribe_audio(audio, language)["text"]
+                        for _offset, audio in windows]
             finally:
                 self.is_transcribing = False
+
+    def decode_window(self, audio: np.ndarray, language=None) -> str:
+        """One window's text, decoded exactly as ``transcribe_windows`` would.
+
+        For windows decoded while a dictation is still being recorded. It
+        queues with the preview on the decode lock but leaves
+        ``is_transcribing`` alone: a recording is not yet a job, so a cancel
+        press must not tear the engine down over it.
+        """
+        with self._decode_lock:
+            return self._transcribe_audio(audio, language)["text"]
+
+    @staticmethod
+    def join_texts(texts) -> str:
+        """A transcript from its windows' texts; both decode paths join here."""
+        return " ".join(texts).strip()
 
     def _transcribe_audio(self, audio, language=None):
         texts, segments = [], []

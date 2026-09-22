@@ -23,6 +23,8 @@ The counts and identities for this follow-up are in
 - Stop requests recorder shutdown immediately. Post-roll capture and preview drain
   happen on the recording executor, including incomplete windows and lazy decoder
   results already in flight. Preview updates are muted during this drain.
+  (Window previews no longer drain at stop; see the September 22 follow-up
+  at the end of this document.)
 - Cancellation discards preview work without waiting for inference. Both native
   and window workers suppress late output after cancellation or the existing
   five-second stop deadline. A still-running old worker prevents a replacement
@@ -123,3 +125,30 @@ The local .tmp files are not committed. The repository measurement summary
 preserves the aggregate counts, clip hashes, source provenance, model identities,
 and hardware metadata. The native lifecycle changes were made after the paired
 window replay; their validation is the real worker check and regression suite.
+
+## Follow-up: non-blocking stop (September 22, 2026)
+
+A dictation latency audit found the window preview's stop drain on every
+stop-to-paste path: up to 100 ms waiting out the worker's queue poll, then a
+resample and decode of the unfinished window, all before the WAV save and the
+final decode. The drained text is only used when the final transcript is empty.
+
+- `StreamingTranscriber.stop_streaming()` now wakes the worker with a marker
+  and returns the text published so far without decoding. The unfinished
+  window, blocks still queued, and the overlap tail are kept.
+- `finalize_preview()` decodes that kept audio with the same window
+  boundaries the old drain used, and runs only on the transcription worker
+  when the final transcript is empty. A window already decoding at stop
+  finishes in the background and still counts for the fallback.
+- The five-second deadline, cancel-without-waiting, late-output suppression,
+  and the rule that a still-running worker blocks a replacement preview are
+  unchanged. Kept audio is dropped at the next start, cancel, or cleanup.
+- The native Nemotron stream only gained the wake marker; its finish push still
+  flushes at stop, because deferring it would interleave an open stream session
+  with the final decode on the same engine handle.
+
+Paced replay of six saved 6-14 s dictations with real Parakeet v3 on CUDA:
+stop went from 42-153 ms to 0.01 ms, and median stop-to-final-transcript from
+166-243 ms to 115-130 ms. Lazily finalized text equalled the old drained text
+in 15 of 15 runs; the lazy decode itself costs 37-73 ms and is paid only on an
+empty result.

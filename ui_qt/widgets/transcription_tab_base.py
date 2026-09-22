@@ -191,7 +191,7 @@ class TranscriptionTabBase(QWidget):
         self._field_row.addWidget(engine_field(
             "Backend", self.model_combo,
             "Choose which speech recognition engine turns your audio into text. Local engines process audio on this computer after download. OpenAI sends audio to the cloud and requires an API key. This choice determines the available models.",
-            [("Open Model Manager → On-demand voice", "ondemand")], self.help_requested.emit,
+            [("Open Settings → Voice model", "ondemand")], self.help_requested.emit,
         ), stretch=2)
         self._field_row.addWidget(self.local_engine, stretch=4)
         self._field_row.addWidget(self.api_model_field, stretch=2)

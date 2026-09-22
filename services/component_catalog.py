@@ -1,6 +1,6 @@
 """Bundled user-facing profiles for optional downloadable components.
 
-The Downloads window uses this catalog to explain what a component is and
+Settings → Downloads uses this catalog to explain what a component is and
 where it comes from, without contacting the network.  Install URLs, sizes,
 and SHA-256 pins stay in ``services.components`` — this module is copy and
 links only.

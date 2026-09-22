@@ -90,6 +90,22 @@ def _session_settings_store(tmp_path_factory):
     config.SETTINGS_FILE = settings_path
     settings_manager.settings_file = settings_path
     config.RECORDED_AUDIO_FILE = str(tmp_path_factory.mktemp("recording-session") / "recorded_audio.wav")
+    # From source, recordings/ is CWD-relative: the checkout's own saved
+    # audio, which retention rotation deletes without a Recycle Bin.
+    config.RECORDINGS_FOLDER = str(tmp_path_factory.mktemp("recordings-session"))
+    # openwhisper.db is CWD-relative too: the checkout's real history. An
+    # empty database imports HISTORY_FILE and renames it, so move both.
+    database_folder = tmp_path_factory.mktemp("database-session")
+    config.DATABASE_FILE = str(database_folder / "openwhisper.db")
+    config.HISTORY_FILE = str(database_folder / "transcription_history.json")
+    from services.database import db
+    from services.history_manager import history_manager
+
+    # The lazy singletons bind their paths on first use; rebuild them here.
+    db.close()
+    history_manager._instance = None
+    yield
+    db.close()
 
 
 @pytest.fixture(autouse=True)
@@ -131,7 +147,20 @@ def _isolated_settings_store(_session_settings_store, tmp_path):
         patcher.setattr(config, "SETTINGS_FILE", settings_path)
         patcher.setattr(settings_manager, "settings_file", settings_path)
         patcher.setattr(config, "RECORDED_AUDIO_FILE", str(tmp_path / "recorded_audio.wav"))
+        patcher.setattr(config, "RECORDINGS_FOLDER", str(tmp_path / "recordings"))
+        patcher.setattr(config, "DATABASE_FILE", str(tmp_path / "openwhisper.db"))
+        patcher.setattr(config, "HISTORY_FILE", str(tmp_path / "transcription_history.json"))
+        # Bind the real module now: some tests swap services.database in
+        # sys.modules, and teardown must still reach this manager.
+        from services.database import db
+        from services.history_manager import history_manager
+
+        patcher.setattr(db, "_instance", None)
+        patcher.setattr(history_manager, "_instance", None)
         yield
+        # Release the test's SQLite handles; Windows cannot delete tmp_path
+        # while the file, or its -wal and -shm siblings, is still open.
+        db.close()
 
 
 @pytest.fixture(autouse=True)

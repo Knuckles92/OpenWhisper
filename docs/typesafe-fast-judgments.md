@@ -1,6 +1,6 @@
 # TypeSafe fast judgments
 
-**Experimental:** semantic topic changes, spoken instructions, and sensitive-dictation screening are available for testing. Their behavior and thresholds may change.
+**Experimental:** semantic topic changes and spoken instructions are available for testing. Their behavior and thresholds may change.
 
 Added September 18, 2026. Optional features share one small client for TypeSafe's System One model (`jev-1.13.0`): a decision service that answers narrow typed questions about short text in about 0.2 s and never generates prose. Everything here is off by default, needs a `TYPESAFE_API_KEY` (Settings → API keys → TypeSafe), and degrades to the previous deterministic behaviour whenever a judgment is disabled, unkeyed, or unanswered.
 
@@ -13,7 +13,6 @@ Evidence for the thresholds is in [the human-label benchmark](typesafe-human-lab
 | Master switch | Meeting Mode → Fast judgments → TypeSafe fast judgments | gates every judgment | everything below stays off |
 | Semantic topic changes | same page (on once the master switch is on) | `CheckpointScheduler._detect_topic_shift` | content-word Jaccard < 0.15 |
 | Spoken instructions | same page (off) | `MeetingEngine._on_chunk_result` → `meeting/voice_commands.py` | none; nothing is applied |
-| Sensitive-dictation gate | Dictation → AI cleanup (off) | `TranscriptCleanup.cleanup` before the remote call | cleanup proceeds |
 
 Meeting-side judgments additionally require the meeting's cloud intelligence to be on; the closures check `state.cloud_enabled` on every call, so turning cloud off mid-meeting stops them immediately.
 
@@ -22,14 +21,13 @@ Meeting-side judgments additionally require the meeting's cloud intelligence to 
 Quiet degradation is the right runtime policy — a dead network must not interrupt capture — but it makes "you never set a key" indistinguishable from "nobody said anything checkable." Settings therefore reports the configuration case, which runtime deliberately will not:
 
 - **Meeting Mode → Fast judgments** shows a notice while no key resolves, with a button that opens API keys on the TypeSafe credential. The nav rail reads `No key` instead of a feature count.
-- **The sensitive-dictation gate** states that it is screening nothing when it is switched on but TypeSafe is off or unkeyed, and that dictation is reaching the cloud endpoint unchecked. Cleanup still runs; only the screening step is missing. The warning is suppressed when cleanup is off or its endpoint is local, since nothing is being sent in those cases.
 - **API keys → Test** verifies a TypeSafe key with one minimal judgment (`services.typesafe.verify_key`) and reports the status class. TypeSafe is not an OpenAI-compatible endpoint, so it cannot use the shared `verify_api_key` probe.
 
 `services.typesafe.key_present()` answers "is a key resolvable" on its own, separate from `is_configured()`, which also requires the master switch — the two cases need different copy and a different next step.
 
 ## Privacy
 
-Each judgment sends a short excerpt to `api.typesafe.ai`: about two minutes of transcript for a topic check, one segment plus three predecessors for a voice command, and the dictation itself for the sensitivity gate. The response is a probability or a label, not text. The sensitivity gate is therefore a trade, not a wall: flagged dictation is kept away from the cleanup model, but the gate itself has seen it. It is only consulted when the cleanup destination is remote, so a local endpoint never triggers a remote call, and it is described that way in Settings.
+Each judgment sends a short excerpt to `api.typesafe.ai`: about two minutes of transcript for a topic check, and one segment plus three predecessors for a voice command. The response is a probability or a label, not text. Dictation is never sent to TypeSafe.
 
 ## Semantic topic changes
 
@@ -48,22 +46,19 @@ Applied ops use the `system` actor with `voice_command` attribution and land as 
 
 Judgment and application run on one background thread so a slow answer never delays a transcript commit. The engine emits a `voice_command` event with applied and rejected counts.
 
-## Sensitive-dictation gate
-
-Before `TranscriptCleanup` sends dictation to a remote model it asks one Noul: does the text hold passwords, keys or credentials; government, bank or card numbers; health, disciplinary, salary or home-address details about an identifiable person; or an explicit confidentiality statement. At the 0.8 threshold the benchmark measured recall 0.96 on authored positives and a 0.11% false-positive rate on 884 real research-meeting segments. Flagged text is returned unchanged with `last_error` set to `skipped: sensitive content kept local`, which the existing UI shows the way it shows other skip reasons. A missing or failed judgment lets cleanup proceed.
-
 ## Code map
 
-- `services/typesafe.py`: pinned model, credential, `urllib` transport with the app's verified TLS context, response validation, failure policy, usage counters, and the sensitivity question.
+- `services/typesafe.py`: pinned model, credential, `urllib` transport with the app's verified TLS context, response validation, failure policy, and usage counters.
 - `meeting/agent/typesafe_signals.py`: meeting-side questions worded exactly as benchmarked, with thresholds.
 - `meeting/agent/scheduler.py`: optional `topic_judge` and `_semantic_topic_shift`.
 - `meeting/voice_commands.py`: wake pattern, referent selection, op construction, background listener.
 - `meeting/engine.py`: `_typesafe_judge`, `_typesafe_topic_judge`, `_voice_command_listener`, shutdown in `_stop_asr`.
-- `services/transcript_cleanup.py`: `sensitivity_gate` and `_sensitive_for_cloud`.
 - `services/settings.py`: `typesafe_*` keys and resolvers; `ui_qt/dialogs/settings_dialog.py`: tiles and the API-key row.
-- Tests: `tests/test_typesafe_service.py`, `tests/test_voice_commands.py`, `tests/test_scheduler_semantic_topic_shift.py`, `tests/test_transcript_cleanup_gate.py`, plus updated layout and API-key page tests.
+- Tests: `tests/test_typesafe_service.py`, `tests/test_voice_commands.py`, `tests/test_scheduler_semantic_topic_shift.py`, plus updated layout and API-key page tests.
 
 ## Not done, on purpose
+
+- A sensitive-dictation gate in front of cloud cleanup shipped on September 18, 2026 and was removed on September 22. Screening sent every cloud-bound dictation to TypeSafe first, so the text still left the machine, and it added a network round trip before each cleanup.
 
 - Per-occurrence gating of term corrections (measured 87% vs 53% for replace-all) is deferred: corrections are applied server-side in two places and mirrored in the browser, so a server-only gate would make the notes disagree with the live transcript.
 - Agenda coverage tracking needs an agenda concept and a dashboard panel; the benchmark supports it (63% per-window accuracy, exact coverage sets on three of four meetings) but it is a feature, not a switch.

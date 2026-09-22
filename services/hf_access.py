@@ -268,7 +268,7 @@ def scan_cached_models(
     """Enumerate model repositories in the local HF cache. No network.
 
     Keys are repository IDs because reverse mapping to short names is ambiguous.
-    A positive ``max_age_seconds`` reuses the shared snapshot so Model Manager
+    A positive ``max_age_seconds`` reuses the shared snapshot so the Settings model pages
     and Downloads do not independently traverse every cached repository.
     """
     global _cache_scan_in_progress

@@ -1,16 +1,15 @@
-"""Model Manager dialog for on-demand and meeting model assignment.
+"""Model assignments hosted by the Settings window.
 
-A left rail lists the five things that can be assigned — on-demand voice and
-text cleanup, meeting voice and intelligence, and the shared Whisper runtime —
-and shows each one's current value next to its name, so the whole configuration
-is readable without navigating. Every destination is sized to fit the window;
-nothing here scrolls. The Whisper catalog and optional components live in
-``DownloadsDialog``, reached from the rail footer.
+Builds the model pages Settings shows under Dictation, Meeting Mode, and
+Models & storage (Voice model, Voice & speakers, Runtime), plus the two chat
+model sections the AI cleanup and Meeting intelligence pages embed, so every
+model choice sits on the page for the feature it powers. Every choice persists
+on change.
 
-Unlike the app's other dialogs this one is NON-modal (``show()``, not
-``exec()``): downloads are long-running and the user should be able to keep
-recording and transcribing while the manager is open. ``UIController`` holds
-a single instance and re-raises it instead of stacking copies.
+The host owns the window, the rail, and navigation. This object only reports
+each model destination's current value through ``rail.set_value`` and emits
+``assignments_changed`` so the host can refresh values that combine a model
+with its own settings (AI cleanup, the Overview).
 """
 import logging
 import sys
@@ -18,16 +17,15 @@ import threading
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
-    QInputDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -42,7 +40,6 @@ from services.components import (
 )
 from services.hf_access import (
     CachedModelInfo,
-    format_size_bytes,
     peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
@@ -76,8 +73,14 @@ from services.text_llm import (
     remove_custom_profile,
     upsert_custom_profile,
 )
-from ui_qt.utils.app_icon import app_icon
-from ui_qt.widgets import Button, ElidingComboBox
+from ui_qt.dialogs.settings_destinations import (
+    CLEANUP,
+    MEETING_INTELLIGENCE,
+    MEETING_VOICE,
+    RUNTIME,
+    VOICE_MODEL,
+)
+from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
 from ui_qt.widgets.text_model_picker import TextModelPicker
@@ -90,13 +93,8 @@ _ENGINE_CAPTIONS = {
     "api": "OpenAI transcription. Enter your API key in Settings → API keys.",
 }
 
-# Rail destination keys. Stable identifiers used by callers that deep-link into
-# one destination, so they never depend on rail order.
-ONDEMAND_VOICE = "ondemand_voice"
-ONDEMAND_TEXT = "ondemand_text"
-MEETING_VOICE = "meeting_voice"
-MEETING_TEXT = "meeting_text"
-SHARED_RUNTIME = "shared_runtime"
+#: Downloads filter value for the Whisper family.
+WHISPER_FILTER = "local_whisper"
 
 
 def _design_icon(filename: str) -> QIcon:
@@ -112,40 +110,73 @@ def _display_name_for_backend(model_value: str) -> str:
     return names.get(model_value) or names[config.DEFAULT_BACKEND]
 
 
-class ModelManagerDialog(QDialog):
-    #: The height floor is measured: 620 is just above the 601 px the tallest
-    #: destination needs under the themed font metrics, so no page scrolls. The
-    #: width floor is deliberately well above Qt's own minimum — the eliding
-    #: combos and labels would happily shrink past the point where a model id or
-    #: an endpoint URL is still readable.
-    DEFAULT_SIZE = QSize(980, 660)
-    MINIMUM_SIZE = QSize(840, 620)
-    COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
+def agent_core_label(core: str) -> str:
+    """Short display name for a ``MeetingAgentCore`` value."""
+    if core == MeetingAgentCore.PI:
+        return "Pi (sidecar)"
+    if core == MeetingAgentCore.OPENCODE:
+        return "OpenCode v2 (beta)"
+    return "Direct (no sidecar)"
 
-    #: Opening the Downloads window is UIController's job — it owns dialog
-    #: lifetimes and already routes download progress signals.
-    downloads_requested = pyqtSignal()
+
+def speaker_id_label(backend: str) -> str:
+    """Short display name for a ``MeetingSpeakerIdBackend`` value."""
+    if backend == MeetingSpeakerIdBackend.OFF:
+        return "Me / Others labels"
+    if backend == MeetingSpeakerIdBackend.OPENAI:
+        return "OpenAI speaker labels"
+    return "On-device speaker labels"
+
+
+def meeting_language_label(code: str) -> str:
+    return next(
+        (label for value, label in MeetingLanguage.CHOICES if value == code), code
+    )
+
+
+class ModelAssignments(QObject):
+    """Every model assignment, built as pages and sections for Settings.
+
+    Args:
+        host: Parent for the confirmation and endpoint dialogs this opens.
+        rail: The host's rail; model destinations report their value here.
+        message_label: Where status and error messages are shown.
+        get_loaded_model: Provider returning the model name currently loaded
+            by the engine (or None). Used to resolve what "auto" means.
+        background_cache_scan: Scan the model cache on a worker thread. Tests
+            pass False to scan synchronously through a patched scanner.
+    """
+
+    #: The model page needs Downloads, filtered to one backend ("" for all).
+    downloads_requested = pyqtSignal(str)
+    #: A model assignment or its rail value changed.
+    assignments_changed = pyqtSignal()
     _text_models_loaded = pyqtSignal(str, str, list, str, object)
     _cache_scan_finished = pyqtSignal(int, object)
 
+    COMPUTE_CHOICES = ("auto", "float16", "float32", "int8")
+
+    #: Assigned by UIController.
+    on_set_active_requested: Optional[Callable[[str], None]] = None
+    on_backend_changed: Optional[Callable[[str], None]] = None
+    on_runtime_settings_changed: Optional[Callable[[], None]] = None
+
     def __init__(
         self,
+        host: QWidget,
+        rail: NavRail,
+        message_label: QLabel,
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
-        parent=None,
         background_cache_scan: bool = True,
     ):
-        """Assign models, reporting which local model the engine has loaded.
-
-        Args:
-            get_loaded_model: Provider returning the model name currently
-                loaded by the engine (or None). Used to resolve what "auto"
-                actually means in the on-demand voice destination.
-        """
-        super().__init__(parent)
+        super().__init__(host)
+        self._host = host
+        self.rail = rail
+        self.message_label = message_label
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._cache_scan_generation = 0
-        self._cache_inventory_loading = False
+        self._cached: Dict[str, CachedModelInfo] = {}
         self._text_models_cache: Dict[tuple, list] = {}
         self._catalog_tokens = {}
         self._text_models_loading = set()
@@ -156,178 +187,17 @@ class ModelManagerDialog(QDialog):
         self._active_meeting_provider = TranscriptCleanupProvider.OPENROUTER
         self._active_meeting_llm_model = config.MEETING_LLM_MODEL
         self._pi_payload_available = meeting_agent_payload_dir() is not None
-        self._opencode_payload_available = meeting_agent_payload_dir("opencode") is not None
-
-        self.setWindowTitle("Model Manager")
-        self.setWindowIcon(app_icon())
-        self.setObjectName("modelManagerDialog")
-        self.setModal(False)
-        self.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
-        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.setSizeGripEnabled(True)
-
-        self._setup_ui()
-        self.setMinimumSize(self.MINIMUM_SIZE)
-        self.resize(self.DEFAULT_SIZE)
+        self._opencode_payload_available = (
+            meeting_agent_payload_dir("opencode") is not None
+        )
+        self._built = set()
         self._text_models_loaded.connect(self._on_text_models_loaded)
         self._cache_scan_finished.connect(self._on_cache_scan_finished)
-        self.rail.select(ONDEMAND_VOICE)
-        self.refresh()
 
-    # ---- construction ----
-
-    def _setup_ui(self) -> None:
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_rail_pane())
-        root.addWidget(self._build_body(), stretch=1)
-
-    def _build_rail_pane(self) -> QWidget:
-        pane = QWidget()
-        pane.setObjectName("modelManagerRailPane")
-        pane.setFixedWidth(NavRail.RAIL_WIDTH)
-        column = QVBoxLayout(pane)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(0)
-
-        brand = QHBoxLayout()
-        brand.setContentsMargins(16, 16, 16, 12)
-        brand.setSpacing(10)
-        brand_icon = QLabel()
-        brand_icon.setObjectName("modelManagerHeaderIcon")
-        brand_icon.setPixmap(app_icon().pixmap(26, 26))
-        brand_icon.setFixedSize(28, 28)
-        brand.addWidget(brand_icon)
-        brand_title = QLabel("Model Manager")
-        brand_title.setObjectName("modelManagerRailBrand")
-        brand.addWidget(brand_title)
-        brand.addStretch()
-        column.addLayout(brand)
-
-        self.rail = NavRail()
-        self.rail.add_group("On-demand")
-        self.rail.add_destination(
-            ONDEMAND_VOICE, "Voice", _design_icon("microphone-blue.svg")
-        )
-        self.rail.add_destination(
-            ONDEMAND_TEXT, "Text cleanup", _design_icon("stack-purple.svg")
-        )
-        self.rail.add_group("Meeting Mode")
-        self.rail.add_destination(
-            MEETING_VOICE, "Voice", _design_icon("microphone-blue.svg")
-        )
-        self.rail.add_destination(
-            MEETING_TEXT, "Intelligence", _design_icon("stack-purple.svg")
-        )
-        self.rail.add_group("Shared")
-        self.rail.add_destination(
-            SHARED_RUNTIME, "Runtime", _design_icon("box-blue.svg")
-        )
-        self.rail.destination_changed.connect(self._on_destination_changed)
-        column.addWidget(self.rail, stretch=1)
-
-        footer = QVBoxLayout()
-        footer.setContentsMargins(16, 10, 16, 14)
-        footer.setSpacing(8)
-        self.cache_summary_label = WrappedLabel("")
-        self.cache_summary_label.setObjectName("modelManagerRailFootnote")
-        footer.addWidget(self.cache_summary_label)
-        self.downloads_button = Button("Downloads…")
-        self.downloads_button.setObjectName("modelManagerDownloadsButton")
-        self.downloads_button.set_base_minimum_size(0, 34)
-        self.downloads_button.setToolTip(
-            "Download speech models and optional components"
-        )
-        self.downloads_button.clicked.connect(self.downloads_requested.emit)
-        footer.addWidget(self.downloads_button)
-        column.addLayout(footer)
-        return pane
-
-    def _build_body(self) -> QWidget:
-        body = QWidget()
-        body.setObjectName("modelManagerBody")
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(28, 20, 28, 16)
-        layout.setSpacing(14)
-
-        self.page_title = QLabel("")
-        self.page_title.setObjectName("modelManagerTitle")
-        self.page_subtitle = WrappedLabel("")
-        self.page_subtitle.setObjectName("modelManagerSubtitle")
-        layout.addWidget(self.page_title)
-        layout.addWidget(self.page_subtitle)
-
-        self.stack = QStackedWidget()
-        self.stack.setObjectName("modelManagerStack")
-        self._pages: Dict[str, QWidget] = {}
-        self._headings: Dict[str, tuple] = {}
-        self._add_page(
-            ONDEMAND_VOICE,
-            "On-demand voice",
-            "The transcription engine used by Quick Record, hotkey dictation, "
-            "and Upload File.",
-            self._build_ondemand_voice_page,
-        )
-        self._add_page(
-            ONDEMAND_TEXT,
-            "On-demand text cleanup",
-            "The chat model that rewrites a finished dictation when AI cleanup "
-            "is enabled.",
-            self._build_ondemand_text_page,
-        )
-        self._add_page(
-            MEETING_VOICE,
-            "Meeting voice",
-            "Meetings load their own Whisper instance for live captions and the "
-            "optional end-of-meeting re-decode.",
-            self._build_meeting_voice_page,
-        )
-        self._add_page(
-            MEETING_TEXT,
-            "Meeting intelligence",
-            "One chat model runs every Meeting Mode pass: live cards, the note "
-            "taker, polish, summaries, and the final report.",
-            self._build_meeting_text_page,
-        )
-        self._add_page(
-            SHARED_RUNTIME,
-            "Shared runtime",
-            "How local Whisper models are executed. Both on-demand and Meeting "
-            "Mode inherit these.",
-            self._build_runtime_page,
-        )
-        layout.addWidget(self.stack, stretch=1)
-
-        footer = QHBoxLayout()
-        footer.setSpacing(8)
-        self.message_label = WrappedLabel("")
-        self.message_label.setObjectName("modelManagerMessage")
-        footer.addWidget(self.message_label, stretch=1)
-        close_btn = Button("Close")
-        close_btn.setObjectName("modelManagerCloseButton")
-        self._compact_button(close_btn, 110)
-        close_btn.clicked.connect(self.close)
-        footer.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignBottom)
-        layout.addLayout(footer)
-        return body
-
-    def _add_page(
-        self, key: str, title: str, subtitle: str, builder: Callable
-    ) -> None:
-        page = QWidget()
-        page.setObjectName(f"modelManagerPage_{key}")
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        builder(layout)
-        layout.addStretch()
-        self._pages[key] = page
-        self._headings[key] = (title, subtitle)
-        self.stack.addWidget(page)
+    # ---- construction helpers ----
 
     def _field(self, label: str, widget: QWidget) -> QWidget:
-        """Wrap a control with the field label the rail destination shows."""
+        """Wrap a control with its field label."""
         wrapper = QWidget()
         wrapper.setObjectName("modelManagerFieldGroup")
         col = QVBoxLayout(wrapper)
@@ -338,6 +208,26 @@ class ModelManagerDialog(QDialog):
         col.addWidget(caption)
         col.addWidget(widget)
         return wrapper
+
+    @staticmethod
+    def _group_title(layout: QVBoxLayout, text: str) -> QLabel:
+        # Qt stylesheets have no text-transform, so the eyebrow case is set here.
+        caption = QLabel(text.upper())
+        caption.setObjectName("settingsTileGroupTitle")
+        layout.addWidget(caption)
+        return caption
+
+    @staticmethod
+    def _card(layout: QVBoxLayout) -> QVBoxLayout:
+        """Add a resting settings card and return its content layout."""
+        card = QFrame()
+        card.setObjectName("settingsTile")
+        card.setProperty("kind", "field")
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(16, 14, 16, 14)
+        inner.setSpacing(10)
+        layout.addWidget(card)
+        return inner
 
     def _footnote(self, text: str) -> QWidget:
         card = QFrame()
@@ -361,43 +251,68 @@ class ModelManagerDialog(QDialog):
         label.setObjectName("infoLabel")
         return label
 
-    def _build_ondemand_voice_page(self, layout: QVBoxLayout) -> None:
+    def _say(self, text: str) -> None:
+        self.message_label.setText(text)
+
+    # ---- page builders (the host passes its page layout) ----
+
+    def build_voice_page(self, layout: QVBoxLayout) -> None:
+        """Dictation → Voice model: engine, model, and what is downloaded."""
+        self._group_title(layout, "Engine")
+        card = self._card(layout)
         self.engine_combo = ElidingComboBox()
         self.engine_combo.setObjectName("ondemandEngineCombo")
         self.engine_combo.setMinimumHeight(40)
         for display in config.MODEL_CHOICES:
             self.engine_combo.addItem(display, config.MODEL_VALUE_MAP[display])
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        layout.addWidget(self._field("Recording engine", self.engine_combo))
+        card.addWidget(self._field("Recording engine", self.engine_combo))
 
         self.engine_caption = self._caption("")
-        layout.addWidget(self.engine_caption)
+        card.addWidget(self.engine_caption)
 
         self.ondemand_whisper_picker = LocalModelPicker()
         self.ondemand_whisper_picker.model_changed.connect(
             self._on_set_active_clicked
         )
         self.ondemand_whisper_picker.manage_downloads_requested.connect(
-            self.downloads_requested.emit
+            lambda: self.downloads_requested.emit(WHISPER_FILTER)
         )
         self.ondemand_whisper_field = self._field(
             "Model", self.ondemand_whisper_picker
         )
-        layout.addWidget(self.ondemand_whisper_field)
+        card.addWidget(self.ondemand_whisper_field)
 
         from ui_qt.widgets.local_engine_controls import LocalEngineControls
         self.speech_controls = LocalEngineControls()
-        self.speech_controls.engine_settings_changed.connect(self._on_speech_settings_changed)
-        layout.addWidget(self.speech_controls)
-        self.speech_download_button = Button("Get models and runtimes")
-        self.speech_download_button.clicked.connect(self.downloads_requested.emit)
-        layout.addWidget(self.speech_download_button)
+        self.speech_controls.engine_settings_changed.connect(
+            self._on_speech_settings_changed
+        )
+        card.addWidget(self.speech_controls)
         self.api_model_combo = ElidingComboBox()
         self.api_model_combo.setMinimumHeight(40)
         self.api_model_combo.addItems(list(config.API_MODEL_CHOICES))
         self.api_model_combo.currentTextChanged.connect(self._on_api_model_changed)
         self.api_model_field = self._field("Model", self.api_model_combo)
-        layout.addWidget(self.api_model_field)
+        card.addWidget(self.api_model_field)
+
+        self.engine_inventory_title = self._group_title(layout, "On this computer")
+        self.engine_inventory_row = QWidget()
+        self.engine_inventory_row.setObjectName("engineInventoryRow")
+        row = QHBoxLayout(self.engine_inventory_row)
+        row.setContentsMargins(3, 0, 0, 0)
+        row.setSpacing(12)
+        self.engine_inventory_label = self._caption("")
+        self.engine_inventory_label.setObjectName("engineInventoryLabel")
+        row.addWidget(self.engine_inventory_label, stretch=1)
+        self.speech_download_button = Button("Get models and runtimes")
+        self.speech_download_button.setObjectName("engineInventoryButton")
+        self.speech_download_button.set_base_minimum_size(0, 34)
+        self.speech_download_button.clicked.connect(
+            lambda: self.downloads_requested.emit(self._engine_filter())
+        )
+        row.addWidget(self.speech_download_button)
+        layout.addWidget(self.engine_inventory_row)
 
         layout.addWidget(
             self._footnote(
@@ -408,8 +323,10 @@ class ModelManagerDialog(QDialog):
                 "previews in Meeting Mode."
             )
         )
+        self._built.add(VOICE_MODEL)
 
-    def _build_ondemand_text_page(self, layout: QVBoxLayout) -> None:
+    def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
+        """The chat model AI cleanup runs, embedded in the AI cleanup page."""
         self.text_model_picker = TextModelPicker()
         self._connect_picker_profile_signals(self.text_model_picker)
         self.text_model_picker.provider_changed.connect(
@@ -422,7 +339,6 @@ class ModelManagerDialog(QDialog):
             self._activate_text_model
         )
         self.text_model_picker.sort_changed.connect(self._on_text_sort_changed)
-        layout.addWidget(self.text_model_picker)
 
         self.cleanup_reasoning_combo = ElidingComboBox()
         self.cleanup_reasoning_combo.setMinimumHeight(40)
@@ -436,29 +352,40 @@ class ModelManagerDialog(QDialog):
         self.cleanup_reasoning_combo.currentIndexChanged.connect(
             self._on_cleanup_reasoning_changed
         )
-        layout.addWidget(self._field("Thinking level", self.cleanup_reasoning_combo))
-        layout.addWidget(self._caption(
-            "Used only by models with configurable reasoning."
-        ))
 
-        layout.addWidget(
-            self._footnote(
-                "Used when AI cleanup is enabled. Prompts and learned rules: "
-                "Settings → Cleanup."
-            )
+        self.cleanup_model_tile = InfoTile(
+            "Chat model",
+            "The provider and model that rewrite each dictation. Cleanup "
+            "profiles use it too. The provider's key lives under API keys.",
+            _design_icon("box-blue.svg"),
         )
+        self.cleanup_model_tile.add_body(self.text_model_picker)
+        self.cleanup_model_tile.add_body(
+            self._field("Thinking level", self.cleanup_reasoning_combo)
+        )
+        self.cleanup_model_tile.add_body(
+            self._caption("Used only by models with configurable reasoning.")
+        )
+        layout.addWidget(self.cleanup_model_tile)
+        self._built.add(CLEANUP)
+        return self.cleanup_model_tile
 
-    def _build_meeting_voice_page(self, layout: QVBoxLayout) -> None:
+    def build_meeting_voice_page(self, layout: QVBoxLayout) -> None:
+        """Meeting Mode → Voice & speakers."""
+        self._group_title(layout, "Speech")
+        card = self._card(layout)
         self.meeting_whisper_picker = LocalModelPicker(include_speech_models=True)
         self.meeting_whisper_picker.model_changed.connect(
             self._on_meeting_set_active_clicked
         )
         self.meeting_whisper_picker.manage_downloads_requested.connect(
-            self.downloads_requested.emit
+            lambda: self.downloads_requested.emit("")
         )
-        layout.addWidget(
+        card.addWidget(
             self._field("Meeting speech model", self.meeting_whisper_picker)
         )
+        self.meeting_runtime_label = self._caption("")
+        card.addWidget(self.meeting_runtime_label)
 
         self.meeting_language_combo = ElidingComboBox()
         self.meeting_language_combo.setObjectName("meetingLanguageCombo")
@@ -472,10 +399,10 @@ class ModelManagerDialog(QDialog):
         self.meeting_language_combo.currentIndexChanged.connect(
             self._on_meeting_language_changed
         )
-        layout.addWidget(
-            self._field("Spoken language", self.meeting_language_combo)
-        )
+        card.addWidget(self._field("Spoken language", self.meeting_language_combo))
 
+        self._group_title(layout, "Speakers")
+        card = self._card(layout)
         self.meeting_speaker_id_combo = ElidingComboBox()
         self.meeting_speaker_id_combo.setObjectName("meetingSpeakerIdCombo")
         self.meeting_speaker_id_combo.setMinimumHeight(40)
@@ -495,18 +422,15 @@ class ModelManagerDialog(QDialog):
         self.meeting_speaker_id_combo.currentIndexChanged.connect(
             self._on_speaker_id_backend_changed
         )
-        layout.addWidget(
-            self._field(
-                "Speaker identification", self.meeting_speaker_id_combo
-            )
+        card.addWidget(
+            self._field("Speaker identification", self.meeting_speaker_id_combo)
         )
         self.speaker_id_status = self._caption("")
-        layout.addWidget(self.speaker_id_status)
+        card.addWidget(self.speaker_id_status)
+        self._built.add(MEETING_VOICE)
 
-        self.meeting_runtime_label = self._caption("")
-        layout.addWidget(self.meeting_runtime_label)
-
-    def _build_meeting_text_page(self, layout: QVBoxLayout) -> None:
+    def build_meeting_model_section(self, layout: QVBoxLayout) -> InfoTile:
+        """The meeting chat model and agent core, embedded in Intelligence."""
         self.meeting_model_picker = TextModelPicker(
             idle_status="Open Meeting intelligence to load the model catalog."
         )
@@ -527,7 +451,6 @@ class ModelManagerDialog(QDialog):
         self.meeting_model_picker.sort_changed.connect(
             self._on_meeting_sort_changed
         )
-        layout.addWidget(self.meeting_model_picker)
 
         self.meeting_agent_core_combo = ElidingComboBox()
         self.meeting_agent_core_combo.setObjectName("meetingAgentCoreCombo")
@@ -545,9 +468,7 @@ class ModelManagerDialog(QDialog):
             "Direct (no sidecar)", MeetingAgentCore.DIRECT
         )
         self.meeting_agent_core_combo.addItem(
-            "OpenCode v2 (beta)" if self._opencode_payload_available
-            else ("OpenCode v2 (beta — Windows x64 only)" if current_platform_tag() != "win_amd64"
-                  else "OpenCode v2 (beta — install from Downloads)"), MeetingAgentCore.OPENCODE
+            self._opencode_label(), MeetingAgentCore.OPENCODE
         )
         item = model.item(2) if hasattr(model, "item") else None
         if item is not None:
@@ -555,17 +476,25 @@ class ModelManagerDialog(QDialog):
         self.meeting_agent_core_combo.currentIndexChanged.connect(
             self._on_meeting_agent_core_changed
         )
-        layout.addWidget(
+
+        self.meeting_model_tile = InfoTile(
+            "Chat model",
+            "Runs live cards, the note taker, polish, summaries, and the final "
+            "report. Install Pi or OpenCode from Downloads.",
+            _design_icon("box-blue.svg"),
+        )
+        self.meeting_model_tile.add_body(self.meeting_model_picker)
+        self.meeting_model_tile.add_body(
             self._field("Agent core", self.meeting_agent_core_combo)
         )
-        layout.addWidget(
-            self._footnote(
-                "Install Pi or OpenCode from Downloads. Cloud consent, knowledge folder "
-                "and report options: Settings → Meeting."
-            )
-        )
+        layout.addWidget(self.meeting_model_tile)
+        self._built.add(MEETING_INTELLIGENCE)
+        return self.meeting_model_tile
 
-    def _build_runtime_page(self, layout: QVBoxLayout) -> None:
+    def build_runtime_page(self, layout: QVBoxLayout) -> None:
+        """Models & storage → Runtime: device and quantization."""
+        self._group_title(layout, "Local Whisper")
+        card = self._card(layout)
         runtime_row = QHBoxLayout()
         runtime_row.setSpacing(12)
         device_choices = (
@@ -583,9 +512,8 @@ class ModelManagerDialog(QDialog):
         self.compute_combo.currentTextChanged.connect(self._on_runtime_changed)
         runtime_row.addWidget(self._field("Device", self.device_combo))
         runtime_row.addWidget(self._field("Quantization", self.compute_combo))
-        layout.addLayout(runtime_row)
-
-        layout.addWidget(
+        card.addLayout(runtime_row)
+        card.addWidget(
             self._caption(
                 "auto picks CUDA when a supported GPU is present and falls back "
                 "to CPU otherwise. Changing either value reloads the local "
@@ -594,67 +522,29 @@ class ModelManagerDialog(QDialog):
         )
         layout.addWidget(
             self._footnote(
-                "Downloaded models and optional components are managed in "
-                "Downloads. Deleting a model there does not change these "
-                "assignments."
+                "Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on "
+                "Dictation → Voice model. Downloaded models and optional "
+                "components are managed in Downloads."
             )
         )
+        self._built.add(RUNTIME)
 
-    @staticmethod
-    def _compact_button(button: Button, width: int) -> None:
-        """Size a shared button for the dialog's compact footer.
+    def _opencode_label(self) -> str:
+        if self._opencode_payload_available:
+            return "OpenCode v2 (beta)"
+        if current_platform_tag() != "win_amd64":
+            return "OpenCode v2 (beta — Windows x64 only)"
+        return "OpenCode v2 (beta — install from Downloads)"
 
-        Uses ``width`` as a preferred size floor, but never caps the maximum
-        below the polished sizeHint so text is not clipped on macOS (where theme
-        font metrics differ from the Button constructor font).
-        """
-        button.set_base_minimum_size(width, 34)
-        button.ensurePolished()
-        height = max(34, button.sizeHint().height())
-        button.setMinimumHeight(height)
-        button.setMaximumHeight(height)
-        fitted = max(width, button.minimumWidth(), button.sizeHint().width())
-        button.setMinimumWidth(fitted)
-        button.setMaximumWidth(fitted)
+    # ---- navigation hooks ----
 
-    #: Assigned by UIController.
-    on_set_active_requested: Optional[Callable[[str], None]] = None
-    on_backend_changed: Optional[Callable[[str], None]] = None
-    on_runtime_settings_changed: Optional[Callable[[], None]] = None
-
-    # ---- navigation ----
-
-    def select_destination(self, key: str) -> None:
-        """Show one rail destination by stable key."""
-        if key in self._pages:
-            self.rail.select(key)
-
-    def show_ondemand_tab(self) -> None:
-        self.select_destination(ONDEMAND_VOICE)
-
-    def show_text_tab(self) -> None:
-        self.select_destination(ONDEMAND_TEXT)
-
-    def show_meeting_tab(self) -> None:
-        self.select_destination(MEETING_VOICE)
-
-    def show_runtime(self) -> None:
-        self.select_destination(SHARED_RUNTIME)
-
-    def _on_destination_changed(self, key: str) -> None:
-        """Swap the page, its heading, and load any catalog it needs."""
-        page = self._pages.get(key)
-        if page is None:
-            return
-        self.stack.setCurrentWidget(page)
-        title, subtitle = self._headings[key]
-        self.page_title.setText(title)
-        self.page_subtitle.setText(subtitle)
-        if key == ONDEMAND_TEXT:
+    def on_destination_shown(self, key: str) -> None:
+        """Load the chat-model catalog a destination shows, once it is open."""
+        if key == CLEANUP:
             self._fetch_catalog_models(
                 self.text_model_picker.provider, picker=self.text_model_picker
             )
-        elif key == MEETING_TEXT:
+        elif key == MEETING_INTELLIGENCE:
             self._fetch_catalog_models(
                 self.meeting_model_picker.provider,
                 picker=self.meeting_model_picker,
@@ -673,16 +563,15 @@ class ModelManagerDialog(QDialog):
             if model_name in MODELS:
                 settings_manager.save_setting(SettingsKey.MEETING_ASR_MODEL, model_name)
             else:
-                settings_manager.update_settings({SettingsKey.MEETING_ASR_MODEL: "", SettingsKey.MEETING_WHISPER_MODEL: model_name})
+                settings_manager.update_settings({
+                    SettingsKey.MEETING_ASR_MODEL: "",
+                    SettingsKey.MEETING_WHISPER_MODEL: model_name,
+                })
         except Exception as exc:
             logger.error("Couldn't set meeting Whisper model: %s", exc)
-            self.message_label.setText(
-                f"Couldn't set meeting transcription model: {exc}"
-            )
+            self._say(f"Couldn't set meeting transcription model: {exc}")
             return
-        self.message_label.setText(
-            f'Meeting transcription model set to "{model_name}"'
-        )
+        self._say(f'Meeting transcription model set to "{model_name}"')
         self.refresh()
 
     def _on_engine_changed(self, _index: int) -> None:
@@ -692,10 +581,12 @@ class ModelManagerDialog(QDialog):
             self.on_backend_changed(display)
         self._update_engine_caption()
         self._update_ondemand_whisper_enabled()
+        self._refresh_engine_inventory()
         self._refresh_rail_values()
 
     def _on_speech_settings_changed(self):
         self._refresh_meeting_runtime_label()
+        self._refresh_engine_inventory()
         if self.on_runtime_settings_changed:
             self.on_runtime_settings_changed()
         self._refresh_rail_values()
@@ -717,7 +608,7 @@ class ModelManagerDialog(QDialog):
             })
         except Exception as exc:
             logger.error("Couldn't save shared Whisper runtime: %s", exc)
-            self.message_label.setText(f"Couldn't save device or quant: {exc}")
+            self._say(f"Couldn't save device or quant: {exc}")
             return
         if self.on_runtime_settings_changed:
             self.on_runtime_settings_changed()
@@ -732,7 +623,9 @@ class ModelManagerDialog(QDialog):
             settings_manager.save_setting(SettingsKey.MEETING_LANGUAGE, language)
         except Exception as exc:
             logger.error("Couldn't save meeting language: %s", exc)
-            self.message_label.setText(f"Couldn't save spoken language: {exc}")
+            self._say(f"Couldn't save spoken language: {exc}")
+            return
+        self._refresh_rail_values()
 
     def _on_meeting_agent_core_changed(self, _index: int) -> None:
         core = self.meeting_agent_core_combo.currentData()
@@ -742,7 +635,9 @@ class ModelManagerDialog(QDialog):
             settings_manager.save_setting(SettingsKey.MEETING_AGENT_CORE, core)
         except Exception as exc:
             logger.error("Couldn't save meeting agent core: %s", exc)
-            self.message_label.setText(f"Couldn't save agent core: {exc}")
+            self._say(f"Couldn't save agent core: {exc}")
+            return
+        self._refresh_rail_values()
 
     def _on_speaker_id_backend_changed(self, _index: int = 0) -> None:
         """Ask for audio-upload consent when the user picks OpenAI speaker ID."""
@@ -753,7 +648,7 @@ class ModelManagerDialog(QDialog):
                     MeetingAudioConsentDialog,
                 )
 
-                dialog = MeetingAudioConsentDialog(self)
+                dialog = MeetingAudioConsentDialog(self._host)
                 dialog.exec()
                 granted = (
                     dialog.result_action == MeetingAudioConsentDialog.RESULT_ENABLE
@@ -785,12 +680,11 @@ class ModelManagerDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't save speaker identification: %s", exc)
-            self.message_label.setText(
-                f"Couldn't save speaker identification: {exc}"
-            )
+            self._say(f"Couldn't save speaker identification: {exc}")
         else:
             self._speaker_id_backend_previous = backend
         self._refresh_speaker_id_status()
+        self._refresh_rail_values()
 
     # ---- text endpoint profiles ----
 
@@ -820,7 +714,8 @@ class ModelManagerDialog(QDialog):
     def _add_text_endpoint(self) -> None:
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
 
-        dialog = TextEndpointDialog(parent=self)
+        sender = self.sender()
+        dialog = TextEndpointDialog(parent=self._host)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payload = dialog.result_payload() or {}
@@ -835,10 +730,9 @@ class ModelManagerDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't add text endpoint: %s", exc)
-            self.message_label.setText(f"Couldn't add endpoint: {exc}")
+            self._say(f"Couldn't add endpoint: {exc}")
             return
         self._refresh_picker_profiles()
-        sender = self.sender()
         if sender is self.meeting_model_picker:
             self.meeting_model_picker.set_provider(profile.id)
             self._fetch_catalog_models(
@@ -849,7 +743,7 @@ class ModelManagerDialog(QDialog):
             self._fetch_catalog_models(
                 profile.id, picker=self.text_model_picker
             )
-        self.message_label.setText(f'Added endpoint "{profile.name}"')
+        self._say(f'Added endpoint "{profile.name}"')
 
     def _edit_text_endpoint(self, profile_id: str) -> None:
         from ui_qt.dialogs.text_endpoint_dialog import TextEndpointDialog
@@ -857,7 +751,8 @@ class ModelManagerDialog(QDialog):
         profile = get_profile(profile_id, self._settings_snapshot())
         if profile is not None and profile.id == "ollama":
             url, accepted = QInputDialog.getText(
-                self, "Ollama server", "API base URL (shared by cleanup and meetings):",
+                self._host, "Ollama server",
+                "API base URL (shared by cleanup and meetings):",
                 text=profile.base_url or "",
             )
             if not accepted:
@@ -866,18 +761,20 @@ class ModelManagerDialog(QDialog):
             try:
                 save_ollama_url(url)
             except ValueError as exc:
-                self.message_label.setText(str(exc))
+                self._say(str(exc))
                 return
             self._invalidate_text_catalog("ollama")
             self._refresh_picker_profiles()
             for picker in (self.text_model_picker, self.meeting_model_picker):
                 if picker.provider == "ollama":
                     self._fetch_catalog_models("ollama", picker=picker, force=True)
-            self.message_label.setText("Ollama server updated. Active meetings keep their original server.")
+            self._say(
+                "Ollama server updated. Active meetings keep their original server."
+            )
             return
         if profile is None or profile.builtin:
             return
-        dialog = TextEndpointDialog(profile, parent=self)
+        dialog = TextEndpointDialog(profile, parent=self._host)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payload = dialog.result_payload() or {}
@@ -893,7 +790,7 @@ class ModelManagerDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't edit text endpoint: %s", exc)
-            self.message_label.setText(f"Couldn't save endpoint: {exc}")
+            self._say(f"Couldn't save endpoint: {exc}")
             return
         self._invalidate_text_catalog(updated.id)
         self._refresh_picker_profiles()
@@ -901,7 +798,7 @@ class ModelManagerDialog(QDialog):
         self.meeting_model_picker.set_provider(
             self.meeting_model_picker.provider
         )
-        self.message_label.setText(f'Updated endpoint "{updated.name}"')
+        self._say(f'Updated endpoint "{updated.name}"')
 
     def _delete_text_endpoint(self, profile_id: str) -> None:
         """Delete a custom endpoint that is not currently assigned."""
@@ -912,13 +809,13 @@ class ModelManagerDialog(QDialog):
         cleanup_id = resolve_transcript_cleanup_provider(settings)
         meeting_id = resolve_meeting_llm_provider(settings)
         if profile_id in (cleanup_id, meeting_id):
-            self.message_label.setText(
+            self._say(
                 f'"{profile.name}" is in use. Choose another text model '
                 "before deleting this endpoint."
             )
             return
         confirmed = QMessageBox.question(
-            self,
+            self._host,
             "Delete endpoint",
             f'Delete "{profile.name}"?\n\n'
             "Meetings that already recorded this endpoint can still retry "
@@ -934,22 +831,24 @@ class ModelManagerDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't delete text endpoint: %s", exc)
-            self.message_label.setText(f"Couldn't delete endpoint: {exc}")
+            self._say(f"Couldn't delete endpoint: {exc}")
             return
         self._refresh_picker_profiles()
-        self.message_label.setText(f'Deleted endpoint "{profile.name}"')
+        self._say(f'Deleted endpoint "{profile.name}"')
 
     # ---- catalog loading ----
 
     def _on_text_provider_changed(self, provider: str) -> None:
-        self._update_cleanup_reasoning_controls(provider, self.text_model_picker.model_combo.currentText())
-        if self.rail.current_key() == ONDEMAND_TEXT:
+        self._update_cleanup_reasoning_controls(
+            provider, self.text_model_picker.model_combo.currentText()
+        )
+        if self.rail.current_key() == CLEANUP:
             self._fetch_catalog_models(
                 provider, picker=self.text_model_picker
             )
 
     def _on_meeting_provider_changed(self, provider: str) -> None:
-        if self.rail.current_key() == MEETING_TEXT:
+        if self.rail.current_key() == MEETING_INTELLIGENCE:
             self._fetch_catalog_models(
                 provider, picker=self.meeting_model_picker
             )
@@ -996,8 +895,8 @@ class ModelManagerDialog(QDialog):
 
         Args:
             provider: A ``TranscriptCleanupProvider`` value.
-            picker: On-demand or Meeting picker that requested the catalog.
-            force: Bypass the in-dialog cache when true.
+            picker: Cleanup or Meeting picker that requested the catalog.
+            force: Bypass the in-memory cache when true.
         """
         if provider == picker.provider:
             picker._update_credential_status()
@@ -1030,7 +929,7 @@ class ModelManagerDialog(QDialog):
             try:
                 self._text_models_loaded.emit(provider, sort, models, error, token)
             except RuntimeError:
-                pass  # Dialog was destroyed before the catalog finished.
+                pass  # Settings was destroyed before the catalog finished.
 
         threading.Thread(
             target=worker,
@@ -1084,8 +983,6 @@ class ModelManagerDialog(QDialog):
 
     def _update_cleanup_reasoning_controls(self, provider: str, model: str) -> None:
         from services.text_model_catalog import model_spec
-        if not hasattr(self, "cleanup_reasoning_combo"):
-            return
         profile = get_profile(provider, self._settings_snapshot())
         supported = profile is not None and profile.kind in ("openai", "openrouter")
         if profile is not None and model:
@@ -1107,7 +1004,7 @@ class ModelManagerDialog(QDialog):
             model_spec(get_profile(provider, self._settings_snapshot()), model)
             return True
         except ValueError as exc:
-            self.message_label.setText(str(exc))
+            self._say(str(exc))
             return False
 
     def _activate_text_model(self, provider: str) -> None:
@@ -1129,19 +1026,14 @@ class ModelManagerDialog(QDialog):
             })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
-            self.message_label.setText(f"Couldn't set text model: {exc}")
+            self._say(f"Couldn't set text model: {exc}")
             return
 
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_active_selection(provider, model)
         self._update_cleanup_reasoning_controls(provider, model)
-        display_provider = profile_display_name(
-            provider, self._settings_snapshot()
-        )
-        self.message_label.setText(
-            f"Text model set to {display_provider} · {model}"
-        )
+        self._say(f"Text model set to {self.text_summary()}")
         self._refresh_rail_values()
 
     def _activate_meeting_llm_model(self, provider: str) -> None:
@@ -1163,18 +1055,13 @@ class ModelManagerDialog(QDialog):
             })
         except Exception as exc:
             logger.error("Couldn't activate meeting LLM model: %s", exc)
-            self.message_label.setText(f"Couldn't set meeting model: {exc}")
+            self._say(f"Couldn't set meeting model: {exc}")
             return
 
         self._active_meeting_provider = provider
         self._active_meeting_llm_model = model
         self.meeting_model_picker.set_active_selection(provider, model)
-        display_provider = profile_display_name(
-            provider, self._settings_snapshot()
-        )
-        self.message_label.setText(
-            f"Meeting intelligence model set to {display_provider} · {model}"
-        )
+        self._say(f"Meeting intelligence model set to {self.meeting_text_summary()}")
         self._refresh_rail_values()
 
     # ---- state loading ----
@@ -1187,7 +1074,7 @@ class ModelManagerDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't save cleanup thinking level: %s", exc)
-            self.message_label.setText(f"Couldn't save thinking level: {exc}")
+            self._say(f"Couldn't save thinking level: {exc}")
 
     def _load_text_settings(self) -> None:
         settings = self._settings_snapshot()
@@ -1248,6 +1135,7 @@ class ModelManagerDialog(QDialog):
 
     def refresh_engine_selection(self) -> None:
         self._load_engine_and_runtime()
+        self._refresh_engine_inventory()
         self._refresh_rail_values()
 
     def _load_engine_and_runtime(self) -> None:
@@ -1299,6 +1187,55 @@ class ModelManagerDialog(QDialog):
         if is_speech:
             self.speech_controls.set_backend(backend)
         self.api_model_field.setVisible(backend == "api")
+        self.engine_inventory_title.setVisible(backend != "api")
+        self.engine_inventory_row.setVisible(backend != "api")
+
+    def _engine_filter(self) -> str:
+        """Downloads backend filter for the selected recording engine."""
+        backend = self.engine_combo.currentData() or WHISPER_FILTER
+        return "" if backend == "api" else backend
+
+    def _refresh_engine_inventory(self) -> None:
+        """Say what the selected engine has on this computer."""
+        backend = self.engine_combo.currentData() or WHISPER_FILTER
+        if backend == "api":
+            self.engine_inventory_label.setText("")
+            return
+        try:
+            if backend == WHISPER_FILTER:
+                repos = {
+                    resolve_model_repo(name)
+                    for name in config.WHISPER_MODEL_CHOICES
+                    if name != "auto"
+                }
+                present = sum(1 for repo in repos if repo in self._cached)
+                text = f"{present} of {len(repos)} Whisper models on this computer."
+            else:
+                from services.components import is_installed
+                from services.local_asr.cache import is_cached
+                from services.local_asr.catalog import (
+                    BACKENDS,
+                    MODELS,
+                    resolve_runtime,
+                    selected_device,
+                )
+                keys = [key for key, model in MODELS.items() if model.backend == backend]
+                present = sum(1 for key in keys if is_cached(key))
+                noun = "model" if len(keys) == 1 else "models"
+                text = (
+                    f"{present} of {len(keys)} {BACKENDS[backend]} {noun} on this "
+                    "computer"
+                )
+                component, _device = resolve_runtime(
+                    backend, selected_device(backend, self._settings_snapshot())
+                )
+                name = component_coordinator.describe(component).display_name
+                state = "installed" if is_installed(component) else "not installed"
+                text += f" · {name} {state}."
+        except Exception:
+            logger.debug("Engine inventory lookup failed", exc_info=True)
+            text = "Open Downloads to see which models are on this computer."
+        self.engine_inventory_label.setText(text)
 
     def _refresh_meeting_runtime_label(self) -> None:
         from services.local_asr.catalog import MODELS, selected_device
@@ -1307,14 +1244,15 @@ class ModelManagerDialog(QDialog):
             device = selected_device(MODELS[model].backend, self._settings_snapshot())
             self.meeting_runtime_label.setText(
                 f"Uses {MODELS[model].label} with its {device} device preference. "
-                "Set that engine's device under On-demand voice. Install its runtime and model in Downloads."
+                "Set that engine's device on Dictation → Voice model. Install "
+                "its runtime and model in Downloads."
             )
             return
         device = self.device_combo.currentText() or "auto"
         compute = self.compute_combo.currentText() or "auto"
         self.meeting_runtime_label.setText(
-            f"Device and quantization come from Shared → Runtime "
-            f"({device} · {compute}) and are shared with on-demand Local "
+            f"Device and quantization come from Models & storage → Runtime "
+            f"({device} · {compute}) and are shared with dictation's Local "
             "Whisper."
         )
 
@@ -1358,7 +1296,7 @@ class ModelManagerDialog(QDialog):
     def _sync_pi_core_availability(self, settings: Optional[dict] = None) -> None:
         """Refresh the Pi combo after a meeting-agent install or remove.
 
-        The dialog is non-modal and cached, so ``_pi_payload_available`` cannot
+        Settings is non-modal and cached, so ``_pi_payload_available`` cannot
         stay as the value computed in ``__init__``.
         """
         self._pi_payload_available = meeting_agent_payload_dir() is not None
@@ -1375,11 +1313,7 @@ class ModelManagerDialog(QDialog):
         if item is not None:
             item.setEnabled(self._pi_payload_available)
         oc_index = combo.findData(MeetingAgentCore.OPENCODE)
-        combo.setItemText(
-            oc_index, "OpenCode v2 (beta)" if self._opencode_payload_available
-            else ("OpenCode v2 (beta — Windows x64 only)" if current_platform_tag() != "win_amd64"
-                  else "OpenCode v2 (beta — install from Downloads)"),
-        )
+        combo.setItemText(oc_index, self._opencode_label())
         oc_item = model.item(oc_index) if hasattr(model, "item") else None
         if oc_item is not None:
             oc_item.setEnabled(self._opencode_payload_available)
@@ -1393,47 +1327,56 @@ class ModelManagerDialog(QDialog):
         combo.blockSignals(blocker)
 
     def refresh_component_state(self) -> None:
-        """Re-read component install state that this dialog reports on."""
+        """Re-read component install state these pages report on."""
         self._sync_pi_core_availability()
         self._refresh_speaker_id_status()
+        self._refresh_engine_inventory()
 
-    def refresh(self) -> None:
+    def refresh(self, scan: bool = True) -> None:
+        """Reload every assignment, then the model cache it depends on.
+
+        Args:
+            scan: Rescan the model cache. Without it, the last shared scan is
+                reused, so loading a hidden window never touches the disk.
+        """
         self._load_text_settings()
         self._load_meeting_settings()
         self._load_engine_and_runtime()
         if not self._background_cache_scan:
-            self._cache_inventory_loading = False
             self._refresh_cached_model_state(
                 scan_cached_models(max_age_seconds=30.0)
             )
             return
 
-        cached = peek_cached_models()
-        self._cache_inventory_loading = cached is None
-        self._refresh_cached_model_state(cached or {})
+        self._refresh_cached_model_state(peek_cached_models() or {})
+        if not scan:
+            return
         self._cache_scan_generation += 1
         generation = self._cache_scan_generation
 
         def load() -> None:
             result = scan_cached_models(max_age_seconds=30.0)
-            self._cache_scan_finished.emit(generation, result)
+            try:
+                self._cache_scan_finished.emit(generation, result)
+            except RuntimeError:
+                pass  # Settings was destroyed before the scan finished.
 
         threading.Thread(
             target=load,
-            name="model-manager-cache-scan",
+            name="settings-models-cache-scan",
             daemon=True,
         ).start()
 
     def _on_cache_scan_finished(self, generation: int, cached) -> None:
         if generation != self._cache_scan_generation:
             return
-        self._cache_inventory_loading = False
         self._refresh_cached_model_state(dict(cached or {}))
 
     def _refresh_cached_model_state(
         self,
         cached: Dict[str, CachedModelInfo],
     ) -> None:
+        self._cached = dict(cached)
         settings = self._settings_snapshot()
         active_model = settings_manager.get(
             SettingsKey.WHISPER_MODEL, config.DEFAULT_WHISPER_MODEL
@@ -1448,7 +1391,7 @@ class ModelManagerDialog(QDialog):
         )
         self._update_ondemand_whisper_enabled()
         self.meeting_whisper_picker.set_options(cached, meeting_model)
-        self._update_cache_summary(cached)
+        self._refresh_engine_inventory()
         self._refresh_rail_values()
 
     def set_downloading(self, model_name: str) -> None:
@@ -1460,57 +1403,95 @@ class ModelManagerDialog(QDialog):
     def finish_download(self, model_name: str, success: bool) -> None:
         self.refresh()
 
-    def _update_cache_summary(self, cached: Dict[str, CachedModelInfo]) -> None:
-        """Report cache totals in the rail footer, next to the Downloads button."""
-        if self._cache_inventory_loading:
-            self.cache_summary_label.setText("Checking downloaded models…")
-            return
-        catalog_repos = {
-            resolve_model_repo(model_name)
-            for model_name in config.WHISPER_MODEL_CHOICES
-            if model_name != "auto"
-        }
+    # ---- summaries read by the host (rail, AI cleanup, Overview) ----
+
+    @property
+    def active_text_provider(self) -> str:
+        return self._active_text_provider
+
+    @property
+    def active_text_model(self) -> str:
+        return self._active_text_model
+
+    @property
+    def active_meeting_provider(self) -> str:
+        return self._active_meeting_provider
+
+    def voice_summary(self) -> str:
+        """The dictation engine and model, as the rail shows it."""
+        engine_value = self.engine_combo.currentData() or "local_whisper"
+        if engine_value == "local_whisper":
+            return f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
+        if engine_value == "api":
+            return f"API · {self.api_model_combo.currentText()}"
+        return self.speech_controls.model_combo.currentText()
+
+    def voice_detail(self) -> str:
+        """Where dictation runs, for the Overview card."""
+        engine_value = self.engine_combo.currentData() or "local_whisper"
+        if engine_value == "api":
+            return "Sent to OpenAI for transcription"
+        if engine_value == "local_whisper":
+            device = self.device_combo.currentText() or "auto"
+            return f"On this computer · {device}"
+        from services.local_asr.catalog import selected_device
+        return f"On this computer · {selected_device(engine_value, self._settings_snapshot())}"
+
+    def voice_is_remote(self) -> bool:
+        return (self.engine_combo.currentData() or "") == "api"
+
+    def text_summary(self) -> str:
+        provider = profile_display_name(
+            self._active_text_provider, self._settings_snapshot()
+        )
+        return f"{provider} · {self._active_text_model}"
+
+    def meeting_model_label(self) -> str:
         from services.local_asr.catalog import MODELS
-        catalog_repos.update(resolve_model_repo(key) for key in MODELS)
-        present = {
-            repo: info for repo, info in cached.items() if repo in catalog_repos
-        }
-        total_bytes = sum(info.size_bytes for info in present.values())
-        self.cache_summary_label.setText(
-            f"{len(present)} of {len(catalog_repos)} models downloaded · "
-            f"{format_size_bytes(total_bytes)}"
+        model = self.meeting_whisper_picker.current_model()
+        return MODELS[model].label if model in MODELS else model
+
+    def meeting_voice_summary(self) -> str:
+        language = meeting_language_label(
+            self.meeting_language_combo.currentData() or "auto"
+        )
+        return f"{self.meeting_model_label()} · {language}"
+
+    def meeting_voice_detail(self) -> str:
+        language = meeting_language_label(
+            self.meeting_language_combo.currentData() or "auto"
+        )
+        speakers = speaker_id_label(self.meeting_speaker_id_combo.currentData())
+        return f"{language} · {speakers}"
+
+    def speaker_id_is_remote(self) -> bool:
+        return (
+            self.meeting_speaker_id_combo.currentData()
+            == MeetingSpeakerIdBackend.OPENAI
+        )
+
+    def meeting_text_summary(self) -> str:
+        provider = profile_display_name(
+            self._active_meeting_provider, self._settings_snapshot()
+        )
+        return f"{provider} · {self._active_meeting_llm_model}"
+
+    def meeting_model_name(self) -> str:
+        return self._active_meeting_llm_model
+
+    def meeting_agent_core_label(self) -> str:
+        return agent_core_label(self.meeting_agent_core_combo.currentData())
+
+    def runtime_summary(self) -> str:
+        return (
+            f"{self.device_combo.currentText()} · "
+            f"{self.compute_combo.currentText()}"
         )
 
     def _refresh_rail_values(self) -> None:
-        """Mirror each destination's current assignment into its rail item."""
-        engine_value = self.engine_combo.currentData() or "local_whisper"
-        engine_display = self.engine_combo.currentText()
-        if engine_value == "local_whisper":
-            engine_display = (
-                f"Local Whisper · {self.ondemand_whisper_picker.current_model()}"
-            )
-        elif engine_value == "api":
-            engine_display = f"API · {self.api_model_combo.currentText()}"
-        else:
-            engine_display = self.speech_controls.model_combo.currentText()
-        self.rail.set_value(ONDEMAND_VOICE, engine_display)
-        self.rail.set_value(
-            ONDEMAND_TEXT,
-            f"{profile_display_name(self._active_text_provider, self._settings_snapshot())}"
-            f" · {self._active_text_model}",
-        )
-        from services.local_asr.catalog import MODELS
-        meeting_model = self.meeting_whisper_picker.current_model()
-        self.rail.set_value(
-            MEETING_VOICE, MODELS[meeting_model].label if meeting_model in MODELS else meeting_model
-        )
-        self.rail.set_value(
-            MEETING_TEXT,
-            f"{profile_display_name(self._active_meeting_provider, self._settings_snapshot())}"
-            f" · {self._active_meeting_llm_model}",
-        )
-        self.rail.set_value(
-            SHARED_RUNTIME,
-            f"{self.device_combo.currentText()} · "
-            f"{self.compute_combo.currentText()}",
-        )
+        """Mirror each model destination's current assignment into the rail."""
+        self.rail.set_value(VOICE_MODEL, self.voice_summary())
+        self.rail.set_value(MEETING_VOICE, self.meeting_voice_summary())
+        self.rail.set_value(MEETING_INTELLIGENCE, self.meeting_text_summary())
+        self.rail.set_value(RUNTIME, self.runtime_summary())
+        self.assignments_changed.emit()

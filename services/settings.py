@@ -88,9 +88,11 @@ class SettingsKey:
     HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
     LAST_TAB_INDEX: Final[str] = "last_tab_index"
     DEVELOPER_MODE: Final[str] = "developer_mode"
-    # Recording retention: "keep_all" or "custom" (+ max_saved_recordings count)
+    # Recording retention: "keep_all", "custom" (+ max_saved_recordings count),
+    # or "size_limit" (+ max_saved_recordings_mb folder size)
     RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
     MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
+    MAX_SAVED_RECORDINGS_MB: Final[str] = "max_saved_recordings_mb"
     # Record hotkey activation: "toggle" or "push_hold"
     RECORDING_TRIGGER_MODE: Final[str] = "recording_trigger_mode"
     CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
@@ -143,9 +145,6 @@ class SettingsKey:
         "typesafe_voice_commands_enabled"
     )
     TYPESAFE_VOICE_COMMAND_NAMES: Final[str] = "typesafe_voice_command_names"
-    TYPESAFE_CLEANUP_SENSITIVITY_GATE: Final[str] = (
-        "typesafe_cleanup_sensitivity_gate"
-    )
     # In-app updater. Absent keys mean both automatic check and notify are on.
     UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
     UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
@@ -166,7 +165,10 @@ LEGACY_STREAMING_KEYS: Final[tuple[str, ...]] = (
 class RecordingRetentionMode:
     """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
     KEEP_ALL: Final[str] = "keep_all"
+    # Keep the newest ``MAX_SAVED_RECORDINGS`` files.
     CUSTOM: Final[str] = "custom"
+    # Keep the newest files that fit in ``MAX_SAVED_RECORDINGS_MB``.
+    SIZE_LIMIT: Final[str] = "size_limit"
 
 
 class RecordingTriggerMode:
@@ -608,7 +610,7 @@ settings_manager = SettingsManager()
 def resolve_max_saved_recordings(
     settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[int]:
-    """Return a positive retention count, or None to keep all."""
+    """Return a positive retention count, or None when no count limit applies."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
@@ -616,7 +618,7 @@ def resolve_max_saved_recordings(
         SettingsKey.RECORDING_RETENTION_MODE,
         RecordingRetentionMode.CUSTOM,
     )
-    if mode == RecordingRetentionMode.KEEP_ALL:
+    if mode in (RecordingRetentionMode.KEEP_ALL, RecordingRetentionMode.SIZE_LIMIT):
         return None
 
     raw = settings.get(SettingsKey.MAX_SAVED_RECORDINGS, config.MAX_SAVED_RECORDINGS)
@@ -625,6 +627,27 @@ def resolve_max_saved_recordings(
     except (TypeError, ValueError):
         count = config.MAX_SAVED_RECORDINGS
     return max(1, count)
+
+
+def resolve_max_saved_recordings_bytes(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Return the saved-recordings size cap in bytes, or None when no size limit applies."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    mode = settings.get(SettingsKey.RECORDING_RETENTION_MODE)
+    if mode != RecordingRetentionMode.SIZE_LIMIT:
+        return None
+
+    raw = settings.get(
+        SettingsKey.MAX_SAVED_RECORDINGS_MB, config.MAX_SAVED_RECORDINGS_MB
+    )
+    try:
+        megabytes = int(raw)
+    except (TypeError, ValueError):
+        megabytes = config.MAX_SAVED_RECORDINGS_MB
+    return max(1, megabytes) * 1024 * 1024
 
 
 def resolve_recording_trigger_mode(
@@ -1105,22 +1128,6 @@ def resolve_typesafe_voice_command_names(
         if isinstance(item, str) and item.strip()
     )
     return names or DEFAULT_VOICE_COMMAND_NAMES
-
-
-def resolve_typesafe_cleanup_sensitivity_gate(
-    settings: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Return whether dictation is screened before cloud cleanup.
-
-    Off by default. When on, text bound for a remote cleanup model is first
-    sent to TypeSafe, which answers only with a probability that it contains
-    credentials, identifiers, or personal details; flagged dictation is
-    returned raw instead of being cleaned in the cloud. Local cleanup
-    endpoints are never screened.
-    """
-    return resolve_typesafe_enabled(settings) and _resolve_bool_setting(
-        settings, SettingsKey.TYPESAFE_CLEANUP_SENSITIVITY_GATE, False,
-    )
 
 
 def resolve_meeting_context_folder_enabled(

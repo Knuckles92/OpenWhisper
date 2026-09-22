@@ -36,8 +36,8 @@ _FEATURES: Final[tuple[str, ...]] = (
 )
 
 _SETTINGS: Final[tuple[str, ...]] = (
-    "Settings → Meeting — dashboard, after-meeting cleanup, recall",
-    "Model Manager — voice model, language, speakers, intelligence",
+    "Settings → Meeting Mode — voice model, language, and speakers",
+    "Settings → Meeting Mode — intelligence, recall, dashboard, and after-meeting steps",
 )
 
 

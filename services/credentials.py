@@ -115,7 +115,7 @@ def memory_backend() -> tuple[CredentialBackend, str]:
 class CredentialStore:
     """Thread-safe front for one credential backend with a lookup cache.
 
-    Lookups are cached because ``connection_fingerprint`` and the Model Manager
+    Lookups are cached because ``connection_fingerprint`` and the Settings model pages
     resolve credentials on every render; the cache is invalidated by ``set``
     and ``delete``. A change made directly in the OS store while the app runs
     is therefore picked up on the next launch.

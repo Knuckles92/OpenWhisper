@@ -21,12 +21,12 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from config import config
 from ui_qt.app import QtApplication
 from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
-from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
 from ui_qt.dialogs.settings_dialog import (
     GENERAL,
     HOTKEYS,
     MEETING_AFTER,
     RECORDING,
+    VOICE_MODEL,
     SettingsDialog,
 )
 from ui_qt.main_window import MainWindow
@@ -677,17 +677,13 @@ def capture() -> dict[str, Path]:
         saved["settings-after"] = save_widget(
             settings, PICTURES / "16b-settings-after-meeting.png"
         )
-        settings.hide()
-        settings.deleteLater()
-
-        manager = ModelManagerDialog(background_cache_scan=False, parent=window)
-        manager.show()
+        settings.select_destination(VOICE_MODEL)
         wait_ms(app, 240)
         saved["model-manager"] = save_widget(
-            manager, PICTURES / "17-model-manager.png"
+            settings, PICTURES / "17-settings-voice-model.png"
         )
-        manager.hide()
-        manager.deleteLater()
+        settings.hide()
+        settings.deleteLater()
 
         delete = MeetingDeleteDialog(window, has_audio=True)
         delete.resize(420, 240)

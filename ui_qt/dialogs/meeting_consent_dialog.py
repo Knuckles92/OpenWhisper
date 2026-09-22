@@ -95,7 +95,7 @@ class MeetingConsentDialog(QDialog):
             location = (
                 f"To do this, the meeting transcript text and the dashboard "
                 f"state are sent to {self.destination}, using the model "
-                f"chosen in Model Manager.\n\n"
+                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
                 "That destination is remote, so transcript text leaves this "
                 "computer."
             )
@@ -103,7 +103,7 @@ class MeetingConsentDialog(QDialog):
             location = (
                 f"To do this, the meeting transcript text and the dashboard "
                 f"state are sent to {self.destination}, using the model "
-                f"chosen in Model Manager.\n\n"
+                f"chosen in Settings → Meeting Mode → Intelligence.\n\n"
                 "That destination is on this computer, so transcript text "
                 "does not leave this machine."
             )

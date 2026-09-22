@@ -1,4 +1,4 @@
-"""Single-model row for the Model Manager dialog.
+"""Single-model row for Settings → Downloads.
 
 Shows one catalog model's identity (name, Hugging Face repo), its cache
 status (downloaded / active / downloading / not downloaded), its size
@@ -182,7 +182,7 @@ _ROW_STYLE = """
 
 
 class ModelRowWidget(QFrame):
-    """One row in the Model Manager's model list.
+    """One row in the Settings → Downloads model list.
 
     The row is "dumb": it renders the state handed to :meth:`update_state`
     and re-emits button clicks with its model name; all cache scanning and

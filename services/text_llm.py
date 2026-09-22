@@ -531,18 +531,24 @@ def create_openai_client(
     timeout: float = 15.0,
     api_key: Optional[str] = None,
     session_id: str = "",
+    max_retries: Optional[int] = None,
 ) -> OpenAI:
-    """Build a client, resolving credentials when no explicit key is supplied."""
+    """Build a client, resolving credentials when no explicit key is supplied.
+
+    ``max_retries`` of None keeps the SDK default (two retries).
+    """
     key = api_key or resolve_api_key(profile)
     if not key:
         raise RuntimeError(
             f"No API key found for {profile.name} (set {profile.api_key_env})"
         )
+    retries = {} if max_retries is None else {"max_retries": max_retries}
     return OpenAI(
         api_key=key,
         base_url=profile.base_url,
         default_headers=provider_headers(profile, session_id),
         timeout=timeout,
+        **retries,
     )
 
 

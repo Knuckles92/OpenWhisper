@@ -22,7 +22,7 @@ class TestKnowledgeFolderSettings(_DialogTestCase):
         return patch.object(
             settings_dialog_module, "settings_manager", isolated,
         ), patch.object(
-            settings_dialog_module.history_manager, "set_max_recordings",
+            settings_dialog_module.history_manager, "set_retention",
         )
 
     def test_load_save_and_clear_round_trip(self):

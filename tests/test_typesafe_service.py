@@ -8,7 +8,6 @@ from services.typesafe import (
     ChoiceAnswer,
     TypeSafeError,
     TypeSafeJudge,
-    sensitive_content_probability,
     validate_answers,
 )
 
@@ -133,21 +132,6 @@ class TestSettingsGating:
         assert isinstance(judge, TypeSafeJudge)
         assert seen["name"] == typesafe.CREDENTIAL_ENV
         assert judge.timeout_s == 1.0
-
-
-class TestSensitiveContent:
-    def test_sends_text_field_and_truncates(self):
-        transport = RecordingTransport(body={"answers": {"q": {"type": "noul", "noul": 0.97}}})
-        judge = TypeSafeJudge("k", transport=transport)
-        assert sensitive_content_probability(judge, "x" * 20_000) == 0.97
-        state = transport.calls[0][0]["state"]
-        assert set(state) == {"text"}
-        assert len(state["text"]) == typesafe._SENSITIVE_MAX_CHARS
-
-    def test_blank_text_is_not_sent(self):
-        transport = RecordingTransport(body={})
-        assert sensitive_content_probability(TypeSafeJudge("k", transport=transport), "   ") is None
-        assert transport.calls == []
 
 
 GOOD_VERIFY_BODY = {"answers": {"q": {"type": "noul", "noul": 1.0}}}

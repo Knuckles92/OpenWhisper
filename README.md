@@ -20,7 +20,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **Audio files:** Transcribe one file or a queue, keep results separate or combine them, and copy the output when ready.
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
 - **AI cleanup:** Apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
-- **Model Manager:** Select speech and text models; install local models and optional runtimes through Downloads.
+- **One Settings window:** An Overview of what is running, each model choice on the page for the feature it powers, local models and runtimes under Downloads, and Ctrl+K search across every setting, model, and help note.
 - **History:** Search, retranscribe, and export transcripts as Markdown, plain text, or JSON. See [export format support](docs/export-support.md) for what each format includes.
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
@@ -123,8 +123,8 @@ Use **Help → Check for Updates**. Windows applies an in-app update or opens se
 
 ## Get started
 
-1. Open **Model Manager** and choose a speech backend. New Windows x64 installs default to Parakeet; other platforms default to Local Whisper. Existing choices are preserved.
-2. Download the selected model and any required runtime through **Downloads**, or add an OpenAI key in **Settings → API keys** for cloud transcription.
+1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 installs default to Parakeet; other platforms default to Local Whisper. Existing choices are preserved.
+2. Download the selected model and any required runtime through **Settings → Downloads** (**Get models and runtimes** on the Voice model page opens it filtered to your engine), or add an OpenAI key in **Settings → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
@@ -156,31 +156,31 @@ On Linux, hotkeys also reach the focused app. Native Wayland limits global hotke
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU | Dictation, uploads, meetings with native preview |
 | OpenAI API | GPT-Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper | Cloud; API key and network required | Dictation, uploads |
 
-Local model weights and optional runtimes are separate downloads. **Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
+Local model weights and optional runtimes are separate downloads. **Settings → Downloads** shows model details and required components, and verifies component archives before installation. macOS transcription uses CPU; see [GPU acceleration](#gpu-acceleration) for Windows and Linux.
 
 ### AI cleanup and meeting intelligence
 
-Speech recognition and text processing use separate models. Choose cleanup models in **Model Manager → On-demand → Text cleanup**, and configure meeting models independently. Text providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints.
+Speech recognition and text processing use separate models. Choose the cleanup model on **Settings → AI cleanup** and the meeting model on **Settings → Intelligence**; each is set independently. Text providers include OpenAI, OpenRouter, Ollama, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints.
 
-Add credentials in **Settings → API keys**; they are stored in the OS credential store. Environment variables or a `.env` file provide a fallback when no key is saved: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`. Add custom endpoints in Model Manager. Ollama requires a separately managed server.
+Add credentials in **Settings → API keys**; they are stored in the OS credential store. Environment variables or a `.env` file provide a fallback when no key is saved: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENCODE_GO_API_KEY`, and `OPENCODE_ZEN_API_KEY`. Add custom endpoints from either chat-model picker. Ollama requires a separately managed server.
 
-Enable cleanup in **Settings → Cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for formats such as emails or support tickets. Meeting settings control intelligence, end-of-meeting processing, and dashboard sharing.
+Enable cleanup in **Settings → AI cleanup**, teach spelling and style in **Learned rules**, and use [Profiles](docs/cleanup-profiles.md) for formats such as emails or support tickets. Meeting settings control intelligence, end-of-meeting processing, and dashboard sharing.
 
 ### Offline use
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-**Settings → Advanced → Hugging Face Downloads** controls missing-model downloads: ask first (default), always allow, or never connect unless you approve a one-time override. Setting `HF_HUB_OFFLINE=1` before launch blocks model downloads entirely. This controls model downloads; cloud transcription and remote text providers still require a network connection.
+**Settings → Downloads → When a model is missing from this computer** controls missing-model downloads: ask first (default), always allow, or never connect unless you approve a one-time override. Setting `HF_HUB_OFFLINE=1` before launch blocks model downloads entirely. This controls model downloads; cloud transcription and remote text providers still require a network connection.
 
 <details>
 <summary>More screenshots</summary>
 
 <p align="center">
-  <img width="735" alt="Model Manager: voice, cleanup, and meeting models" src="docs/screenshots/01-model-manager-voice.png" />
+  <img width="735" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
 </p>
 
 <p align="center">
-  <img width="960" alt="Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
+  <img width="960" alt="Settings → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
 </p>
 
 <p align="center">

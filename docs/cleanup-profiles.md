@@ -21,7 +21,7 @@ When a recording is already running, pressing a profile shortcut stops that
 recording and keeps the format chosen at its start.
 
 Profiles always run AI cleanup, even when cleanup is off for standard dictation.
-They share the text model configured in **Model Manager → On-demand → Text cleanup**.
+They share the chat model configured in **Settings → AI cleanup**.
 Their output instructions replace the standard cleanup prompt. Learned rules are
 optional; the profile's format takes priority over conflicting formatting rules.
 Uploads and meetings use their existing settings.

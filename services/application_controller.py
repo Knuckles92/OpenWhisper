@@ -89,7 +89,7 @@ class ApplicationController(QObject):
     # threads) with (model_name, env_blocked, load_into_engine); the connected
     # slot shows the consent dialog on the Qt main thread. load_into_engine is
     # True for the selected-model flow (download + load) and False for
-    # Model Manager fetch-only downloads.
+    # Settings → Downloads fetch-only downloads.
     hf_consent_requested = pyqtSignal(str, bool, bool)
     runtime_consent_requested = pyqtSignal(str)
     model_download_started = pyqtSignal(str)
@@ -97,7 +97,7 @@ class ApplicationController(QObject):
     model_download_finished = pyqtSignal(str, bool)
     model_deleted = pyqtSignal(str, bool, str)
     model_cache_changed = pyqtSignal()
-    # Batched fetch-only downloads (Downloads window): the approved plan up
+    # Batched fetch-only downloads (Settings → Downloads): the approved plan up
     # front, then started/finished per model, then (completed, planned).
     batch_download_planned = pyqtSignal(list)
     batch_download_finished = pyqtSignal(int, int)
@@ -186,6 +186,12 @@ class ApplicationController(QObject):
         # sets it, so an API-only user (whose local model never loaded) is
         # never handed one by ``restore_local_engine``.
         self._engine_released_for_lease = False
+        # A restore that arrived while a reload was in flight. That reload
+        # normally loads the model, but its warmup runs outside the engine
+        # lock, so a lease can close the worker it just loaded; the reload's
+        # finish then restarts it. Guarded with _reload_in_flight's handoff.
+        self._restore_after_reload = False
+        self._reload_handoff_lock = threading.Lock()
         self._reload_timer = QTimer()
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._do_reload_whisper_model)
@@ -372,11 +378,35 @@ class ApplicationController(QObject):
         self.executor.submit(self._reload_worker)
 
     def _reload_worker(self) -> None:
+        warm = self._reload_selected_engine()
+        if warm is None:
+            return
+        # A fresh worker's first decode pays a one-time cost (see
+        # config.SPEECH_WARMUP_BACKENDS), so take it now instead of in the
+        # user's first dictation. The model is already published: a recording
+        # may start meanwhile, but its decode cannot begin before the hold
+        # and post-roll end, long after this ~0.3 s. It stays in the busy
+        # state so engine changes and runtime installs wait for a settled
+        # worker, and it finishes before the preview is set up, because the
+        # native-stream warmup takes the same decode lock on the Qt thread.
+        # It runs outside the engine lock so a Meeting Mode lease never
+        # waits for it: releasing the engine closes the worker and ends it.
+        try:
+            warm.warmup()
+        finally:
+            self._finish_speech_reload(warm)
+
+    def _reload_selected_engine(self) -> Optional[TranscriptionBackend]:
+        """Reload the selected engine under the engine lock.
+
+        Returns the optional speech engine that ``_reload_worker`` still has
+        to warm and finish, or None when the reload has finished here.
+        """
         with self._engine_lock:
             if self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
                 self._reload_in_flight = False
                 self.engine_busy_changed.emit(False)
-                return
+                return None
             from transcriber.optional_backend import LocalSpeechBackend
             from services.local_asr.catalog import BACKENDS
             selected = self.current_backend
@@ -385,32 +415,50 @@ class ApplicationController(QObject):
                 if other is not None and other is not selected:
                     other.cleanup()
             if isinstance(selected, LocalSpeechBackend):
+                warm = None
                 try:
                     selected.reload_model()
                     if selected is not self.current_backend:
                         selected.cleanup()
-                        return
+                        return None
                     self.device_info_update.emit(selected.device_info, selected.is_available())
                     self.status_update.emit(selected.device_info)
                     if selected.is_model_missing:
                         self.ensure_local_model_available()
+                    elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
+                        warm = selected
                 except Exception as exc:
                     self.status_update.emit(f"Engine load failed: {exc}")
                     self.device_info_update.emit(str(exc), False)
                 finally:
-                    self._reload_in_flight = False
-                    self.engine_busy_changed.emit(False)
-                    if selected is self.current_backend and not selected.is_available() and not selected.is_model_missing:
-                        self.runtime_consent_requested.emit(selected.model_name)
-                    # The preview shares this worker, so it can only be set up
-                    # once the load has settled.
-                    self._flush_pending_streaming_setup()
-                return
+                    if warm is None:
+                        self._finish_speech_reload(selected)
+                return warm
             if self._current_model_name == "local_whisper":
                 self._reload_whisper_worker()
             else:
                 self._reload_in_flight = False
                 self.engine_busy_changed.emit(False)
+            return None
+
+    def _finish_speech_reload(self, selected) -> None:
+        with self._reload_handoff_lock:
+            self._reload_in_flight = False
+            restore, self._restore_after_reload = self._restore_after_reload, False
+        unloaded = selected is self.current_backend and not selected.is_available()
+        if restore and unloaded and not self.is_meeting_active():
+            # A lease closed this worker during its warmup and was returned
+            # before the reload finished, so nothing else would load it again.
+            self._submit_restore_reload()
+            return
+        self.engine_busy_changed.emit(False)
+        # An engine a lease released is not missing its runtime.
+        leased = restore or self._engine_released_for_lease
+        if unloaded and not selected.is_model_missing and not leased:
+            self.runtime_consent_requested.emit(selected.model_name)
+        # The preview shares this worker, so it can only be set up
+        # once the load has settled.
+        self._flush_pending_streaming_setup()
 
     def _reload_whisper_worker(self) -> None:
         """Reload the local backend off the UI thread; report results via signals.
@@ -494,9 +542,16 @@ class ApplicationController(QObject):
         if not self._engine_released_for_lease:
             return
         self._engine_released_for_lease = False
-        if self._reload_in_flight:
-            # A reload already queued by another path will load the model.
-            return
+        with self._reload_handoff_lock:
+            if self._reload_in_flight:
+                # A reload already queued by another path will load the model;
+                # if the lease closed the worker it had loaded, its finish
+                # (_finish_speech_reload) restarts it.
+                self._restore_after_reload = True
+                return
+        self._submit_restore_reload()
+
+    def _submit_restore_reload(self) -> None:
         self._reload_in_flight = True
         self.engine_busy_changed.emit(True)
         self.status_update.emit("Reloading speech engine...")
@@ -839,7 +894,7 @@ class ApplicationController(QObject):
         return None
 
     def request_model_download(self, model_name: str) -> None:
-        """Fetch a model into the local cache via the consent flow (Model Manager).
+        """Fetch a model into the local cache via the consent flow (Settings → Downloads).
 
         Fetch-only: the download never changes the active model selection or
         touches the loaded engine (unless the model happens to be the missing
@@ -875,7 +930,7 @@ class ApplicationController(QObject):
             self.hf_consent_requested.emit(model_name, False, False)
 
     def request_model_batch_download(self, model_names: List[str]) -> None:
-        """Fetch several models back-to-back via the Downloads window.
+        """Fetch several models back-to-back via Settings → Downloads.
 
         The window's confirmation dialog acts as consent for every listed
         model, so no per-model consent dialogs appear; the worker grants
@@ -888,7 +943,7 @@ class ApplicationController(QObject):
             return
         if hf_access_coordinator.requests_in_flight:
             # Keep the app's one-download-at-a-time invariant even when the
-            # request came from another window (e.g. Model Manager).
+            # request came from somewhere else (e.g. a single-model download).
             self.status_update.emit(
                 "Another model request is in progress — try again when it finishes"
             )
@@ -908,7 +963,7 @@ class ApplicationController(QObject):
         self._batch_stop_requested = True
 
     def request_model_delete(self, model_name: str) -> None:
-        """Delete a model's files from the local HF cache (Model Manager).
+        """Delete a model's files from the local HF cache (Settings → Downloads).
 
         Refuses to delete the currently loaded model: ctranslate2 memory-maps
         the files, so removal would fail (Windows) or yank data out from under
@@ -1001,7 +1056,7 @@ class ApplicationController(QObject):
                 f"Model '{model_name}' is unavailable — download declined"
             )
             if load_into_engine:
-                # A declined Model Manager download must not touch the
+                # A declined Downloads-page download must not touch the
                 # selected model.
                 self._revert_declined_model_selection(model_name)
 
@@ -1312,7 +1367,7 @@ class ApplicationController(QObject):
             return
         self._runtime_prompted.add(component)
         if self.ui_controller.show_required_runtime_dialog(model_name, component):
-            self.ui_controller.open_downloads_dialog(component_id=component)
+            self.ui_controller.open_downloads(component_id=component)
             self.request_component_install(component)
 
     def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
@@ -1720,7 +1775,7 @@ class ApplicationController(QObject):
         )
         self.model_download_finished.connect(self._on_model_download_finished)
         self.model_deleted.connect(self.ui_controller.on_model_deleted)
-        self.model_cache_changed.connect(self.ui_controller.refresh_model_manager)
+        self.model_cache_changed.connect(self.ui_controller.refresh_model_views)
         self.model_cache_changed.connect(
             self.ui_controller.refresh_local_engine_controls
         )

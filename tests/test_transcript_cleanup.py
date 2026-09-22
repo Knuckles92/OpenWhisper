@@ -60,20 +60,28 @@ class TestTranscriptCleanup:
         assert result == "raw transcript"
 
     def test_timeout_override_is_sent_per_request(self):
+        """A long job gets its own timeout and keeps the batch retry budget."""
+        from config import config
+
         cleaner = TranscriptCleanup(api_key="test-key")
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = MagicMock(
+        batch_client = mock_client.with_options.return_value
+        batch_client.chat.completions.create.return_value = MagicMock(
             choices=[MagicMock(message=MagicMock(content="Done."))]
         )
         cleaner.client = mock_client
 
-        cleaner.cleanup("raw text", timeout_s=120.0)
+        assert cleaner.cleanup("raw text", timeout_s=120.0) == "Done."
 
-        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        mock_client.with_options.assert_called_once_with(
+            max_retries=config.TRANSCRIPT_BATCH_CLEANUP_MAX_RETRIES
+        )
+        kwargs = batch_client.chat.completions.create.call_args.kwargs
         assert kwargs["timeout"] == 120.0
+        mock_client.chat.completions.create.assert_not_called()
 
     def test_no_timeout_kwarg_when_not_overridden(self):
-        """The dictation path keeps the client-level timeout untouched."""
+        """The dictation path keeps the client-level timeout and retry cap."""
         cleaner = TranscriptCleanup(api_key="test-key")
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = MagicMock(
@@ -85,6 +93,7 @@ class TestTranscriptCleanup:
 
         kwargs = mock_client.chat.completions.create.call_args.kwargs
         assert "timeout" not in kwargs
+        mock_client.with_options.assert_not_called()
 
     def test_empty_model_response_falls_back_to_raw(self):
         cleaner = TranscriptCleanup(api_key="test-key")

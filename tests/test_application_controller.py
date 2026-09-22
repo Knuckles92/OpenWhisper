@@ -120,6 +120,7 @@ class FakeRecorder:
         self.cleaned_up = False
         self.last_start_error = None
         self.start_should_fail = False
+        self.capture_canceled = False
 
     def set_audio_level_callback(self, callback):
         self.audio_level_callback = callback
@@ -133,6 +134,7 @@ class FakeRecorder:
             self.last_start_error = self.last_start_error or "No audio device available"
             return False
         self.is_recording = True
+        self.capture_canceled = False
         return True
 
     def stop_recording(self):
@@ -154,6 +156,11 @@ class FakeRecorder:
 
     def clear_recording_data(self):
         pass
+
+    def cancel_recording(self):
+        self.capture_canceled = True
+        self.stop_recording()
+        self.clear_recording_data()
 
     def cleanup(self):
         self.cleaned_up = True
@@ -442,6 +449,8 @@ class DummyUIController:
         self.clipboard_stages = []
         self.clipboard_restores = []
         self.clipboard_commits = []
+        self.clipboard_prefetches = 0
+        self.clipboard_prefetch_discards = 0
         self.streaming_overlay_shown = 0
         self.streaming_overlay_hidden = 0
         self.consent_requests = []
@@ -554,7 +563,7 @@ class DummyUIController:
     def refresh_local_engine_controls(self):
         self.engine_controls_refreshes += 1
 
-    def refresh_model_manager(self):
+    def refresh_model_views(self):
         self.model_manager_refreshes += 1
 
     def on_component_progress(self, component_id, phase, done, total):
@@ -603,7 +612,7 @@ class DummyUIController:
     def set_engine_busy(self, busy):
         self.engine_busy_states.append(busy)
         if not busy:
-            self.refresh_model_manager()
+            self.refresh_model_views()
 
     def update_audio_levels(self, _levels):
         pass
@@ -629,6 +638,12 @@ class DummyUIController:
             return False
         self.copied.append(text)
         return True
+
+    def prefetch_clipboard_snapshot(self):
+        self.clipboard_prefetches += 1
+
+    def discard_clipboard_prefetch(self):
+        self.clipboard_prefetch_discards += 1
 
     def stage_transcript_for_paste(self, text):
         if not self.copy_succeeds:
@@ -2858,7 +2873,7 @@ class TestApplicationController:
         controller = self._create_controller()
         ui = controller.ui_controller
         ui.show_required_runtime_dialog = Mock(return_value=accepted)
-        ui.open_downloads_dialog = Mock()
+        ui.open_downloads = Mock()
         controller.request_component_install = Mock()
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
@@ -2866,7 +2881,7 @@ class TestApplicationController:
             controller._prompt_for_model_runtime('parakeet-v3')
         ui.show_required_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cpu')
         assert controller.request_component_install.call_count == int(accepted)
-        assert ui.open_downloads_dialog.call_count == int(accepted)
+        assert ui.open_downloads.call_count == int(accepted)
 
     @pytest.mark.parametrize('installing,offline', [(True, False), (False, True)])
     def test_required_runtime_prompt_skips_inflight_or_offline(self, installing, offline):
@@ -2900,7 +2915,7 @@ class TestApplicationController:
         controller._reload_in_flight = True
         ui = controller.ui_controller
         ui.show_required_runtime_dialog = Mock(side_effect=lambda *args: not controller._reload_in_flight)
-        ui.open_downloads_dialog = Mock()
+        ui.open_downloads = Mock()
         controller.request_component_install = Mock()
         with patch('services.local_asr.cache.is_cached', return_value=cached) as is_cached, \
                 patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \

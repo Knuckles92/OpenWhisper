@@ -53,16 +53,16 @@ class LocalEngineControls(QWidget):
         # two runtime knobs stay visibly secondary.
         layout.addWidget(engine_field("Model", self.model_combo,
             'The speech model turns audio into text. Larger models generally improve accuracy but need more memory and processing time. Use Downloads to install models for this backend.',
-            [('Open Model Manager → On-demand voice', 'ondemand'), ('Open Downloads', 'downloads')], self.help_requested.emit), stretch=2)
+            [('Open Settings → Voice model', 'ondemand'), ('Open Settings → Downloads', 'downloads')], self.help_requested.emit), stretch=2)
         layout.addWidget(engine_field("Device", self.device_combo,
             'Choose the hardware used for transcription. Auto picks an available device. CUDA uses a compatible NVIDIA graphics card for faster processing; CPU uses your main processor. Moonshine uses CPU only.',
-            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit), stretch=1)
+            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
         layout.addWidget(engine_field("Quant", self.compute_combo,
             'Controls how Whisper stores and calculates model numbers. Start with Auto. int8 uses less memory; float16 is suited to GPUs; float32 uses more memory. Lower precision may affect accuracy.',
-            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit), stretch=1)
+            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit), stretch=1)
         self.language_field = engine_field("Language", self.language_combo,
             'Choose English for English speech, or Auto to detect another language supported by the model. This transcribes speech in its original language; it does not translate. Moonshine supports English only.',
-            [('Open Model Manager → On-demand voice', 'ondemand')], self.help_requested.emit)
+            [('Open Settings → Voice model', 'ondemand')], self.help_requested.emit)
         layout.addWidget(self.language_field, stretch=1)
         self.language_field.hide()
 

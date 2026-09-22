@@ -1,6 +1,9 @@
-"""Qt tests for the Model Manager dialog's rail, destinations, and pickers.
+"""Qt tests for the model assignments Settings hosts on its feature pages.
 
-Catalog, download, and component behavior moved to ``test_downloads_dialog``.
+``ModelAssignments`` builds Voice model, Voice & speakers, Runtime, and the
+chat-model sections of AI cleanup and Intelligence. These tests host it in a
+minimal rail harness; ``test_settings_unified`` covers the real window.
+Catalog, download, and component behavior lives in ``test_settings_downloads``.
 """
 import pytest
 import os
@@ -9,7 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QScrollArea
+from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from services.hf_access import CachedModelInfo
 from services.settings import (
@@ -21,18 +24,56 @@ from services.settings import (
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
 )
-from ui_qt.dialogs import model_manager_dialog as dialog_module
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs.model_manager_dialog import (
-    MEETING_TEXT,
+from ui_qt.dialogs import settings_downloads as downloads_module
+from ui_qt.dialogs import settings_models as dialog_module
+from ui_qt.dialogs.settings_destinations import (
+    CLEANUP,
+    MEETING_INTELLIGENCE,
     MEETING_VOICE,
-    ONDEMAND_TEXT,
-    ONDEMAND_VOICE,
-    SHARED_RUNTIME,
-    ModelManagerDialog,
+    RUNTIME,
+    VOICE_MODEL,
 )
-from ui_qt.utils.theme_manager import ThemeManager
+from ui_qt.dialogs.settings_models import WHISPER_FILTER, ModelAssignments
 from ui_qt.widgets import text_model_picker as picker_module
+from ui_qt.widgets.nav_rail import NavRail
+
+# The rail keys these tests used when Model Manager was its own window.
+ONDEMAND_VOICE = VOICE_MODEL
+ONDEMAND_TEXT = CLEANUP
+MEETING_TEXT = MEETING_INTELLIGENCE
+SHARED_RUNTIME = RUNTIME
+
+
+class _Host(QWidget):
+    """The smallest stand-in for Settings: a rail, a message line, pages."""
+
+    def __init__(self, get_loaded_model):
+        super().__init__()
+        self.rail = NavRail(self)
+        for key in (VOICE_MODEL, CLEANUP, MEETING_VOICE, MEETING_INTELLIGENCE, RUNTIME):
+            self.rail.add_destination(key, key)
+        self.message_label = QLabel(self)
+        self.models = ModelAssignments(
+            self,
+            self.rail,
+            self.message_label,
+            get_loaded_model=get_loaded_model,
+            background_cache_scan=False,
+        )
+        self.pages = {}
+        for key, builder in (
+            (VOICE_MODEL, self.models.build_voice_page),
+            (CLEANUP, self.models.build_cleanup_model_section),
+            (MEETING_VOICE, self.models.build_meeting_voice_page),
+            (MEETING_INTELLIGENCE, self.models.build_meeting_model_section),
+            (RUNTIME, self.models.build_runtime_page),
+        ):
+            page = QWidget(self)
+            builder(QVBoxLayout(page))
+            self.pages[key] = page
+        self.rail.destination_changed.connect(self.models.on_destination_shown)
+        self.models.host = self
 
 
 def _cached(repo_id, size_bytes):
@@ -79,6 +120,28 @@ class _FakeSettings:
 
     def load_model_selection(self):
         return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")
+
+
+def _isolated_settings(isolated):
+    """Point every Settings module at one throwaway store."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for module in (settings_dialog_module, dialog_module, downloads_module):
+        stack.enter_context(patch.object(module, "settings_manager", isolated))
+    stack.enter_context(
+        patch.object(settings_dialog_module.history_manager, "set_retention")
+    )
+    stack.enter_context(
+        patch.object(dialog_module, "peek_cached_models", return_value={})
+    )
+    stack.enter_context(
+        patch.object(downloads_module, "scan_cached_models", return_value={})
+    )
+    stack.enter_context(
+        patch.object(dialog_module, "scan_cached_models", return_value={})
+    )
+    return stack
 
 
 class _DialogTestCase:
@@ -148,70 +211,14 @@ class _DialogTestCase:
         for patcher in patchers:
             patcher.start()
             self._started.append(patcher)
-        return ModelManagerDialog(
-            get_loaded_model=lambda: loaded_model,
-            background_cache_scan=False,
-        ), values
-
-
-class TestDialogShell(_DialogTestCase):
-    """The window is a fixed shell: every destination fits, nothing scrolls."""
-
-    def test_dialog_uses_resizable_default_that_fits_every_destination(self):
-        previous_stylesheet = self.app.styleSheet()
-        self.app.setStyleSheet(ThemeManager().stylesheet)
-        try:
-            dialog, _values = self._make_dialog()
-            dialog.show()
-            self.app.processEvents()
-
-            assert (dialog.width(), dialog.height()) == (980, 660)
-            assert (dialog.minimumWidth(), dialog.minimumHeight()) == (840, 620)
-            assert dialog.isSizeGripEnabled()
-            assert dialog.minimumSizeHint().height() <= dialog.height()
-
-            dialog.resize(900, 640)
-            self.app.processEvents()
-            assert (dialog.width(), dialog.height()) == (900, 640)
-        finally:
-            self.app.setStyleSheet(previous_stylesheet)
-
-    def test_no_destination_is_wrapped_in_a_scroll_area(self):
-        """The former design paid for its height with a page-level scroller."""
-        dialog, _values = self._make_dialog()
-        assert dialog.findChildren(QScrollArea) == []
-
-    def test_every_destination_fits_the_default_height(self):
-        previous_stylesheet = self.app.styleSheet()
-        self.app.setStyleSheet(ThemeManager().stylesheet)
-        try:
-            dialog, _values = self._make_dialog()
-            dialog.show()
-            self.app.processEvents()
-
-            for key in dialog.rail.keys():
-                dialog.rail.select(key)
-                self.app.processEvents()
-                page = dialog._pages[key]
-                assert page.sizeHint().height() <= page.height(), key
-        finally:
-            self.app.setStyleSheet(previous_stylesheet)
+        host = _Host(lambda: loaded_model)
+        host.models.refresh()
+        # Tests talk to the assignments directly; the host stays alive with them.
+        return host.models, values
 
 
 class TestRail(_DialogTestCase):
     """The rail lists every assignable thing and reports its current value."""
-
-    def test_rail_offers_five_grouped_destinations(self):
-        dialog, _values = self._make_dialog()
-        assert dialog.rail.keys() == (
-            ONDEMAND_VOICE,
-            ONDEMAND_TEXT,
-            MEETING_VOICE,
-            MEETING_TEXT,
-            SHARED_RUNTIME,
-        )
-        assert dialog.stack.count() == 5
-        assert dialog.rail.current_key() == ONDEMAND_VOICE
 
     def test_rail_items_show_the_value_each_destination_owns(self):
         dialog, _values = self._make_dialog(
@@ -219,8 +226,10 @@ class TestRail(_DialogTestCase):
             active_model="base",
         )
         assert dialog.rail.value(ONDEMAND_VOICE) == "Local Whisper · base"
-        assert dialog.rail.value(ONDEMAND_TEXT) == "OpenAI · gpt-test"
-        assert dialog.rail.value(MEETING_VOICE) == "auto"
+        # AI cleanup's rail value also says whether cleanup is on, so Settings
+        # composes it; the assignment reports the model half.
+        assert dialog.text_summary() == "OpenAI · gpt-test"
+        assert dialog.rail.value(MEETING_VOICE) == "auto · Detect automatically"
         assert dialog.rail.value(MEETING_TEXT) == (
             "OpenRouter · deepseek/test-model"
         )
@@ -247,69 +256,41 @@ class TestRail(_DialogTestCase):
         )
         assert dialog.rail.value(ONDEMAND_VOICE) == "API · gpt-transcribe"
 
-    def test_rail_footer_summarizes_the_cache_next_to_downloads(self):
-        dialog, _values = self._make_dialog(
-            cached={
-                BASE_REPO: _cached(BASE_REPO, 145_000_000),
-                TINY_REPO: _cached(TINY_REPO, 76_000_000),
-            }
-        )
-        text = dialog.cache_summary_label.text()
-        assert text.startswith("2 of ")
-        assert "221 MB" in text
-
-    def test_downloads_button_asks_the_controller_to_open_that_window(self):
+    def test_manage_downloads_links_open_downloads_filtered(self):
         dialog, _values = self._make_dialog()
         opened = []
-        dialog.downloads_requested.connect(lambda: opened.append(True))
-
-        dialog.downloads_button.click()
-
-        assert opened == [True]
-
-    def test_manage_downloads_link_reuses_the_same_request(self):
-        dialog, _values = self._make_dialog()
-        opened = []
-        dialog.downloads_requested.connect(lambda: opened.append(True))
+        dialog.downloads_requested.connect(opened.append)
 
         dialog.ondemand_whisper_picker.manage_button.click()
         dialog.meeting_whisper_picker.manage_button.click()
 
-        assert opened == [True, True]
+        assert opened == [WHISPER_FILTER, ""]
 
+    def test_get_models_filters_downloads_to_the_selected_engine(self):
+        dialog, _values = self._make_dialog(
+            extra_settings={SettingsKey.SELECTED_MODEL: "parakeet"}
+        )
+        opened = []
+        dialog.downloads_requested.connect(opened.append)
 
-class TestDestinationNavigation(_DialogTestCase):
-    """Deep links land on a destination and retitle the page."""
+        dialog.speech_download_button.click()
 
-    def test_show_text_selects_the_cleanup_destination(self):
-        dialog, _values = self._make_dialog()
-        dialog.show_text_tab()
+        assert opened == ["parakeet"]
 
-        assert dialog.rail.current_key() == ONDEMAND_TEXT
-        assert dialog.stack.currentWidget() is dialog._pages[ONDEMAND_TEXT]
-        assert dialog.page_title.text() == "On-demand text cleanup"
+    def test_voice_page_says_what_the_engine_has_on_this_computer(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        text = dialog.engine_inventory_label.text()
+        assert text.startswith("1 of ")
+        assert "Whisper models on this computer" in text
+        assert dialog.engine_inventory_row.isVisibleTo(dialog.host)
 
-    def test_show_meeting_selects_meeting_voice(self):
-        dialog, _values = self._make_dialog()
-        dialog.show_meeting_tab()
-
-        assert dialog.rail.current_key() == MEETING_VOICE
-        assert dialog.page_title.text() == "Meeting voice"
-
-    def test_show_runtime_selects_shared_runtime(self):
-        dialog, _values = self._make_dialog()
-        dialog.show_runtime()
-
-        assert dialog.rail.current_key() == SHARED_RUNTIME
-        assert dialog.page_title.text() == "Shared runtime"
-
-    def test_clicking_the_rail_swaps_the_page(self):
-        dialog, _values = self._make_dialog()
-        dialog.rail.select(MEETING_TEXT)
-
-        assert dialog.stack.currentWidget() is dialog._pages[MEETING_TEXT]
-        assert dialog.rail.is_selected(MEETING_TEXT)
-        assert not dialog.rail.is_selected(ONDEMAND_VOICE)
+    def test_cloud_engine_hides_the_on_this_computer_row(self):
+        dialog, _values = self._make_dialog(
+            extra_settings={SettingsKey.SELECTED_MODEL: "api"}
+        )
+        assert not dialog.engine_inventory_row.isVisibleTo(dialog.host)
 
 
 class TestTextModelPicker(_DialogTestCase):
@@ -421,9 +402,7 @@ class TestTextModelPicker(_DialogTestCase):
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "anthropic/claude-test"
         assert picker.model_combo.badge_text() == "Active"
-        assert dialog.rail.value(ONDEMAND_TEXT) == (
-            "OpenRouter · anthropic/claude-test"
-        )
+        assert dialog.text_summary() == "OpenRouter · anthropic/claude-test"
 
     def test_typed_model_id_persists_on_enter(self):
         dialog, values = self._make_text_dialog()
@@ -466,9 +445,7 @@ class TestTextModelPicker(_DialogTestCase):
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openrouter"
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "anthropic/claude-test"
         assert picker.model_combo.badge_text() == "Active"
-        assert dialog.rail.value(ONDEMAND_TEXT) == (
-            "OpenRouter · anthropic/claude-test"
-        )
+        assert dialog.text_summary() == "OpenRouter · anthropic/claude-test"
 
     def test_custom_endpoint_appears_and_activation_persists(self):
         dialog, values = self._make_dialog(
@@ -585,7 +562,7 @@ class TestMeetingDestinations(_DialogTestCase):
         dialog.meeting_whisper_picker.model_combo.setCurrentIndex(index)
 
         assert values[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
-        assert dialog.rail.value(MEETING_VOICE) == "tiny"
+        assert dialog.rail.value(MEETING_VOICE) == "tiny · Detect automatically"
 
     def test_meeting_llm_activation_persists_provider_and_model(self):
         dialog, values = self._make_meeting_dialog()
@@ -637,6 +614,7 @@ class TestMeetingDestinations(_DialogTestCase):
 
         assert values[SettingsKey.MEETING_LANGUAGE] == "en"
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.DIRECT
+        assert dialog.rail.value(MEETING_VOICE).endswith("· English")
 
     def test_speaker_id_combo_includes_off_and_persists(self):
         dialog, values = self._make_meeting_dialog()
@@ -777,7 +755,7 @@ class TestSharedRuntime(_DialogTestCase):
 
     def test_meeting_voice_names_the_shared_runtime_destination(self):
         dialog, _values = self._make_dialog()
-        assert "Shared" in dialog.meeting_runtime_label.text()
+        assert "Models & storage → Runtime" in dialog.meeting_runtime_label.text()
         assert "auto · auto" in dialog.meeting_runtime_label.text()
 
 
@@ -826,14 +804,10 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     ),
                 }
             )
-            with (
-                patch.object(settings_dialog_module, "settings_manager", isolated),
-                patch.object(
-                    settings_dialog_module.history_manager,
-                    "set_max_recordings",
-                ),
-            ):
-                dialog = settings_dialog_module.SettingsDialog()
+            with _isolated_settings(isolated):
+                dialog = settings_dialog_module.SettingsDialog(
+                    background_cache_scan=False
+                )
                 dialog.transcript_cleanup_check.toggle()
 
             saved = isolated.load_all_settings()
@@ -842,24 +816,19 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "high"
             assert saved[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT] == TranscriptCleanupModelSort.NEWEST
 
-    def test_cleanup_tab_links_to_model_manager(self):
+    def test_cleanup_page_hosts_the_chat_model_picker(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
-            with (
-                patch.object(settings_dialog_module, "settings_manager", isolated),
-                patch.object(
-                    settings_dialog_module.history_manager,
-                    "set_max_recordings",
-                ),
-            ):
-                dialog = settings_dialog_module.SettingsDialog()
-                requested = []
-                dialog.model_manager_requested.connect(requested.append)
-
-                dialog.open_model_manager_btn.click()
-
-                assert requested == ["text"]
-                assert dialog.result() != dialog.DialogCode.Accepted
+            with _isolated_settings(isolated):
+                dialog = settings_dialog_module.SettingsDialog(
+                    background_cache_scan=False
+                )
+                page = dialog._pages[CLEANUP]
+                picker = dialog.models.text_model_picker
+                assert page.isAncestorOf(picker)
+                assert page.isAncestorOf(dialog.models.cleanup_reasoning_combo)
+                assert dialog.cleanup_model_tile.isAncestorOf(picker)
+                assert not hasattr(dialog, "open_model_manager_btn")
 
     def test_saving_meeting_settings_preserves_model_keys(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -884,20 +853,14 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     ],
                 }
             )
-            with (
-                patch.object(settings_dialog_module, "settings_manager", isolated),
-                patch.object(
-                    settings_dialog_module.history_manager,
-                    "set_max_recordings",
-                ),
-            ):
-                dialog = settings_dialog_module.SettingsDialog()
-                summary = dialog.meeting_model_summary.text()
-                assert "Whisper · tiny" in summary
-                assert "Spoken language · French" in summary
-                assert "OpenAI · gpt-4o-mini" in summary
-                assert "Agent core · Direct" in summary
-                assert "Speaker ID · OpenAI" in summary
+            with _isolated_settings(isolated):
+                dialog = settings_dialog_module.SettingsDialog(
+                    background_cache_scan=False
+                )
+                assert dialog.rail.value(MEETING_VOICE) == "tiny · French"
+                assert dialog.rail.value(MEETING_INTELLIGENCE) == "OpenAI · gpt-4o-mini"
+                assert dialog.models.meeting_agent_core_label() == "Direct (no sidecar)"
+                assert dialog.models.speaker_id_is_remote()
                 dialog.meeting_end_polish_check.setChecked(
                     not dialog.meeting_end_polish_check.isChecked()
                 )
@@ -911,7 +874,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             assert saved[SettingsKey.MEETING_SPEAKER_ID_BACKEND] == MeetingSpeakerIdBackend.OPENAI
             assert saved[SettingsKey.TEXT_LLM_PROFILES][0]["id"] == "custom_abcd1234"
 
-    def test_settings_recap_shows_off_speaker_id(self):
+    def test_meeting_voice_detail_shows_off_speaker_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
             isolated.save_all_settings(
@@ -921,36 +884,24 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
                     ),
                 }
             )
-            with (
-                patch.object(settings_dialog_module, "settings_manager", isolated),
-                patch.object(
-                    settings_dialog_module.history_manager,
-                    "set_max_recordings",
-                ),
-            ):
-                dialog = settings_dialog_module.SettingsDialog()
-                assert "Speaker ID · Off (Me / Others)" in (
-                    dialog.meeting_model_summary.text()
+            with _isolated_settings(isolated):
+                dialog = settings_dialog_module.SettingsDialog(
+                    background_cache_scan=False
                 )
+                assert "Me / Others labels" in dialog.models.meeting_voice_detail()
 
-    def test_meeting_tab_links_to_model_manager(self):
+    def test_intelligence_page_hosts_the_meeting_picker_and_agent_core(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
-            with (
-                patch.object(settings_dialog_module, "settings_manager", isolated),
-                patch.object(
-                    settings_dialog_module.history_manager,
-                    "set_max_recordings",
-                ),
-            ):
-                dialog = settings_dialog_module.SettingsDialog()
-                requested = []
-                dialog.model_manager_requested.connect(requested.append)
-
-                dialog.open_meeting_model_manager_btn.click()
-
-                assert requested == ["meeting"]
-                assert dialog.result() != dialog.DialogCode.Accepted
+            with _isolated_settings(isolated):
+                dialog = settings_dialog_module.SettingsDialog(
+                    background_cache_scan=False
+                )
+                page = dialog._pages[MEETING_INTELLIGENCE]
+                assert page.isAncestorOf(dialog.models.meeting_model_picker)
+                assert page.isAncestorOf(dialog.models.meeting_agent_core_combo)
+                assert page.isAncestorOf(dialog.meeting_past_recall_tile)
+                assert not hasattr(dialog, "open_meeting_model_manager_btn")
 
 
 class TestApiModelSelection(_DialogTestCase):
@@ -979,7 +930,9 @@ class TestOptionalSpeechSummary(_DialogTestCase):
             SettingsKey.MEETING_ASR_MODEL: "moonshine-small",
         })
         assert dialog.rail.value(ONDEMAND_VOICE) == "Parakeet TDT 0.6B v3"
-        assert dialog.rail.value(MEETING_VOICE) == "Moonshine Streaming Small"
+        assert dialog.rail.value(MEETING_VOICE) == (
+            "Moonshine Streaming Small · Detect automatically"
+        )
         dialog.engine_combo.setCurrentIndex(dialog.engine_combo.findData("moonshine"))
         assert "Moonshine" in dialog.rail.value(ONDEMAND_VOICE)
 

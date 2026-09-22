@@ -1,7 +1,7 @@
-"""Qt tests for the Downloads window: catalog, filters, actions, inspector.
+"""Qt tests for Settings → Downloads: catalog, filters, actions, inspector.
 
-Split out of ``test_model_manager_dialog`` when the sixteen-row Whisper catalog
-moved out of the assignment surface.
+The page is built standalone here; ``test_settings_unified`` covers how the
+Settings window hosts it.
 """
 import os
 from unittest.mock import patch
@@ -25,10 +25,10 @@ from services.component_catalog import PI_HOME_URL, get_component_details
 from services.components import ComponentId, ComponentInfo, ComponentState
 from services.hf_access import CachedModelInfo, get_hf_cache_dir
 from services.settings import SettingsKey
-from ui_qt.dialogs import downloads_dialog as dialog_module
+from ui_qt.dialogs import settings_downloads as dialog_module
 from ui_qt.dialogs import component_details_dialog as component_dialog_module
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
-from ui_qt.dialogs.downloads_dialog import BatchDownloadDialog, DownloadsDialog
+from ui_qt.dialogs.settings_downloads import BatchDownloadDialog, DownloadsPage
 from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets import Button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
@@ -112,29 +112,30 @@ class _DialogTestCase:
         for patcher in patchers:
             patcher.start()
             self._started.append(patcher)
-        return DownloadsDialog(
+        page = DownloadsPage(
             get_loaded_model=lambda: loaded_model,
             background_cache_scan=False,
-        ), values
+        )
+        # Settings refreshes the page it hosts; standalone, the test does.
+        page.refresh()
+        return page, values
 
 
-class TestWindowShell(_DialogTestCase):
-    """The window is resizable; only the two content columns scroll."""
+class TestPageShell(_DialogTestCase):
+    """The page fills Settings' body; only the two content columns scroll."""
 
-    def test_default_and_minimum_size_allow_a_row_beside_the_inspector(self):
-        dialog, _values = self._make_dialog()
-        assert (dialog.width(), dialog.height()) == (1060, 680)
-        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (980, 560)
-        assert dialog.isSizeGripEnabled()
-        assert not dialog.isModal()
+    #: The body width Settings gives the page at its default window size.
+    SETTINGS_BODY = (1120 - 258 - 56, 560)
 
-    def test_rows_are_not_clipped_at_the_minimum_window_width(self):
+    def test_rows_are_not_clipped_at_the_settings_minimum_width(self):
+        from ui_qt.dialogs.settings_dialog import SettingsDialog
+
         previous_stylesheet = self.app.styleSheet()
         self.app.setStyleSheet(ThemeManager().stylesheet)
         try:
             dialog, _values = self._make_dialog()
             dialog.show()
-            dialog.resize(dialog.MINIMUM_SIZE)
+            dialog.resize(SettingsDialog.MINIMUM_SIZE.width() - 258 - 56, 480)
             self.app.processEvents()
 
             container = dialog.library_scroll_area.widget()
@@ -144,6 +145,48 @@ class TestWindowShell(_DialogTestCase):
             )
         finally:
             self.app.setStyleSheet(previous_stylesheet)
+
+    def test_inspector_docks_when_the_page_is_wide_enough(self):
+        dialog, _values = self._make_dialog()
+        dialog.show()
+        dialog.resize(1400, 640)
+        self.app.processEvents()
+
+        assert dialog.inspector_docked()
+        assert dialog.inspector.isVisible()
+        assert not dialog.inspector_close_button.isVisibleTo(dialog)
+
+    def test_narrow_page_floats_the_inspector_until_a_model_is_picked(self):
+        dialog, _values = self._make_dialog()
+        dialog.show()
+        dialog.resize(640, 560)
+        self.app.processEvents()
+
+        assert not dialog.inspector_docked()
+        assert not dialog.inspector.isVisible()
+
+        dialog.select_model("tiny")
+        self.app.processEvents()
+        assert dialog.inspector.isVisible()
+        assert dialog.inspector.property("overlay") is True
+        assert dialog.inspector_close_button.isVisibleTo(dialog)
+        catalog = dialog.catalog_column.geometry()
+        assert dialog.inspector.geometry().right() == catalog.right()
+
+        dialog.inspector_close_button.click()
+        assert not dialog.inspector.isVisible()
+
+    def test_widening_again_docks_the_inspector(self):
+        dialog, _values = self._make_dialog()
+        dialog.show()
+        dialog.resize(640, 560)
+        self.app.processEvents()
+        dialog.resize(1400, 640)
+        self.app.processEvents()
+
+        assert dialog.inspector_docked()
+        assert dialog.inspector.isVisible()
+        assert dialog.inspector.property("overlay") is False
 
     def test_only_the_catalog_and_inspector_body_scroll(self):
         dialog, _values = self._make_dialog()
@@ -162,6 +205,7 @@ class TestWindowShell(_DialogTestCase):
         try:
             dialog, _values = self._make_dialog()
             dialog.show()
+            dialog.resize(*self.SETTINGS_BODY)
             self.app.processEvents()
 
             def right_edge(widget):
@@ -248,7 +292,7 @@ class TestModelRows(_DialogTestCase):
         )
         row = dialog.rows["base"]
         assert not row.set_active_button.isVisibleTo(dialog)
-        assert row.usage_label.text() == "On-demand"
+        assert row.usage_label.text() == "Dictation"
         assert row.usage_label.isVisibleTo(dialog)
         assert not dialog.rows["tiny"].usage_label.isVisibleTo(dialog)
 
@@ -258,7 +302,7 @@ class TestModelRows(_DialogTestCase):
             active_model="base",
             meeting_model="base",
         )
-        assert dialog.rows["base"].usage_label.text() == "On-demand · Meetings"
+        assert dialog.rows["base"].usage_label.text() == "Dictation · Meetings"
 
     def test_loaded_model_delete_is_disabled(self):
         dialog, _values = self._make_dialog(
@@ -616,7 +660,7 @@ class TestInspector(_DialogTestCase):
         )
         dialog.select_model("base")
         dialog.refresh()
-        assert dialog.inspector_usage.text() == "On-demand"
+        assert dialog.inspector_usage.text() == "Dictation"
         assert dialog.inspector_usage.isVisibleTo(dialog)
 
     def test_representative_profiles_render_expected_facts(self):

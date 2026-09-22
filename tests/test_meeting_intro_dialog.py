@@ -33,8 +33,9 @@ class TestMeetingIntroDialog(unittest.TestCase):
         self.assertIn("live transcript", text.lower())
         self.assertIn("dashboard", text.lower())
         self.assertIn("cloud insights", text.lower())
-        self.assertIn("Settings → Meeting", text)
-        self.assertIn("Model Manager", text)
+        self.assertIn("Settings → Meeting Mode", text)
+        # Meeting models live on Settings pages now, not a separate window.
+        self.assertNotIn("Model Manager", text)
         self.assertIn("Skip anytime", text)
 
         skip = dialog.findChild(QPushButton, "meetingIntroSkipButton")

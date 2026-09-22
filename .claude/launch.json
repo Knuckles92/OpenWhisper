@@ -58,6 +58,21 @@
       "port": 8765
     },
     {
+      "name": "unified-settings-mockups",
+      "runtimeExecutable": "D:/coding/whisper_local/venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5621",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "D:/coding/whisper_local"
+      ],
+      "port": 5621,
+      "url": "http://127.0.0.1:5621"
+    },
+    {
       "name": "rail-lead-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

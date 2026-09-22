@@ -14,7 +14,10 @@ from services.settings import (
     SettingsKey,
     SettingsManager,
     resolve_max_saved_recordings,
+    resolve_max_saved_recordings_bytes,
 )
+
+MB = 1024 * 1024
 
 
 class TestResolveMaxSavedRecordings:
@@ -54,6 +57,61 @@ class TestResolveMaxSavedRecordings:
         }
         assert resolve_max_saved_recordings(settings) == config.MAX_SAVED_RECORDINGS
 
+    def test_size_limit_disables_count(self):
+        """Folder-size mode should not also apply the count limit."""
+        settings = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS: 5,
+        }
+        assert resolve_max_saved_recordings(settings) is None
+
+
+class TestResolveMaxSavedRecordingsBytes:
+    def test_default_has_no_size_limit(self):
+        """Missing settings keep the count default, so no size cap applies."""
+        assert resolve_max_saved_recordings_bytes({}) is None
+
+    def test_other_modes_have_no_size_limit(self):
+        for mode in (RecordingRetentionMode.KEEP_ALL, RecordingRetentionMode.CUSTOM):
+            settings = {
+                SettingsKey.RECORDING_RETENTION_MODE: mode,
+                SettingsKey.MAX_SAVED_RECORDINGS_MB: 50,
+            }
+            assert resolve_max_saved_recordings_bytes(settings) is None
+
+    def test_size_limit_converts_megabytes(self):
+        settings = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: 250,
+        }
+        assert resolve_max_saved_recordings_bytes(settings) == 250 * MB
+
+    def test_size_limit_defaults_to_config(self):
+        settings = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+        }
+        assert (
+            resolve_max_saved_recordings_bytes(settings)
+            == config.MAX_SAVED_RECORDINGS_MB * MB
+        )
+
+    def test_invalid_size_falls_back_to_config(self):
+        settings = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: "big",
+        }
+        assert (
+            resolve_max_saved_recordings_bytes(settings)
+            == config.MAX_SAVED_RECORDINGS_MB * MB
+        )
+
+    def test_size_clamps_to_at_least_one_megabyte(self):
+        settings = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: -3,
+        }
+        assert resolve_max_saved_recordings_bytes(settings) == MB
+
 
 class TestRecordingRotation:
     @pytest.fixture(autouse=True)
@@ -70,10 +128,10 @@ class TestRecordingRotation:
         os.rmdir(self.recordings_dir)
         os.rmdir(self.temp_dir)
 
-    def _touch_recording(self, stamp: str) -> str:
+    def _touch_recording(self, stamp: str, size: int = 4) -> str:
         path = os.path.join(self.recordings_dir, f"recording_{stamp}.wav")
         with open(path, "wb") as handle:
-            handle.write(b"RIFF")
+            handle.write(b"R" * size)
         return path
 
     @patch("services.history_manager.db")
@@ -108,8 +166,8 @@ class TestRecordingRotation:
         assert len(os.listdir(self.recordings_dir)) == 3
 
     @patch("services.history_manager.db")
-    def test_set_max_recordings_applies_immediately(self, _mock_db):
-        """Lowering the limit via set_max_recordings should rotate now."""
+    def test_set_retention_applies_immediately(self, _mock_db):
+        """Lowering the limit via set_retention should rotate now."""
         manager = HistoryManager(
             recordings_folder=self.recordings_dir,
             max_recordings=None,
@@ -118,10 +176,171 @@ class TestRecordingRotation:
         self._touch_recording("20260102_120000")
         self._touch_recording("20260103_120000")
 
-        manager.set_max_recordings(1)
+        manager.set_retention(1)
 
         remaining = os.listdir(self.recordings_dir)
         assert remaining == ["recording_20260103_120000.wav"]
+
+    @patch("services.history_manager.db")
+    def test_size_limit_keeps_newest_that_fit(self, mock_db):
+        """A folder-size cap should delete oldest files until the rest fit."""
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_bytes=250,
+        )
+        self._touch_recording("20260101_120000", size=100)
+        self._touch_recording("20260102_120000", size=100)
+        self._touch_recording("20260103_120000", size=100)
+        self._touch_recording("20260104_120000", size=100)
+
+        manager._rotate_recordings()
+
+        remaining = sorted(os.listdir(self.recordings_dir))
+        assert remaining == [
+            "recording_20260103_120000.wav",
+            "recording_20260104_120000.wav",
+        ]
+        cleared = sorted(
+            call.args[0] for call in mock_db.clear_history_audio_file.call_args_list
+        )
+        assert cleared == [
+            "recording_20260101_120000.wav",
+            "recording_20260102_120000.wav",
+        ]
+
+    @patch("services.history_manager.db")
+    def test_size_limit_exact_fit_keeps_everything(self, _mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_bytes=300,
+        )
+        self._touch_recording("20260101_120000", size=100)
+        self._touch_recording("20260102_120000", size=100)
+        self._touch_recording("20260103_120000", size=100)
+
+        manager._rotate_recordings()
+
+        assert len(os.listdir(self.recordings_dir)) == 3
+
+    @patch("services.history_manager.db")
+    def test_size_limit_always_keeps_newest(self, _mock_db):
+        """A recording bigger than the cap should survive if it is the newest."""
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_bytes=50,
+        )
+        self._touch_recording("20260101_120000", size=10)
+        self._touch_recording("20260102_120000", size=200)
+
+        manager._rotate_recordings()
+
+        assert os.listdir(self.recordings_dir) == ["recording_20260102_120000.wav"]
+
+    @patch("services.history_manager.db")
+    def test_count_and_size_limits_both_apply(self, _mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=3,
+            max_bytes=1000,
+        )
+        for day in range(1, 6):
+            self._touch_recording(f"2026010{day}_120000", size=100)
+
+        manager._rotate_recordings()
+
+        assert sorted(os.listdir(self.recordings_dir)) == [
+            "recording_20260103_120000.wav",
+            "recording_20260104_120000.wav",
+            "recording_20260105_120000.wav",
+        ]
+
+    @patch("services.history_manager.db")
+    def test_set_retention_switches_to_size_limit(self, _mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=10,
+        )
+        self._touch_recording("20260101_120000", size=100)
+        self._touch_recording("20260102_120000", size=100)
+        self._touch_recording("20260103_120000", size=100)
+
+        manager.set_retention(max_bytes=150)
+
+        assert manager.max_recordings is None
+        assert os.listdir(self.recordings_dir) == ["recording_20260103_120000.wav"]
+
+    @patch("services.history_manager.db")
+    def test_saving_rotates_by_size(self, _mock_db):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_bytes=150,
+        )
+        self._touch_recording("20260101_120000", size=100)
+        source = os.path.join(self.temp_dir, "new.wav")
+        with open(source, "wb") as handle:
+            handle.write(b"N" * 100)
+
+        saved = manager._save_recording(source)
+        os.remove(source)
+
+        assert os.listdir(self.recordings_dir) == [saved]
+
+    @patch("services.history_manager.settings_manager")
+    def test_explicit_limit_does_not_read_settings(self, mock_settings):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=4,
+        )
+
+        assert manager.max_recordings == 4
+        assert manager.max_bytes is None
+        mock_settings.load_all_settings.assert_not_called()
+
+    @patch("services.history_manager.settings_manager")
+    def test_omitted_limits_read_saved_size_policy(self, mock_settings):
+        mock_settings.load_all_settings.return_value = {
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: 64,
+        }
+
+        manager = HistoryManager(recordings_folder=self.recordings_dir)
+
+        assert manager.max_recordings is None
+        assert manager.max_bytes == 64 * MB
+        mock_settings.load_all_settings.assert_called_once()
+
+    @patch("services.history_manager.db")
+    def test_recordings_over_limit_previews_without_deleting(self, mock_db):
+        """The preview should name what rotation deletes, and delete nothing."""
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        self._touch_recording("20260101_120000", size=100)
+        self._touch_recording("20260102_120000", size=100)
+        self._touch_recording("20260103_120000", size=100)
+
+        preview = manager.recordings_over_limit(max_bytes=150)
+
+        assert [rec.filename for rec in preview] == [
+            "recording_20260102_120000.wav",
+            "recording_20260101_120000.wav",
+        ]
+        assert len(os.listdir(self.recordings_dir)) == 3
+        mock_db.clear_history_audio_file.assert_not_called()
+
+        manager.set_retention(max_bytes=150)
+        assert os.listdir(self.recordings_dir) == ["recording_20260103_120000.wav"]
+
+    def test_recordings_usage_totals_saved_audio(self):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        self._touch_recording("20260101_120000", size=30)
+        self._touch_recording("20260102_120000", size=70)
+
+        assert manager.get_recordings_usage() == (2, 100)
 
     @patch("services.history_manager.db")
     @patch("services.history_manager.datetime")
@@ -241,4 +460,15 @@ class TestRecordingRetentionPersistence:
         })
         loaded = self.manager.load_all_settings()
         assert resolve_max_saved_recordings(loaded) is None
+
+    def test_save_and_resolve_size_limit(self):
+        """Persisted folder-size retention should resolve to a byte cap."""
+        self.manager.save_all_settings({
+            SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.SIZE_LIMIT,
+            SettingsKey.MAX_SAVED_RECORDINGS: 15,
+            SettingsKey.MAX_SAVED_RECORDINGS_MB: 512,
+        })
+        loaded = self.manager.load_all_settings()
+        assert resolve_max_saved_recordings(loaded) is None
+        assert resolve_max_saved_recordings_bytes(loaded) == 512 * MB
 

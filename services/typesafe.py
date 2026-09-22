@@ -19,15 +19,18 @@ judgment at $0.042 per million (output tokens are free).
 """
 from __future__ import annotations
 
+import http.client
 import json
 import logging
+import select
+import ssl
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from services.credentials import resolve_credential
 from services.http_tls import verified_context
@@ -73,18 +76,125 @@ class JudgeUsage:
     last_latency_s: float = 0.0
 
 
-def _http_post(payload: Dict[str, Any], timeout_s: float, *, api_key: str,
-               endpoint: str) -> Tuple[int, str]:
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint, data=body, method="POST",
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "OpenWhisper",
-        },
-    )
+#: Idle connections kept per origin; meeting mode judges from a few threads.
+_POOL_MAX_IDLE = 4
+#: How long an idle connection stays eligible for reuse. The server held an
+#: idle connection open for over 7 minutes (September 22, 2026), so the risk
+#: is a NAT or firewall silently forgetting it: the next judgment would stall
+#: until its timeout and then come back as no judgment at all.
+#: Browsers keep idle connections for about two to five minutes.
+_POOL_IDLE_S = 115.0
+
+
+def _reused_wait_s(timeout_s: float) -> float:
+    """How long a reused connection may stay silent before it is given up.
+
+    A connection a NAT or firewall silently forgot still accepts the request
+    and then never answers. Judgments take 0.14-0.17 s median and under 0.3 s
+    at p95, so a reused connection gets half the budget (at least a second)
+    and the judgment goes out again on a fresh connection with what is left,
+    instead of the whole wait ending in no judgment at all.
+    """
+    return min(timeout_s, max(1.0, timeout_s / 2))
+
+
+#: A fresh connection's TCP and TLS handshake alone takes about 100 ms here,
+#: so a resend with less budget than this could not be answered in time.
+_FRESH_ATTEMPT_MIN_S = 0.1
+
+_Origin = Tuple[str, str, int]
+
+
+def _still_open(conn: http.client.HTTPConnection) -> bool:
+    """True when the peer has not closed an idle keep-alive connection.
+
+    Between requests the server has nothing to send, so a readable socket
+    means EOF or a reset, never an answer.
+    """
+    sock = conn.sock
+    if sock is None:
+        return False
+    try:
+        readable, _, _ = select.select([sock], [], [], 0)
+    except (OSError, ValueError):
+        return False
+    return not readable
+
+
+class _KeepAlivePool:
+    """Idle HTTP/1.1 connections per origin, shared by every judge in the process.
+
+    urllib sends ``Connection: close``, so every judgment paid a fresh TCP and
+    TLS handshake: 207 ms median against 112 ms over a reused connection (ten
+    sequential judgments, September 22, 2026). Several callers build
+    short-lived judges, so the pool lives at module level rather than on a
+    judge. A connection serves one request at a time; the lock guards the
+    idle lists, never a round trip.
+    """
+
+    def __init__(self, *, max_idle: int = _POOL_MAX_IDLE, idle_s: float = _POOL_IDLE_S,
+                 monotonic: Callable[[], float] = time.monotonic) -> None:
+        self._max_idle = max_idle
+        self._idle_s = idle_s
+        self._monotonic = monotonic
+        self._idle: Dict[_Origin, List[Tuple[http.client.HTTPConnection, float]]] = {}
+        self._lock = threading.Lock()
+
+    def acquire(self, origin: _Origin, timeout_s: float) -> Tuple[http.client.HTTPConnection, bool]:
+        """Return ``(connection, reused)``, preferring the most recent live idle one."""
+        while True:
+            with self._lock:
+                idle = self._idle.get(origin)
+                if not idle:
+                    break
+                conn, released = idle.pop()
+            if self._monotonic() - released < self._idle_s and _still_open(conn):
+                conn.timeout = timeout_s
+                conn.sock.settimeout(timeout_s)
+                return conn, True
+            conn.close()
+        scheme, host, port = origin
+        if scheme == "https":
+            return http.client.HTTPSConnection(
+                host, port, timeout=timeout_s, context=verified_context()), False
+        return http.client.HTTPConnection(host, port, timeout=timeout_s), False
+
+    def release(self, origin: _Origin, conn: http.client.HTTPConnection) -> None:
+        with self._lock:
+            idle = self._idle.setdefault(origin, [])
+            if len(idle) < self._max_idle:
+                idle.append((conn, self._monotonic()))
+                return
+        conn.close()
+
+    def discard(self, origin: _Origin) -> None:
+        """Close every idle connection to ``origin``, e.g. after the server restarted."""
+        with self._lock:
+            idle = self._idle.pop(origin, [])
+        for conn, _ in idle:
+            conn.close()
+
+
+_POOL = _KeepAlivePool()
+
+
+def _proxied(parts: urllib.parse.SplitResult) -> bool:
+    """True when the system routes this URL through a proxy.
+
+    Checked per request, as urllib did, so a proxy change applies to the next
+    judgment; the check costs about 45 us.
+    """
+    try:
+        return (bool(urllib.request.getproxies().get(parts.scheme))
+                and not urllib.request.proxy_bypass(parts.hostname or ""))
+    except Exception:
+        return True
+
+
+def _urlopen_post(endpoint: str, body: bytes, headers: Dict[str, str],
+                  timeout_s: float) -> Tuple[int, str]:
+    """One-shot request through urllib, which knows how to tunnel through a proxy."""
+    request = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(
             request, timeout=timeout_s, context=verified_context(),
@@ -93,6 +203,61 @@ def _http_post(payload: Dict[str, Any], timeout_s: float, *, api_key: str,
     except urllib.error.HTTPError as exc:
         # The body may echo the request; keep only the status.
         return exc.code, ""
+
+
+def _http_post(payload: Dict[str, Any], timeout_s: float, *, api_key: str,
+               endpoint: str) -> Tuple[int, str]:
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": "Bearer " + api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "OpenWhisper",
+    }
+    parts = urllib.parse.urlsplit(endpoint)
+    if parts.scheme not in ("http", "https") or not parts.hostname or _proxied(parts):
+        return _urlopen_post(endpoint, body, headers, timeout_s)
+    origin = (parts.scheme, parts.hostname,
+              parts.port or (443 if parts.scheme == "https" else 80))
+    target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    deadline = time.monotonic() + timeout_s
+    budget = timeout_s
+    retried = False
+    while True:
+        conn, reused = _POOL.acquire(origin, budget)
+        if reused:
+            conn.timeout = _reused_wait_s(budget)
+            conn.sock.settimeout(conn.timeout)
+        try:
+            conn.request("POST", target, body=body, headers=headers)
+            response = conn.getresponse()
+            data = response.read()
+        except (ConnectionError, ssl.SSLEOFError, TimeoutError):
+            conn.close()
+            if not reused or retried:
+                raise
+            # The server dropped an idle connection as this request went out,
+            # or a NAT forgot it and it went silent, so nothing was answered.
+            # A judgment has no side effects: send it once more on a fresh
+            # connection within the remaining budget, and drop idle siblings
+            # that probably died with it.
+            _POOL.discard(origin)
+            budget = deadline - time.monotonic()
+            if budget < _FRESH_ATTEMPT_MIN_S:
+                raise
+            retried = True
+            continue
+        except BaseException:
+            conn.close()
+            raise
+        if response.will_close:
+            conn.close()
+        else:
+            _POOL.release(origin, conn)
+        if not 200 <= response.status < 300:
+            # The body may echo the request; keep only the status.
+            return response.status, ""
+        return response.status, data.decode("utf-8", "replace")
 
 
 def validate_answers(body: Any, questions: Mapping[str, Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -147,7 +312,8 @@ class TypeSafeJudge:
     """Ask narrow typed questions; every failure returns ``None`` and is logged sparsely.
 
     Instances are safe to share between threads: each call is one blocking
-    HTTP round trip with its own timeout, and usage counters are locked.
+    HTTP round trip with its own timeout on a connection no other thread is
+    using, and usage counters are locked.
     """
 
     def __init__(self, api_key: str, *, model: str = MODEL,
@@ -325,30 +491,3 @@ def verify_key(api_key: str, *, timeout_s: float = VERIFY_TIMEOUT_S,
     except (ValueError, TypeSafeError) as exc:
         return False, f"{host} accepted the key but answered oddly: {exc}."
     return True, f"{host} accepted the key and {MODEL} answered."
-
-
-# -- dictation-side question -----------------------------------------------------
-
-#: Benchmarked September 18, 2026 on 884 real meeting segments plus authored
-#: positives: AUROC 0.9995, recall 0.96 and a 0.11% false-positive rate at 0.8.
-SENSITIVE_CONTENT_INSTRUCTIONS = (
-    "Does `text` contain information that should not be sent to a third-party "
-    "cloud service without review: passwords, keys or credentials; government, "
-    "bank or card numbers; health, disciplinary, salary or home-address details "
-    "about an identifiable person; or an explicit statement that the content is "
-    "confidential or privileged? Ordinary technical or business discussion is "
-    "not sensitive."
-)
-SENSITIVE_CONTENT_THRESHOLD = 0.8
-#: Dictation can be long; the judgment needs the content, not every word.
-_SENSITIVE_MAX_CHARS = 12_000
-
-
-def sensitive_content_probability(judge: TypeSafeJudge, text: str) -> Optional[float]:
-    """Probability that ``text`` holds credentials, identifiers or personal details."""
-    excerpt = (text or "").strip()
-    if not excerpt:
-        return None
-    if len(excerpt) > _SENSITIVE_MAX_CHARS:
-        excerpt = excerpt[:_SENSITIVE_MAX_CHARS]
-    return judge.noul({"text": excerpt}, SENSITIVE_CONTENT_INSTRUCTIONS)

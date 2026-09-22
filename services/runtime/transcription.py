@@ -12,8 +12,13 @@ from config import config
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.audio_processor import audio_processor
 from services.history_manager import history_manager
-from services.transcript_cleanup import CleanupInfo, TranscriptCleanup
+from services.transcript_cleanup import (
+    CANCELED_REASON,
+    CleanupInfo,
+    TranscriptCleanup,
+)
 from services.cleanup_profiles import find_cleanup_profile, compose_profile_prompt
+from services.incremental_dictation import IncrementalDictation
 from services.batch_upload import (
     BatchItemResult,
     BatchResult,
@@ -54,7 +59,6 @@ class TranscriptionRuntime:
 
     def __init__(self, controller: "ApplicationController"):
         self.controller = controller
-        self._transcript_cleanup = TranscriptCleanup()
         self._job_lock = threading.Lock()
         self._capture_lock = threading.RLock()
         self._job_active = False
@@ -62,6 +66,11 @@ class TranscriptionRuntime:
         # a cancel that lands between files of a batch would be lost; this
         # event outlives the individual calls.
         self._cancel_requested = threading.Event()
+        # The same event ends a cleanup request's wait, so a Cancel during
+        # "Cleaning up..." frees the job instead of waiting on the provider.
+        self._transcript_cleanup = TranscriptCleanup(
+            cancel_event=self._cancel_requested
+        )
         # Why the most recent cleanup pass fell back to raw text, or None.
         self._last_cleanup_failure: Optional[str] = None
         # Dictation lands in whatever application the hotkey was pressed in, so
@@ -71,6 +80,8 @@ class TranscriptionRuntime:
         self._deliver_to_clipboard = True
         self._recording_profile = None
         self._profile_settings = None
+        # Decodes a long dictation's completed windows while it is recorded.
+        self._incremental = IncrementalDictation()
 
     @property
     def has_active_job(self) -> bool:
@@ -133,17 +144,24 @@ class TranscriptionRuntime:
             self.controller.ui_controller.clear_transcription_stats()
             self.controller.ui_controller.main_window.clear_partial_transcription()
             self.controller.streaming_runtime.start_streaming_session()
+            self._incremental.start(self.controller)
             self.controller.recording_state_changed.emit(True)
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit(
                 f"Recording · {profile.name}..." if profile else "Recording..."
             )
+            # Auto-paste copies the user's clipboard so it can put it back.
+            # Take that copy while the user speaks instead of in front of the
+            # paste; it is queued to the Qt thread and never delays this start.
+            if settings_manager.get(SettingsKey.AUTO_PASTE, True):
+                self.controller.ui_controller.prefetch_clipboard_snapshot()
             return True
         else:
             reason = getattr(
                 self.controller.recorder, "last_start_error", None
             ) or "Could not open the audio stream"
             logger.error("Failed to start recording: %s", reason)
+            self.controller.ui_controller.discard_clipboard_prefetch()
             self.controller.recording_state_changed.emit(False)
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit(f"Failed to start recording: {reason}")
@@ -155,6 +173,12 @@ class TranscriptionRuntime:
             self._stop_recording()
 
     def _stop_recording(self) -> None:
+        if self.controller.recorder.capture_canceled is True:
+            # A cancel already discarded this capture and the stream is only
+            # closing; a stop now (the record hotkey, or a push-and-hold
+            # release) must not claim a job and transcribe what is left.
+            logger.info("Stop ignored: this recording was canceled")
+            return
         if self.controller._streaming_enabled:
             # Dismiss preview overlay immediately so the classic waveform
             # processing/transcribing states are the only post-stop UI.
@@ -202,11 +226,21 @@ class TranscriptionRuntime:
                 if not self.controller.recorder.wait_for_stop_completion():
                     logger.warning("Proceeding without confirmed post-roll completion")
             finally:
-                # Preview draining may decode the tail or wait for an in-flight
-                # window. Keep it off Qt and retain it for empty-result recovery.
+                # The window preview stops without decoding its unfinished
+                # window, so the final decode starts at once; that window is
+                # decoded only if the transcript comes back empty (see
+                # _complete_preview_fallback). A native stream still flushes
+                # here, which can block, so this stays off Qt.
                 self.controller._pending_streaming_text = (
                     self.controller.streaming_runtime.stop_streaming_session()
                 )
+
+            if self._cancel_requested.is_set():
+                # Cancel landed during post-roll: _cancel_recording discarded
+                # the capture, and transcribing what is left would paste audio
+                # the user had just thrown away.
+                self._abandon_canceled_job("during post-roll")
+                return
 
             if not self.controller.recorder.has_recording_data():
                 logger.error("No recording data available")
@@ -239,6 +273,12 @@ class TranscriptionRuntime:
                 f"Quick Record · {self._recording_profile.name}"
                 if self._recording_profile else "Quick Record"
             )
+
+            if self._cancel_requested.is_set():
+                # Cancel landed while the preview stopped or the WAV saved,
+                # when no engine was running for _cancel to interrupt.
+                self._abandon_canceled_job("before transcription")
+                return
 
             logger.info(
                 "Transcription started. Duration: "
@@ -306,10 +346,15 @@ class TranscriptionRuntime:
             self.controller.status_update.emit("Canceled")
 
     def _cancel_recording(self) -> None:
+        if self.has_active_job:
+            # Only a stop claims the job while the recorder still runs, so this
+            # is post-roll; finish_recording_job checks the flag before saving.
+            self._cancel_requested.set()
         self.controller.streaming_runtime.cancel_streaming_session()
+        self._incremental.discard()
         self.controller.recording_state_changed.emit(False)
-        self.controller.recorder.stop_recording()
-        self.controller.recorder.clear_recording_data()
+        self.controller.recorder.cancel_recording()
+        self.controller.ui_controller.discard_clipboard_prefetch()
         self._recording_profile = None
         self._profile_settings = None
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
@@ -719,7 +764,9 @@ class TranscriptionRuntime:
             return
 
         status = "Ready"
-        if result.cleanup_error:
+        if result.cleanup_error == CANCELED_REASON:
+            status += " — AI cleanup canceled; showing raw text"
+        elif result.cleanup_error:
             status += (
                 f" — AI cleanup failed ({result.cleanup_error}); showing raw text"
             )
@@ -751,7 +798,7 @@ class TranscriptionRuntime:
         if not enabled or not raw or not raw.strip():
             return raw, None, None
 
-        # Re-apply provider/model each run so Model Manager changes take effect
+        # Re-apply provider/model each run so Settings model changes take effect
         # without restarting (a provider switch rebuilds the client).
         self._transcript_cleanup.configure(
             resolve_transcript_cleanup_provider(settings),
@@ -811,16 +858,63 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
             self.controller.status_update.emit("Transcribing...")
             self.controller._transcription_start_time = time.time()
-            raw = self.controller.current_backend.transcribe(audio_path)
+            raw = self._incremental.transcribe(self.controller.current_backend, audio_path)
             self.controller._transcription_elapsed = (
                 time.time() - self.controller._transcription_start_time
             )
             self.controller._transcription_start_time = None
+            self._complete_preview_fallback(audio_path, raw)
+            self._raise_if_canceled()
             fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            self._raise_if_canceled()
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
+
+    def _abandon_canceled_job(self, stage: str) -> None:
+        """Release a dictation job canceled before any transcript existed.
+
+        ``_cancel`` already showed the canceled state, so this only drops what
+        the job still holds: its early-decode session, the clipboard snapshot
+        taken for the paste, and the pending metadata.
+        """
+        logger.info("Dictation canceled %s; nothing transcribed", stage)
+        self._incremental.discard()
+        self.controller.ui_controller.discard_clipboard_prefetch()
+        self._clear_pending_audio_metadata()
+        self._finish_job()
+
+    def _raise_if_canceled(self) -> None:
+        """Stop a job whose cancel arrived while no engine was decoding.
+
+        When the engine is idle (queued behind a preview window, already
+        finished, or the cleanup HTTP call is running), ``_cancel`` can only
+        set the flag and show "Canceled". Checked before cleanup, so canceled
+        text never reaches a cleanup provider, and after it: the flag ends
+        cleanup's wait early with the raw text, which must not be pasted into
+        whatever has focus. The message matches the one an engine raises
+        when canceled mid-decode, so both end the same way.
+        """
+        if self._cancel_requested.is_set():
+            raise RuntimeError("Transcription canceled")
+
+    def _complete_preview_fallback(self, audio_path: str, raw: str) -> None:
+        """Finish the live preview's text when this dictation came back empty.
+
+        on_transcription_complete reads the preview only for an empty final
+        transcript, so the recording job stopped the preview without decoding
+        its last partial window and that window is decoded here, on this
+        worker, for just that case. Uploads and retranscriptions never stopped
+        a preview of their own; their _pending_audio_path is None.
+        """
+        if (raw or "").strip() or self._cancel_requested.is_set():
+            return
+        if self.controller._pending_audio_path != audio_path:
+            return
+        text = self.controller.streaming_runtime.finalize_streaming_text()
+        if text:
+            self.controller._pending_streaming_text = text
 
     def _transcribe_split(self, audio_path: str) -> str:
         """Split a large file and transcribe the chunks; caller cleans temp files."""
@@ -849,7 +943,10 @@ class TranscriptionRuntime:
                 time.time() - self.controller._transcription_start_time
             )
             self.controller._transcription_start_time = None
+            self._complete_preview_fallback(audio_path, raw)
+            self._raise_if_canceled()
             fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+            self._raise_if_canceled()
             self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
         except Exception as exc:
             logger.error(f"Large audio transcription failed: {exc}")
@@ -868,6 +965,10 @@ class TranscriptionRuntime:
         raw_text: Optional[str] = None,
         cleanup_info: Optional[CleanupInfo] = None,
     ) -> None:
+        if self._deliver_to_clipboard and self._cancel_requested.is_set():
+            # The cancel arrived between the worker's emit and this slot.
+            self.on_transcription_error("Transcription canceled")
+            return
         is_empty = not (transcript or "").strip()
         preview = ""
         if is_empty:
@@ -920,29 +1021,31 @@ class TranscriptionRuntime:
             self.controller.ui_controller.set_status(
                 EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
             )
+            self.controller.ui_controller.discard_clipboard_prefetch()
             self._clear_pending_audio_metadata()
             self._finish_job()
             return
 
-        try:
-            history_manager.add_entry(
-                text=transcript,
-                model=self._model_info_for_history(),
-                source_audio_path=self.controller._pending_audio_path,
-                transcription_time=transcription_time,
-                audio_duration=self.controller._pending_audio_duration,
-                file_size=self.controller._pending_file_size,
-                raw_text=raw_text,
-                cleanup_provider=cleanup_info.provider if cleanup_info else None,
-                cleanup_model=cleanup_info.model if cleanup_info else None,
-                source_name=source_name,
-            )
-            self.controller.ui_controller.refresh_history()
-            logger.info("Transcription saved to history")
-        except Exception as exc:
-            logger.error(f"Failed to save transcription to history: {exc}")
-        finally:
-            self._clear_pending_audio_metadata()
+        def _save_history() -> None:
+            try:
+                history_manager.add_entry(
+                    text=transcript,
+                    model=self._model_info_for_history(),
+                    source_audio_path=self.controller._pending_audio_path,
+                    transcription_time=transcription_time,
+                    audio_duration=self.controller._pending_audio_duration,
+                    file_size=self.controller._pending_file_size,
+                    raw_text=raw_text,
+                    cleanup_provider=cleanup_info.provider if cleanup_info else None,
+                    cleanup_model=cleanup_info.model if cleanup_info else None,
+                    source_name=source_name,
+                )
+                self.controller.ui_controller.refresh_history()
+                logger.info("Transcription saved to history")
+            except Exception as exc:
+                logger.error(f"Failed to save transcription to history: {exc}")
+            finally:
+                self._clear_pending_audio_metadata()
 
         cleanup_notice = (
             f" — {self._recording_profile.name} formatting failed "
@@ -950,14 +1053,25 @@ class TranscriptionRuntime:
             if self._recording_profile and self._last_cleanup_failure else ""
         )
         if not self._deliver_to_clipboard:
+            _save_history()
             self.controller.ui_controller.set_status("Ready" + cleanup_notice)
             self._finish_job()
             return
 
+        # Paste first: persisting copies the WAV into Recordings (with an
+        # fsync), may prune the oldest one, and inserts the row, which held
+        # the paste keystroke back 5-8 ms installed and ~90 ms on a cold
+        # source run. History sets no status, so the paste outcome stays the
+        # visible one. The target reads the clipboard after the keystroke,
+        # while this thread saves; stage_text hands the text to Windows first
+        # so a Win32 reader need not wait (OLE readers such as Office still do).
         try:
             self._apply_clipboard_and_paste(transcript, status_suffix=cleanup_notice)
         finally:
-            self._finish_job()
+            try:
+                _save_history()
+            finally:
+                self._finish_job()
 
     def _clear_pending_audio_metadata(self) -> None:
         """Drop one-shot metadata attached to the current transcription job."""
@@ -1037,6 +1151,9 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.schedule_clipboard_restore(stage)
             return
 
+        # Only a paste consumes the clipboard snapshot prefetched when the
+        # recording started (auto-paste may have been turned off since).
+        self.controller.ui_controller.discard_clipboard_prefetch()
         should_copy = copy_clipboard or paste_blocked
         copy_ok = False
         if should_copy:
@@ -1083,6 +1200,7 @@ class TranscriptionRuntime:
         self.controller.overlay_state_update.emit(OverlayState.NONE)
         self.controller._transcription_start_time = None
         self.controller._transcription_elapsed = None
+        self.controller.ui_controller.discard_clipboard_prefetch()
         self._clear_pending_audio_metadata()
         self._finish_job()
 

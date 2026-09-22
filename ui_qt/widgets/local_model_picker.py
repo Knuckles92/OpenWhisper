@@ -1,4 +1,4 @@
-"""Compact local-Whisper assignment control for Model Manager mode pages."""
+"""Compact local-Whisper assignment control for the Settings model pages."""
 from typing import Dict, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -18,8 +18,8 @@ from ui_qt.widgets.no_wheel import ElidingComboBox
 class LocalModelPicker(QWidget):
     """Assign a local Whisper model from ``auto`` plus downloaded sizes.
 
-    The Downloads window owns download and delete. Each Model Manager
-    destination uses this picker to choose which cached model it should load.
+    Settings → Downloads owns download and delete. Each Settings model
+    page uses this picker to choose which cached model it should load.
     """
 
     model_changed = pyqtSignal(str)

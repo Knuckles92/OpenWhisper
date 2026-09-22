@@ -25,13 +25,18 @@ from ui_qt.dialogs.settings_dialog import (
     CLEANUP,
     CLEANUP_RULES,
     CLEANUP_PROFILES,
+    DOWNLOADS,
     GENERAL,
     HOTKEYS,
     MEETING_AFTER,
     MEETING_DASHBOARD,
     MEETING_INTELLIGENCE,
     MEETING_FAST,
+    MEETING_VOICE,
+    OVERVIEW,
     RECORDING,
+    RUNTIME,
+    VOICE_MODEL,
     SettingsDialog,
 )
 from ui_qt.utils.font_scale import apply_ui_font_scale, current_ui_font_scale_percent
@@ -51,24 +56,36 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog = SettingsDialog()
         try:
             self.assertIsInstance(dialog.rail, NavRail)
+            # Grouped by feature, under an Overview landing page.
             self.assertEqual(
                 dialog.rail.keys(),
                 (
-                    GENERAL,
+                    OVERVIEW,
+                    VOICE_MODEL,
                     RECORDING,
                     CLEANUP,
                     CLEANUP_RULES,
                     CLEANUP_PROFILES,
+                    MEETING_VOICE,
                     MEETING_INTELLIGENCE,
                     MEETING_FAST,
                     MEETING_AFTER,
                     MEETING_DASHBOARD,
-                    API_KEYS,
+                    DOWNLOADS,
+                    RUNTIME,
+                    GENERAL,
                     HOTKEYS,
+                    API_KEYS,
                     ADVANCED,
                 ),
             )
+            self.assertEqual(dialog.rail.current_key(), OVERVIEW)
             for key in dialog.rail.keys():
+                if key == DOWNLOADS:
+                    # Its catalog list is the page's own scroller.
+                    self.assertNotIn(key, dialog._page_scrolls)
+                    self.assertIs(dialog._pages[key].parentWidget(), dialog.stack)
+                    continue
                 scroll = dialog._page_scrolls[key]
                 self.assertIs(scroll.widget(), dialog._pages[key])
                 self.assertTrue(scroll.widgetResizable())
@@ -151,12 +168,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             helpers = recording.findChildren(WrappedLabel)
             self.assertGreaterEqual(len(helpers), 2)
             cleanup = dialog._pages[CLEANUP]
-            # The AI-cleanup switch plus the TypeSafe sensitivity gate.
-            self.assertEqual(len(cleanup.findChildren(SettingTile)), 2)
-            self.assertIs(
-                dialog.cleanup_sensitivity_gate_check,
-                dialog.cleanup_sensitivity_gate_tile.checkbox,
-            )
+            # Only the AI-cleanup switch.
+            self.assertEqual(len(cleanup.findChildren(SettingTile)), 1)
             self.assertEqual(len(cleanup.findChildren(FieldTile)), 1)
             self.assertEqual(len(cleanup.findChildren(InfoTile)), 1)
             self.assertIs(
@@ -186,8 +199,12 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             )
             self.assertEqual(len(intelligence.findChildren(InfoTile)), 1)
             self.assertIs(
-                dialog.meeting_model_summary.parentWidget(),
+                dialog.models.meeting_model_picker.parentWidget(),
                 dialog.meeting_model_tile.body,
+            )
+            self.assertIs(
+                dialog.models.text_model_picker.parentWidget(),
+                dialog.cleanup_model_tile.body,
             )
             api_keys = dialog._pages[API_KEYS]
             self.assertEqual(len(api_keys.findChildren(FieldTile)), 1)
@@ -212,11 +229,12 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 dialog.meeting_redecode_coverage_guard_check,
                 dialog.meeting_redecode_coverage_guard_tile.checkbox,
             )
-            self.assertEqual(len(advanced.findChildren(FieldTile)), 1)
+            self.assertEqual(len(advanced.findChildren(FieldTile)), 0)
             self.assertIs(
                 dialog.developer_mode_check, dialog.developer_mode_tile.checkbox
             )
-            self.assertIs(dialog.hf_policy_tile.control, dialog.hf_policy_combo)
+            # The Hugging Face policy sits next to the catalog it governs.
+            self.assertTrue(dialog.downloads.isAncestorOf(dialog.hf_policy_combo))
             hotkeys = dialog._pages[HOTKEYS]
             shortcut_cards = [
                 card
@@ -275,9 +293,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             ):
                 self.assertFalse(tile.isEnabled())
             self.assertFalse(dialog.cleanup_rule_add_btn.isEnabled())
-            # The model summary stays live so Model Manager is still reachable.
+            # The chat model stays editable so it can be set up before turning
+            # cleanup on.
             self.assertTrue(dialog.cleanup_model_tile.isEnabled())
-            self.assertTrue(dialog.open_model_manager_btn.isEnabled())
+            self.assertTrue(dialog.models.text_model_picker.isEnabled())
             self.assertFalse(dialog.cleanup_rules_gate_tile.isHidden())
             self.assertTrue(dialog.cleanup_rules_gate_tile.isEnabled())
             self.assertTrue(dialog.open_cleanup_btn.isEnabled())
@@ -343,8 +362,17 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     with self.subTest(size=size, page=key):
                         self.assertEqual(dialog.size(), size)
                         self.assertEqual(dialog.minimumSize(), SettingsDialog.MINIMUM_SIZE)
-                        scroll = dialog._page_scrolls[key]
                         page = dialog._pages[key]
+                        if key not in dialog._page_scrolls:
+                            # Downloads fills the stack and scrolls its list.
+                            self.assertGreaterEqual(
+                                page.height(), page.minimumSizeHint().height()
+                            )
+                            self.assertLessEqual(
+                                page.geometry().bottom(), dialog.stack.height()
+                            )
+                            continue
+                        scroll = dialog._page_scrolls[key]
                         self.assertEqual(page.width(), scroll.viewport().width())
                         self.assertGreaterEqual(page.height(), page.minimumSizeHint().height())
                         self.assertTrue(dialog.rect().contains(
@@ -370,6 +398,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             dialog = SettingsDialog()
         try:
             dialog.show()
+            # The window floor keeps two columns; the reflow itself is what
+            # this test pins down, so let the body get narrow enough for one.
+            dialog.setMinimumSize(0, 0)
+            dialog.select_destination(GENERAL)
             for width in (1200, 800, 1200):
                 dialog.resize(width, 600)
                 for _ in range(8):

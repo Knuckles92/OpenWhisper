@@ -268,7 +268,8 @@ class MainWindow(QMainWindow):
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
     settings_requested = pyqtSignal()
-    model_manager_requested = pyqtSignal(str)
+    #: A Settings destination key (or legacy alias) to open.
+    settings_destination_requested = pyqtSignal(str)
     engine_help_requested = pyqtSignal(str)
     hotkeys_requested = pyqtSignal()
     about_requested = pyqtSignal()
@@ -429,7 +430,7 @@ class MainWindow(QMainWindow):
             tab.live_preview_changed.connect(self._on_live_preview_changed)
             tab.help_requested.connect(self.engine_help_requested)
             tab.engine_downloads_requested.connect(
-                lambda: self.model_manager_requested.emit("engine_downloads")
+                lambda: self.settings_destination_requested.emit("engine_downloads")
             )
             tab.transcription_collapsed.connect(self._on_transcription_collapsed)
             tab.stats_widget.visibility_changed.connect(self._on_stats_visibility_changed)
@@ -486,27 +487,6 @@ class MainWindow(QMainWindow):
         QWidget#footerBar {
             background-color: @bg;
             border-top: 1px solid @border-subtle;
-        }
-    """
-
-    _MODELS_BUTTON_STYLE = """
-        QPushButton#modelsButton {
-            background-color: @surface;
-            color: @success-text;
-            border: 1px solid @border;
-            border-radius: 8px;
-            padding: 6px 18px;
-            font-weight: 600;
-            font-size: 13px;
-        }
-        QPushButton#modelsButton:hover {
-            background-color: @success;
-            color: @on-accent;
-            border: 1px solid @success;
-        }
-        QPushButton#modelsButton:pressed {
-            background-color: @success-pressed;
-            color: @on-accent;
         }
     """
 
@@ -584,20 +564,6 @@ class MainWindow(QMainWindow):
         footer_layout.setSpacing(0)
         footer_layout.addStretch()
 
-        self.models_button = QPushButton("Model Manager")
-        self.models_button.setObjectName("modelsButton")
-        self.models_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.models_button.setFixedHeight(34)
-        self.models_button.setMinimumWidth(130)
-        self.models_button.setStyleSheet(self._MODELS_BUTTON_STYLE)
-        self.models_button.setToolTip(
-            "Browse, download, and activate voice and text models"
-        )
-        self.models_button.clicked.connect(self.open_model_manager)
-        footer_layout.addWidget(self.models_button)
-
-        footer_layout.addSpacing(10)
-
         self.tray_button = Button("Minimize to Tray")
         self.tray_button.setObjectName("trayButton")
         self.tray_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -618,7 +584,9 @@ class MainWindow(QMainWindow):
         self.settings_button.setFixedHeight(34)
         self.settings_button.setMinimumWidth(100)
         self.settings_button.setStyleSheet(self._SETTINGS_BUTTON_STYLE)
-        self.settings_button.setToolTip("Open Settings")
+        self.settings_button.setToolTip(
+            "Settings, models, and downloads (starts on the Overview)"
+        )
         self.settings_button.clicked.connect(self.open_settings)
         footer_layout.addWidget(self.settings_button)
 
@@ -648,8 +616,6 @@ class MainWindow(QMainWindow):
         # rewrites the label to "Preferences" on Windows. Keep our wording.
         settings_action = file_menu.addAction("Settings", self.open_settings)
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
-        models_action = file_menu.addAction("Model Manager...", self.open_model_manager)
-        models_action.setMenuRole(QAction.MenuRole.NoRole)
         downloads_action = file_menu.addAction("Downloads...", self.open_downloads)
         downloads_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
@@ -1026,13 +992,9 @@ class MainWindow(QMainWindow):
         logger.info("Opening settings dialog")
         self.settings_requested.emit()
 
-    def open_model_manager(self):
-        logger.info("Opening model manager")
-        self.model_manager_requested.emit("ondemand")
-
     def open_downloads(self):
-        logger.info("Opening downloads")
-        self.model_manager_requested.emit("downloads")
+        logger.info("Opening Settings on Downloads")
+        self.settings_destination_requested.emit("downloads")
 
     def open_hotkey_settings(self):
         logger.info("Opening hotkey settings")
@@ -1100,7 +1062,6 @@ class MainWindow(QMainWindow):
             self.history_sidebar.hide()
             self.title_bar.title_label.hide()
             self.title_bar.maximize_btn.hide()
-            self.models_button.hide()
 
             self.setMinimumSize(0, 0)
             self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
@@ -1124,7 +1085,6 @@ class MainWindow(QMainWindow):
             self.history_sidebar.show()
             self.title_bar.title_label.show()
             self.title_bar.maximize_btn.show()
-            self.models_button.show()
 
             if self._full_geometry is not None:
                 self.setGeometry(self._full_geometry)

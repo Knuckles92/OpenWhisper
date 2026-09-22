@@ -1,4 +1,4 @@
-"""Single-column endpoint + model picker for Model Manager destinations.
+"""Single-column endpoint + model picker for the Settings chat-model sections.
 
 The picker is stacked vertically because it lives inside a rail destination
 that must fit the window without scrolling. Provider prose that used to sit in

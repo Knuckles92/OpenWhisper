@@ -508,5 +508,15 @@ class TestLazyDatabaseManager:
         lazy.close()
 
 
+def test_suite_keeps_the_database_out_of_the_checkout():
+    from config import config
+    from services.database import db
+
+    repo_database = os.path.abspath("openwhisper.db")
+    assert os.path.abspath(config.DATABASE_FILE) != repo_database
+    assert os.path.abspath(db.db_path) != repo_database
+    assert os.path.abspath(config.HISTORY_FILE) != os.path.abspath("transcription_history.json")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

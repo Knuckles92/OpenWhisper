@@ -5,7 +5,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QPushButton
 
 from config import config
 from services.settings import SettingsKey, settings_manager
@@ -102,7 +102,6 @@ class TestMainWindowCompactMode:
         assert self.window.compact_controller.isVisibleTo(self.window)
         assert not self.window.tabbed_content.isVisibleTo(self.window)
         assert not self.window.history_edge_tab.isVisibleTo(self.window)
-        assert not self.window.models_button.isVisibleTo(self.window)
         assert self.window.settings_button.text() == "Settings"
 
         self.window.set_compact_mode(False)
@@ -110,7 +109,6 @@ class TestMainWindowCompactMode:
         assert not self.window._compact_mode
         assert self.window.geometry() == full_geometry
         assert self.window.tabbed_content.isVisibleTo(self.window)
-        assert self.window.models_button.isVisibleTo(self.window)
         assert self.window.settings_button.text() == "Settings"
 
     def test_missing_system_tray_disables_tray_only_controls(self):
@@ -131,15 +129,15 @@ class TestMainWindowCompactMode:
 
         assert event.isAccepted()
 
-    def test_footer_model_manager_button_opens_manager(self):
-        """Footer Model Manager button uses the existing open signal path."""
-        opened = []
-        self.window.model_manager_requested.connect(lambda: opened.append(True))
-
-        self.window.models_button.click()
-
-        assert opened == [True]
-        assert self.window.models_button.text() == "Model Manager"
+    def test_footer_has_one_settings_entry_point(self):
+        """Models and downloads live in Settings, so the footer has no second door."""
+        assert not hasattr(self.window, "models_button")
+        labels = [
+            button.text()
+            for button in self.window.footer.findChildren(QPushButton)
+        ]
+        assert "Model Manager" not in labels
+        assert "Settings" in labels
 
     def test_footer_settings_button_opens_settings(self):
         """Footer Settings button uses the existing open signal path."""
@@ -152,9 +150,11 @@ class TestMainWindowCompactMode:
         assert self.window.settings_button.text() == "Settings"
 
     def test_file_menu_downloads_opens_downloads(self):
-        """File → Downloads uses the existing downloads signal path."""
+        """File → Downloads opens Settings on its Downloads destination."""
         opened = []
-        self.window.model_manager_requested.connect(opened.append)
+        self.window.settings_destination_requested.connect(opened.append)
+        file_menu = self.window.title_bar.menu_bar.actions()[0].menu()
+        assert "Model Manager..." not in [a.text() for a in file_menu.actions()]
 
         file_menu = self.window.title_bar.menu_bar.actions()[0].menu()
         downloads_action = next(
@@ -276,7 +276,6 @@ class TestMainWindowCompactMode:
         assert last_tab.right() < tab_bar.width()
 
         buttons = (
-            self.window.models_button,
             self.window.tray_button,
             self.window.settings_button,
             self.window.quit_button,

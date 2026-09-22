@@ -33,7 +33,13 @@ from ui_qt.main_window import MainWindow
 from ui_qt.overlays import WaveformOverlay
 from ui_qt.system_tray import SystemTrayManager
 from ui_qt.dialogs.app_update_dialog import AppUpdateDialog
-from ui_qt.dialogs.settings_dialog import GENERAL, HOTKEYS, CLEANUP_PROFILES, SettingsDialog
+from ui_qt.dialogs.settings_dialog import (
+    CLEANUP_PROFILES,
+    DOWNLOADS,
+    HOTKEYS,
+    OVERVIEW,
+    SettingsDialog,
+)
 from ui_qt.utils.font_scale import apply_ui_font_scale, apply_ui_theme
 from ui_qt.widgets import TabbedContentWidget
 from ui_qt.widgets.transcription_progress import stage_for_overlay_state
@@ -175,9 +181,7 @@ class UIController(QObject):
         self._meeting_active = False
         self._meeting_urls: dict = {}
 
-        self._model_manager_dialog = None
         self._settings_dialog = None
-        self._downloads_dialog = None
         self._download_progress_dialog = None
 
         self.cancel_animation_timer = QTimer()
@@ -195,7 +199,9 @@ class UIController(QObject):
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
-        self.main_window.model_manager_requested.connect(self.open_model_manager_dialog)
+        self.main_window.settings_destination_requested.connect(
+            self.open_settings_destination
+        )
         self.main_window.hotkeys_requested.connect(self.open_hotkey_settings)
         self.main_window.about_requested.connect(self.show_about_dialog)
         self.main_window.check_for_updates_requested.connect(
@@ -287,8 +293,8 @@ class UIController(QObject):
         logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.refresh_engine_selection()
+        if self._settings_dialog is not None:
+            self._settings_dialog.models.refresh_engine_selection()
 
     def _on_whisper_engine_changed(self):
         """Handle a local-engine (model/device/quant) change from the main GUI.
@@ -428,9 +434,9 @@ class UIController(QObject):
     def set_engine_busy(self, busy: bool):
         """Disable/enable the inline local-engine combos during a reload.
 
-        When the engine becomes idle again, refresh the Model Manager so its
-        Delete lock tracks the newly loaded model — not the previous one left
-        from the pre-reload refresh after Set Active.
+        When the engine becomes idle again, refresh the model pages so the
+        Downloads Delete lock tracks the newly loaded model — not the previous
+        one left from the pre-reload refresh after Set Active.
 
         Args:
             busy: True to disable combos while the engine reloads, else False.
@@ -438,7 +444,7 @@ class UIController(QObject):
         self.main_window.quick_record_tab.set_engine_busy(busy)
         self.main_window.upload_file_tab.set_engine_busy(busy)
         if not busy:
-            self.refresh_model_manager()
+            self.refresh_model_views()
 
     def set_transcription_stats(
         self,
@@ -574,6 +580,14 @@ class UIController(QObject):
         """Copy text to the Qt clipboard. Returns True if the write succeeded."""
         return self._temporary_clipboard.write_text(text)
 
+    def prefetch_clipboard_snapshot(self) -> None:
+        """Snapshot the user's clipboard now, off the paste path. Any thread."""
+        self._temporary_clipboard.request_prefetch()
+
+    def discard_clipboard_prefetch(self) -> None:
+        """Drop the snapshot a recording prefetched without pasting. Any thread."""
+        self._temporary_clipboard.discard_prefetch()
+
     def stage_transcript_for_paste(self, text: str) -> ClipboardStageResult:
         return self._temporary_clipboard.stage_text(text)
 
@@ -635,10 +649,10 @@ class UIController(QObject):
         self.main_window.restore_from_tray()
 
     def open_settings_dialog(self, focus_hf_policy: bool = False):
-        """Show the non-modal Settings window (single instance, re-raised).
+        """Show the non-modal Settings window on its Overview (re-raised).
 
         Args:
-            focus_hf_policy: When True, open Advanced with the Hugging Face
+            focus_hf_policy: When True, open Downloads with the Hugging Face
                 download-policy control focused (used by the consent dialog's
                 "Open Settings" action).
         """
@@ -647,7 +661,7 @@ class UIController(QObject):
         if focus_hf_policy:
             dialog.focus_hf_policy()
         else:
-            dialog.select_destination(GENERAL)
+            dialog.select_destination(OVERVIEW)
         self._raise_dialog(dialog)
 
     def open_engine_help_destination(self, destination: str) -> None:
@@ -657,7 +671,7 @@ class UIController(QObject):
             dialog.focus_api_keys("OPENAI_API_KEY")
             self._raise_dialog(dialog)
         elif destination in ("ondemand", "downloads"):
-            self.open_model_manager_dialog(destination)
+            self.open_settings_destination(destination)
 
     def open_hotkey_settings(self) -> None:
         """Show the singleton Settings window on its Hotkeys destination."""
@@ -702,16 +716,38 @@ class UIController(QObject):
         dialog.on_recording_trigger_mode_changed = (
             self._on_settings_recording_trigger_mode_changed
         )
+        models = dialog.models
+        models.on_set_active_requested = self._on_manager_set_active
+        models.on_backend_changed = self.select_transcription_backend
+        models.on_runtime_settings_changed = self._on_manager_runtime_changed
+        downloads = dialog.downloads
+        downloads.on_download_requested = self.on_model_download_requested
+        downloads.on_delete_requested = self.on_model_delete_requested
+        downloads.on_batch_download_requested = self.on_model_batch_download
+        downloads.on_batch_cancel_requested = self.request_model_batch_stop
         return dialog
 
     def _ensure_settings_dialog(self):
         if self._settings_dialog is None:
-            dialog = SettingsDialog(self.main_window)
-            dialog.model_manager_requested.connect(
-                self.open_model_manager_dialog
+            dialog = SettingsDialog(
+                self.main_window, get_loaded_model=self._loaded_local_model
+            )
+            downloads = dialog.downloads
+            downloads.component_install_requested.connect(
+                self.on_component_install_requested
+            )
+            downloads.component_cancel_requested.connect(
+                self.on_component_cancel_requested
+            )
+            downloads.component_remove_requested.connect(
+                self.on_component_remove_requested
             )
             self._settings_dialog = dialog
         return self._settings_dialog
+
+    def _loaded_local_model(self) -> Optional[str]:
+        """The model the engine has loaded, read when Settings asks."""
+        return self.get_loaded_local_model() if self.get_loaded_local_model else None
 
     def refresh_local_engine_controls(self):
         """Re-sync the inline local-engine combos with the persisted settings.
@@ -749,7 +785,7 @@ class UIController(QObject):
         """A key was saved or removed: rebuild clients, then redraw key status."""
         if self.on_api_keys_changed:
             self.on_api_keys_changed()
-        self.refresh_model_manager()
+        self.refresh_model_views()
 
     def show_hf_consent_dialog(
         self, model_name: str, policy: str, env_blocked: bool = False
@@ -778,83 +814,39 @@ class UIController(QObject):
         dialog = RequiredRuntimeDialog(model_name, component_id, parent=self.main_window)
         return dialog.exec() == dialog.DialogCode.Accepted
 
-    def open_model_manager_dialog(self, tab: str = "ondemand"):
-        """Show the non-modal Model Manager (single instance, re-raised).
+    def open_settings_destination(self, name: str = OVERVIEW):
+        """Show Settings on one destination (single instance, re-raised).
 
         Args:
-            tab: Rail destination alias — ``\"ondemand\"``, ``\"text\"``,
-                ``\"meeting\"``, or ``\"runtime\"``. ``\"downloads\"`` and the
-                legacy ``\"library\"`` / ``\"voice\"`` open the Downloads
-                window, which now owns the catalog and components.
-                ``"engine_downloads"`` also focuses the selected engine's
-                missing runtime, when one has been reported.
+            name: A destination key, or a name the retired Model Manager and
+                Downloads windows used: ``"ondemand"``, ``"text"``,
+                ``"meeting"``, ``"runtime"``, ``"downloads"``, or
+                ``"engine_downloads"``, which also focuses the selected
+                engine's missing runtime when one has been reported.
         """
-        if tab == "engine_downloads":
+        if name == "engine_downloads":
             component_id = (
                 self.get_missing_local_runtime()
                 if self.get_missing_local_runtime else None
             )
-            self.open_downloads_dialog(component_id=component_id)
+            self.open_downloads(component_id=component_id)
             return
-        if tab in ("downloads", "library", "voice"):
-            self.open_downloads_dialog()
-            return
-
-        dialog = self._ensure_model_manager_dialog()
+        dialog = self._prepare_settings_dialog()
         dialog.refresh()
-        if tab == "text":
-            dialog.show_text_tab()
-        elif tab == "meeting":
-            dialog.show_meeting_tab()
-        elif tab == "runtime":
-            dialog.show_runtime()
+        if name == "text":
+            dialog.focus_cleanup_model()
         else:
-            dialog.show_ondemand_tab()
+            dialog.select_destination(name)
         self._raise_dialog(dialog)
 
-    def _ensure_model_manager_dialog(self):
-        from ui_qt.dialogs.model_manager_dialog import ModelManagerDialog
-
-        if self._model_manager_dialog is None:
-            dialog = ModelManagerDialog(
-                get_loaded_model=self.get_loaded_local_model,
-                parent=self.main_window,
-            )
-            dialog.on_set_active_requested = self._on_manager_set_active
-            dialog.on_backend_changed = self.select_transcription_backend
-            dialog.on_runtime_settings_changed = self._on_manager_runtime_changed
-            dialog.downloads_requested.connect(self.open_downloads_dialog)
-            self._model_manager_dialog = dialog
-        return self._model_manager_dialog
-
-    def open_downloads_dialog(self, component_id: Optional[str] = None):
-        """Show the non-modal Downloads window (single instance, re-raised)."""
-        from ui_qt.dialogs.downloads_dialog import DownloadsDialog
-
-        if self._downloads_dialog is None:
-            dialog = DownloadsDialog(
-                get_loaded_model=self.get_loaded_local_model,
-                parent=self.main_window,
-            )
-            dialog.on_download_requested = self.on_model_download_requested
-            dialog.on_delete_requested = self.on_model_delete_requested
-            dialog.on_batch_download_requested = self.on_model_batch_download
-            dialog.on_batch_cancel_requested = self.request_model_batch_stop
-            dialog.component_install_requested.connect(
-                self.on_component_install_requested
-            )
-            dialog.component_cancel_requested.connect(
-                self.on_component_cancel_requested
-            )
-            dialog.component_remove_requested.connect(
-                self.on_component_remove_requested
-            )
-            self._downloads_dialog = dialog
-
-        self._downloads_dialog.refresh()
-        self._raise_dialog(self._downloads_dialog)
+    def open_downloads(self, component_id: Optional[str] = None):
+        """Show Settings on Downloads, optionally focused on one component."""
+        dialog = self._prepare_settings_dialog()
+        dialog.refresh()
+        dialog.select_destination(DOWNLOADS)
+        self._raise_dialog(dialog)
         if component_id:
-            self._downloads_dialog.focus_component(component_id)
+            dialog.downloads.focus_component(component_id)
 
     @staticmethod
     def _raise_dialog(dialog) -> None:
@@ -880,7 +872,7 @@ class UIController(QObject):
             self.on_whisper_settings_changed()
 
     def _on_manager_set_active(self, model_name: str):
-        """Persist a Model Manager Whisper assignment and reload the engine.
+        """Persist a dictation Whisper assignment and reload the engine.
 
         Identical contract to ``LocalEngineControls._on_changed``: write the
         setting, re-sync the inline combos (signal-safe), then fire the same
@@ -893,56 +885,56 @@ class UIController(QObject):
         if self.on_whisper_settings_changed:
             self.on_whisper_settings_changed()
 
-    def refresh_model_manager(self):
-        if self._model_manager_dialog is not None and self._model_manager_dialog.isVisible():
-            self._model_manager_dialog.refresh()
-        if self._downloads_dialog is not None and self._downloads_dialog.isVisible():
-            self._downloads_dialog.refresh()
+    def refresh_model_views(self):
+        """Re-read model assignments and downloads while Settings is open."""
+        dialog = self._settings_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.refresh_models()
+
+    def _settings_parts(self):
+        """Settings' model pages and Downloads page, once Settings exists."""
+        dialog = self._settings_dialog
+        if dialog is None:
+            return None, None
+        return dialog.models, dialog.downloads
 
     def on_model_download_started(self, model_name: str):
         self.main_window.quick_record_tab.set_model_downloading(model_name, True)
         self.main_window.upload_file_tab.set_model_downloading(model_name, True)
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.set_downloading(model_name)
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.set_downloading(model_name)
-        downloads_visible = (
-            self._downloads_dialog is not None
-            and self._downloads_dialog.isVisible()
-        )
-        manager_visible = (
-            self._model_manager_dialog is not None
-            and self._model_manager_dialog.isVisible()
-        )
-        if not downloads_visible and not manager_visible:
+        models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.set_downloading(model_name)
+            models.set_downloading(model_name)
+        # Settings shows its own progress (the Downloads row and rail value).
+        if self._settings_dialog is None or not self._settings_dialog.isVisible():
             self._show_download_progress(model_name)
 
     def on_model_download_progress(self, model_name: str, done: int, total: int):
-        if self._downloads_dialog is not None and hasattr(
-            self._downloads_dialog, "set_download_progress"
-        ):
-            self._downloads_dialog.set_download_progress(model_name, done, total)
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.set_download_progress(model_name, done, total)
+        models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.set_download_progress(model_name, done, total)
+            models.set_download_progress(model_name, done, total)
         self._update_download_progress(model_name, done, total)
 
     def on_model_download_finished(self, model_name: str, success: bool):
         self.main_window.quick_record_tab.set_model_downloading(model_name, False)
         self.main_window.upload_file_tab.set_model_downloading(model_name, False)
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.finish_download(model_name, success)
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.finish_download(model_name, success)
+        models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.finish_download(model_name, success)
+            models.finish_download(model_name, success)
         self._hide_download_progress()
-        self.refresh_model_manager()
+        self.refresh_model_views()
 
     def on_model_batch_planned(self, model_names):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.begin_batch(list(model_names))
+        _models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.begin_batch(list(model_names))
 
     def on_model_batch_finished(self, completed: int, planned: int):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.finish_batch(completed, planned)
+        _models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.finish_batch(completed, planned)
 
     def request_model_batch_stop(self):
         if self.on_model_batch_stop:
@@ -991,10 +983,10 @@ class UIController(QObject):
             dialog.close()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.show_delete_result(model_name, success, error)
-            self._downloads_dialog.refresh()
-        self.refresh_model_manager()
+        _models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.show_delete_result(model_name, success, error)
+        self.refresh_model_views()
 
     def on_component_install_requested(self, component_id: str):
         if self.on_component_install:
@@ -1011,26 +1003,23 @@ class UIController(QObject):
     def on_component_progress(
         self, component_id: str, phase: str, done: int, total: int
     ):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.set_component_progress(
-                component_id, phase, done, total
-            )
+        _models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.set_component_progress(component_id, phase, done, total)
 
     def on_component_state_changed(self):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.refresh_components()
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.refresh_component_state()
+        models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.refresh_components()
+            models.refresh_component_state()
 
     def on_component_install_finished(
         self, component_id: str, success: bool, message: str
     ):
-        if self._downloads_dialog is not None:
-            self._downloads_dialog.finish_component_install(
-                component_id, success, message
-            )
-        if self._model_manager_dialog is not None:
-            self._model_manager_dialog.refresh_component_state()
+        models, downloads = self._settings_parts()
+        if downloads is not None:
+            downloads.finish_component_install(component_id, success, message)
+            models.refresh_component_state()
 
     def ensure_meeting_platform_ack(self) -> bool:
         """Clear platform access gates before Meeting Mode opens or starts.

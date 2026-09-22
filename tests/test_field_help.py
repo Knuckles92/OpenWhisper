@@ -84,13 +84,13 @@ def test_help_routes_to_the_named_page(destination):
     controller = SimpleNamespace(
         _prepare_settings_dialog=MagicMock(return_value=dialog),
         _raise_dialog=MagicMock(),
-        open_model_manager_dialog=MagicMock(),
+        open_settings_destination=MagicMock(),
     )
     UIController.open_engine_help_destination(controller, destination)
     if destination == "api_keys":
         dialog.focus_api_keys.assert_called_once_with("OPENAI_API_KEY")
         controller._raise_dialog.assert_called_once_with(dialog)
-        controller.open_model_manager_dialog.assert_not_called()
+        controller.open_settings_destination.assert_not_called()
     else:
-        controller.open_model_manager_dialog.assert_called_once_with(destination)
+        controller.open_settings_destination.assert_called_once_with(destination)
         controller._prepare_settings_dialog.assert_not_called()
