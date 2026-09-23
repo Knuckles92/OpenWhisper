@@ -1,5 +1,13 @@
 """Qt entry point and pre-import native-library bootstrap."""
 
+import multiprocessing
+
+if __name__ == "__main__":
+    # Frozen workers reuse this executable. Divert them before imports or CLI
+    # handling can initialize the app. Even tqdm's progress lock can start a
+    # resource tracker; opening the UI there recursively launches more copies.
+    multiprocessing.freeze_support()
+
 import logging
 import os
 import platform
@@ -15,6 +23,10 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 def _run_package_self_test() -> None:
     """Import release-critical modules and initialize Qt without starting UI."""
     import importlib
+
+    from services.package_checks import check_multiprocessing
+
+    check_multiprocessing()
 
     modules = [ 
         "av",

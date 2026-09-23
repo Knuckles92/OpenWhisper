@@ -22,6 +22,7 @@ benchmarks/typesafe_human_labels/results/*
 tmp_meeting_eval/
 
 # Local data and settings (auto-generated at runtime)
+/:memory:.ses
 openwhisper_settings.json
 openwhisper.db
 # WAL journaling (enabled for Meeting Mode) keeps two sidecar files alongside it

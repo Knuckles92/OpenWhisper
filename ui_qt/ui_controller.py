@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import threading
 from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QTimer, QUrl, pyqtSignal, QObject
@@ -113,6 +114,11 @@ class UIController(QObject):
         self.overlay = WaveformOverlay()
         self.tray_manager = SystemTrayManager(self.main_window)
         self.main_window.set_tray_available(self.tray_manager.available)
+        self._dock_icon_sync = None
+        if sys.platform == "darwin" and self.tray_manager.available:
+            from ui_qt.utils.macos_dock import install_dock_icon_sync
+
+            self._dock_icon_sync = install_dock_icon_sync(QApplication.instance())
 
         self.is_recording = False
         self.audio_levels: List[float] = [0.0] * 20

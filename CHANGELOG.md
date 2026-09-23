@@ -8,6 +8,22 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.08] - 2026-09-22
+
+### Fixed
+- **Minimize to Tray leaves the Dock on macOS** — hiding the window to the menu bar now removes OpenWhisper from the Dock (and Cmd-Tab) as well, instead of leaving a Dock icon whose click and "Show All Windows" had nothing to bring back. The icon returns as soon as the window, or a window opened from the tray such as Settings, is shown again; the recording overlay does not bring it back.
+
+## [2.6.07] - 2026-09-22
+
+### Fixed
+- **Restore from the menu bar on macOS** — clicking the OpenWhisper menu-bar icon now brings the window back after Minimize to Tray, the minimize hotkey, or closing the window. Previously the click only opened the tray menu, and the double-click that restores the window on Windows never arrives on macOS. Right-click or Ctrl-click the icon to open the menu.
+
+## [2.6.06] - 2026-09-22
+
+### Fixed
+- **Repeated app windows on macOS** — packaged apps no longer open repeated copies when Live preview or transcription starts a Python multiprocessing helper. Helpers now run before application initialization, and release self-tests exercise a spawned worker and shared lock.
+- Settings redraws reuse cached component and credential status and combine pending navigation refreshes, reducing repeated lookups while the window updates.
+
 ## [2.6.05] - 2026-09-22
 
 ### Added
