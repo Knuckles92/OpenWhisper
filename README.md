@@ -176,15 +176,23 @@ Downloaded speech models load from the local cache without network metadata chec
 <summary>More screenshots</summary>
 
 <p align="center">
-  <img width="735" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
+  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
 </p>
 
 <p align="center">
-  <img width="960" alt="Settings → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
+  <img width="480" alt="Meeting Mode after a call: finalization steps complete and the report ready" src="docs/screenshots/02-meeting-mode-ready.png" />
 </p>
 
 <p align="center">
-  <img width="720" alt="General settings" src="docs/screenshots/01-general.png" />
+  <img width="880" alt="Settings → AI cleanup: chat model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
+</p>
+
+<p align="center">
+  <img width="880" alt="Settings → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
+</p>
+
+<p align="center">
+  <img width="880" alt="General settings" src="docs/screenshots/01-general.png" />
 </p>
 
 </details>
