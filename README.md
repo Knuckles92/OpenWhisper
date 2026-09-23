@@ -14,6 +14,10 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
   <img width="360" alt="Waveform overlay showing recording, transcription, and live preview" src="docs/screenshots/overlay-states.gif" />
 </p>
 
+<p align="center">
+  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
+</p>
+
 ## What it does
 
 - **Dictation:** Record from any app with a global hotkey, see a live preview on supported engines, and paste the result into the active window.
@@ -174,10 +178,6 @@ Downloaded speech models load from the local cache without network metadata chec
 
 <details>
 <summary>More screenshots</summary>
-
-<p align="center">
-  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
-</p>
 
 <p align="center">
   <img width="480" alt="Meeting Mode after a call: finalization steps complete and the report ready" src="docs/screenshots/02-meeting-mode-ready.png" />
