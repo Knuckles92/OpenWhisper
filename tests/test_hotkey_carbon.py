@@ -203,15 +203,15 @@ class TestKeycodeResolution(unittest.TestCase):
         self.assertIsNone(carbon.keycode_for("vkx"))
         self.assertIsNone(carbon.keycode_for("vk"))
 
-    def test_media_keys_are_excluded(self):
-        # RegisterEventHotKey cannot bind pynput's synthetic media vks.
-        self.assertNotIn("media_play_pause", carbon._SPECIAL_KEYCODES)
-        self.assertNotIn("media_volume_up", carbon._SPECIAL_KEYCODES)
-
 
 @unittest.skipUnless(sys.platform == "darwin", "pynput vks are the host platform's")
 class TestSpecialKeycodesOnMacOS(unittest.TestCase):
     """Named keys come from pynput, so only Darwin sees macOS keycodes."""
+
+    def test_media_keys_are_excluded(self):
+        # Only pynput's Darwin backend marks synthetic vks with _is_media.
+        self.assertNotIn("media_play_pause", carbon._SPECIAL_KEYCODES)
+        self.assertNotIn("media_volume_up", carbon._SPECIAL_KEYCODES)
 
     def test_named_keys_match_carbon(self):
         expected = {

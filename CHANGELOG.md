@@ -8,8 +8,11 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.06] - 2026-09-22
+
 ### Fixed
-- Packaged apps no longer open repeated copies when Live preview or transcription starts a Python multiprocessing helper. Helpers now run before application initialization, and release self-tests exercise a spawned worker and shared lock.
+- **Repeated app windows on macOS** — packaged apps no longer open repeated copies when Live preview or transcription starts a Python multiprocessing helper. Helpers now run before application initialization, and release self-tests exercise a spawned worker and shared lock.
+- Settings redraws reuse cached component and credential status and combine pending navigation refreshes, reducing repeated lookups while the window updates.
 
 ## [2.6.05] - 2026-09-22
 
