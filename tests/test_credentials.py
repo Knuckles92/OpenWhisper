@@ -118,6 +118,22 @@ class TestResolutionOrder:
         # Loaded into the environment, yet still reported as the file's value.
         assert credential_source(NAME) == CredentialSource.DOTENV
 
+    def test_dotenv_edit_is_seen_despite_the_parse_cache(
+        self, monkeypatch, _no_dotenv_and_clean_env
+    ):
+        import os
+
+        env_file = _no_dotenv_and_clean_env
+        env_file.write_text(f"{NAME}=first\n", encoding="utf-8")
+        assert credentials._dotenv_values()[NAME] == "first"
+        env_file.write_text(f"{NAME}=second-value\n", encoding="utf-8")
+        stat_result = env_file.stat()
+        # Force a distinct mtime even on filesystems with coarse timestamps.
+        os.utime(env_file, ns=(stat_result.st_atime_ns, stat_result.st_mtime_ns + 1_000_000))
+        assert credentials._dotenv_values()[NAME] == "second-value"
+        env_file.unlink()
+        assert credentials._dotenv_values() == {}
+
     def test_nothing_set(self):
         assert resolve_credential(NAME) is None
         assert credential_source(NAME) == CredentialSource.NONE

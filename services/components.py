@@ -841,9 +841,53 @@ def read_manifest(component_id: str) -> Optional[dict]:
     return data
 
 
+#: Tree sizes keyed by install path, valid while the install fingerprint holds.
+_installed_size_cache: Dict[str, Tuple[tuple, int]] = {}
+_installed_size_lock = threading.Lock()
+
+
+def _install_fingerprint(directory: str) -> Optional[tuple]:
+    """Identify one committed install of ``directory``, or None if uncommitted.
+
+    Installs and removals swap the whole tree with ``os.replace`` and every
+    install writes a fresh sentinel, so the directory and sentinel stats
+    change whenever the tree's contents can have.
+    """
+    try:
+        tree = os.stat(directory)
+        sentinel = os.stat(os.path.join(directory, _SENTINEL_NAME))
+    except OSError:
+        return None
+    return (
+        tree.st_ino, tree.st_mtime_ns,
+        sentinel.st_ino, sentinel.st_mtime_ns, sentinel.st_size,
+    )
+
+
 def installed_size_bytes(component_id: str) -> int:
+    """Bytes on disk for a component tree.
+
+    Walking a multi-gigabyte runtime costs thousands of ``lstat`` calls, and
+    Settings asks for every component each time it redraws, so a committed
+    install's size is remembered until its fingerprint changes.
+    """
+    directory = component_dir(component_id)
+    fingerprint = _install_fingerprint(directory)
+    if fingerprint is not None:
+        with _installed_size_lock:
+            cached = _installed_size_cache.get(directory)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+    total = _walk_size_bytes(directory)
+    if fingerprint is not None:
+        with _installed_size_lock:
+            _installed_size_cache[directory] = (fingerprint, total)
+    return total
+
+
+def _walk_size_bytes(directory: str) -> int:
     total = 0
-    for root, _dirs, files in os.walk(component_dir(component_id)):
+    for root, _dirs, files in os.walk(directory):
         for name in files:
             try:
                 # Native Mac libraries have multiple symlink aliases; count
@@ -1705,8 +1749,11 @@ class ComponentCoordinator:
         for event in events:
             event.set()
 
-    def fetch_catalog(self, force: bool = False) -> Optional[dict]:
-        """Return the component catalog.
+    def fetch_catalog(self, force: bool = False) -> Optional[Mapping]:
+        """Return a read-only view of the component catalog.
+
+        :meth:`catalog_entry` returns a mutable copy of one entry; copying the
+        whole catalog here instead cost Settings a deep copy per component.
 
         The catalog ships in the application (:data:`_BUILTIN_CATALOG`) and
         needs no network access: its entries point at immutable upstream URLs
@@ -1724,7 +1771,7 @@ class ComponentCoordinator:
 
         ``force`` remains accepted for call compatibility.
         """
-        return _thaw_catalog_value(_BUILTIN_CATALOG)
+        return _BUILTIN_CATALOG
 
     def catalog_entry(self, component_id: str) -> Optional[dict]:
         catalog = self.fetch_catalog()

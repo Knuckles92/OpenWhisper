@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -299,6 +300,8 @@ class SettingsDialog(QDialog):
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
         self._pages_ready = False
+        self._rail_batch_depth = 0
+        self._rail_refresh_pending = False
         self._search_flash: Optional[QWidget] = None
         self._loading = False
         self._tray_available = bool(QSystemTrayIcon.isSystemTrayAvailable())
@@ -938,8 +941,9 @@ class SettingsDialog(QDialog):
             self._refresh_accessibility_status()
             self._accessibility_timer.start()
         if self._pages_ready and not event.spontaneous():
-            self.refresh_models()
-            self._refresh_recordings_usage()
+            with self._coalesced_rail_refresh():
+                self.refresh_models()
+                self._refresh_recordings_usage()
 
     def hideEvent(self, event):
         if hasattr(self, "_accessibility_timer"):
@@ -2347,18 +2351,35 @@ class SettingsDialog(QDialog):
 
     def refresh(self) -> None:
         """Reload persisted values, model assignments, and rail captions."""
-        self._cancel_hotkey_capture()
-        self.cleanup_profiles_panel.refresh()
-        self._loading = True
+        with self._coalesced_rail_refresh():
+            self._cancel_hotkey_capture()
+            self.cleanup_profiles_panel.refresh()
+            self._loading = True
+            try:
+                self._load_settings()
+            finally:
+                self._loading = False
+            # A hidden window reuses the last cache scan; showEvent rescans.
+            visible = self.isVisible()
+            self.models.refresh(scan=visible)
+            self.downloads.refresh(scan=visible)
+            self._refresh_rail_values()
+
+    @contextmanager
+    def _coalesced_rail_refresh(self):
+        """Run the rail and Overview redraws requested inside once, at the end.
+
+        A refresh fans out through model and download signals that each
+        redraw the rail, and every redraw rebuilds the Overview.
+        """
+        self._rail_batch_depth += 1
         try:
-            self._load_settings()
+            yield
         finally:
-            self._loading = False
-        # A hidden window reuses the last cache scan; showEvent rescans.
-        visible = self.isVisible()
-        self.models.refresh(scan=visible)
-        self.downloads.refresh(scan=visible)
-        self._refresh_rail_values()
+            self._rail_batch_depth -= 1
+            if not self._rail_batch_depth and self._rail_refresh_pending:
+                self._rail_refresh_pending = False
+                self._refresh_rail_values()
 
     def refresh_models(self) -> None:
         """Re-read model assignments and downloads after the engine changes."""
@@ -2413,6 +2434,9 @@ class SettingsDialog(QDialog):
         return True
 
     def _refresh_rail_values(self) -> None:
+        if self._rail_batch_depth:
+            self._rail_refresh_pending = True
+            return
         self.rail.set_value(OVERVIEW, "What is running now")
         self.rail.set_value(CLEANUP_PROFILES, f"{len(load_cleanup_profiles(settings_manager.load_all_settings()))} profiles")
         if self.auto_paste_check.isChecked():

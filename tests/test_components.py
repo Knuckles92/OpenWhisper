@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import shutil
 import tarfile
 import threading
 import zipfile
@@ -1189,3 +1190,37 @@ def test_installed_size_does_not_count_dylib_aliases_twice(component_root):
             pytest.skip("Creating symlinks requires Windows Developer Mode or elevation")
         raise
     assert components.installed_size_bytes(ComponentId.ASR_NVIDIA_CPU) == 1000 + alias.lstat().st_size
+
+
+def test_installed_size_is_remembered_until_the_install_changes(component_root, monkeypatch):
+    target = _make_installed(component_root, "gpu-accel", {"version": "1"})
+    first = components.installed_size_bytes("gpu-accel")
+    walks = []
+    real_walk = components._walk_size_bytes
+    monkeypatch.setattr(
+        components, "_walk_size_bytes",
+        lambda directory: walks.append(directory) or real_walk(directory),
+    )
+    assert components.installed_size_bytes("gpu-accel") == first
+    assert walks == []
+
+    # An install swaps a freshly staged tree, sentinel included, into place.
+    staged = component_root / "staged"
+    (staged / "bin").mkdir(parents=True)
+    (staged / "bin" / "fake.dll").write_bytes(b"x" * 4096)
+    (staged / ".installed").write_text("2", encoding="utf-8")
+    shutil.rmtree(target)
+    os.replace(staged, target)
+    assert components.installed_size_bytes("gpu-accel") == 4096 + 1
+    assert len(walks) == 1
+
+
+def test_fetch_catalog_is_read_only_and_entries_are_mutable_copies():
+    catalog = ComponentCoordinator().fetch_catalog()
+    with pytest.raises(TypeError):
+        catalog["schema"] = 0
+    entry = ComponentCoordinator().catalog_entry(ComponentId.MEETING_AGENT)
+    if entry is None:
+        pytest.skip("No meeting-agent entry for this platform")
+    entry["install_bytes"] = -1
+    assert ComponentCoordinator().catalog_entry(ComponentId.MEETING_AGENT)["install_bytes"] != -1

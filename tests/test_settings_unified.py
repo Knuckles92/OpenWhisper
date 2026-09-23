@@ -106,6 +106,16 @@ class TestRouting:
         assert dialog.page_title.text() == "Overview"
         assert dialog.rail.value(OVERVIEW) == "What is running now"
 
+    def test_refresh_rebuilds_the_overview_once(self, make_dialog):
+        dialog, _store = make_dialog()
+        with patch.object(
+            dialog, "_refresh_overview", wraps=dialog._refresh_overview
+        ) as overview:
+            dialog.refresh()
+        # Model and download refreshes each ask for a rail redraw; the
+        # Overview behind it is rebuilt once, after they all finish.
+        assert overview.call_count == 1
+
     @pytest.mark.parametrize("alias, destination", [
         ("ondemand", VOICE_MODEL),
         ("text", CLEANUP),

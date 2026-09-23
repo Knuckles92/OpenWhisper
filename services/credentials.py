@@ -284,16 +284,32 @@ def mask_key(value: str | None) -> str:
     return f"••••{value[-4:]}"
 
 
+#: Last parse of ``.env`` as (path, mtime_ns, size, values). Settings asks
+#: for the source of every provider's key on each redraw.
+_dotenv_cache: tuple | None = None
+
+
 def _dotenv_values() -> dict[str, str | None]:
+    global _dotenv_cache
     try:
         from dotenv import dotenv_values
     except ImportError:
         return {}
     try:
         path = env_file_path()
+        try:
+            stat_result = os.stat(path)
+        except OSError:
+            return {}
         if not os.path.isfile(path):
             return {}
-        return dict(dotenv_values(path))
+        key = (path, stat_result.st_mtime_ns, stat_result.st_size)
+        cached = _dotenv_cache
+        if cached is not None and cached[:3] == key:
+            return dict(cached[3])
+        values = dict(dotenv_values(path))
+        _dotenv_cache = (*key, values)
+        return dict(values)
     except Exception as exc:
         logger.warning("Failed to read .env file: %s", exc)
         return {}
