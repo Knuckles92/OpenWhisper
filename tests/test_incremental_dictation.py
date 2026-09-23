@@ -277,7 +277,9 @@ def test_silent_windows_are_skipped_the_same_way(controller, recorder, backend):
     path = stop(recorder, session)
     assert session.early_windows == 3
     assert session._texts[1] == ""
-    assert session.finish(path) == backend.transcribe(path)
+    slot = IncrementalDictation()
+    slot._session = session
+    assert slot.transcribe(backend, path) == backend.transcribe(path)
 
 
 def test_short_dictation_costs_nothing_and_falls_through(controller, recorder, backend):
