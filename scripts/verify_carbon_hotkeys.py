@@ -5,8 +5,10 @@ Run from the repo root in your normal GUI session:
     ./venv/bin/python scripts/verify_carbon_hotkeys.py
 
 A small window appears. MINIMIZE it (or click another app to defocus it), then
-press one of the hotkeys. Each press should print a line in this terminal —
-proving global detection works with NO Accessibility permission granted.
+press one of the hotkeys. Each press and release should print a line in this
+terminal — proving global detection works with NO Accessibility permission
+granted. Releases are what push-and-hold recording stops on, so a press with no
+matching release is itself a failure.
 
     Ctrl+Alt+R            -> record_toggle
     Ctrl+Alt+Escape       -> cancel
@@ -35,9 +37,14 @@ def main() -> int:
 
     counter = {"n": 0}
 
-    def on_action(action: str) -> None:
+    # Must match HotkeyManager.trigger_action: the registrar dispatches the
+    # release flag too, and a one-argument callback only raises inside the
+    # Carbon handler, which swallows it -- looking exactly like a hotkey that
+    # never fired.
+    def on_action(action: str, released: bool = False) -> None:
         counter["n"] += 1
-        print(f"  [{counter['n']:>3}] HOTKEY FIRED -> {action}")
+        edge = "RELEASED" if released else "PRESSED "
+        print(f"  [{counter['n']:>3}] HOTKEY {edge} -> {action}")
 
     registrar = carbon.CarbonHotkeyRegistrar(on_action=on_action)
     registrar.register_hotkeys({
