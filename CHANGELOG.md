@@ -8,6 +8,11 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.07] - 2026-09-22
+
+### Fixed
+- **Restore from the menu bar on macOS** — clicking the OpenWhisper menu-bar icon now brings the window back after Minimize to Tray, the minimize hotkey, or closing the window. Previously the click only opened the tray menu, and the double-click that restores the window on Windows never arrives on macOS. Right-click or Ctrl-click the icon to open the menu.
+
 ## [2.6.06] - 2026-09-22
 
 ### Fixed
