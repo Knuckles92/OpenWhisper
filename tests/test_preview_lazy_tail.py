@@ -164,9 +164,13 @@ def test_finalize_matches_the_old_drain_after_a_window_in_flight_at_stop():
     blocks = _blocks(360 * config.CHUNK_SIZE / config.SAMPLE_RATE, seed=6)
     decoder = _Decoder(stall_on=2)
     preview = _preview(decoder)
+    # Let the first window finish before feeding the second. Feeding 260
+    # blocks at once can overflow the 130-block queue before the worker runs.
+    _feed(preview, blocks[:130])
+    _wait_until(lambda: len(decoder.calls) == 1)
     # Window 2 stalls in the engine; 100 blocks queue behind it (the queue
     # holds 130, about 3 s).
-    _feed(preview, blocks[:260])
+    _feed(preview, blocks[130:260])
     assert decoder.entered.wait(5)
     _feed(preview, blocks[260:])
 
@@ -182,8 +186,10 @@ def test_in_flight_window_lands_for_the_fallback_but_never_reaches_the_ui():
     decoder = _Decoder(stall_on=1)
     preview = _preview(decoder)
     blocks = _blocks(3.5, seed=3)
-    _feed(preview, blocks)
+    _feed(preview, blocks[:130])
     assert decoder.entered.wait(5)
+    # Queue the tail after the worker starts decoding so none of it is dropped.
+    _feed(preview, blocks[130:])
 
     started = time.perf_counter()
     assert preview.stop_streaming() == ""
