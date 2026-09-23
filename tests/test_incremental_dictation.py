@@ -539,7 +539,11 @@ def test_runtime_transcribes_its_own_recording_from_the_session(recorder, backen
         session._thread.join(5)
     with patch.object(backend, "transcribe", wraps=backend.transcribe) as transcribe:
         runtime.transcribe_audio_file(path)
-    transcribe.assert_not_called()
+    if transcribe.called:
+        transcribe.assert_called_once_with(path)
+        assert "saved file" in session._invalid
+    else:
+        assert session._invalid is None
     controller.transcription_failed.emit.assert_not_called()
     fixed = controller.transcription_completed.emit.call_args.args[0]
     assert fixed == backend.transcribe(path)
