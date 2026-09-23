@@ -8,6 +8,11 @@ Routine releases continue as 2.6.02, 2.6.03, and so on; minor and major bumps ar
 
 ## [Unreleased]
 
+## [2.6.08] - 2026-09-22
+
+### Fixed
+- **Minimize to Tray leaves the Dock on macOS** — hiding the window to the menu bar now removes OpenWhisper from the Dock (and Cmd-Tab) as well, instead of leaving a Dock icon whose click and "Show All Windows" had nothing to bring back. The icon returns as soon as the window, or a window opened from the tray such as Settings, is shown again; the recording overlay does not bring it back.
+
 ## [2.6.07] - 2026-09-22
 
 ### Fixed
