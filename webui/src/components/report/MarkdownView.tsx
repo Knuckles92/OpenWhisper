@@ -71,6 +71,11 @@ function block(item: MarkdownBlock, key: number): ReactNode {
   }
 }
 
+/** Inline-only Markdown (bold, italics, code, links) for one-paragraph notes. */
+export function InlineMarkdown({ text }: { text: string }) {
+  return <>{inline(text)}</>;
+}
+
 export default function MarkdownView({ source }: { source: string }) {
   return <div className="report-md">{parseMarkdown(source).map(block)}</div>;
 }

@@ -72,10 +72,10 @@ export default function TopicHero({
 
   return (
     <section className="topic-hero">
-      <div className="topic-hero-eyebrow">
+      {/* The title already sits in the command bar; the eyebrow names the moment. */}
+      <div className="topic-hero-eyebrow" title={meetingTitle || undefined}>
         <i className={pulseClass} aria-hidden />
-        {statusLabel(status)}
-        {meetingTitle ? ` · ${meetingTitle}` : ''}
+        {status === 'active' ? 'Now discussing' : `${statusLabel(status)} · Last topic`}
       </div>
       <h1>
         {topic || topicPlaceholder(status, cloudEnabled, intelligenceOnline)}

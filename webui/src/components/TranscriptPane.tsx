@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { usePlayingSpanId } from '../playback';
 import { scrollChildIntoView } from '../scroll';
 import type { Participant, Segment, SpeechPreviewMsg } from '../types';
+import { speakerColor } from '../people';
 
 interface TranscriptPaneProps {
   segments: Segment[];
@@ -146,7 +147,10 @@ export default function TranscriptPane({
                   )}
                   <div>
                     <div className="segment-meta">
-                      <span className="segment-speaker">
+                      <span
+                        className="segment-speaker"
+                        style={{ '--speaker': speakerColor(seg.speaker_participant_id, participants) } as CSSProperties}
+                      >
                         {readOnly ? (
                           <span>{speakerLabel(participants, seg.speaker_participant_id, seg.channel)}</span>
                         ) : (

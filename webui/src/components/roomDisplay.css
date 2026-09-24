@@ -1,0 +1,306 @@
+/* Room display: a presenter overlay for a conference-room screen. Sized in
+   viewport units so it reads from across the room on any TV. */
+.room {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 3vh;
+  padding: 5vh 4.5vw 4vh;
+  background: var(--bar);
+  color: var(--bar-ink);
+  overflow: hidden;
+}
+
+.room-exit {
+  position: absolute;
+  top: 2vh;
+  right: 2vw;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--bar-line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--bar-soft);
+  font-size: 13px;
+}
+
+.room-exit:hover {
+  color: var(--bar-ink);
+  border-color: var(--bar-soft);
+}
+
+.room-exit:focus-visible {
+  outline: 2px solid var(--bar-live);
+  outline-offset: 2px;
+}
+
+.room-exit kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--bar-line);
+  border-radius: 4px;
+}
+
+.room-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 5vw;
+}
+
+.room-now {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.room-status {
+  display: flex;
+  align-items: center;
+  gap: 0.8vw;
+  font-size: clamp(14px, 1.3vw, 26px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bar-soft);
+}
+
+.room-dot {
+  width: 0.8vw;
+  height: 0.8vw;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 50%;
+  background: var(--bar-soft);
+}
+
+.room-status.live {
+  color: var(--bar-live);
+}
+
+.room-status.live .room-dot {
+  background: var(--bar-live);
+  animation: room-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes room-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.room-clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--bar-ink);
+}
+
+.room-eyebrow {
+  margin: 4vh 0 1vh;
+  font-size: clamp(14px, 1.2vw, 24px);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bar-soft);
+}
+
+.room-topic {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(40px, 5.6vw, 128px);
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.room-lines {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2.4vh;
+  padding-top: 3vh;
+}
+
+.room-line {
+  margin: 0;
+  font-size: clamp(20px, 2.1vw, 44px);
+  line-height: 1.3;
+  color: var(--bar-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.room-line:first-child:not(:last-child) {
+  color: var(--bar-soft);
+}
+
+/* Speaker hues are tuned for light grounds; a light chip keeps them legible. */
+.room-speaker {
+  display: inline-block;
+  margin-right: 0.8vw;
+  padding: 0.1em 0.45em;
+  border-radius: 6px;
+  background: var(--bar-ink);
+  font-size: 0.72em;
+  font-weight: 700;
+  vertical-align: 0.12em;
+}
+
+.room-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4vh;
+  min-height: 0;
+  padding-left: 3vw;
+  border-left: 1px solid var(--bar-line);
+  overflow: hidden;
+}
+
+/* Long lists give way first; the open question always keeps its place. */
+.room-side > section {
+  min-height: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  /* When a list runs long it fades out rather than slicing a line in half. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4vh), transparent);
+}
+
+.room-side > .room-open {
+  flex-shrink: 0;
+  mask-image: none;
+}
+
+.room-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.7vw;
+  margin: 0 0 1.4vh;
+  font-size: clamp(14px, 1.2vw, 24px);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bar-soft);
+}
+
+.room-heading::before {
+  content: '';
+  width: 0.75vw;
+  height: 0.75vw;
+  min-width: 10px;
+  min-height: 10px;
+  background: var(--bar-live);
+}
+
+.room-heading.decision::before {
+  transform: rotate(45deg) scale(0.85);
+}
+
+.room-heading.action::before {
+  background: transparent;
+  border: 2px solid var(--bar-live);
+  border-radius: 3px;
+}
+
+.room-heading.question::before {
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--bar-ink);
+}
+
+.room-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6vh;
+}
+
+.room-list li,
+.room-open p {
+  margin: 0;
+  font-size: clamp(18px, 1.75vw, 38px);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.room-list strong {
+  font-weight: 700;
+}
+
+.room-empty {
+  margin: 0;
+  font-size: clamp(16px, 1.4vw, 30px);
+  color: var(--bar-soft);
+}
+
+.room-open {
+  margin-top: auto;
+  padding: 2.4vh 1.6vw;
+  border: 1px solid var(--bar-line);
+  border-radius: 10px;
+}
+
+.room-chapters {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-chapters li {
+  flex-basis: 0;
+  min-width: 0;
+  padding: 1.2vh 1vw;
+  border-radius: 6px;
+  background: var(--bar-line);
+  color: var(--bar-soft);
+  font-size: clamp(12px, 1vw, 20px);
+  font-weight: 600;
+}
+
+.room-chapters li span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.room-chapters li.current {
+  background: var(--bar-ink);
+  color: var(--bar);
+}
+
+@media (max-width: 800px) {
+  .room-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-side {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-status.live .room-dot {
+    animation: none;
+  }
+}

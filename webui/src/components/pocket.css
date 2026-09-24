@@ -1,0 +1,141 @@
+/* Pocket: the phone layout. The workspace keeps every pane mounted (so live
+   state, audio and scroll anchors survive tab switches) and shows one
+   section at a time, chosen by the bottom tab bar. */
+.app-main.workspace.pocket {
+  gap: 16px;
+  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+}
+
+.app-main.workspace.pocket .workspace-ruler {
+  display: none;
+}
+
+/* Live: topic + brief, then the newest transcript turns. */
+.app-main.workspace.pocket[data-pocket-tab='live'] .workspace-rail,
+.app-main.workspace.pocket[data-pocket-tab='live'] .center-notes,
+.app-main.workspace.pocket[data-pocket-tab='live'] .agent-activity,
+.app-main.workspace.pocket[data-pocket-tab='live'] .voice-hint {
+  display: none;
+}
+
+/* Ended: Live is the report on its own; the transcript has its own tab. */
+.app-main.workspace.pocket.ended[data-pocket-tab='live'] .workspace-conversation {
+  display: none;
+}
+
+.app-main.workspace.pocket[data-pocket-tab='notes'] .workspace-conversation,
+.app-main.workspace.pocket[data-pocket-tab='notes'] .workspace-rail,
+.app-main.workspace.pocket[data-pocket-tab='notes'] .workspace-center > :not(.center-notes) {
+  display: none;
+}
+
+.app-main.workspace.pocket[data-pocket-tab='transcript'] .workspace-center,
+.app-main.workspace.pocket[data-pocket-tab='transcript'] .workspace-rail {
+  display: none;
+}
+
+.app-main.workspace.pocket[data-pocket-tab='captured'] .workspace-conversation,
+.app-main.workspace.pocket[data-pocket-tab='captured'] .workspace-center,
+.app-main.workspace.pocket[data-pocket-tab='captured'] .workspace-rail > .panel:not(.capture) {
+  display: none;
+}
+
+.app-main.workspace.pocket[data-pocket-tab='people'] .workspace-conversation,
+.app-main.workspace.pocket[data-pocket-tab='people'] .workspace-center,
+.app-main.workspace.pocket[data-pocket-tab='people'] .workspace-rail > .panel.capture {
+  display: none;
+}
+
+.pocket-tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface-raised);
+  border-top: 1px solid var(--hair-2);
+}
+
+.pocket-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pocket-tab.active {
+  color: var(--leaf);
+  background: var(--wash);
+}
+
+.pocket-tab:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: -2px;
+}
+
+.pocket-tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.pocket-badge {
+  position: absolute;
+  top: -5px;
+  right: -11px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  border: 2px solid var(--surface-raised);
+  background: var(--leaf);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+
+.pocket-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pocket-jump {
+  position: fixed;
+  left: 50%;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  z-index: 61;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--bar);
+  color: var(--bar-ink);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-pop);
+}
+
+.pocket-jump:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}

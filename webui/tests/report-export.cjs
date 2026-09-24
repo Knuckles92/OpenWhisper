@@ -8,7 +8,8 @@ const {JSDOM} = require('jsdom');
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
   compilerOptions: {module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020},
 }).outputText, filename);
-const FullMeetingDocument = require('../src/components/report/FullMeetingDocument.tsx').default;
+require.extensions['.css'] = () => {};
+const FullMeetingDocument =require('../src/components/report/FullMeetingDocument.tsx').default;
 const ReportTabs = require('../src/components/report/ReportTabs.tsx').default;
 const ReportDownload = require('../src/components/report/ReportDownload.tsx').default;
 const {EvidenceProvider} = require('../src/evidence.tsx');

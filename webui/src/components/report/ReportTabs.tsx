@@ -11,7 +11,9 @@ import { EvidenceProvider } from '../../evidence';
 import type { MeetingInfo, MeetingStateDoc, Segment } from '../../types';
 import BriefReport from './BriefReport';
 import CustomReports from './CustomReports';
+import EditorialReport from './EditorialReport';
 import FullMeetingDocument from './FullMeetingDocument';
+import HandoffReport from './HandoffReport';
 import ReportDownload from './ReportDownload';
 import ReportViewSelect from './ReportViewSelect';
 import RibbonReport from './RibbonReport';
@@ -105,6 +107,8 @@ export default function ReportTabs({
           {active === 'ribbon' && <RibbonReport {...shared} audioRef={audioRef} audioKey={audioKey} />}
           {active === 'brief' && <BriefReport {...shared} />}
           {active === 'signal' && <SignalReport {...shared} />}
+          {active === 'editorial' && <EditorialReport {...shared} />}
+          {active === 'handoff' && <HandoffReport {...shared} />}
         </div>
         {token && (
           <CustomReports

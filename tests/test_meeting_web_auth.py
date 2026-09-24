@@ -2,6 +2,7 @@
 Tests for meeting web auth: role resolve, host-only ops, token compare,
 export token stripping, and the re-run-insights in-flight guard.
 """
+import json
 import threading
 
 import pytest
@@ -256,6 +257,60 @@ class TestHostOnlyAuthz:
         assert "state_json" not in meeting
         assert "steps" not in meeting
         assert "host_token" not in meeting
+
+    def test_meeting_list_exposes_duration_and_digest(self, client):
+        tc, _, repo = client
+        repo._meetings = [{
+            "id": "m_digest",
+            "title": "Scope review",
+            "status": "ended",
+            "started_at": "2026-01-02T09:00:00Z",
+            "ended_at": "2026-01-02T09:50:00Z",
+            "paused_total_s": 180,
+            "state_json": json.dumps({
+                "participants": {
+                    "p2": {"id": "p2", "display_name": "Maya Chen", "kind": "guest",
+                           "created_at": "2026-01-02T09:01:00Z"},
+                    "me": {"id": "me", "display_name": "Me", "kind": "me",
+                           "created_at": "2026-01-02T09:05:00Z"},
+                },
+                "cards": {
+                    "decisions": [{"id": "d1", "status": "confirmed"},
+                                  {"id": "d2", "status": "removed"}],
+                    "action_items": [{"id": "a1", "status": "proposed"},
+                                     {"id": "a2", "status": "edited"}],
+                    "risks": [],
+                },
+                "questions": [{"id": "q1", "status": "open"},
+                              {"id": "q2", "status": "resolved"}],
+            }),
+        }]
+
+        meeting = tc.get("/api/meetings", params={"token": HOST_TOKEN}).json()["meetings"][0]
+
+        assert meeting["duration_s"] == 50 * 60 - 180
+        digest = meeting["digest"]
+        assert digest["decisions"] == 1, "removed cards are not counted"
+        assert digest["action_items"] == 2
+        assert digest["risks"] == 0
+        assert digest["open_questions"] == 1
+        assert digest["participant_count"] == 2
+        assert [p["id"] for p in digest["participants"]] == ["me", "p2"], "me leads"
+        assert "state_json" not in meeting
+
+    def test_meeting_list_survives_corrupt_snapshot(self, client):
+        tc, _, repo = client
+        repo._meetings = [{
+            "id": "m_corrupt", "title": "Broken", "status": "ended",
+            "started_at": "not a date", "state_json": "{not json",
+        }]
+
+        response = tc.get("/api/meetings", params={"token": HOST_TOKEN})
+
+        assert response.status_code == 200
+        meeting = response.json()["meetings"][0]
+        assert meeting["duration_s"] is None
+        assert "digest" not in meeting
 
     def test_guest_cannot_end_meeting(self, client):
         tc, engine, _ = client

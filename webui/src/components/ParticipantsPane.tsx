@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Participant } from '../types';
+import { initials, speakerColor } from '../people';
 
 interface ParticipantsPaneProps {
   participants: Participant[];
@@ -71,6 +72,13 @@ export default function ParticipantsPane({
                 className={`chip${online ? ' on' : ''}`}
                 title={`${KIND_LABELS[p.kind]}${p.is_provisional ? ' · provisional' : ''}`}
               >
+                <span
+                  className="chip-avatar"
+                  style={{ background: speakerColor(p.id, participants) }}
+                  aria-hidden="true"
+                >
+                  {initials(p.display_name)}
+                </span>
                 {editingId === p.id ? (
                   <input
                     value={draft}
@@ -96,7 +104,7 @@ export default function ParticipantsPane({
                 {!readOnly && (
                   <button
                     type="button"
-                    className="ghost no-print"
+                    className="ghost no-print chip-rename"
                     disabled={savingId === p.id}
                     onClick={() => startEdit(p)}
                     aria-label={`Rename ${p.display_name}`}

@@ -1,0 +1,248 @@
+/* Captured ledger: quick-add, filter tabs, and to-do style action rows.
+   Colours come only from the shared tokens so the dark theme can re-point them. */
+
+.ledger-composer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.ledger-kinds {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--hair);
+  align-self: flex-start;
+}
+
+.ledger-kinds button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ledger-kinds button:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.ledger-kinds button.active {
+  background: var(--surface-raised);
+  border-color: var(--hair-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ledger-input {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ledger-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+}
+
+.ledger-input button {
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+/* Filter tabs: a hairline row; the active tab is underlined in leaf. */
+.ledger-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin: 0 0 10px;
+  border-bottom: 1px solid var(--hair-2);
+}
+
+.ledger-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  margin-bottom: -1px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--soft);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.ledger-tabs button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink);
+}
+
+.ledger-tabs button.active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--leaf);
+}
+
+.ledger-tab-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--soft);
+}
+
+/* Actions: checkbox + text, owner and due under the text. */
+.ledger-action {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.ledger-check {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  padding: 0;
+  accent-color: var(--k-commitment);
+  cursor: pointer;
+}
+
+.ledger-check:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.ledger-action-body .card-item-text {
+  margin-bottom: 4px;
+}
+
+.card-item.confirmed .ledger-action-body .card-item-text {
+  color: var(--ink-2);
+}
+
+.ledger-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.ledger-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.ledger-owner.unassigned {
+  color: var(--soft);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.ledger-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* Light ink on the saturated speaker colour, in both themes. */
+  color: var(--bar-ink);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ledger-due {
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--hair-2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.ledger-due.soon,
+.ledger-due.overdue {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* Decisions: a quiet Proposed → Confirmed track. */
+.ledger-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--soft);
+}
+
+.ledger-state .current {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ledger-state.confirmed .current {
+  color: var(--k-decision);
+}
+
+.ledger-state svg {
+  color: var(--soft);
+}
+
+.ledger-state .ledger-confirm {
+  min-height: 26px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-color: color-mix(in srgb, var(--k-decision) 45%, var(--line));
+  background: transparent;
+  color: var(--k-decision);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ledger-state .ledger-confirm:hover:not(:disabled) {
+  background: var(--wash);
+  border-color: var(--k-decision);
+}
+
+.ledger-panel > .capture-lead-ghost:only-child {
+  margin: 8px 0;
+}
+
+@media (hover: none) {
+  .ledger-kinds button,
+  .ledger-tabs button {
+    min-height: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ledger-tabs button,
+  .ledger-kinds button {
+    transition: none;
+  }
+}

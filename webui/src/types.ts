@@ -269,6 +269,15 @@ export interface MeetingContentSummary {
   can_rerun_speakers: boolean;
 }
 
+export interface MeetingDigest {
+  decisions: number;
+  action_items: number;
+  risks: number;
+  open_questions: number;
+  participant_count: number;
+  participants: Array<Pick<Participant, 'id' | 'display_name' | 'kind' | 'created_at'>>;
+}
+
 export interface MeetingInfo {
   id: string;
   title: string;
@@ -283,6 +292,11 @@ export interface MeetingInfo {
   has_audio?: boolean;
   has_transcript?: boolean;
   can_rerun_speakers?: boolean;
+  ended_at?: string | null;
+  /** Wall time minus pauses; null when the stored times can't be read. */
+  duration_s?: number | null;
+  /** Counts and people for History rows; absent for unreadable snapshots. */
+  digest?: MeetingDigest;
   [key: string]: unknown;
 }
 

@@ -2,8 +2,15 @@ import { citationLabel } from './components/CitationBadge';
 import { sortedCardItems } from './state';
 import type { CardItem, MeetingStateDoc, Participant, Segment } from './types';
 
+/** Views the server configures; this list also steers the final agent pass. */
 export const DEFAULT_REPORT_VIEWS = ['ribbon', 'brief', 'signal'] as const;
-export type ReportViewId = (typeof DEFAULT_REPORT_VIEWS)[number];
+/**
+ * Views built entirely in the browser from data every meeting already has,
+ * so they need no agent output and are offered for every meeting.
+ */
+export const DERIVED_REPORT_VIEWS = ['editorial', 'handoff'] as const;
+export const ALL_REPORT_VIEWS = [...DEFAULT_REPORT_VIEWS, ...DERIVED_REPORT_VIEWS] as const;
+export type ReportViewId = (typeof ALL_REPORT_VIEWS)[number];
 
 export const REPORT_VIEW_STORAGE_KEY = 'ow_report_view';
 
@@ -23,13 +30,27 @@ export const REPORT_VIEW_META: Record<ReportViewId, { label: string; hint: strin
     hint: 'Headline plus the clips worth hearing',
     note: 'One screen, plus the clips worth hearing. Best for forty seconds before the next call.',
   },
+  editorial: {
+    label: 'Editorial',
+    hint: 'A news page: lead, decisions, actions',
+    note: 'Set like a well-edited news page: the lead, what was decided, who owes what, and the moment worth hearing.',
+  },
+  handoff: {
+    label: 'Handoff',
+    hint: 'Actions by owner and a recap email',
+    note: 'Built for follow-through: every action grouped by owner, plus a recap email ready to send.',
+  },
 };
+
+function isReportView(value: unknown): value is ReportViewId {
+  return typeof value === 'string' && (ALL_REPORT_VIEWS as readonly string[]).includes(value);
+}
 
 /** Last report tab the user picked, if it is still a known view. */
 export function readStoredReportView(): ReportViewId | null {
   try {
     const raw = localStorage.getItem(REPORT_VIEW_STORAGE_KEY);
-    if (raw === 'ribbon' || raw === 'brief' || raw === 'signal') return raw;
+    if (isReportView(raw)) return raw;
   } catch {
     /* private mode / blocked storage */
   }
@@ -54,12 +75,16 @@ export function resolveReportView(views: ReportViewId[]): ReportViewId {
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 const SPEAKER_PALETTE = ['#2f6b4f', '#a2603c', '#4a6b8a', '#8a7340', '#6b4a7a', '#3c6b6b'];
 
-/** Return the views this meeting recorded, defaulting to all three. */
+/**
+ * The views this meeting recorded (defaulting to the three agent views), then
+ * the browser-derived views, which every meeting can show.
+ */
 export function enabledReportViews(state: MeetingStateDoc): ReportViewId[] {
   const allowed = new Set<string>(DEFAULT_REPORT_VIEWS);
   const raw = Array.isArray(state.report_views) ? state.report_views : DEFAULT_REPORT_VIEWS;
   const views = raw.filter((view): view is ReportViewId => allowed.has(view));
-  return views.length ? views : ['ribbon'];
+  const configured: ReportViewId[] = views.length ? [...new Set(views)] : ['ribbon'];
+  return [...configured, ...DERIVED_REPORT_VIEWS];
 }
 
 export function liveItems(items: CardItem[] | undefined): CardItem[] {

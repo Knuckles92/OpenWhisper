@@ -136,3 +136,53 @@ test('the full view fills the pane with the picked meeting and steps back to the
     api.meeting = original.meeting;
   }
 });
+
+test('the shelf groups meetings by week, filters them, and previews the pick', async () => {
+  const now = new Date();
+  const hoursAgo = h => new Date(now.getTime() - h * 3600e3).toISOString();
+  const rows = [
+    { id: 'm_today', title: 'Scope review', started_at: hoursAgo(1), status: 'ended', has_audio: false,
+      duration_s: 2820, insights_pill: 'Insights ready', insights_tone: 'success',
+      digest: { decisions: 1, action_items: 3, risks: 0, open_questions: 0, participant_count: 2,
+        participants: [{ id: 'me', display_name: 'Me', kind: 'me' }, { id: 'p2', display_name: 'Maya Chen', kind: 'guest' }] } },
+    { id: 'm_old', title: 'Vendor call', started_at: '2020-03-03T18:00:00Z', status: 'ended', has_audio: false,
+      duration_s: 1560, digest: { decisions: 0, action_items: 0, risks: 1, open_questions: 0, participant_count: 1, participants: [] } },
+  ];
+  const original = { meetings: api.meetings, meeting: api.meeting };
+  api.meetings = async () => rows;
+  api.meeting = async (token, id) => ({
+    meeting: rows.find(r => r.id === id),
+    state: { ...meetingState(id, 'Scope review'), rolling_summary: 'Pump 2 gets replaced this year.',
+      participants: { me: { id: 'me', display_name: 'Me', kind: 'me' }, p2: { id: 'p2', display_name: 'Maya Chen', kind: 'guest' } },
+      cards: { decisions: [{ id: 'd1', text: 'Replace Pump 2 motor', status: 'confirmed', data: {} }],
+        action_items: [{ id: 'a1', text: 'Revise scope memo', status: 'proposed', data: { owner_participant_id: 'p2', deadline: 'Oct 6' } },
+          { id: 'a2', text: 'Dropped idea', status: 'removed', data: {} }] } },
+    segments: [], transcript_next_cursor: null,
+  });
+  try {
+    let props = { token: 'demo', selectedId: null, focused: false, onClose() {},
+      onSelectMeeting: id => { props = { ...props, selectedId: id }; }, onFocusChange() {} };
+    await mount(HistoryPane, props);
+    const labels = [...container.querySelectorAll('.shelf-group-label')].map(h => h.textContent);
+    assert.deepEqual(labels, ['This week', 'March 2020']);
+    assert.match(container.querySelector('.history-item').textContent, /47m/);
+    assert.equal(container.querySelectorAll('.shelf-avatar').length, 2);
+
+    const decisionsOnly = [...container.querySelectorAll('.shelf-checks label')].find(l => l.textContent === 'Has decisions').querySelector('input');
+    await click(decisionsOnly);
+    assert.equal(container.querySelectorAll('.history-item').length, 1, 'meetings without decisions are hidden');
+    assert.match(container.textContent, /1 of 2 meetings/);
+
+    await click(container.querySelector('.history-item'));
+    await rerender(HistoryPane, props);
+    const preview = container.querySelector('.shelf-preview');
+    assert.match(preview.textContent, /Scope review/);
+    assert.match(preview.textContent, /Pump 2 gets replaced this year\./);
+    assert.match(preview.textContent, /Revise scope memo.*Maya Chen · Oct 6/);
+    assert.doesNotMatch(preview.textContent, /Dropped idea/, 'removed items stay out of the preview');
+    assert.ok(button('Open meeting'));
+  } finally {
+    api.meetings = original.meetings;
+    api.meeting = original.meeting;
+  }
+});

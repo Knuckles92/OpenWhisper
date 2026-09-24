@@ -137,3 +137,104 @@ test('a synthesized replacement of a legacy sample can become a capture', () => 
   })]};
   assert.equal(capturedRailFeed(doc).top[0].id, 'rewritten');
 });
+
+const {EvidenceProvider} = require('../src/evidence.tsx');
+const {dueTone, ledgerCounts, ledgerTabOf} = require('../src/components/CardsPane.tsx');
+
+const ledgerCards = () => ({
+  ...cards(),
+  action_items: [item('ac_1', 'action_items', 'Pull 18 months of flow logs', {
+    data: {owner_participant_id: 'p_luis', deadline: '2026-10-02'}, created_at: at(30), updated_at: at(30),
+  })],
+  risks: [item('rk_1', 'risks', 'Motor lead time is 14 weeks', {created_at: at(25), updated_at: at(25)})],
+});
+const people = [{id: 'p_luis', display_name: 'Luis Ortega', kind: 'others_cluster', created_at: at(0)}];
+const mountLedger = (extra = {}) => mount((props) => React.createElement(EvidenceProvider,
+  {segments: [], participants: people}, React.createElement(CardsPane, props)), {
+  cards: ledgerCards(), questions: [], onEvidenceClick() {}, lastSeqByTarget: {},
+  newestFirst: true, embedded: true, highlightTop: 3, status: 'active',
+  cloudEnabled: true, intelligenceOnline: true, ...extra,
+});
+const tabButtons = (container) => [...container.querySelectorAll('[role=tab]')];
+
+test('ledger tabs count each kind and hide empty ones', async () => {
+  const container = await mountLedger();
+  const labels = tabButtons(container).map((b) => b.textContent);
+  assert.deepEqual(labels, ['All6', 'Decisions1', 'Actions1', 'Risks1', 'Other3']);
+  assert.equal(container.querySelector('[role=tab][aria-selected=true]').dataset.tab, 'all');
+  assert.ok(container.querySelector('.capture-lead'), 'All keeps the highlighted lead');
+});
+
+test('picking a tab shows only that kind, and arrow keys move between tabs', async () => {
+  const container = await mountLedger();
+  const actions = tabButtons(container).find((b) => b.dataset.tab === 'actions');
+  await act(async () => actions.click());
+  const rows = [...container.querySelectorAll('#ledger-panel .card-item')];
+  assert.deepEqual(rows.map((r) => r.dataset.card), ['action_items']);
+  assert.equal(container.querySelector('.capture-lead'), null, 'the lead belongs to All only');
+  await act(async () => actions.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true})));
+  assert.equal(container.querySelector('[role=tab][aria-selected=true]').dataset.tab, 'risks');
+  assert.equal(document.activeElement.dataset.tab, 'risks');
+});
+
+test('an action row shows its owner and due date, and the box confirms it', async () => {
+  const sent = [];
+  const container = await mountLedger({onSendOp: async (op) => { sent.push(op); return true; }});
+  const row = container.querySelector('.card-item[data-card=action_items]');
+  assert.match(row.querySelector('.ledger-owner').textContent, /LOLuis Ortega/);
+  assert.ok(row.querySelector('.ledger-due'));
+  const box = row.querySelector('input[type=checkbox]');
+  assert.equal(box.checked, false);
+  await act(async () => box.click());
+  assert.deepEqual(sent, [{op: 'confirm_item', id: 'ac_1'}]);
+});
+
+test('a proposed decision offers a confirm step; a confirmed one does not', async () => {
+  const sent = [];
+  const container = await mountLedger({onSendOp: async (op) => { sent.push(op); return true; }});
+  const state = container.querySelector('.card-item[data-card=decisions] .ledger-state');
+  await act(async () => state.querySelector('.ledger-confirm').click());
+  assert.deepEqual(sent, [{op: 'confirm_item', id: 'dc_1'}]);
+  const doc = ledgerCards();
+  doc.decisions[0].status = 'confirmed';
+  const again = await mountLedger({cards: doc});
+  assert.equal(again.querySelector('.ledger-state .ledger-confirm'), null);
+  assert.ok(again.querySelector('.ledger-state.confirmed'));
+});
+
+test('quick-add sends the picked kind', async () => {
+  const sent = [];
+  const container = await mountLedger({onSendOp: async (op) => { sent.push(op); return true; }});
+  const risk = [...container.querySelectorAll('.ledger-kinds [role=radio]')].find((b) => b.textContent === 'Risk');
+  await act(async () => risk.click());
+  const input = container.querySelector('.ledger-input input');
+  const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set;
+  await act(async () => { setter.call(input, 'Bypass capacity unconfirmed'); input.dispatchEvent(new dom.window.Event('input', {bubbles: true})); });
+  await act(async () => container.querySelector('.ledger-input button').click());
+  assert.deepEqual(sent, [{op: 'add_item', card: 'risks', text: 'Bypass capacity unconfirmed'}]);
+});
+
+test('print and archive keep the plain feed without ledger chrome', async () => {
+  const container = await mountLedger({readOnly: true});
+  assert.equal(container.querySelector('[role=tablist]'), null);
+  assert.equal(container.querySelector('.ledger-action'), null);
+  assert.equal(container.querySelector('.ledger-composer'), null);
+});
+
+test('ledger helpers classify entries and judge only ISO due dates', () => {
+  const entries = [
+    {kind: 'item', item: item('a', 'action_items', 'x')},
+    {kind: 'item', item: item('b', 'timeline', 'y', {status: 'removed'})},
+    {kind: 'question', question: {id: 'q'}},
+  ];
+  assert.equal(ledgerTabOf(entries[0]), 'actions');
+  assert.equal(ledgerTabOf(entries[2]), 'questions');
+  const counts = ledgerCounts(entries);
+  assert.equal(counts.all, 2);
+  assert.equal(counts.other, 0, 'removed items never count');
+  const now = new Date(2026, 8, 30);
+  assert.equal(dueTone('2026-09-29', now), 'overdue');
+  assert.equal(dueTone('2026-10-01', now), 'soon');
+  assert.equal(dueTone('2026-10-20', now), 'neutral');
+  assert.equal(dueTone('next Tuesday', now), 'neutral');
+});

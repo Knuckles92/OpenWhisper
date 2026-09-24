@@ -4,6 +4,7 @@ import { ops, type CardItem, type Op } from '../types';
 import { sortedNoteItems } from '../state';
 import { EvidenceRow } from './EvidenceChip';
 import CitationBadge from './CitationBadge';
+import { InlineMarkdown } from './report/MarkdownView';
 
 interface NoteRequestResult {
   ok: boolean;
@@ -155,7 +156,7 @@ function NoteBlock({
         />
       ) : (
         <p className="note-body" onDoubleClick={beginEdit}>
-          {item.text}
+          <InlineMarkdown text={item.text} />
         </p>
       )}
       {readOnly && (

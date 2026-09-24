@@ -12,6 +12,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
   compilerOptions:{module:ts.ModuleKind.CommonJS, jsx:ts.JsxEmit.ReactJSX, target:ts.ScriptTarget.ES2020},
 }).outputText, filename);
+require.extensions['.css'] = () => {};
 const React = require('react');
 const {act} = React;
 const {createRoot} = require('react-dom/client');
@@ -388,4 +389,76 @@ test('saved source fields stay off the preview when a recording is unavailable',
   assert.equal(preview.querySelector('details'), null);
   assert.doesNotMatch(preview.textContent, /Source selection|Other source options|Source rank/);
   assert.match(preview.textContent, /No recording available for this moment/);
+});
+
+test('topic history becomes chapters offset from the meeting start', () => {
+  const {topicChapters} = require('../src/chapters.ts');
+  const start = '2026-09-22T16:00:00Z';
+  const at = s => new Date(Date.parse(start) + s * 1000).toISOString();
+  const rev = (s, text) => ({text, ts:at(s), evidence:[], actor_type:'agent'});
+  const history = [
+    rev(40, 'Goals & constraints'),
+    rev(250, 'Pump condition'),
+    rev(262, 'Pump condition findings'),
+    rev(600, 'pump condition findings'),
+    rev(1050, 'Budget & phasing'),
+  ];
+  assert.deepEqual(topicChapters(history, start, 1900), [
+    {label:'Goals & constraints', start_s:0, end_s:250},
+    {label:'Pump condition findings', start_s:250, end_s:1050},
+    {label:'Budget & phasing', start_s:1050, end_s:1900},
+  ]);
+  assert.deepEqual(topicChapters(history, start).at(-1), {label:'Budget & phasing', start_s:1050});
+  assert.deepEqual(topicChapters(history, null), []);
+  assert.deepEqual(topicChapters(history, 'not a date'), []);
+  assert.equal(topicChapters(history, start, 900).length, 2, 'chapters after the ruler end are dropped');
+});
+
+test('the moment ruler draws chapter bands, a now edge, activity and a counted legend', async () => {
+  const pulses = [
+    {id:'a', kind:'decision', start_s:1780, segment_id:'s2', probability:.9, text:'Phase 1 is Pump 2.'},
+    {id:'b', kind:'number', start_s:1745, segment_id:'s1', probability:.9, text:'Four-twelve.'},
+    {id:'c', kind:'decision', start_s:1782, segment_id:'s2', probability:.9, text:'Confirmed.'},
+  ];
+  const participants = [
+    {id:'me', display_name:'You', kind:'me', created_at:'1'},
+    {id:'p', display_name:'Priya Nair', kind:'others_cluster', created_at:'2'},
+  ];
+  const segments = [
+    {id:'s1', start_s:1745, end_s:1760, text:'If we split it…', speaker_participant_id:'p'},
+    {id:'s2', start_s:1780, end_s:1800, text:'Okay — so Phase 1…', speaker_participant_id:'me'},
+  ];
+  const chapters = [
+    {label:'Goals & constraints', start_s:0, end_s:250},
+    {label:'Budget & phasing', start_s:1050},
+  ];
+  const container = await mount(PulseStrip, {pulses, segments, participants, chapters, durationS:1908, nowEdge:true,
+    meetingStatus:'active', highlightStatus:'on', onSelect:() => {}});
+  const bands = [...container.querySelectorAll('.mr-band')];
+  assert.deepEqual(bands.map(b => b.querySelector('.mr-band-label').textContent), ['Goals & constraints', 'Budget & phasing']);
+  assert.ok(bands[1].classList.contains('current'));
+  assert.equal(bands[1].querySelector('.mr-band-time').textContent, '17:30–now');
+  assert.ok(container.querySelector('.mr-now'));
+  assert.match(container.querySelector('.mr-scale').textContent, /now 31:48/);
+  assert.equal(container.querySelectorAll('.mr-activity > span').length, 32);
+  assert.equal(container.querySelectorAll('button').length, 3, 'only markers are buttons');
+  const legend = [...container.querySelectorAll('.mr-legend-item')].map(item => item.textContent);
+  assert.deepEqual(legend, ['Decision2', 'Number1']);
+  assert.equal(container.querySelector('.pulse-label.pulse-number').textContent, 'Number');
+  const rows = [...container.querySelectorAll('.pulse-mark')].map(b => b.style.bottom);
+  assert.equal(new Set(rows).size > 1, true, 'colliding markers stack instead of overlapping');
+  await act(async () => container.querySelector('.pulse-mark.pulse-decision').focus());
+  const preview = document.querySelector('[role=dialog]');
+  assert.match(preview.textContent, /You · Budget & phasing/);
+  assert.ok(preview.querySelector('.mr-pop-play'));
+});
+
+test('play from here in the preview plays the pulse', async () => {
+  const pulse = {id:'p', kind:'commitment', start_s:90, segment_id:'x', probability:.9, text:'Luis pulls the logs.'};
+  const picked = [];
+  const container = await mount(PulseStrip, {pulses:[pulse], onSelect:p => picked.push(p)});
+  await act(async () => container.querySelector('.pulse-mark').focus());
+  await act(async () => document.querySelector('.mr-pop-play').click());
+  assert.deepEqual(picked, [pulse]);
+  assert.equal(document.querySelector('[role=dialog]'), null);
 });

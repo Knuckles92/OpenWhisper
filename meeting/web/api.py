@@ -39,6 +39,7 @@ from meeting.state.schema import (
     MeetingState,
     compact_finalization_list_fields,
 )
+from meeting.time_utils import elapsed_seconds, seconds_since
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
 
@@ -100,6 +101,90 @@ def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
         raise HTTPException(status_code=400, detail="invalid transcript cursor") from exc
 
 
+#: Meeting statuses whose clock is still running (no ``ended_at`` yet).
+_RUNNING_STATUSES = {"active", "paused", "ending"}
+#: Avatars shown per History row; the full count travels separately.
+_DIGEST_PARTICIPANTS = 6
+
+
+def _meeting_duration_s(meeting: Dict[str, Any]) -> Optional[float]:
+    """Wall time minus pause credit; a running meeting counts up to now."""
+    if meeting.get("ended_at"):
+        elapsed = elapsed_seconds(meeting.get("started_at"), meeting.get("ended_at"))
+    elif str(meeting.get("status") or "") in _RUNNING_STATUSES:
+        elapsed = seconds_since(meeting.get("started_at"))
+    else:
+        return None
+    if elapsed is None:
+        return None
+    try:
+        paused = float(meeting.get("paused_total_s") or 0.0)
+    except (TypeError, ValueError):
+        paused = 0.0
+    return max(0.0, elapsed - paused)
+
+
+def _meeting_digest(meeting: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Counts and people for a History row, read from the saved snapshot.
+
+    Never raises: a missing or corrupt snapshot just omits the digest.
+    """
+    raw = meeting.get("state_json")
+    if not raw:
+        return None
+    try:
+        state = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(state, dict):
+            return None
+        cards = state.get("cards") if isinstance(state.get("cards"), dict) else {}
+
+        def live_count(key: str) -> int:
+            items = cards.get(key)
+            if not isinstance(items, list):
+                return 0
+            return sum(
+                1 for item in items
+                if isinstance(item, dict) and item.get("status") != "removed"
+            )
+
+        questions = state.get("questions")
+        if isinstance(questions, dict):
+            questions = list(questions.values())
+        open_questions = sum(
+            1 for q in (questions if isinstance(questions, list) else [])
+            if isinstance(q, dict) and q.get("status") == "open"
+        )
+        raw_people = state.get("participants")
+        people = [
+            p for p in (raw_people.values() if isinstance(raw_people, dict) else [])
+            if isinstance(p, dict) and p.get("id")
+        ]
+        # "Me" first, then join order, so avatar colors match the live view.
+        people.sort(key=lambda p: (
+            p.get("kind") != "me", str(p.get("created_at") or ""), str(p.get("id")),
+        ))
+        return {
+            "decisions": live_count("decisions"),
+            "action_items": live_count("action_items"),
+            "risks": live_count("risks"),
+            "open_questions": open_questions,
+            "participant_count": len(people),
+            "participants": [
+                {
+                    "id": str(p.get("id")),
+                    "display_name": str(p.get("display_name") or ""),
+                    "kind": str(p.get("kind") or ""),
+                    "created_at": str(p.get("created_at") or ""),
+                }
+                for p in people[:_DIGEST_PARTICIPANTS]
+            ],
+        }
+    except Exception:
+        logger.debug("Could not build History digest for %s", meeting.get("id"),
+                     exc_info=True)
+        return None
+
+
 def _public_meeting(
     meeting: Optional[Dict[str, Any]],
     repository: Optional[Any] = None,
@@ -109,6 +194,10 @@ def _public_meeting(
         return {}
     public = {key: meeting.get(key) for key in _PUBLIC_MEETING_KEYS}
     public["display_title"] = meeting_display_title(meeting)
+    public["duration_s"] = _meeting_duration_s(meeting)
+    digest = _meeting_digest(meeting)
+    if digest is not None:
+        public["digest"] = digest
     public.update(compact_finalization_list_fields(meeting))
     if repository is not None:
         summary = summarize_meeting_content(

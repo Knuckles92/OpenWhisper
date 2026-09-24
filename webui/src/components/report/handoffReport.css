@@ -1,0 +1,303 @@
+/* Handoff report: every action by owner, plus a recap email ready to send. */
+.ho {
+  container-type: inline-size;
+  padding: 32px 36px 40px;
+  color: var(--ink);
+}
+
+.ho-head {
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--hair-2);
+}
+
+.ho-kicker,
+.ho-h {
+  display: block;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--leaf);
+}
+
+.ho-title {
+  margin: 8px 0 12px;
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 4cqi, 2.6rem);
+  font-weight: 400;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.ho-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.ho-summary b {
+  font-weight: 600;
+}
+
+.ho-summary .ho-open b {
+  color: var(--warning);
+}
+
+.ho-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.ho-owners {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ho-empty {
+  margin: 0;
+  color: var(--soft);
+}
+
+.ho-card {
+  padding: 16px 18px;
+  border: 1px solid var(--hair-2);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.ho-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ho-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--leaf);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ho-avatar.none {
+  background: var(--hair);
+  color: var(--soft);
+}
+
+.ho-owner {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ho-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.ho-tasks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ho-tasks li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--hair);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ho-tasks li:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.ho-box {
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border: 1.5px solid var(--k-commitment);
+  border-radius: 3px;
+}
+
+.ho-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.ho-due {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.ho-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.ho-card-actions button {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.ho-questions ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.ho-email {
+  min-width: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ho-email-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.ho-note {
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.ho-letter {
+  border: 1px solid var(--hair-2);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.ho-letter-row {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hair);
+  font-size: 13px;
+}
+
+.ho-letter-row span {
+  color: var(--soft);
+}
+
+.ho-letter-body {
+  margin: 0;
+  padding: 14px 16px 18px;
+  max-height: 460px;
+  overflow: auto;
+  font-family: var(--font);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ho-email-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ho-mail-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.ho-mail-link:hover {
+  background: var(--wash);
+  border-color: var(--leaf);
+}
+
+.ho-error {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+@container (min-width: 760px) {
+  .ho-grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .ho-email {
+    position: sticky;
+    top: 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .ho {
+    padding: 22px 14px 30px;
+  }
+}
+
+@media print {
+  .ho {
+    padding: 0;
+  }
+
+  .ho-grid {
+    display: block;
+  }
+
+  .ho-card {
+    break-inside: avoid;
+    margin-bottom: 12px;
+  }
+
+  .ho-email {
+    position: static;
+    margin-top: 20px;
+  }
+
+  .ho-letter-body {
+    max-height: none;
+    overflow: visible;
+  }
+}

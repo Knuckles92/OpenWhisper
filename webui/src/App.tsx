@@ -18,6 +18,7 @@ import MeetingBrief from './components/MeetingBrief';
 import MeetingOverview from './components/MeetingOverview';
 import NotesPane from './components/NotesPane';
 import ParticipantsPane from './components/ParticipantsPane';
+import PreFlight from './components/PreFlight';
 import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
 import { EvidenceProvider } from './evidence';
@@ -28,6 +29,9 @@ import {
   type ReportViewId,
 } from './report';
 import { initialUiState, meetingReducer } from './state';
+import { topicChapters } from './chapters';
+import RoomDisplay from './components/RoomDisplay';
+import { JumpToLive, PocketTabs, pocketTabs, usePocketLayout, usePocketTab } from './components/PocketShell';
 import type { Op, Role, SessionResponse } from './types';
 import { MeetingSocket, socketStatusMessage } from './ws';
 
@@ -63,6 +67,14 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   );
   const [historyFocused, setHistoryFocused] = useState(false);
   const [showActivity, setShowActivity] = useState(true);
+  const [roomOpen, setRoomOpen] = useState(
+    () => new URLSearchParams(location.search).get('view') === 'room',
+  );
+  const closeRoom = useCallback(() => setRoomOpen(false), []);
+  const pocket = usePocketLayout();
+  const [pocketTab, setPocketTab] = usePocketTab(
+    ui.state?.status === 'ended' || ui.state?.finalization?.status === 'completed',
+  );
   const [highlightSegmentId, setHighlightSegmentId] = useState<string | null>(null);
   const [transcriptLoad, setTranscriptLoad] = useState<TranscriptLoadState>({ status: 'loading' });
   const [transcriptAttempt, setTranscriptAttempt] = useState(0);
@@ -164,6 +176,19 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
     [ui.state],
   );
 
+  // How far the meeting has run, in recording seconds: the ruler's right edge.
+  const previewList = useMemo(() => Object.values(ui.speechPreviews), [ui.speechPreviews]);
+  const meetingSpan = useMemo(
+    () => [...segments, ...previewList].reduce((edge, item) => Math.max(edge, item.end_s || 0), 0),
+    [segments, previewList],
+  );
+  const topicHistory = ui.state?.topic.history;
+  const startedAt = ui.meeting?.started_at;
+  const chapters = useMemo(
+    () => topicChapters(topicHistory ?? [], startedAt, meetingSpan || undefined),
+    [topicHistory, startedAt, meetingSpan],
+  );
+
   const handleEvidenceClick = useCallback(async (segmentId: string) => {
     if (!ui.segments.some((segment) => segment.id === segmentId) && ui.state) {
       try {
@@ -210,6 +235,17 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   // Re-keying the player swaps the <audio> node; the minimap playhead needs
   // the same key so it re-binds to the live element.
   const audioKey = `${ui.state.meeting_id}:${ui.state.status}`;
+  const meetingRunning = ['active', 'paused'].includes(ui.state.status);
+  // Before anyone has spoken, the centre shows readiness instead of empty placeholders.
+  const warmingUp = meetingRunning && transcriptComplete && segments.length === 0
+    && previewList.every((preview) => !preview.text.trim());
+  const reportMode = ui.state.status === 'ended' || ui.state.finalization?.status === 'completed';
+  const capturedCount = ['decisions', 'action_items', 'risks', 'key_points', 'timeline'].reduce(
+    (total, key) => total + (ui.state!.cards[key as 'decisions'] ?? []).filter((item) => item.status !== 'removed').length,
+    0,
+  );
+  // Once the final insights are in, live-agent chatter no longer earns space above the report.
+  const reportsSettled = ui.state.status === 'ended' && ui.state.finalization?.status === 'completed';
 
   return (
     <div className="app-shell">
@@ -247,6 +283,10 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         transcriptComplete={transcriptComplete}
         reportView={reportView}
         onReportViewChange={selectReportView}
+        participants={participants}
+        onlineIds={ui.onlineIds}
+        listening={ui.state.status === 'active' && previewList.length > 0}
+        onOpenRoom={() => setRoomOpen(true)}
       />
 
       {showHistory && isHost ? (
@@ -266,7 +306,24 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
         </div>
       ) : (
         <EvidenceProvider segments={segments} participants={participants}>
-          <div className="app-main workspace" ref={workspaceRef} data-workspace-scroll>
+          <div
+            className={`app-main workspace${pocket ? ' pocket' : ''}${pocket && reportMode ? ' ended' : ''}`}
+            ref={workspaceRef}
+            data-workspace-scroll
+            data-pocket-tab={pocket ? pocketTab : undefined}
+          >
+            <div className="workspace-ruler">
+              <HighlightPulseStrip pulses={ui.state.live_highlights ?? []}
+                highlightStatus={ui.state.live_highlights_status} meetingStatus={ui.state.status}
+                cloudEnabled={ui.state.cloud_enabled} isHost={isHost}
+                chapters={chapters} segments={segments} participants={participants}
+                durationS={meetingSpan} nowEdge={meetingRunning}
+                onSelect={pulse => {
+                  setPlaybackMoment(pulse);
+                  void handleEvidenceClick(pulse.segment_id);
+                  playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));
+                }} />
+            </div>
             <aside className="workspace-conversation">
               <TranscriptPane
                 segments={segments}
@@ -307,18 +364,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
             </aside>
 
             <div className="workspace-center">
-              {['active', 'paused'].includes(ui.state.status) &&
-                <VoiceCommandHelp guide={ui.voiceCommandGuide} meetingId={ui.state.meeting_id}
-                  cloudEnabled={ui.state.cloud_enabled}
-                  paused={ui.state.status === 'paused'} isHost={isHost} />}
-              <HighlightPulseStrip pulses={ui.state.live_highlights ?? []}
-                highlightStatus={ui.state.live_highlights_status} meetingStatus={ui.state.status}
-                cloudEnabled={ui.state.cloud_enabled} isHost={isHost} onSelect={pulse => {
-                setPlaybackMoment(pulse);
-                void handleEvidenceClick(pulse.segment_id);
-                playMoment(audioRef.current, pulse.start_s, api.audioUrl(token, ui.state!.meeting_id, Date.now()));
-              }} />
-              {isHost && showActivity && (
+              {isHost && showActivity && !reportsSettled && (
                 <ActivityPane
                   token={token}
                   onUndo={sendUndo}
@@ -358,13 +404,20 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                 </>
               ) : (
                 <>
-                  <MeetingBrief
-                    intent={ui.state.intent}
-                    isHost={isHost}
-                    status={ui.state.status}
-                    onSendOp={sendOp}
-                  />
-
+                  {warmingUp ? (
+                    <PreFlight
+                      state={ui.state}
+                      meeting={ui.meeting}
+                      isHost={isHost}
+                      guestUrl={ui.guestUrl}
+                      participants={participants}
+                      onlineIds={ui.onlineIds}
+                      listening={ui.state.status === 'active' && previewList.length > 0}
+                      onSendOp={sendOp}
+                      onClientError={(message) => dispatch({ type: 'client_error', message })}
+                    />
+                  ) : (
+                  <>
                   <MeetingOverview
                     meetingTitle={ui.state.title || ui.meeting?.title || 'Meeting'}
                     status={ui.state.status}
@@ -379,6 +432,14 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                     onEvidenceClick={handleEvidenceClick}
                   />
 
+                  <MeetingBrief
+                    intent={ui.state.intent}
+                    isHost={isHost}
+                    status={ui.state.status}
+                    onSendOp={sendOp}
+                  />
+
+                  <div className="center-notes">
                   <NotesPane
                     newestFirst
                     onRequestAdjustment={(text) => api.requestNoteAdjustment(token, text)}
@@ -391,6 +452,14 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
                     onUndo={isHost ? sendUndo : undefined}
                     lastSeqByTarget={ui.lastSeqByTarget}
                   />
+                  </div>
+                  </>
+                  )}
+
+                  {meetingRunning &&
+                    <VoiceCommandHelp guide={ui.voiceCommandGuide} meetingId={ui.state.meeting_id}
+                      cloudEnabled={ui.state.cloud_enabled}
+                      paused={ui.state.status === 'paused'} isHost={isHost} />}
                 </>
               )}
             </div>
@@ -424,7 +493,33 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
               />
             </aside>
           </div>
+          {pocket && (
+            <>
+              <JumpToLive anchorRef={workspaceRef} enabled={pocketTab === 'live' || pocketTab === 'transcript'} />
+              <PocketTabs
+                tabs={pocketTabs(reportMode)}
+                active={pocketTab}
+                onSelect={(tab) => {
+                  setPocketTab(tab);
+                  const scroller = workspaceRef.current?.closest('.app-shell');
+                  workspaceRef.current?.scrollTo?.({ top: 0 });
+                  scroller?.scrollTo?.({ top: 0 });
+                }}
+                capturedCount={capturedCount}
+              />
+            </>
+          )}
         </EvidenceProvider>
+      )}
+      {roomOpen && (
+        <RoomDisplay
+          state={ui.state}
+          segments={segments}
+          participants={participants}
+          chapters={chapters}
+          elapsedS={meetingSpan}
+          onExit={closeRoom}
+        />
       )}
       {!showHistory && !ui.meetingEnded && ui.state.status === 'active' &&
         <VoiceAssistantBubble feedback={ui.voiceFeedback} />}

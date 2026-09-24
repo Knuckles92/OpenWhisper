@@ -1,4 +1,5 @@
 """Static accessibility guardrails for the dependency-free Meeting dashboard."""
+import re
 from pathlib import Path
 
 
@@ -23,7 +24,8 @@ def test_history_uses_native_buttons_and_report_uses_accessible_timeline():
     ribbon = _source("components/report/RibbonReport.tsx")
 
     assert 'aria-label="Search meeting transcripts"' in history
-    assert '<li key={m.id}>\n                    <button' in history
+    # Each meeting row is a native button directly inside its list item.
+    assert re.search(r"<li key=\{m\.id\}>\s*<button", history)
     assert 'className={`history-item${' in history
     assert "<TimelineMinimap" in ribbon
 
